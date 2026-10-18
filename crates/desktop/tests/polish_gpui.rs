@@ -154,7 +154,7 @@ fn a_panel_the_set_has_no_icon_for_keeps_its_glyph(cx: &mut TestAppContext) {
 
 // ---- the Agent Dashboard drawer ---------------------------------------------------------------
 
-fn report(daemon: &TestDaemon, session: SessionId, state: AgentState, message: &str) {
+fn report(daemon: &TestDaemon, session: SessionId, state: AgentState, message: &str, seq: u64) {
     let applied: AgentApplied = daemon.call(Request::AgentReport(AgentReportRequest {
         pid: None,
         session_id: session,
@@ -162,7 +162,7 @@ fn report(daemon: &TestDaemon, session: SessionId, state: AgentState, message: &
         agent: "omp".into(),
         state: Some(state),
         message: Some(message.into()),
-        seq: 1,
+        seq,
         agent_session_id: None,
         resume_argv: None,
         node: None,
@@ -177,19 +177,43 @@ struct Board {
     idle: SessionId,
 }
 
+/// Four agents, one per column. Plain shells are not cards, so each session is an agent that
+/// reports. The done one ends while the window watches ([`finish_turn`]): an unseen end is
+/// what the window shows as done.
 fn start_board(daemon: &TestDaemon) -> Board {
     let needs = daemon.sh_titled("Fix the build", "sleep 600").id;
     let working = daemon.sh_titled("Write the docs", "sleep 600").id;
-    let idle = daemon.sh_titled("Shell", "sleep 600").id;
-    let done = daemon.sh_titled("One-off", "exit 0").id;
-    report(daemon, needs, AgentState::Blocked, "wants to run rm -rf");
-    report(daemon, working, AgentState::Working, "editing README.md");
+    let idle = daemon.sh_titled("Waiting", "sleep 600").id;
+    let done = daemon.sh_titled("One-off", "read line; exit 0").id;
+    report(daemon, needs, AgentState::Blocked, "wants to run rm -rf", 1);
+    report(daemon, working, AgentState::Working, "editing README.md", 1);
+    report(daemon, idle, AgentState::Idle, "ready", 1);
+    report(daemon, done, AgentState::Working, "a quick job", 1);
     Board {
         needs,
         working,
         done,
         idle,
     }
+}
+
+/// The done agent's process ends while the window is open.
+fn finish_turn(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    daemon: &TestDaemon,
+    board: &Board,
+) {
+    wait_until(cx, "the window to see the working agent", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .session(board.done)
+                .is_some_and(|s| s.agent.is_some())
+        })
+    });
+    let terminal = daemon.session(board.done).terminal_id.expect("a terminal");
+    daemon.send_input(terminal, b"\n");
 }
 
 fn wait_board(view: &Entity<Workbench>, cx: &mut VisualTestContext, board: &Board) {
@@ -217,6 +241,7 @@ fn the_agents_row_opens_a_kanban_drawer_and_the_nav_row_or_escape_closes_it(
     let daemon = TestDaemon::start();
     let board = start_board(&daemon);
     let (view, cx) = open_daemon(cx, &daemon);
+    finish_turn(&view, cx, &daemon, &board);
     wait_board(&view, cx, &board);
     assert!(!drawer_open(&view, cx));
     assert!(!painted(&view, cx, Region::AgentsDrawer));
@@ -291,6 +316,7 @@ fn the_drawer_lists_the_sessions_in_the_column_of_their_state_and_a_card_opens_i
     let daemon = TestDaemon::start();
     let board = start_board(&daemon);
     let (view, cx) = open_daemon(cx, &daemon);
+    finish_turn(&view, cx, &daemon, &board);
     wait_board(&view, cx, &board);
     click(&view, cx, Region::Nav("agents"));
 
@@ -314,8 +340,8 @@ fn the_drawer_lists_the_sessions_in_the_column_of_their_state_and_a_card_opens_i
     for column in order {
         let header = bounds(&view, cx, Region::DrawerColumn(column));
         assert!(
-            f32::from(header.size.width) >= 263.0,
-            "{column:?} is at least 264 px wide, got {}",
+            f32::from(header.size.width) >= 219.0,
+            "{column:?} is at least 220 px wide, got {}",
             header.size.width
         );
         if let Some(right) = previous_right {

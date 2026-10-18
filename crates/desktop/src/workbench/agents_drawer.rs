@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, ParentElement,
     SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::*, px,
 };
-use hutan_core::{SessionId, SessionKind, SessionState};
+use hutan_core::{SessionId, SessionState};
 use hutan_protocol::messages::SessionInfo;
 
 use super::panels::{age_label, state_dot, tone_color};
@@ -21,8 +21,9 @@ use crate::theme::{DensityExt as _, STATUS_BAR_HEIGHT};
 
 /// The widest the drawer gets (Orca's dashboard drawer).
 pub const DRAWER_MAX_WIDTH: f32 = 1294.0;
-/// The narrowest a kanban column gets; the board scrolls sideways below that.
-pub const COLUMN_MIN_WIDTH: f32 = 264.0;
+/// The narrowest a kanban column gets (four fit beside a 280 px sidebar in a 1280 px window);
+/// the board scrolls sideways below that.
+pub const COLUMN_MIN_WIDTH: f32 = 220.0;
 /// Space between two cards of a column.
 const CARD_GAP: f32 = 8.0;
 
@@ -93,7 +94,10 @@ pub struct DashboardCard {
 
 impl Workbench {
     /// The sessions of the dashboard by column, in the board's order; every column is listed,
-    /// empty or not. Assistant chats are not agents of the user's work and stay out.
+    /// empty or not. Cards are the work of agents: chats, terminals an agent reports from, and
+    /// sessions that ended while this window watched and nobody has looked at since (a finished
+    /// agent's report goes with its process, the unseen end stays). Idle plain shells and
+    /// assistant chats are not agents' work and stay out.
     pub fn agents_dashboard(&self, cx: &gpui::App) -> Vec<(DashboardColumn, Vec<DashboardCard>)> {
         let store = self.sessions.read(cx);
         let mut columns: Vec<(DashboardColumn, Vec<DashboardCard>)> = DashboardColumn::ALL
@@ -104,16 +108,14 @@ impl Workbench {
             if info.chat.as_ref().is_some_and(|chat| chat.is_assistant()) {
                 continue;
             }
-            let presentation = store.presentation(info);
-            let column = column_of(info, &presentation);
             let agent = match (&info.agent, &info.chat) {
                 (Some(report), _) => report.agent.clone(),
                 (None, Some(chat)) => chat.agent.clone(),
-                (None, None) => match info.kind {
-                    SessionKind::Terminal => "terminal".to_owned(),
-                    SessionKind::Harness | SessionKind::Direct => "agent".to_owned(),
-                },
+                (None, None) if store.unread(info.id).is_some() => "terminal".to_owned(),
+                (None, None) => continue,
             };
+            let presentation = store.presentation(info);
+            let column = column_of(info, &presentation);
             let message = info
                 .agent
                 .as_ref()
@@ -417,7 +419,7 @@ impl Workbench {
 mod tests {
     use super::*;
     use crate::sessions::{Unread, present};
-    use hutan_core::WorkspaceId;
+    use hutan_core::{SessionKind, WorkspaceId};
     use hutan_protocol::messages::{AgentReport, AgentState};
 
     fn info(state: SessionState) -> SessionInfo {
