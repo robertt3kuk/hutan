@@ -2232,6 +2232,18 @@ fn requests() -> Vec<(&'static str, Request)> {
                 workspace_id: Some(ws()),
             }),
         ),
+        (
+            "history_sessions",
+            Request::HistorySessions(HistorySessionsRequest {
+                scope: HistoryScope::Project,
+                workspace_id: Some(ws()),
+                filter: "repo:hutan flaky".into(),
+                sort: HistorySessionSort::Updated,
+                sources: vec![HistorySource::Claude, HistorySource::Omp],
+                limit: 250,
+                refresh: true,
+            }),
+        ),
     ]
 }
 
@@ -3411,6 +3423,65 @@ fn responses_match_fixtures() {
                         },
                     ],
                     db_bytes: 11_534_336,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "history_sessions",
+            ControlMessage::ok(
+                9,
+                &HistorySessions {
+                    sessions: vec![HistorySessionRow {
+                        source: HistorySource::Omp,
+                        session_key: "4f1c2a9e".into(),
+                        title: Some("Fix the flaky test".into()),
+                        cwd: Some("/Users/dev/proj/hutan".into()),
+                        branch: Some("main".into()),
+                        model: Some("openai-codex/gpt-5.6-luna".into()),
+                        messages: 8,
+                        created_ms: Some(1_791_894_100_000),
+                        updated_ms: Some(1_791_894_164_332),
+                        first_prompt: Some("Fix the flaky test in launcher_gpui".into()),
+                        latest: vec![
+                            HistoryTurn {
+                                role: HistoryRole::User,
+                                text: "and the second one?".into(),
+                                ts_ms: Some(1_791_894_160_000),
+                            },
+                            HistoryTurn {
+                                role: HistoryRole::Assistant,
+                                text: "Both pass now.".into(),
+                                ts_ms: Some(1_791_894_164_332),
+                            },
+                        ],
+                        workspace_id: Some(ws()),
+                        resume_argv: Some(vec![
+                            "omp".into(),
+                            "--resume".into(),
+                            "/Users/dev/.omp/agent/sessions/x/4f1c2a9e.jsonl".into(),
+                        ]),
+                        path: Some("/Users/dev/.omp/agent/sessions/x/4f1c2a9e.jsonl".into()),
+                        session_id: None,
+                    }],
+                    matched: 2,
+                    loaded: 250,
+                    scan: HistoryScanInfo {
+                        files: 986,
+                        done: 986,
+                        scanning: false,
+                        finished_ms: Some(1_791_894_164_000),
+                        per_source: vec![
+                            HistorySourceFiles {
+                                name: "claude".into(),
+                                files: 610,
+                            },
+                            HistorySourceFiles {
+                                name: "omp".into(),
+                                files: 376,
+                            },
+                        ],
+                    },
                 },
             )
             .unwrap(),

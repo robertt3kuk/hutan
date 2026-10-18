@@ -131,6 +131,8 @@ pub(crate) const RECOVERY_CAPABILITY: &str = "session.recovery";
 pub(crate) const TASK_CHAT_MODEL_CAPABILITY: &str = "task.chat_model";
 /// Capability for `daemon.settings.get` / `.set` and `assistant.reset` (protocol 0.28).
 pub(crate) const DAEMON_SETTINGS_CAPABILITY: &str = "daemon.settings";
+/// Capability for `history.sessions`, the session catalog (protocol 0.29).
+pub(crate) const HISTORY_SESSIONS_CAPABILITY: &str = "history.sessions";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -159,6 +161,7 @@ const CAPABILITIES: &[&str] = &[
     RECOVERY_CAPABILITY,
     TASK_CHAT_MODEL_CAPABILITY,
     DAEMON_SETTINGS_CAPABILITY,
+    HISTORY_SESSIONS_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -759,6 +762,23 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == DAEMON_SETTINGS_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `history.sessions` (protocol 0.29): the
+    /// session catalog exists.
+    pub fn supports_history_sessions(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == HISTORY_SESSIONS_CAPABILITY)
+    }
+
+    /// `history.sessions`: the session catalog, one row per agent session.
+    pub async fn history_sessions(
+        &self,
+        request: hutan_protocol::history::HistorySessionsRequest,
+    ) -> Result<hutan_protocol::history::HistorySessions, ClientError> {
+        self.call(Request::HistorySessions(request)).await
     }
 
     /// `daemon.settings.get`: every option of `daemon.toml` with its value, default and whether

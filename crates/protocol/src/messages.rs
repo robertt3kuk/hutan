@@ -158,6 +158,10 @@ pub enum Request {
     /// Capability `history.search`: read every transcript again.
     #[serde(rename = "history.rebuild")]
     HistoryRebuild(Empty),
+    /// Capability `history.sessions` (protocol 0.29): the session catalog, one row per agent
+    /// session; answered with `HistorySessions`.
+    #[serde(rename = "history.sessions")]
+    HistorySessions(crate::history::HistorySessionsRequest),
     /// Capability `chat.codex` (protocol 0.9): open an agent conversation as a session.
     #[serde(rename = "chat.create")]
     ChatCreate(ChatCreate),

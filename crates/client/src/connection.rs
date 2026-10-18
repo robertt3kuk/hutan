@@ -331,6 +331,22 @@ impl Connection {
         self.call(Request::HistoryStatus(Empty {})).await
     }
 
+    /// True while connected to a daemon that advertised capability `history.sessions`
+    /// ([`Client::supports_history_sessions`]); false when disconnected.
+    pub fn supports_history_sessions(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_history_sessions())
+    }
+
+    /// `history.sessions` ([`Client::history_sessions`]): the session catalog.
+    pub async fn history_sessions(
+        &self,
+        request: hutan_protocol::history::HistorySessionsRequest,
+    ) -> Result<hutan_protocol::history::HistorySessions, ClientError> {
+        self.call(Request::HistorySessions(request)).await
+    }
+
     /// `history.set_enabled`: turns indexing on or off (recorded in `daemon.toml`); answers with
     /// the new status.
     pub async fn history_set_enabled(
