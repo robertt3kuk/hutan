@@ -127,13 +127,27 @@ fn json(value: &toml_edit::Value) -> Value {
     }
 }
 
-/// A value for a table cell: text as it is (`-` when empty), the rest as JSON.
+/// Widest value cell of `hutan config ls`; `get` and `set` print a value whole.
+const CELL_MAX_CHARS: usize = 40;
+
+/// A value as text: text as it is (`-` when empty), the rest as JSON.
 fn render(value: &Value) -> String {
     match value {
         Value::String(s) if s.is_empty() => "-".to_owned(),
         Value::String(s) => s.clone(),
         other => other.to_string(),
     }
+}
+
+/// [`render`] cut to [`CELL_MAX_CHARS`] with `…`, for the table.
+fn cell(value: &Value) -> String {
+    let text = render(value);
+    if text.chars().count() <= CELL_MAX_CHARS {
+        return text;
+    }
+    let mut cut: String = text.chars().take(CELL_MAX_CHARS - 1).collect();
+    cut.push('…');
+    cut
 }
 
 fn table(settings: &DaemonSettings) -> String {
@@ -148,8 +162,8 @@ fn table(settings: &DaemonSettings) -> String {
     for entry in &settings.entries {
         rows.push([
             entry.key.clone(),
-            render(&entry.value),
-            render(&entry.default),
+            cell(&entry.value),
+            cell(&entry.default),
             if entry.set_in_file { "yes" } else { "-" }.to_owned(),
             match entry.applies {
                 Applies::Live => "live",
