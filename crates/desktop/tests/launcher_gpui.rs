@@ -223,12 +223,18 @@ fn launcher_project(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<
     view.read_with(cx, |wb, _| wb.launcher().and_then(|l| l.project()))
 }
 
-/// Waits until the sheet knows the worktrees of its project and OMP can be started.
+/// Waits until the sheet knows the worktrees of its project and OMP can be started. The sheet
+/// opens on a plain terminal, for which every harness counts as ready, so the account listing
+/// a chat needs is waited for too.
 fn ready(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
     wait_until(cx, "the worktrees and the harnesses", |cx| {
         view.read_with(cx, |wb, cx| {
             wb.launcher()
                 .is_some_and(|l| matches!(l.worktrees(), WorktreeList::Ready(_)))
+                && matches!(
+                    wb.harness_directory().read(cx).listing(),
+                    hutan_desktop::workbench::Listing::Ready
+                )
                 && wb
                     .launcher_harness_choices(cx)
                     .iter()
