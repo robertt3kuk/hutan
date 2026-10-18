@@ -566,6 +566,8 @@ impl Workbench {
             let edit = provider.clone();
             let key = id.clone();
             let clear = id.clone();
+            // Nothing to clear without a key: the button is off and does nothing.
+            let has_key = provider.has_credential;
             let remove = id.clone();
             let models = id.clone();
             let mut row = div()
@@ -630,12 +632,14 @@ impl Workbench {
                                 format!("provider-clear-{id}"),
                                 "Clear key",
                                 ButtonKind::Secondary,
-                                true,
+                                has_key,
                                 &look,
                             )
                             .on_click(cx.listener(
                                 move |this, _, window, cx| {
-                                    this.clear_provider_key(&clear, window, cx)
+                                    if has_key {
+                                        this.clear_provider_key(&clear, window, cx)
+                                    }
                                 },
                             )),
                         )

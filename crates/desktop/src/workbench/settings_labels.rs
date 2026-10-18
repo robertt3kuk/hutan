@@ -1424,7 +1424,7 @@ pub mod words {
             2 => ("keymap.toml", "Your own key bindings."),
             3 => (
                 "daemon.toml",
-                "The daemon's configuration. It is read when the daemon starts.",
+                "The daemon's configuration. The daemon pages of Settings edit it and keep your comments; a few changes apply after the daemon restarts.",
             ),
             _ => (
                 "Logs folder",
