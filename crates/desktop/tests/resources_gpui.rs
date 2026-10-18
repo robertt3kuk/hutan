@@ -15,7 +15,7 @@ use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext};
 use hutan_core::{NodeKind, SessionId};
 use hutan_desktop::settings::{ResourcesSettings, ResourcesSort};
 use hutan_desktop::workbench::actions;
-use hutan_desktop::workbench::model::{DockPosition, LayoutPreset};
+use hutan_desktop::workbench::model::{DockPosition, LayoutPreset, PanelDest};
 use hutan_desktop::workbench::panels::{
     RESOURCES_WATCH, ResourceCommand, ResourceInterrupt, ResourceLine, ResourceTarget,
     ResourcesLink, ResourcesPanel,
@@ -46,10 +46,15 @@ fn open<'a>(
     (view, cx)
 }
 
-/// Reveals the panel in a bottom dock tall enough to hold the rows of a test.
+/// Reveals the panel in a bottom dock tall enough to hold the rows of a test. (It is a tab of
+/// the right sidebar by default; the rows have room to spread out in a wide dock.)
 fn show(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<ResourcesPanel> {
     view.update(cx, |wb, cx| {
-        wb.edit_layout(cx, |s| s.docks.bottom.size = 700.0);
+        wb.edit_layout(cx, |s| {
+            s.move_panel(&"resources".into(), PanelDest::Dock(DockPosition::Bottom))
+                .unwrap();
+            s.docks.bottom.size = 700.0;
+        });
     });
     cx.dispatch_action(actions::ShowResources);
     draw(cx);
@@ -251,7 +256,7 @@ const TREE: &str = "sleep 60 & sleep 60 & wait";
 // ---- registration -----------------------------------------------------------------------------
 
 #[gpui::test]
-fn the_panel_lives_hidden_in_the_bottom_dock_and_has_commands_and_a_key(cx: &mut TestAppContext) {
+fn the_panel_is_a_tab_of_the_right_sidebar_and_has_commands_and_a_key(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon);
     let spec = view
@@ -259,13 +264,18 @@ fn the_panel_lives_hidden_in_the_bottom_dock_and_has_commands_and_a_key(cx: &mut
             wb.panel_registry().get(&"resources".into()).cloned()
         })
         .expect("the resources panel is registered");
-    assert_eq!(spec.default_dock, DockPosition::Bottom);
+    assert_eq!(spec.default_dock, DockPosition::Right);
     let state = view.read_with(cx, |wb, _| wb.state().clone());
-    assert!(state.docks.bottom.contains(&"resources".into()));
-    assert!(!state.docks.bottom.visible, "hidden until asked for");
+    assert!(state.docks.right.contains(&"resources".into()));
+    assert_eq!(
+        state.docks.right.active,
+        Some("history".into()),
+        "a tab of the strip until asked for"
+    );
+    assert!(state.docks.bottom.panels.is_empty() && !state.docks.bottom.visible);
     for preset in LayoutPreset::builtin() {
         assert!(
-            preset.docks.bottom.contains(&"resources".into()) && !preset.docks.bottom.visible,
+            preset.docks.right.contains(&"resources".into()),
             "{}",
             preset.name
         );
@@ -281,16 +291,18 @@ fn the_panel_lives_hidden_in_the_bottom_dock_and_has_commands_and_a_key(cx: &mut
     cx.simulate_keystrokes("enter");
     draw(cx);
     let state = view.read_with(cx, |wb, _| wb.state().clone());
-    assert!(state.docks.bottom.visible);
-    assert_eq!(state.docks.bottom.active, Some("resources".into()));
+    assert!(state.docks.right.visible);
+    assert_eq!(state.docks.right.active, Some("resources".into()));
 
-    // ⌥⌘R hides it again, and shows it once more.
+    // ⌥⌘R hides it again (the sidebar it is the page of), and shows it once more.
     cx.simulate_keystrokes("cmd-alt-r");
     draw(cx);
-    assert!(!view.read_with(cx, |wb, _| wb.state().docks.bottom.visible));
+    assert!(!view.read_with(cx, |wb, _| wb.state().docks.right.visible));
     cx.simulate_keystrokes("cmd-alt-r");
     draw(cx);
-    assert!(view.read_with(cx, |wb, _| wb.state().docks.bottom.visible));
+    let state = view.read_with(cx, |wb, _| wb.state().clone());
+    assert!(state.docks.right.visible);
+    assert_eq!(state.docks.right.active, Some("resources".into()));
 }
 
 // ---- subscription -----------------------------------------------------------------------------
@@ -786,7 +798,10 @@ fn show_in_resources_reveals_the_session_from_its_context_menu(cx: &mut TestAppC
             store.session(one.id).is_some() && store.session(two.id).is_some()
         })
     });
-    assert!(!view.read_with(cx, |wb, _| wb.state().docks.bottom.visible));
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.state().docks.right.active.clone()),
+        Some("history".into())
+    );
 
     cx.dispatch_action(actions::ShowSessionMenu(actions::SessionMenuAt {
         session: two.id.to_string(),
@@ -796,8 +811,8 @@ fn show_in_resources_reveals_the_session_from_its_context_menu(cx: &mut TestAppC
     run_entry(&view, cx, "Show in Resources");
     draw(cx);
     let state = view.read_with(cx, |wb, _| wb.state().clone());
-    assert!(state.docks.bottom.visible);
-    assert_eq!(state.docks.bottom.active, Some("resources".into()));
+    assert!(state.docks.right.visible);
+    assert_eq!(state.docks.right.active, Some("resources".into()));
     let panel = view
         .read_with(cx, |wb, _| wb.panel::<ResourcesPanel>("resources"))
         .expect("drawn");

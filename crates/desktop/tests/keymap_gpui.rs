@@ -11,7 +11,7 @@ use common::{TestDaemon, offline_connection, open_with, wait_until};
 use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
 use hutan_desktop::settings::KeymapBase;
 use hutan_desktop::workbench::actions::{self, default_bindings};
-use hutan_desktop::workbench::model::{DockPosition, FocusTarget, WorkbenchState};
+use hutan_desktop::workbench::model::{DockPosition, FocusTarget, PanelId, WorkbenchState};
 use hutan_desktop::workbench::{PickerKind, Region, Workbench};
 use hutan_settings::{SettingsPaths, SettingsStore};
 
@@ -32,6 +32,17 @@ fn visible(view: &Entity<Workbench>, cx: &VisualTestContext) -> [bool; 3] {
         docks.right.visible,
         docks.bottom.visible,
     ]
+}
+
+/// The default bottom dock is empty (Resources moved to the right sidebar's strip), and a hidden
+/// dock without panels has an inert button: give it a panel, hidden.
+fn give_the_bottom_dock_a_panel(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            s.open_panel(&PanelId::new("notifications"), DockPosition::Bottom);
+            s.set_dock_visible(DockPosition::Bottom, false);
+        });
+    });
 }
 
 fn set_base(view: &Entity<Workbench>, cx: &mut VisualTestContext, base: &str) {
@@ -91,7 +102,7 @@ fn zed_is_the_default_base_with_its_palette_jump_and_dock_keys(cx: &mut TestAppC
     );
     assert_eq!(hint(cx, &actions::OpenJump).as_deref(), Some("⌘P"));
     assert_eq!(hint(cx, &actions::ToggleLeftDock).as_deref(), Some("⌘B"));
-    assert_eq!(hint(cx, &actions::ToggleRightDock).as_deref(), Some("⌘R"));
+    assert_eq!(hint(cx, &actions::ToggleRightDock).as_deref(), Some("⌘L"));
     assert_eq!(hint(cx, &actions::ToggleBottomDock).as_deref(), Some("⌘J"));
     assert_eq!(hint(cx, &actions::CloseAllDocks).as_deref(), Some("⌥⌘Y"));
 }
@@ -110,6 +121,12 @@ fn cmd_b_r_j_toggle_the_docks_both_ways_and_cmd_alt_y_closes_them_all(cx: &mut T
     cx.simulate_keystrokes("cmd-r");
     assert_eq!(visible(&view, cx), [true, false, false]);
     cx.simulate_keystrokes("cmd-r");
+    assert_eq!(visible(&view, cx), [true, true, false]);
+
+    // ⌘L is the right sidebar's key now (Orca's); ⌘R stays as the Zed key.
+    cx.simulate_keystrokes("cmd-l");
+    assert_eq!(visible(&view, cx), [true, false, false]);
+    cx.simulate_keystrokes("cmd-l");
     assert_eq!(visible(&view, cx), [true, true, false]);
 
     cx.simulate_keystrokes("cmd-j");
@@ -153,7 +170,7 @@ fn dock_keys_work_while_a_terminal_has_focus(cx: &mut TestAppContext) {
         focus.is_some_and(|f| cx.update(|window, _| f.is_focused(window)))
     });
 
-    for (key, index) in [("cmd-b", 0), ("cmd-r", 1), ("cmd-j", 2)] {
+    for (key, index) in [("cmd-b", 0), ("cmd-l", 1), ("cmd-r", 1), ("cmd-j", 2)] {
         let before = visible(&view, cx)[index];
         cx.simulate_keystrokes(key);
         assert_eq!(visible(&view, cx)[index], !before, "{key} (first press)");
@@ -165,6 +182,7 @@ fn dock_keys_work_while_a_terminal_has_focus(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_status_bar_dock_buttons_toggle_the_docks(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
+    give_the_bottom_dock_a_panel(&view, cx);
     assert_eq!(visible(&view, cx), [true, true, false]);
 
     click(&view, cx, Region::StatusItem("dock_left"));
@@ -254,11 +272,18 @@ fn switching_the_keymap_base_rebinds_live(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-alt-j");
     cx.simulate_keystrokes("cmd-r");
     assert_eq!(visible(&view, cx), [true, true, false], "⌘R is unbound");
+    // ⌘L toggles the right sidebar in both bases.
+    assert_eq!(hint(cx, &actions::ToggleRightDock).as_deref(), Some("⌘L"));
+    cx.simulate_keystrokes("cmd-l");
+    assert_eq!(visible(&view, cx), [true, false, false]);
+    cx.simulate_keystrokes("cmd-l");
+    assert_eq!(visible(&view, cx), [true, true, false]);
     cx.simulate_keystrokes("cmd-k");
     assert!(view.read_with(cx, |wb, _| wb.palette_open()));
     cx.simulate_keystrokes("escape");
 
     // The status bar tooltips follow too: the dock buttons still work.
+    give_the_bottom_dock_a_panel(&view, cx);
     click(&view, cx, Region::StatusItem("dock_bottom"));
     assert_eq!(visible(&view, cx), [true, true, true]);
     click(&view, cx, Region::StatusItem("dock_bottom"));

@@ -943,7 +943,10 @@ fn nothing_is_registered_by_default_and_a_configured_shortcut_opens_the_assistan
     drop(view);
 
     let daemon = TestDaemon::start();
-    write_settings(&daemon, "[assistant]\nglobal_shortcut = \"alt-space\"\n");
+    write_settings(
+        &daemon,
+        "[assistant]\nenabled = true\nglobal_shortcut = \"alt-space\"\n",
+    );
     let (tx, rx) = event_channel();
     let fakes = Fakes::new();
     let mut mac = fakes.services();
@@ -956,13 +959,13 @@ fn nothing_is_registered_by_default_and_a_configured_shortcut_opens_the_assistan
 
     // Pressed while another app is in front: the window comes forward with the Assistant.
     assert_ne!(
-        view.read_with(cx, |wb, _| wb.state().docks.right.active.clone()),
+        view.read_with(cx, |wb, _| wb.state().docks.left.active.clone()),
         Some(PanelId::new("assistant"))
     );
     tx.try_send(MacEvent::Hotkey).unwrap();
     wait_until(cx, "the Assistant to open", |cx| {
         view.read_with(cx, |wb, _| {
-            wb.state().docks.right.active == Some(PanelId::new("assistant"))
+            wb.state().docks.left.active == Some(PanelId::new("assistant"))
         })
     });
 }
@@ -970,7 +973,7 @@ fn nothing_is_registered_by_default_and_a_configured_shortcut_opens_the_assistan
 #[gpui::test]
 fn a_taken_shortcut_is_reported_once_and_the_setting_is_left_alone(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
-    let configured = "[assistant]\nglobal_shortcut = \"alt-space\"\n";
+    let configured = "[assistant]\nenabled = true\nglobal_shortcut = \"alt-space\"\n";
     write_settings(&daemon, configured);
     let fakes = Fakes::new();
     fakes.hotkey.take("⌥Space");
@@ -1027,7 +1030,10 @@ fn a_taken_shortcut_is_reported_once_and_the_setting_is_left_alone(cx: &mut Test
 #[gpui::test]
 fn an_empty_shortcut_turns_it_off_and_garbage_is_reported(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
-    write_settings(&daemon, "[assistant]\nglobal_shortcut = \"\"\n");
+    write_settings(
+        &daemon,
+        "[assistant]\nenabled = true\nglobal_shortcut = \"\"\n",
+    );
     let fakes = Fakes::new();
     let (view, cx) = open(cx, &daemon, &fakes);
     wait_synced(&view, cx, 0);

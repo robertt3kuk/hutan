@@ -3,6 +3,7 @@
 
 mod agents;
 mod assistant;
+mod changes;
 mod common;
 mod history;
 mod history_model;
@@ -26,6 +27,7 @@ use std::rc::Rc;
 
 pub use agents::{AgentsPanel, RowView, SectionView, TICK as AGENTS_TICK};
 pub use assistant::{AssistantPanel, Choice as AssistantChoice, Failure, Opened, ScopeKey};
+pub use changes::{ChangesPanel, Checkouts as ChangesCheckouts, REFRESH_AFTER as CHANGES_REFRESH};
 pub use common::{
     age_label, agent_badge, kind_icon, placement_badge, recovery_chip, state_dot, time_tooltip,
     tone_color,
@@ -98,8 +100,10 @@ impl Render for PlaceholderPanel {
     }
 }
 
-/// `sessions`, `history`, `inspector`, `overview`, `agents`, `resources`, `tasks`, `assistant`,
-/// `notifications`.
+/// `sessions`, `history`, `changes`, `inspector` (titled Requests), `overview`, `agents`,
+/// `resources`, `tasks`, `assistant`, `notifications`. `sessions` (Projects), `tasks`, `overview`
+/// and `assistant` open as pages of the left sidebar, `history`, `changes`, `inspector`, `agents`
+/// and `resources` as tabs of the right sidebar's strip.
 pub fn builtin_panels() -> PanelRegistry {
     let mut registry = PanelRegistry::new();
     registry.register(PanelSpec {
@@ -115,16 +119,26 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: "history".into(),
         title: "History".into(),
-        icon: "⌕".into(),
-        default_dock: DockPosition::Left,
+        icon: "⟲".into(),
+        default_dock: DockPosition::Right,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
             AnyView::from(cx.new(|cx| HistoryPanel::new(env, cx)))
         }),
     });
     registry.register(PanelSpec {
+        id: "changes".into(),
+        title: "Changes".into(),
+        icon: "±".into(),
+        default_dock: DockPosition::Right,
+        factory: Rc::new(|env, _window, cx| {
+            let env = env.clone();
+            AnyView::from(cx.new(|cx| ChangesPanel::new(env, cx)))
+        }),
+    });
+    registry.register(PanelSpec {
         id: "inspector".into(),
-        title: "Inspector".into(),
+        title: "Requests".into(),
         icon: "ⓘ".into(),
         default_dock: DockPosition::Right,
         factory: Rc::new(|env, _window, cx| {
@@ -156,7 +170,7 @@ pub fn builtin_panels() -> PanelRegistry {
         id: "resources".into(),
         title: "Resources".into(),
         icon: "◫".into(),
-        default_dock: DockPosition::Bottom,
+        default_dock: DockPosition::Right,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
             AnyView::from(cx.new(|cx| ResourcesPanel::new(env, cx)))
@@ -166,7 +180,7 @@ pub fn builtin_panels() -> PanelRegistry {
         id: "tasks".into(),
         title: "Tasks".into(),
         icon: "☑".into(),
-        default_dock: DockPosition::Right,
+        default_dock: DockPosition::Left,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
             AnyView::from(cx.new(|cx| TasksPanel::new(env, cx)))
@@ -176,7 +190,7 @@ pub fn builtin_panels() -> PanelRegistry {
         id: "assistant".into(),
         title: "Assistant".into(),
         icon: "✦".into(),
-        default_dock: DockPosition::Right,
+        default_dock: DockPosition::Left,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
             AnyView::from(cx.new(|cx| AssistantPanel::new(env, cx)))

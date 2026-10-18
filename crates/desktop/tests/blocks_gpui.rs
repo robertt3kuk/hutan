@@ -351,11 +351,15 @@ fn the_inspector_lists_the_last_twenty_blocks_and_jumps_to_one(cx: &mut TestAppC
     wait_synced(&view, cx, 1);
     open_session(&view, cx, info.id);
     wait_blocks(&view, cx, info.id, "150 commands", |b| finished(b) == 150);
+    // Requests is a tab of the right sidebar; History is the one showing.
+    cx.dispatch_action(hutan_desktop::workbench::actions::OpenPanel(
+        "inspector".into(),
+    ));
     draw(cx);
 
     let inspector = view
         .read_with(cx, |wb, _| wb.panel::<InspectorPanel>("inspector"))
-        .expect("the inspector is drawn in the right dock");
+        .expect("the inspector is drawn in the right sidebar");
     let current = view
         .read_with(cx, |wb, cx| {
             wb.sessions().read(cx).session(info.id).cloned()

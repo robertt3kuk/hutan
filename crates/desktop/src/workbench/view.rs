@@ -163,8 +163,15 @@ pub enum Region {
     Pane(PaneId),
     /// Tab `index` of a center pane.
     Tab(PaneId, usize),
-    /// Panel tab `index` of a dock.
+    /// Panel tab `index` of a dock (for the right dock: icon `index` of its strip).
     DockTab(DockPosition, usize),
+    /// An entry of the left sidebar's nav, by name (`search`, `tasks`, `agents`, `assistant`,
+    /// `projects` for the back affordance of a page) or by panel id for any other page.
+    Nav(&'static str),
+    /// A control of the left sidebar's bottom toolbar (`new`, `settings`).
+    Toolbar(&'static str),
+    /// The right strip's More menu button.
+    StripMore,
     /// A container row (workspace, project or Home) of the sessions panel.
     WorkspaceRow(hutan_core::WorkspaceId),
     /// The "No workspace" label of the sessions panel: where a project is dropped to leave its
@@ -283,6 +290,8 @@ pub enum Region {
     TaskDep(usize),
     /// The delivery pill of row `index` of the tasks panel's tree (`Awaiting review`, …).
     TaskDelivery(usize),
+    /// Row `index` of the right sidebar's Changes tab (the checkouts, top to bottom).
+    ChangesCheckout(usize),
     /// A control of the Changes view, by name (`toggle`, `refresh`, `merge`, `merge-confirm`,
     /// `merge-cancel`, `strategy-merge`, `strategy-squash`, `strategy-rebase`, `message`,
     /// `remove`, `keep`; delivery: `delivery`, `accept`, `request-changes`, `request-note`,
@@ -1393,7 +1402,12 @@ impl Workbench {
     pub(crate) fn panel_menu(&self, panel: &PanelId) -> Vec<MenuEntry> {
         let mut entries = Vec::new();
         let here = self.state.find_panel(panel);
+        // A left-only panel (the Assistant) is a page of the left sidebar: no other place.
+        let left_only = panel.is_left_only();
         for pos in DockPosition::ALL {
+            if left_only && pos != DockPosition::Left {
+                continue;
+            }
             let panel = panel.clone();
             let already = matches!(&here, Some(ItemSource::Dock { pos: p, .. }) if *p == pos);
             let mut e = Self::entry(
@@ -1405,10 +1419,12 @@ impl Workbench {
             e.checked = already;
             entries.push(e);
         }
-        let p = panel.clone();
-        entries.push(Self::entry("Open as Tab", move |this, _, cx| {
-            this.try_mutate(cx, |s| s.move_panel(&p, PanelDest::Center));
-        }));
+        if !left_only {
+            let p = panel.clone();
+            entries.push(Self::entry("Open as Tab", move |this, _, cx| {
+                this.try_mutate(cx, |s| s.move_panel(&p, PanelDest::Center));
+            }));
+        }
         let p = panel.clone();
         entries.push(Self::entry("Close", move |this, _, cx| {
             this.try_mutate(cx, |s| s.close_panel(&p));

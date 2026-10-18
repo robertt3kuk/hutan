@@ -318,7 +318,7 @@ pub fn time_tooltip(ms: u64) -> impl Fn(&mut gpui::Window, &mut App) -> gpui::An
     move |_, cx| cx.new(|_| TextTooltip(text.clone())).into()
 }
 
-/// Panel header: sentence-case section label on the left, the ⚙ that opens the panel's settings on the
+/// Panel header (Orca's section header: 32 px, 12 px semibold, muted): the label on the left, the ⚙ that opens the panel's settings on the
 /// right.
 pub fn panel_header(title: &str, namespace: &'static str, cx: &App) -> AnyElement {
     panel_header_with(title, namespace, Vec::new(), cx)
@@ -339,12 +339,12 @@ pub fn panel_header_with(
         .flex_none()
         .items_center()
         .justify_between()
-        .h(px(tokens.sidebar_row + 4.0))
-        .px(px(tokens.spacing * 2.5))
+        .h(px(32.0))
+        .px(px(tokens.spacing * 3.0))
         .child(
             div()
-                .text_size(px(tokens.section_font_size))
-                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_size(px(12.0))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(style.theme.muted)
                 .child(SharedString::from(title.to_owned())),
         )

@@ -51,8 +51,13 @@ fn opens_with_default_layout_and_title(cx: &mut TestAppContext) {
     assert!(state.docks.left.visible && state.docks.right.visible && !state.docks.bottom.visible);
     assert_eq!(
         state.docks.left.panels,
-        vec![PanelId::new("sessions"), PanelId::new("history")]
+        vec![
+            PanelId::new("sessions"),
+            PanelId::new("tasks"),
+            PanelId::new("overview")
+        ]
     );
+    assert_eq!(state.docks.right.active, Some(PanelId::new("history")));
     assert_eq!(state.panes().len(), 1);
     assert_eq!(cx.window_title().as_deref(), Some("Welcome — Hutan"));
 }
@@ -151,7 +156,12 @@ fn presets_and_overview_toggle(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-shift-o");
     let s = state(&view, cx);
     assert_eq!(s.preset, "default");
-    assert!(s.find_panel(&PanelId::new("overview")).is_none());
+    assert!(
+        s.panes()
+            .iter()
+            .all(|p| !p.items.contains(&ItemRef::panel("overview"))),
+        "the board left the center (it is the left sidebar's Agents page again)"
+    );
 }
 
 #[gpui::test]
@@ -199,10 +209,7 @@ fn panel_actions_move_panels_between_docks(cx: &mut TestAppContext) {
     let (view, cx) = open(cx, None);
     cx.dispatch_action(actions::OpenPanel("notifications".into()));
     let s = state(&view, cx);
-    assert_eq!(
-        s.docks.bottom.panels,
-        vec![PanelId::new("resources"), PanelId::new("notifications")]
-    );
+    assert_eq!(s.docks.bottom.panels, vec![PanelId::new("notifications")]);
     assert!(s.docks.bottom.visible);
     assert_eq!(s.focus, FocusTarget::Dock(DockPosition::Bottom));
 
@@ -210,7 +217,7 @@ fn panel_actions_move_panels_between_docks(cx: &mut TestAppContext) {
         hutan_desktop::workbench::model::PanelDest::Dock(DockPosition::Left),
     ));
     let s = state(&view, cx);
-    assert_eq!(s.docks.bottom.panels, vec![PanelId::new("resources")]);
+    assert!(s.docks.bottom.panels.is_empty());
     assert!(s.docks.left.panels.contains(&PanelId::new("notifications")));
 
     cx.dispatch_action(actions::OpenActivePanelAsTab);
@@ -329,7 +336,7 @@ fn state_is_saved_debounced_and_restored(cx: &mut TestAppContext) {
 
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 1);
+    assert_eq!(on_disk["version"], 2);
 
     // A second window (a "restart") restores exactly that layout.
     let (view2, cx2) = open(cx, Some(path.clone()));
@@ -420,10 +427,10 @@ fn default_layout_geometry_matches_the_design_tokens(cx: &mut TestAppContext) {
     let title = bounds(&view, cx, Region::Titlebar);
     let status = bounds(&view, cx, Region::StatusBar);
 
-    assert_size(left.size.width, 240.0);
-    assert_size(right.size.width, 300.0);
+    assert_size(left.size.width, 280.0);
+    assert_size(right.size.width, 350.0);
     assert_size(title.size.height, 36.0);
-    assert_size(status.size.height, 22.0); // compact status bar token
+    assert_size(status.size.height, 24.0); // the status bar token, in both densities
     assert!(
         view.read_with(cx, |wb, _| wb
             .region_bounds(Region::Dock(DockPosition::Bottom)))
@@ -443,7 +450,7 @@ fn default_layout_geometry_matches_the_design_tokens(cx: &mut TestAppContext) {
     assert!(f(center.size.height) > 100.0);
 
     cx.dispatch_action(actions::SetDensityComfortable);
-    assert_size(bounds(&view, cx, Region::StatusBar).size.height, 26.0);
+    assert_size(bounds(&view, cx, Region::StatusBar).size.height, 24.0);
 }
 
 #[gpui::test]
@@ -491,7 +498,7 @@ fn dock_visibility_and_size_drive_the_layout(cx: &mut TestAppContext) {
     let before = bounds(&view, cx, Region::Center);
     cx.dispatch_action(actions::ToggleLeftDock);
     let after = bounds(&view, cx, Region::Center);
-    assert!((f(after.size.width) - f(before.size.width) - 240.0).abs() < 1.0);
+    assert!((f(after.size.width) - f(before.size.width) - 280.0).abs() < 1.0);
     assert!(
         view.read_with(cx, |wb, _| wb
             .region_bounds(Region::Dock(DockPosition::Left)))
@@ -602,12 +609,12 @@ fn dragging_a_dock_edge_resizes_the_dock(cx: &mut TestAppContext) {
     let left = bounds(&view, cx, Region::Dock(DockPosition::Left));
     let edge = point(left.right() - px(2.0), px(400.0));
     drag(cx, edge, edge + point(px(60.0), px(0.0)));
-    assert_eq!(state(&view, cx).docks.left.size, 300.0);
+    assert_eq!(state(&view, cx).docks.left.size, 340.0);
 
     let right = bounds(&view, cx, Region::Dock(DockPosition::Right));
     let edge = point(right.left() + px(2.0), px(400.0));
     drag(cx, edge, edge + point(px(-50.0), px(0.0)));
-    assert_eq!(state(&view, cx).docks.right.size, 350.0);
+    assert_eq!(state(&view, cx).docks.right.size, 400.0);
 
     cx.dispatch_action(actions::ToggleBottomDock);
     let bottom = bounds(&view, cx, Region::Dock(DockPosition::Bottom));
@@ -736,13 +743,18 @@ fn dragging_a_panel_tab_to_a_pane_and_to_another_dock(cx: &mut TestAppContext) {
     let (view, cx) = open(cx, None);
     // Dock tab → center pane (opens the panel as a tab).
     let pane = state(&view, cx).first_pane_id();
-    let tab = bounds(&view, cx, Region::DockTab(DockPosition::Right, 0));
+    let tab = bounds(&view, cx, Region::DockTab(DockPosition::Right, 2));
     let target = bounds(&view, cx, Region::Pane(pane));
     drag(cx, center_of(tab), center_of(target));
     let s = state(&view, cx);
     assert_eq!(
         s.docks.right.panels,
-        vec![PanelId::new("agents"), PanelId::new("tasks")]
+        vec![
+            PanelId::new("history"),
+            PanelId::new("changes"),
+            PanelId::new("agents"),
+            PanelId::new("resources")
+        ]
     );
     assert!(
         s.pane(pane)
@@ -751,20 +763,22 @@ fn dragging_a_panel_tab_to_a_pane_and_to_another_dock(cx: &mut TestAppContext) {
             .contains(&ItemRef::panel("inspector"))
     );
 
-    // Center panel tab → left dock tab strip (reorders in front of `sessions`).
+    // Center panel tab → the left sidebar (it joins the pages, after the others).
     let inspector_index = state(&view, cx).pane(pane).unwrap().items.len() - 1;
     let tab = bounds(&view, cx, Region::Tab(pane, inspector_index));
-    let dock_tab = bounds(&view, cx, Region::DockTab(DockPosition::Left, 0));
-    drag(cx, center_of(tab), center_of(dock_tab));
+    let left = bounds(&view, cx, Region::Dock(DockPosition::Left));
+    drag(cx, center_of(tab), center_of(left));
     let s = state(&view, cx);
     assert_eq!(
         s.docks.left.panels,
         vec![
-            PanelId::new("inspector"),
             PanelId::new("sessions"),
-            PanelId::new("history")
+            PanelId::new("tasks"),
+            PanelId::new("overview"),
+            PanelId::new("inspector")
         ]
     );
+    assert_eq!(s.docks.left.active, Some(PanelId::new("inspector")));
     assert!(
         !s.pane(pane)
             .unwrap()
@@ -780,8 +794,8 @@ fn plain_tabs_cannot_be_dropped_into_docks(cx: &mut TestAppContext) {
     let pane = state(&view, cx).first_pane_id();
     let before = state(&view, cx);
     let tab = bounds(&view, cx, Region::Tab(pane, 1));
-    let dock_tab = bounds(&view, cx, Region::DockTab(DockPosition::Left, 0));
-    drag(cx, center_of(tab), center_of(dock_tab));
+    let dock = bounds(&view, cx, Region::Dock(DockPosition::Left));
+    drag(cx, center_of(tab), center_of(dock));
     assert_eq!(state(&view, cx).docks, before.docks);
     assert_eq!(state(&view, cx).center, before.center);
 }
@@ -789,7 +803,8 @@ fn plain_tabs_cannot_be_dropped_into_docks(cx: &mut TestAppContext) {
 #[gpui::test]
 fn right_click_menus_list_the_documented_entries(cx: &mut TestAppContext) {
     let (view, cx) = open(cx, None);
-    let tab = bounds(&view, cx, Region::DockTab(DockPosition::Left, 0));
+    // The Tasks row of the left nav (the dock's panel 1).
+    let tab = bounds(&view, cx, Region::DockTab(DockPosition::Left, 1));
     let p = center_of(tab);
     cx.simulate_mouse_down(p, MouseButton::Right, Modifiers::none());
     cx.simulate_mouse_up(p, MouseButton::Right, Modifiers::none());
@@ -812,10 +827,7 @@ fn right_click_menus_list_the_documented_entries(cx: &mut TestAppContext) {
     // "Move to Bottom Dock".
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(2, window, cx));
     let s = state(&view, cx);
-    assert_eq!(
-        s.docks.bottom.panels,
-        vec![PanelId::new("resources"), PanelId::new("sessions")]
-    );
+    assert_eq!(s.docks.bottom.panels, vec![PanelId::new("tasks")]);
     assert!(
         view.read_with(cx, |wb, _| wb.context_menu_entries())
             .is_none()
@@ -838,9 +850,11 @@ fn right_click_menus_list_the_documented_entries(cx: &mut TestAppContext) {
     assert_eq!(
         state(&view, cx).docks.right.panels,
         vec![
+            PanelId::new("history"),
+            PanelId::new("changes"),
             PanelId::new("inspector"),
             PanelId::new("agents"),
-            PanelId::new("tasks")
+            PanelId::new("resources")
         ]
     );
 

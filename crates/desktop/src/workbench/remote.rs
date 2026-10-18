@@ -344,6 +344,16 @@ impl Workbench {
         <actions::OpenWorkspace as Action>::name_for_type()
     }
 
+    /// The panels `open_panel` accepts: every registered one, the Assistant only while
+    /// `assistant.enabled` (it opens as the left sidebar's page).
+    fn openable_panels(&self) -> Vec<String> {
+        self.panels
+            .iter()
+            .filter(|s| self.assistant_enabled() || s.id.as_str() != "assistant")
+            .map(|s| s.id.to_string())
+            .collect()
+    }
+
     /// Every action the window offers: each palette command by action name, the variants of one
     /// action collapsed into a single entry that takes the variant's title as `choice`, and the
     /// parameterised ones (apply preset, open panel, open or focus a session, show a workspace).
@@ -398,11 +408,7 @@ impl Workbench {
         out.push(UiAction {
             id: Self::open_panel_id().to_owned(),
             title: "Panel: Open".to_owned(),
-            args_schema: Some(choice_schema(
-                "id",
-                "the panel id",
-                self.panels.iter().map(|s| s.id.to_string()).collect(),
-            )),
+            args_schema: Some(choice_schema("id", "the panel id", self.openable_panels())),
         });
         out.push(UiAction {
             id: Self::open_session_id().to_owned(),
@@ -619,10 +625,9 @@ impl Workbench {
         } else if action == Self::open_panel_id() {
             let id = arg_str(args, "id", action)?;
             if self.panels.get(&super::model::PanelId::new(id)).is_none() {
-                let known: Vec<String> = self.panels.iter().map(|s| s.id.to_string()).collect();
                 return Err(not_found(format!(
                     "no panel `{id}`; known: {}",
-                    known.join(", ")
+                    self.openable_panels().join(", ")
                 )));
             }
             Box::new(actions::OpenPanel(id.to_owned()))

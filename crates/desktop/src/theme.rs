@@ -37,6 +37,10 @@ pub struct Tokens {
     pub block_gutter: f32,
 }
 
+/// Height of the status bar, in both densities (Orca's 24 px).
+pub const STATUS_BAR_HEIGHT: f32 = 24.0;
+/// Height of the title bar and of the right sidebar's icon strip (Orca's 36 px).
+pub const TITLEBAR_HEIGHT: f32 = 36.0;
 /// Corner radius of pills, badges and round buttons.
 pub const PILL_RADIUS: f32 = 999.0;
 /// Width of the chat's reading column.
@@ -60,7 +64,7 @@ impl DensityExt for Density {
             sidebar_row: t.sidebar_row,
             tab_height: t.tab_height,
             pane_header: t.pane_header,
-            status_bar: t.status_bar,
+            status_bar: STATUS_BAR_HEIGHT,
             spacing: t.spacing,
             radius: t.radius,
             card_radius: if compact { 10.0 } else { 12.0 },
@@ -101,11 +105,18 @@ pub struct Theme {
     pub bg: Hsla,
     /// Left dock and the title bar strip.
     pub sidebar: Hsla,
+    /// Selected nav row and active project card of the left sidebar (Orca's
+    /// `worktree-sidebar-accent`): a step away from `sidebar`, lighter in dark, darker in light.
+    pub sidebar_accent: Hsla,
+    /// The right sidebar: its own surface, apart from the left one (Orca's `sidebar`).
+    pub right_sidebar: Hsla,
+    /// Hover and selected rows of the right sidebar (Orca's `sidebar-accent`).
+    pub right_sidebar_accent: Hsla,
     /// Cards, composer, popovers, palette, modals.
     pub surface: Hsla,
     /// Row and button hover.
     pub surface_hover: Hsla,
-    /// Hairlines (1 px).
+    /// Hairlines (1 px): white at 7 % in dark (Orca's `--border`), an opaque warm gray in light.
     pub border: Hsla,
     /// Primary text.
     pub fg: Hsla,
@@ -133,6 +144,16 @@ pub const DARK_PALETTE: [u32; 13] = [
     0x3E2C23, 0x6BBF85, 0xE2AE45, 0xE87562,
 ];
 
+/// The surfaces Orca separates and Hutan did not: `sidebar_accent`, `right_sidebar`,
+/// `right_sidebar_accent`, as `0xRRGGBB`. Same structure as Orca's tokens (dark: left rows step
+/// up from the sidebar, the right panel is darker than the left; light: left rows step down, the
+/// right panel is lighter), in Hutan's warm hues.
+pub const LIGHT_SIDEBARS: [u32; 3] = [0xE9E6DC, 0xF8F7F2, 0xF0EEE6];
+pub const DARK_SIDEBARS: [u32; 3] = [0x2E2D2B, 0x1A1918, 0x2A2927];
+
+/// Dark hairlines: white at 7 % (Orca's `--border` in dark).
+const DARK_BORDER_ALPHA: f32 = 0.07;
+
 impl Theme {
     /// The theme for the `appearance` setting; `system` follows the window appearance, so a macOS
     /// light/dark switch changes it the next time the workbench re-resolves.
@@ -152,22 +173,29 @@ impl Theme {
     }
 
     pub fn dark() -> Self {
-        Self::from_palette(true, DARK_PALETTE)
+        Self::from_palette(true, DARK_PALETTE, DARK_SIDEBARS)
     }
 
     pub fn light() -> Self {
-        Self::from_palette(false, LIGHT_PALETTE)
+        Self::from_palette(false, LIGHT_PALETTE, LIGHT_SIDEBARS)
     }
 
-    fn from_palette(dark: bool, p: [u32; 13]) -> Self {
+    fn from_palette(dark: bool, p: [u32; 13], sidebars: [u32; 3]) -> Self {
         let color = |hex: u32| Hsla::from(rgb(hex));
         Self {
             dark,
             bg: color(p[0]),
             sidebar: color(p[1]),
+            sidebar_accent: color(sidebars[0]),
+            right_sidebar: color(sidebars[1]),
+            right_sidebar_accent: color(sidebars[2]),
             surface: color(p[2]),
             surface_hover: color(p[3]),
-            border: color(p[4]),
+            border: if dark {
+                hsla(0.0, 0.0, 1.0, DARK_BORDER_ALPHA)
+            } else {
+                color(p[4])
+            },
             fg: color(p[5]),
             muted: color(p[6]),
             faint: color(p[7]),
@@ -324,17 +352,52 @@ mod tests {
                 0xE0692E, 0xFBE9DF, 0x3F8F5A, 0xC98A12, 0xC8452F
             ]
         );
+        // The dark hairline is white at 7 % (Orca's `--border`), so its hex is the blend-less
+        // white of the table; every other token is opaque.
         assert_eq!(
             table(&Theme::dark()),
             [
-                0x262624, 0x1F1E1D, 0x30302E, 0x3A3936, 0x3D3C39, 0xF5F4EF, 0xA6A49C, 0x6F6D66,
+                0x262624, 0x1F1E1D, 0x30302E, 0x3A3936, 0xFFFFFF, 0xF5F4EF, 0xA6A49C, 0x6F6D66,
                 0xEA7A43, 0x3E2C23, 0x6BBF85, 0xE2AE45, 0xE87562
             ]
         );
         assert!(Theme::dark().dark && !Theme::light().dark);
-        for theme in [Theme::light(), Theme::dark()] {
-            assert_eq!(rgba_of(theme.border).a, 1.0, "hairlines are opaque tokens");
+        assert_eq!(rgba_of(Theme::light().border).a, 1.0);
+        assert!((rgba_of(Theme::dark().border).a - 0.07).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_sidebars_have_their_own_surfaces() {
+        // Orca's structure: the right panel is not the left one; selected left rows step away
+        // from the left surface (up in dark, down in light); the right panel is darker than the
+        // left in dark and lighter in light.
+        for theme in [Theme::dark(), Theme::light()] {
+            let (left, accent, right, right_accent) = (
+                hex(theme.sidebar),
+                hex(theme.sidebar_accent),
+                hex(theme.right_sidebar),
+                hex(theme.right_sidebar_accent),
+            );
+            assert!(left != right && left != accent && right != right_accent);
+            assert_eq!(accent > left, theme.dark, "dark={}", theme.dark);
+            assert_eq!(right < left, theme.dark, "dark={}", theme.dark);
+            for ground in [theme.sidebar, theme.sidebar_accent, theme.right_sidebar] {
+                assert!(contrast(theme.fg, ground) >= 7.0);
+                // Selected rows: like `accent_soft`, large-text AA for secondary labels.
+                let floor = if hex(ground) == hex(theme.sidebar_accent) {
+                    4.0
+                } else {
+                    4.5
+                };
+                assert!(
+                    contrast(theme.muted, ground) >= floor,
+                    "{:06x}",
+                    hex(ground)
+                );
+            }
+            assert!(contrast(theme.muted, theme.right_sidebar_accent) >= 4.0);
         }
+        assert_eq!((TITLEBAR_HEIGHT, STATUS_BAR_HEIGHT), (36.0, 24.0));
     }
 
     #[test]
@@ -441,7 +504,7 @@ mod tests {
                 c.radius,
                 c.card_radius
             ),
-            (26.0, 30.0, 30.0, 22.0, 4.0, 6.0, 10.0)
+            (26.0, 30.0, 30.0, 24.0, 4.0, 6.0, 10.0)
         );
         let m = Density::Comfortable.ui();
         assert_eq!(
@@ -454,7 +517,7 @@ mod tests {
                 m.radius,
                 m.card_radius
             ),
-            (30.0, 34.0, 36.0, 26.0, 6.0, 8.0, 12.0)
+            (30.0, 34.0, 36.0, 24.0, 6.0, 8.0, 12.0)
         );
         assert_eq!((c.font_size, m.font_size), (12.0, 13.0));
         assert_eq!((c.secondary_font_size, m.secondary_font_size), (11.0, 12.0));

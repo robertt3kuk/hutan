@@ -1003,30 +1003,64 @@ pub fn migrate_start_at_login(store: &SettingsStore, user_file: &Path) -> bool {
     true
 }
 
+/// `assistant.enabled` used to default to true and is off for new users now. A user who already
+/// had Hutan (a layout saved by the version before the Orca-style relayout, `version` 1 in
+/// `desktop-state.json`) and never named the key keeps what they had: `assistant.enabled = true`
+/// is written. A user file that names the key (whatever the value) is left alone; a user with
+/// no saved layout, or one written by a newer Hutan, is new. Run before the layout is loaded
+/// and saved again. `true` when the key was written.
+pub fn migrate_assistant_default(
+    store: &SettingsStore,
+    user_file: &Path,
+    state_file: &Path,
+) -> bool {
+    let saved_by_old_hutan = std::fs::read_to_string(state_file)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| value.get("version").and_then(serde_json::Value::as_u64))
+        == Some(1);
+    if !saved_by_old_hutan {
+        return false;
+    }
+    let names_key = std::fs::read_to_string(user_file)
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|table| {
+            table
+                .get("assistant")
+                .and_then(toml::Value::as_table)
+                .map(|assistant| assistant.contains_key("enabled"))
+        })
+        .unwrap_or(false);
+    if names_key {
+        return false;
+    }
+    if let Err(error) = store.write_user("assistant.enabled", toml::Value::Boolean(true)) {
+        tracing::warn!("cannot keep assistant.enabled on for your existing setup: {error}");
+        return false;
+    }
+    true
+}
+
 /// The diagnostics source of [`migrate_start_at_login`]'s note.
 const MIGRATION_NOTE: &str = "app.migration";
 
 /// The `assistant` namespace.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AssistantSettings {
-    /// Whether Hutan has an assistant at all. Off hides the Assistant panel, removes its
-    /// commands from the palette and unregisters the system-wide shortcut; the daemon keeps its assistant conversations.
+    /// Whether Hutan has an assistant at all. Off (the default for a new settings file) hides the
+    /// Assistant page of the left sidebar, removes its commands from the palette and
+    /// unregisters the system-wide shortcut; the daemon keeps its assistant conversations. On
+    /// adds *Assistant* to the left sidebar's nav; the page opens inside the left sidebar and
+    /// never in the right dock or the center. A settings file written before the default
+    /// changed keeps the assistant on (see [`migrate_assistant_default`]).
     pub enabled: bool,
     /// System-wide shortcut that brings Hutan forward and opens the Assistant, for example
     /// `alt-space` or `cmd-shift-space` (modifiers `cmd`, `ctrl`, `alt`, `shift`, at least one
     /// of the first three). Empty (the default) turns it off. If another app already owns the shortcut,
     /// Hutan says so once and leaves the setting alone; the in-app keybinding is separate.
     pub global_shortcut: String,
-}
-
-impl Default for AssistantSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            global_shortcut: String::new(),
-        }
-    }
 }
 
 impl Setting for AssistantSettings {

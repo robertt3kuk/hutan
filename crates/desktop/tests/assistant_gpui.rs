@@ -179,8 +179,9 @@ fn the_global_assistant_streams_without_a_terminal_and_each_scope_keeps_its_conv
     cx.dispatch_action(hutan_desktop::workbench::actions::OpenAssistant);
     let panel = open_assistant(&view, cx);
     assert_eq!(
-        view.read_with(cx, |wb, _| wb.state().docks.right.active.clone()),
-        Some(PanelId::new("assistant"))
+        view.read_with(cx, |wb, _| wb.state().docks.left.active.clone()),
+        Some(PanelId::new("assistant")),
+        "the Assistant is a page of the left sidebar"
     );
 
     // Home is active: the global assistant, a direct chat of the configured provider — and no
@@ -301,44 +302,46 @@ fn the_global_assistant_streams_without_a_terminal_and_each_scope_keeps_its_conv
 }
 
 #[gpui::test]
-fn the_panel_moves_like_any_other_panel(cx: &mut TestAppContext) {
+fn the_panel_is_a_left_sidebar_page_that_keeps_its_conversation(cx: &mut TestAppContext) {
     let env = AssistantEnv::start(Options {
         configured: true,
         ..Options::default()
     });
     let (view, cx) = open(cx, &env.daemon);
     let panel = open_assistant(&view, cx);
+    let left_page =
+        |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.state().docks.left.active.clone());
+    assert_eq!(left_page(cx), Some(PanelId::new("assistant")));
+    let before = panel.read_with(cx, |p, cx| p.session(cx));
+    assert!(before.is_some());
+
+    // It cannot leave the left sidebar: not for a dock, not as a tab.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| {
-            s.move_panel(
-                &PanelId::new("assistant"),
+            for dest in [
                 PanelDest::Dock(DockPosition::Bottom),
-            )
-            .unwrap();
-            s.open_panel(&PanelId::new("assistant"), DockPosition::Bottom);
+                PanelDest::Dock(DockPosition::Right),
+                PanelDest::Center,
+            ] {
+                assert!(s.move_panel(&PanelId::new("assistant"), dest).is_err());
+            }
         });
     });
-    draw(cx);
     assert!(view.read_with(cx, |wb, _| {
         wb.state()
             .docks
-            .bottom
+            .left
             .panels
             .contains(&PanelId::new("assistant"))
     }));
-    // Moving it keeps the conversation: the same session is shown in the new dock.
-    let before = panel.read_with(cx, |p, cx| p.session(cx));
-    assert!(before.is_some());
+
+    // Another page replaces it, and the nav brings it back with the same conversation.
+    cx.dispatch_action(hutan_desktop::workbench::actions::OpenPanel("tasks".into()));
+    assert_eq!(left_page(cx), Some(PanelId::new("tasks")));
+    view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
+    draw(cx);
+    assert_eq!(left_page(cx), Some(PanelId::new("assistant")));
     assert_eq!(panel.read_with(cx, |p, cx| p.session(cx)), before);
-    assert_eq!(
-        view.read_with(cx, |wb, _| wb.state().docks.bottom.active.clone()),
-        Some(PanelId::new("assistant"))
-    );
-    assert!(
-        view.read_with(cx, |wb, _| wb
-            .region_bounds(Region::Dock(DockPosition::Bottom)))
-            .is_some()
-    );
 }
 
 // ---- scenario 2: context chips, add / remove, only what was selected --------------------------

@@ -166,12 +166,10 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
     });
     let home = view.read_with(cx, |wb, _| wb.active_workspace()).unwrap();
 
-    // ---- it is a panel in the left dock, next to Sessions ---------------------------------------
+    // ---- it is the first tab of the right sidebar's strip, the one showing -----------------------
     let docks = view.read_with(cx, |wb, _| wb.state().docks.clone());
-    assert_eq!(
-        docks.left.panels,
-        [PanelId::new("sessions"), PanelId::new("history")]
-    );
+    assert_eq!(docks.right.panels.first(), Some(&PanelId::new("history")));
+    assert_eq!(docks.right.active, Some(PanelId::new("history")));
     assert_eq!(docks.left.active, Some(PanelId::new("sessions")));
     let palette = view.read_with(cx, |wb, _| {
         wb.commands()
@@ -190,7 +188,7 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
     cx.dispatch_action(actions::SearchHistory);
     let history = panel(&view, cx);
     assert_eq!(
-        view.read_with(cx, |wb, _| wb.state().docks.left.active.clone()),
+        view.read_with(cx, |wb, _| wb.state().docks.right.active.clone()),
         Some(PanelId::new("history")),
         "the palette command reveals the panel"
     );
@@ -468,7 +466,7 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
         "nothing was started"
     );
     assert_eq!(
-        view.read_with(cx, |wb, _| wb.state().docks.left.active.clone()),
+        view.read_with(cx, |wb, _| wb.state().docks.right.active.clone()),
         Some(PanelId::new("history"))
     );
     // Enter on a row that cannot be resumed (and is no Hutan record) does nothing.

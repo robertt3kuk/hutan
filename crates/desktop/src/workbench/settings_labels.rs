@@ -58,7 +58,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("layout", "Layout"),
     ("panels.sessions", "Projects Sidebar"),
     ("sidebar", "Sidebar organization"),
-    ("panels.inspector", "Inspector"),
+    ("panels.inspector", "Requests"),
     ("panels.overview", "Overview"),
     ("workspaces", "Workspaces"),
     ("history", "History"),
@@ -137,7 +137,7 @@ const FIELDS: &[FieldText] = &[
         "keymap",
         "base",
         "Key bindings",
-        "The set of shortcuts Hutan starts from. Zed keys follow Zed on macOS (⌘⇧P command palette, ⌘P jump, ⌘B ⌘R ⌘J docks); Hutan keys are the original ones (⌘K command palette, ⌘J jump). Your own bindings in keymap.toml are applied on top, and a change takes effect at once.",
+        "The set of shortcuts Hutan starts from. Zed keys follow Zed on macOS (⌘⇧P command palette, ⌘P jump, ⌘B left sidebar, ⌘L ⌘R right sidebar, ⌘J bottom dock); Hutan keys are the original ones (⌘K command palette, ⌘J jump). Your own bindings in keymap.toml are applied on top, and a change takes effect at once.",
         &[("zed", "Zed keys"), ("hutan", "Hutan keys")],
     ),
     // ---- terminal ----
@@ -496,7 +496,7 @@ const FIELDS: &[FieldText] = &[
         "assistant",
         "enabled",
         "Use the assistant",
-        "Off hides the Assistant panel, removes its commands and shortcuts, and releases the system-wide shortcut. Your earlier assistant conversations are kept.",
+        "Off (the default for a new setup) hides the Assistant page of the left sidebar, removes its commands and shortcuts, and releases the system-wide shortcut. On adds Assistant to the left sidebar's list; it only ever opens there, never in the right sidebar or as a tab. Your earlier assistant conversations are kept.",
     ),
     field(
         "assistant",

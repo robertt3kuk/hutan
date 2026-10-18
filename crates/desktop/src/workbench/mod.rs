@@ -40,6 +40,7 @@ mod settings_rows;
 pub mod settings_schema;
 mod settings_sheet;
 mod setup;
+mod sidebars;
 pub mod style;
 mod terminals;
 pub mod text_field;
@@ -71,6 +72,7 @@ pub use settings_layers::FieldSource;
 pub use settings_pages::{DataTarget, HistoryIndex};
 pub use settings_sheet::{Edit, SettingsSheet};
 pub use setup::{NotificationUi, SetupFinish, SetupState, SetupStep};
+pub use sidebars::{NavEntry, NavTarget, strip_split};
 pub use terminals::session_of_item;
 pub use view::{
     BadgeSite, DragPreview, DraggedItem, Region, SAVE_DEBOUNCE, Workbench, WorkbenchOptions,

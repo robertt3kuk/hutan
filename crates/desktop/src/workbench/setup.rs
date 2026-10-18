@@ -1154,7 +1154,7 @@ impl Workbench {
             ))
             .child(self.setup_row(
                 "Assistant",
-                "Answers questions about your work through one of your logged-in agents.",
+                "Off unless you turn it on. Answers questions about your work through one of your logged-in agents, in a page of the left sidebar.",
                 assistant.into_any_element(),
             ))
             .when(state.assistant_enabled, |s| {

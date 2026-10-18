@@ -1,0 +1,758 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)] // test helpers
+//! The Orca-style shell (OL-2): the default regions and their sizes, the left sidebar's nav pages,
+//! the right sidebar's icon strip, the Assistant that is off by default and only ever a left page,
+//! ⌘B / ⌘L, the presets, and the one-time migration of a saved layout. No daemon: layout only.
+
+mod common;
+
+use common::{offline_connection, open_with, wait_until};
+use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+use hutan_desktop::workbench::actions::{self, OpenAssistant, OpenPanel};
+use hutan_desktop::workbench::model::{
+    Dock, DockPosition, Docks, FocusTarget, ItemRef, PanelDest, PanelId, WorkbenchState,
+};
+use hutan_desktop::workbench::persistence::{STATE_FILE, load_state};
+use hutan_desktop::workbench::{PickerKind, Region, SAVE_DEBOUNCE, Workbench};
+use hutan_settings::SettingsStore;
+use std::path::PathBuf;
+
+fn open_in(
+    cx: &mut TestAppContext,
+    assistant: bool,
+    state_path: Option<PathBuf>,
+) -> (Entity<Workbench>, SettingsStore, &mut VisualTestContext) {
+    let (connection, settings, _) = offline_connection();
+    if assistant {
+        settings
+            .write_user("assistant.enabled", toml::Value::Boolean(true))
+            .unwrap();
+    }
+    let (view, cx) = open_with(cx, settings.clone(), connection, state_path);
+    (view, settings, cx)
+}
+
+fn open(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) {
+    let (view, _, cx) = open_in(cx, false, None);
+    (view, cx)
+}
+
+fn state(view: &Entity<Workbench>, cx: &VisualTestContext) -> WorkbenchState {
+    view.read_with(cx, |wb, _| wb.state().clone())
+}
+
+fn ids(panels: &[&str]) -> Vec<PanelId> {
+    panels.iter().map(|p| PanelId::new(*p)).collect()
+}
+
+fn bounds(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    region: Region,
+) -> gpui::Bounds<gpui::Pixels> {
+    wait_until(cx, &format!("{region:?} to be drawn"), |cx| {
+        view.read_with(cx, |wb, _| wb.region_bounds(region))
+            .is_some()
+    });
+    view.read_with(cx, |wb, _| wb.region_bounds(region))
+        .unwrap()
+}
+
+fn painted(view: &Entity<Workbench>, cx: &VisualTestContext, region: Region) -> bool {
+    view.read_with(cx, |wb, _| wb.region_bounds(region))
+        .is_some()
+}
+
+fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
+    let at = bounds(view, cx, region).center();
+    cx.simulate_click(at, Modifiers::none());
+}
+
+/// Probes measure the content box, so a 1 px border makes a dock or bar read 1 px smaller.
+#[track_caller]
+fn assert_size(actual: gpui::Pixels, expected: f32) {
+    let actual = f32::from(actual);
+    assert!(
+        (actual - expected).abs() <= 1.0,
+        "expected {expected} (±1 border), got {actual}"
+    );
+}
+
+fn nav_keys(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<String> {
+    view.read_with(cx, |wb, cx| {
+        wb.nav_entries(cx).into_iter().map(|e| e.key).collect()
+    })
+}
+
+fn selected_nav(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<String> {
+    view.read_with(cx, |wb, cx| {
+        wb.nav_entries(cx)
+            .into_iter()
+            .filter(|e| e.selected)
+            .map(|e| e.key)
+            .collect()
+    })
+}
+
+fn visible(view: &Entity<Workbench>, cx: &VisualTestContext) -> [bool; 3] {
+    let s = state(view, cx);
+    [
+        s.docks.left.visible,
+        s.docks.right.visible,
+        s.docks.bottom.visible,
+    ]
+}
+
+// ---- regions --------------------------------------------------------------------------------
+
+#[gpui::test]
+fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_status_bar(
+    cx: &mut TestAppContext,
+) {
+    let (view, cx) = open(cx);
+    let s = state(&view, cx);
+    assert_eq!(s.preset, "default");
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "overview"]));
+    assert_eq!(s.docks.left.active, Some(PanelId::new("sessions")));
+    assert_eq!(
+        s.docks.right.panels,
+        ids(&["history", "changes", "inspector", "agents", "resources"])
+    );
+    assert_eq!(s.docks.right.active, Some(PanelId::new("history")));
+    assert!(s.docks.bottom.panels.is_empty() && !s.docks.bottom.visible);
+    assert!(s.docks.left.visible && s.docks.right.visible);
+    assert_eq!((s.docks.left.size, s.docks.right.size), (280.0, 350.0));
+
+    let left = bounds(&view, cx, Region::Dock(DockPosition::Left));
+    let right = bounds(&view, cx, Region::Dock(DockPosition::Right));
+    let center = bounds(&view, cx, Region::Center);
+    let titlebar = bounds(&view, cx, Region::Titlebar);
+    let status = bounds(&view, cx, Region::StatusBar);
+    assert_size(left.size.width, 280.0);
+    assert_size(right.size.width, 350.0);
+    assert_size(titlebar.size.height, 36.0);
+    assert_size(status.size.height, 24.0);
+    // Left | center | right, side by side; the right sidebar starts below the title bar row.
+    assert!(left.right() <= center.origin.x + gpui::px(1.0));
+    assert!(center.right() <= right.origin.x + gpui::px(1.0));
+    // The right sidebar is a column of its own: its strip is the title bar row of that side.
+    assert!((f32::from(right.origin.y) - f32::from(titlebar.origin.y)).abs() <= 1.0);
+
+    // The left nav: Search, Tasks, Agents; no Assistant while it is off.
+    assert_eq!(nav_keys(&view, cx), ["search", "tasks", "agents"]);
+    assert_eq!(
+        selected_nav(&view, cx),
+        Vec::<String>::new(),
+        "Projects shows"
+    );
+    for key in ["search", "tasks", "agents"] {
+        assert!(painted(&view, cx, Region::Nav(key)), "{key}");
+    }
+    assert!(!painted(&view, cx, Region::Nav("assistant")));
+    assert!(
+        !painted(&view, cx, Region::Nav("projects")),
+        "no back row on Projects"
+    );
+    assert!(painted(&view, cx, Region::Toolbar("new")));
+    assert!(painted(&view, cx, Region::Toolbar("settings")));
+    // The right strip: five icons, in the strip's row.
+    for index in 0..5 {
+        let icon = bounds(&view, cx, Region::DockTab(DockPosition::Right, index));
+        assert!(
+            icon.origin.y < right.origin.y + gpui::px(36.0),
+            "icon {index}"
+        );
+    }
+    assert!(
+        !painted(&view, cx, Region::StripMore),
+        "five icons fit 350 px"
+    );
+    // The title bar is 36 px and so is the strip: the first icon sits inside that row.
+    let first = bounds(&view, cx, Region::DockTab(DockPosition::Right, 0));
+    assert_size(first.size.height, 28.0);
+}
+
+#[gpui::test]
+fn the_left_nav_toolbar_starts_a_session_and_opens_settings(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    click(&view, cx, Region::Toolbar("settings"));
+    assert!(view.read_with(cx, |wb, _| wb.settings_sheet().is_some()));
+}
+
+// ---- left nav ---------------------------------------------------------------------------------
+
+#[gpui::test]
+fn nav_items_switch_the_left_page_and_the_back_row_returns_to_projects(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    let page = |cx: &VisualTestContext| state(&view, cx).docks.left.active.unwrap();
+    assert_eq!(page(cx).as_str(), "sessions");
+
+    click(&view, cx, Region::Nav("tasks"));
+    assert_eq!(page(cx).as_str(), "tasks");
+    assert_eq!(selected_nav(&view, cx), ["tasks"]);
+    assert!(
+        painted(&view, cx, Region::Nav("projects")),
+        "a page shows its way back"
+    );
+    // The panel list of the dock is untouched: pages are the dock's panels.
+    assert_eq!(
+        state(&view, cx).docks.left.panels,
+        ids(&["sessions", "tasks", "overview"])
+    );
+
+    click(&view, cx, Region::Nav("agents"));
+    assert_eq!(page(cx).as_str(), "overview");
+    assert_eq!(selected_nav(&view, cx), ["agents"]);
+
+    // The back row, and a second click on the selected row, both return to Projects.
+    click(&view, cx, Region::Nav("projects"));
+    assert_eq!(page(cx).as_str(), "sessions");
+    assert!(!painted(&view, cx, Region::Nav("projects")));
+    click(&view, cx, Region::Nav("tasks"));
+    click(&view, cx, Region::Nav("tasks"));
+    assert_eq!(page(cx).as_str(), "sessions");
+    assert_eq!(
+        state(&view, cx).focus,
+        FocusTarget::Dock(DockPosition::Left)
+    );
+}
+
+#[gpui::test]
+fn the_search_row_opens_the_jump_palette(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    click(&view, cx, Region::Nav("search"));
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.picker().map(|p| p.kind)),
+        Some(PickerKind::Jump)
+    );
+    assert_eq!(
+        state(&view, cx).docks.left.active.unwrap().as_str(),
+        "sessions",
+        "Search is an action, not a page"
+    );
+}
+
+#[gpui::test]
+fn a_panel_left_in_the_left_dock_gets_its_own_nav_row(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            s.move_panel(
+                &PanelId::new("resources"),
+                PanelDest::Dock(DockPosition::Left),
+            )
+            .unwrap();
+        });
+    });
+    assert_eq!(
+        nav_keys(&view, cx),
+        ["search", "tasks", "agents", "resources"]
+    );
+    assert_eq!(
+        selected_nav(&view, cx),
+        ["resources"],
+        "the move made it the page"
+    );
+    // It is the dock's panel at index 3: the same probe the right strip uses.
+    assert!(painted(&view, cx, Region::DockTab(DockPosition::Left, 3)));
+}
+
+// ---- assistant ---------------------------------------------------------------------------------
+
+#[gpui::test]
+fn the_assistant_is_off_by_default_and_has_no_place_in_any_dock(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    assert!(!view.read_with(cx, |wb, _| wb.assistant_enabled()));
+    assert!(!nav_keys(&view, cx).contains(&"assistant".to_owned()));
+    let s = state(&view, cx);
+    assert!(s.find_panel(&PanelId::new("assistant")).is_none());
+    // The commands are gone and opening it does nothing.
+    assert!(!view.read_with(cx, |wb, _| {
+        wb.commands().iter().any(|c| c.title.contains("Assistant"))
+    }));
+    cx.dispatch_action(OpenAssistant);
+    cx.dispatch_action(OpenPanel("assistant".into()));
+    assert!(
+        state(&view, cx)
+            .find_panel(&PanelId::new("assistant"))
+            .is_none()
+    );
+    for preset in [
+        LayoutPresetName::Default,
+        LayoutPresetName::Focus,
+        LayoutPresetName::Overview,
+    ] {
+        let layout = hutan_desktop::workbench::model::LayoutPreset::builtin()
+            .into_iter()
+            .find(|p| p.name == preset.name())
+            .unwrap();
+        for pos in DockPosition::ALL {
+            assert!(
+                !layout
+                    .docks
+                    .get(pos)
+                    .panels
+                    .iter()
+                    .any(PanelId::is_left_only),
+                "{} lists a left-only panel in {pos:?}",
+                layout.name
+            );
+        }
+    }
+}
+
+enum LayoutPresetName {
+    Default,
+    Focus,
+    Overview,
+}
+
+impl LayoutPresetName {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Focus => "focus",
+            Self::Overview => "overview",
+        }
+    }
+}
+
+#[gpui::test]
+fn the_enabled_assistant_is_a_left_nav_page_and_never_anywhere_else(cx: &mut TestAppContext) {
+    let (view, _settings, cx) = open_in(cx, true, None);
+    assert!(view.read_with(cx, |wb, _| wb.assistant_enabled()));
+    assert_eq!(
+        nav_keys(&view, cx),
+        ["search", "tasks", "agents", "assistant"]
+    );
+    // Enabled is not open: no preset places it, nothing opened it.
+    assert!(
+        state(&view, cx)
+            .find_panel(&PanelId::new("assistant"))
+            .is_none()
+    );
+
+    // The nav row shows it as the left page.
+    click(&view, cx, Region::Nav("assistant"));
+    let s = state(&view, cx);
+    assert_eq!(s.docks.left.active, Some(PanelId::new("assistant")));
+    assert!(s.docks.left.panels.contains(&PanelId::new("assistant")));
+    assert!(
+        s.docks
+            .right
+            .panels
+            .iter()
+            .all(|p| p.as_str() != "assistant")
+    );
+    assert_eq!(selected_nav(&view, cx), ["assistant"]);
+    assert!(painted(&view, cx, Region::Nav("projects")));
+
+    // Every other way in lands on the same page.
+    click(&view, cx, Region::Nav("projects"));
+    cx.dispatch_action(OpenPanel("assistant".into()));
+    assert_eq!(
+        state(&view, cx).docks.left.active,
+        Some(PanelId::new("assistant"))
+    );
+    click(&view, cx, Region::Nav("projects"));
+    cx.dispatch_action(OpenAssistant);
+    assert_eq!(
+        state(&view, cx).docks.left.active,
+        Some(PanelId::new("assistant"))
+    );
+
+    // It cannot be moved out: not by the palette's move commands, not as a tab.
+    let before = state(&view, cx);
+    for dest in [
+        PanelDest::Dock(DockPosition::Right),
+        PanelDest::Dock(DockPosition::Bottom),
+        PanelDest::Center,
+    ] {
+        cx.dispatch_action(actions::MoveActivePanel(dest));
+        assert_eq!(state(&view, cx).docks, before.docks, "{dest:?}");
+        assert_eq!(state(&view, cx).center, before.center, "{dest:?}");
+    }
+    cx.dispatch_action(actions::OpenActivePanelAsTab);
+    assert_eq!(state(&view, cx).docks, before.docks);
+
+    // The panel's own menu offers only the left dock and Close.
+    let right_click = |cx: &mut VisualTestContext| {
+        let at = bounds(&view, cx, Region::Nav("assistant")).center();
+        cx.simulate_mouse_down(at, gpui::MouseButton::Right, Modifiers::none());
+        cx.simulate_mouse_up(at, gpui::MouseButton::Right, Modifiers::none());
+    };
+    right_click(cx);
+    let labels: Vec<String> = view
+        .read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("a menu opened")
+        .into_iter()
+        .map(|(label, _)| label.to_string())
+        .collect();
+    assert_eq!(labels, ["Move to Left Dock", "Close"]);
+    cx.simulate_keystrokes("escape");
+
+    // Presets keep it where it is: in the left dock, never in the preset's docks. The overview
+    // stashes the layout it replaces (the open page with it) and gives it back.
+    for preset in ["focus", "default"] {
+        cx.dispatch_action(actions::ApplyPreset(preset.into()));
+        let s = state(&view, cx);
+        assert!(
+            s.docks.left.panels.contains(&PanelId::new("assistant")),
+            "{preset}: {:?}",
+            s.docks
+        );
+        assert!(
+            [DockPosition::Right, DockPosition::Bottom]
+                .into_iter()
+                .all(|p| s
+                    .docks
+                    .get(p)
+                    .panels
+                    .iter()
+                    .all(|x| x.as_str() != "assistant")),
+            "{preset}"
+        );
+        assert!(
+            s.panes()
+                .iter()
+                .all(|p| !p.items.contains(&ItemRef::panel("assistant"))),
+            "{preset}"
+        );
+    }
+    cx.dispatch_action(actions::ApplyPreset("overview".into()));
+    let s = state(&view, cx);
+    assert!(
+        s.find_panel(&PanelId::new("assistant")).is_none(),
+        "stashed, not shown"
+    );
+    assert!(s.all_items().contains(&ItemRef::panel("assistant")));
+    cx.dispatch_action(actions::ApplyPreset("default".into()));
+    assert!(
+        state(&view, cx)
+            .docks
+            .left
+            .panels
+            .contains(&PanelId::new("assistant"))
+    );
+}
+
+#[gpui::test]
+fn turning_the_assistant_off_closes_its_page_and_its_nav_row(cx: &mut TestAppContext) {
+    let (view, settings, cx) = open_in(cx, true, None);
+    click(&view, cx, Region::Nav("assistant"));
+    assert!(view.read_with(cx, |wb, _| wb.panel_open("assistant")));
+    settings
+        .write_user("assistant.enabled", toml::Value::Boolean(false))
+        .unwrap();
+    wait_until(cx, "the setting to apply", |cx| {
+        view.read_with(cx, |wb, _| {
+            !wb.assistant_enabled() && !wb.panel_open("assistant")
+        })
+    });
+    assert_eq!(nav_keys(&view, cx), ["search", "tasks", "agents"]);
+    assert_eq!(
+        state(&view, cx).docks.left.active.unwrap().as_str(),
+        "sessions",
+        "back on Projects"
+    );
+}
+
+// ---- right strip -------------------------------------------------------------------------------
+
+#[gpui::test]
+fn the_right_strip_switches_tabs(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    let active = |cx: &VisualTestContext| state(&view, cx).docks.right.active.unwrap();
+    assert_eq!(active(cx).as_str(), "history", "History is the default tab");
+    for (index, panel) in [
+        (1, "changes"),
+        (2, "inspector"),
+        (3, "agents"),
+        (4, "resources"),
+        (0, "history"),
+    ] {
+        click(&view, cx, Region::DockTab(DockPosition::Right, index));
+        assert_eq!(active(cx).as_str(), panel);
+        assert_eq!(
+            state(&view, cx).focus,
+            FocusTarget::Dock(DockPosition::Right)
+        );
+    }
+}
+
+#[gpui::test]
+fn icons_that_do_not_fit_move_into_the_more_menu(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    // 120 px: room for three slots, one of them More.
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| s.resize_dock(DockPosition::Right, 130.0))
+    });
+    let more = bounds(&view, cx, Region::StripMore);
+    assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 0)));
+    assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 1)));
+    assert!(!painted(&view, cx, Region::DockTab(DockPosition::Right, 4)));
+
+    cx.simulate_click(more.center(), Modifiers::none());
+    let labels: Vec<String> = view
+        .read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("the More menu opened")
+        .into_iter()
+        .map(|(label, _)| label.to_string())
+        .collect();
+    assert_eq!(labels, ["Requests", "Agents", "Resources"]);
+
+    // Choosing one makes it the active tab, and the active tab never hides.
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(0, window, cx));
+    let s = state(&view, cx);
+    assert_eq!(s.docks.right.active, Some(PanelId::new("inspector")));
+    assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 2)));
+}
+
+// ---- keys --------------------------------------------------------------------------------------
+
+#[gpui::test]
+fn cmd_b_toggles_the_left_sidebar_and_cmd_l_the_right_one(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    assert_eq!(visible(&view, cx), [true, true, false]);
+    cx.simulate_keystrokes("cmd-b");
+    assert_eq!(visible(&view, cx), [false, true, false]);
+    cx.simulate_keystrokes("cmd-b");
+    assert_eq!(visible(&view, cx), [true, true, false]);
+    cx.simulate_keystrokes("cmd-l");
+    assert_eq!(visible(&view, cx), [true, false, false]);
+    cx.simulate_keystrokes("cmd-l");
+    assert_eq!(visible(&view, cx), [true, true, false]);
+    // The tooltip hint of the right dock is the new key.
+    cx.update(|window, _| {
+        let binding = window
+            .highest_precedence_binding_for_action(&actions::ToggleRightDock)
+            .expect("bound");
+        let keys: Vec<String> = binding.keystrokes().iter().map(|k| k.to_string()).collect();
+        assert_eq!(keys.join(" "), "⌘L");
+    });
+}
+
+// ---- presets -----------------------------------------------------------------------------------
+
+#[gpui::test]
+fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    cx.dispatch_action(actions::ApplyPreset("focus".into()));
+    let s = state(&view, cx);
+    assert_eq!(visible(&view, cx), [false, false, false]);
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "overview"]));
+    assert_eq!(
+        s.docks.right.panels,
+        ids(&["history", "changes", "inspector", "agents", "resources"])
+    );
+    assert!(s.zoomed.is_some());
+
+    cx.dispatch_action(actions::ApplyPreset("default".into()));
+    assert_eq!(visible(&view, cx), [true, true, false]);
+
+    // The overview preset shows the board in the center, so the left nav has no Agents page.
+    cx.dispatch_action(actions::ToggleOverview);
+    let s = state(&view, cx);
+    assert_eq!(s.preset, "overview");
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert!(
+        s.active_pane()
+            .unwrap()
+            .items
+            .contains(&ItemRef::panel("overview"))
+    );
+    cx.dispatch_action(actions::ToggleOverview);
+    let s = state(&view, cx);
+    assert_eq!(s.preset, "default");
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "overview"]));
+}
+
+#[gpui::test]
+fn the_palette_lists_the_new_panels_and_the_sidebar_toggles(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    let titles: Vec<String> = view.read_with(cx, |wb, _| {
+        wb.commands().iter().map(|c| c.title.to_string()).collect()
+    });
+    for wanted in [
+        "Panel: Open Requests",
+        "Panel: Open Changes",
+        "Panel: Open History",
+        "Panel: Open Tasks",
+        "Panel: Open Resources",
+        "View: Toggle Left Dock",
+        "View: Toggle Right Dock",
+    ] {
+        assert!(titles.iter().any(|t| t == wanted), "{wanted} in {titles:?}");
+    }
+    assert!(!titles.iter().any(|t| t.contains("Inspector")));
+    assert!(
+        !titles.iter().any(|t| t == "Panel: Open Assistant"),
+        "off by default"
+    );
+
+    // Opening Resources by its command lands in the right sidebar's strip now.
+    cx.dispatch_action(OpenPanel("resources".into()));
+    let s = state(&view, cx);
+    assert_eq!(
+        s.find_panel(&PanelId::new("resources")).map(|_| ()),
+        Some(())
+    );
+    assert_eq!(s.docks.right.active, Some(PanelId::new("resources")));
+    // A panel that is not open goes where its registry says: Tasks closed, then opened.
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| s.close_panel(&PanelId::new("tasks")).unwrap());
+    });
+    cx.dispatch_action(OpenPanel("tasks".into()));
+    assert_eq!(
+        state(&view, cx).docks.left.active,
+        Some(PanelId::new("tasks"))
+    );
+}
+
+// ---- migration ---------------------------------------------------------------------------------
+
+/// What a Hutan from before the Orca-style layout saved: Projects and History on the left,
+/// Inspector / Agents / Tasks and a stray Assistant on the right, Resources in the bottom dock,
+/// the old widths, two center tabs.
+fn version_1_file(dir: &std::path::Path) -> PathBuf {
+    let mut state = WorkbenchState::default();
+    state.docks = Docks {
+        left: Dock {
+            panels: ids(&["sessions", "history"]),
+            active: Some(PanelId::new("history")),
+            size: 240.0,
+            visible: true,
+        },
+        right: Dock {
+            panels: ids(&["inspector", "agents", "tasks", "assistant"]),
+            active: Some(PanelId::new("assistant")),
+            size: 300.0,
+            visible: true,
+        },
+        bottom: Dock::new(&["resources"], 200.0, false),
+    };
+    let pane = state.first_pane_id();
+    state.add_item(pane, ItemRef::placeholder("Notes")).unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
+    value["version"] = 1.into();
+    let path = dir.join(STATE_FILE);
+    std::fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+    path
+}
+
+#[gpui::test]
+fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = version_1_file(dir.path());
+    let (view, _settings, cx) = open_in(cx, false, Some(path.clone()));
+    let s = state(&view, cx);
+
+    // History on the right and active; Assistant out; Tasks on the left behind Projects.
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert_eq!(s.docks.left.active, Some(PanelId::new("sessions")));
+    assert_eq!(
+        s.docks.right.panels,
+        ids(&["history", "changes", "inspector", "agents", "resources"])
+    );
+    assert_eq!(s.docks.right.active, Some(PanelId::new("history")));
+    assert!(s.find_panel(&PanelId::new("assistant")).is_none());
+    assert!(s.docks.bottom.panels.is_empty());
+    // Sizes the user never changed follow the new defaults; the center is theirs.
+    assert_eq!((s.docks.left.size, s.docks.right.size), (280.0, 350.0));
+    assert_eq!(
+        s.active_pane().unwrap().items,
+        vec![
+            ItemRef::placeholder("Welcome"),
+            ItemRef::placeholder("Notes")
+        ]
+    );
+
+    // The next save is version 2, and loading that again changes nothing.
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| s.toggle_dock(DockPosition::Bottom))
+    });
+    cx.executor().advance_clock(SAVE_DEBOUNCE * 2);
+    cx.run_until_parked();
+    view.update(cx, |wb, _| wb.flush_save());
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(on_disk["version"], 2);
+    let reloaded = load_state(&path);
+    assert_eq!(reloaded.docks, state(&view, cx).docks);
+    assert_eq!(reloaded.center, state(&view, cx).center);
+}
+
+#[gpui::test]
+fn a_migrated_layout_keeps_what_the_user_changed(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = version_1_file(dir.path());
+    // The user had widened the left dock and shown the bottom dock with Resources in it.
+    let mut value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    value["docks"]["left"]["size"] = 333.0.into();
+    value["docks"]["bottom"]["visible"] = true.into();
+    std::fs::write(&path, serde_json::to_string(&value).unwrap()).unwrap();
+
+    let (view, _settings, cx) = open_in(cx, false, Some(path));
+    let s = state(&view, cx);
+    assert_eq!(s.docks.left.size, 333.0);
+    assert_eq!(s.docks.right.size, 350.0, "untouched, so the new default");
+    assert_eq!(s.docks.bottom.panels, ids(&["resources"]));
+    assert!(s.docks.bottom.visible);
+    assert!(
+        s.docks
+            .right
+            .panels
+            .iter()
+            .all(|p| p.as_str() != "resources"),
+        "a panel is placed once"
+    );
+}
+
+// ---- settings ----------------------------------------------------------------------------------
+
+#[test]
+fn a_user_who_had_hutan_keeps_the_assistant_on_and_a_new_user_does_not() {
+    use hutan_desktop::settings::{AssistantSettings, migrate_assistant_default, register_all};
+    use hutan_settings::SettingsPaths;
+
+    let check = |state_version: Option<u64>, user_file: Option<&str>| -> (bool, bool) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = SettingsPaths::in_dir(dir.path());
+        let user = paths.user.clone();
+        let state_file = dir.path().join(STATE_FILE);
+        if let Some(version) = state_version {
+            std::fs::write(&state_file, format!(r#"{{ "version": {version} }}"#)).unwrap();
+        }
+        if let Some(text) = user_file {
+            std::fs::write(&user, text).unwrap();
+        }
+        let store = SettingsStore::new(paths);
+        register_all(&store);
+        let migrated = migrate_assistant_default(&store, &user, &state_file);
+        (migrated, store.get::<AssistantSettings>().enabled)
+    };
+
+    // A new user: no layout yet, or one saved by this Hutan: off.
+    assert_eq!(check(None, None), (false, false));
+    assert_eq!(check(Some(2), None), (false, false));
+    assert_eq!(
+        check(Some(2), Some("[terminal]\nfont_size = 14\n")),
+        (false, false)
+    );
+    // A layout from before: the assistant they had stays on, once.
+    assert_eq!(check(Some(1), None), (true, true));
+    assert_eq!(
+        check(Some(1), Some("[terminal]\nfont_size = 14\n")),
+        (true, true)
+    );
+    // An explicit value (either way) is theirs.
+    assert_eq!(
+        check(Some(1), Some("[assistant]\nenabled = false\n")),
+        (false, false)
+    );
+    assert_eq!(
+        check(Some(1), Some("[assistant]\nenabled = true\n")),
+        (false, true)
+    );
+    assert!(!AssistantSettings::default().enabled);
+}

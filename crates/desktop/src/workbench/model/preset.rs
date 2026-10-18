@@ -32,22 +32,43 @@ impl LayoutPreset {
     pub const FOCUS: &'static str = "focus";
     pub const OVERVIEW: &'static str = "overview";
 
+    /// Default width of the left sidebar and of the right sidebar (Orca's 280 / 350).
+    pub const LEFT_SIZE: f32 = 280.0;
+    pub const RIGHT_SIZE: f32 = 350.0;
+
+    /// The left sidebar: Projects is its default page, Tasks one of its nav pages. The
+    /// Assistant is never listed here: it is a left page that opens on demand.
+    fn left(visible: bool, panels: &[&str]) -> Dock {
+        Dock::new(panels, Self::LEFT_SIZE, visible)
+    }
+
+    /// The right sidebar's icon strip: History first (the default tab), then Changes, Requests
+    /// (the inspector), Agents and Resources.
+    fn right(visible: bool) -> Dock {
+        Dock::new(
+            &["history", "changes", "inspector", "agents", "resources"],
+            Self::RIGHT_SIZE,
+            visible,
+        )
+    }
+
     fn docks(left: Dock, right: Dock) -> Docks {
         Docks {
             left,
             right,
-            bottom: Dock::new(&["resources"], 200.0, false),
+            bottom: Dock::new(&[], 200.0, false),
         }
     }
 
-    /// `sessions` and `history` left, `inspector`, `agents` and `tasks` right, `resources` in the hidden
-    /// bottom dock, center untouched.
+    /// `sessions` (Projects), `tasks` and `overview` (the Agents page) as pages of the left
+    /// sidebar; `history`, `changes`, `inspector`, `agents` and `resources` in the right
+    /// sidebar's strip; the bottom dock hidden and empty; center untouched.
     pub fn default_preset() -> Self {
         Self {
             name: Self::DEFAULT.to_owned(),
             docks: Self::docks(
-                Dock::new(&["sessions", "history"], 240.0, true),
-                Dock::new(&["inspector", "agents", "tasks"], 300.0, true),
+                Self::left(true, &["sessions", "tasks", "overview"]),
+                Self::right(true),
             ),
             center: CenterLayout::Keep,
             zoom_active: false,
@@ -59,22 +80,20 @@ impl LayoutPreset {
         Self {
             name: Self::FOCUS.to_owned(),
             docks: Self::docks(
-                Dock::new(&["sessions", "history"], 240.0, false),
-                Dock::new(&["inspector", "agents", "tasks"], 300.0, false),
+                Self::left(false, &["sessions", "tasks", "overview"]),
+                Self::right(false),
             ),
             center: CenterLayout::Keep,
             zoom_active: true,
         }
     }
 
-    /// `overview` panel as the first center item, side docks visible.
+    /// `overview` panel as the first center item, side docks visible (the board is in the center,
+    /// so the left sidebar's Agents page is not listed).
     pub fn overview_preset() -> Self {
         Self {
             name: Self::OVERVIEW.to_owned(),
-            docks: Self::docks(
-                Dock::new(&["sessions", "history"], 240.0, true),
-                Dock::new(&["inspector", "agents", "tasks"], 300.0, true),
-            ),
+            docks: Self::docks(Self::left(true, &["sessions", "tasks"]), Self::right(true)),
             center: CenterLayout::Items(vec![ItemRef::panel("overview")]),
             zoom_active: false,
         }

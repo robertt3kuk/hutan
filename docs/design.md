@@ -37,8 +37,8 @@ flowchart TB
   PANE --> IT[Items: Terminal, Chat, Diff, any Panel opened as a tab]
 ```
 
-- **Panel**: a registered component with an id, title, icon, default dock, and a typed settings section. Panels: `sessions`, `history`, `inspector`, `overview`, `agents`, `assistant`, `notifications`, later `tasks`, `worktrees`, `providers`, `changes`. The `assistant` panel is described in `docs/assistant.md` § Desktop.
-- **Dock**: left, right, bottom. A dock hosts a stack of panels (tabs inside the dock). Docks resize, collapse, and can be emptied.
+- **Panel**: a registered component with an id, title, icon, default dock, and a typed settings section. Panels: `sessions` (Projects), `tasks`, `overview` (the Agents dashboard page), `assistant` (left sidebar only), `history`, `changes`, `inspector` (titled *Requests*), `agents`, `resources`, `notifications`, later `worktrees`, `providers`. The `assistant` panel is described in `docs/assistant.md` § Desktop.
+- **Dock**: left, right, bottom. A dock hosts a stack of panels. The left dock is the **left sidebar** (its panels are *pages* chosen from a nav list), the right dock the **right sidebar** (its panels are tabs of an icon strip), the bottom dock keeps a strip of text tabs. Docks resize, collapse, and can be emptied. A panel marked left-only (the Assistant) can be placed in the left dock only: the model rejects moving it to the right or bottom dock or into the center, and a layout that has it elsewhere (a preset, a saved file) gets it moved to the left dock when it is normalized.
 - **Center**: a binary split tree of panes; each pane has its own tab strip. Items are session views (terminal/chat), diffs, or any panel opened as a tab.
 - **Status bar**: an ordered list of status items (`connection`, `sessions`, `attention`, `density`, `theme`, `palette_hint`, the dock buttons `dock_left`, `dock_bottom`, `dock_right`, …) left and right; each is configurable. The dock buttons sit at the right end, like Zed's: a small window glyph with the dock's side filled, drawn pressed (accent) while the dock shows. A click toggles the dock (the same action as its key), the tooltip names the key of the active keymap base, and a hidden dock without panels shows a dimmed, inert button. A preset that lists its own `status_bar.right` shows them only when it names them.
 - **Title bar**: transparent with traffic lights; shows the active item title, preset switcher, Overview toggle. Can be hidden into a minimal mode.
@@ -55,117 +55,60 @@ flowchart TB
 | Resize | drag splitter / dock edge | ⌃⌘←→↑↓ |
 | Focus neighbour | — | ⌘⌥←→↑↓ |
 | Zoom pane | double-click tab | ⌘⇧↩ (Zed base: also ⇧⎋) |
-| Toggle docks | status bar dock buttons | Zed base ⌘B left, ⌘R / ⌘⌥B right, ⌘J / ⌃\` bottom, ⌘⌥Y close all; Hutan base ⌘B, ⌘⌥B, ⌘⌥J |
+| Toggle docks | status bar dock buttons | ⌘B left sidebar, ⌘L right sidebar (both bases; also ⌘⌥B, and ⌘R in the Zed base), Zed base ⌘J / ⌃\` bottom, ⌘⌥Y close all; Hutan base ⌘⌥J bottom |
 | Switch preset / Overview | title bar menu | ⌘⇧O overview, ⌘⇧1…9 presets |
 | Save current layout as preset | title bar menu | palette → "Save layout as preset…" |
 | Close tab (detach) | × on tab | ⌘W |
 | Stop session | session menu (confirm if running) | ⌘⇧W |
 
-## Default layout
+## Layout (Orca-style, 2026-10-18)
 
-```svg
-<svg viewBox="0 0 960 540" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, sans-serif">
-  <rect x="0.5" y="0.5" width="959" height="539" rx="10" fill="var(--surface)" stroke="var(--border)"/>
-  <rect x="0.5" y="0.5" width="219" height="515" rx="10" fill="var(--border)" opacity="0.28"/>
-  <circle cx="18" cy="18" r="6" fill="var(--error)" opacity="0.8"/><circle cx="36" cy="18" r="6" fill="var(--warning)" opacity="0.8"/><circle cx="54" cy="18" r="6" fill="var(--success)" opacity="0.8"/>
-  <text x="420" y="22" font-size="12" fill="var(--muted)">M2 · claude — hutan</text>
-  <rect x="742" y="9" width="96" height="20" rx="5" fill="none" stroke="var(--border)"/><text x="752" y="23" font-size="11" fill="var(--fg)">Layout: Default ▾</text>
-  <rect x="846" y="9" width="104" height="20" rx="5" fill="none" stroke="var(--border)"/><text x="856" y="23" font-size="11" fill="var(--fg)">⊞ Overview ⌘⇧O</text>
-  <line x1="220" y1="36" x2="960" y2="36" stroke="var(--border)"/>
-  <rect x="10" y="44" width="200" height="24" rx="6" fill="var(--surface)" stroke="var(--border)"/><text x="20" y="60" font-size="11" fill="var(--muted)">⌕ Search sessions</text>
-  <text x="12" y="88" font-size="10" fill="var(--warning)" font-weight="700">NEEDS YOU · 2</text>
-  <circle cx="18" cy="104" r="4" fill="var(--warning)"/><text x="28" y="108" font-size="12" fill="var(--fg)">api · codex</text><text x="182" y="108" font-size="10" fill="var(--muted)">1m</text>
-  <text x="28" y="121" font-size="10" fill="var(--muted)">approval · cargo test</text>
-  <circle cx="18" cy="138" r="4" fill="var(--success)"/><text x="28" y="142" font-size="12" fill="var(--fg)">web · omp</text><text x="182" y="142" font-size="10" fill="var(--muted)">4m</text>
-  <text x="28" y="155" font-size="10" fill="var(--muted)">done · 3 files changed</text>
-  <text x="12" y="180" font-size="10" fill="var(--muted)" font-weight="700">HUTAN  ·  master</text>
-  <rect x="8" y="188" width="204" height="24" rx="5" fill="var(--accent)" opacity="0.18"/>
-  <text x="16" y="204" font-size="11" fill="var(--c3)">◆</text><text x="30" y="204" font-size="12" fill="var(--fg)">M2 · claude</text>
-  <rect x="122" y="193" width="58" height="14" rx="3" fill="none" stroke="var(--border)"/><text x="127" y="203" font-size="9" fill="var(--muted)">wt m2-shell</text><circle cx="198" cy="200" r="4" fill="var(--accent)"/>
-  <text x="16" y="228" font-size="11" fill="var(--muted)">❯</text><text x="30" y="228" font-size="12" fill="var(--fg)">tests</text>
-  <rect x="142" y="217" width="38" height="14" rx="3" fill="none" stroke="var(--border)"/><text x="148" y="227" font-size="9" fill="var(--muted)">main</text><circle cx="198" cy="224" r="4" fill="var(--accent)"/>
-  <text x="16" y="252" font-size="11" fill="var(--muted)">❯</text><text x="30" y="252" font-size="12" fill="var(--fg)">zsh</text><circle cx="198" cy="248" r="4" fill="var(--muted)"/>
-  <text x="16" y="276" font-size="11" fill="var(--c5)">✦</text><text x="30" y="276" font-size="12" fill="var(--fg)">ask · sonnet</text><circle cx="198" cy="272" r="4" fill="var(--muted)"/>
-  <text x="12" y="302" font-size="10" fill="var(--muted)" font-weight="700">▸ ZAMAN-API  ·  3</text>
-  <text x="12" y="500" font-size="11" fill="var(--muted)">＋ New session   ⌘T</text>
-  <line x1="220" y1="36" x2="220" y2="516" stroke="var(--border)"/>
-  <rect x="220" y="36" width="270" height="28" fill="var(--border)" opacity="0.18"/>
-  <text x="232" y="54" font-size="11" fill="var(--fg)">❯ omp</text><text x="276" y="54" font-size="11" fill="var(--muted)">×</text>
-  <text x="296" y="54" font-size="11" fill="var(--muted)">❯ zsh</text>
-  <line x1="220" y1="64" x2="490" y2="64" stroke="var(--border)"/>
-  <g font-family="ui-monospace, Menlo, monospace" font-size="11">
-    <text x="232" y="84" fill="var(--c4)">  ▄▀▀▄ █▀▄▀▄ █▀▀▄</text>
-    <text x="232" y="98" fill="var(--c4)">  ▀▄▄▀ █ █ █ █▄▄▀  v18.10.3</text>
-    <text x="232" y="122" fill="var(--muted)">Tip: ⌥P switches provider</text>
-    <text x="232" y="146" fill="var(--fg)">● Reading crates/client/src…</text>
-    <text x="232" y="160" fill="var(--fg)">● Editing connection.rs</text>
-    <text x="232" y="174" fill="var(--success)">  + reconnect with backoff</text>
-    <text x="232" y="188" fill="var(--error)">  - TODO resume</text>
-    <text x="232" y="468" fill="var(--muted)">π › Opus 5.5 › hutan ▶ 12%</text>
-    <text x="232" y="488" fill="var(--fg)">╰─ continue with M2.2</text>
-  </g>
-  <rect x="356" y="478" width="7" height="13" fill="var(--accent)"/>
-  <line x1="490" y1="36" x2="490" y2="516" stroke="var(--border)"/>
-  <rect x="491" y="36" width="209" height="28" fill="var(--border)" opacity="0.18"/>
-  <text x="502" y="54" font-size="11" fill="var(--fg)">◆ api · codex</text>
-  <rect x="600" y="43" width="92" height="16" rx="4" fill="none" stroke="var(--border)"/>
-  <rect x="601" y="44" width="44" height="14" rx="3" fill="var(--accent)" opacity="0.25"/>
-  <text x="608" y="55" font-size="9" fill="var(--fg)">Chat</text><text x="650" y="55" font-size="9" fill="var(--muted)">Terminal</text>
-  <line x1="490" y1="64" x2="700" y2="64" stroke="var(--border)"/>
-  <rect x="540" y="74" width="150" height="34" rx="8" fill="var(--accent)" opacity="0.16"/>
-  <text x="550" y="95" font-size="11" fill="var(--fg)">Fix the flaky resume test</text>
-  <text x="502" y="126" font-size="11" fill="var(--fg)">Found a race in replay_after.</text>
-  <rect x="500" y="134" width="190" height="24" rx="5" fill="none" stroke="var(--c2)"/>
-  <text x="510" y="150" font-size="10" fill="var(--c2)">⚙ read bus.rs  ·  ✓  ▸</text>
-  <rect x="500" y="164" width="190" height="24" rx="5" fill="none" stroke="var(--c2)"/>
-  <text x="510" y="180" font-size="10" fill="var(--c2)">✎ edit bus.rs  +12 −3  ▸</text>
-  <rect x="500" y="196" width="190" height="62" rx="6" fill="none" stroke="var(--warning)" stroke-width="1.5"/>
-  <text x="510" y="213" font-size="10" fill="var(--warning)" font-weight="700">Approval needed</text>
-  <text x="510" y="229" font-size="11" fill="var(--fg)" font-family="ui-monospace, Menlo, monospace">cargo test -p daemon</text>
-  <rect x="510" y="236" width="56" height="16" rx="4" fill="var(--accent)"/><text x="518" y="248" font-size="10" fill="var(--surface)">Allow ⌘↩</text>
-  <rect x="572" y="236" width="52" height="16" rx="4" fill="none" stroke="var(--border)"/><text x="580" y="248" font-size="10" fill="var(--fg)">Always</text>
-  <rect x="630" y="236" width="52" height="16" rx="4" fill="none" stroke="var(--border)"/><text x="640" y="248" font-size="10" fill="var(--fg)">Deny ⎋</text>
-  <line x1="491" y1="290" x2="700" y2="290" stroke="var(--border)"/>
-  <rect x="491" y="290" width="209" height="24" fill="var(--border)" opacity="0.18"/>
-  <text x="502" y="306" font-size="11" fill="var(--fg)">❯ tests</text><text x="560" y="306" font-size="10" fill="var(--accent)">● running</text>
-  <g font-family="ui-monospace, Menlo, monospace" font-size="10">
-    <text x="502" y="330" fill="var(--muted)">running 203 tests</text>
-    <text x="502" y="344" fill="var(--success)">test bus::replay … ok</text>
-    <text x="502" y="358" fill="var(--success)">test conn::slow … ok</text>
-  </g>
-  <rect x="500" y="474" width="190" height="32" rx="7" fill="none" stroke="var(--border)"/>
-  <text x="510" y="494" font-size="11" fill="var(--muted)">Message codex…   gpt-5.6-sol ▾</text>
-  <line x1="700" y1="36" x2="700" y2="516" stroke="var(--border)"/>
-  <text x="714" y="56" font-size="11" fill="var(--fg)" font-weight="600">Approvals</text>
-  <text x="784" y="56" font-size="11" fill="var(--muted)">Changes</text><text x="846" y="56" font-size="11" fill="var(--muted)">Info</text>
-  <text x="934" y="56" font-size="11" fill="var(--muted)">⚙</text>
-  <line x1="700" y1="64" x2="960" y2="64" stroke="var(--border)"/>
-  <rect x="712" y="76" width="236" height="80" rx="6" fill="none" stroke="var(--warning)"/>
-  <text x="722" y="94" font-size="11" fill="var(--fg)">api · codex</text><text x="900" y="94" font-size="10" fill="var(--muted)">1m</text>
-  <text x="722" y="112" font-size="11" fill="var(--fg)" font-family="ui-monospace, Menlo, monospace">cargo test -p daemon</text>
-  <text x="722" y="128" font-size="10" fill="var(--muted)">cwd ~/proj/zaman-api (main)</text>
-  <text x="722" y="146" font-size="10" fill="var(--accent)">Allow   ·   Always   ·   Deny</text>
-  <text x="714" y="182" font-size="10" fill="var(--muted)" font-weight="700">CHANGES · web · omp</text>
-  <text x="714" y="202" font-size="11" fill="var(--fg)">src/app.tsx</text><text x="900" y="202" font-size="10" fill="var(--success)">+42</text><text x="928" y="202" font-size="10" fill="var(--error)">−7</text>
-  <text x="714" y="220" font-size="11" fill="var(--fg)">src/api.ts</text><text x="900" y="220" font-size="10" fill="var(--success)">+8</text><text x="928" y="220" font-size="10" fill="var(--error)">−2</text>
-  <text x="714" y="238" font-size="11" fill="var(--fg)">README.md</text><text x="900" y="238" font-size="10" fill="var(--success)">+3</text>
-  <line x1="0" y1="516" x2="960" y2="516" stroke="var(--border)"/>
-  <circle cx="14" cy="528" r="3.5" fill="var(--success)"/><text x="24" y="532" font-size="10" fill="var(--muted)">hutand connected</text>
-  <text x="140" y="532" font-size="10" fill="var(--muted)">7 sessions</text>
-  <text x="214" y="532" font-size="10" fill="var(--warning)">● 2 need you</text>
-  <text x="742" y="532" font-size="10" fill="var(--muted)">Compact · Hutan Dark · ⌘K</text>
-</svg>
+Hutan is laid out like Orca (stablyai/orca, MIT; studied in `docs/spikes/2026-10-18-orca-layout.md`): three columns, a 36 px title bar row and a 24 px status bar. Ideas ported, nothing copied.
+
+```text
+┌──────────────────────┬──────────────────────────────────┬──────────────────────────┐
+│ ● ● ●                │ title bar (36 px): active item,  │ ⟲  ±  ⓘ  ⑂  ◫      strip │ 36
+│                      │ Layout ▾, Overview               │ (History Changes         │
+│ ⌕ Search             ├──────────────────────────────────┤  Requests Agents         │
+│ ☑ Tasks              │ tab strip                        │  Resources)              │
+│ ⊞ Agents        [2]  ├──────────────────────────────────┤                          │
+│ ✦ Assistant (opt-in) │                                  │  History / Changes /     │
+│ Projects      ＋ ⇅ ▶ │  terminals · chats · diffs       │  Requests / Agents /     │
+│ ▸ hutan              │  (split panes)                   │  Resources body          │
+│   ◆ M2 · claude      │                                  │                          │
+│   ❯ tests            │                                  │                          │
+│ ＋ New session  ⚙    │                                  │                          │
+├──────────────────────┴──────────────────────────────────┴──────────────────────────┤
+│ hutand connected · 7 sessions · ● 2 need you                 Compact · Dark · ⌘⇧P  │ 24
+└────────────────────────────────────────────────────────────────────────────────────┘
+   left sidebar 280 px                      center                  right sidebar 350 px
 ```
 
-Left dock: `sessions` panel (vibrancy) with `history` as a second tab. Center: two-column split; right column split again (chat over terminal). Right dock: `inspector` panel. Status bar: `connection`, `sessions`, `attention` | `density`, `theme`, `palette_hint`, `dock_left`, `dock_bottom`, `dock_right`.
+**Left sidebar** (280 px, resizable 120–1200 like every dock; ⌘B). From the top: the inset under the traffic lights, the **nav list**, the **page**, a bottom toolbar.
+
+- Nav rows (Orca's look: 8 px padding, 2 px gap, rows 8 × 6 px, 13 px medium labels, 16 px icons, muted when inactive, `sidebar_accent` fill and accent icon when selected): **Search** (opens the jump palette, the ⌘P / ⌘J "Jump to…"), **Tasks** (the Tasks panel as a page), **Agents** (the dashboard: the `overview` board of session cards, with a pill counting the sessions that need you), **Assistant** (only while `assistant.enabled`; see below), and a row for every other panel the user keeps in the left dock. A row toggles its page; right-click gives the panel menu.
+- The default page is **Projects** (`sessions`): a 32 px section header (12 px semibold, muted, with Start, +, the sort/organize menu and ⚙), the filter, and the project / workspace / session tree drawn as cards (13 px titles, a 20 px status lane with the state dot and, for an unread session, an amber dot ringed in the sidebar color; branch / checkout badge; live-agent badge; hover and selected fills from `sidebar_accent`). Any other page replaces the list and shows a **‹ Projects** back row.
+- Bottom toolbar: **＋ New session** (⌘T) and **⚙ Settings**.
+
+**Right sidebar** (350 px, ⌘L): a 36 px strip of icons with tooltips, then the active panel. Default tabs: **History** (default, the Agent Session History), **Changes** (the checkouts of the workspace, uncommitted ones first; a click opens the full Changes view as a tab), **Requests** (the inspector: approvals and block requests), **Agents** (the observation tree / monitor), **Resources**. Icons that do not fit the width move into a **⋯** More menu (the active one always stays visible). Icons drag to reorder or to another dock.
+
+**Assistant.** `assistant.enabled` is **off** by default for a new settings file (a user whose layout was saved by Hutan before this layout keeps the assistant on: `assistant.enabled = true` is written once). When on, *Assistant* appears in the left nav and its page opens **inside the left sidebar**, in place of the project list. It is never part of a preset, never in the right dock, never a center tab: ⌘K → *Assistant: Open / Focus*, *Panel: Open Assistant*, the nav row, the menu bar item and the global shortcut all show that page (`OpenAssistant` needs the setting on). Turning the setting off closes the page.
+
+**Tokens.** Chrome follows Orca's structure in Hutan's warm hues (see § Visual system): the right sidebar has its own surface (`right_sidebar`, darker than the left in dark, lighter in light), selected rows step away from the sidebar (`sidebar_accent`, `right_sidebar_accent`), the dark hairline is white at 7 %, the title bar and the right strip are 36 px, the status bar 24 px in both densities. Accent (orange) and fonts are unchanged.
 
 ### Presets shipped
 
-| Preset | Left dock | Center | Right dock | Bottom dock | Use |
+| Preset | Left sidebar pages | Center | Right sidebar tabs | Bottom dock | Use |
 |---|---|---|---|---|---|
-| `default` | sessions, history | pane tree | inspector, agents, tasks | `resources`, hidden | daily work |
-| `focus` | hidden | pane tree, zoomed active pane | hidden | `resources`, hidden | deep terminal work (layout C) |
-| `overview` | sessions, history | `overview` panel as the only center item | inspector, agents, tasks | `resources`, hidden | many agents at once (layout B) |
+| `default` | sessions (Projects), tasks, overview (Agents) | pane tree | history, changes, inspector, agents, resources | empty, hidden | daily work |
+| `focus` | same, hidden | pane tree, zoomed active pane | same, hidden | empty, hidden | deep terminal work (layout C) |
+| `overview` | sessions, tasks | `overview` panel as the only center item | history, changes, inspector, agents, resources | empty, hidden | many agents at once (layout B) |
+
+The Assistant is in no preset. Applying a preset keeps an open Assistant page in the left sidebar.
+
+### Layout migration
+
+The saved layout (`desktop-state.json`) is version 2. A version 1 file is migrated once when it is read, for the live layout, the overview stash and every workspace's parked layout: History moves to the front of the right dock and becomes its active tab; Changes joins the right dock after it; Resources moves there from a hidden bottom dock; Tasks moves from the right dock to the left sidebar behind Projects; the Assistant leaves every dock and the center (its conversations stay in the daemon; the nav opens it again); Projects becomes the left page; a dock still at the old default width (240 / 300 px) takes the new one (280 / 350 px). Center tabs, splits, zoom, focus, the preset name, user-changed widths and a visible bottom dock are kept. The next save writes version 2.
 
 ## Session pane header
 
@@ -203,10 +146,13 @@ Rollups: session → workspace header → sidebar "Needs you" → status bar `at
 | Token | Light | Dark | Use |
 |---|---|---|---|
 | `bg` | `#FAF9F5` | `#262624` | window and center panes |
-| `sidebar` | `#F3F1EA` | `#1F1E1D` | left dock, titlebar strip |
+| `sidebar` | `#F3F1EA` | `#1F1E1D` | left sidebar, titlebar strip, status bar |
+| `sidebar_accent` | `#E9E6DC` | `#2E2D2B` | selected nav row and active project card of the left sidebar (Orca's `worktree-sidebar-accent`) |
+| `right_sidebar` | `#F8F7F2` | `#1A1918` | the right sidebar and its strip (Orca's `sidebar`) |
+| `right_sidebar_accent` | `#F0EEE6` | `#2A2927` | active strip icon and hover rows of the right sidebar |
 | `surface` | `#FFFFFF` | `#30302E` | cards, composer, popovers, palette |
 | `surface_hover` | `#F0EEE6` | `#3A3936` | row and button hover |
-| `border` | `#E6E3D9` | `#3D3C39` | hairlines (1 px), focus rings use `accent` |
+| `border` | `#E6E3D9` | white at 7 % | hairlines (1 px; dark follows Orca's `--border`), focus rings use `accent` |
 | `fg` | `#1F1E1D` | `#F5F4EF` | primary text |
 | `muted` | `#6F6D66` | `#A6A49C` | secondary text, icons |
 | `faint` | `#A8A59C` | `#6F6D66` | placeholders, disabled |
@@ -217,7 +163,7 @@ Rollups: session → workspace header → sidebar "Needs you" → status bar `at
   The terminal keeps its own palette (themes `hutan-dark` / `hutan-light`); its background matches `bg` so panes do not look like holes.
 - **Shape and depth**: radius 8 px (controls), 12 px (cards, composer, popovers, palette), 999 px (pills, badges); no drop shadows inside the window except popovers/palette (one soft shadow, 0 8 24 rgba(0,0,0,.12) light / .4 dark); separators are 1 px `border` hairlines, used sparingly.
 - **Components**
-  - *Sidebar rows*: 30 px (comfortable), 8 px horizontal padding, rounded 8 px hover/selected (`surface_hover` / `accent_soft`), icon 16 px `muted`, title `fg`, second line or right side `muted`; counters as small pills.
+  - *Sidebar rows* (the Projects tree; the left nav uses Orca's 8 × 6 px rows, 13 px medium): 30 px (comfortable), 8 px horizontal padding, rounded 8 px hover/selected (`surface_hover` / `accent_soft`), icon 16 px `muted`, title `fg`, second line or right side `muted`; counters as small pills.
   - *Buttons*: primary = `accent` fill, white text; secondary = `surface` with `border`; ghost = text only with hover fill; all 28 px high, 8 px radius.
   - *Chat*: no bubbles for agent messages (prose in serif on `bg`, max width 720 px centered in the pane); user messages in an `accent_soft` rounded bubble aligned right; tool calls as quiet collapsible cards (`surface`, 12 px radius, mono summary line, status dot); approvals as a card with the offered options as buttons, the first option primary.
   - *Composer*: a `surface` card with 12 px radius and hairline border at the bottom of the chat, multi-line field, a row below with attach (+), context chips, model/harness picker, and a round send button (`accent`) that turns into stop while streaming.
@@ -230,7 +176,7 @@ Rollups: session → workspace header → sidebar "Needs you" → status bar `at
 | sidebar row | 26 px | 30 px |
 | tab height | 30 px | 34 px |
 | pane header | 30 px | 36 px |
-| status bar | 22 px | 26 px |
+| status bar | 24 px | 24 px |
 | base spacing | 4 px | 6 px |
 | control radius | 6 px | 8 px |
 | card radius | 10 px | 12 px |
@@ -362,7 +308,7 @@ The daemon's own options (`daemon.toml`, protocol 0.28, capability `daemon.setti
 
 The sheet speaks to users, not to people editing `settings.toml`: the schemas' doc comments name keys, types and files, so the sheet shows the wording of `crates/desktop/src/workbench/settings_labels.rs` instead (which this section mirrors; a test fails for any field or choice of a built-in namespace that has no entry there, and for any title, help or choice label that contains a code span, `::` or a snake_case key name).
 
-- **Namespaces** are listed by title: Appearance, General (`app`), Data & logs, Keyboard (`keymap`), Terminal, Layout, Projects Sidebar (`panels.sessions`, with `sidebar` as *Organize the sidebar*), Inspector, Overview, Workspaces, History, Chat, Editing (`editor`), Agents, Resources, Tasks, Assistant, Agent Integrations (`integrations`), Start Sheet (`launcher`), Accounts, Models. The key stays what `settings.toml` and `hutan ui set` use, and a search finds a namespace or field by its key as well as by its title, help or the label of a choice.
+- **Namespaces** are listed by title: Appearance, General (`app`), Data & logs, Keyboard (`keymap`), Terminal, Layout, Projects Sidebar (`panels.sessions`, with `sidebar` as *Organize the sidebar*), Requests (`panels.inspector`), Overview, Workspaces, History, Chat, Editing (`editor`), Agents, Resources, Tasks, Assistant, Agent Integrations (`integrations`), Start Sheet (`launcher`), Accounts, Models. The key stays what `settings.toml` and `hutan ui set` use, and a search finds a namespace or field by its key as well as by its title, help or the label of a choice.
 - **A field** has a title in sentence case that says what it controls (“Keep the daemon running after Hutan quits”, “Cursor shape”), and one or two sentences of help in plain words: what it does and what happens when it is off. No key names, types or file paths of the source tree; a user-facing file such as `settings.toml`, `keymap.toml` or a command such as `hutan daemon stop` may be named.
 - **A choice** shows a label per value (“Zed keys” / “Hutan keys”, “Keep in the menu bar”, “Last 24 hours”). The value written to the file is unchanged.
 - Everything the sheet says besides fields (buttons, questions, notes of the pages above) is in `settings_labels::words` and read by the same tests; the sheet itself says where a value comes from instead of a generic “can be set per workspace” line.
@@ -395,7 +341,7 @@ The daemon owns three kinds of container (ADR 0014, `docs/orchestration.md` § P
 
 ## History panel (M17-B)
 
-The `history` panel searches the opt-in session history index (`docs/history-index.md`, protocol 0.8 `history.*`): Hutan terminal blocks and the transcripts of Claude Code, Codex and OMP. It lives in the left dock as a tab next to Sessions in every built-in preset and moves like any panel; ⌘K → "Panel: Open History" reveals it.
+The `history` panel searches the opt-in session history index (`docs/history-index.md`, protocol 0.8 `history.*`): Hutan terminal blocks and the transcripts of Claude Code, Codex and OMP. It lives in the right sidebar as the first (default) tab of its strip in every built-in preset and moves like any panel; ⌘K → "Panel: Open History" reveals it.
 
 - **Disabled** (`history.status.enabled = false`, the default): the panel says what turning indexing on reads (the four sources and their default folders), that nothing leaves the machine and that Clear deletes the index, and offers **Enable indexing** (`history.set_enabled`) and a link to the `history` settings. No search is sent while indexing is off.
 - **Search**: a field (debounced 150 ms, `history.search`, 50 sessions) under which filter chips narrow the same search — source (Hutan / Claude / Codex / OMP), role (user · assistant · tool · command · output), date (24h / 7d / 30d / all), project (this workspace = the first folder of the active workspace · all). Chips are toggles; none chosen means all. One row per session: source glyph, title, age, `source · role · folder · N hits`, and the best snippet with the matching words **emphasised** (the index's `«…»` markers are parsed, never drawn). ↑ ↓ select a row, ↩ runs its main action.
@@ -406,7 +352,7 @@ The `history` panel searches the opt-in session history index (`docs/history-ind
 
 ## Agent monitor (M13-B)
 
-The `agents` panel (default: second tab of the right dock in `default`, `focus` (hidden) and `overview`; movable like every panel) draws the daemon's observation tree (`agent.tree`, `agent.tree_updated`, `docs/protocol.md` § Agent observation tree) of every session that has one. The daemon owns the tree; the panel only filters and draws.
+The `agents` panel (default: fourth tab of the right sidebar's strip in `default`, `focus` (hidden) and `overview`; movable like every panel) draws the daemon's observation tree (`agent.tree`, `agent.tree_updated`, `docs/protocol.md` § Agent observation tree) of every session that has one. The daemon owns the tree; the panel only filters and draws.
 
 - **Sections**: one per session with agents, headed `workspace › session title` (click focuses the session), workspaces in the sidebar's manual order, sessions in creation order. Under it the tree, indented: main agent first, siblings in the order they started (then by id, so rows never jump when a node changes).
 - **Row**: state glyph, name (else agent type, else the agent program or node id), the agent type when it is not the name, model, duration, and a second line with usage and the current activity (one line, 80 characters). Glyphs are never color alone: `●` working (accent, pulses once a second; steady under Reduce Motion), `▲` blocked (warning), `○` idle, `?` unknown (muted; the main agent after a daemon restart until it reports), and for finished agents their outcome: `✓` completed (success), `✗` failed (error), `⊘` interrupted, `⏹` disconnected (muted). Finished rows are dimmed.
@@ -420,7 +366,7 @@ The `agents` panel (default: second tab of the right dock in `default`, `focus` 
 
 ## Resources panel (M13-D)
 
-The `resources` panel (default: the bottom dock, hidden, in every preset; ⌘K *Resources: Show Panel*, ⌥⌘R toggles it; movable like every panel) is the Activity Monitor of Hutan: what each live session runs and what it costs, over the resource manager of `docs/resources.md`. The daemon samples; the panel draws and sends the actions.
+The `resources` panel (default: the last tab of the right sidebar's strip in every preset, the bottom dock stays empty and hidden; ⌘K *Resources: Show Panel*, ⌥⌘R toggles it; movable like every panel) is the Activity Monitor of Hutan: what each live session runs and what it costs, over the resource manager of `docs/resources.md`. The daemon samples; the panel draws and sends the actions.
 
 - **Subscription**: `resources.subscribe` (`resources.interval_ms`, default 2000, at least 1000) on the window's shared connection (`Connection::resources_subscribe`; it remembers the subscription and renews it after a reconnect, announcing samples as `Notice::ResourcesUpdated`). Every draw marks the panel as seen; a 500 ms watcher unsubscribes at the first look that finds it was not drawn (hidden dock, another tab, closed) and the next draw subscribes again, so a hidden panel costs the daemon nothing (it stops sampling with its last subscriber). The link retries with backoff when the daemon goes away (the panel says so) and says so when the daemon is older than protocol 0.18.
 - **Table**: a `hutand` row first, then one block per session that has a process: fold chevron, title, folder, placement badge (`main` / `wt <branch>`), and its totals in the same columns (processes, CPU, memory). Under it the process tree, indented by depth: name, PID, CPU % (a thin `accent_soft` bar, 100 % = full, more is clipped), memory (MB, GB from 10 000 MB), threads, command (one line, the full text in the tooltip). A process that an agent reported with `--pid` carries an `accent` dot and the node's label; agent nodes without a process of their own (a Codex subagent thread, an agent that reported no pid) are listed under the tree. A stopped or zombie process says so in a pill. Narrower than 520 px the threads and command columns are left out.
@@ -431,7 +377,7 @@ The `resources` panel (default: the bottom dock, hidden, in every preset; ⌘K *
 - **Settings** (`resources`): `interval_ms`, `sort`. Visual tokens only: `ui.rs` components, `accent`, `accent_soft`, `warning`, `danger`, `muted`.
 ## Tasks panel (M7-C)
 
-The `tasks` panel (default: third tab of the right dock in `default` and `overview`; movable like every panel) draws the daemon's tasks (`docs/orchestration.md` § Tasks) as a dependency tree. The daemon owns tasks; the panel sends `task.*` requests and draws what `task.updated` / `task.removed` say.
+The `tasks` panel (default: the Tasks page of the left sidebar in `default`, `focus` (hidden) and `overview`; movable like every panel) draws the daemon's tasks (`docs/orchestration.md` § Tasks) as a dependency tree. The daemon owns tasks; the panel sends `task.*` requests and draws what `task.updated` / `task.removed` say.
 
 - **Tree**: every task once, under the dependency it waits for last (the others read `also after …`), dependencies before dependants, roots oldest first. Row: state glyph and color from the theme — `○` todo (muted), `◎` ready (accent), `▶` running (accent, pulses once a second; steady under Reduce Motion), `◆` blocked (warning), `✓` done (success), `✗` failed (error), `⊘` cancelled (muted) — the title, the state name, and a second line with the placement badge (`main` / `wt <branch>`), the run (`shell`, `$ command`, `codex chat`, `omp chat`), `auto`, the elapsed time (running time, or how long it took; ticks once a second only while the panel is drawn and a listed task runs) and the outcome (`(exited 3)`). Done and cancelled rows are dimmed.
 - **Click** a row: select it and focus its last session's tab. The selected row shows its actions, exactly the ones the daemon accepts in that state: *Start* (ready), *Done* (everything but done and cancelled), *Cancel* (todo, ready, running, blocked), *Reset* (failed, done, cancelled), *Delete* (not while running); *Changes* opens the Changes view (`docs/orchestration.md` § Review and merge) of the checkout it ran in. Deleting a task others wait for asks first: the daemon's refusal names them, *Delete them too* repeats it with `cascade`.
@@ -464,7 +410,7 @@ The daemon indexes OSC 133 marks into blocks (protocol 0.5); the desktop draws t
 - **Accounts** (Settings sheet → `accounts`, ⌘K "Accounts…"): one card per harness (OMP, Claude Code, Codex): name, a detection pill (installed / not found with the daemon's install hint), **Log in** and **Log out** buttons, then the accounts it reports (label, provider, plan pill, status pill; OMP has a Log out per provider). The login runs in a terminal session which the window shows (the sheet closes); `instructions` (OMP logs out inside its interface) appear as a notice. No token or address is ever shown. Empty state: the mascot when no harness is installed.
 - **Start…** (S-1; ⌘⇧T in both keymap bases, ⌘K *Start Agent or Task…*, the ▶ of a project row and the sidebar header, the Tasks panel's *+ New task*, the empty pane/project): one sheet for every start. Fields in Tab order: *Project* (fuzzy picker, shows its folder and branch), *What* (Agent chat · Terminal agent · Plain terminal · Command), *Agent* (OMP / Claude Code / Codex / direct providers; the choices keep their order and place whatever the harnesses report; one that is not installed or logged in is dimmed and cannot be started, and clicking it says why on a line *below* the row with *Install…* / *Log in…* for that agent only), *Model* (the harness's list; default the harness's own), *Prompt* (multi-line, Vim mode when on), *Where* (Main checkout · New worktree with branch `hutan/<slug of the title>` from the current branch · an existing worktree; a warning when another live agent already works in the chosen checkout), *Title* (from the prompt), *More* (After; the system prompt of a direct chat), *Start now* / *Queue as task*. ⌘↩ starts, ⌥⌘↩ (*Start & new*) starts and keeps the sheet with project, what and where for fan-out. Every start is `task.create` (+ `task.start` for Start now) so it shows in the Tasks panel and the monitor; only a direct model chat, which tasks cannot run, uses `chat.create`. A model picked for a harness chat is applied with `chat.set_model` after the first message (tasks carry no model); a queued task starts on the harness's default. *Switch model…* of a running chat is its own small dialog.
   **Safe Start (UX-B).** The sheet opens on what was started last (What, Agent, Model, Where; kept in `desktop-state.json`), and on **Plain terminal** before there was a first start; a preset about an agent (a prompt, *Queue*, a direct chat) opens on *Agent chat*. The footer says what Start will do in one line (*Start OMP · Claude Opus 4.5 chat in hutan (main)*, *Open a terminal in hutan (main)*, *Run “cargo test” in hutan (main)*) and the Start button names the agent. An agent chat that sends its prompt at once asks first, once per agent and model: *This sends your prompt to OMP · Claude Opus 4.5 now* with *Start* (↩), *Cancel* (Esc) and *Don't ask again for this model* (unticked until the user ticks it; Space toggles); `launcher.confirm_agent_start = false` turns the question off. Plain terminals, commands and queued chats never ask. Keyboard: Tab / Shift-Tab move between rows and the focused row is tinted with an accent border; on the choice rows (What, Agent, Model, Where, Start now / Queue) ↩ or Space opens the choices, ← → ↑ ↓ change the value only while they are open, Esc or Tab closes them, and ⌘↩ does not start while they are open. Only the chosen agent says why it cannot start; choosing another agent clears the previous one's error. **Command** is shell text: the sheet runs `$SHELL -lc "<text>"` (`/bin/zsh` without `$SHELL`) in a session with the login environment, so `;`, `&&`, pipes, quotes and globs work (the field says *Runs in your shell*); `hutan task add … -- <argv>` stays an explicit argv. The Changes view header wraps its actions under the title when the pane is narrow, so *Merge into …* is never cut off. Rename (session, project, workspace) opens with the whole old name selected: typing or pasting replaces it.
-- **Assistant panel**: the scope tabs, a backend row (`harness · model ▾`) opening the backend and model chooser, and — when nothing is configured and no harness or provider is ready — the first-run card (mascot, *Use OMP* when OMP is installed and logged in, *Add a provider…*); otherwise the daemon's automatic backend and model open it (`docs/assistant.md` § Backends). `assistant.enabled = false` removes the panel, its commands and the system-wide shortcut.
+- **Assistant panel**: the scope tabs, a backend row (`harness · model ▾`) opening the backend and model chooser, and — when nothing is configured and no harness or provider is ready — the first-run card (mascot, *Use OMP* when OMP is installed and logged in, *Add a provider…*); otherwise the daemon's automatic backend and model open it (`docs/assistant.md` § Backends). `assistant.enabled = false` (the default for a new settings file) removes the page, its nav row, its commands and the system-wide shortcut; on, the panel is the *Assistant* page of the left sidebar and nowhere else (§ Layout).
 
 ## First-run setup (D-2)
 
@@ -568,12 +514,12 @@ The **Zed** base follows Zed's published macOS keymap (`default-macos.json`) whe
 | New workspace | ⌘⇧N | — |
 | Search the session history | ⌘⇧F | palette |
 | New session (terminal) / new agent / new chat | ⌘T / ⌘⇧T / ⌘⌥T (Zed's ⌘⇧T reopens a closed tab, an action Hutan does not have) | same |
-| Open / focus the Assistant panel | none by default (palette → Assistant: Open / Focus; bind it in `keymap.toml` or set `assistant.global_shortcut`) | same |
+| Open / focus the Assistant page (left sidebar; needs `assistant.enabled`) | none by default (palette → Assistant: Open / Focus; bind it in `keymap.toml` or set `assistant.global_shortcut`) | same |
 | Previous / next tab (the focused dock's panels, else the active pane's tabs; wraps) | ⌘⇧[ / ⌘⇧] (also ⌃⇧Tab / ⌃Tab) | same |
 | Tabs 1–9 in pane | ⌘1…⌘9 | same |
 | Jump to next "needs you" | ⌘⇧J | ⌘⇧J |
 | Toggle the Resources panel | ⌘⌥R (Zed's ⌘⌥R reruns a task; Hutan has no such action) | ⌘⌥R |
-| Toggle left / right / bottom dock | ⌘B / ⌘R (also ⌘⌥B) / ⌘J (also ⌃\`) | ⌘B / ⌘⌥B / ⌘⌥J |
+| Toggle left / right / bottom dock | ⌘B / ⌘L (also ⌘R, ⌘⌥B) / ⌘J (also ⌃\`) | ⌘B / ⌘L (also ⌘⌥B) / ⌘⌥J |
 | Close all docks | ⌘⌥Y | palette |
 | Split right / down | ⌘D / ⌘⇧D, ⌘\\ (right) | ⌘D / ⌘⇧D |
 | Split in a direction | ⌘K ←→↑↓ | palette |

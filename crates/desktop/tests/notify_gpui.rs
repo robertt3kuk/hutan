@@ -28,7 +28,7 @@ fn open<'a>(
 ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
     let (view, cx) = open_with(
         cx,
-        SettingsStore::new(SettingsPaths::in_dir(daemon.home())),
+        common::with_assistant(SettingsStore::new(SettingsPaths::in_dir(daemon.home()))),
         connection,
         None,
     );
@@ -215,9 +215,7 @@ fn looked_at_assistant(
 }
 
 #[gpui::test]
-fn the_assistant_panel_counts_as_looked_at_wherever_it_is_and_only_while_it_is(
-    cx: &mut TestAppContext,
-) {
+fn the_assistant_page_counts_as_looked_at_only_while_it_is_on_screen(cx: &mut TestAppContext) {
     use common::assistant::{AssistantEnv, Options, PATH, open, open_assistant, reply, shown};
     use hutan_desktop::workbench::model::{DockPosition, PanelDest, PanelId};
     use hutan_desktop::workbench::panels::AssistantChoice;
@@ -273,44 +271,50 @@ fn the_assistant_panel_counts_as_looked_at_wherever_it_is_and_only_while_it_is(
     assert_eq!(pending.len(), 1, "{pending:?}");
     assert_eq!(pending[0].session_id, other.id);
 
-    // Moved to a pane as a tab: still looked at once its composer has the keyboard again.
+    // The page is the Assistant's only place (the left sidebar); it cannot be moved out.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| {
-            s.move_panel(&PanelId::new("assistant"), PanelDest::Center)
-                .unwrap();
+            assert!(
+                s.move_panel(&PanelId::new("assistant"), PanelDest::Center)
+                    .is_err()
+            );
+            assert!(
+                s.move_panel(
+                    &PanelId::new("assistant"),
+                    PanelDest::Dock(DockPosition::Right)
+                )
+                .is_err()
+            );
         });
     });
+
+    // Another page of the left sidebar: the Assistant is not on screen, not looked at.
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            s.open_panel(&PanelId::new("tasks"), DockPosition::Left)
+        });
+    });
+    wait_until(cx, "the hidden page to stop counting", |cx| {
+        reported(&view, cx) != Some(Some(global))
+    });
+    view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
     panel.update(cx, |p, cx| p.focus_composer(cx));
-    wait_until(cx, "the assistant in a pane to be reported", |cx| {
+    wait_until(cx, "the shown page to count again", |cx| {
         looked_at_assistant(&view, cx, global)
     });
 
-    // Back in a dock that is then hidden: not on screen, not looked at.
+    // The sidebar hidden: not on screen, not looked at; shown again, looked at.
     view.update(cx, |wb, cx| {
-        wb.edit_layout(cx, |s| {
-            s.move_panel(
-                &PanelId::new("assistant"),
-                PanelDest::Dock(DockPosition::Right),
-            )
-            .unwrap();
-            s.open_panel(&PanelId::new("assistant"), DockPosition::Right);
-        });
+        wb.edit_layout(cx, |s| s.docks.left.visible = false);
     });
-    panel.update(cx, |p, cx| p.focus_composer(cx));
-    wait_until(cx, "the assistant in its dock to be reported", |cx| {
-        looked_at_assistant(&view, cx, global)
-    });
-    view.update(cx, |wb, cx| {
-        wb.edit_layout(cx, |s| s.docks.right.visible = false);
-    });
-    wait_until(cx, "the hidden panel to stop counting", |cx| {
+    wait_until(cx, "the hidden sidebar to stop counting", |cx| {
         reported(&view, cx) != Some(Some(global))
     });
     view.update(cx, |wb, cx| {
-        wb.edit_layout(cx, |s| s.docks.right.visible = true);
+        wb.edit_layout(cx, |s| s.docks.left.visible = true);
     });
     panel.update(cx, |p, cx| p.focus_composer(cx));
-    wait_until(cx, "the shown panel to count again", |cx| {
+    wait_until(cx, "the shown sidebar to count again", |cx| {
         looked_at_assistant(&view, cx, global)
     });
 

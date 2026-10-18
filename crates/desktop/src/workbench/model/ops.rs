@@ -144,6 +144,9 @@ impl WorkbenchState {
 
     /// Append `item` to `pane`, activate it, and focus the pane. Returns its tab index.
     pub fn add_item(&mut self, pane: PaneId, item: ItemRef) -> Result<usize, ModelError> {
+        if let Some(panel) = item.as_panel().filter(|p| p.is_left_only()) {
+            return Err(ModelError::LeftOnly(panel.clone()));
+        }
         if let Some(panel) = item.as_panel()
             && self.find_panel(panel).is_some()
         {
@@ -209,6 +212,9 @@ impl WorkbenchState {
         if self.center.pane(pane).is_none() {
             return Err(ModelError::NoSuchPane(pane));
         }
+        if let Some(panel) = item.as_panel().filter(|p| p.is_left_only()) {
+            return Err(ModelError::LeftOnly(panel.clone()));
+        }
         if let Some(panel) = item.as_panel()
             && self.find_panel(panel).is_some()
         {
@@ -252,6 +258,18 @@ impl WorkbenchState {
                 }
             }
         };
+        // The left-only panels (the Assistant) stay pages of the left sidebar.
+        if let Some(panel) = item.as_panel().filter(|p| p.is_left_only())
+            && !matches!(
+                &target,
+                DropTarget::Dock {
+                    pos: DockPosition::Left,
+                    ..
+                }
+            )
+        {
+            return Err(ModelError::LeftOnly(panel.clone()));
+        }
         match &target {
             DropTarget::Pane { pane, index } => {
                 let p = self
@@ -419,8 +437,14 @@ impl WorkbenchState {
         }
     }
 
-    /// Show `panel`: reveal and focus it where it is open, otherwise open it in `default_dock`.
+    /// Show `panel`: reveal and focus it where it is open, otherwise open it in `default_dock`
+    /// (the left dock for a left-only panel, whatever the caller says).
     pub fn open_panel(&mut self, panel: &PanelId, default_dock: DockPosition) {
+        let default_dock = if panel.is_left_only() {
+            DockPosition::Left
+        } else {
+            default_dock
+        };
         match self.find_panel(panel) {
             Some(ItemSource::Dock { pos, .. }) => {
                 let dock = self.docks.get_mut(pos);

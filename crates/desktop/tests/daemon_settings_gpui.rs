@@ -33,7 +33,7 @@ use hutan_settings::{SettingsPaths, SettingsStore};
 use serde_json::{Value, json};
 
 fn store(dir: &Path) -> SettingsStore {
-    SettingsStore::new(SettingsPaths::in_dir(dir))
+    common::with_assistant(SettingsStore::new(SettingsPaths::in_dir(dir)))
 }
 
 fn wait_synced(view: &Entity<Workbench>, cx: &mut VisualTestContext) {

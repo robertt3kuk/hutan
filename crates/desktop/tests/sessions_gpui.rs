@@ -182,7 +182,13 @@ fn a_pane_tab_and_an_overview_card_share_one_attachment(cx: &mut TestAppContext)
     cx.dispatch_action(actions::OpenSessionFromOverview(info.id.to_string()));
     let state = state_of(&view, cx);
     assert_eq!(state.preset, LayoutPreset::DEFAULT);
-    assert!(state.find_panel(&"overview".into()).is_none());
+    assert!(
+        state
+            .panes()
+            .iter()
+            .all(|p| !p.items.contains(&ItemRef::panel("overview"))),
+        "the board left the center"
+    );
     assert_eq!(
         view.read_with(cx, |wb, _| wb.focused_session()),
         Some(info.id)
@@ -546,13 +552,13 @@ fn settings_files_hot_reload_density_and_terminal_font(cx: &mut TestAppContext) 
         view.read_with(cx, |wb, _| wb.terminal_view_settings().padding),
         12.0
     );
-    // Panel geometry follows the density tokens: the status bar is 26 px comfortable.
+    // Panel geometry follows the tokens: the status bar is 24 px in both densities.
     draw(cx);
     let bar = view.read_with(cx, |wb, _| {
         wb.region_bounds(hutan_desktop::workbench::Region::StatusBar)
     });
     let height = f32::from(bar.unwrap().size.height);
-    assert!((height - 26.0).abs() <= 1.0, "{height}");
+    assert!((height - 24.0).abs() <= 1.0, "{height}");
 
     // A broken edit keeps the last good values and is reported; a fix recovers.
     write(
@@ -811,7 +817,7 @@ fn save_layout_as_preset_writes_settings_and_hot_reloads_presets(cx: &mut TestAp
     let preset = &parsed["layout"]["presets"]["My-Layout"];
     assert_eq!(preset["left"]["visible"].as_bool(), Some(true));
     assert_eq!(preset["right"]["visible"].as_bool(), Some(false));
-    assert_eq!(preset["left"]["panels"].as_array().unwrap().len(), 2);
+    assert_eq!(preset["left"]["panels"].as_array().unwrap().len(), 3);
     assert_eq!(state_of(&view, cx).preset, "My-Layout");
     assert_eq!(
         parsed["layout"]["preset"].as_str(),
@@ -1400,10 +1406,12 @@ fn the_inspector_describes_the_focused_session(cx: &mut TestAppContext) {
     wait_synced(&view, cx, 1);
     open_session(&view, cx, info.id);
     wait_screen(&view, cx, info.id, "inspected");
+    // Requests is a tab of the right sidebar; History is the one showing.
+    cx.dispatch_action(actions::OpenPanel("inspector".into()));
     draw(cx);
     let inspector = view
         .read_with(cx, |wb, _| wb.panel::<InspectorPanel>("inspector"))
-        .expect("the inspector is drawn in the right dock");
+        .expect("the inspector is drawn in the right sidebar");
     let current: SessionInfo = view
         .read_with(cx, |wb, cx| {
             wb.sessions().read(cx).session(info.id).cloned()
@@ -1549,7 +1557,12 @@ fn the_overview_preset_shows_the_board_from_every_path(cx: &mut TestAppContext) 
     });
     let s = state_of(&view, cx);
     assert_eq!(s.active_pane().unwrap().active_item(), Some(&terminal));
-    assert!(s.find_panel(&"overview".into()).is_none());
+    assert!(
+        s.panes()
+            .iter()
+            .all(|p| !p.items.contains(&ItemRef::panel("overview"))),
+        "the board left the center"
+    );
 
     // Palette / menu path, then ⌘⇧O and a card click leave again.
     cx.dispatch_action(actions::ApplyPreset("overview".into()));

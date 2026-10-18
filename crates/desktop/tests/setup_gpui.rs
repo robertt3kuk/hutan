@@ -440,6 +440,9 @@ fn the_agents_step_lists_the_harnesses_and_writes_the_assistant_choice(cx: &mut 
     let (view, cx) = open_first_run(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Agents);
     wait_listing(&view, cx);
+    // The assistant is off until it is turned on (its backends show once it is).
+    assert!(!drawn(&view, cx, Region::Setup("backend-omp")));
+    click(&view, cx, Region::Setup("assistant"));
 
     // OMP is installed and logged in, Claude Code installed and logged out.
     view.read_with(cx, |wb, cx| {
@@ -502,6 +505,7 @@ fn with_omp_missing_and_codex_logged_in_the_agents_step_preselects_codex(cx: &mu
     let (view, cx) = open_first_run(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Agents);
     wait_listing(&view, cx);
+    click(&view, cx, Region::Setup("assistant"));
 
     view.read_with(cx, |wb, cx| {
         let directory = wb.harness_directory().read(cx);
@@ -519,16 +523,31 @@ fn with_omp_missing_and_codex_logged_in_the_agents_step_preselects_codex(cx: &mu
 }
 
 #[gpui::test]
-fn turning_the_assistant_off_in_the_setup_is_written(cx: &mut TestAppContext) {
+fn the_assistant_is_off_in_the_setup_unless_it_is_turned_on(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let env = Env::new();
+    let (view, cx) = open_first_run(cx, &daemon, &env);
+    go_to(&view, cx, SetupStep::Agents);
+    assert!(!view.read_with(cx, |wb, _| wb.setup().unwrap().assistant_enabled));
+    click(&view, cx, Region::Setup("continue"));
+    let text = saved(&daemon);
+    assert!(text.contains("[assistant]\nenabled = false"), "{text}");
+    assert!(!view.read_with(cx, |wb, _| wb.assistant_enabled()));
+}
+
+#[gpui::test]
+fn turning_the_assistant_on_in_the_setup_is_written(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
     let (view, cx) = open_first_run(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Agents);
     click(&view, cx, Region::Setup("assistant"));
+    assert!(view.read_with(cx, |wb, _| wb.setup().unwrap().assistant_enabled));
     click(&view, cx, Region::Setup("continue"));
     let text = saved(&daemon);
-    assert!(text.contains("[assistant]\nenabled = false"), "{text}");
-    assert!(!view.read_with(cx, |wb, _| wb.assistant_enabled()));
+    assert!(text.contains("[assistant]\nenabled = true"), "{text}");
+    // The Assistant is a page of the left sidebar now.
+    assert!(view.read_with(cx, |wb, _| wb.assistant_enabled()));
 }
 
 #[gpui::test]

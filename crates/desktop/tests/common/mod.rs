@@ -495,6 +495,15 @@ thread_local! {
     static KEEP: RefCell<Vec<TempDir>> = const { RefCell::new(Vec::new()) };
 }
 
+/// `settings` with the assistant on: it is off by default since the Orca-style layout, and the
+/// tests of its page, its commands and its shortcut need it.
+pub fn with_assistant(settings: SettingsStore) -> SettingsStore {
+    settings
+        .write_user("assistant.enabled", toml::Value::Boolean(true))
+        .expect("enable the assistant");
+    settings
+}
+
 /// A connection to a daemon that does not exist (layout-only tests).
 pub fn offline_connection() -> (Connection, SettingsStore, PathBuf) {
     let dir = tempfile::tempdir().unwrap();

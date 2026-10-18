@@ -211,3 +211,71 @@ fn two_agents_in_one_checkout_turn_the_badge_into_a_warning(cx: &mut TestAppCont
         badge_text(&view, cx, first) == Some(("main".into(), false))
     });
 }
+
+#[gpui::test]
+fn the_changes_tab_lists_the_checkouts_and_a_click_opens_the_changes_view(cx: &mut TestAppContext) {
+    use gpui::Modifiers;
+    use hutan_desktop::workbench::model::DockPosition;
+    use hutan_desktop::workbench::panels::ChangesPanel;
+
+    let daemon = TestDaemon::start();
+    let (_keep, root, wt) = repo_with_worktree();
+    // The worktree has an uncommitted file, the main checkout is clean.
+    fs::write(wt.join("new.txt"), "hello\n").unwrap();
+    let workspace = daemon.create_workspace("proj", &[&root]).id;
+    let (view, cx) = open(cx, &daemon);
+    view.update_in(cx, |wb, window, cx| {
+        wb.switch_workspace(workspace, window, cx)
+    });
+
+    // The strip's second icon is Changes.
+    wait_until(cx, "the strip", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::DockTab(DockPosition::Right, 1))
+                .is_some()
+        })
+    });
+    let tab = view
+        .read_with(cx, |wb, _| {
+            wb.region_bounds(Region::DockTab(DockPosition::Right, 1))
+        })
+        .unwrap();
+    cx.simulate_click(tab.center(), Modifiers::none());
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.state().docks.right.active.clone())
+            .map(|p| p.to_string()),
+        Some("changes".to_owned())
+    );
+    draw(cx);
+    let panel = view
+        .read_with(cx, |wb, _| wb.panel::<ChangesPanel>("changes"))
+        .expect("the Changes panel is drawn");
+    wait_until(cx, "both checkouts", |cx| {
+        panel.read_with(cx, |p, _| p.rows().len() == 2)
+    });
+    let rows = panel.read_with(cx, |p, _| p.rows().to_vec());
+    // The checkout with uncommitted changes first, the clean main checkout after it.
+    assert_eq!(rows[0].branch.as_deref(), Some("topic"));
+    assert!(rows[0].dirty && !rows[0].main);
+    assert!(rows[1].main && !rows[1].dirty);
+    wait_until(cx, "the rows to be drawn", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::ChangesCheckout(1)).is_some()
+        })
+    });
+
+    // A click on the worktree opens its full Changes view as a tab of the center.
+    let row = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::ChangesCheckout(0)))
+        .unwrap();
+    cx.simulate_click(row.center(), Modifiers::none());
+    let key = rows[0].path.display().to_string();
+    assert!(
+        view.read_with(cx, |wb, _| wb
+            .state()
+            .find_item(&ItemRef::changes(key.clone())))
+            .is_some(),
+        "the Changes view of {key} is a tab"
+    );
+    assert!(view.read_with(cx, |wb, _| wb.changes(&key)).is_some());
+}

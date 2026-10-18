@@ -684,6 +684,7 @@ fn hutan_global_bindings() -> Vec<BindingSpec> {
         bind::<ToggleZoom>("cmd-shift-enter", None),
         bind::<ToggleLeftDock>("cmd-b", None),
         bind::<ToggleRightDock>("cmd-alt-b", None),
+        bind::<ToggleRightDock>("cmd-l", None),
         bind::<ToggleBottomDock>("cmd-alt-j", None),
         bind::<OpenJump>("cmd-j", None),
         bind::<OpenProject>("cmd-o", None),
@@ -799,7 +800,9 @@ fn numbered_bindings() -> Vec<BindingSpec> {
 ///
 /// - ⌘⇧P palette (⌘K is Zed's chord prefix, so it is not bound alone here), ⌘P quick open =
 ///   jump, ⌘O open, ⌘, settings, ⌘⇧N new workspace, ⌘⇧F search history.
-/// - ⌘B / ⌘⌥B / ⌘R left / right dock, ⌘J / ⌃\` bottom dock, ⌘⌥Y close all docks.
+/// - ⌘B left sidebar; ⌘⌥B / ⌘R / ⌘L right sidebar (⌘L is Orca's key and the one the tooltips
+///   show; Zed's ⌘L is "go to line", which Hutan has no use for); ⌘J / ⌃\` bottom dock; ⌘⌥Y
+///   close all docks.
 /// - ⌘K ←→↑↓ (and ⌘\\) split in that direction, ⌘K ⌘←→↑↓ and ⌘⌥←→↑↓ focus the neighbor pane;
 ///   ⌘D / ⌘⇧D stay (they are Zed's split keys in the terminal).
 /// - ⇧⎋ zoom pane, ⌘= / ⌘+ / ⌘- / ⌘0 terminal font size.
@@ -837,6 +840,7 @@ fn zed_global_bindings() -> Vec<BindingSpec> {
         bind::<ToggleLeftDock>("cmd-b", None),
         bind::<ToggleRightDock>("cmd-alt-b", None),
         bind::<ToggleRightDock>("cmd-r", None),
+        bind::<ToggleRightDock>("cmd-l", None),
         bind::<ToggleBottomDock>("ctrl-`", None),
         bind::<ToggleBottomDock>("cmd-j", None),
         bind::<CloseAllDocks>("cmd-alt-y", None),
@@ -978,7 +982,8 @@ mod tests {
         assert!(!keys(TogglePalette::name_for_type()).contains(&"cmd-k".to_owned()));
         assert_eq!(last(OpenJump::name_for_type()), "cmd-p");
         assert_eq!(last(ToggleLeftDock::name_for_type()), "cmd-b");
-        assert_eq!(last(ToggleRightDock::name_for_type()), "cmd-r");
+        assert_eq!(last(ToggleRightDock::name_for_type()), "cmd-l");
+        assert!(keys(ToggleRightDock::name_for_type()).contains(&"cmd-r".to_owned()));
         assert_eq!(last(ToggleBottomDock::name_for_type()), "cmd-j");
         assert_eq!(last(CloseAllDocks::name_for_type()), "alt-cmd-y");
         assert!(keys(ToggleBottomDock::name_for_type()).contains(&"ctrl-`".to_owned()));
@@ -1027,6 +1032,7 @@ mod tests {
             "shift-cmd-enter | workbench::ToggleZoom | -",
             "cmd-b | workbench::ToggleLeftDock | -",
             "alt-cmd-b | workbench::ToggleRightDock | -",
+            "cmd-l | workbench::ToggleRightDock | -",
             "alt-cmd-j | workbench::ToggleBottomDock | -",
             "cmd-j | workbench::OpenJump | -",
             "cmd-o | workbench::OpenProject | -",

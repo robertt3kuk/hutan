@@ -31,10 +31,9 @@ use crate::settings::{
     GroupBy, SessionsPanelSettings, SidebarSettings, WorkspaceSort, WorkspacesSettings,
 };
 use crate::workbench::actions::{
-    DropProjectOnto, MoveWorkspaceOnto, NewTerminal, OpenFolder, OpenSession, OpenWorkspace,
-    ProjectDrop, ProjectMenuAt, RenameTo, RenameWorkspaceTo, SessionMenuAt, ShowPlusMenu,
-    ShowProjectMenu, ShowSessionMenu, ShowSortMenu, ShowWorkspaceMenu, WorkspaceDrop,
-    WorkspaceMenuAt,
+    DropProjectOnto, MoveWorkspaceOnto, OpenFolder, OpenSession, OpenWorkspace, ProjectDrop,
+    ProjectMenuAt, RenameTo, RenameWorkspaceTo, SessionMenuAt, ShowPlusMenu, ShowProjectMenu,
+    ShowSessionMenu, ShowSortMenu, ShowWorkspaceMenu, WorkspaceDrop, WorkspaceMenuAt,
 };
 use crate::workbench::actions::{LauncherOpen, OpenLauncher};
 use crate::workbench::chat::vim::Outcome;
@@ -51,6 +50,19 @@ const AGE_REFRESH: Duration = Duration::from_secs(30);
 
 /// Indent per level of the tree.
 const INDENT: f32 = 12.0;
+/// Orca's project card: the leading status lane is 20 px wide, titles are 13 px.
+const STATUS_LANE: f32 = 20.0;
+const CARD_TITLE: f32 = 13.0;
+
+/// Hover fill of a card: the foreground at 4 % in light, the left sidebar's accent at 40 % in
+/// dark (Orca's workspace hover).
+fn card_hover(theme: &crate::theme::Theme) -> gpui::Hsla {
+    if theme.dark {
+        theme.sidebar_accent.opacity(0.4)
+    } else {
+        theme.fg.opacity(0.04)
+    }
+}
 
 /// A workspace row being dragged to a new place (manual order).
 #[derive(Clone, Debug)]
@@ -1066,22 +1078,6 @@ impl Render for SessionsPanel {
             ))
             .child(probe(&self.env.regions, Region::SidebarControl("filter")));
 
-        let new_session = div()
-            .id("sessions-new")
-            .flex()
-            .flex_none()
-            .items_center()
-            .h(px(tokens.sidebar_row))
-            .mx(px(tokens.spacing * 2.0))
-            .mb(px(tokens.spacing * 2.0))
-            .px(px(tokens.spacing * 2.0))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .text_color(theme.muted)
-            .hover(move |s| s.bg(hover).text_color(theme.fg))
-            .on_click(|_, window, cx| window.dispatch_action(Box::new(NewTerminal), cx))
-            .child("＋ New session");
-
         div()
             .size_full()
             .flex()
@@ -1096,7 +1092,6 @@ impl Render for SessionsPanel {
             ))
             .child(search)
             .child(list)
-            .child(new_session)
     }
 }
 
@@ -1225,7 +1220,7 @@ impl SessionsPanel {
     ) -> AnyElement {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
-        let (hover, accent) = (theme.surface_hover, theme.accent);
+        let (hover, accent) = (card_hover(&theme), theme.accent);
         let info = &row.info;
         let id = info.id;
         let kind = info.kind;
@@ -1299,8 +1294,8 @@ impl SessionsPanel {
             .mx(px(tokens.spacing * 1.5))
             .pl(px(tokens.spacing * 1.5 + row.depth as f32 * INDENT))
             .pr(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius))
-            .text_size(px(tokens.font_size))
+            .rounded(px(tokens.radius + 4.0))
+            .text_size(px(CARD_TITLE))
             .medium()
             .text_color(if current || selected {
                 theme.fg
@@ -1308,7 +1303,7 @@ impl SessionsPanel {
                 theme.muted
             })
             .cursor_pointer()
-            .when(current || selected, move |s| s.bg(theme.accent_soft))
+            .when(current || selected, move |s| s.bg(theme.sidebar_accent))
             .when(selected, move |s| s.border_1().border_color(accent))
             .when(!(current || selected), move |s| {
                 s.hover(move |s| s.bg(hover))
@@ -1493,7 +1488,8 @@ impl SessionsPanel {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let presentation = self.env.sessions.read(cx).presentation(info);
-        let hover = theme.surface_hover;
+        let unread = self.env.sessions.read(cx).unread(info.id).is_some();
+        let hover = card_hover(&theme);
         let id = info.id.to_string();
         let open_id = id.clone();
         let menu_id = id.clone();
@@ -1528,7 +1524,31 @@ impl SessionsPanel {
             .w_full();
         for field in &settings.row {
             line = match field.as_str() {
-                "state" => line.child(state_dot(&theme, &presentation)),
+                "state" => line.child(
+                    // Orca's 20 px status lane: the state dot, and for an unread session an
+                    // amber dot with a ring in the color of the sidebar on top of it.
+                    div()
+                        .relative()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(STATUS_LANE))
+                        .child(state_dot(&theme, &presentation))
+                        .when(unread, |s| {
+                            s.child(
+                                div()
+                                    .absolute()
+                                    .top(px(-2.0))
+                                    .right(px(1.0))
+                                    .size(px(6.0))
+                                    .rounded_full()
+                                    .bg(theme.warning)
+                                    .border_2()
+                                    .border_color(theme.sidebar),
+                            )
+                        }),
+                ),
                 "kind" => line.child(
                     div()
                         .flex_none()
@@ -1541,6 +1561,8 @@ impl SessionsPanel {
                             .flex_1()
                             .min_w_0()
                             .truncate()
+                            .text_size(px(CARD_TITLE))
+                            .when(unread, |s| s.font_weight(gpui::FontWeight::MEDIUM))
                             .child(SharedString::from(info.title.clone())),
                     )
                     .children(badge.take())
@@ -1573,7 +1595,7 @@ impl SessionsPanel {
                 .flex()
                 .items_center()
                 .gap(px(tokens.spacing * 1.5))
-                .pl(px(tokens.spacing * 4.0))
+                .pl(px(STATUS_LANE + tokens.spacing * 1.5))
                 .pb(px(tokens.spacing))
                 .text_size(px(tokens.secondary_font_size))
                 .children(folder.map(|(label, _)| {
@@ -1608,11 +1630,16 @@ impl SessionsPanel {
             .flex()
             .flex_col()
             .mx(px(tokens.spacing * 1.5))
+            .my(px(1.0))
             .pl(px(tokens.spacing * 1.5 + row.depth as f32 * INDENT))
             .pr(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius))
+            .rounded(px(tokens.radius + 4.0))
+            .border_1()
+            .border_color(gpui::transparent_black())
             .cursor_pointer()
-            .when(selected, move |s| s.bg(theme.accent_soft))
+            .when(selected, move |s| {
+                s.bg(theme.sidebar_accent).border_color(theme.border)
+            })
             .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
             .on_click(cx.listener(move |_, _, window, cx| {
                 window.dispatch_action(Box::new(OpenSession(open_id.clone())), cx);
@@ -1639,7 +1666,7 @@ impl SessionsPanel {
             };
             element = element.child(
                 div()
-                    .pl(px(tokens.spacing * 4.0))
+                    .pl(px(STATUS_LANE + tokens.spacing * 1.5))
                     .pb(px(tokens.spacing))
                     .text_size(px(tokens.secondary_font_size))
                     .text_color(tone_color(&theme, presentation.tone))

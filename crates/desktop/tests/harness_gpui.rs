@@ -72,7 +72,7 @@ fn open<'a>(
 ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
     let (view, cx) = open_with(
         cx,
-        SettingsStore::new(SettingsPaths::in_dir(daemon.home())),
+        common::with_assistant(SettingsStore::new(SettingsPaths::in_dir(daemon.home()))),
         daemon.connection(),
         None,
     );

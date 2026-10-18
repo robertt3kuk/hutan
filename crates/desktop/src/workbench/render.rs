@@ -24,8 +24,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/// Height of the title bar region (and of the inset above the left dock's panel stack).
-pub const TITLEBAR_HEIGHT: f32 = 36.0;
+/// Height of the title bar region (and of the inset above the left dock's panel stack, and of
+/// the right sidebar's icon strip).
+pub const TITLEBAR_HEIGHT: f32 = crate::theme::TITLEBAR_HEIGHT;
 /// Space reserved for the traffic lights when the left dock does not cover them.
 const TRAFFIC_LIGHT_INSET: f32 = 80.0;
 const HANDLE_THICKNESS: f32 = 6.0;
@@ -138,20 +139,17 @@ impl Render for Workbench {
                         .child(
                             div()
                                 .flex()
+                                .flex_col()
                                 .flex_1()
                                 .min_h_0()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .child(center)
-                                        .children(bottom),
-                                )
-                                .children(right),
+                                .min_w_0()
+                                .child(center)
+                                .children(bottom),
                         ),
-                ),
+                )
+                // Orca's right sidebar is a column of its own: its icon strip is the title bar
+                // row of that side.
+                .children(right),
         )
         .child(status)
         .children(daemon_popover)
@@ -948,8 +946,14 @@ impl Workbench {
         // Tabs are rounded chips inset 4 px in their strip.
         let tab_inner = tokens.tab_height - 8.0;
 
-        let tabs: Vec<AnyElement> = dock
-            .panels
+        // Only the bottom dock keeps a strip of text tabs; the left dock is a nav list with the
+        // active page below it, the right dock an icon strip (`sidebars.rs`).
+        let tab_panels: &[crate::workbench::model::PanelId] = if pos == DockPosition::Bottom {
+            &dock.panels
+        } else {
+            &[]
+        };
+        let tabs: Vec<AnyElement> = tab_panels
             .iter()
             .enumerate()
             .map(|(index, panel)| {
@@ -1080,7 +1084,11 @@ impl Workbench {
             .flex()
             .flex_col()
             .flex_none()
-            .bg(if is_left { theme.sidebar } else { theme.bg })
+            .bg(match pos {
+                DockPosition::Left => theme.sidebar,
+                DockPosition::Right => theme.right_sidebar,
+                DockPosition::Bottom => theme.bg,
+            })
             .border_color(theme.border)
             .on_mouse_down(
                 MouseButton::Left,
@@ -1095,87 +1103,80 @@ impl Workbench {
             DockPosition::Bottom => root.h(px(dock.size)).w_full().border_t_1(),
         };
 
-        Some(
-            root.when(is_left, |s| {
-                // Inset for the traffic lights; also a window drag handle.
-                s.child(
+        let tab_header = (pos == DockPosition::Bottom).then(|| {
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(px(tokens.tab_height))
+                .w_full()
+                .px(px(4.0))
+                .gap(px(2.0))
+                .border_b_1()
+                .border_color(theme.border)
+                .text_size(px(tokens.font_size))
+                .children(tabs)
+                .child(
                     div()
-                        .h(px(TITLEBAR_HEIGHT))
-                        .flex_none()
-                        .w_full()
-                        .on_mouse_down(MouseButton::Left, |event, window, cx| {
-                            if event.click_count == 2 {
-                                window.titlebar_double_click();
-                            } else {
-                                window.start_window_move();
-                            }
-                            cx.stop_propagation();
-                        }),
+                        .id(id(format!("dock-tab-filler-{pos:?}")))
+                        .flex_1()
+                        .h_full()
+                        .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.18)))
+                        .can_drop(|any, _, _| {
+                            any.downcast_ref::<DraggedItem>()
+                                .is_some_and(|d| d.item.as_panel().is_some())
+                        })
+                        .on_drop(cx.listener(move |this, d: &DraggedItem, window, cx| {
+                            this.drop_item(
+                                d,
+                                DropTarget::Dock {
+                                    pos,
+                                    index: append_index,
+                                },
+                                window,
+                                cx,
+                            );
+                        })),
                 )
-            })
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .h(px(tokens.tab_height))
-                    .w_full()
-                    .px(px(4.0))
-                    .gap(px(2.0))
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .text_size(px(tokens.font_size))
-                    .children(tabs)
-                    .child(
-                        div()
-                            .id(id(format!("dock-tab-filler-{pos:?}")))
-                            .flex_1()
-                            .h_full()
-                            .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.18)))
-                            .can_drop(|any, _, _| {
-                                any.downcast_ref::<DraggedItem>()
-                                    .is_some_and(|d| d.item.as_panel().is_some())
-                            })
-                            .on_drop(cx.listener(move |this, d: &DraggedItem, window, cx| {
-                                this.drop_item(
-                                    d,
-                                    DropTarget::Dock {
-                                        pos,
-                                        index: append_index,
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .id(id(format!("dock-body-{pos:?}")))
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.10)))
-                    .can_drop(|any, _, _| {
-                        any.downcast_ref::<DraggedItem>()
-                            .is_some_and(|d| d.item.as_panel().is_some())
-                    })
-                    .on_drop(cx.listener(move |this, d: &DraggedItem, window, cx| {
-                        this.drop_item(
-                            d,
-                            DropTarget::Dock {
-                                pos,
-                                index: append_index,
-                            },
-                            window,
-                            cx,
-                        );
-                    }))
-                    .child(body),
-            )
-            .child(handle)
-            .child(probe(&self.regions, Region::Dock(pos)))
-            .into_any_element(),
+        });
+        let top: Vec<AnyElement> = match pos {
+            DockPosition::Left => self.left_sidebar_top(&dock, window, cx),
+            DockPosition::Right => vec![self.right_strip(&dock, window, cx)],
+            DockPosition::Bottom => Vec::new(),
+        };
+        let toolbar = is_left.then(|| self.left_toolbar());
+
+        Some(
+            root.children(top)
+                .children(tab_header)
+                .child(
+                    div()
+                        .id(id(format!("dock-body-{pos:?}")))
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_hidden()
+                        .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.10)))
+                        .can_drop(|any, _, _| {
+                            any.downcast_ref::<DraggedItem>()
+                                .is_some_and(|d| d.item.as_panel().is_some())
+                        })
+                        .on_drop(cx.listener(move |this, d: &DraggedItem, window, cx| {
+                            this.drop_item(
+                                d,
+                                DropTarget::Dock {
+                                    pos,
+                                    index: append_index,
+                                },
+                                window,
+                                cx,
+                            );
+                        }))
+                        .child(body),
+                )
+                .children(toolbar)
+                .child(handle)
+                .child(probe(&self.regions, Region::Dock(pos)))
+                .into_any_element(),
         )
     }
 

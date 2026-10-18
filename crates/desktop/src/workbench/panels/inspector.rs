@@ -552,7 +552,7 @@ impl Render for InspectorPanel {
             .flex_col()
             .text_size(px(tokens.font_size))
             .text_color(theme.fg)
-            .child(panel_header("Inspector", "panels.inspector", cx))
+            .child(panel_header("Requests", "panels.inspector", cx))
             .child(
                 div()
                     .flex()

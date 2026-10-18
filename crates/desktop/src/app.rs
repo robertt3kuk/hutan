@@ -274,7 +274,9 @@ pub fn start_connection(
 }
 
 /// The settings store over `settings.toml` / `keymap.toml` in the Hutan home. A `settings.toml`
-/// from before `app.start_at_login` is migrated here, before anything reads it.
+/// from before `app.start_at_login` is migrated here, before anything reads it; so is the
+/// `assistant.enabled` default of a user whose layout was saved before the Orca-style relayout
+/// (it must run before the layout is loaded and saved again).
 pub fn settings_store() -> SettingsStore {
     let paths = SettingsPaths::from_env().unwrap_or_else(|err| {
         tracing::warn!("{err}; settings are kept in the temp directory");
@@ -284,6 +286,9 @@ pub fn settings_store() -> SettingsStore {
     let store = SettingsStore::new(paths);
     crate::settings::register_all(&store);
     crate::settings::migrate_start_at_login(&store, &user_file);
+    if let Some(state_file) = crate::workbench::persistence::default_state_path() {
+        crate::settings::migrate_assistant_default(&store, &user_file, &state_file);
+    }
     store
 }
 
