@@ -24,6 +24,7 @@ mod agents;
 mod assistant;
 mod attach;
 mod chat;
+mod config;
 mod help;
 mod history;
 mod integration;
@@ -86,6 +87,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Chat(command) => ctx?.chat(command).await,
         Command::Account(command) => ctx?.account(command).await,
         Command::Provider(command) => ctx?.provider(command).await,
+        Command::Config(command) => ctx?.config(command).await,
         Command::Ask(args) => ctx?.ask(args).await,
         Command::Assistant(command) => ctx?.assistant(command).await,
         Command::Approvals => ctx?.approvals().await,

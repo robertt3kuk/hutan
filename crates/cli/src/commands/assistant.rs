@@ -9,10 +9,13 @@ use hutan_protocol::assistant::{
 use hutan_protocol::messages::{
     Empty, Request, SessionInfo, SessionResult, Subscribed, WorkspaceKind, WorkspaceList,
 };
+use serde_json::json;
 
 use super::Ctx;
 use super::workspaces::{resolve_workspace, workspace_target};
-use crate::args::{AskArgs, AssistantCommand, AssistantLsArgs, AssistantOpenArgs};
+use crate::args::{
+    AskArgs, AssistantCommand, AssistantLsArgs, AssistantOpenArgs, AssistantResetArgs,
+};
 use crate::error::CliError;
 
 impl Ctx {
@@ -20,6 +23,7 @@ impl Ctx {
         match command {
             AssistantCommand::Ls(args) => self.assistant_ls(args).await,
             AssistantCommand::Open(args) => self.assistant_open(args).await,
+            AssistantCommand::Reset(args) => self.assistant_reset(args).await,
         }
     }
 
@@ -97,6 +101,29 @@ impl Ctx {
             );
             format!("session {} assistant {model}", session.id)
         })
+    }
+
+    async fn assistant_reset(&self, args: AssistantResetArgs) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        if !client.supports_daemon_settings() {
+            return Err(CliError::Failed(
+                "this hutand cannot reset an assistant's backend (it is older than protocol \
+                 0.28); restart it with `hutan daemon restart`"
+                    .to_owned(),
+            ));
+        }
+        let (scope, workspace_id) = self.assistant_scope(&client, args.workspace).await?;
+        client
+            .assistant_reset(scope, workspace_id)
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(
+            &json!({"scope": scope.as_str(), "workspace_id": workspace_id}),
+            || match workspace_id {
+                Some(id) => format!("the assistants of workspace {id} inherit their backend again"),
+                None => "the global assistant inherits its backend again".to_owned(),
+            },
+        )
     }
 
     async fn assistant_ls(&self, args: AssistantLsArgs) -> Result<(), CliError> {

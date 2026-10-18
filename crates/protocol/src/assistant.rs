@@ -130,6 +130,22 @@ pub struct AssistantConfig {
     pub provider: Option<String>,
 }
 
+/// `assistant.reset` (protocol 0.28, capability `daemon.settings`): removes the backend choice
+/// `assistant.configure` stored for a scope, so the scope inherits again (workspace → its parent
+/// workspace → global → `[assistant]` of `daemon.toml` → the automatic backend). Existing
+/// sessions are untouched. A scope with nothing stored is not an error. Answered with `Empty`.
+///
+/// Errors: `bad_request` for `workspace` without `workspace_id` and for the Home workspace (it
+/// has the `global` scope); `not_found` for a workspace that does not exist; `forbidden` from an
+/// agent-originated connection, always (ADR 0016).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssistantReset {
+    pub scope: AssistantScope,
+    /// Required for `workspace`, ignored for `global`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<WorkspaceId>,
+}
+
 /// `assistant.open`: the default assistant session of a scope, created on first use. A stopped
 /// default is started again. Answered with `SessionResult`.
 ///

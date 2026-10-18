@@ -1456,6 +1456,41 @@ fn providers_are_stored_updated_and_deleted() {
 }
 
 #[test]
+fn provider_writes_report_a_failing_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    storage.providers().upsert(provider("a", 10)).unwrap();
+    // Another connection takes the table away, like a disk or schema fault would.
+    rusqlite::Connection::open(db(&dir))
+        .unwrap()
+        .execute_batch("DROP TABLE providers")
+        .unwrap();
+    let error = storage.providers().upsert(provider("b", 20)).unwrap_err();
+    assert!(error.to_string().contains("provider"), "{error}");
+    assert!(storage.providers().delete("a").is_err());
+    storage.close();
+    assert!(
+        matches!(
+            storage.providers().upsert(provider("c", 30)),
+            Err(StorageError::Closed)
+        ),
+        "a closed storage is an error too"
+    );
+}
+
+#[test]
+fn app_meta_keys_can_be_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    storage.app_meta().set("k", "v").unwrap();
+    assert_eq!(storage.app_meta().get("k").unwrap().as_deref(), Some("v"));
+    storage.app_meta().delete("k").unwrap();
+    storage.app_meta().delete("k").unwrap();
+    assert_eq!(storage.app_meta().get("k").unwrap(), None);
+    storage.close();
+}
+
+#[test]
 fn migrating_v4_adds_the_provider_table_and_keeps_the_data() {
     let dir = tempfile::tempdir().unwrap();
     let ws = workspace("alpha", 0);

@@ -27,6 +27,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use hutan_core::{
@@ -324,7 +325,8 @@ pub struct TaskService {
     worktrees: Arc<WorktreeService>,
     storage: Storage,
     bus: Arc<EventBus>,
-    max_parallel: usize,
+    /// `[tasks] max_parallel`; changed live by `daemon.settings.set`.
+    max_parallel: AtomicUsize,
     state: Mutex<State>,
 }
 
@@ -345,7 +347,7 @@ impl TaskService {
             worktrees,
             storage,
             bus,
-            max_parallel: settings.max_parallel,
+            max_parallel: AtomicUsize::new(settings.max_parallel),
             state: Mutex::new(State::new(stored)),
         });
         let sessions = this
@@ -408,6 +410,18 @@ impl TaskService {
             this.registry.note_recovery_loss(session, lost).await;
         }
         Ok(this)
+    }
+
+    /// The most tasks that start by themselves at once, now.
+    pub fn max_parallel(&self) -> usize {
+        self.max_parallel.load(Ordering::Relaxed)
+    }
+
+    /// Starts ready tasks within `max_parallel` from now on; a raised limit lets waiting
+    /// tasks start at once.
+    pub fn set_max_parallel(self: &Arc<Self>, max_parallel: usize) {
+        self.max_parallel.store(max_parallel, Ordering::Relaxed);
+        self.schedule();
     }
 
     /// Watches the event bus until `shutdown`, and starts the ready tasks that start by
@@ -742,7 +756,9 @@ impl TaskService {
             let mut st = self.state.lock();
             st.refill_queue();
             let active = st.active_count();
-            let next = st.scheduler.take(active, self.max_parallel);
+            let next = st
+                .scheduler
+                .take(active, self.max_parallel.load(Ordering::Relaxed));
             next.into_iter()
                 .filter_map(|id| self.claim(&mut st, id).ok())
                 .collect()

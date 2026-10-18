@@ -1,5 +1,7 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`daemon_settings`]: `daemon.toml` as a list of settings, `daemon.settings.get` / `.set`
+//!   and `assistant.reset` (protocol 0.28, capability `daemon.settings`).
 //! - [`account`]: harness accounts (protocol 0.17, capability `accounts`); [`chat`] also takes
 //!   `chat.create` for the ACP harnesses `omp` and `claude` (capability `harness.acp`).
 //! - [`resources`]: process trees, usage, stop/kill/interrupt (protocol 0.18, capability
@@ -40,6 +42,7 @@ pub mod assistant;
 pub mod blocks;
 pub mod chat;
 pub mod control;
+pub mod daemon_settings;
 pub mod error;
 pub mod frame;
 pub mod history;
@@ -65,7 +68,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 27,
+    minor: 28,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

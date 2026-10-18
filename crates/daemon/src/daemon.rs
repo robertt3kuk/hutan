@@ -27,6 +27,7 @@ use crate::chat;
 use crate::config::DaemonSettings;
 use crate::conn::{self, ConnContext};
 use crate::control::ControlService;
+use crate::daemon_settings::{SettingsService, Targets};
 use crate::error::{DaemonError, MAX_SOCKET_PATH_BYTES};
 use crate::harness::Harnesses;
 use crate::history::HistoryService;
@@ -370,6 +371,19 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         hutan_bin,
         socket: paths.socket.clone(),
     });
+    let settings_service = SettingsService::new(
+        paths.config_file.clone(),
+        paths.user_home.clone(),
+        settings.clone(),
+        Targets {
+            history: history.clone(),
+            assistant: assistant.clone(),
+            notify: notify.clone(),
+            tasks: tasks.clone(),
+            control: control.clone(),
+            registry: registry.clone(),
+        },
+    );
     let router = Router::new(
         registry,
         hub,
@@ -383,6 +397,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             resources,
             control,
             ui,
+            settings: settings_service,
         },
         bus.clone(),
         shutdown.clone(),

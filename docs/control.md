@@ -61,7 +61,7 @@ Every request kind is classified once, in one table in `crates/daemon/src/router
 
 - **Read** — always allowed: lists, snapshots, history, `ui.actions`, `ui.layout`, `approval.list`, `account.list`, terminal attach/detach/ack, `agent.report`/`release` (what hooks do), `client.focus`, …
 - **Mutate** — follows `agents`: creating, stopping, renaming, sending, tasks, worktrees, workspaces, history index changes, `ui.run`, `ui.set_setting`, `session.send_text`, `daemon.shutdown`, … `workspace.assign` and `workspace.delete` (projects, protocol 0.19) are Mutate; `workspace.list|recent` Read. The resource manager (`docs/resources.md`): `session.kill`, `process.signal` and `agent.interrupt` are Mutate; `resources.list|subscribe|unsubscribe` are Read.
-- **UserOnly** — refused to agents under every policy: `approval.respond`, `notify.act` (it can answer an approval), provider configuration and credentials (`provider.add|update|remove|set_credential|clear_credential`, `account.login|logout`), the desktop's own `ui.publish` and `ui.command_result`. `[control]` itself lives in `daemon.toml`, which no request writes.
+- **UserOnly** — refused to agents under every policy: `approval.respond`, `notify.act` (it can answer an approval), provider configuration and credentials (`provider.add|update|remove|set_credential|clear_credential`, `account.login|logout`), the desktop's own `ui.publish` and `ui.command_result`, and the daemon's own settings: `daemon.settings.set` and `assistant.reset` (protocol 0.28). `[control]` itself lives in `daemon.toml`, which only `daemon.settings.set` writes, so an agent can never widen its own permissions, whatever `agents` says; `daemon.settings.get` is Read. Neither is a tool of `hutan mcp`.
 
 For a Mutate request from an agent:
 

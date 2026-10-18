@@ -14,13 +14,14 @@ use serde_json::{Map, Value};
 
 use crate::ProtocolVersion;
 use crate::account::{AccountLogin, AccountLogout};
-use crate::assistant::{AssistantConfigure, AssistantListRequest, AssistantOpen};
+use crate::assistant::{AssistantConfigure, AssistantListRequest, AssistantOpen, AssistantReset};
 use crate::blocks::{Block, TerminalBlockText, TerminalBlocks};
 use crate::chat::{
     ApprovalInfo, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatHistoryRequest, ChatInfo,
     ChatModelsRequest, ChatSend, QuestionAnswer, QuestionInfo, QuestionListRequest,
 };
 use crate::control::{ErrorBody, ErrorCode};
+use crate::daemon_settings::DaemonSettingSet;
 use crate::error::ProtocolError;
 use crate::history::{HistorySearch, HistorySetEnabled};
 use crate::notify::{ClientFocus, NotificationIntent, NotifyAck, NotifyAct};
@@ -230,6 +231,19 @@ pub enum Request {
     /// `AssistantConfig`.
     #[serde(rename = "assistant.configure")]
     AssistantConfigure(AssistantConfigure),
+    /// Capability `daemon.settings` (protocol 0.28): remove the stored `assistant.configure`
+    /// choice of a scope so it inherits again; answered with `Empty`. Never allowed to an
+    /// agent-originated connection.
+    #[serde(rename = "assistant.reset")]
+    AssistantReset(AssistantReset),
+    /// Capability `daemon.settings` (protocol 0.28): `daemon.toml` as a list of settings;
+    /// answered with `DaemonSettings`.
+    #[serde(rename = "daemon.settings.get")]
+    DaemonSettingsGet(Empty),
+    /// Capability `daemon.settings`: change or remove one setting of `daemon.toml`; answered
+    /// with `DaemonSettings`. Never allowed to an agent-originated connection.
+    #[serde(rename = "daemon.settings.set")]
+    DaemonSettingsSet(DaemonSettingSet),
     /// Capability `notify.intents` (protocol 0.13): the pending notification intents; answered
     /// with `NotifyList`.
     #[serde(rename = "notify.list")]

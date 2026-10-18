@@ -10,11 +10,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
-use hutan_core::{ApprovalId, QuestionId, QuestionResponse, SessionId, TerminalId};
+use hutan_core::{ApprovalId, QuestionId, QuestionResponse, SessionId, TerminalId, WorkspaceId};
 use hutan_protocol::account::{AccountInfo, AccountSession};
 use hutan_protocol::assistant::{
     AssistantConfig, AssistantConfigure, AssistantEntry, AssistantListRequest, AssistantOpen,
-    Attachment,
+    AssistantScope, Attachment,
 };
 use hutan_protocol::blocks::{
     BlockPart, TerminalBlockText, TerminalBlockTextResult, TerminalBlocks, TerminalBlocksResult,
@@ -22,6 +22,7 @@ use hutan_protocol::blocks::{
 use hutan_protocol::chat::{
     ApprovalInfo, ChatCreate, ChatHistory, ChatModels, ChatSent, QuestionInfo,
 };
+use hutan_protocol::daemon_settings::DaemonSettings;
 use hutan_protocol::history::{HistoryHits, HistorySearch, HistorySetEnabled, HistoryStatusInfo};
 use hutan_protocol::messages::{
     AgentReleaseRequest, AgentReportRequest, Empty, Request, SessionInfo, TerminalSize,
@@ -598,6 +599,41 @@ impl Connection {
     ) -> Result<AssistantConfig, ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;
         client.assistant_configure(req).await
+    }
+
+    /// True while connected to a daemon that advertised capability `daemon.settings`
+    /// ([`Client::supports_daemon_settings`]); false when disconnected.
+    pub fn supports_daemon_settings(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_daemon_settings())
+    }
+
+    /// `daemon.settings.get` ([`Client::daemon_settings`]): the options of `daemon.toml`.
+    pub async fn daemon_settings(&self) -> Result<DaemonSettings, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.daemon_settings().await
+    }
+
+    /// `daemon.settings.set` ([`Client::daemon_setting_set`]): changes (`Some`) or removes
+    /// (`None`) one option of `daemon.toml`.
+    pub async fn daemon_setting_set(
+        &self,
+        key: &str,
+        value: Option<serde_json::Value>,
+    ) -> Result<DaemonSettings, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.daemon_setting_set(key, value).await
+    }
+
+    /// `assistant.reset` ([`Client::assistant_reset`]): the scope inherits its backend again.
+    pub async fn assistant_reset(
+        &self,
+        scope: AssistantScope,
+        workspace_id: Option<WorkspaceId>,
+    ) -> Result<(), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.assistant_reset(scope, workspace_id).await
     }
 
     /// True while connected to a daemon that advertised capability `harness.acp`

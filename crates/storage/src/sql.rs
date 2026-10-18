@@ -84,6 +84,10 @@ pub enum Write {
         key: String,
         value: String,
     },
+    /// Removes a key (nothing happens for a missing one).
+    DeleteMeta {
+        key: String,
+    },
     /// Appends to the epoch history, keeping the newest [`EPOCH_HISTORY_KEPT`].
     RecordEpoch(EpochRecord),
     /// Marks a recorded run as cleanly stopped (nothing happens for an unknown or untracked one).
@@ -252,6 +256,10 @@ pub fn apply(conn: &Connection, write: &Write) -> Result<()> {
             .map_err(StorageError::sqlite("deleting an agent tree"))?;
         }
         Write::SetMeta { key, value } => set_meta(conn, key, value)?,
+        Write::DeleteMeta { key } => {
+            conn.execute("DELETE FROM app_meta WHERE key = ?1", [key])
+                .map_err(StorageError::sqlite("deleting from app_meta"))?;
+        }
         Write::RecordEpoch(record) => record_epoch(conn, *record)?,
         Write::RecordEpochStop {
             epoch,

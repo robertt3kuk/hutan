@@ -61,6 +61,8 @@ What each harness assistant may do (restricted where the harness allows it, neve
 
 The permissions below (`[assistant.context]` …) gate attachments for every backend. A harness assistant's session is marked `ChatInfo.assistant`; it is an ordinary harness chat otherwise (journal, restore, history index). Harness assistants need the harness's login (`hutan account ls`); when the harness is missing or logged out `assistant.open` fails with the harness's own message (when it was chosen; the automatic backend only picks a ready harness).
 
+**Resetting a scope.** `assistant.configure` stores a choice per scope and there is no such thing as "automatic" among its backends, so a choice made once would stay. `assistant.reset {scope, workspace_id?}` (protocol 0.28; `hutan assistant reset [--ws ID]`) removes the stored choice of that scope (the `app_meta` key it was written to): the scope inherits again, workspace → its parent workspace → the global choice → `[assistant]` of `daemon.toml` → the automatic backend. Assistant sessions that exist are untouched and `assistant.open` follows the inherited choice from then on (the oldest assistant that runs on it is the default, one is created when there is none). Resetting a scope with nothing stored is not an error. Like `daemon.settings.set` it is user-only: an agent-originated connection gets `forbidden` under every `[control]` policy. The `[assistant]` defaults (`backend`, `provider`, `model`, `context_budget_chars`) and the permissions are also settings of `daemon.settings`, live.
+
 ## Attachments
 
 `chat.send { session_id, text, attachments }`. At most 16 per message. Every chat takes attachments (protocol 0.23, `docs/protocol.md` § Rich input); `[assistant.context]` gates them for assistants and for agent-originated messages only. Every attachment is validated (its own bounds, then the permission of the session's scope) before the first one is read, and the first one that cannot be resolved fails the message: nothing is journaled, nothing reaches the provider.
@@ -119,7 +121,7 @@ files = false
 files = false
 ```
 
-An attachment the settings do not allow is `forbidden`, and the message names the setting (`assistant.context.shell`, `assistant.global_context.files`, `assistant.workspaces.<key>.files`); the error's `data.setting` has it too. The file is read when the daemon starts: restart it after editing. Settings gate the daemon's own reading; they do not make an attachment out of anything that was not attached.
+An attachment the settings do not allow is `forbidden`, and the message names the setting (`assistant.context.shell`, `assistant.global_context.files`, `assistant.workspaces.<key>.files`); the error's `data.setting` has it too. The permissions are read for each message, so a change made through `daemon.settings.set` (`hutan config set assistant.context.files false`, protocol 0.28, `docs/protocol.md` § Daemon settings) holds from the next message on; a hand edit of the file is picked up by the next such change or a restart. Settings gate the daemon's own reading; they do not make an attachment out of anything that was not attached.
 
 Other refusals: `bad_request` (bounds, more than 16 attachments, a session that is not a chat), `not_found` (terminal, block, file, transcript), `invalid_state` (`search` or an external transcript while indexing is disabled).
 
@@ -160,6 +162,7 @@ Chips are removable (×) before the send and become structured attachments of `c
 hutan ask "<question>" [--ws <id|name>] [--attach <spec>]…
 hutan assistant ls [--ws <id|name>]
 hutan assistant open [--ws <id|name>] [--new]
+hutan assistant reset [--ws <id|name>]
 ```
 
 `--attach` specs: `block:<terminal>:<block>`, `recent:<terminal>:<lines>`, `agent:<session>[:<turns>]` (default 5), `file:<path>[:<first>-<last>]`, `search:<query>` (5 hits; quotes optional). `ask` uses the default assistant of `--ws`, else `$HUTAN_WORKSPACE`, else the global one (Home), prints the answer as it streams and exits 1 when the turn fails (also when the daemon refuses an attachment: the message is on stderr). `--json` prints every event. `hutan chat log <session>` shows the whole conversation, attachments included.

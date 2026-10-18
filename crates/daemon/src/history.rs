@@ -299,6 +299,30 @@ impl HistoryService {
         self.status().await
     }
 
+    /// The `[history]` settings indexing runs by (or would run by, when it is off).
+    pub async fn settings(&self) -> HistorySettings {
+        self.state.lock().await.settings.clone()
+    }
+
+    /// Indexing follows `settings` from now on (`daemon.settings.set` changed `[history]`):
+    /// on or off, and a running indexer starts again when its sources or range changed. The
+    /// index on disk is kept. Does not write `daemon.toml`.
+    pub async fn apply_settings(&self, settings: HistorySettings) -> Result<(), ErrorBody> {
+        let mut state = self.state.lock().await;
+        if state.settings == settings && state.running.is_some() == settings.enabled {
+            return Ok(());
+        }
+        self.halt(&mut state).await;
+        state.settings = settings;
+        if state.settings.enabled
+            && let Err(error) = self.launch(&mut state).await
+        {
+            state.settings.enabled = false;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// Deletes the index (rows, sources table, file) and, when indexing runs, starts an empty one.
     pub async fn clear(&self) -> Result<(), ErrorBody> {
         let state = self.state.lock().await;

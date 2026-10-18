@@ -93,6 +93,10 @@ pub enum Command {
     /// Model providers for direct chat: OpenAI, Anthropic, Ollama, OpenAI-compatible servers
     #[command(subcommand)]
     Provider(ProviderCommand),
+    /// The daemon's own settings (daemon.toml): list, read, change or reset them
+    /// (`hutan config ls|get|set|reset`)
+    #[command(subcommand)]
+    Config(ConfigCommand),
     /// Ask the assistant a question, with context attached (shell output, files, agent
     /// transcripts, search results); streams the answer
     Ask(AskArgs),
@@ -700,6 +704,10 @@ pub enum AssistantCommand {
     Ls(AssistantLsArgs),
     /// Print the default assistant session of a scope, creating it on first use
     Open(AssistantOpenArgs),
+    /// Forget the backend chosen for a scope (the Assistant panel, setup): it uses the parent
+    /// workspace's, the global choice, `[assistant]` of daemon.toml, or the automatic backend
+    /// again
+    Reset(AssistantResetArgs),
 }
 
 #[derive(Debug, Args)]
@@ -718,6 +726,45 @@ pub struct AssistantOpenArgs {
     /// Create one more assistant instead of returning the default
     #[arg(long)]
     pub new: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct AssistantResetArgs {
+    /// The workspace whose own choice is removed (id, unique id prefix, or exact name; default:
+    /// $HUTAN_WORKSPACE, else the global assistant of Home)
+    #[arg(long = "ws", visible_alias = "workspace", value_name = "ID|NAME")]
+    pub workspace: Option<String>,
+}
+
+/// The daemon's own settings: `daemon.toml`, edited by the daemon with its comments kept.
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// List every setting: its value, default, whether a change applies at once (live) or after
+    /// a daemon restart, and whether the running daemon still uses an older value (pending)
+    Ls,
+    /// Print one setting
+    Get(ConfigKeyArgs),
+    /// Change one setting; the value is TOML: `true`, `30`, `"text"`, `["a", "b"]`, or bare text
+    /// for a plain string (`hutan config set control.agents read_only`)
+    Set(ConfigSetArgs),
+    /// Remove a setting from daemon.toml: back to its default
+    Reset(ConfigKeyArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ConfigKeyArgs {
+    /// A dotted key as `hutan config ls` shows it (`notify.enabled`, `harness.omp.bin`, ...)
+    pub key: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ConfigSetArgs {
+    /// A dotted key as `hutan config ls` shows it (`notify.enabled`, `harness.omp.bin`, ...)
+    pub key: String,
+    /// The new value as TOML: `true`, `30`, `"text"`, `["a", "b"]`; an empty string removes the
+    /// setting like `reset`
+    #[arg(allow_hyphen_values = true)]
+    pub value: String,
 }
 
 #[derive(Debug, Args)]

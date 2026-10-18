@@ -16,7 +16,7 @@ use hutan_protocol::account::{
 };
 use hutan_protocol::assistant::{
     AssistantConfig, AssistantConfigure, AssistantEntry, AssistantList, AssistantListRequest,
-    AssistantOpen, Attachment,
+    AssistantOpen, AssistantReset, AssistantScope, Attachment,
 };
 use hutan_protocol::blocks::{
     BlockPart, TerminalBlockText, TerminalBlockTextResult, TerminalBlocks, TerminalBlocksResult,
@@ -26,6 +26,7 @@ use hutan_protocol::chat::{
     ChatHistoryRequest, ChatModels, ChatModelsRequest, ChatSend, ChatSent, HISTORY_MAX_LIMIT,
     QuestionAnswer, QuestionInfo, QuestionList, QuestionListRequest,
 };
+use hutan_protocol::daemon_settings::{DaemonSettingSet, DaemonSettings};
 use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, ClientInfo, Empty, Event, Hello,
     Request, ResumePoint, SessionInfo, SessionRef, SessionResult, Welcome, WorkspaceCreate,
@@ -128,6 +129,8 @@ pub(crate) const TASK_REVIEW_CAPABILITY: &str = "task.review";
 pub(crate) const RECOVERY_CAPABILITY: &str = "session.recovery";
 /// Capability for `TaskRun::Chat.model` (protocol 0.27).
 pub(crate) const TASK_CHAT_MODEL_CAPABILITY: &str = "task.chat_model";
+/// Capability for `daemon.settings.get` / `.set` and `assistant.reset` (protocol 0.28).
+pub(crate) const DAEMON_SETTINGS_CAPABILITY: &str = "daemon.settings";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -155,6 +158,7 @@ const CAPABILITIES: &[&str] = &[
     TASK_REVIEW_CAPABILITY,
     RECOVERY_CAPABILITY,
     TASK_CHAT_MODEL_CAPABILITY,
+    DAEMON_SETTINGS_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -746,6 +750,50 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == TASK_CHAT_MODEL_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `daemon.settings` (protocol 0.28):
+    /// `daemon.settings.get` / `.set` and `assistant.reset` exist.
+    pub fn supports_daemon_settings(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == DAEMON_SETTINGS_CAPABILITY)
+    }
+
+    /// `daemon.settings.get`: every option of `daemon.toml` with its value, default and whether
+    /// the running daemon uses it.
+    pub async fn daemon_settings(&self) -> Result<DaemonSettings, ClientError> {
+        self.call(Request::DaemonSettingsGet(Empty {})).await
+    }
+
+    /// `daemon.settings.set`: changes one option of `daemon.toml`; `None` removes it (back to
+    /// the default). Answers the settings as they are afterwards. Refused with `forbidden` for
+    /// a client that runs inside an agent's session.
+    pub async fn daemon_setting_set(
+        &self,
+        key: &str,
+        value: Option<Value>,
+    ) -> Result<DaemonSettings, ClientError> {
+        self.call(Request::DaemonSettingsSet(DaemonSettingSet {
+            key: key.to_owned(),
+            value,
+        }))
+        .await
+    }
+
+    /// `assistant.reset`: the scope inherits its backend again.
+    pub async fn assistant_reset(
+        &self,
+        scope: AssistantScope,
+        workspace_id: Option<WorkspaceId>,
+    ) -> Result<(), ClientError> {
+        self.call::<Empty>(Request::AssistantReset(AssistantReset {
+            scope,
+            workspace_id,
+        }))
+        .await
+        .map(|_| ())
     }
 
     /// The files a checkout changed against its base (`worktree.diff`).

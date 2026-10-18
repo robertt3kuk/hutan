@@ -99,7 +99,7 @@ struct State {
 /// The policy gate and the `control` approvals.
 #[derive(Debug)]
 pub struct ControlService {
-    settings: ControlSettings,
+    settings: parking_lot::RwLock<ControlSettings>,
     bus: Arc<EventBus>,
     storage: Storage,
     registry: RegistryHandle,
@@ -130,7 +130,7 @@ impl ControlService {
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         let service = Arc::new(Self {
-            settings,
+            settings: parking_lot::RwLock::new(settings),
             bus,
             storage,
             registry: registry.clone(),
@@ -144,7 +144,13 @@ impl ControlService {
     }
 
     pub fn settings(&self) -> ControlSettings {
-        self.settings
+        *self.settings.read()
+    }
+
+    /// Uses `settings` from now on (`daemon.settings.set` changed `[control]`): the policy is
+    /// asked for each request and the timeout for each approval.
+    pub fn apply_settings(&self, settings: ControlSettings) {
+        *self.settings.write() = settings;
     }
 
     /// Whether `session` exists and is live: a claimed `origin` that is not gets ignored.
@@ -199,7 +205,7 @@ impl ControlService {
                 "user_only",
             ));
         }
-        match self.settings.agents {
+        match self.settings().agents {
             AgentPolicy::ReadOnly => {
                 self.audit_auto(origin, &describe, "deny_policy");
                 Err(forbidden(
@@ -268,7 +274,7 @@ impl ControlService {
         info!(approval = %id, session = %origin, method, "an agent asks to control Hutan");
 
         let started = Instant::now();
-        let timeout = Duration::from_secs(self.settings.approval_timeout_secs);
+        let timeout = Duration::from_secs(self.settings().approval_timeout_secs);
         let decision = tokio::select! {
             decision = answered => decision.ok(),
             () = tokio::time::sleep(timeout) => None,
@@ -288,7 +294,7 @@ impl ControlService {
             return Err(forbidden(
                 format!(
                     "nobody answered the approval within {}s: `{method}` was not run",
-                    self.settings.approval_timeout_secs
+                    timeout.as_secs()
                 ),
                 "expired",
             ));
@@ -338,7 +344,7 @@ impl ControlService {
     /// `ask` only after the user chose "allow for this session" for a `session.send_text` of
     /// that session. Frames are not audited one by one.
     pub fn input_allowed(&self, origin: SessionId) -> bool {
-        match self.settings.agents {
+        match self.settings().agents {
             AgentPolicy::Allow => true,
             AgentPolicy::ReadOnly => false,
             AgentPolicy::Ask => lock(&self.state)

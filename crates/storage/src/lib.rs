@@ -41,6 +41,8 @@ const QUEUE_CAPACITY: usize = 1024;
 
 enum Cmd {
     Write(Write),
+    /// Applied like `Write`; the outcome goes back to the submitter.
+    WriteChecked(Write, SyncSender<Result<()>>),
     /// All or nothing: one transaction.
     Batch(Vec<Write>),
     Read(Box<dyn FnOnce(&Connection) + Send>),
@@ -180,6 +182,14 @@ impl Storage {
         self.send(Cmd::Write(write))
     }
 
+    /// Applies one write on the writer thread, after everything queued before it, and returns
+    /// its outcome: an SQLite failure is the result, not only a log line. Blocks until then.
+    pub fn write_checked(&self, write: Write) -> Result<()> {
+        let (reply, answer) = sync_channel(1);
+        self.send(Cmd::WriteChecked(write, reply))?;
+        answer.recv().map_err(|_| StorageError::Closed)?
+    }
+
     /// Queues writes that are applied in one transaction: after a crash either all of them
     /// are there or none.
     pub fn batch(&self, writes: Vec<Write>) -> Result<()> {
@@ -238,6 +248,14 @@ fn run_writer(mut conn: Connection, commands: std::sync::mpsc::Receiver<Cmd>) {
                 if let Err(error) = sql::apply(&conn, &write) {
                     error!(%error, ?write, "storage write failed");
                 }
+            }
+            Cmd::WriteChecked(write, reply) => {
+                let result = sql::apply(&conn, &write);
+                if let Err(error) = &result {
+                    error!(%error, ?write, "storage write failed");
+                }
+                // The submitter may have gone away; nothing to do then.
+                let _ = reply.send(result);
             }
             Cmd::Batch(writes) => {
                 if let Err(error) = apply_batch(&mut conn, &writes) {
@@ -519,13 +537,15 @@ impl Questions<'_> {
 pub struct Providers<'a>(&'a Storage);
 
 impl Providers<'_> {
-    /// Inserts the provider or replaces everything but its creation time.
+    /// Inserts the provider or replaces everything but its creation time. Applied before it
+    /// returns: a failing database is the error (blocks, like a read).
     pub fn upsert(&self, row: ProviderRow) -> Result<()> {
-        self.0.write(Write::UpsertProvider(Box::new(row)))
+        self.0.write_checked(Write::UpsertProvider(Box::new(row)))
     }
 
+    /// Applied before it returns, like [`upsert`](Self::upsert).
     pub fn delete(&self, id: &str) -> Result<()> {
-        self.0.write(Write::DeleteProvider(id.to_owned()))
+        self.0.write_checked(Write::DeleteProvider(id.to_owned()))
     }
 
     /// Oldest first.
@@ -584,6 +604,13 @@ impl AppMeta<'_> {
     pub fn get(&self, key: &str) -> Result<Option<String>> {
         let key = key.to_owned();
         self.0.read(move |conn| sql::get_meta(conn, &key))
+    }
+
+    /// Removes a key, applied before it returns (a failing database is the error).
+    pub fn delete(&self, key: &str) -> Result<()> {
+        self.0.write_checked(Write::DeleteMeta {
+            key: key.to_owned(),
+        })
     }
 
     pub fn set(&self, key: &str, value: &str) -> Result<()> {

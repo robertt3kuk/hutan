@@ -47,6 +47,114 @@ use hutan_protocol::task::*;
 use hutan_protocol::tree::*;
 use hutan_protocol::worktree::*;
 use hutan_protocol::{ErrorBody, ErrorCode, Frame, PROTOCOL_VERSION};
+fn daemon_setting_entries() -> Vec<hutan_protocol::daemon_settings::DaemonSetting> {
+    use hutan_protocol::daemon_settings::{Applies, DaemonSetting, DaemonSettingKind};
+    let entry = |key: &str,
+                 kind: DaemonSettingKind,
+                 value: serde_json::Value,
+                 default: serde_json::Value,
+                 set_in_file: bool,
+                 applies: Applies,
+                 pending_restart: bool| DaemonSetting {
+        key: key.into(),
+        kind,
+        value,
+        default,
+        set_in_file,
+        applies,
+        pending_restart,
+    };
+    vec![
+        entry(
+            "notify.enabled",
+            DaemonSettingKind::Bool,
+            serde_json::json!(false),
+            serde_json::json!(true),
+            true,
+            Applies::Live,
+            false,
+        ),
+        entry(
+            "tasks.max_parallel",
+            DaemonSettingKind::Int {
+                min: Some(1),
+                max: None,
+            },
+            serde_json::json!(3),
+            serde_json::json!(3),
+            false,
+            Applies::Live,
+            false,
+        ),
+        entry(
+            "daemon.restore_sessions",
+            DaemonSettingKind::Enum {
+                choices: vec!["respawn".into(), "stopped".into()],
+            },
+            serde_json::json!("stopped"),
+            serde_json::json!("respawn"),
+            true,
+            Applies::Restart,
+            true,
+        ),
+        entry(
+            "harness.omp.bin",
+            DaemonSettingKind::Path,
+            serde_json::json!(""),
+            serde_json::json!(""),
+            false,
+            Applies::Restart,
+            false,
+        ),
+        entry(
+            "notify.kinds",
+            DaemonSettingKind::StringList {
+                choices: Some(vec!["approval_required".into(), "task_failed".into()]),
+            },
+            serde_json::json!(["approval_required"]),
+            serde_json::json!(["approval_required", "task_failed"]),
+            true,
+            Applies::Live,
+            false,
+        ),
+        entry(
+            "codex.args",
+            DaemonSettingKind::StringList { choices: None },
+            serde_json::json!([]),
+            serde_json::json!([]),
+            false,
+            Applies::Restart,
+            false,
+        ),
+        entry(
+            "harness.omp.env",
+            DaemonSettingKind::StringMap,
+            serde_json::json!({"OMP_LOG": "debug"}),
+            serde_json::json!({}),
+            true,
+            Applies::Restart,
+            false,
+        ),
+        entry(
+            "assistant.model",
+            DaemonSettingKind::String,
+            serde_json::json!(""),
+            serde_json::json!(""),
+            false,
+            Applies::Restart,
+            false,
+        ),
+        entry(
+            "mcp.docs",
+            DaemonSettingKind::Table,
+            serde_json::json!({"command": "npx", "args": ["-y", "docs-mcp"]}),
+            serde_json::json!({}),
+            true,
+            Applies::Restart,
+            false,
+        ),
+    ]
+}
 fn ws() -> WorkspaceId {
     "01K7F3B5N2Q9W8E4R6T1Y0V3JA".parse().unwrap()
 }
@@ -2095,6 +2203,35 @@ fn requests() -> Vec<(&'static str, Request)> {
             "session_recovery_ack_all",
             Request::SessionRecoveryAck(RecoveryAck { session_id: None }),
         ),
+        ("daemon_settings_get", Request::DaemonSettingsGet(Empty {})),
+        (
+            "daemon_settings_set",
+            Request::DaemonSettingsSet(hutan_protocol::daemon_settings::DaemonSettingSet {
+                key: "notify.kinds".into(),
+                value: Some(serde_json::json!(["approval_required", "task_failed"])),
+            }),
+        ),
+        (
+            "daemon_settings_set_reset",
+            Request::DaemonSettingsSet(hutan_protocol::daemon_settings::DaemonSettingSet {
+                key: "notify.enabled".into(),
+                value: None,
+            }),
+        ),
+        (
+            "assistant_reset_global",
+            Request::AssistantReset(AssistantReset {
+                scope: AssistantScope::Global,
+                workspace_id: None,
+            }),
+        ),
+        (
+            "assistant_reset_workspace",
+            Request::AssistantReset(AssistantReset {
+                scope: AssistantScope::Workspace,
+                workspace_id: Some(ws()),
+            }),
+        ),
     ]
 }
 
@@ -4078,6 +4215,18 @@ fn responses_match_fixtures() {
                 19,
                 &QuestionList {
                     questions: vec![question_info()],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "daemon_settings",
+            ControlMessage::ok(
+                15,
+                &hutan_protocol::daemon_settings::DaemonSettings {
+                    file: "/Users/me/Library/Application Support/Hutan/daemon.toml".into(),
+                    restart_pending: true,
+                    entries: daemon_setting_entries(),
                 },
             )
             .unwrap(),

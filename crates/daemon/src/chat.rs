@@ -17,7 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
@@ -186,7 +186,7 @@ pub struct ChatManager {
     codex: CodexConfig,
     harnesses: Arc<Harnesses>,
     providers: Arc<ProviderService>,
-    max_context_chars: usize,
+    max_context_chars: Arc<AtomicUsize>,
     live: Mutex<HashMap<SessionId, Arc<Live>>>,
     approvals: Mutex<HashMap<ApprovalId, Pending>>,
     questions: Mutex<HashMap<QuestionId, PendingQuestion>>,
@@ -293,7 +293,7 @@ impl ChatManager {
             codex,
             harnesses,
             providers,
-            max_context_chars,
+            max_context_chars: Arc::new(AtomicUsize::new(max_context_chars)),
             live: Mutex::new(HashMap::new()),
             approvals: Mutex::new(HashMap::new()),
             questions: Mutex::new(HashMap::new()),
@@ -307,6 +307,16 @@ impl ChatManager {
     /// The model providers of this daemon.
     pub(crate) fn providers(&self) -> &Arc<ProviderService> {
         &self.providers
+    }
+
+    /// `gateway.max_context_chars`, now.
+    pub(crate) fn max_context_chars(&self) -> usize {
+        self.max_context_chars.load(Ordering::Relaxed)
+    }
+
+    /// `gateway.max_context_chars` from now on, for direct chats that already run too.
+    pub(crate) fn set_max_context_chars(&self, chars: usize) {
+        self.max_context_chars.store(chars, Ordering::Relaxed);
     }
 
     /// The pending approvals of another service (the control gate, protocol 0.21) that
@@ -534,7 +544,7 @@ impl ChatManager {
             self.storage.clone(),
             self.providers.clone(),
             tx,
-            self.max_context_chars,
+            self.max_context_chars.clone(),
             Target {
                 provider_id: provider_id.clone(),
                 model: model.clone(),

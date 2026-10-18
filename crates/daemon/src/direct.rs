@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use futures::StreamExt;
@@ -63,7 +63,8 @@ pub(crate) struct DirectSession {
     storage: Storage,
     providers: Arc<ProviderService>,
     tx: mpsc::Sender<AdapterMessage>,
-    max_context_chars: usize,
+    /// `gateway.max_context_chars`, shared with the chat manager (changed live).
+    max_context_chars: Arc<AtomicUsize>,
     target: Mutex<Target>,
     turn: Mutex<Option<ActiveTurn>>,
     /// Cumulative token counts of the conversation (the `total` of `usage` events).
@@ -96,7 +97,7 @@ impl DirectSession {
         storage: Storage,
         providers: Arc<ProviderService>,
         tx: mpsc::Sender<AdapterMessage>,
-        max_context_chars: usize,
+        max_context_chars: Arc<AtomicUsize>,
         target: Target,
         usage: TokenCounts,
     ) -> Arc<Self> {
@@ -156,11 +157,12 @@ impl DirectSession {
                 .await?;
         }
         let history = self.load_history().await?;
+        let max_context_chars = self.max_context_chars.load(Ordering::Relaxed);
         let (mut messages, dropped) = build_context(
             &history,
             &text,
             target.system_prompt.as_deref(),
-            self.max_context_chars,
+            max_context_chars,
         );
         if let Some(message) = messages.last_mut() {
             // The images ride on the new message only: the journal keeps their headers, which
@@ -371,7 +373,7 @@ impl DirectSession {
                     message: format!(
                         "context truncated: the {dropped} oldest message(s) were left out \
                          (gateway.max_context_chars = {})",
-                        self.max_context_chars
+                        self.max_context_chars.load(Ordering::Relaxed)
                     ),
                 },
             ))

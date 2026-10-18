@@ -21,7 +21,7 @@ use hutan_storage::{ProviderRow, Storage};
 use parking_lot::Mutex;
 use tracing::{info, warn};
 
-use crate::registry::{self, log_write};
+use crate::registry;
 
 /// Most providers one daemon keeps.
 const MAX_PROVIDERS: usize = 64;
@@ -307,7 +307,10 @@ impl ProviderService {
             providers.push(record.clone());
             record
         };
-        self.persist(&record);
+        if let Err(error) = self.persist(&record).await {
+            self.providers.lock().retain(|p| p.id != record.id);
+            return Err(error);
+        }
         info!(provider = %record.id, kind = %record.kind, "provider added");
         Ok(ProviderResult {
             provider: self.info(&record).await?,
@@ -329,7 +332,7 @@ impl ProviderService {
             .as_deref()
             .map(|m| checked_model(Some(m)))
             .transpose()?;
-        let record = {
+        let (record, previous) = {
             let mut providers = self.providers.lock();
             let record = providers
                 .iter_mut()
@@ -340,6 +343,7 @@ impl ProviderService {
                         format!("provider `{}` not found", req.provider_id),
                     )
                 })?;
+            let previous = record.clone();
             if let Some(name) = name {
                 record.name = name;
             }
@@ -349,26 +353,59 @@ impl ProviderService {
             if let Some(model) = default_model {
                 record.default_model = model;
             }
-            record.clone()
+            (record.clone(), previous)
         };
-        self.persist(&record);
+        if let Err(error) = self.persist(&record).await {
+            if let Some(current) = self
+                .providers
+                .lock()
+                .iter_mut()
+                .find(|p| p.id == previous.id)
+            {
+                *current = previous;
+            }
+            return Err(error);
+        }
         Ok(ProviderResult {
             provider: self.info(&record).await?,
         })
     }
 
+    /// Removes a provider and its key. The key goes first: a failure there leaves the provider
+    /// (and the key) in place to retry. When the database then refuses the delete, the provider
+    /// is back in the list (without its key) and the error says so.
     pub async fn remove(self: &Arc<Self>, provider_id: &str) -> Result<(), ErrorBody> {
         let record = self.record(provider_id)?;
-        // The key goes first: a failure leaves the provider (and the key) in place to retry.
         self.delete_credential(&record.id).await?;
-        self.providers.lock().retain(|p| p.id != record.id);
+        let index = {
+            let mut providers = self.providers.lock();
+            let index = providers.iter().position(|p| p.id == record.id);
+            if let Some(index) = index {
+                providers.remove(index);
+            }
+            index
+        };
+        let storage = self.storage.clone();
+        let id = record.id.clone();
+        let stored = tokio::task::spawn_blocking(move || storage.providers().delete(&id))
+            .await
+            .map_err(|e| internal("removing the provider", e))
+            .and_then(|result| result.map_err(|e| internal("removing the provider", e)));
+        if let Err(error) = stored {
+            let mut providers = self.providers.lock();
+            if !providers.iter().any(|p| p.id == record.id) {
+                let at = index.map_or(providers.len(), |i| i.min(providers.len()));
+                providers.insert(at, record);
+            }
+            return Err(error);
+        }
         self.checked.lock().remove(&record.id);
-        log_write(self.storage.providers().delete(&record.id), "a provider");
         info!(provider = %record.id, "provider removed");
         Ok(())
     }
 
-    fn persist(&self, record: &ProviderRecord) {
+    /// Writes the provider's row; a failing database is an `internal` error.
+    async fn persist(self: &Arc<Self>, record: &ProviderRecord) -> Result<(), ErrorBody> {
         let row = ProviderRow {
             id: record.id.clone(),
             kind: record.kind.as_str().to_owned(),
@@ -378,7 +415,11 @@ impl ProviderService {
             keychain_ref: keychain_ref(&record.id),
             created_at_ms: record.created_at_ms,
         };
-        log_write(self.storage.providers().upsert(row), "a provider");
+        let storage = self.storage.clone();
+        tokio::task::spawn_blocking(move || storage.providers().upsert(row))
+            .await
+            .map_err(|e| internal("saving the provider", e))?
+            .map_err(|e| internal("saving the provider", e))
     }
 
     // Talking to providers ----------------------------------------------------------------------
@@ -540,5 +581,55 @@ mod tests {
         let taken = [record("ollama"), record("ollama-2")];
         assert_eq!(unique_id(&taken, "ollama"), "ollama-3");
         assert_eq!(unique_id(&taken, "other"), "other");
+    }
+
+    #[tokio::test]
+    async fn a_failing_database_fails_provider_changes_and_rolls_them_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("hutan.db");
+        let storage = Storage::open(&database).unwrap();
+        let service = ProviderService::new(
+            storage.clone(),
+            Arc::new(hutan_gateway::MemoryStore::new()),
+            Http::new(hutan_gateway::HttpConfig::default()).unwrap(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let add = |name: &str| ProviderAdd {
+            kind: "ollama".to_owned(),
+            name: name.to_owned(),
+            base_url: None,
+            default_model: None,
+        };
+        service.add(add("Local")).await.unwrap();
+
+        // The table disappears under the running daemon, like a disk or schema fault.
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .execute_batch("DROP TABLE providers")
+            .unwrap();
+
+        let error = service.add(add("Second")).await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::Internal, "{}", error.message);
+        let error = service
+            .update(ProviderUpdate {
+                provider_id: "local".to_owned(),
+                name: Some("Renamed".to_owned()),
+                base_url: None,
+                default_model: Some("llama3".to_owned()),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::Internal, "{}", error.message);
+        let error = service.remove("local").await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::Internal, "{}", error.message);
+
+        // Nothing of the failed changes is visible: the list is what is stored.
+        let list = service.list().await.unwrap().providers;
+        assert_eq!(list.len(), 1, "{list:?}");
+        assert_eq!(list[0].id, "local");
+        assert_eq!(list[0].name, "Local");
+        assert_eq!(list[0].default_model, None);
+        storage.close();
     }
 }

@@ -543,7 +543,7 @@ impl DaemonSettings {
         })
     }
 
-    fn parse(text: &str, user_home: Option<&Path>) -> Result<Self, toml::de::Error> {
+    pub(crate) fn parse(text: &str, user_home: Option<&Path>) -> Result<Self, toml::de::Error> {
         let file: File = toml::from_str(text)?;
         if !RANGE_DAYS.contains(&file.history.range_days) {
             return Err(toml::de::Error::custom(format!(
@@ -662,9 +662,6 @@ fn expand_home_folder(folder: &str, user_home: Option<&Path>) -> Result<PathBuf,
 /// leaving every other key and comment as it is. Written to a temporary file first, so a crash
 /// never leaves a half-written config.
 pub fn set_history_enabled(path: &Path, enabled: bool) -> Result<(), DaemonError> {
-    use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-
     let context = |what: &str| format!("{what} {}", path.display());
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
@@ -691,6 +688,15 @@ pub fn set_history_enabled(path: &Path, enabled: bool) -> Result<(), DaemonError
         }
     }
 
+    write_atomic(path, &doc.to_string()).map_err(DaemonError::io(context("writing")))
+}
+
+/// Replaces the file at `path` with `text`: written to a temporary file beside it (mode 0600),
+/// synced, then renamed over it, so a crash never leaves a half-written config.
+pub fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
     let tmp = path.with_extension("toml.tmp");
     let write = || -> io::Result<()> {
         let mut file = std::fs::OpenOptions::new()
@@ -699,13 +705,12 @@ pub fn set_history_enabled(path: &Path, enabled: bool) -> Result<(), DaemonError
             .truncate(true)
             .mode(0o600)
             .open(&tmp)?;
-        file.write_all(doc.to_string().as_bytes())?;
+        file.write_all(text.as_bytes())?;
         file.sync_all()?;
         std::fs::rename(&tmp, path)
     };
-    write().map_err(|e| {
+    write().inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
-        DaemonError::io(context("writing"))(e)
     })
 }
 

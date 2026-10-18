@@ -26,8 +26,8 @@ use hutan_index::{Role, SessionTextQuery, Source};
 use hutan_protocol::account::{HARNESS_CLAUDE, HARNESS_OMP};
 use hutan_protocol::assistant::{
     AGENT_ASSISTANT, ATTACHMENTS_MAX, AssistantBackend, AssistantConfig, AssistantConfigure,
-    AssistantEntry, AssistantList, AssistantListRequest, AssistantOpen, AssistantScope, Attachment,
-    AttachmentKind, IMAGE_INLINE_MAX_BYTES, IMAGE_MAX_BYTES, LineRange,
+    AssistantEntry, AssistantList, AssistantListRequest, AssistantOpen, AssistantReset,
+    AssistantScope, Attachment, AttachmentKind, IMAGE_INLINE_MAX_BYTES, IMAGE_MAX_BYTES, LineRange,
 };
 use hutan_protocol::blocks::{BlockPart, BlockState, TerminalBlockText, TerminalBlocks};
 use hutan_protocol::chat::ChatCreate;
@@ -35,6 +35,7 @@ use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::history::HistorySearch;
 use hutan_protocol::messages::{SessionInfo, SessionListFilter, WorkspaceInfo, WorkspaceKind};
 use hutan_storage::Storage;
+use parking_lot::RwLock;
 use tokio::sync::Mutex;
 
 use crate::accounts::AccountService;
@@ -138,7 +139,8 @@ fn gated_kind(attachment: &Attachment) -> Option<AttachmentKind> {
 /// Runs assistants and resolves attachments.
 #[derive(Debug)]
 pub struct AssistantService {
-    settings: AssistantSettings,
+    /// `[assistant]` of `daemon.toml`; swapped when `daemon.settings.set` changes it.
+    settings: RwLock<AssistantSettings>,
     registry: RegistryHandle,
     hub: Arc<TerminalHub>,
     history: Arc<HistoryService>,
@@ -175,7 +177,7 @@ impl AssistantService {
         accounts: Arc<AccountService>,
     ) -> Arc<Self> {
         Arc::new(Self {
-            settings,
+            settings: RwLock::new(settings),
             registry,
             hub,
             history,
@@ -185,6 +187,15 @@ impl AssistantService {
         })
     }
 
+    pub fn settings(&self) -> AssistantSettings {
+        self.settings.read().clone()
+    }
+
+    /// Uses `settings` from now on: the permissions are read for each message, the backend
+    /// defaults for each open.
+    pub fn apply_settings(&self, settings: AssistantSettings) {
+        *self.settings.write() = settings;
+    }
     async fn workspaces(&self) -> Result<Vec<WorkspaceInfo>, ErrorBody> {
         Ok(self.registry.list_workspaces().await?.workspaces)
     }
@@ -470,16 +481,17 @@ impl AssistantService {
                 provider: config.provider,
             }));
         }
-        let kind = self.settings.backend.or_else(|| {
-            self.settings
+        let settings = self.settings();
+        let kind = settings.backend.or_else(|| {
+            settings
                 .provider
                 .as_ref()
                 .map(|_| AssistantBackend::Provider)
         });
         Ok(kind.map(|kind| Backend {
             kind,
-            model: self.settings.model.clone(),
-            provider: self.settings.provider.clone(),
+            model: settings.model.clone(),
+            provider: settings.provider.clone(),
         }))
     }
 
@@ -527,6 +539,20 @@ impl AssistantService {
             .map_err(internal)?
             .map_err(internal)?;
         Ok(config)
+    }
+
+    /// `assistant.reset`: forgets what `assistant.configure` stored for a scope, so the scope
+    /// inherits again (its parent workspace, the global choice, `[assistant]`, the automatic
+    /// backend). Sessions that exist are untouched.
+    pub async fn reset(&self, req: AssistantReset) -> Result<(), ErrorBody> {
+        let workspaces = self.workspaces().await?;
+        let workspace = Self::target(&workspaces, req.scope, req.workspace_id)?;
+        let key = Self::meta_key(req.scope, workspace.id);
+        let storage = self.storage.clone();
+        tokio::task::spawn_blocking(move || storage.app_meta().delete(&key))
+            .await
+            .map_err(internal)?
+            .map_err(internal)
     }
 
     async fn create(
@@ -698,7 +724,7 @@ impl AssistantService {
             .iter()
             .filter(|a| !matches!(a, Attachment::Image { .. }))
             .count();
-        let share = context::share(self.settings.context_budget_chars, texts);
+        let share = context::share(self.settings().context_budget_chars, texts);
         let mut parts = Vec::with_capacity(attachments.len());
         for attachment in attachments {
             parts.push(self.resolve(&access, attachment, share).await?);
@@ -734,14 +760,14 @@ impl AssistantService {
             })?;
         let scope = Self::scope_of(workspace);
         let id = workspace.id.to_string();
+        let settings = self.settings();
         let (permissions, settings_key) = match scope {
-            AssistantScope::Global => (self.settings.global_context, None),
+            AssistantScope::Global => (settings.global_context, None),
             AssistantScope::Workspace => (
-                self.settings
-                    .permissions_for_workspace(&workspace.name, &id),
+                settings.permissions_for_workspace(&workspace.name, &id),
                 [&id, &workspace.name]
                     .into_iter()
-                    .find(|key| self.settings.workspaces.contains_key(*key))
+                    .find(|key| settings.workspaces.contains_key(*key))
                     .cloned(),
             ),
         };

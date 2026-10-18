@@ -25,6 +25,7 @@ use crate::assistant::{AssistantService, Origin};
 use crate::bus::EventBus;
 use crate::conn::{ConnHandle, ConnId};
 use crate::control::{Access, ControlService};
+use crate::daemon_settings::SettingsService;
 use crate::history::HistoryService;
 use crate::notify::NotifyService;
 use crate::providers::ProviderService;
@@ -48,6 +49,7 @@ pub struct Services {
     pub resources: Arc<ResourceService>,
     pub control: Arc<ControlService>,
     pub ui: Arc<UiHub>,
+    pub settings: Arc<SettingsService>,
 }
 
 #[derive(Debug)]
@@ -67,6 +69,7 @@ pub struct Router {
     clients: Arc<AtomicU32>,
     control: Arc<ControlService>,
     ui: Arc<UiHub>,
+    settings: Arc<SettingsService>,
     /// The shutdown in progress asked to drop the stopped sessions from the restore set.
     forget: AtomicBool,
 }
@@ -96,6 +99,7 @@ impl Router {
             clients,
             control: services.control,
             ui: services.ui,
+            settings: services.settings,
             forget: AtomicBool::new(false),
         }
     }
@@ -322,6 +326,12 @@ impl Router {
             }),
             Request::AssistantList(req) => ok(&self.assistant.list(req).await?),
             Request::AssistantConfigure(req) => ok(&self.assistant.configure(req).await?),
+            Request::AssistantReset(req) => {
+                self.assistant.reset(req).await?;
+                ok(&Empty {})
+            }
+            Request::DaemonSettingsGet(_) => ok(&self.settings.get().await?),
+            Request::DaemonSettingsSet(req) => ok(&self.settings.set(req).await?),
             Request::NotifyList(_) => ok(&NotifyList {
                 intents: self.notify.list(),
             }),
@@ -621,6 +631,12 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::AccountLogout(_) => ("account.logout", UserOnly),
         Request::AssistantOpen(_) => ("assistant.open", Mutate),
         Request::AssistantConfigure(_) => ("assistant.configure", Mutate),
+        // Forgetting a scope's choice changes what answers the user's assistant: the user's.
+        Request::AssistantReset(_) => ("assistant.reset", UserOnly),
+        // Reading the settings is free; changing them is never an agent's, whatever
+        // `[control] agents` says: an agent must not widen its own permissions (ADR 0016).
+        Request::DaemonSettingsGet(_) => ("daemon.settings.get", Read),
+        Request::DaemonSettingsSet(_) => ("daemon.settings.set", UserOnly),
         Request::AssistantList(_) => ("assistant.list", Read),
         Request::NotifyList(_) => ("notify.list", Read),
         Request::NotifyAck(_) => ("notify.ack", Mutate),

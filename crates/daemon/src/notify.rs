@@ -689,6 +689,17 @@ impl NotifyService {
         let _ = self.changed.set(changed);
     }
 
+    /// The settings intents are raised by now.
+    pub fn settings(&self) -> NotifySettings {
+        self.core.lock().settings.clone()
+    }
+
+    /// Raises intents by `settings` from now on (`daemon.settings.set` changed `[notify]`);
+    /// the intents that are pending stay. `native` and the sweep interval were fixed at start.
+    pub fn apply_settings(&self, settings: NotifySettings) {
+        self.core.lock().settings = settings;
+    }
+
     /// Starts watching the event bus until `shutdown`.
     pub fn start(self: &Arc<Self>, shutdown: CancellationToken) -> JoinHandle<()> {
         if let Some(NativeParts { poster, ops }) = self.native_parts.lock().take() {

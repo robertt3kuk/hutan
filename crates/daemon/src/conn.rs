@@ -58,6 +58,7 @@ pub const CAPABILITIES: &[&str] = &[
     "task.review",
     "session.recovery",
     "task.chat_model",
+    "daemon.settings",
 ];
 
 /// How long a closing connection may take to flush already queued messages.
