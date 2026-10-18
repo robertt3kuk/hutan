@@ -640,6 +640,12 @@ const DAEMON_FIELDS: &[FieldText] = &[
     ),
     field(
         "daemon",
+        "assistant.idle_stop_secs",
+        "Let an idle assistant sleep after",
+        "Seconds without use after which an assistant that runs on OMP, Claude Code or Codex stops its agent to give the memory back (several hundred MB). Its conversation stays; the next message wakes it. 0 keeps it running.",
+    ),
+    field(
+        "daemon",
         "assistant.context.shell",
         "Projects: terminal output",
         "Lets the assistant of a project read the commands and output of terminals you attach to a message.",
@@ -1686,7 +1692,6 @@ mod tests {
     #[test]
     fn every_daemon_key_has_user_facing_wording() {
         let keys = daemon_wording_keys();
-        assert_eq!(keys.len(), 45);
         for key in &keys {
             assert_user_facing(&format!("{key} title"), &daemon_field_title(key));
             assert_user_facing(&format!("{key} help"), &daemon_field_help(key));

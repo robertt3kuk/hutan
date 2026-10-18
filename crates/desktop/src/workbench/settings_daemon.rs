@@ -172,7 +172,7 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
             Section {
                 title: words::SEC_ASSISTANT_LIMITS,
                 help: "",
-                keys: &["assistant.context_budget_chars"],
+                keys: &["assistant.context_budget_chars", "assistant.idle_stop_secs"],
             },
         ],
         _ => &[],
