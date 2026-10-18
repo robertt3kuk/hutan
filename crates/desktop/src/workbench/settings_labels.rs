@@ -1217,9 +1217,10 @@ pub mod words {
         }
     }
 
-    /// "editing Project api": the layer a change to a field goes to.
+    /// "changes go to Project api": the layer a change to a field goes to, when that is not
+    /// where the value shown comes from.
     pub fn editing(layer: &str) -> String {
-        format!("editing {layer}")
+        format!("changes go to {layer}")
     }
 
     /// "Until then, edit /path by hand.": where the file is when this daemon cannot change it.

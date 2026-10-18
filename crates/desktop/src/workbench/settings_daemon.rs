@@ -1033,12 +1033,31 @@ impl Workbench {
         }
     }
 
+    /// The default as the source line names it: like [`Self::daemon_value_text`], but a list of
+    /// more than three is counted ("all 8", "5 of 8") instead of spelled out, so the line fits
+    /// under the help and the chips beside it show the items.
+    fn daemon_default_text(&self, e: &DaemonSetting) -> String {
+        if let DaemonSettingKind::StringList { choices } = &e.kind {
+            let items = strings_of(&e.default);
+            if items.len() > 3 {
+                return match choices {
+                    Some(choices) if choices.len() == items.len() => {
+                        format!("all {}", items.len())
+                    }
+                    Some(choices) => format!("{} of {}", items.len(), choices.len()),
+                    None => format!("{} items", items.len()),
+                };
+            }
+        }
+        self.daemon_value_text(e, &e.default)
+    }
+
     /// "Default: On · applies at once": whether the file sets it and when a change counts.
     fn daemon_source_line(&self, e: &DaemonSetting) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
         let table = e.kind == DaemonSettingKind::Table;
-        let default = self.daemon_value_text(e, &e.default);
+        let default = self.daemon_default_text(e);
         let source = match (e.set_in_file, table) {
             (true, true) => words::SET_IN_FILE.to_owned(),
             (true, false) => words::set_with_default(&default),

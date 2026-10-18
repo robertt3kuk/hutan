@@ -114,8 +114,11 @@ impl Workbench {
         let source = self.source_of_field(field, cx);
         let edit = self.edit_layer_of(field);
         let mut text = source.label.clone();
-        if source.layer != Some(edit) {
-            // The value is hidden by another layer, or not set anywhere: say where it goes.
+        // A value hidden by another layer, or not set where a change goes: say where it goes.
+        // A built-in default with changes going to your own settings is the plain case and
+        // says nothing more.
+        let plain = source.layer.is_none() && edit == hutan_settings::SettingsLayer::User;
+        if source.layer != Some(edit) && !plain {
             let target = self.layer_label(edit, cx);
             if target != source.label {
                 text = format!("{text} · {}", words::editing(&target));
