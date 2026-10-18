@@ -9,6 +9,9 @@ ignore = [
   { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained, pulled in by gpui" },
   { id = "RUSTSEC-2026-0192", reason = "ttf-parser: unmaintained, pulled in by gpui/fontdb" },
   { id = "RUSTSEC-2026-0206", reason = "rustybuzz: unmaintained, pulled in by gpui_wgpu/usvg" },
+  { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, pulled in by gpui_linux (zbus); not built on macOS" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, pulled in by gpui_linux (zbus); not built on macOS" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, pulled in by gpui_linux (zbus); not built on macOS" },
 ]
 
 [licenses]
