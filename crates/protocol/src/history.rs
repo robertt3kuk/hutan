@@ -290,6 +290,10 @@ pub struct HistorySessionRow {
     /// As [`HistoryHit::session_id`]: the Hutan session of a `hutan` row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
+    /// Protocol 0.30 (capability `session.close`): the Hutan session of this row was closed;
+    /// `session.reopen` brings it back (a client shows Reopen instead of Open).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
 }
 
 /// Transcript files seen by one source in the last scan.

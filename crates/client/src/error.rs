@@ -22,3 +22,17 @@ pub enum ClientError {
     #[error("cannot determine the hutand socket path; set HUTAN_SOCKET or HUTAN_HOME")]
     NoSocketPath,
 }
+
+impl ClientError {
+    /// What runs in the session a `session.close` was refused for (`invalid_state` with
+    /// `data.busy`); `None` for any other error.
+    pub fn busy(&self) -> Option<hutan_protocol::messages::SessionBusy> {
+        let Self::Remote(error) = self else {
+            return None;
+        };
+        if error.code != hutan_protocol::ErrorCode::InvalidState {
+            return None;
+        }
+        serde_json::from_value(error.data.as_ref()?.get("busy")?.clone()).ok()
+    }
+}

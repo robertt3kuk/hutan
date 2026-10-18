@@ -6,6 +6,7 @@ mod agents_drawer;
 mod assistant;
 mod changes;
 pub mod chat;
+mod closing;
 mod daemon;
 mod daemon_popover;
 mod harness_install;

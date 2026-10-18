@@ -216,6 +216,8 @@ async fn initialize_and_list_tools() {
         "ui_set_setting",
         "resources_list",
         "session_kill",
+        "session_close",
+        "session_reopen",
         "process_signal",
         "agent_interrupt",
     ] {
@@ -404,5 +406,74 @@ async fn read_only_policy_and_a_plain_shell_origin() {
     let done = as_user.answer(call).await;
     assert!(!is_error(&done), "{done}");
     assert_eq!(t.session(&target).await["title"], "user");
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_and_reopening_a_session_are_mutations_that_wait_for_approval() {
+    let t = start_with_policy("ask").await;
+    let agent = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    let target = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    report_agent(&t, &agent).await;
+    let mut mcp = Mcp::start(&t.paths.socket, Some(&agent)).await;
+    mcp.initialize().await;
+
+    let call = mcp
+        .tool_request("session_close", json!({"session_id": target}))
+        .await;
+    let approval = first_pending(&t).await;
+    assert_eq!(approval["kind"], "control");
+    assert!(
+        approval["title"].as_str().unwrap().contains("close"),
+        "{approval}"
+    );
+    t.hutan(&["approve", approval["id"].as_str().unwrap(), "allow_once"])
+        .await
+        .ok();
+    let done = mcp.answer(call).await;
+    assert!(!is_error(&done), "{done}");
+    assert!(
+        t.sessions()
+            .await
+            .iter()
+            .all(|s| s["id"] != target.as_str()),
+        "closed"
+    );
+
+    let call = mcp
+        .tool_request("session_reopen", json!({"session_id": target}))
+        .await;
+    let approval = first_pending(&t).await;
+    assert!(
+        approval["title"].as_str().unwrap().contains("reopen"),
+        "{approval}"
+    );
+    t.hutan(&["approve", approval["id"].as_str().unwrap(), "allow_once"])
+        .await
+        .ok();
+    let done = mcp.answer(call).await;
+    assert!(!is_error(&done), "{done}");
+    t.wait_state(&target, "running").await;
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_read_only_policy_refuses_to_close_sessions() {
+    let t = start_with_policy("read_only").await;
+    let agent = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    let target = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    report_agent(&t, &agent).await;
+    let mut mcp = Mcp::start(&t.paths.socket, Some(&agent)).await;
+    mcp.initialize().await;
+    let call = mcp
+        .tool_request(
+            "session_close",
+            json!({"session_id": target, "stop_running": true}),
+        )
+        .await;
+    let refused = mcp.answer(call).await;
+    assert!(is_error(&refused), "{refused}");
+    assert!(text_of(&refused).contains("REFUSED"), "{refused}");
+    assert_eq!(t.session(&target).await["state"]["state"], "running");
     t.stop().await;
 }

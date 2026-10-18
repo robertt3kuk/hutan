@@ -14,9 +14,9 @@ use tempfile::TempDir;
 use crate::migrate::Migration;
 use crate::sql::Fault;
 use crate::{
-    ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, CreatedBy, ProviderRow,
-    RecentProject, SessionRow, Storage, StorageError, WorkspaceKind, WorkspaceRow, WorktreeRow,
-    Write, migrate,
+    ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
+    CreatedBy, ProviderRow, RecentProject, SessionRow, Storage, StorageError, WorkspaceKind,
+    WorkspaceRow, WorktreeRow, Write, migrate,
 };
 use hutan_core::ApprovalId;
 
@@ -465,6 +465,48 @@ fn equal_timestamp_sessions_keep_creation_order_after_updates_and_reopen() {
     let reopened = Storage::open(db(&dir)).unwrap();
     assert_eq!(reopened.sessions().list().unwrap(), [first, second]);
     reopened.close();
+}
+
+#[test]
+fn a_closed_session_is_kept_but_not_listed_until_it_is_reopened() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let ws = workspace("project", 0);
+    storage.workspaces().insert(ws.clone()).unwrap();
+    let mut open = session(ws.id, "open");
+    open.created_at_ms = 10;
+    let mut gone = session(ws.id, "gone");
+    gone.created_at_ms = 20;
+    storage.sessions().upsert(open.clone()).unwrap();
+    storage.sessions().upsert(gone.clone()).unwrap();
+
+    storage.sessions().set_closed(gone.id, Some(500)).unwrap();
+    assert_eq!(storage.sessions().list().unwrap(), [open.clone()]);
+    assert_eq!(
+        storage.sessions().list_in_workspace(ws.id).unwrap(),
+        [open.clone()]
+    );
+    assert_eq!(
+        storage.sessions().list_closed().unwrap(),
+        [ClosedSession {
+            session: gone.clone(),
+            closed_at_ms: 500
+        }]
+    );
+
+    // Writing the row again (a late title change) does not reopen it.
+    gone.title = "gone, renamed".into();
+    storage.sessions().upsert(gone.clone()).unwrap();
+    assert_eq!(storage.sessions().list().unwrap(), [open.clone()]);
+    storage.close();
+
+    let storage = Storage::open(db(&dir)).unwrap();
+    assert_eq!(storage.sessions().list().unwrap(), [open.clone()]);
+    assert_eq!(storage.sessions().list_closed().unwrap()[0].session, gone);
+    storage.sessions().set_closed(gone.id, None).unwrap();
+    assert_eq!(storage.sessions().list().unwrap(), [open, gone]);
+    assert!(storage.sessions().list_closed().unwrap().is_empty());
+    storage.close();
 }
 
 /// A database as schema v1 wrote it: raw SQL, because the typed API speaks the newest schema.

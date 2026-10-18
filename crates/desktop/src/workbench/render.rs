@@ -97,6 +97,7 @@ impl Render for Workbench {
         let launcher = self.render_launcher(window, cx);
         let menu = self.render_context_menu(cx);
         let modal = self.render_modal(cx);
+        let close_toast = self.render_close_toast(cx);
         let agents_drawer = self.render_agents_drawer(window, cx);
         let daemon_popover = self.render_daemon_popover(cx);
         let recovery = self.render_recovery_summary(cx);
@@ -161,6 +162,7 @@ impl Render for Workbench {
         .children(picker)
         .children(agent_picker)
         .children(launcher)
+        .children(close_toast)
         .children(menu)
         .children(sheet)
         .children(setup)
@@ -573,6 +575,25 @@ impl Workbench {
                 this.stop_session(session, window, cx);
             }
         }))
+        .on_action(cx.listener(|this, _: &actions::CloseSession, window, cx| {
+            if let Some(session) = this.focused_session() {
+                this.close_session(session, window, cx);
+            }
+        }))
+        .on_action(
+            cx.listener(|this, a: &actions::CloseSessionById, window, cx| {
+                if let Ok(id) = a.0.parse() {
+                    this.close_session(id, window, cx);
+                }
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::ReopenSessionById, window, cx| {
+                if let Ok(id) = a.0.parse() {
+                    this.reopen_session(id, window, cx);
+                }
+            }),
+        )
         .on_action(cx.listener(|this, _: &actions::RenameSession, window, cx| {
             if let Some(session) = this.focused_session() {
                 this.rename_session(session, window, cx);
@@ -1702,8 +1723,25 @@ impl Workbench {
                     .text_color(theme.muted)
                     .hover(move |s| s.bg(hover).text_color(theme.fg))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.try_mutate(cx, |s| s.close_item(pane_id, index));
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        // `terminal.tab_close = close_session`: the × closes the session too.
+                        let session = this
+                            .state
+                            .pane(pane_id)
+                            .and_then(|p| p.items.get(index))
+                            .and_then(super::terminals::session_of_item);
+                        match session {
+                            Some(session)
+                                if this.terminal_settings.tab_close
+                                    == crate::settings::TabClose::CloseSession
+                                    && this.can_close_sessions(cx) =>
+                            {
+                                this.close_session(session, window, cx);
+                            }
+                            _ => {
+                                this.try_mutate(cx, |s| s.close_item(pane_id, index));
+                            }
+                        }
                         cx.stop_propagation();
                     }))
                     .child("×"),

@@ -359,9 +359,43 @@ impl Workbench {
             .card(&theme, &tokens)
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
+            .group(SharedString::from(format!("drawer-card-group-{session}")))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.open_session_from_drawer(session, window, cx);
             }))
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                    let entries = this.session_menu(session, cx);
+                    this.open_menu(event.position, entries, window, cx);
+                }),
+            )
+            .when(self.sessions.read(cx).supports_close(), |card| {
+                card.child(
+                    div()
+                        .id(SharedString::from(format!("drawer-close-{session}")))
+                        .absolute()
+                        .top(px(4.0))
+                        .right(px(6.0))
+                        .px(px(4.0))
+                        .rounded(px(tokens.radius))
+                        .cursor_pointer()
+                        .text_color(theme.muted)
+                        .opacity(0.0)
+                        .group_hover(
+                            SharedString::from(format!("drawer-card-group-{session}")),
+                            |s| s.opacity(1.0),
+                        )
+                        .hover(move |s| s.bg(hover).text_color(theme.fg))
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.close_session(session, window, cx);
+                            cx.stop_propagation();
+                        }))
+                        .child("×")
+                        .child(probe(&self.regions, Region::SessionClose(session))),
+                )
+            })
             .child(
                 div()
                     .flex()

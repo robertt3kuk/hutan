@@ -32,9 +32,10 @@ use crate::settings::{
     GroupBy, SessionsPanelSettings, SidebarSettings, WorkspaceSort, WorkspacesSettings,
 };
 use crate::workbench::actions::{
-    DropProjectOnto, MoveWorkspaceOnto, OpenFolder, OpenSession, OpenWorkspace, ProjectDrop,
-    ProjectMenuAt, RenameTo, RenameWorkspaceTo, SessionMenuAt, ShowPlusMenu, ShowProjectMenu,
-    ShowSessionMenu, ShowSortMenu, ShowWorkspaceMenu, WorkspaceDrop, WorkspaceMenuAt,
+    CloseSessionById, DropProjectOnto, MoveWorkspaceOnto, OpenFolder, OpenSession, OpenWorkspace,
+    ProjectDrop, ProjectMenuAt, RenameTo, RenameWorkspaceTo, SessionMenuAt, ShowPlusMenu,
+    ShowProjectMenu, ShowSessionMenu, ShowSortMenu, ShowWorkspaceMenu, WorkspaceDrop,
+    WorkspaceMenuAt,
 };
 use crate::workbench::actions::{LauncherOpen, OpenLauncher};
 use crate::workbench::chat::vim::Outcome;
@@ -1596,6 +1597,32 @@ impl SessionsPanel {
                 _ => line,
             };
         }
+        // The hover × closes the session (needs a daemon with `session.close`).
+        let row_group = SharedString::from(format!("session-group-{id}"));
+        if self.env.sessions.read(cx).supports_close() {
+            let close_id = id.clone();
+            let session = info.id;
+            line = line.child(
+                div()
+                    .id(SharedString::from(format!("session-close-{id}")))
+                    .relative()
+                    .flex_none()
+                    .px(px(tokens.spacing))
+                    .rounded(px(tokens.radius))
+                    .cursor_pointer()
+                    .text_color(theme.muted)
+                    .opacity(0.0)
+                    .group_hover(row_group.clone(), |s| s.opacity(1.0))
+                    .hover(move |s| s.bg(theme.accent_soft).text_color(theme.fg))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(CloseSessionById(close_id.clone())), cx);
+                        cx.stop_propagation();
+                    })
+                    .child("×")
+                    .child(probe(&self.env.regions, Region::SessionClose(session))),
+            );
+        }
 
         // Where the session is now, and which checkout it works in.
         let folder = has("folder")
@@ -1644,6 +1671,7 @@ impl SessionsPanel {
 
         let mut element = div()
             .id(SharedString::from(format!("session-row-{id}")))
+            .group(row_group)
             .flex()
             .flex_col()
             .mx(px(tokens.spacing * 1.5))

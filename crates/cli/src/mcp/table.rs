@@ -242,6 +242,37 @@ static TOOLS: &[Tool] = &[
         schema: || object(json!({"session_id": session_id()}), &["session_id"]),
     },
     Tool {
+        name: "session_close",
+        description: ask!(
+            "Close a session: it is stopped (as `session_stop`) and removed from the session \
+             list; its history stays and `session_reopen` brings it back. A session something \
+             runs in (a foreground command, a working agent, a chat turn or approval) is \
+             refused with what runs unless `stop_running` is true; only set it when ending that \
+             work is intended."
+        ),
+        read_only: false,
+        call: request("session.close"),
+        schema: || {
+            object(
+                json!({
+                    "session_id": session_id(),
+                    "stop_running": {"type": "boolean", "default": false, "description": "Stop what runs in the session and close it anyway."},
+                }),
+                &["session_id"],
+            )
+        },
+    },
+    Tool {
+        name: "session_reopen",
+        description: ask!(
+            "Bring a closed session back (same id): a terminal starts its command again in its \
+             last directory (or resumes its agent), a chat continues its conversation."
+        ),
+        read_only: false,
+        call: request("session.reopen"),
+        schema: || object(json!({"session_id": session_id()}), &["session_id"]),
+    },
+    Tool {
         name: "process_signal",
         description: ask!(
             "Send a signal to one process of a session's process tree (a runaway build, say), \
@@ -1055,6 +1086,8 @@ mod tests {
             "session_stop",
             "session_restart",
             "session_rename",
+            "session_close",
+            "session_reopen",
             "chat_create",
             "chat_send",
             "chat_log",

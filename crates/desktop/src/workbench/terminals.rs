@@ -694,6 +694,9 @@ impl Workbench {
             Self::entry("Stop…", move |this, window, cx| {
                 this.stop_session(session, window, cx);
             }),
+            Self::entry("Close session…", move |this, window, cx| {
+                this.close_session(session, window, cx);
+            }),
             Self::entry("Show in Resources", move |this, window, cx| {
                 this.show_in_resources(session, window, cx);
             }),
@@ -1176,6 +1179,9 @@ impl Workbench {
                     }),
                     Self::entry("Stop…", move |this, window, cx| {
                         this.stop_session(session, window, cx);
+                    }),
+                    Self::entry("Close session…", move |this, window, cx| {
+                        this.close_session(session, window, cx);
                     }),
                     Self::entry("Show in Resources", move |this, window, cx| {
                         this.show_in_resources(session, window, cx);

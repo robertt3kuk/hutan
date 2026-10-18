@@ -90,6 +90,8 @@ meta      small facts
 
 ## The session catalog
 
+A Hutan session that `session.close` removed keeps its row in the catalog: `HistorySessionRow.closed` is true (protocol 0.30), with the title, folder and project it had, so a client shows **Reopen** (`session.reopen`) instead of Open.
+
 `history.sessions` (protocol 0.29, `docs/protocol.md` § Session catalog) answers "what sessions are there on this machine": one row per session of the enabled sources, summarised while the indexer reads, so listing a thousand sessions takes milliseconds and never opens a transcript.
 
 **Fields.** Each row has the source and the agent's session key; `title`; `cwd`, `branch`, `model`; `messages`; `created_ms`/`updated_ms`; `first_prompt` (at most 2 000 characters); `latest` (the last 3 turns, oldest first: role, one line of at most 400 characters, time); the transcript `path`; `resume_argv`; for a Hutan session its `session_id`; and the project it belongs to (`workspace_id`, § Scopes). Every text goes through the redaction before it is kept (a prompt with a key in it shows `[REDACTED]`), and nothing but the first prompt and the last three turns is stored: the catalog is not a second copy of the transcript.

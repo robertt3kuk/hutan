@@ -78,6 +78,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "task_delivery",
         sql: include_str!("../migrations/0010_task_delivery.sql"),
     },
+    Migration {
+        version: 11,
+        name: "session_closed",
+        sql: include_str!("../migrations/0011_session_closed.sql"),
+    },
 ];
 
 /// Schema version recorded in the database; 0 for a database without `app_meta`.

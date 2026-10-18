@@ -133,6 +133,9 @@ pub(crate) const TASK_CHAT_MODEL_CAPABILITY: &str = "task.chat_model";
 pub(crate) const DAEMON_SETTINGS_CAPABILITY: &str = "daemon.settings";
 /// Capability for `history.sessions`, the session catalog (protocol 0.29).
 pub(crate) const HISTORY_SESSIONS_CAPABILITY: &str = "history.sessions";
+/// Capability for `session.close` / `session.reopen`, the `session.closed` event and
+/// `HistorySessionRow.closed` (protocol 0.30).
+pub(crate) const SESSION_CLOSE_CAPABILITY: &str = "session.close";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -162,6 +165,7 @@ const CAPABILITIES: &[&str] = &[
     TASK_CHAT_MODEL_CAPABILITY,
     DAEMON_SETTINGS_CAPABILITY,
     HISTORY_SESSIONS_CAPABILITY,
+    SESSION_CLOSE_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -947,6 +951,40 @@ impl Client {
     pub async fn session_kill(&self, session_id: SessionId) -> Result<SessionInfo, ClientError> {
         let result: SessionResult = self
             .call(Request::SessionKill(SessionRef { session_id }))
+            .await?;
+        Ok(result.session)
+    }
+
+    /// True when the daemon advertised capability `session.close` (protocol 0.30): sessions can
+    /// be closed and reopened.
+    pub fn supports_session_close(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == SESSION_CLOSE_CAPABILITY)
+    }
+
+    /// `session.close`: removes the session from the lists. A session something runs in is
+    /// refused with `invalid_state` (see [`ClientError::busy`]) unless `stop_running`.
+    pub async fn session_close(
+        &self,
+        session_id: SessionId,
+        stop_running: bool,
+    ) -> Result<(), ClientError> {
+        self.call::<Empty>(Request::SessionClose(
+            hutan_protocol::messages::SessionClose {
+                session_id,
+                stop_running,
+            },
+        ))
+        .await
+        .map(|_| ())
+    }
+
+    /// `session.reopen`: brings a closed session back; answers with the session.
+    pub async fn session_reopen(&self, session_id: SessionId) -> Result<SessionInfo, ClientError> {
+        let result: SessionResult = self
+            .call(Request::SessionReopen(SessionRef { session_id }))
             .await?;
         Ok(result.session)
     }

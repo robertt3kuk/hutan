@@ -205,6 +205,27 @@ impl Router {
                 );
                 ok(&SessionResult { session: stopped? })
             }
+            Request::SessionClose(req) => {
+                let closed = self.registry.close_session(req).await;
+                audit(
+                    Actor::of(conn),
+                    "session.close",
+                    &req.session_id.to_string(),
+                    &closed,
+                );
+                closed?;
+                ok(&Empty {})
+            }
+            Request::SessionReopen(req) => {
+                let reopened = self.registry.reopen_session(req.session_id).await;
+                audit(
+                    Actor::of(conn),
+                    "session.reopen",
+                    &req.session_id.to_string(),
+                    &reopened,
+                );
+                ok(&SessionResult { session: reopened? })
+            }
             Request::SessionKill(req) => ok(&SessionResult {
                 session: self
                     .resources
@@ -586,6 +607,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::SessionStop(_) => ("session.stop", Mutate),
         Request::SessionRestart(_) => ("session.restart", Mutate),
         Request::SessionRename(_) => ("session.rename", Mutate),
+        Request::SessionClose(_) => ("session.close", Mutate),
+        Request::SessionReopen(_) => ("session.reopen", Mutate),
         // Dismissing what a restart did is the user's: an agent must not hide it.
         Request::SessionRecoveryAck(_) => ("session.recovery_ack", UserOnly),
         Request::SessionSendText(_) => ("session.send_text", Mutate),

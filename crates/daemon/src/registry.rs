@@ -25,16 +25,19 @@ use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, AgentState, CreatedBy, Event,
     RECENT_PROJECTS_DEFAULT_LIMIT, RECENT_PROJECTS_MAX_LIMIT, RecentProject, RecentProjects,
-    SessionCreate, SessionInfo, SessionList, SessionListFilter, SessionRename, SessionSnapshot,
-    SessionSpec, TerminalSpec, WorkspaceCreate, WorkspaceInfo, WorkspaceKind, WorkspaceList,
-    WorkspaceMove, WorkspaceOpen, WorkspaceOpened, WorkspacePin, WorkspaceRename,
+    SessionBusy, SessionClose, SessionCreate, SessionInfo, SessionList, SessionListFilter,
+    SessionRename, SessionSnapshot, SessionSpec, TerminalSpec, WorkspaceCreate, WorkspaceInfo,
+    WorkspaceKind, WorkspaceList, WorkspaceMove, WorkspaceOpen, WorkspaceOpened, WorkspacePin,
+    WorkspaceRename,
 };
 use hutan_protocol::project::{ProjectInfo, WorkspaceAssign, WorkspaceDelete};
 use hutan_protocol::provider::ChatSetModel;
 use hutan_protocol::recovery::{Lost, Recovery, RecoveryAck, RecoveryAcked, RecoveryKind};
 use hutan_protocol::tree::{AgentTree, NodeReport};
 use hutan_protocol::worktree::Placement;
-use hutan_storage::{self as stored_rows, SessionRow, Storage, StorageError, WorkspaceRow, Write};
+use hutan_storage::{
+    self as stored_rows, ClosedSession, SessionRow, Storage, StorageError, WorkspaceRow, Write,
+};
 use hutan_terminal::{
     EnvInherit, ExitStatus, PromptMark, RenderTracker, Terminal, TerminalConfig, TerminalMeta,
 };
@@ -124,6 +127,12 @@ enum Command {
     /// The assignment is present when the request names no workspace.
     CreateSession(SessionCreate, Option<Assignment>, Reply<SessionInfo>),
     ListSessions(SessionListFilter, Reply<SessionList>),
+    /// `session.close`: answered once the session is closed (after it stopped, when it ran).
+    CloseSession(SessionClose, Reply<()>),
+    /// `session.reopen`.
+    ReopenSession(SessionId, Reply<SessionInfo>),
+    /// The closed sessions, most recently closed first.
+    ClosedSessions(Reply<Vec<ClosedInfo>>),
     /// Answered once the session has actually stopped.
     StopSession(SessionId, Reply<SessionInfo>),
     RestartSession(SessionId, Reply<SessionInfo>),
@@ -260,6 +269,15 @@ impl ChatNotifier {
 pub struct SessionCounts {
     pub total: u32,
     pub live: u32,
+}
+
+/// A closed session, as the session catalog needs to know it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClosedInfo {
+    pub id: SessionId,
+    pub workspace_id: WorkspaceId,
+    pub title: String,
+    pub cwd: Option<PathBuf>,
 }
 
 /// What the resource manager needs to know about one live session.
@@ -448,6 +466,23 @@ impl RegistryHandle {
         self.ask(|r| Command::StopSession(id, r)).await
     }
 
+    /// `session.close`: removes the session from the lists. A live session is stopped first
+    /// (`req.stop_running`, else `invalid_state` with the busy data when something runs in it);
+    /// answered once it is closed.
+    pub async fn close_session(&self, req: SessionClose) -> Result<(), ErrorBody> {
+        self.ask(|r| Command::CloseSession(req, r)).await
+    }
+
+    /// `session.reopen`: brings a closed session back the way a daemon restart does.
+    pub async fn reopen_session(&self, id: SessionId) -> Result<SessionInfo, ErrorBody> {
+        self.ask(|r| Command::ReopenSession(id, r)).await
+    }
+
+    /// The closed sessions, most recently closed first.
+    pub async fn closed_sessions(&self) -> Result<Vec<ClosedInfo>, ErrorBody> {
+        self.ask(Command::ClosedSessions).await
+    }
+
     /// SIGKILLs the session's whole process group (a chat session's harness and everything
     /// below it) and returns the session once it is `stopped`.
     pub async fn kill_session(&self, id: SessionId) -> Result<SessionInfo, ErrorBody> {
@@ -581,6 +616,18 @@ struct SessionEntry {
     /// The command line running in the foreground of the terminal (the last running block,
     /// secrets removed), for the next start's `session.recovery`.
     running_command: Option<String>,
+    /// `session.close` is waiting for the session to end: it is removed once it has.
+    close: Option<CloseRequest>,
+}
+
+/// A `session.close` that stopped a live session and waits for its exit.
+#[derive(Debug)]
+struct CloseRequest {
+    /// Answered once the session is closed.
+    waiters: Vec<Reply<()>>,
+    /// The agent resume reference the session had when it was closed: the exit forgets it, the
+    /// closed row keeps it so that `session.reopen` resumes the agent.
+    resume_ref_json: Option<String>,
 }
 
 impl SessionEntry {
@@ -686,6 +733,9 @@ struct SessionRegistry {
     next_position: i64,
     activity_interval: Duration,
     sessions: Vec<SessionEntry>,
+    /// The sessions `session.close` removed, most recently closed first; their rows are kept in
+    /// the database for `session.reopen`.
+    closed: Vec<ClosedSession>,
     stop_all_waiters: Vec<Reply<()>>,
     chats: Arc<ChatManager>,
     storage: Storage,
@@ -780,6 +830,7 @@ pub fn spawn(
         next_position,
         activity_interval: config.activity_interval,
         sessions: Vec::new(),
+        closed: stored.closed_sessions,
         stop_all_waiters: Vec::new(),
         chats: chats.clone(),
         storage: config.storage,
@@ -1150,6 +1201,22 @@ impl SessionRegistry {
                     }));
                 }
                 Command::StopSession(id, reply) => self.stop_session(id, reply),
+                Command::CloseSession(req, reply) => self.close_session(req, reply),
+                Command::ReopenSession(id, reply) => {
+                    let _ = reply.send(self.reopen_session(id));
+                }
+                Command::ClosedSessions(reply) => {
+                    let _ = reply.send(Ok(self
+                        .closed
+                        .iter()
+                        .map(|closed| ClosedInfo {
+                            id: closed.session.id,
+                            workspace_id: closed.session.workspace_id,
+                            title: closed.session.title.clone(),
+                            cwd: closed.session.cwd.clone(),
+                        })
+                        .collect()));
+                }
                 Command::RestartSession(id, reply) => {
                     let _ = reply.send(self.restart_session(id));
                 }
@@ -1506,6 +1573,7 @@ impl SessionRegistry {
         log_write(self.storage.workspaces().delete(id), "a workspace removal");
         // Ended sessions go with their workspace, and so do their terminals.
         let hub = &self.hub;
+        self.closed.retain(|c| c.session.workspace_id != id);
         self.sessions.retain(|s| {
             let keep = s.info.workspace_id != id;
             if !keep && let Some(terminal) = &s.terminal {
@@ -2004,6 +2072,7 @@ impl SessionRegistry {
             tree: TreeState::new(session_id),
             chat: None,
             running_command: None,
+            close: None,
         });
         let index = self.sessions.len() - 1;
         // A new session is activity; the workspace announcement that follows the session's
@@ -2155,6 +2224,186 @@ impl SessionRegistry {
         }
         self.emit_session(index);
         self.start_terminal(index);
+        Ok(self.sessions[index].info.clone())
+    }
+
+    // Closing and reopening ---------------------------------------------------------------------
+
+    /// What runs in the session that closing it would cut off, if anything: a command in the
+    /// foreground of a terminal (OSC 133, see `note_running_command`), an agent reporting
+    /// `working` or `blocked`, a chat turn, a pending approval or question.
+    fn busy_of(&self, index: usize) -> Option<SessionBusy> {
+        let session = &self.sessions[index];
+        if let (Some(info), Some(spec)) = (&session.info.chat, &session.chat) {
+            let state = if info.pending_approvals > 0 || info.pending_questions > 0 {
+                "approval"
+            } else if info.turn_active {
+                "turn"
+            } else {
+                return None;
+            };
+            return Some(SessionBusy {
+                command: None,
+                agent: Some(spec.agent.clone()),
+                state: state.to_owned(),
+            });
+        }
+        let command = session.running_command.clone();
+        let agent = session
+            .info
+            .agent
+            .as_ref()
+            .filter(|agent| agent.state != AgentState::Idle);
+        if command.is_none() && agent.is_none() {
+            return None;
+        }
+        let state = match agent.map(|agent| agent.state) {
+            Some(AgentState::Blocked) => "blocked",
+            _ => "working",
+        };
+        Some(SessionBusy {
+            command,
+            agent: agent.map(|agent| agent.agent.clone()),
+            state: state.to_owned(),
+        })
+    }
+
+    /// `session.close`. A session that is not live is closed at once; an idle live one is
+    /// stopped (as `session.stop`) and closed when its process has ended; a busy one is
+    /// refused (`invalid_state`, `data.busy`) unless `stop_running`.
+    fn close_session(&mut self, req: SessionClose, reply: Reply<()>) {
+        let index = match self.session_index(req.session_id) {
+            Ok(index) => index,
+            Err(error) => {
+                let _ = reply.send(Err(error));
+                return;
+            }
+        };
+        if let Some(close) = &mut self.sessions[index].close {
+            // Already on its way out: this caller waits for the same end.
+            close.waiters.push(reply);
+            return;
+        }
+        let live = self.sessions[index].info.state.is_live();
+        if live
+            && !req.stop_running
+            && let Some(busy) = self.busy_of(index)
+        {
+            let _ = reply.send(Err(busy_error(&self.sessions[index].info.title, &busy)));
+            return;
+        }
+        let session = &mut self.sessions[index];
+        session.close = Some(CloseRequest {
+            waiters: vec![reply],
+            resume_ref_json: session.resume_ref_json.clone(),
+        });
+        if !live {
+            self.complete_close(index);
+            return;
+        }
+        session.request_stop(&self.chats);
+        self.clear_recovery(index);
+        self.end_if_asleep(index);
+    }
+
+    /// The session has ended and `session.close` asked for it to go: its row stays (marked
+    /// closed) with everything that belongs to it, the registry forgets it, and clients and
+    /// the attention state hear of it.
+    fn complete_close(&mut self, index: usize) {
+        if self.sessions[index].tree.take_dirty() {
+            self.persist_tree(index);
+        }
+        let mut row = self.session_row(index);
+        let session = &mut self.sessions[index];
+        let close = session.close.take();
+        // The exit forgot the agent's resume reference; the closed row keeps the one the
+        // session had, so that reopening resumes the agent.
+        if let Some(close) = &close {
+            row.resume_ref_json.clone_from(&close.resume_ref_json);
+        }
+        row.state = session.info.state.clone();
+        row.ended_at_ms = session.ended_at_ms;
+        let id = session.info.id;
+        let closed_at_ms = now_ms();
+        log_write(
+            self.storage.sessions().upsert(row.clone()),
+            "a closed session",
+        );
+        log_write(
+            self.storage.sessions().set_closed(id, Some(closed_at_ms)),
+            "closing a session",
+        );
+        let entry = self.sessions.remove(index);
+        if let Some(terminal) = &entry.terminal {
+            self.hub.remove(terminal.id());
+        }
+        self.closed.insert(
+            0,
+            ClosedSession {
+                session: row,
+                closed_at_ms,
+            },
+        );
+        // The recorded foreground commands no longer include this session's.
+        self.commands_dirty = true;
+        self.flush_at
+            .get_or_insert_with(|| Instant::now() + DIRTY_WRITE_INTERVAL);
+        self.emit(&Event::SessionClosed { session_id: id });
+        self.sync_workspace(entry.info.workspace_id);
+        // A checkout it shared is not shared any more.
+        for other in self.sync_shared() {
+            self.emit(&Event::SessionUpdated {
+                session: self.sessions[other].info.clone(),
+            });
+        }
+        self.schedule_tree_events();
+        for waiter in close.into_iter().flat_map(|close| close.waiters) {
+            let _ = waiter.send(Ok(()));
+        }
+    }
+
+    /// `session.reopen`: a closed session comes back as a restart recovers one. A terminal
+    /// spawns its saved command (or its agent's resume command) in the last known directory,
+    /// a chat resumes its conversation, an assistant comes back asleep; same id, title and
+    /// workspace.
+    fn reopen_session(&mut self, id: SessionId) -> Result<SessionInfo, ErrorBody> {
+        if self.sessions.iter().any(|s| s.info.id == id) {
+            return Err(ErrorBody::new(
+                ErrorCode::InvalidState,
+                format!("session {id} is not closed"),
+            ));
+        }
+        let position = self
+            .closed
+            .iter()
+            .position(|closed| closed.session.id == id)
+            .ok_or_else(|| {
+                ErrorBody::new(ErrorCode::NotFound, format!("session {id} not found"))
+            })?;
+        let mut row = self.closed[position].session.clone();
+        // Brought back like a session that was live when the daemon stopped.
+        row.state = SessionState::Running;
+        let context = recovery::Context::new(None, now_ms());
+        let facts = recovery::Facts::default();
+        let mut pending = Restoring::default();
+        let before = self.sessions.len();
+        self.restore_row(row, RestoreMode::Respawn, &context, &facts, &mut pending);
+        if self.sessions.len() == before {
+            return Err(ErrorBody::new(
+                ErrorCode::NotFound,
+                format!("the workspace of session {id} is gone"),
+            ));
+        }
+        self.closed.remove(position);
+        log_write(
+            self.storage.sessions().set_closed(id, None),
+            "reopening a session",
+        );
+        let index = self.sessions.len() - 1;
+        self.touch_workspace(self.sessions[index].info.workspace_id);
+        // Clients know the session before it starts; `start_restored` announces the rest.
+        self.emit_session(index);
+        self.start_restored(pending);
         Ok(self.sessions[index].info.clone())
     }
 
@@ -2393,23 +2642,20 @@ impl SessionRegistry {
 
     fn stop_all(&mut self, forget: bool, reply: Reply<()>) {
         let mut asleep = Vec::new();
-        for (index, session) in self
-            .sessions
-            .iter_mut()
-            .enumerate()
-            .filter(|(_, s)| s.info.state.is_live())
-        {
+        for session in self.sessions.iter_mut().filter(|s| s.info.state.is_live()) {
             // A session the user is already stopping stays stopped; the others die with the
             // daemon but remain in the restore set unless the user asked to forget them.
             if !session.stopping && !forget {
                 session.keep_live = Some(session.info.state.clone());
             }
             session.request_stop(&self.chats);
-            asleep.push(index);
+            asleep.push(session.info.id);
         }
         // Nothing to stop in a sleeping assistant: it ends here.
-        for index in asleep {
-            self.end_if_asleep(index);
+        for id in asleep {
+            if let Ok(index) = self.session_index(id) {
+                self.end_if_asleep(index);
+            }
         }
         self.flush_dirty();
         self.stop_all_waiters.push(reply);
@@ -2562,6 +2808,9 @@ impl SessionRegistry {
             let _ = waiter.send(Ok(info.clone()));
         }
         self.settle_stop_all();
+        if self.sessions[index].close.is_some() {
+            self.complete_close(index);
+        }
     }
 
     // Agent trees -----------------------------------------------------------------------------
@@ -2802,6 +3051,7 @@ impl SessionRegistry {
             tree: TreeState::new(session_id),
             chat: Some(spec),
             running_command: None,
+            close: None,
         });
         let index = self.sessions.len() - 1;
         let workspace = self.sessions[index].info.workspace_id;
@@ -3166,6 +3416,9 @@ impl SessionRegistry {
                     let _ = waiter.send(Ok(info.clone()));
                 }
                 self.settle_stop_all();
+                if self.sessions[index].close.is_some() {
+                    self.complete_close(index);
+                }
             }
         }
     }
@@ -3334,6 +3587,9 @@ impl SessionRegistry {
             let _ = waiter.send(Ok(info.clone()));
         }
         self.settle_stop_all();
+        if self.sessions[index].close.is_some() {
+            self.complete_close(index);
+        }
     }
 
     /// A stopped or failed chat session comes back: the agent resumes the stored conversation.
@@ -3471,6 +3727,7 @@ impl SessionRegistry {
             tree: TreeState::new(row.id),
             chat: Some(spec),
             running_command: None,
+            close: None,
         });
         let index = self.sessions.len() - 1;
         match action {
@@ -3526,30 +3783,66 @@ impl SessionRegistry {
         facts: recovery::Facts,
     ) {
         let context = recovery::Context::new(facts.previous.as_ref(), now_ms());
-        let mut respawn = Vec::new();
-        let mut rewrite = Vec::new();
-        let mut chat_starts = Vec::new();
-        for mut row in rows {
+        let mut pending = Restoring::default();
+        for row in rows {
+            self.restore_row(row, mode, &context, &facts, &mut pending);
+        }
+        // What the sessions ran when the previous daemon ended is not running now.
+        recovery::store_running_commands(&self.storage, std::iter::empty());
+        // Before the respawns announce anything: the counts of a restored workspace are right
+        // from the start.
+        self.recount_sessions();
+        self.restore_trees(trees);
+        self.place_restored_sessions();
+        self.start_restored(pending);
+    }
+
+    /// Starts what [`Self::restore_row`] decided to start and writes the rows it changed.
+    fn start_restored(&mut self, pending: Restoring) {
+        // `start_terminal` stores the session itself once it is running.
+        for index in pending.respawn {
+            self.start_terminal(index);
+        }
+        for index in pending.chat_starts {
+            self.spawn_chat_start(index, None, false);
+        }
+        for index in pending.rewrite {
+            self.persist_session(index);
+        }
+    }
+
+    /// Adds the session of one stored row to `self.sessions` as the restore `mode` says: a live
+    /// row comes back (or is listed as stopped), an ended one stays as it was. What still has
+    /// to be started or written is noted in `pending` (indices into `self.sessions`).
+    fn restore_row(
+        &mut self,
+        mut row: SessionRow,
+        mode: RestoreMode,
+        context: &recovery::Context,
+        facts: &recovery::Facts,
+        pending: &mut Restoring,
+    ) {
+        {
             if !self
                 .workspaces
                 .iter()
                 .any(|w| w.info.id == row.workspace_id)
             {
                 warn!(session = %row.id, "stored session has no workspace; skipping it");
-                continue;
+                return;
             }
             let moved = self.follow_moved_project(&mut row);
             if row.kind == SessionKind::Harness {
-                match self.restore_chat(row, mode, &context, &facts) {
-                    ChatRestore::Start(index) => chat_starts.push(index),
-                    ChatRestore::Rewrite(index) => rewrite.push(index),
+                match self.restore_chat(row, mode, context, facts) {
+                    ChatRestore::Start(index) => pending.chat_starts.push(index),
+                    ChatRestore::Rewrite(index) => pending.rewrite.push(index),
                     ChatRestore::Keep => {}
                 }
                 if moved && let Some(index) = self.sessions.len().checked_sub(1) {
                     // The new project is stored with the session.
                     self.persist_session(index);
                 }
-                continue;
+                return;
             }
             let was_live = row.state.is_live();
             let (spec, unusable) = match serde_json::from_str::<TerminalSpec>(&row.spec_json) {
@@ -3615,7 +3908,7 @@ impl SessionRegistry {
                         }
                     }
                 };
-                recovery = Some(context.recovery(kind, recovery::lost(&facts, row.id, false)));
+                recovery = Some(context.recovery(kind, recovery::lost(facts, row.id, false)));
             }
             let default_title = default_title(&spec);
             let state_is_live = state.is_live();
@@ -3655,32 +3948,16 @@ impl SessionRegistry {
                 tree: TreeState::new(row.id),
                 chat: None,
                 running_command: None,
+                close: None,
             });
             let index = self.sessions.len() - 1;
             match action {
-                Some(true) => respawn.push(index),
-                Some(false) => rewrite.push(index),
+                Some(true) => pending.respawn.push(index),
+                Some(false) => pending.rewrite.push(index),
                 // A respawned session is stored by `start_terminal`.
-                None if moved => rewrite.push(index),
+                None if moved => pending.rewrite.push(index),
                 None => {}
             }
-        }
-        // What the sessions ran when the previous daemon ended is not running now.
-        recovery::store_running_commands(&self.storage, std::iter::empty());
-        // Before the respawns announce anything: the counts of a restored workspace are right
-        // from the start.
-        self.recount_sessions();
-        self.restore_trees(trees);
-        self.place_restored_sessions();
-        // `start_terminal` stores the session itself once it is running.
-        for index in respawn {
-            self.start_terminal(index);
-        }
-        for index in chat_starts {
-            self.spawn_chat_start(index, None, false);
-        }
-        for index in rewrite {
-            self.persist_session(index);
         }
     }
 
@@ -4105,6 +4382,33 @@ fn node_update(
     update
 }
 
+/// `session.close` of a session something runs in: `invalid_state` with `data.busy` so that a
+/// client can say what runs and ask.
+fn busy_error(title: &str, busy: &SessionBusy) -> ErrorBody {
+    let what = match (busy.state.as_str(), &busy.agent, &busy.command) {
+        ("turn", ..) => "a reply is being written".to_owned(),
+        ("approval", ..) => "a request is waiting for your answer".to_owned(),
+        (state, Some(agent), _) => format!(
+            "{agent} is {}",
+            if state == "blocked" {
+                "waiting for you"
+            } else {
+                "working"
+            }
+        ),
+        (_, None, Some(command)) => format!("`{command}` is still running"),
+        (_, None, None) => "something is running".to_owned(),
+    };
+    let mut error = ErrorBody::new(
+        ErrorCode::InvalidState,
+        format!("{title} is busy: {what}; close it with stop_running to stop it"),
+    );
+    error.data = serde_json::to_value(busy)
+        .ok()
+        .map(|busy| serde_json::json!({ "busy": busy }));
+    error
+}
+
 fn validated_name(name: String, what: &str) -> Result<String, ErrorBody> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -4136,6 +4440,17 @@ enum ChatRestore {
     Rewrite(usize),
     /// Start its agent again.
     Start(usize),
+}
+
+/// What [`SessionRegistry::restore_row`] left to do for the sessions it added.
+#[derive(Debug, Default)]
+struct Restoring {
+    /// Terminals to spawn.
+    respawn: Vec<usize>,
+    /// Chat agents to start.
+    chat_starts: Vec<usize>,
+    /// Sessions whose row changed; write them.
+    rewrite: Vec<usize>,
 }
 
 fn chat_info(spec: &ChatSpec) -> ChatInfo {

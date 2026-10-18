@@ -81,6 +81,8 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Send(args) => ctx?.send(args).await,
         Command::Stop(args) => ctx?.stop(&args.target).await,
         Command::Restart(args) => ctx?.restart(&args.target).await,
+        Command::Close(args) => ctx?.close(&args.target, args.force).await,
+        Command::Reopen(args) => ctx?.reopen(&args.target).await,
         Command::Recovery(args) => ctx?.recovery(args).await,
         Command::Rename(args) => ctx?.rename(args).await,
         Command::History(HistoryArgs {

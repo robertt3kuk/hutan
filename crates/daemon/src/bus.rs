@@ -301,6 +301,7 @@ fn feeds_attention(event: &Event) -> bool {
         event,
         Event::SessionUpdated { .. }
             | Event::SessionExited { .. }
+            | Event::SessionClosed { .. }
             | Event::ApprovalRequired { .. }
             | Event::ApprovalResolved { .. }
             | Event::QuestionRequired { .. }
@@ -337,6 +338,7 @@ fn feeds_notifications(event: &Event) -> bool {
         | Event::QuestionResolved { .. }
         | Event::AgentTreeUpdated { .. }
         | Event::SessionExited { .. }
+        | Event::SessionClosed { .. }
         | Event::TaskUpdated { .. } => true,
         Event::ChatEvent { event, .. } => {
             event.delivery == Delivery::Live

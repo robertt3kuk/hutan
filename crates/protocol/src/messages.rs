@@ -109,6 +109,15 @@ pub enum Request {
     SessionRestart(SessionRef),
     #[serde(rename = "session.rename")]
     SessionRename(SessionRename),
+    /// Capability `session.close` (protocol 0.30): ends a session and removes it from the
+    /// lists (its journal, blocks and history-index records stay); a busy session needs
+    /// `stop_running`, else `invalid_state` with the busy data; answered with `Empty`.
+    #[serde(rename = "session.close")]
+    SessionClose(SessionClose),
+    /// Capability `session.close`: brings a closed session back the way restart recovery does;
+    /// answered with `SessionResult`.
+    #[serde(rename = "session.reopen")]
+    SessionReopen(SessionRef),
     /// Capability `session.recovery` (protocol 0.26): dismiss what a daemon restart did to one
     /// session, or to all; answered with `RecoveryAcked`.
     #[serde(rename = "session.recovery_ack")]
@@ -611,6 +620,30 @@ pub struct SessionRename {
     pub title: String,
 }
 
+/// `session.close` (protocol 0.30, capability `session.close`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionClose {
+    pub session_id: SessionId,
+    /// Stop the session even when something runs in it; without it a busy session answers
+    /// `invalid_state` and `data.busy` says what runs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stop_running: bool,
+}
+
+/// What runs in a session that `session.close` refused to close (`ErrorBody.data.busy`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionBusy {
+    /// The command line in the foreground of a terminal (secrets removed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// The agent working or blocked in the session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// `working` or `blocked` (an agent or a foreground command), `turn` (a chat's reply is
+    /// being written), `approval` (a chat waits for a decision).
+    pub state: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalSize {
     pub cols: u16,
@@ -1058,6 +1091,11 @@ pub enum Event {
         #[serde(default)]
         args: Value,
     },
+    /// Capability `session.close` (protocol 0.30): the session was closed (`session.close`) and
+    /// is gone from `session.list`; clients drop it. Clients without the capability see it vanish
+    /// on their next `session.list`.
+    #[serde(rename = "session.closed")]
+    SessionClosed { session_id: SessionId },
 }
 
 impl Event {
@@ -1099,6 +1137,7 @@ impl Event {
         "account.changed",
         "resources.updated",
         "ui.command",
+        "session.closed",
     ];
 }
 

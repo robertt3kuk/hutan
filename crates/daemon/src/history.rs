@@ -260,14 +260,17 @@ impl HistoryService {
         let (rows, scan) = read.await.map_err(internal)?.map_err(index_error)?;
         let workspaces = self.registry.list_workspaces().await?.workspaces;
         // Only Hutan rows need the live sessions (their title, folder and workspace).
-        let sessions = if rows.iter().any(|row| row.source == Source::Hutan) {
-            self.registry.snapshot().await?.sessions
+        let (sessions, closed) = if rows.iter().any(|row| row.source == Source::Hutan) {
+            (
+                self.registry.snapshot().await?.sessions,
+                self.registry.closed_sessions().await?,
+            )
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         // Attribution reads the file system (canonical paths, git worktrees).
         tokio::task::spawn_blocking(move || {
-            history_catalog::answer(&req, limit, rows, scan, &workspaces, &sessions)
+            history_catalog::answer(&req, limit, rows, scan, &workspaces, &sessions, &closed)
         })
         .await
         .map_err(internal)?

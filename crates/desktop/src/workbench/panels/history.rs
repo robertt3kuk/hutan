@@ -41,7 +41,7 @@ use super::history_model::{Filters, HutanTarget, SOURCES, shell_join};
 use crate::settings::{HistoryScope as SettingsScope, HistorySettings};
 use crate::workbench::actions::{
     CopyHistoryCommand, Notify, OpenHistoryDirectory, OpenHistoryFile, OpenHistoryHit,
-    ResumeHistoryHit, RevealHistoryFile,
+    ReopenSessionById, ResumeHistoryHit, RevealHistoryFile,
 };
 use crate::workbench::chat::vim::Outcome;
 use crate::workbench::registry::PanelEnv;
@@ -1419,6 +1419,11 @@ fn run_row_action(action: RowAction, item: &SessionItem, window: &mut Window, cx
         RowAction::Resume => {
             if let Some(resume) = item.resume() {
                 dispatch(window, cx, Box::new(ResumeHistoryHit(resume)));
+            }
+        }
+        RowAction::Reopen => {
+            if let Some(id) = item.session_id {
+                dispatch(window, cx, Box::new(ReopenSessionById(id.to_string())));
             }
         }
         RowAction::OpenSession => {

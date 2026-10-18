@@ -1,4 +1,4 @@
-//! Session commands: `new`, `ls`, `send`, `stop`, `restart`, `rename`, `history`, and the
+//! Session commands: `new`, `ls`, `send`, `stop`, `close`, `reopen`, `restart`, `rename`, `history`, and the
 //! target resolution they share with `attach`.
 
 use std::collections::{BTreeMap, HashMap};
@@ -148,6 +148,108 @@ impl Ctx {
             )
             .await?;
         self.print(&result, || format!("stopped {}", result.session.id))
+    }
+
+    /// `hutan close`: ends the session and removes it from the lists. A session something runs
+    /// in is refused, with what runs, unless `force`.
+    pub(super) async fn close(&self, target: &str, force: bool) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        if !client.supports_session_close() {
+            return Err(CliError::Failed(
+                "this hutand cannot close sessions (protocol 0.30); \
+                 restart it with `hutan daemon restart`"
+                    .to_owned(),
+            ));
+        }
+        let session = self.resolve(&client, target).await?;
+        match client.session_close(session.id, force).await {
+            Ok(()) => self.print(
+                &serde_json::json!({"session_id": session.id, "closed": true}),
+                || format!("closed {} ({})", session.id, session.title),
+            ),
+            Err(error) => match error.busy() {
+                Some(busy) => Err(CliError::Failed(format!(
+                    "{} ({}) is busy: {}; `hutan close --force {target}` stops it and closes it",
+                    session.id,
+                    session.title,
+                    busy_text(&busy)
+                ))),
+                None => Err(self.fail(error)),
+            },
+        }
+    }
+
+    /// `hutan reopen`: a closed session comes back (same id; a terminal starts its command
+    /// again, a chat continues its conversation).
+    pub(super) async fn reopen(&self, target: &str) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        if !client.supports_session_close() {
+            return Err(CliError::Failed(
+                "this hutand cannot reopen sessions (protocol 0.30); \
+                 restart it with `hutan daemon restart`"
+                    .to_owned(),
+            ));
+        }
+        let id = self.resolve_closed(&client, target).await?;
+        let session = client.session_reopen(id).await.map_err(|e| self.fail(e))?;
+        self.announce(
+            &session,
+            &SessionResult {
+                session: session.clone(),
+            },
+        )
+    }
+
+    /// The id of a closed session: a full session id, or a prefix of one that the history
+    /// catalog (`hutan history sessions`, needs the index) knows as closed.
+    async fn resolve_closed(&self, client: &Client, target: &str) -> Result<SessionId, CliError> {
+        if let Ok(id) = target.parse::<SessionId>() {
+            return Ok(id);
+        }
+        if target.len() < MIN_PREFIX {
+            return Err(CliError::Usage(format!(
+                "`{target}` is not a session id; give the full id or a prefix of at least \
+                 {MIN_PREFIX} characters"
+            )));
+        }
+        let answer = client
+            .history_sessions(hutan_protocol::history::HistorySessionsRequest {
+                scope: hutan_protocol::history::HistoryScope::All,
+                workspace_id: None,
+                filter: target.to_owned(),
+                sort: hutan_protocol::history::HistorySessionSort::Updated,
+                sources: vec![hutan_protocol::history::HistorySource::Hutan],
+                limit: hutan_protocol::history::SESSIONS_MAX_LIMIT,
+                refresh: false,
+            })
+            .await
+            .map_err(|_| {
+                CliError::Failed(format!(
+                    "cannot look up `{target}` among the closed sessions (that needs \
+                     `hutan index enable`); give the full session id"
+                ))
+            })?;
+        let prefix = target.to_ascii_uppercase();
+        let mut found: Vec<SessionId> = answer
+            .sessions
+            .iter()
+            .filter(|row| row.closed)
+            .filter_map(|row| row.session_id)
+            .filter(|id| id.to_string().starts_with(&prefix))
+            .collect();
+        found.dedup();
+        match found.as_slice() {
+            [id] => Ok(*id),
+            [] => Err(not_found(target)),
+            many => Err(CliError::Usage(format!(
+                "`{target}` matches {} closed sessions: {}",
+                many.len(),
+                many.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))),
+        }
     }
 
     pub(super) async fn restart(&self, target: &str) -> Result<(), CliError> {
@@ -354,6 +456,27 @@ fn unique<'a>(
             }
             Err(CliError::Usage(message))
         }
+    }
+}
+
+/// What `session.close` found running, in words.
+fn busy_text(busy: &hutan_protocol::messages::SessionBusy) -> String {
+    match (busy.state.as_str(), &busy.agent, &busy.command) {
+        ("turn", ..) => "a reply is being written".to_owned(),
+        ("approval", ..) => "a request is waiting for your answer".to_owned(),
+        (state, Some(agent), command) => {
+            let what = if state == "blocked" {
+                "waiting for you"
+            } else {
+                "working"
+            };
+            match command {
+                Some(command) => format!("{agent} is {what} (`{command}` is running)"),
+                None => format!("{agent} is {what}"),
+            }
+        }
+        (_, None, Some(command)) => format!("`{command}` is still running"),
+        (_, None, None) => "something is running".to_owned(),
     }
 }
 

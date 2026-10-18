@@ -5,7 +5,9 @@ use std::path::PathBuf;
 
 use hutan_core::{ObservationTree, SessionId, Task};
 use hutan_protocol::messages::TerminalSpec;
-use hutan_storage::{ProviderRow, RecentProject, SessionRow, Storage, StorageError, WorkspaceRow};
+use hutan_storage::{
+    ClosedSession, ProviderRow, RecentProject, SessionRow, Storage, StorageError, WorkspaceRow,
+};
 use serde::{Deserialize, Serialize};
 
 /// Everything the registry needs to rebuild its state.
@@ -13,6 +15,8 @@ use serde::{Deserialize, Serialize};
 pub struct Stored {
     pub workspaces: Vec<WorkspaceRow>,
     pub sessions: Vec<SessionRow>,
+    /// The sessions `session.close` removed, most recently closed first.
+    pub closed_sessions: Vec<ClosedSession>,
     /// Newest first.
     pub recent_projects: Vec<RecentProject>,
     /// What the daemon knew about the agents of each session when it stopped.
@@ -31,6 +35,7 @@ pub fn load(storage: &Storage) -> Result<Stored, StorageError> {
     Ok(Stored {
         workspaces: storage.workspaces().list()?,
         sessions: storage.sessions().list()?,
+        closed_sessions: storage.sessions().list_closed()?,
         recent_projects: storage.recent_projects().list()?,
         agent_trees: crate::tree::load(storage)?,
         providers: storage.providers().list()?,

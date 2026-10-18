@@ -347,6 +347,31 @@ impl Connection {
         self.call(Request::HistorySessions(request)).await
     }
 
+    /// True while connected to a daemon that advertised capability `session.close`
+    /// ([`Client::supports_session_close`]); false when disconnected.
+    pub fn supports_session_close(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_session_close())
+    }
+
+    /// `session.close` ([`Client::session_close`]). A refusal because something runs in the
+    /// session carries [`ClientError::busy`].
+    pub async fn session_close(
+        &self,
+        session: SessionId,
+        stop_running: bool,
+    ) -> Result<(), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.session_close(session, stop_running).await
+    }
+
+    /// `session.reopen` ([`Client::session_reopen`]): brings a closed session back.
+    pub async fn session_reopen(&self, session: SessionId) -> Result<SessionInfo, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.session_reopen(session).await
+    }
+
     /// `history.set_enabled`: turns indexing on or off (recorded in `daemon.toml`); answers with
     /// the new status.
     pub async fn history_set_enabled(

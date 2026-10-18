@@ -36,6 +36,7 @@ actions!(
         NewAgent,
         NewChat,
         StopSession,
+        CloseSession,
         RenameSession,
         RestartSession,
         CopySessionId,
@@ -242,6 +243,10 @@ data_actions! {
     /// Reveal the resources panel with this session's processes in view.
     ShowInResources(String);
     StopSessionById(String);
+    /// Close the session (asks first when something runs in it); History's Reopen is
+    /// `ReopenSessionById`.
+    CloseSessionById(String);
+    ReopenSessionById(String);
     RenameSessionById(String);
     RestartSessionById(String);
     CopySessionIdOf(String);
@@ -437,6 +442,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Session: Rename…", RenameSession),
         command("Session: Restart", RestartSession),
         command("Session: Stop…", StopSession),
+        command("Session: Close…", CloseSession),
         command("Session: Copy Session ID", CopySessionId),
         command("Session: Jump to Next That Needs You", JumpToNextAttention),
         command("Layout: Split Right", SplitRight),

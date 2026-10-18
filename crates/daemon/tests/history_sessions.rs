@@ -779,6 +779,76 @@ async fn hutan_terminals_are_rows_with_their_session_title_and_project() {
     env.daemon.stop().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closed_hutan_session_stays_a_row_marked_closed_until_it_is_reopened() {
+    let env = start(true).await;
+    let app_path = env.repo("app");
+    let client = env.daemon.connect().await;
+    let project = open(&client, &app_path).await;
+    let session = create_in(
+        &client,
+        None,
+        hutan_protocol::messages::TerminalSpec {
+            cwd: Some(app_path.clone()),
+            title: Some("dev server".to_owned()),
+            ..sh("printf '\\033]133;A\\007$ \\033]133;B\\007cargo test -p daemon\\r\\n\\033]133;C\\007all green\\r\\n\\033]133;D;0\\007\\033]133;A\\007$ \\033]133;B\\007'; exec cat")
+        },
+    )
+    .await;
+    let key = session.id.to_string();
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let answer = sessions(&client, req()).await;
+        if answer
+            .sessions
+            .iter()
+            .any(|r| r.source == HistorySource::Hutan && r.messages > 0)
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "no Hutan row in time");
+        sleep(Duration::from_millis(50)).await;
+    }
+    assert!(!row(&sessions(&client, req()).await, &key).closed);
+
+    client
+        .call::<hutan_protocol::messages::Empty>(Request::SessionClose(
+            hutan_protocol::messages::SessionClose {
+                session_id: session.id,
+                stop_running: true,
+            },
+        ))
+        .await
+        .unwrap();
+    // Still there, still its own title and project, and marked closed.
+    let scoped = sessions(
+        &client,
+        HistorySessionsRequest {
+            scope: HistoryScope::Project,
+            workspace_id: Some(project.id),
+            ..req()
+        },
+    )
+    .await;
+    let found = row(&scoped, &key);
+    assert!(found.closed);
+    assert_eq!(found.session_id, Some(session.id));
+    assert_eq!(found.title.as_deref(), Some("dev server"));
+    assert_eq!(found.workspace_id, Some(project.id));
+
+    client
+        .call::<hutan_protocol::messages::SessionResult>(Request::SessionReopen(
+            hutan_protocol::messages::SessionRef {
+                session_id: session.id,
+            },
+        ))
+        .await
+        .unwrap();
+    assert!(!row(&sessions(&client, req()).await, &key).closed);
+    stop(&client, session.id).await.unwrap();
+    env.daemon.stop().await;
+}
+
 const FIXTURE_BIN_NAME: &str = "hutan-codex-fixture";
 
 /// The fake codex app server, next to the test binaries (`just test` builds the workspace

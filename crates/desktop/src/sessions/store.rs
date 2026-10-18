@@ -62,6 +62,21 @@ pub struct UiOpenRequested {
     pub workspace_id: Option<WorkspaceId>,
 }
 
+/// Emitted by [`SessionsStore`] when a session was closed (`session.closed`), by this window
+/// or by another client: its tabs go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionClosed {
+    pub session_id: SessionId,
+}
+
+/// Why `session.close` did not close the session.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CloseFailure {
+    /// Something runs in it; closing needs `stop_running`.
+    Busy(hutan_protocol::messages::SessionBusy),
+    Failed(String),
+}
+
 /// Emitted by [`SessionsStore`] when a harness's login or logout session ended
 /// (`account.changed`): its accounts may have changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +203,7 @@ pub struct SessionsStore {
 impl EventEmitter<AgentAttentionChanged> for SessionsStore {}
 impl EventEmitter<UiOpenRequested> for SessionsStore {}
 impl EventEmitter<AccountsChanged> for SessionsStore {}
+impl EventEmitter<SessionClosed> for SessionsStore {}
 impl EventEmitter<RecoverySummaryDue> for SessionsStore {}
 
 impl std::fmt::Debug for SessionsStore {
@@ -475,6 +491,10 @@ impl SessionsStore {
                     });
                 }
             }
+            // A session closed by any client: the window drops its tabs.
+            Notice::SessionClosed { session } => cx.emit(SessionClosed {
+                session_id: *session,
+            }),
             // Intents are for notifiers (M6-B) and `hutan notify watch`; the desktop shows
             // approvals and agent state from its own state.
             Notice::SessionExited { .. }
@@ -1101,6 +1121,46 @@ impl SessionsStore {
     ) -> Task<Result<SessionInfo, String>> {
         self.run(
             Request::SessionStop(SessionRef {
+                session_id: session,
+            }),
+            cx,
+        )
+    }
+
+    /// Whether the daemon can close and reopen sessions (capability `session.close`); the
+    /// close buttons and History's Reopen exist only then.
+    pub fn supports_close(&self) -> bool {
+        self.connection.supports_session_close()
+    }
+
+    /// `session.close`. A session something runs in is refused as [`CloseFailure::Busy`]
+    /// unless `stop_running`.
+    pub fn close(
+        &self,
+        session: SessionId,
+        stop_running: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), CloseFailure>> {
+        let connection = self.connection.clone();
+        cx.spawn(async move |_, _| {
+            connection
+                .session_close(session, stop_running)
+                .await
+                .map_err(|error| match error.busy() {
+                    Some(busy) => CloseFailure::Busy(busy),
+                    None => CloseFailure::Failed(error.to_string()),
+                })
+        })
+    }
+
+    /// `session.reopen`: a closed session comes back.
+    pub fn reopen(
+        &mut self,
+        session: SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<SessionInfo, String>> {
+        self.run(
+            Request::SessionReopen(SessionRef {
                 session_id: session,
             }),
             cx,

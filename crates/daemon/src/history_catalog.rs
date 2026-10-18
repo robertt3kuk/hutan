@@ -30,6 +30,7 @@ use hutan_protocol::messages::{SessionInfo, WorkspaceInfo, WorkspaceKind};
 
 use crate::agent::validate_resume_argv;
 use crate::projects;
+use crate::registry::ClosedInfo;
 
 /// A filter longer than this (bytes) matches nothing.
 pub const FILTER_MAX_BYTES: usize = 2048;
@@ -403,12 +404,14 @@ struct Candidate {
     cwd: Option<String>,
     attribution: Option<Attribution>,
     session_id: Option<SessionId>,
+    /// The Hutan session was closed (`session.close`).
+    closed: bool,
 }
 
 /// Answers `req` from the catalog `rows` of the enabled sources (`limit` as
 /// [`check_request`] returned it). `workspaces` are the daemon's workspaces and projects,
-/// `sessions` its own sessions (a Hutan row takes the title, folder and workspace of its live
-/// session).
+/// `sessions` its own sessions and `closed` the ones it closed (a Hutan row takes the title,
+/// folder and workspace of its session; a closed one is marked so).
 pub fn answer(
     req: &HistorySessionsRequest,
     limit: usize,
@@ -416,6 +419,7 @@ pub fn answer(
     scan: ScanInfo,
     workspaces: &[WorkspaceInfo],
     sessions: &[SessionInfo],
+    closed: &[ClosedInfo],
 ) -> Result<HistorySessions, ErrorBody> {
     let mut resolver = Resolver::new(workspaces);
     if req.scope != HistoryScope::All
@@ -429,6 +433,7 @@ pub fn answer(
     }
     let loaded = rows.len() as u64;
     let live: HashMap<SessionId, &SessionInfo> = sessions.iter().map(|s| (s.id, s)).collect();
+    let gone: HashMap<SessionId, &ClosedInfo> = closed.iter().map(|s| (s.id, s)).collect();
     let sources: Vec<Source> = req.sources.iter().map(|s| source_in(*s)).collect();
     let terms = if req.filter.len() > FILTER_MAX_BYTES {
         None
@@ -446,9 +451,19 @@ pub fn answer(
         let mut cwd = row.cwd.clone();
         let mut session_id = None;
         let mut owner: Option<WorkspaceId> = None;
+        let mut is_closed = false;
         if row.source == Source::Hutan {
             session_id = row.key.parse::<SessionId>().ok();
             if let Some(session) = session_id.and_then(|id| live.get(&id)) {
+                if !session.title.trim().is_empty() {
+                    title = Some(session.title.clone());
+                }
+                if let Some(dir) = &session.cwd {
+                    cwd = Some(dir.to_string_lossy().into_owned());
+                }
+                owner = Some(session.workspace_id);
+            } else if let Some(session) = session_id.and_then(|id| gone.get(&id)) {
+                is_closed = true;
                 if !session.title.trim().is_empty() {
                     title = Some(session.title.clone());
                 }
@@ -500,6 +515,7 @@ pub fn answer(
             cwd,
             attribution,
             session_id,
+            closed: is_closed,
         });
     }
 
@@ -526,6 +542,7 @@ fn row_out(candidate: Candidate) -> HistorySessionRow {
         cwd,
         attribution,
         session_id,
+        closed,
     } = candidate;
     // The same rules as `agent.report` resume commands: a command that would not pass is not
     // offered. OMP resumes by transcript path; when that fails the rules, by id.
@@ -559,6 +576,7 @@ fn row_out(candidate: Candidate) -> HistorySessionRow {
         resume_argv,
         path: row.path,
         session_id,
+        closed,
     }
 }
 

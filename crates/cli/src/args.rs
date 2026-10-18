@@ -63,6 +63,12 @@ pub enum Command {
     Stop(TargetArgs),
     /// Start an ended session again (new terminal, same id)
     Restart(TargetArgs),
+    /// Close a session: end it and remove it from the lists (refused while something runs in it
+    /// unless --force); `hutan reopen` brings it back
+    Close(CloseArgs),
+    /// Bring a closed session back: a terminal starts its command again in its last directory, a
+    /// chat continues its conversation
+    Reopen(TargetArgs),
     /// What the last hutand restart did to each session (shells respawned, agents resumed, turns
     /// interrupted, sessions not restarted); `hutan recovery ack` dismisses it
     Recovery(RecoveryArgs),
@@ -1282,6 +1288,16 @@ pub enum SignalArg {
     Hup,
     Stop,
     Cont,
+}
+
+/// `hutan close`.
+#[derive(Debug, Args)]
+pub struct CloseArgs {
+    #[arg(help = TARGET_HELP)]
+    pub target: String,
+    /// Stop what runs in the session (a command, a working agent, a chat turn) and close it
+    #[arg(long)]
+    pub force: bool,
 }
 
 /// `hutan kill`.

@@ -62,6 +62,11 @@ pub enum Notice {
         code: Option<i32>,
         signal: Option<i32>,
     },
+    /// The session was closed (`session.closed`, protocol 0.30) and is no longer in the state:
+    /// close its tabs.
+    SessionClosed {
+        session: SessionId,
+    },
     Bell {
         terminal: TerminalId,
     },
@@ -323,6 +328,17 @@ impl StoreState {
                 code,
                 signal,
             }),
+            Event::SessionClosed { session_id } => {
+                if let Some(at) = self.sessions.iter().position(|s| s.id == session_id) {
+                    effects.removed.extend(self.sessions.remove(at).terminal_id);
+                }
+                self.approvals.retain(|a| a.session_id != session_id);
+                self.questions.retain(|q| q.session_id != session_id);
+                self.trees.remove(&session_id);
+                effects.notices.push(Notice::SessionClosed {
+                    session: session_id,
+                });
+            }
             Event::TerminalBell { terminal_id } => effects.notices.push(Notice::Bell {
                 terminal: terminal_id,
             }),

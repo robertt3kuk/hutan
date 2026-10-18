@@ -275,6 +275,7 @@ fn the_sessions_panel_lists_groups_and_filters(cx: &mut TestAppContext) {
             "Rename…",
             "Restart",
             "Stop…",
+            "Close session…",
             "Show in Resources",
             "Copy Session ID"
         ]

@@ -76,6 +76,13 @@ pub struct SessionRow {
     pub resume_ref_json: Option<String>,
 }
 
+/// A session `session.close` removed from the lists: its row, kept for `session.reopen`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClosedSession {
+    pub session: SessionRow,
+    pub closed_at_ms: u64,
+}
+
 /// One daemon run recorded in `app_meta`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EpochRecord {

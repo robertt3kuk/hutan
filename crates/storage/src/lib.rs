@@ -30,9 +30,9 @@ use tracing::{debug, error};
 pub use error::{Result, StorageError};
 pub use migrate::{BACKUPS_KEPT, MIGRATIONS, Migration};
 pub use rows::{
-    ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, CreatedBy, EpochEnd,
-    EpochRecord, ProviderRow, QuestionOutcome, QuestionRow, RecentProject, SessionRow,
-    WorkspaceKind, WorkspaceRow, WorktreeRow,
+    ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
+    CreatedBy, EpochEnd, EpochRecord, ProviderRow, QuestionOutcome, QuestionRow, RecentProject,
+    SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
 };
 pub use sql::{EPOCH_HISTORY_KEPT, RECENT_PROJECTS_KEPT, Write};
 
@@ -370,9 +370,20 @@ impl Sessions<'_> {
         self.0.write(Write::DeleteSession(id))
     }
 
-    /// Every session, oldest first.
+    /// Every open session, oldest first (closed ones are not listed).
     pub fn list(&self) -> Result<Vec<SessionRow>> {
         self.0.read(|conn| sql::list_sessions(conn, None))
+    }
+
+    /// The closed sessions, most recently closed first.
+    pub fn list_closed(&self) -> Result<Vec<ClosedSession>> {
+        self.0.read(sql::list_closed_sessions)
+    }
+
+    /// Marks the session closed at `closed_at_ms`, or open again (`None`); its row and everything
+    /// that belongs to it stay.
+    pub fn set_closed(&self, id: SessionId, closed_at_ms: Option<u64>) -> Result<()> {
+        self.0.write(Write::SetSessionClosed { id, closed_at_ms })
     }
 
     pub fn list_in_workspace(&self, workspace: WorkspaceId) -> Result<Vec<SessionRow>> {

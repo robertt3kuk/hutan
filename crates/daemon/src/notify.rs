@@ -191,6 +191,14 @@ impl Core {
                     _ => Vec::new(),
                 }
             }
+            Event::SessionClosed { session_id } => {
+                // Nothing is left to open: what was raised about the session goes with it.
+                self.forget_session(*session_id);
+                self.last_raised.remove(session_id);
+                let session = *session_id;
+                self.withdraw_where(|e| e.intent.session_id == session);
+                Vec::new()
+            }
             Event::ChatEvent { session_id, event } if event.delivery == Delivery::Live => {
                 match &event.kind {
                     AgentEventKind::TurnStarted => {
@@ -1358,6 +1366,38 @@ mod tests {
         };
         assert_eq!(intent.kind, IntentKind::SessionExitedWithError);
         assert_eq!(intent.body, "The process exited with code 2.");
+    }
+
+    #[test]
+    fn closing_a_session_withdraws_what_was_raised_about_it() {
+        let mut core = core();
+        let session = SessionId::new();
+        let other = SessionId::new();
+        for id in [session, other] {
+            let raised = raise(
+                &mut core,
+                &Event::SessionExited {
+                    session_id: id,
+                    code: Some(2),
+                    signal: None,
+                },
+                1_000,
+            );
+            assert_eq!(raised.len(), 1);
+        }
+        assert_eq!(core.list(1_001).len(), 2);
+        let raised = raise(
+            &mut core,
+            &Event::SessionClosed {
+                session_id: session,
+            },
+            1_002,
+        );
+        assert!(raised.is_empty());
+        let left = core.list(1_003);
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].session_id, other);
+        assert_eq!(core.withdrawn.len(), 1, "its native notification goes too");
     }
 
     #[test]

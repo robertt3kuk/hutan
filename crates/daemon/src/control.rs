@@ -530,6 +530,8 @@ fn target_session(request: &Request) -> Option<SessionId> {
         }
         Request::SessionRename(r) => Some(r.session_id),
         Request::SessionKill(r) => Some(r.session_id),
+        Request::SessionClose(r) => Some(r.session_id),
+        Request::SessionReopen(r) => Some(r.session_id),
         Request::ProcessSignal(r) => Some(r.session_id),
         Request::AgentInterrupt(r) => Some(r.session_id),
         Request::SessionSendText(r) => Some(r.session_id),
@@ -627,6 +629,16 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
         Request::SessionRename(r) => {
             format!("rename {} to “{}”", session(r.session_id), r.title)
         }
+        Request::SessionClose(r) => format!(
+            "close {}{}",
+            session(r.session_id),
+            if r.stop_running {
+                ", stopping whatever runs in it"
+            } else {
+                ""
+            }
+        ),
+        Request::SessionReopen(r) => format!("reopen the closed session {}", r.session_id),
         Request::SessionSendText(r) => format!(
             "type {} character(s) into {}{}",
             r.text.chars().count(),

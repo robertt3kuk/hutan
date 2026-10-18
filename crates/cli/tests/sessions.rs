@@ -364,3 +364,63 @@ async fn usage_errors_and_missing_daemon() {
     }
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn close_refuses_a_busy_session_without_force_and_reopen_brings_it_back() {
+    let t = TestDaemon::start().await;
+    let id = t.new_session(&["--title", "worker"], &["cat"]).await;
+    t.wait_state(&id, "running").await;
+
+    // An agent working in the session makes it busy.
+    let mut report = common::command(
+        std::path::Path::new(common::HUTAN),
+        Some(&t.paths.socket),
+        &[
+            "agent", "report", "--source", "test", "--agent", "fake", "--state", "working",
+            "--seq", "1",
+        ],
+    );
+    report.env("HUTAN_SESSION_ID", &id);
+    common::finish(report).await.ok();
+    timeout(WAIT, async {
+        while t.session(&id).await.get("agent").is_none() {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the report never showed up");
+
+    let refused = t.hutan(&["close", &id]).await;
+    assert_eq!(refused.code, 1, "{refused:?}");
+    assert!(
+        refused.stderr.contains("busy") && refused.stderr.contains("fake is working"),
+        "says what runs: {refused:?}"
+    );
+    assert!(
+        refused.stderr.contains("--force"),
+        "says how to go on: {refused:?}"
+    );
+    t.wait_state(&id, "running").await;
+
+    let closed = t.hutan(&["close", "--force", &id, "--json"]).await.ok();
+    assert_eq!(closed.json()["closed"], true);
+    assert!(t.sessions().await.is_empty(), "gone from `hutan ls`");
+
+    // Reopened by the full id: same session, running again; idle, so it closes without --force.
+    let reopened = t.hutan(&["reopen", &id]).await.ok();
+    assert!(reopened.stdout.contains(&id), "{reopened:?}");
+    let session = t.wait_state(&id, "running").await;
+    assert_eq!(session["title"], "worker");
+    t.hutan(&["close", &id]).await.ok();
+    assert!(t.sessions().await.is_empty());
+
+    // Reopened once more (as JSON), it is open: a second reopen has nothing to bring back.
+    let out = t.hutan(&["reopen", &id, "--json"]).await.ok();
+    assert_eq!(out.json()["session"]["id"], id.as_str());
+    let out = t.hutan(&["reopen", &id]).await;
+    assert_eq!(out.code, 1, "already open: {out:?}");
+    assert!(out.stderr.contains("not closed"), "{out:?}");
+    let out = t.hutan(&["close", "nonexistent"]).await;
+    assert_eq!(out.code, 1, "{out:?}");
+    t.stop().await;
+}

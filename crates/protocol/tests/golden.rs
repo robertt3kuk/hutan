@@ -2244,6 +2244,24 @@ fn requests() -> Vec<(&'static str, Request)> {
                 refresh: true,
             }),
         ),
+        (
+            "session_close",
+            Request::SessionClose(SessionClose {
+                session_id: sid(),
+                stop_running: false,
+            }),
+        ),
+        (
+            "session_close_stop_running",
+            Request::SessionClose(SessionClose {
+                session_id: sid(),
+                stop_running: true,
+            }),
+        ),
+        (
+            "session_reopen",
+            Request::SessionReopen(SessionRef { session_id: sid() }),
+        ),
     ]
 }
 
@@ -3006,6 +3024,7 @@ fn events() -> Vec<(&'static str, Event)> {
                 },
             },
         ),
+        ("session_closed", Event::SessionClosed { session_id: sid() }),
     ]
 }
 
@@ -3463,6 +3482,7 @@ fn responses_match_fixtures() {
                         ]),
                         path: Some("/Users/dev/.omp/agent/sessions/x/4f1c2a9e.jsonl".into()),
                         session_id: None,
+                        closed: false,
                     }],
                     matched: 2,
                     loaded: 250,
@@ -4308,6 +4328,72 @@ fn responses_match_fixtures() {
                 14,
                 &RecoveryAcked {
                     sessions: vec![sid()],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "session_reopened",
+            ControlMessage::ok(
+                16,
+                &SessionResult {
+                    session: session_info(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "error_session_busy",
+            ControlMessage::err(
+                17,
+                ErrorBody {
+                    code: ErrorCode::InvalidState,
+                    message: "session is busy: `npm run dev` is still running".into(),
+                    data: Some(
+                        serde_json::to_value(serde_json::json!({
+                            "busy": SessionBusy {
+                                command: Some("npm run dev".into()),
+                                agent: None,
+                                state: "working".into(),
+                            }
+                        }))
+                        .unwrap(),
+                    ),
+                },
+            ),
+        ),
+        (
+            "history_sessions_closed",
+            ControlMessage::ok(
+                18,
+                &HistorySessions {
+                    sessions: vec![HistorySessionRow {
+                        source: HistorySource::Hutan,
+                        session_key: sid().to_string(),
+                        title: Some("cargo watch".into()),
+                        cwd: Some("/Users/dev/proj/hutan".into()),
+                        branch: None,
+                        model: None,
+                        messages: 3,
+                        created_ms: Some(1_791_894_100_000),
+                        updated_ms: Some(1_791_894_164_332),
+                        first_prompt: None,
+                        latest: vec![],
+                        workspace_id: Some(ws()),
+                        resume_argv: None,
+                        path: None,
+                        session_id: Some(sid()),
+                        closed: true,
+                    }],
+                    matched: 1,
+                    loaded: 1,
+                    scan: HistoryScanInfo {
+                        files: 0,
+                        done: 0,
+                        scanning: false,
+                        finished_ms: None,
+                        per_source: vec![],
+                    },
                 },
             )
             .unwrap(),

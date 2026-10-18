@@ -244,6 +244,10 @@ pub enum Region {
     /// Entry `index` of a list of the Start… sheet (`project`, `provider`, `model`, `worktree`,
     /// `after`), top to bottom.
     LauncherItem(&'static str, usize),
+    /// The hover × of a session's row in the sidebar or card in the Agent Dashboard.
+    SessionClose(hutan_core::SessionId),
+    /// A control of the "Closed … · Undo" toast (`undo`).
+    CloseToast(&'static str),
     /// The ▶ Start button of project row `workspace` in the sidebar.
     ProjectStart(hutan_core::WorkspaceId),
     /// A control of the Accounts page: harness id (or `*`) and the control (`login`, `logout`, `card`, `refresh`).
@@ -499,6 +503,9 @@ pub struct Workbench {
     pub(crate) changes_views: HashMap<String, Entity<super::changes::ChangesView>>,
     pub(crate) changes_subscriptions: Vec<Subscription>,
     pub(crate) notice: Option<SharedString>,
+    /// "Closed … · Undo" (`closing.rs`).
+    pub(crate) close_toast: Option<super::closing::CloseToast>,
+    pub(crate) toast_rev: u64,
     /// The restart summary is on screen (`recovery_summary.rs`).
     pub(crate) recovery_open: bool,
     /// A large sidebar's one-row summary was opened into the full list ("Review").
@@ -696,6 +703,13 @@ impl Workbench {
             cx.subscribe(&sessions, |this, _, _: &RecoverySummaryDue, cx| {
                 this.show_recovery_summary(cx);
             }),
+            cx.subscribe_in(
+                &sessions,
+                window,
+                |this, _, event: &crate::sessions::SessionClosed, window, cx| {
+                    this.on_session_closed(event.session_id, window, cx);
+                },
+            ),
         ];
 
         let remote = super::remote::RemoteControl::start(&sessions, window, cx);
@@ -795,6 +809,8 @@ impl Workbench {
             changes_views: HashMap::new(),
             changes_subscriptions: Vec::new(),
             notice: None,
+            close_toast: None,
+            toast_rev: 0,
             recovery_open: false,
             recovery_review: false,
             last_title: String::new(),

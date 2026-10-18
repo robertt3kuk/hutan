@@ -18,7 +18,7 @@ pub use attention::{
 };
 pub use placement::{PlacementBadge, placement_badge};
 pub use store::{
-    AccountsChanged, REPLAY_WINDOW, RecoverySummaryDue, SessionsStore, UI_OPEN_MAX_AGE_MS,
-    UiOpenRequested,
+    AccountsChanged, CloseFailure, REPLAY_WINDOW, RecoverySummaryDue, SessionClosed, SessionsStore,
+    UI_OPEN_MAX_AGE_MS, UiOpenRequested,
 };
 pub use terminal::TerminalSession;

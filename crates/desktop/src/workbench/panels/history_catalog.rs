@@ -78,6 +78,8 @@ pub struct SessionItem {
     pub resume_argv: Option<Vec<String>>,
     pub path: Option<String>,
     pub session_id: Option<SessionId>,
+    /// The Hutan session was closed: Reopen instead of Open.
+    pub closed: bool,
     /// Set for a full-text hit: the best matching row.
     pub evidence: Option<Evidence>,
     /// A Hutan hit on a terminal block.
@@ -118,6 +120,7 @@ impl SessionItem {
             resume_argv: row.resume_argv.clone(),
             path: row.path.clone(),
             session_id: row.session_id,
+            closed: row.closed,
             evidence: None,
             block: None,
         }
@@ -140,6 +143,7 @@ impl SessionItem {
             resume_argv: hit.resume_argv.clone(),
             path: hit.path.clone(),
             session_id: hit.session_id,
+            closed: false,
             evidence: Some(Evidence {
                 role: hit.role,
                 snippet: parse_snippet(&hit.snippet),
@@ -466,6 +470,8 @@ pub enum RowAction {
     Resume,
     /// Show a Hutan session.
     OpenSession,
+    /// Bring a closed Hutan session back (`session.reopen`) and show it.
+    Reopen,
     CopyResumeCommand,
     OpenLog,
     RevealLog,
@@ -486,6 +492,9 @@ pub struct ActionEntry {
 /// whether the daemon still has the Hutan session of a Hutan row.
 pub fn blocker(item: &SessionItem, session_exists: bool) -> Option<&'static str> {
     if item.source == HistorySource::Hutan {
+        if item.closed {
+            return None;
+        }
         return (!session_exists).then_some("That terminal session no longer exists.");
     }
     item.resume()
@@ -503,7 +512,13 @@ pub fn actions(item: &SessionItem, session_exists: bool) -> Vec<ActionEntry> {
         enabled,
     };
     let mut out = Vec::new();
-    if hutan {
+    if hutan && item.closed {
+        out.push(entry(
+            RowAction::Reopen,
+            "Reopen",
+            item.session_id.is_some(),
+        ));
+    } else if hutan {
         out.push(entry(
             RowAction::OpenSession,
             "Open Session",
@@ -572,6 +587,7 @@ mod tests {
             resume_argv: None,
             path: None,
             session_id: None,
+            closed: false,
         }
     }
 
@@ -878,5 +894,18 @@ mod tests {
         assert_eq!(sort_label(HistorySessionSort::Created), "Created");
         let names: Vec<_> = GroupBy::ALL.iter().map(|g| g.label()).collect();
         assert_eq!(names, ["Project", "Folder", "Agent"]);
+    }
+
+    #[test]
+    fn a_closed_hutan_row_offers_reopen_instead_of_open() {
+        let mut hutan = item(HistorySource::Hutan, "k", None);
+        hutan.closed = true;
+        hutan.session_id = Some(SessionId::new());
+        let entries = actions(&hutan, false);
+        assert_eq!(entries[0].action, RowAction::Reopen);
+        assert_eq!(entries[0].label, "Reopen");
+        assert!(entries[0].enabled);
+        assert!(!entries.iter().any(|e| e.action == RowAction::OpenSession));
+        assert_eq!(blocker(&hutan, false), None);
     }
 }

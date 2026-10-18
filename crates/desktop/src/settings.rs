@@ -63,6 +63,18 @@ pub enum OptionAsMetaSetting {
     Both,
 }
 
+/// What the × of a terminal tab does (`terminal.tab_close`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TabClose {
+    /// Closes the tab only: the session keeps running and stays in the sidebar.
+    #[default]
+    Detach,
+    /// Closes the session (the sidebar's × does the same): asks first when something runs in
+    /// it, and Reopen in History brings it back.
+    CloseSession,
+}
+
 /// The `terminal` namespace: font, theme and behavior of every terminal view.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -91,6 +103,9 @@ pub struct TerminalSettings {
     /// (`[terminal] env_inherit` in `daemon.toml`). A workspace's `terminal.env` overrides the
     /// user's per variable. Values may be secrets: they go to the daemon and nowhere else.
     pub env: BTreeMap<String, String>,
+    /// What the × of a terminal tab does: `detach` (the session keeps running) or
+    /// `close_session`.
+    pub tab_close: TabClose,
 }
 
 impl Default for TerminalSettings {
@@ -107,6 +122,7 @@ impl Default for TerminalSettings {
             blocks: true,
             shell: String::new(),
             env: BTreeMap::new(),
+            tab_close: TabClose::Detach,
         }
     }
 }

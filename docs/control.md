@@ -90,6 +90,8 @@ A stdio MCP server (hand-rolled JSON-RPC, one message per line; protocol version
 | `session_stop` | `session.stop` | yes | stop a session |
 | `session_restart` | `session.restart` | yes | start an ended session again |
 | `session_kill` | `session.kill` | yes | SIGKILL a session's whole process tree |
+| `session_close` | `session.close` | yes | stop a session and remove it from the list (a busy one needs `stop_running`) |
+| `session_reopen` | `session.reopen` | yes | bring a closed session back |
 | `process_signal` | `process.signal` | yes | signal one process of a session (a runaway build) |
 | `agent_interrupt` | `agent.interrupt` | yes | stop an agent's turn (or one subagent) without ending the session |
 | `resources_list` | `resources.list` | no | process trees with CPU and memory per session |

@@ -13,9 +13,9 @@ use serde::de::DeserializeOwned;
 
 use crate::error::{Result, StorageError};
 use crate::rows::{
-    ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, CreatedBy, EpochEnd,
-    EpochRecord, ProviderRow, QuestionOutcome, QuestionRow, RecentProject, SessionRow,
-    WorkspaceKind, WorkspaceRow, WorktreeRow,
+    ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
+    CreatedBy, EpochEnd, EpochRecord, ProviderRow, QuestionOutcome, QuestionRow, RecentProject,
+    SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
 };
 
 pub const EPOCH_HISTORY_KEY: &str = "epoch_history";
@@ -72,6 +72,11 @@ pub enum Write {
     /// Inserts or replaces every column except `created_at_ms`.
     UpsertSession(Box<SessionRow>),
     DeleteSession(SessionId),
+    /// Closes a session (`Some`: the time) or reopens it (`None`); the row stays either way.
+    SetSessionClosed {
+        id: SessionId,
+        closed_at_ms: Option<u64>,
+    },
     /// Stores the observation tree of a session (JSON written by the daemon); the session's row
     /// must have been written before.
     UpsertAgentTree {
@@ -233,6 +238,13 @@ pub fn apply(conn: &Connection, write: &Write) -> Result<()> {
         Write::DeleteSession(id) => {
             conn.execute("DELETE FROM sessions WHERE id = ?1", [id.to_string()])
                 .map_err(StorageError::sqlite("deleting a session"))?;
+        }
+        Write::SetSessionClosed { id, closed_at_ms } => {
+            conn.execute(
+                "UPDATE sessions SET closed_at_ms = ?2 WHERE id = ?1",
+                params![id.to_string(), closed_at_ms.map(ms)],
+            )
+            .map_err(StorageError::sqlite("closing a session"))?;
         }
         Write::UpsertAgentTree {
             session_id,
@@ -494,13 +506,36 @@ pub fn list_sessions(conn: &Connection, workspace: Option<WorkspaceId>) -> Resul
     let mut stmt = conn
         .prepare(&format!(
             "SELECT {SESSION_COLUMNS} FROM sessions \
-             WHERE ?1 IS NULL OR workspace_id = ?1 \
+             WHERE closed_at_ms IS NULL AND (?1 IS NULL OR workspace_id = ?1) \
              ORDER BY created_at_ms, rowid"
         ))
         .map_err(StorageError::sqlite(context))?;
     let rows = stmt
         .query_map([workspace.map(|w| w.to_string())], |row| {
             Ok(session_from(row))
+        })
+        .map_err(StorageError::sqlite(context))?;
+    collect(rows, context)
+}
+
+/// The closed sessions, most recently closed first.
+pub fn list_closed_sessions(conn: &Connection) -> Result<Vec<ClosedSession>> {
+    let context = "listing closed sessions";
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {SESSION_COLUMNS}, closed_at_ms FROM sessions \
+             WHERE closed_at_ms IS NOT NULL \
+             ORDER BY closed_at_ms DESC, rowid DESC"
+        ))
+        .map_err(StorageError::sqlite(context))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(session_from(row).and_then(|session| {
+                Ok(ClosedSession {
+                    session,
+                    closed_at_ms: unms(row.get(11).map_err(read_err)?),
+                })
+            }))
         })
         .map_err(StorageError::sqlite(context))?;
     collect(rows, context)

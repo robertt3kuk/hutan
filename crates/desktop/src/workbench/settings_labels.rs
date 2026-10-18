@@ -211,6 +211,16 @@ const FIELDS: &[FieldText] = &[
         "Jump to the latest output when typing",
         "When you type while scrolled back into history, return to the live screen.",
     ),
+    choice(
+        "terminal",
+        "tab_close",
+        "Closing a terminal tab",
+        "What the × of a terminal tab does. Detach closes the tab only: the session keeps running and stays in the sidebar. Close session also ends the session and removes it from the sidebar (it asks first when something runs in it; History can reopen it). The tab's context menu and the sidebar's × always offer Close session….",
+        &[
+            ("detach", "Detach (keep the session)"),
+            ("close_session", "Close the session"),
+        ],
+    ),
     field(
         "terminal",
         "blocks",

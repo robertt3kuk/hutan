@@ -347,7 +347,15 @@ fn sessions_text(answer: &HistorySessions, workspaces: &[WorkspaceInfo], now_ms:
             .unwrap_or("(untitled)");
         rows.push([
             session.source.as_str().to_owned(),
-            clip(terminal_safe(title).trim(), TITLE_WIDTH),
+            // A closed Hutan session: `hutan reopen <id>` brings it back.
+            if session.closed {
+                format!(
+                    "{} [closed]",
+                    clip(terminal_safe(title).trim(), TITLE_WIDTH)
+                )
+            } else {
+                clip(terminal_safe(title).trim(), TITLE_WIDTH)
+            },
             session.messages.to_string(),
             session
                 .updated_ms
@@ -475,6 +483,7 @@ mod tests {
             resume_argv: None,
             path: None,
             session_id: None,
+            closed: false,
         }
     }
 
