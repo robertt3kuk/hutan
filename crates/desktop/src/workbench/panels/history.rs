@@ -1,43 +1,54 @@
-//! The `history` panel: search over the session history index (protocol 0.8, docs/history-index.md)
-//! — Hutan terminal blocks and the transcripts of Claude Code, Codex and OMP.
+//! The `history` panel: **Agent Session History** (docs/history-index.md § The History panel).
 //!
-//! While indexing is off the panel explains what turning it on reads and offers to do it. While
-//! it is on: a debounced search field, filter chips, one row per matching session with its best
-//! snippet, and a footer with the index's size and per-source state, **Clear** and **Rebuild**
-//! (both ask first). The panel only sends `history.*` requests; the actions that start sessions
-//! (`ResumeHistoryHit`, `OpenHistoryHit`, `RevealHistoryFile`) are the workbench's.
+//! While indexing is off the panel is one card that explains what turning it on reads, lets the
+//! user pick the sources and offers **Enable**. While it is on, the panel lists the daemon's
+//! session catalog (`history.sessions`, protocol 0.29): grouped by project, folder or agent,
+//! scoped to the workspace, the project or everything, with a live filter, a scan strip and the
+//! `X of Y sessions` bar. A typed query that is not a `repo:`/`path:` filter is also searched in
+//! the transcripts (`history.search`) after a quiet 250 ms or on Return; the ranked sessions
+//! replace the list, ungrouped, with the matching words marked. A daemon that predates the
+//! catalog gets the search alone, with a note.
+//!
+//! Click a row to read more of it; Resume runs the agent's resume command in a new terminal tab
+//! in the session's project. The panel only sends `history.*` requests; the actions that start
+//! sessions, open files and folders (`ResumeHistoryHit`, `OpenHistoryHit`, `OpenHistoryFile`,
+//! `OpenHistoryDirectory`, `RevealHistoryFile`) are the workbench's. Rendering is in
+//! `history_view.rs`.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::collections::HashSet;
+use std::time::Duration;
 
 use gpui::{
-    AnyElement, Context, FocusHandle, Focusable, HighlightStyle, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, StyledText, Task, Window, div, prelude::*, px,
+    Context, FocusHandle, Focusable, KeyDownEvent, ListAlignment, ListOffset, ListState, Pixels,
+    Point, SharedString, Task, Window, px,
 };
 use hutan_client::{ClientError, ConnectionState};
-use hutan_core::SessionId;
+use hutan_core::{SessionId, WorkspaceId};
 use hutan_protocol::ErrorCode;
-use hutan_protocol::history::{HistoryHit, HistorySource, HistoryStatusInfo};
-
-use super::common::{age_label, panel_header, time_tooltip};
-use super::history_model::{
-    DEBOUNCE, Filters, HistoryResume, HutanTarget, PANEL_LIMIT, ROLES, SOURCES, format_bytes,
-    hit_title, hutan_target, parse_snippet, resume_blocker, role_label, shell_join, short_path,
-    source_icon, source_label, transcript_path,
+use hutan_protocol::history::{
+    HistoryHit, HistoryHits, HistoryScope, HistorySessionSort, HistorySessions,
+    HistorySessionsRequest, HistorySource, HistoryStatusInfo, SESSIONS_DEFAULT_LIMIT,
+    SESSIONS_MAX_LIMIT,
 };
-use crate::settings::{HistoryRange, HistoryScope, HistorySettings};
-use crate::theme::{DensityExt as _, Theme, Tokens};
-use crate::workbench::Region;
+use serde_json::Value as Json;
+
+use super::history_catalog::{
+    Entry, GroupBy, ItemKey, NARROW_WIDTH, REFRESH_EVERY, RowAction, SCAN_POLL, SEARCH_DEBOUNCE,
+    SEARCH_LIMIT, SessionItem, actions, entries, flat_entries, group_items, has_qualifier,
+    session_id_text,
+};
+use super::history_model::{Filters, HutanTarget, SOURCES, shell_join};
+use crate::settings::{HistoryScope as SettingsScope, HistorySettings};
 use crate::workbench::actions::{
-    CopyHistoryCommand, OpenHistoryHit, OpenSettingsFor, ResumeHistoryHit, RevealHistoryFile,
+    CopyHistoryCommand, Notify, OpenHistoryDirectory, OpenHistoryFile, OpenHistoryHit,
+    ResumeHistoryHit, RevealHistoryFile,
 };
 use crate::workbench::chat::vim::Outcome;
 use crate::workbench::registry::PanelEnv;
-use crate::workbench::render::probe;
-use crate::workbench::style::UiStyle;
 use crate::workbench::text_field::FieldRef;
-use crate::workbench::ui;
-use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
+use crate::workbench::vim_ui::{FieldEdit, VimConfig};
+
+pub(crate) use super::history_view::pill;
 
 /// How often the index status is read while indexing settles after Enable or Rebuild.
 const SETTLE_POLL: Duration = Duration::from_millis(500);
@@ -50,7 +61,7 @@ const SETTLE_MAX: Duration = Duration::from_secs(60);
 
 /// What the panel knows about the index.
 #[derive(Debug, Clone, PartialEq)]
-enum Index {
+pub(super) enum Index {
     /// Not asked yet, or the daemon is not reachable.
     Unknown,
     /// The connected daemon predates `history.*` (protocol 0.8).
@@ -59,8 +70,8 @@ enum Index {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum Results {
-    /// No query.
+pub(super) enum Results {
+    /// No full-text results: the catalog is shown.
     Idle,
     Hits(Vec<HistoryHit>),
     Failed(String),
@@ -73,34 +84,88 @@ pub enum Confirm {
     Rebuild,
 }
 
+/// What the list shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// The session catalog, grouped.
+    Catalog,
+    /// Ranked full-text results, ungrouped.
+    Search,
+}
+
+/// What identifies a list line across rebuilds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EntryId {
+    Row(ItemKey),
+    Group(String),
+}
+
+/// A menu that is open over the panel.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum Menu {
+    GroupBy(Point<Pixels>),
+    Sources(Point<Pixels>),
+    Sort(Point<Pixels>),
+    Row(ItemKey, Point<Pixels>),
+}
+
 pub struct HistoryPanel {
-    env: PanelEnv,
-    search_focus: FocusHandle,
-    /// Drawn since the age timer last looked.
+    pub(super) env: PanelEnv,
+    pub(super) search_focus: FocusHandle,
+    /// Drawn since the refresh timer last looked.
     drawn: bool,
-    query: String,
+    pub(super) query: String,
     /// Vim state of the search field (`editor.vim_mode`).
-    query_edit: FieldEdit,
-    filters: Filters,
-    index: Index,
-    results: Results,
-    /// A search is on its way (the old rows stay until it answers).
+    pub(super) query_edit: FieldEdit,
+    pub(super) filters: Filters,
+    pub(super) scope: HistoryScope,
+    pub(super) group_by: GroupBy,
+    pub(super) sort: HistorySessionSort,
+    /// Rows the catalog asks for ("Show more" raises it).
+    limit: u32,
+    pub(super) index: Index,
+    /// The last `history.sessions` answer.
+    pub(super) catalog: Option<HistorySessions>,
+    pub(super) catalog_error: Option<String>,
+    /// A catalog request is on its way (the old rows stay until it answers).
+    pub(super) loading: bool,
+    pub(super) results: Results,
+    /// A full-text search (debounce included) has not answered yet.
     searching: bool,
-    selected: Option<usize>,
-    /// The hit to select once the results arrive (⌘J `?` fallback).
-    pick: Option<(HistorySource, String)>,
+    // The list as drawn: items (catalog rows or hits), their groups, the flat entries.
+    pub(super) items: Vec<SessionItem>,
+    pub(super) groups: Vec<super::history_catalog::Group>,
+    pub(super) entries: Vec<Entry>,
+    pub(super) list: ListState,
+    /// The list starts at the top the next time it is rebuilt (the query, scope or order changed).
+    top_wanted: bool,
+    pub(super) expanded: HashSet<ItemKey>,
+    pub(super) collapsed: HashSet<String>,
+    pub(super) selected: Option<ItemKey>,
+    /// The session to select (and open) once the results arrive (⌘J `?` fallback).
+    pick: Option<ItemKey>,
+    pub(super) scan_open: bool,
+    pub(super) menu: Option<Menu>,
+    /// The off-state card's checkboxes, in [`SOURCES`] order, and what the daemon has now.
+    pub(super) card_sources: [bool; 4],
+    card_daemon: Option<[bool; 4]>,
     confirm: Option<Confirm>,
     /// What a running request is called ("Enabling…"); the buttons wait for it.
-    busy: Option<&'static str>,
-    /// The last failed request, shown in the footer.
-    error: Option<String>,
+    pub(super) busy: Option<&'static str>,
+    /// The last failed request, shown in the index details.
+    pub(super) error: Option<String>,
     was_connected: bool,
+    /// The container and project the workbench showed when the catalog was last asked.
+    last_ids: (Option<WorkspaceId>, Option<WorkspaceId>),
     /// Focus the search field once it is on screen.
     focus_wanted: bool,
     search_task: Option<Task<()>>,
+    catalog_task: Option<Task<()>>,
+    rescan_task: Option<Task<()>>,
     status_task: Option<Task<()>>,
     settle_task: Option<Task<()>>,
-    _ages: Task<()>,
+    card_task: Option<Task<()>>,
+    _timer: Task<()>,
 }
 
 impl std::fmt::Debug for HistoryPanel {
@@ -112,36 +177,49 @@ impl std::fmt::Debug for HistoryPanel {
     }
 }
 
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+pub(super) fn now_ms() -> u64 {
+    hutan_client::time::now_ms()
 }
 
 fn is_disabled(error: &ClientError) -> bool {
     matches!(error, ClientError::Remote(body) if body.code == ErrorCode::InvalidState)
 }
 
+fn index_rows(info: &HistoryStatusInfo) -> u64 {
+    info.sources.iter().map(|s| s.rows).sum()
+}
+
 impl HistoryPanel {
     pub fn new(env: PanelEnv, cx: &mut Context<Self>) -> Self {
         cx.observe(&env.sessions, |this, sessions, cx| {
-            let connected = sessions.read(cx).connection_state() == ConnectionState::Connected;
+            let store = sessions.read(cx);
+            let connected = store.connection_state() == ConnectionState::Connected;
+            let ids = (store.active_workspace_id(), store.active_project_id());
             if connected && !this.was_connected {
+                this.was_connected = true;
                 this.refresh_status(cx);
+                this.reload(false, cx);
             }
             this.was_connected = connected;
+            if ids != this.last_ids {
+                this.last_ids = ids;
+                // The workspace or project in view moved: a scoped list is another list.
+                if this.scope != HistoryScope::All {
+                    this.top_wanted = true;
+                    this.reload(false, cx);
+                    this.search(false, cx);
+                }
+            }
             cx.notify();
         })
         .detach();
-        let ages = cx.spawn(async move |this, cx| {
+        let timer = cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_secs(30))
-                    .await;
-                // The ages of a panel nobody saw since the last look are not worth a frame.
+                cx.background_executor().timer(REFRESH_EVERY).await;
+                // A panel nobody saw since the last look is not worth a request or a frame.
                 let alive = this.update(cx, |this, cx| {
                     if std::mem::take(&mut this.drawn) {
-                        cx.notify();
+                        this.tick(cx);
                     }
                 });
                 if alive.is_err() {
@@ -149,8 +227,16 @@ impl HistoryPanel {
                 }
             }
         });
-        let filters = Filters::from_settings(&env.settings.get::<HistorySettings>());
-        let was_connected = env.sessions.read(cx).connection_state() == ConnectionState::Connected;
+        let settings = env.settings.get::<HistorySettings>();
+        let filters = Filters::from_settings(&settings);
+        let (workspace, project, was_connected) = {
+            let store = env.sessions.read(cx);
+            (
+                store.active_workspace_id(),
+                store.active_project_id(),
+                store.connection_state() == ConnectionState::Connected,
+            )
+        };
         let mut panel = Self {
             env,
             search_focus: cx.focus_handle(),
@@ -158,20 +244,45 @@ impl HistoryPanel {
             query: String::new(),
             query_edit: FieldEdit::new(),
             filters,
+            scope: match settings.project {
+                SettingsScope::Workspace => HistoryScope::Workspace,
+                SettingsScope::All => HistoryScope::All,
+            },
+            group_by: GroupBy::default(),
+            sort: HistorySessionSort::default(),
+            limit: SESSIONS_DEFAULT_LIMIT,
             index: Index::Unknown,
+            catalog: None,
+            catalog_error: None,
+            loading: false,
             results: Results::Idle,
             searching: false,
+            items: Vec::new(),
+            groups: Vec::new(),
+            entries: Vec::new(),
+            list: ListState::new(0, ListAlignment::Top, px(400.0)),
+            top_wanted: true,
+            expanded: HashSet::new(),
+            collapsed: HashSet::new(),
             selected: None,
             pick: None,
+            scan_open: false,
+            menu: None,
+            card_sources: [true; 4],
+            card_daemon: None,
             confirm: None,
             busy: None,
             error: None,
             was_connected,
+            last_ids: (workspace, project),
             focus_wanted: false,
             search_task: None,
+            catalog_task: None,
+            rescan_task: None,
             status_task: None,
             settle_task: None,
-            _ages: ages,
+            card_task: None,
+            _timer: timer,
         };
         if was_connected {
             panel.refresh_status(cx);
@@ -186,12 +297,57 @@ impl HistoryPanel {
         &self.query
     }
 
-    /// The sessions the last search found, best first.
+    /// The sessions the last full-text search found, best first (empty while the catalog is
+    /// shown).
     pub fn hits(&self) -> &[HistoryHit] {
         match &self.results {
             Results::Hits(hits) => hits,
             _ => &[],
         }
+    }
+
+    /// What the list shows now.
+    pub fn mode(&self) -> Mode {
+        match self.results {
+            Results::Idle => Mode::Catalog,
+            _ => Mode::Search,
+        }
+    }
+
+    /// The rows of the last `history.sessions` answer, in the daemon's order.
+    pub fn sessions(&self) -> &[hutan_protocol::history::HistorySessionRow] {
+        self.catalog.as_ref().map_or(&[], |c| c.sessions.as_slice())
+    }
+
+    /// The last `history.sessions` answer.
+    pub fn catalog(&self) -> Option<&HistorySessions> {
+        self.catalog.as_ref()
+    }
+
+    /// The error of the last `history.sessions` request.
+    pub fn catalog_error(&self) -> Option<&str> {
+        self.catalog_error.as_deref()
+    }
+
+    /// The sessions the list draws, in order (catalog rows, or hits in search mode).
+    pub fn items(&self) -> &[SessionItem] {
+        &self.items
+    }
+
+    /// The group headers the list draws, with their row counts (catalog mode).
+    pub fn group_headers(&self) -> Vec<(String, usize, bool)> {
+        self.entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::Header {
+                    label,
+                    count,
+                    collapsed,
+                    ..
+                } => Some((label.clone(), *count, *collapsed)),
+                _ => None,
+            })
+            .collect()
     }
 
     /// The index status as the daemon last reported it; `None` while unknown or unsupported.
@@ -202,9 +358,14 @@ impl HistoryPanel {
         }
     }
 
-    /// True while a search (debounce included) has not answered yet.
+    /// True while a full-text search (debounce included) has not answered yet.
     pub fn searching(&self) -> bool {
         self.searching
+    }
+
+    /// True while a catalog request has not answered yet.
+    pub fn loading(&self) -> bool {
+        self.loading
     }
 
     /// The filter chips as they are now.
@@ -212,9 +373,29 @@ impl HistoryPanel {
         &self.filters
     }
 
-    /// The row that is selected.
+    pub fn scope(&self) -> HistoryScope {
+        self.scope
+    }
+
+    pub fn group_by(&self) -> GroupBy {
+        self.group_by
+    }
+
+    pub fn sort(&self) -> HistorySessionSort {
+        self.sort
+    }
+
+    /// The row (an index into [`items`](Self::items)) that is selected.
     pub fn selected(&self) -> Option<usize> {
-        self.selected
+        let key = self.selected.as_ref()?;
+        self.items.iter().position(|item| item.item_key() == *key)
+    }
+
+    /// True when the row of `item` shows its details.
+    pub fn is_expanded(&self, item: usize) -> bool {
+        self.items
+            .get(item)
+            .is_some_and(|i| self.expanded.contains(&i.item_key()))
     }
 
     /// The confirmation that is pending, if any.
@@ -225,6 +406,71 @@ impl HistoryPanel {
     /// The text of the last failed request.
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    /// The scan strip's per-source breakdown is open.
+    pub fn scan_open(&self) -> bool {
+        self.scan_open
+    }
+
+    /// The name of the open menu (`group`, `sources`, `sort`, `row`).
+    pub fn menu_open(&self) -> Option<&'static str> {
+        self.menu.as_ref().map(|m| match m {
+            Menu::GroupBy(_) => "group",
+            Menu::Sources(_) => "sources",
+            Menu::Sort(_) => "sort",
+            Menu::Row(..) => "row",
+        })
+    }
+
+    /// The off-state card's checkboxes: Hutan, Claude, Codex, OMP.
+    pub fn card_sources(&self) -> [bool; 4] {
+        self.card_sources
+    }
+
+    /// True while the panel is narrower than [`NARROW_WIDTH`] (as of the last frame).
+    pub fn is_narrow(&self) -> bool {
+        self.env
+            .regions
+            .borrow()
+            .get(&crate::workbench::Region::History("panel"))
+            .is_some_and(|b| f32::from(b.size.width) < NARROW_WIDTH)
+    }
+
+    /// The header's title: "Agent Session History", or "History" in a narrow panel.
+    pub fn header_title(&self) -> &'static str {
+        if self.is_narrow() {
+            "History"
+        } else {
+            "Agent Session History"
+        }
+    }
+
+    /// The list line at the top of the view (the scroll position).
+    pub fn first_visible_entry(&self) -> usize {
+        self.list.logical_scroll_top().item_ix
+    }
+
+    /// Scrolls the list so that `entry` is at its top.
+    pub fn scroll_to_entry(&self, entry: usize) {
+        self.list.scroll_to(ListOffset {
+            item_ix: entry,
+            offset_in_item: px(0.0),
+        });
+    }
+
+    /// The lines of the list: group headers, rows and "Show more".
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
+    /// True when the daemon answers `history.sessions` (protocol 0.29).
+    pub fn catalog_supported(&self, cx: &gpui::App) -> bool {
+        self.env
+            .sessions
+            .read(cx)
+            .connection()
+            .supports_history_sessions()
     }
 
     /// Focuses the search field; while it is not on screen yet (the index state is still
@@ -240,19 +486,35 @@ impl HistoryPanel {
         }
     }
 
-    // ---- searching -------------------------------------------------------------------------
+    pub(super) fn take_focus_wanted(&mut self) -> bool {
+        std::mem::take(&mut self.focus_wanted)
+    }
 
-    /// Sets the search text and searches after the debounce.
+    pub(super) fn mark_drawn(&mut self) {
+        self.drawn = true;
+    }
+
+    // ---- searching and filtering -----------------------------------------------------------
+
+    /// Sets the search text: the catalog filter follows at once, the full-text search after the
+    /// debounce.
     pub fn set_query(&mut self, query: &str, cx: &mut Context<Self>) {
         if self.query != query {
             self.query = query.to_owned();
+            self.results = Results::Idle;
+            self.search_task = None;
+            self.searching = false;
+            self.limit = SESSIONS_DEFAULT_LIMIT;
+            self.top_wanted = true;
+            self.reload(false, cx);
             self.search(true, cx);
+            self.rebuild(cx);
         }
         cx.notify();
     }
 
-    /// Replaces the search text, searches at once and selects the hit of `source` / `key` when
-    /// the answer has it (the ⌘J `?` fallback).
+    /// Replaces the search text, searches at once and selects (and opens) the hit of `source` /
+    /// `key` when the answer has it (the ⌘J `?` fallback).
     pub fn show_hit(
         &mut self,
         query: &str,
@@ -261,34 +523,244 @@ impl HistoryPanel {
         cx: &mut Context<Self>,
     ) {
         self.query = query.to_owned();
-        self.pick = Some((source, key.to_owned()));
+        self.pick = Some(ItemKey {
+            source,
+            key: key.to_owned(),
+        });
+        self.top_wanted = true;
+        self.reload(false, cx);
         self.search(false, cx);
         cx.notify();
     }
 
-    /// Replaces a filter chip and searches again.
+    /// Replaces a filter chip and asks again.
     pub fn edit_filters(&mut self, edit: impl FnOnce(&mut Filters), cx: &mut Context<Self>) {
         edit(&mut self.filters);
+        self.top_wanted = true;
+        self.reload(false, cx);
         self.search(false, cx);
         cx.notify();
     }
 
-    fn project_of_active_workspace(&self, cx: &gpui::App) -> Option<std::path::PathBuf> {
-        let store = self.env.sessions.read(cx);
-        store
-            .active_workspace()
-            .or_else(|| store.home_workspace())
-            .and_then(|w| w.roots.first().cloned())
+    /// Workspace, Project or All. Project needs a project in view.
+    pub fn set_scope(&mut self, scope: HistoryScope, cx: &mut Context<Self>) {
+        if scope == HistoryScope::Project && !self.project_known(cx) {
+            return;
+        }
+        if self.scope != scope {
+            self.scope = scope;
+            self.top_wanted = true;
+            self.reload(false, cx);
+            self.search(false, cx);
+        }
+        cx.notify();
     }
 
-    /// Runs the search for the current query and filters (after the debounce when `debounce`);
-    /// an earlier search that has not answered is dropped.
+    pub fn set_group_by(&mut self, by: GroupBy, cx: &mut Context<Self>) {
+        self.group_by = by;
+        self.top_wanted = true;
+        self.menu = None;
+        self.rebuild(cx);
+        cx.notify();
+    }
+
+    pub fn set_sort(&mut self, sort: HistorySessionSort, cx: &mut Context<Self>) {
+        self.menu = None;
+        if self.sort != sort {
+            self.sort = sort;
+            self.top_wanted = true;
+            self.reload(false, cx);
+        }
+        cx.notify();
+    }
+
+    /// Adds `source` to the sources the list shows, or removes it; the last one stays.
+    pub fn toggle_source(&mut self, source: HistorySource, cx: &mut Context<Self>) {
+        let mut chosen: Vec<HistorySource> = if self.filters.sources.is_empty() {
+            SOURCES.to_vec()
+        } else {
+            self.filters.sources.clone()
+        };
+        match chosen.iter().position(|s| *s == source) {
+            Some(at) if chosen.len() > 1 => {
+                chosen.remove(at);
+            }
+            Some(_) => return,
+            None => chosen.push(source),
+        }
+        let all = SOURCES.iter().all(|s| chosen.contains(s));
+        self.edit_filters(
+            |f| {
+                f.sources = if all {
+                    Vec::new()
+                } else {
+                    SOURCES.into_iter().filter(|s| chosen.contains(s)).collect()
+                };
+            },
+            cx,
+        );
+    }
+
+    /// True when `source` is among the sources the list shows.
+    pub fn source_shown(&self, source: HistorySource) -> bool {
+        self.filters.sources.is_empty() || self.filters.sources.contains(&source)
+    }
+
+    /// Raises the rows asked for by one page (the "Show more" row).
+    pub fn show_more(&mut self, cx: &mut Context<Self>) {
+        self.limit = (self.limit + SESSIONS_DEFAULT_LIMIT).min(SESSIONS_MAX_LIMIT);
+        self.reload(false, cx);
+        cx.notify();
+    }
+
+    /// The refresh button: the daemon looks at the transcript files again; a full-text search is
+    /// asked again.
+    pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
+        self.refresh_status(cx);
+        if self.mode() == Mode::Search || self.searching {
+            self.search(false, cx);
+        }
+        self.reload(true, cx);
+        cx.notify();
+    }
+
+    fn tick(&mut self, cx: &mut Context<Self>) {
+        if self.status().is_some_and(|s| s.enabled) {
+            self.reload(false, cx);
+        }
+        cx.notify();
+    }
+
+    fn project_known(&self, cx: &gpui::App) -> bool {
+        self.env.sessions.read(cx).active_project_id().is_some()
+    }
+
+    /// Whether the Project segment can be chosen.
+    pub fn project_scope_available(&self, cx: &gpui::App) -> bool {
+        self.project_known(cx)
+    }
+
+    /// The scope and container the requests name: Workspace and Project fall back to All while
+    /// the workbench shows no such container.
+    fn request_scope(&self, cx: &gpui::App) -> (HistoryScope, Option<WorkspaceId>) {
+        let store = self.env.sessions.read(cx);
+        match self.scope {
+            HistoryScope::Workspace => match store.active_workspace_id() {
+                Some(id) => (HistoryScope::Workspace, Some(id)),
+                None => (HistoryScope::All, None),
+            },
+            HistoryScope::Project => match store.active_project_id() {
+                Some(id) => (HistoryScope::Project, Some(id)),
+                None => (HistoryScope::All, None),
+            },
+            HistoryScope::All => (HistoryScope::All, None),
+        }
+    }
+
+    /// The folder a full-text search is limited to, for the scope.
+    fn scope_folder(&self, cx: &gpui::App) -> Option<std::path::PathBuf> {
+        let store = self.env.sessions.read(cx);
+        let workspace = match self.scope {
+            HistoryScope::All => return None,
+            HistoryScope::Workspace => store.active_workspace().or_else(|| store.home_workspace()),
+            HistoryScope::Project => store.active_project(),
+        };
+        workspace.and_then(|w| w.roots.first().cloned())
+    }
+
+    // ---- the catalog -----------------------------------------------------------------------
+
+    fn catalog_ready(&self, cx: &gpui::App) -> bool {
+        let store = self.env.sessions.read(cx);
+        store.connection_state() == ConnectionState::Connected
+            && store.connection().supports_history_sessions()
+            && matches!(&self.index, Index::Known(info) if info.enabled)
+    }
+
+    fn catalog_request(&self, refresh: bool, cx: &gpui::App) -> HistorySessionsRequest {
+        let (scope, workspace_id) = self.request_scope(cx);
+        HistorySessionsRequest {
+            scope,
+            workspace_id,
+            filter: self.query.trim().to_owned(),
+            sort: self.sort,
+            sources: self.filters.sources.clone(),
+            limit: self.limit,
+            refresh,
+        }
+    }
+
+    /// Asks the daemon for the catalog (`refresh`: look at the transcript files first). An
+    /// earlier request that has not answered is dropped; the rows stay until the answer.
+    pub fn reload(&mut self, refresh: bool, cx: &mut Context<Self>) {
+        if !self.catalog_ready(cx) {
+            return;
+        }
+        let request = self.catalog_request(refresh, cx);
+        let connection = self.env.sessions.read(cx).connection().clone();
+        self.loading = true;
+        self.catalog_task = Some(cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { connection.history_sessions(request).await })
+                .await;
+            this.update(cx, |this, cx| this.finish_catalog(result, cx))
+                .ok();
+        }));
+        cx.notify();
+    }
+
+    fn finish_catalog(
+        &mut self,
+        result: Result<HistorySessions, ClientError>,
+        cx: &mut Context<Self>,
+    ) {
+        self.loading = false;
+        self.rescan_task = None;
+        match result {
+            Ok(answer) => {
+                self.catalog_error = None;
+                let scanning = answer.scan.scanning;
+                self.catalog = Some(answer);
+                self.rebuild(cx);
+                if scanning {
+                    // The daemon is still reading transcripts: ask again soon.
+                    self.rescan_task = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(SCAN_POLL).await;
+                        this.update(cx, |this, cx| this.reload(false, cx)).ok();
+                    }));
+                }
+            }
+            Err(error) if is_disabled(&error) => {
+                // Indexing was switched off behind our back.
+                self.catalog = None;
+                self.rebuild(cx);
+                self.refresh_status(cx);
+            }
+            Err(ClientError::Disconnected) => {}
+            Err(error) => self.catalog_error = Some(error.to_string()),
+        }
+        cx.notify();
+    }
+
+    // ---- the full-text search --------------------------------------------------------------
+
+    /// True when the typed query is waiting for its full-text results.
+    fn search_pending(&self) -> bool {
+        let query = self.query.trim();
+        !query.is_empty() && !has_qualifier(query) && matches!(self.results, Results::Idle)
+    }
+
+    /// Runs the full-text search for the current query and filters (after the debounce when
+    /// `debounce`); an earlier search that has not answered is dropped. A `repo:` / `path:`
+    /// query stays a catalog filter.
     fn search(&mut self, debounce: bool, cx: &mut Context<Self>) {
         self.search_task = None;
         let query = self.query.trim().to_owned();
-        if query.is_empty() {
+        if query.is_empty() || has_qualifier(&query) {
             self.results = Results::Idle;
             self.searching = false;
+            self.rebuild(cx);
             return;
         }
         if matches!(&self.index, Index::Known(info) if !info.enabled) {
@@ -296,14 +768,18 @@ impl HistoryPanel {
             return;
         }
         self.searching = true;
-        let project = self.project_of_active_workspace(cx);
-        let request = self
-            .filters
-            .request(&query, PANEL_LIMIT, now_ms(), project.as_deref());
+        let folder = self.scope_folder(cx);
+        let mut filters = self.filters.clone();
+        filters.scope = if folder.is_some() {
+            SettingsScope::Workspace
+        } else {
+            SettingsScope::All
+        };
+        let request = filters.request(&query, SEARCH_LIMIT, now_ms(), folder.as_deref());
         let connection = self.env.sessions.read(cx).connection().clone();
         self.search_task = Some(cx.spawn(async move |this, cx| {
             if debounce {
-                cx.background_executor().timer(DEBOUNCE).await;
+                cx.background_executor().timer(SEARCH_DEBOUNCE).await;
             }
             let result = cx
                 .background_executor()
@@ -314,25 +790,22 @@ impl HistoryPanel {
         }));
     }
 
-    fn finish_search(
-        &mut self,
-        result: Result<hutan_protocol::history::HistoryHits, ClientError>,
-        cx: &mut Context<Self>,
-    ) {
+    fn finish_search(&mut self, result: Result<HistoryHits, ClientError>, cx: &mut Context<Self>) {
         self.searching = false;
         match result {
             Ok(found) => {
                 self.results = Results::Hits(found.hits);
-                self.selected = match self.pick.take() {
-                    Some((source, key)) => self
-                        .hits()
-                        .iter()
-                        .position(|h| h.source == source && h.session_key == key),
-                    None => self.selected.filter(|i| *i < self.hits().len()),
-                };
-                // The footer's counts come from `history.status`; records indexed since it was
-                // read (new terminal commands, a finished scan) are in these hits, so read it
-                // again. The settle loop reads it on its own while it runs.
+                self.rebuild(cx);
+                if let Some(pick) = self.pick.take()
+                    && self.items.iter().any(|i| i.item_key() == pick)
+                {
+                    self.expanded.insert(pick.clone());
+                    self.selected = Some(pick);
+                    self.rebuild(cx);
+                }
+                // The index details' counts come from `history.status`; records indexed since
+                // it was read (new terminal commands, a finished scan) are in these hits, so
+                // read it again. The settle loop reads it on its own while it runs.
                 if self.settle_task.is_none() {
                     self.refresh_status(cx);
                 }
@@ -340,10 +813,214 @@ impl HistoryPanel {
             Err(error) if is_disabled(&error) => {
                 // Indexing was switched off behind our back.
                 self.results = Results::Idle;
+                self.rebuild(cx);
                 self.refresh_status(cx);
             }
-            Err(error) => self.results = Results::Failed(error.to_string()),
+            Err(error) => {
+                self.results = Results::Failed(error.to_string());
+                self.rebuild(cx);
+            }
         }
+        cx.notify();
+    }
+
+    // ---- the list --------------------------------------------------------------------------
+
+    /// Builds the items, groups and flat entries from what the daemon answered, and tells the
+    /// list; the scroll position stays unless the query, scope or order changed.
+    pub(super) fn rebuild(&mut self, cx: &mut Context<Self>) {
+        // What the top of the view shows now, so that the list can be put back there.
+        let anchor = (!std::mem::take(&mut self.top_wanted)).then(|| {
+            let top = self.list.logical_scroll_top();
+            (self.entry_id(top.item_ix), top)
+        });
+        let home = std::env::home_dir();
+        match &self.results {
+            Results::Hits(hits) => {
+                self.items = hits.iter().map(SessionItem::from_hit).collect();
+                self.groups = Vec::new();
+                self.entries = flat_entries(self.items.len());
+            }
+            _ => {
+                let rows = self.catalog.as_ref().map_or(&[][..], |c| &c.sessions[..]);
+                self.items = rows.iter().map(SessionItem::from_row).collect();
+                let store = self.env.sessions.read(cx);
+                self.groups = group_items(&self.items, self.group_by, home.as_deref(), |id| {
+                    store.workspace(id).map(|w| w.name.clone())
+                });
+                let remaining = self
+                    .catalog
+                    .as_ref()
+                    .map_or(0, |c| c.matched.saturating_sub(c.sessions.len() as u64));
+                let remaining = if self.limit >= SESSIONS_MAX_LIMIT {
+                    0
+                } else {
+                    remaining
+                };
+                self.entries = entries(&self.groups, &self.collapsed, remaining);
+            }
+        }
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|key| !self.items.iter().any(|i| i.item_key() == *key))
+        {
+            self.selected = None;
+        }
+        let top = match anchor {
+            None => ListOffset {
+                item_ix: 0,
+                offset_in_item: px(0.0),
+            },
+            // The same line when it is still there (rows came or went above it), else the same
+            // place counted in lines.
+            Some((Some(id), top)) => ListOffset {
+                item_ix: (0..self.entries.len())
+                    .find(|&ix| self.entry_id(ix).as_ref() == Some(&id))
+                    .unwrap_or(top.item_ix),
+                offset_in_item: top.offset_in_item,
+            },
+            Some((None, top)) => top,
+        };
+        self.list.reset(self.entries.len());
+        self.list.scroll_to(top);
+        cx.notify();
+    }
+
+    /// What identifies list line `ix` across rebuilds: a row's session, a group's key.
+    fn entry_id(&self, ix: usize) -> Option<EntryId> {
+        match self.entries.get(ix)? {
+            Entry::Header { key, .. } => Some(EntryId::Group(key.clone())),
+            Entry::Row(item) => self.items.get(*item).map(|i| EntryId::Row(i.item_key())),
+            Entry::More { .. } => None,
+        }
+    }
+
+    /// The session of list line `entry`, when it is a row.
+    pub fn entry_session(&self, entry: usize) -> Option<ItemKey> {
+        match self.entry_id(entry)? {
+            EntryId::Row(key) => Some(key),
+            EntryId::Group(_) => None,
+        }
+    }
+
+    /// Opens or closes the details of the row of `item`.
+    pub fn toggle_expanded(&mut self, item: usize, cx: &mut Context<Self>) {
+        let Some(key) = self.items.get(item).map(SessionItem::item_key) else {
+            return;
+        };
+        if !self.expanded.remove(&key) {
+            self.expanded.insert(key.clone());
+        }
+        self.selected = Some(key);
+        self.rebuild(cx);
+    }
+
+    /// Folds or unfolds the group `key`.
+    pub fn toggle_group(&mut self, key: &str, cx: &mut Context<Self>) {
+        if !self.collapsed.remove(key) {
+            self.collapsed.insert(key.to_owned());
+        }
+        self.rebuild(cx);
+    }
+
+    /// The scan strip opens its per-source breakdown and the index controls, or closes them.
+    pub fn toggle_scan(&mut self, cx: &mut Context<Self>) {
+        self.scan_open = !self.scan_open;
+        cx.notify();
+    }
+
+    /// Moves the selection by `delta` rows (the arrow keys), over the rows that are visible.
+    fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let rows: Vec<(usize, usize)> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(entry, e)| match e {
+                Entry::Row(item) => Some((entry, *item)),
+                _ => None,
+            })
+            .collect();
+        if rows.is_empty() {
+            return;
+        }
+        let current = self
+            .selected()
+            .and_then(|item| rows.iter().position(|(_, i)| *i == item));
+        let next = match current {
+            None if delta >= 0 => 0,
+            None => rows.len() - 1,
+            Some(at) => at.saturating_add_signed(delta).min(rows.len() - 1),
+        };
+        let (entry, item) = rows[next];
+        self.selected = self.items.get(item).map(SessionItem::item_key);
+        self.list.scroll_to_reveal_item(entry);
+        cx.notify();
+    }
+
+    // ---- menus -----------------------------------------------------------------------------
+
+    pub(super) fn open_menu(&mut self, menu: Menu, cx: &mut Context<Self>) {
+        self.menu = if self.menu.as_ref() == Some(&menu) {
+            None
+        } else {
+            Some(menu)
+        };
+        cx.notify();
+    }
+
+    /// Opens the group-by dropdown (tests; the header button does the same).
+    pub fn open_group_menu(&mut self, cx: &mut Context<Self>) {
+        self.open_menu(Menu::GroupBy(Point::default()), cx);
+    }
+
+    pub fn close_menu(&mut self, cx: &mut Context<Self>) {
+        if self.menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    // ---- row actions -----------------------------------------------------------------------
+
+    fn session_exists(&self, item: &SessionItem, cx: &gpui::App) -> bool {
+        item.hutan_target()
+            .and_then(|target| target.session.parse::<SessionId>().ok())
+            .is_some_and(|id| self.env.sessions.read(cx).session(id).is_some())
+    }
+
+    /// The entries of the row menu of `item`, and whether the Hutan session it names exists.
+    pub(super) fn row_actions(
+        &self,
+        item: &SessionItem,
+        cx: &gpui::App,
+    ) -> (Vec<super::history_catalog::ActionEntry>, bool) {
+        let exists = self.session_exists(item, cx);
+        (actions(item, exists), exists)
+    }
+
+    /// What Return does on the selected row: resume it, or show the Hutan session.
+    fn primary(&self, item: &SessionItem, cx: &gpui::App) -> Option<RowAction> {
+        let exists = self.session_exists(item, cx);
+        actions(item, exists)
+            .into_iter()
+            .next()
+            .filter(|e| e.enabled)
+            .map(|e| e.action)
+    }
+
+    /// Runs a row's button or menu entry: the workbench actions do the work.
+    pub fn run_action(
+        &mut self,
+        action: RowAction,
+        item: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item) = self.items.get(item).cloned() else {
+            return;
+        };
+        self.menu = None;
+        run_row_action(action, &item, window, cx);
         cx.notify();
     }
 
@@ -368,28 +1045,7 @@ impl HistoryPanel {
                 .await;
             this.update(cx, |this, cx| {
                 match result {
-                    Ok(info) => {
-                        let was_enabled = this.status().is_some_and(|s| s.enabled);
-                        this.index = Index::Known(info);
-                        if was_enabled && !this.status().is_some_and(|s| s.enabled) {
-                            // Indexing was switched off elsewhere (the settings, the CLI).
-                            this.results = Results::Idle;
-                            this.selected = None;
-                        }
-                        let rows: u64 = this
-                            .status()
-                            .map_or(0, |s| s.sources.iter().map(|s| s.rows).sum());
-                        if !was_enabled && this.status().is_some_and(|s| s.enabled) {
-                            this.search(false, cx);
-                        }
-                        // Nothing indexed yet: the first scan is probably still running.
-                        if rows == 0
-                            && this.status().is_some_and(|s| s.enabled)
-                            && this.settle_task.is_none()
-                        {
-                            this.settle(cx);
-                        }
-                    }
+                    Ok(info) => this.status_arrived(info, cx),
                     Err(error) => this.error = Some(error.to_string()),
                 }
                 cx.notify();
@@ -398,54 +1054,71 @@ impl HistoryPanel {
         }));
     }
 
-    /// **Enable indexing**: `history.set_enabled`, then follows the first scan.
+    fn status_arrived(&mut self, info: HistoryStatusInfo, cx: &mut Context<Self>) {
+        let before = self.status().map(|s| (s.enabled, index_rows(s)));
+        let now = (info.enabled, index_rows(&info));
+        self.index = Index::Known(info);
+        if before.is_some_and(|(enabled, _)| enabled) && !now.0 {
+            // Indexing was switched off elsewhere (the settings, the CLI).
+            self.results = Results::Idle;
+            self.catalog = None;
+            self.selected = None;
+            self.rebuild(cx);
+        }
+        if now.0 && before != Some(now) {
+            // Newly enabled, or records were indexed since the last look.
+            self.reload(false, cx);
+            if before.is_none_or(|(enabled, _)| !enabled) {
+                self.search(false, cx);
+            }
+        }
+        // Nothing indexed yet: the first scan is probably still running.
+        if now.0 && now.1 == 0 && self.settle_task.is_none() {
+            self.settle(cx);
+        }
+    }
+
+    /// **Enable**: writes the sources the card ticked to `daemon.toml` where they differ, turns
+    /// indexing on (`history.set_enabled`), then follows the first scan.
     pub fn enable_indexing(&mut self, cx: &mut Context<Self>) {
-        self.set_indexing(true, cx);
-    }
-
-    /// **Disable**: `history.set_enabled` off. The daemon stops reading transcripts and keeps
-    /// the index file.
-    pub fn disable_indexing(&mut self, cx: &mut Context<Self>) {
-        self.set_indexing(false, cx);
-    }
-
-    fn set_indexing(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        if self.busy.is_some() {
+        if self.busy.is_some() || self.card_sources.iter().all(|on| !on) {
             return;
         }
         let connection = self.env.sessions.read(cx).connection().clone();
-        self.busy = Some(if enabled {
-            "Enabling…"
-        } else {
-            "Disabling…"
-        });
+        let wanted = self.card_sources;
+        let have = self.card_daemon;
+        self.busy = Some("Enabling…");
         self.error = None;
+        cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { connection.history_set_enabled(enabled).await })
+                .spawn(async move {
+                    if let Some(have) = have {
+                        for (i, source) in SOURCES.iter().enumerate() {
+                            if wanted[i] != have[i] {
+                                connection
+                                    .daemon_setting_set(
+                                        &format!("history.{}", source.as_str()),
+                                        Some(Json::Bool(wanted[i])),
+                                    )
+                                    .await?;
+                            }
+                        }
+                    }
+                    connection.history_set_enabled(true).await
+                })
                 .await;
             this.update(cx, |this, cx| {
                 this.busy = None;
                 match result {
                     Ok(info) => {
-                        this.index = Index::Known(info);
-                        if enabled {
-                            this.settle(cx);
-                            this.search(false, cx);
-                        } else {
-                            this.settle_task = None;
-                            this.search_task = None;
-                            this.searching = false;
-                            this.results = Results::Idle;
-                            this.selected = None;
-                        }
+                        this.card_daemon = Some(wanted);
+                        this.status_arrived(info, cx);
+                        this.settle(cx);
                     }
                     Err(error) => {
-                        this.error = Some(format!(
-                            "Cannot {} indexing: {error}",
-                            if enabled { "enable" } else { "disable" }
-                        ));
+                        this.error = Some(format!("Cannot enable indexing: {error}"));
                     }
                 }
                 cx.notify();
@@ -453,6 +1126,90 @@ impl HistoryPanel {
             .ok();
         })
         .detach();
+    }
+
+    /// **Disable**: `history.set_enabled` off. The daemon stops reading transcripts and keeps
+    /// the index file.
+    pub fn disable_indexing(&mut self, cx: &mut Context<Self>) {
+        if self.busy.is_some() {
+            return;
+        }
+        let connection = self.env.sessions.read(cx).connection().clone();
+        self.busy = Some("Disabling…");
+        self.error = None;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { connection.history_set_enabled(false).await })
+                .await;
+            this.update(cx, |this, cx| {
+                this.busy = None;
+                match result {
+                    Ok(info) => {
+                        this.index = Index::Known(info);
+                        this.settle_task = None;
+                        this.search_task = None;
+                        this.catalog_task = None;
+                        this.rescan_task = None;
+                        this.searching = false;
+                        this.loading = false;
+                        this.results = Results::Idle;
+                        this.catalog = None;
+                        this.selected = None;
+                        this.scan_open = false;
+                        this.card_daemon = None;
+                        this.rebuild(cx);
+                    }
+                    Err(error) => {
+                        this.error = Some(format!("Cannot disable indexing: {error}"));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Ticks or unticks a source on the off-state card.
+    pub fn toggle_card_source(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(on) = self.card_sources.get_mut(index) {
+            *on = !*on;
+            cx.notify();
+        }
+    }
+
+    /// Reads the sources `daemon.toml` has, once, for the card's checkboxes.
+    pub(super) fn load_card(&mut self, cx: &mut Context<Self>) {
+        if self.card_daemon.is_some() || self.card_task.is_some() {
+            return;
+        }
+        let connection = self.env.sessions.read(cx).connection().clone();
+        if !connection.supports_daemon_settings() {
+            return;
+        }
+        self.card_task = Some(cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { connection.daemon_settings().await })
+                .await;
+            this.update(cx, |this, cx| {
+                this.card_task = None;
+                if let Ok(settings) = result {
+                    let mut have = [true; 4];
+                    for (i, source) in SOURCES.iter().enumerate() {
+                        let key = format!("history.{}", source.as_str());
+                        if let Some(entry) = settings.entries.iter().find(|e| e.key == key) {
+                            have[i] = entry.value.as_bool().unwrap_or(true);
+                        }
+                    }
+                    this.card_daemon = Some(have);
+                    this.card_sources = have;
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
     }
 
     /// Asks before running `what`.
@@ -470,7 +1227,7 @@ impl HistoryPanel {
     pub fn confirmed(&mut self, cx: &mut Context<Self>) {
         match self.confirm.take() {
             Some(Confirm::Clear) => self.clear(cx),
-            Some(Confirm::Rebuild) => self.rebuild(cx),
+            Some(Confirm::Rebuild) => self.rebuild_index(cx),
             None => {}
         }
         cx.notify();
@@ -493,8 +1250,11 @@ impl HistoryPanel {
                 match result {
                     Ok(()) => {
                         this.results = Results::Idle;
+                        this.catalog = None;
                         this.selected = None;
+                        this.rebuild(cx);
                         this.refresh_status(cx);
+                        this.reload(false, cx);
                         this.settle(cx);
                         this.search(false, cx);
                     }
@@ -507,7 +1267,7 @@ impl HistoryPanel {
         .detach();
     }
 
-    fn rebuild(&mut self, cx: &mut Context<Self>) {
+    fn rebuild_index(&mut self, cx: &mut Context<Self>) {
         if self.busy.is_some() {
             return;
         }
@@ -522,7 +1282,10 @@ impl HistoryPanel {
             this.update(cx, |this, cx| {
                 this.busy = None;
                 match result {
-                    Ok(()) => this.settle(cx),
+                    Ok(()) => {
+                        this.reload(false, cx);
+                        this.settle(cx);
+                    }
                     Err(error) => {
                         this.error = Some(format!("Cannot rebuild the index: {error}"));
                     }
@@ -535,7 +1298,7 @@ impl HistoryPanel {
     }
 
     /// Follows the index while it is being (re)built: reads the status every
-    /// [`SETTLE_POLL`], searches again when the rows changed, and stops once they stay put.
+    /// [`SETTLE_POLL`], asks again when the rows changed, and stops once they stay put.
     fn settle(&mut self, cx: &mut Context<Self>) {
         let connection = self.env.sessions.read(cx).connection().clone();
         self.settle_task = Some(cx.spawn(async move |this, cx| {
@@ -549,7 +1312,7 @@ impl HistoryPanel {
                     .spawn(async move { asked.history_status().await })
                     .await;
                 let Ok(info) = result else { break };
-                let rows: u64 = info.sources.iter().map(|s| s.rows).sum();
+                let rows = index_rows(&info);
                 let changed = rows_before != Some(rows);
                 if changed {
                     quiet = Duration::ZERO;
@@ -558,7 +1321,10 @@ impl HistoryPanel {
                 let alive = this.update(cx, |this, cx| {
                     this.index = Index::Known(info);
                     if changed && rows_before.is_some() {
-                        this.search(false, cx);
+                        this.reload(false, cx);
+                        if !matches!(this.results, Results::Idle) {
+                            this.search(false, cx);
+                        }
                     }
                     cx.notify();
                 });
@@ -579,43 +1345,10 @@ impl HistoryPanel {
         }));
     }
 
-    // ---- hit actions -----------------------------------------------------------------------
-
-    /// What opening the selected row does by default: resume it, or show the Hutan session.
-    fn primary(&self, hit: &HistoryHit, cx: &gpui::App) -> Option<Box<dyn gpui::Action>> {
-        if let Some(resume) = HistoryResume::of(hit) {
-            return Some(Box::new(ResumeHistoryHit(resume)));
-        }
-        let target = hutan_target(hit)?;
-        self.session_exists(&target, cx)
-            .then(|| Box::new(OpenHistoryHit(target)) as Box<dyn gpui::Action>)
-    }
-
-    fn session_exists(&self, target: &HutanTarget, cx: &gpui::App) -> bool {
-        target
-            .session
-            .parse::<SessionId>()
-            .ok()
-            .is_some_and(|id| self.env.sessions.read(cx).session(id).is_some())
-    }
-
-    /// Moves the selection by `delta` rows (the arrow keys).
-    fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let count = self.hits().len();
-        if count == 0 {
-            return;
-        }
-        let next = match self.selected {
-            None if delta >= 0 => 0,
-            None => count - 1,
-            Some(at) => at.saturating_add_signed(delta).min(count - 1),
-        };
-        self.selected = Some(next);
-        cx.notify();
-    }
+    // ---- the search field ------------------------------------------------------------------
 
     /// How the search box's element reaches its text: the platform's text input and the mouse.
-    fn search_field(&self, cx: &Context<Self>) -> FieldRef {
+    pub(super) fn search_field(&self, cx: &Context<Self>) -> FieldRef {
         FieldRef::new(
             cx.weak_entity(),
             self.search_focus.clone(),
@@ -628,7 +1361,12 @@ impl HistoryPanel {
         )
     }
 
-    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let vim = VimConfig::of(&self.env.settings);
         // Vim's commands and the editing keys; typed text arrives through the box's platform
         // text input (`search_field`).
@@ -644,25 +1382,97 @@ impl HistoryPanel {
             return;
         }
         match ks.key.as_str() {
-            "escape" => self.set_query("", cx),
+            "escape" => {
+                if self.menu.is_some() {
+                    self.close_menu(cx);
+                } else {
+                    self.set_query("", cx);
+                }
+            }
             "down" => self.move_selection(1, cx),
             "up" => self.move_selection(-1, cx),
             "enter" => {
-                let action = self
-                    .selected
-                    .and_then(|i| self.hits().get(i))
-                    .and_then(|hit| self.primary(hit, cx));
-                match action {
-                    Some(action) => window.dispatch_action(action, cx),
-                    None => {
-                        self.search(false, cx);
-                        cx.notify();
-                    }
+                if self.search_pending() {
+                    // Return does not wait for the debounce.
+                    self.search(false, cx);
+                    cx.notify();
+                } else if let Some(item) = self.selected().and_then(|i| self.items.get(i)).cloned()
+                    && let Some(action) = self.primary(&item, cx)
+                {
+                    run_row_action(action, &item, window, cx);
+                } else {
+                    cx.notify();
                 }
             }
             _ => return,
         }
         cx.stop_propagation();
+    }
+}
+
+/// Runs `action` for `item` by dispatching the workbench action that does it.
+fn run_row_action(action: RowAction, item: &SessionItem, window: &mut Window, cx: &mut gpui::App) {
+    let dispatch = |window: &mut Window, cx: &mut gpui::App, a: Box<dyn gpui::Action>| {
+        window.dispatch_action(a, cx);
+    };
+    match action {
+        RowAction::Resume => {
+            if let Some(resume) = item.resume() {
+                dispatch(window, cx, Box::new(ResumeHistoryHit(resume)));
+            }
+        }
+        RowAction::OpenSession => {
+            if let Some(target) = item.hutan_target() {
+                let target: HutanTarget = target;
+                dispatch(window, cx, Box::new(OpenHistoryHit(target)));
+            }
+        }
+        RowAction::CopyResumeCommand => {
+            if let Some(resume) = item.resume() {
+                dispatch(
+                    window,
+                    cx,
+                    Box::new(CopyHistoryCommand(shell_join(&resume.argv))),
+                );
+            }
+        }
+        RowAction::OpenLog => {
+            if let Some(path) = item.transcript() {
+                let path = path.to_string_lossy().into_owned();
+                dispatch(window, cx, Box::new(OpenHistoryFile(path)));
+            }
+        }
+        RowAction::RevealLog => {
+            if let Some(path) = item.transcript() {
+                let path = path.to_string_lossy().into_owned();
+                dispatch(window, cx, Box::new(RevealHistoryFile(path)));
+            }
+        }
+        RowAction::OpenDirectory => {
+            if let Some(cwd) = item.cwd.clone().filter(|c| !c.is_empty()) {
+                dispatch(window, cx, Box::new(OpenHistoryDirectory(cwd)));
+            }
+        }
+        RowAction::CopySessionId => {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(session_id_text(item)));
+            dispatch(
+                window,
+                cx,
+                Box::new(Notify("Copied the session id".to_owned())),
+            );
+        }
+        RowAction::CopyLogPath => {
+            if let Some(path) = item.transcript() {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                    path.to_string_lossy().into_owned(),
+                ));
+                dispatch(
+                    window,
+                    cx,
+                    Box::new(Notify("Copied the log path".to_owned())),
+                );
+            }
+        }
     }
 }
 
@@ -672,803 +1482,7 @@ impl Focusable for HistoryPanel {
     }
 }
 
-// ---- rendering --------------------------------------------------------------------------------
-
-pub(crate) fn pill(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    active: bool,
-    theme: &Theme,
-    tokens: &Tokens,
-) -> gpui::Stateful<gpui::Div> {
-    let (hover, accent) = (theme.surface_hover, theme.accent);
-    div()
-        .id(id.into())
-        .flex_none()
-        .px(px(tokens.spacing * 2.0))
-        .h(px(tokens.font_size + 6.0))
-        .flex()
-        .items_center()
-        .rounded(px(crate::theme::PILL_RADIUS))
-        .border_1()
-        .border_color(if active {
-            accent.opacity(0.45)
-        } else {
-            theme.border
-        })
-        .text_size(px(tokens.secondary_font_size))
-        .text_color(if active { theme.fg } else { theme.muted })
-        .when(active, move |s| s.bg(theme.accent_soft))
-        .cursor_pointer()
-        .when(!active, move |s| s.hover(move |s| s.bg(hover)))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(label.into())
-}
-
-/// A text button; `enabled == false` draws it dim and makes it inert.
-fn button(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    enabled: bool,
-    theme: &Theme,
-    tokens: &Tokens,
-) -> gpui::Stateful<gpui::Div> {
-    ui::button(
-        id.into(),
-        label,
-        ui::ButtonKind::Secondary,
-        enabled,
-        theme,
-        tokens,
-    )
-    .h(px(tokens.font_size + 8.0))
-    .px(px(tokens.spacing * 2.0))
-    .text_size(px(tokens.secondary_font_size))
-}
-
-fn row_meta(hit: &HistoryHit, home: Option<&std::path::Path>) -> String {
-    let mut parts = vec![
-        source_label(hit.source).to_owned(),
-        role_label(hit.role).to_owned(),
-    ];
-    if let Some(cwd) = hit.cwd.as_deref().filter(|c| !c.is_empty()) {
-        parts.push(short_path(cwd, home));
-    }
-    parts.push(match hit.matches {
-        1 => "1 hit".to_owned(),
-        n => format!("{n} hits"),
-    });
-    parts.join(" · ")
-}
-
-impl Render for HistoryPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.drawn = true;
-        let style = UiStyle::get(cx);
-        let (theme, tokens) = (style.theme, style.density.ui());
-        let body = match &self.index {
-            Index::Unsupported => self.render_note(
-                "This hutand does not offer history search (protocol 0.8). Restart it from the \
-                 Daemon menu after updating Hutan.",
-                &theme,
-                &tokens,
-            ),
-            Index::Unknown => {
-                let connected =
-                    self.env.sessions.read(cx).connection_state() == ConnectionState::Connected;
-                let text = if connected {
-                    "Reading the index state…"
-                } else {
-                    "Waiting for the daemon…"
-                };
-                self.render_note(text, &theme, &tokens)
-            }
-            Index::Known(info) if !info.enabled => self.render_disabled(&theme, &tokens, cx),
-            Index::Known(info) => {
-                let info = info.clone();
-                self.render_enabled(&info, window, &theme, &tokens, cx)
-            }
-        };
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .text_size(px(tokens.font_size))
-            .text_color(theme.fg)
-            .child(panel_header("History", "history", cx))
-            .child(body)
-    }
-}
-
-impl HistoryPanel {
-    fn render_note(&self, text: &str, theme: &Theme, tokens: &Tokens) -> AnyElement {
-        let mascot = if text.starts_with("Searching") {
-            ui::Mascot::Thinking
-        } else {
-            ui::Mascot::Empty
-        };
-        ui::empty_state(mascot, text.to_owned(), None, theme, tokens)
-            .h(px(260.0))
-            .into_any_element()
-    }
-
-    /// What indexing reads, what stays local, and the button.
-    fn render_disabled(
-        &self,
-        theme: &Theme,
-        tokens: &Tokens,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let busy = self.busy.is_some();
-        let line = |text: &str| {
-            div()
-                .text_color(theme.muted)
-                .child(SharedString::from(text.to_owned()))
-        };
-        let source = |glyph: &str, name: &str, place: &str| {
-            div()
-                .flex()
-                .gap(px(tokens.spacing * 1.5))
-                .child(
-                    div()
-                        .w(px(12.0))
-                        .flex_none()
-                        .child(SharedString::from(glyph.to_owned())),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(SharedString::from(name.to_owned()))
-                        .child(
-                            div()
-                                .text_size(px(tokens.secondary_font_size))
-                                .text_color(theme.muted)
-                                .child(SharedString::from(place.to_owned())),
-                        ),
-                )
-        };
-        div()
-            .id("history-disabled")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap(px(tokens.spacing * 2.0))
-            .px(px(tokens.spacing * 3.0))
-            .py(px(tokens.spacing * 2.0))
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .child("Search what you and your agents did"),
-            )
-            .child(line("History indexing is off. Turning it on reads:"))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(tokens.spacing))
-                    .child(source(
-                        source_icon(HistorySource::Hutan),
-                        "Hutan terminals",
-                        "commands, their output and agent reports",
-                    ))
-                    .child(source(
-                        source_icon(HistorySource::Claude),
-                        "Claude Code",
-                        "transcripts in ~/.claude/projects",
-                    ))
-                    .child(source(
-                        source_icon(HistorySource::Codex),
-                        "Codex",
-                        "transcripts in ~/.codex/sessions",
-                    ))
-                    .child(source(
-                        source_icon(HistorySource::Omp),
-                        "OMP",
-                        "transcripts in ~/.omp/agent/sessions",
-                    )),
-            )
-            .child(line(
-                "Nothing leaves this machine. The index is one local file with secrets masked \
-                 as far as possible; Clear deletes it. Which sources are read is set in the \
-                 [history] section of daemon.toml.",
-            ))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(tokens.spacing * 2.0))
-                    .child(
-                        button(
-                            "history-enable",
-                            self.busy.unwrap_or("Enable indexing"),
-                            !busy,
-                            theme,
-                            tokens,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| this.enable_indexing(cx)))
-                        .child(probe(&self.env.regions, Region::History("enable"))),
-                    )
-                    .child(
-                        div()
-                            .id("history-settings-link")
-                            .cursor_pointer()
-                            .text_color(theme.accent)
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(OpenSettingsFor("history".to_owned())),
-                                    cx,
-                                );
-                            })
-                            .child("Settings ›")
-                            .child(probe(&self.env.regions, Region::History("settings"))),
-                    ),
-            )
-            .when_some(self.error.clone(), |s, error| {
-                s.child(
-                    div()
-                        .text_color(theme.danger)
-                        .child(SharedString::from(error)),
-                )
-            })
-            .into_any_element()
-    }
-
-    fn render_enabled(
-        &mut self,
-        info: &HistoryStatusInfo,
-        window: &mut Window,
-        theme: &Theme,
-        tokens: &Tokens,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let settings = self.env.settings.get::<HistorySettings>();
-        if self.focus_wanted {
-            self.focus_wanted = false;
-            cx.defer_in(window, |this, window, cx| {
-                window.focus(&this.search_focus, cx);
-            });
-        }
-        let searching_field = self.search_focus.is_focused(window);
-        let search = div()
-            .id("history-search")
-            .key_context("HistorySearch")
-            .track_focus(&self.search_focus)
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                this.on_key(event, window, cx);
-            }))
-            .relative()
-            .mx(px(tokens.spacing * 2.0))
-            .mb(px(tokens.spacing))
-            .px(px(tokens.spacing * 2.0))
-            .h(px(tokens.sidebar_row))
-            .flex_none()
-            .flex()
-            .items_center()
-            .rounded(px(tokens.radius))
-            .bg(theme.surface)
-            .border_1()
-            .border_color(if searching_field {
-                theme.accent
-            } else {
-                theme.border
-            })
-            .cursor_text()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|_, _: &MouseDownEvent, window, cx| {
-                    // The dock re-focuses the workbench on this same mouse down; take focus
-                    // after the event has been handled.
-                    cx.defer_in(window, |this, window, cx| {
-                        window.focus(&this.search_focus, cx);
-                    });
-                }),
-            )
-            .children(vim_ui::string_field(
-                "history-search-text",
-                &self.query_edit,
-                &self.query,
-                VimConfig::of(&self.env.settings).enabled,
-                "⌕ Search sessions, commands, transcripts",
-                searching_field,
-                false,
-                self.search_field(cx),
-                theme,
-                tokens,
-            ))
-            .child(probe(&self.env.regions, Region::History("search")));
-
-        let mut list = div()
-            .id("history-list")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col();
-        match &self.results {
-            Results::Idle => {
-                list = list.child(self.render_note(
-                    "Type a phrase, a command or a file name. Results are one row per session.",
-                    theme,
-                    tokens,
-                ));
-            }
-            Results::Failed(error) => {
-                list = list.child(
-                    div()
-                        .px(px(tokens.spacing * 3.0))
-                        .py(px(tokens.spacing * 2.0))
-                        .text_color(theme.danger)
-                        .child(SharedString::from(format!("Search failed: {error}"))),
-                );
-            }
-            Results::Hits(hits) if hits.is_empty() => {
-                let text = if self.searching {
-                    "Searching…"
-                } else if self.filters.narrows() {
-                    "No session matches. A filter may be hiding some."
-                } else {
-                    "No session matches."
-                };
-                list = list.child(self.render_note(text, theme, tokens));
-            }
-            Results::Hits(hits) => {
-                let home = std::env::home_dir();
-                for (index, hit) in hits.iter().enumerate() {
-                    list = list.child(self.render_hit(
-                        index,
-                        hit,
-                        home.as_deref(),
-                        settings.show_snippets,
-                        theme,
-                        tokens,
-                        cx,
-                    ));
-                }
-            }
-        }
-
-        div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .child(search)
-            .child(self.render_filters(theme, tokens, cx))
-            .child(list)
-            .child(self.render_footer(info, theme, tokens, cx))
-            .into_any_element()
-    }
-
-    fn render_filters(&self, theme: &Theme, tokens: &Tokens, cx: &mut Context<Self>) -> AnyElement {
-        let group = |label: &str| {
-            div()
-                .flex_none()
-                .text_size(px(tokens.section_font_size))
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(theme.muted)
-                .child(SharedString::from(label.to_owned()))
-        };
-        let row = |label: &str| {
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(tokens.spacing))
-                .child(group(label))
-        };
-        let mut sources = row("Source");
-        for source in SOURCES {
-            sources = sources.child(
-                pill(
-                    format!("history-source-{}", source.as_str()),
-                    source_label(source),
-                    self.filters.sources.contains(&source),
-                    theme,
-                    tokens,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.edit_filters(|f| f.toggle_source(source), cx);
-                })),
-            );
-        }
-        let mut roles = row("Role");
-        for role in ROLES {
-            roles = roles.child(
-                pill(
-                    format!("history-role-{}", role.as_str()),
-                    role_label(role),
-                    self.filters.roles.contains(&role),
-                    theme,
-                    tokens,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.edit_filters(|f| f.toggle_role(role), cx);
-                })),
-            );
-        }
-        let mut dates = row("Date");
-        for range in HistoryRange::ALL {
-            let label = match range {
-                HistoryRange::All => "all",
-                other => other.key(),
-            };
-            dates = dates.child(
-                pill(
-                    format!("history-range-{}", range.key()),
-                    label,
-                    self.filters.range == range,
-                    theme,
-                    tokens,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.edit_filters(|f| f.range = range, cx);
-                })),
-            );
-        }
-        let mut project = row("Project");
-        for (scope, label) in [
-            (HistoryScope::Workspace, "this workspace"),
-            (HistoryScope::All, "all"),
-        ] {
-            project = project.child(
-                pill(
-                    format!("history-scope-{label}"),
-                    label,
-                    self.filters.scope == scope,
-                    theme,
-                    tokens,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.edit_filters(|f| f.scope = scope, cx);
-                })),
-            );
-        }
-        div()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap(px(tokens.spacing))
-            .px(px(tokens.spacing * 2.0))
-            .pb(px(tokens.spacing * 2.0))
-            .child(sources)
-            .child(roles)
-            .child(dates)
-            .child(project)
-            .into_any_element()
-    }
-
-    #[allow(clippy::too_many_arguments)] // one call site; a struct would only rename them
-    fn render_hit(
-        &self,
-        index: usize,
-        hit: &HistoryHit,
-        home: Option<&std::path::Path>,
-        show_snippets: bool,
-        theme: &Theme,
-        tokens: &Tokens,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let selected = self.selected == Some(index);
-        let hover = theme.surface_hover;
-        let snippet = parse_snippet(&hit.snippet);
-        let marks: Vec<_> = snippet
-            .marks
-            .iter()
-            .map(|range| {
-                (
-                    range.clone(),
-                    HighlightStyle {
-                        color: Some(theme.accent),
-                        font_weight: Some(gpui::FontWeight::MEDIUM),
-                        ..HighlightStyle::default()
-                    },
-                )
-            })
-            .collect();
-
-        let mut actions = div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(px(tokens.spacing));
-        let mut note: Option<String> = None;
-        match HistoryResume::of(hit) {
-            Some(resume) => {
-                actions = actions.child(
-                    button(
-                        format!("history-resume-{index}"),
-                        "Resume",
-                        true,
-                        theme,
-                        tokens,
-                    )
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(Box::new(ResumeHistoryHit(resume.clone())), cx);
-                    }),
-                );
-                if let Some(argv) = &hit.resume_argv {
-                    let line = shell_join(argv);
-                    actions = actions.child(
-                        button(
-                            format!("history-copy-{index}"),
-                            "Copy command",
-                            true,
-                            theme,
-                            tokens,
-                        )
-                        .on_click(move |_, window, cx| {
-                            window.dispatch_action(Box::new(CopyHistoryCommand(line.clone())), cx);
-                        }),
-                    );
-                }
-            }
-            None => {
-                actions = actions.child(button(
-                    format!("history-resume-{index}"),
-                    "Resume",
-                    false,
-                    theme,
-                    tokens,
-                ));
-                note = resume_blocker(hit).map(|why| format!("Cannot resume: {why}"));
-            }
-        }
-        if let Some(path) = transcript_path(hit) {
-            let path = path.to_string_lossy().into_owned();
-            actions = actions.child(
-                button(
-                    format!("history-reveal-{index}"),
-                    "Reveal File",
-                    true,
-                    theme,
-                    tokens,
-                )
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(Box::new(RevealHistoryFile(path.clone())), cx);
-                }),
-            );
-        }
-        if let Some(target) = hutan_target(hit) {
-            let label = if target.block.is_some() {
-                "Open Block"
-            } else {
-                "Open Session"
-            };
-            if self.session_exists(&target, cx) {
-                actions = actions.child(
-                    button(format!("history-open-{index}"), label, true, theme, tokens).on_click(
-                        move |_, window, cx| {
-                            window.dispatch_action(Box::new(OpenHistoryHit(target.clone())), cx);
-                        },
-                    ),
-                );
-            } else {
-                actions = actions.child(button(
-                    format!("history-open-{index}"),
-                    label,
-                    false,
-                    theme,
-                    tokens,
-                ));
-                note = Some("That terminal session no longer exists.".to_owned());
-            }
-        }
-
-        let age = hit.ts_ms.map(age_label).unwrap_or_default();
-        div()
-            .id(SharedString::from(format!("history-row-{index}")))
-            .flex()
-            .flex_col()
-            .gap(px(tokens.spacing / 2.0))
-            .mx(px(tokens.spacing))
-            .px(px(tokens.spacing))
-            .py(px(tokens.spacing))
-            .rounded(px(tokens.radius))
-            .when(selected, move |s| s.bg(theme.accent_soft))
-            .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                    this.selected = Some(index);
-                    cx.notify();
-                }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(tokens.spacing * 1.5))
-                    .child(
-                        div()
-                            .flex_none()
-                            .w(px(12.0))
-                            .text_color(theme.muted)
-                            .child(source_icon(hit.source)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(SharedString::from(hit_title(hit))),
-                    )
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("history-age-{index}")))
-                            .flex_none()
-                            .text_size(px(tokens.secondary_font_size))
-                            .text_color(theme.muted)
-                            .when_some(hit.ts_ms, |s, ts| s.tooltip(time_tooltip(ts)))
-                            .child(SharedString::from(age)),
-                    ),
-            )
-            .child(
-                div()
-                    .truncate()
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.muted)
-                    .child(SharedString::from(row_meta(hit, home))),
-            )
-            .when(show_snippets && !snippet.text.is_empty(), |s| {
-                s.child(
-                    div()
-                        .line_clamp(3)
-                        .text_size(px(tokens.secondary_font_size))
-                        .child(
-                            StyledText::new(SharedString::from(snippet.text))
-                                .with_highlights(marks),
-                        ),
-                )
-            })
-            .child(actions)
-            .when_some(note, |s, note| {
-                s.child(
-                    div()
-                        .text_size(px(tokens.secondary_font_size))
-                        .text_color(theme.muted)
-                        .child(SharedString::from(note)),
-                )
-            })
-            .into_any_element()
-    }
-
-    fn render_footer(
-        &self,
-        info: &HistoryStatusInfo,
-        theme: &Theme,
-        tokens: &Tokens,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let rows: u64 = info.sources.iter().map(|s| s.rows).sum();
-        let errors: u64 = info.sources.iter().map(|s| s.errors).sum();
-        let per_source = info
-            .sources
-            .iter()
-            .map(|s| {
-                let indexed = s
-                    .last_indexed_ms
-                    .map_or_else(|| "—".to_owned(), hutan_client::time::relative_to_now);
-                format!("{} {indexed}", s.name)
-            })
-            .collect::<Vec<_>>()
-            .join(" · ");
-        let busy = self.busy.is_some();
-        let small = px(tokens.secondary_font_size);
-
-        let controls: AnyElement = match self.confirm {
-            Some(what) => {
-                let question = match what {
-                    Confirm::Clear => {
-                        "Delete the whole index? Hutan's own records cannot be rebuilt."
-                    }
-                    Confirm::Rebuild => "Read every transcript again?",
-                };
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(tokens.spacing))
-                    .child(div().text_color(theme.warning).child(question))
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(tokens.spacing))
-                            .child(
-                                button(
-                                    "history-confirm",
-                                    match what {
-                                        Confirm::Clear => "Clear index",
-                                        Confirm::Rebuild => "Rebuild",
-                                    },
-                                    true,
-                                    theme,
-                                    tokens,
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| this.confirmed(cx)))
-                                .child(probe(&self.env.regions, Region::History("confirm"))),
-                            )
-                            .child(
-                                button("history-cancel", "Cancel", true, theme, tokens).on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.cancel_confirmation(cx);
-                                    }),
-                                ),
-                            ),
-                    )
-                    .into_any_element()
-            }
-            None => div()
-                .flex()
-                .items_center()
-                .gap(px(tokens.spacing))
-                .child(
-                    button("history-clear", "Clear…", !busy, theme, tokens)
-                        .on_click(cx.listener(|this, _, _, cx| this.ask(Confirm::Clear, cx)))
-                        .child(probe(&self.env.regions, Region::History("clear"))),
-                )
-                .child(
-                    button("history-rebuild", "Rebuild…", !busy, theme, tokens)
-                        .on_click(cx.listener(|this, _, _, cx| this.ask(Confirm::Rebuild, cx)))
-                        .child(probe(&self.env.regions, Region::History("rebuild"))),
-                )
-                .child(
-                    button("history-disable", "Disable", !busy, theme, tokens)
-                        .on_click(cx.listener(|this, _, _, cx| this.disable_indexing(cx)))
-                        .child(probe(&self.env.regions, Region::History("disable"))),
-                )
-                .when_some(self.busy, |s, busy| {
-                    s.child(div().text_color(theme.muted).child(busy))
-                })
-                .into_any_element(),
-        };
-
-        div()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap(px(tokens.spacing))
-            .px(px(tokens.spacing * 2.0))
-            .py(px(tokens.spacing * 2.0))
-            .border_t_1()
-            .border_color(theme.border)
-            .text_size(small)
-            .text_color(theme.muted)
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(tokens.spacing * 1.5))
-                    .child(SharedString::from(format!("{rows} rows")))
-                    .child(SharedString::from(format_bytes(info.db_bytes)))
-                    .child(
-                        div()
-                            .text_color(if errors > 0 {
-                                theme.warning
-                            } else {
-                                theme.muted
-                            })
-                            .child(SharedString::from(match errors {
-                                0 => "no errors".to_owned(),
-                                1 => "1 unreadable line".to_owned(),
-                                n => format!("{n} unreadable lines"),
-                            })),
-                    ),
-            )
-            .when(!per_source.is_empty(), |s| {
-                s.child(div().child(SharedString::from(per_source)))
-            })
-            .child(controls)
-            .when_some(self.error.clone(), |s, error| {
-                s.child(
-                    div()
-                        .text_color(theme.danger)
-                        .child(SharedString::from(error)),
-                )
-            })
-            .into_any_element()
-    }
+/// A label that cannot be taken apart: shared between the header and the strips.
+pub(super) fn shared(text: impl Into<String>) -> SharedString {
+    SharedString::from(text.into())
 }

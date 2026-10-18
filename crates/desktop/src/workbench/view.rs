@@ -182,6 +182,10 @@ pub enum Region {
     /// A control of the history panel, by name (`search`, `enable`, `disable`, `clear`,
     /// `rebuild`, `confirm`).
     History(&'static str),
+    /// A repeated control of the history panel: its name (`row`, `chevron`, `more`, `group`,
+    /// `menu`, `source`, `action`, `show-more`) and index (the row, group, entry or button
+    /// counting from 0).
+    HistoryItem(&'static str, usize),
     /// A control of the chat view, by name (`composer`, `send`, `interrupt`, `restart`,
     /// `header`, `banner`).
     Chat(&'static str),

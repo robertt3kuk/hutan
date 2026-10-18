@@ -282,6 +282,10 @@ data_actions! {
     OpenHistoryHit(HutanTarget);
     /// Reveal the transcript file of a history hit of another tool in Finder.
     RevealHistoryFile(String);
+    /// Open the transcript file of a history session with the system (its default app).
+    OpenHistoryFile(String);
+    /// Show the workspace that holds a history session's working directory (found or created).
+    OpenHistoryDirectory(String);
     /// Show a line in the workbench's notice area (panels report results with it).
     Notify(String);
     /// Open the Changes view of the checkout a task runs in (the task's id).

@@ -233,9 +233,21 @@ impl TestDaemon {
     /// through renames the capability `daemon.settings` in the daemon's welcome (to a name of
     /// the same length, so the frame stays valid), and passes everything else on.
     pub fn older_connection(&mut self) -> Connection {
+        self.connection_without("daemon.settings", "older.sock")
+    }
+
+    /// A connection to this daemon as if it predated the capability `history.sessions`
+    /// (protocol 0.29): the panel then falls back to the search alone.
+    pub fn connection_without_history_sessions(&mut self) -> Connection {
+        self.connection_without("history.sessions", "no-sessions.sock")
+    }
+
+    /// A connection through a proxy that renames `capability` in the daemon's welcome (to a name
+    /// of the same length, so the frame stays valid) and passes everything else on.
+    fn connection_without(&mut self, capability: &'static str, socket: &str) -> Connection {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::{UnixListener, UnixStream};
-        let path = self.dir.path().join("older.sock");
+        let path = self.dir.path().join(socket);
         let upstream = self.paths.socket.clone();
         let listener = {
             let _guard = self.rt().enter();
@@ -265,7 +277,7 @@ impl TestDaemon {
                             }
                             let chunk = &mut buf[..n];
                             if !renamed {
-                                let needle = b"daemon.settings";
+                                let needle = capability.as_bytes();
                                 if let Some(at) =
                                     chunk.windows(needle.len()).position(|w| w == needle)
                                 {

@@ -12,8 +12,6 @@ use crate::settings::{HistoryRange, HistoryScope, HistorySettings};
 
 /// Quiet time after the last keystroke before a search runs.
 pub const DEBOUNCE: Duration = Duration::from_millis(150);
-/// Sessions the panel asks for.
-pub const PANEL_LIMIT: u32 = 50;
 /// Sessions the ⌘J `?` search asks for.
 pub const PICKER_LIMIT: u32 = 8;
 
@@ -185,16 +183,6 @@ pub fn source_icon(source: HistorySource) -> &'static str {
     }
 }
 
-pub fn role_label(role: HistoryRole) -> &'static str {
-    match role {
-        HistoryRole::User => "user",
-        HistoryRole::Assistant => "assistant",
-        HistoryRole::Tool => "tool",
-        HistoryRole::Command => "command",
-        HistoryRole::Output => "output",
-    }
-}
-
 /// `~/proj/app` for paths under `home`, else the path as written.
 pub fn short_path(path: &str, home: Option<&Path>) -> String {
     let path = Path::new(path);
@@ -223,21 +211,6 @@ fn shell_word(word: &str) -> String {
     } else {
         format!("'{}'", word.replace('\'', r"'\''"))
     }
-}
-
-/// Why `hit` cannot be resumed, or `None` when it can.
-pub fn resume_blocker(hit: &HistoryHit) -> Option<&'static str> {
-    if hit
-        .resume_argv
-        .as_ref()
-        .is_some_and(|argv| !argv.is_empty())
-    {
-        return None;
-    }
-    Some(match hit.source {
-        HistorySource::Hutan => "Hutan terminal records have no resume command",
-        _ => "the index holds no resume command for this session",
-    })
 }
 
 /// What resuming a hit runs and where (the payload of `ResumeHistoryHit`).
@@ -449,16 +422,6 @@ mod tests {
             shell_join(&argv(&["a b", "", "it's"])),
             r"'a b' '' 'it'\''s'"
         );
-    }
-
-    #[test]
-    fn only_hits_with_a_command_resume_and_the_reason_is_given() {
-        let mut claude = hit(HistorySource::Claude, HistoryRole::User);
-        assert!(resume_blocker(&claude).is_some());
-        claude.resume_argv = Some(vec!["claude".into(), "--resume".into(), "x".into()]);
-        assert!(resume_blocker(&claude).is_none());
-        let hutan = hit(HistorySource::Hutan, HistoryRole::Command);
-        assert!(resume_blocker(&hutan).unwrap().contains("Hutan"));
     }
 
     #[test]

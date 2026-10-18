@@ -24,7 +24,7 @@ use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::model::PanelId;
 use hutan_desktop::workbench::panels::{HistoryConfirm, HistoryPanel};
 use hutan_desktop::workbench::{HistoryState, Region, Workbench};
-use hutan_protocol::history::{HistoryRole, HistorySource};
+use hutan_protocol::history::{HistoryRole, HistoryScope, HistorySource};
 use hutan_protocol::messages::SessionInfo;
 use hutan_settings::{SettingsPaths, SettingsStore};
 
@@ -330,10 +330,7 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
     // Project: only sessions that ran inside the active workspace's folder (Home here: none).
     history.update(cx, |p, cx| {
         p.edit_filters(|f| f.range = hutan_desktop::settings::HistoryRange::All, cx);
-        p.edit_filters(
-            |f| f.scope = hutan_desktop::settings::HistoryScope::Workspace,
-            cx,
-        );
+        p.set_scope(HistoryScope::Workspace, cx);
     });
     pump_until(cx, "the project filter", |cx| {
         history.read_with(cx, |p, _| !p.searching() && p.hits().is_empty())
@@ -344,7 +341,7 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
     pump_until(cx, "the workspace to be active", |cx| {
         view.read_with(cx, |wb, _| wb.active_workspace() == Some(app_a.id))
     });
-    history.update(cx, |p, cx| p.edit_filters(|_| {}, cx));
+    // Switching the workspace asks again by itself.
     pump_until(cx, "the workspace's sessions", |cx| {
         history.read_with(cx, |p, _| !p.searching() && p.hits().len() == 2)
     });
@@ -353,9 +350,7 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
         [HistorySource::Claude, HistorySource::Omp],
         "both ran in app-a"
     );
-    history.update(cx, |p, cx| {
-        p.edit_filters(|f| f.scope = hutan_desktop::settings::HistoryScope::All, cx);
-    });
+    history.update(cx, |p, cx| p.set_scope(HistoryScope::All, cx));
     view.update_in(cx, |wb, window, cx| wb.switch_workspace(home, window, cx));
     pump_until(cx, "Home to be active", |cx| {
         view.read_with(cx, |wb, _| wb.active_workspace() == Some(home))
@@ -552,8 +547,10 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
         Some(block_session.id)
     );
 
-    // ---- Clear (asks first) and Rebuild ---------------------------------------------------------
+    // ---- Clear (asks first) and Rebuild: the controls are behind the scan strip ------------------
     assert!(rows(&history, cx) > 0);
+    click(&view, cx, Region::History("scan"));
+    assert!(history.read_with(cx, |p, _| p.scan_open()));
     click(&view, cx, Region::History("clear"));
     assert_eq!(
         history.read_with(cx, |p, _| p.pending_confirmation()),

@@ -512,6 +512,14 @@ impl Workbench {
         .on_action(cx.listener(|this, a: &actions::RevealHistoryFile, _, cx| {
             this.reveal_history_file(&a.0, cx);
         }))
+        .on_action(cx.listener(|this, a: &actions::OpenHistoryFile, _, cx| {
+            this.open_history_file(&a.0, cx);
+        }))
+        .on_action(
+            cx.listener(|this, a: &actions::OpenHistoryDirectory, window, cx| {
+                this.open_history_directory(&a.0, window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, _: &actions::ShowAgentMonitor, _, cx| {
             this.show_agent_monitor(cx);
         }))

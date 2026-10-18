@@ -130,6 +130,11 @@ fn the_history_namespace_sets_the_default_filters(cx: &mut TestAppContext) {
     assert_eq!(filters.range, HistoryRange::Week);
     assert_eq!(filters.scope, HistoryScope::Workspace);
     assert!(filters.narrows());
+    // The segmented control starts where the settings say.
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.scope()),
+        hutan_protocol::history::HistoryScope::Workspace
+    );
 
     // Defaults when the file says nothing.
     let quiet = TestDaemon::start_with_config(&env.daemon_toml(false));
@@ -172,6 +177,13 @@ fn the_panel_moves_like_any_other_and_clear_asks_first(cx: &mut TestAppContext) 
     });
 
     // Clear asks; Escape-style cancelling leaves the index alone; the confirmation deletes it.
+    // The controls are behind the scan strip.
+    draw(cx);
+    let scan = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::History("scan")))
+        .expect("the scan strip is drawn");
+    cx.simulate_click(scan.center(), Modifiers::none());
+    assert!(panel.read_with(cx, |p, _| p.scan_open()));
     draw(cx);
     let clear = view
         .read_with(cx, |wb, _| wb.region_bounds(Region::History("clear")))

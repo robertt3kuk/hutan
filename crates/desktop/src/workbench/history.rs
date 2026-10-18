@@ -358,6 +358,70 @@ impl Workbench {
         }
     }
 
+    /// Opens the transcript file of a session with the system (its default app).
+    pub fn open_history_file(&mut self, path: &str, cx: &mut Context<Self>) {
+        let path = Path::new(path);
+        if path.is_file() {
+            (self.daemon.open)(path, cx);
+        } else {
+            self.set_notice(format!("{} no longer exists", path.display()), cx);
+        }
+    }
+
+    /// Shows the workspace that holds `dir` (the most specific one when several do); when none
+    /// does, `workspace.open` finds or creates one for the folder first.
+    pub fn open_history_directory(
+        &mut self,
+        dir: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dir = PathBuf::from(dir);
+        if !dir.is_dir() {
+            self.set_notice(format!("{} no longer exists", dir.display()), cx);
+            return;
+        }
+        let holder = self
+            .sessions
+            .read(cx)
+            .workspaces()
+            .iter()
+            .filter(|w| holds(w, &dir))
+            .max_by_key(|w| {
+                w.roots
+                    .iter()
+                    .filter(|root| dir.starts_with(root))
+                    .map(|root| root.components().count())
+                    .max()
+            })
+            .map(|w| w.id);
+        if let Some(id) = holder {
+            self.switch_workspace(id, window, cx);
+            return;
+        }
+        let opening = self
+            .sessions
+            .update(cx, |store, cx| store.open_workspace(dir, cx));
+        cx.spawn_in(window, async move |this, cx| match opening.await {
+            Ok(opened) => {
+                let id = opened.workspace.id;
+                this.update_in(cx, |this, window, cx| {
+                    // Its `workspace.updated` may still be on its way.
+                    this.pending_workspace = Some(id);
+                    this.switch_workspace(id, window, cx);
+                })
+                .ok();
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.set_notice(format!("Cannot open the folder: {error}"), cx);
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     /// Shows the Hutan session a hit points at and, for a block, scrolls its terminal to the
     /// block: the block the index recorded, by its id, in the terminal that ran it. A session
     /// whose terminal is another one (the daemon started it again since) has lost the block,

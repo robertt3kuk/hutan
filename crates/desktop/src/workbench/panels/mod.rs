@@ -6,7 +6,9 @@ mod assistant;
 mod changes;
 mod common;
 mod history;
+mod history_catalog;
 mod history_model;
+mod history_view;
 mod inspector;
 mod overview;
 mod resources;
@@ -34,7 +36,11 @@ pub use common::{
 };
 pub(crate) use common::{edit_text, field_box};
 pub(crate) use history::pill;
-pub use history::{Confirm as HistoryConfirm, HistoryPanel};
+pub use history::{Confirm as HistoryConfirm, HistoryPanel, Mode as HistoryMode};
+pub use history_catalog::{
+    ActionEntry as HistoryActionEntry, Entry as HistoryEntry, GroupBy as HistoryGroupBy,
+    RowAction as HistoryRowAction, SessionItem as HistorySessionItem,
+};
 pub use history_model::{
     BlockTarget, DEBOUNCE as HISTORY_DEBOUNCE, Filters as HistoryFilters, HistoryResume,
     HutanTarget, PICKER_LIMIT as HISTORY_PICKER_LIMIT, Snippet, format_bytes, hit_title,

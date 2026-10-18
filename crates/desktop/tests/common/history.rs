@@ -20,6 +20,9 @@ pub const UNRESUMABLE_ID: &str = "bad'id";
 /// A Claude session whose recorded directory no longer exists.
 pub const GONE_ID: &str = "gone-dir-1";
 pub const GONE_CWD: &str = "/nonexistent/hutan-test/vanished";
+/// A Claude session in `project_a` that started five hours ago and was last used ten minutes
+/// ago: first by "last updated", last by "created".
+pub const LATE_ID: &str = "late-start-1";
 
 pub struct HistoryEnv {
     _tmp: TempDir,
@@ -174,6 +177,38 @@ impl HistoryEnv {
                 r#"{{"type":"user","timestamp":"{t}","cwd":"{GONE_CWD}","message":{{"role":"user","content":[{{"type":"text","text":"count the zebrafish hutangone"}}]}}}}"#
             )],
         );
+    }
+
+    /// The session [`LATE_ID`]: `late bloomer pelican` five hours ago, the answer ten minutes ago.
+    pub fn write_late_session(&self) {
+        let now = now_ms();
+        let a = self.project_a.display();
+        let (t1, t2) = (iso(now - 5 * HOUR), iso(now - 10 * 60_000));
+        self.write(
+            &self.claude.join(format!("-app-a/{LATE_ID}.jsonl")),
+            &[
+                format!(r#"{{"type":"user","timestamp":"{t1}","cwd":"{a}","sessionId":"{LATE_ID}","message":{{"role":"user","content":[{{"type":"text","text":"late bloomer pelican"}}]}}}}"#),
+                format!(r#"{{"type":"assistant","timestamp":"{t2}","cwd":"{a}","message":{{"role":"assistant","model":"claude-test-model","content":[{{"type":"text","text":"Pelicans bloom late."}}]}}}}"#),
+            ],
+        );
+    }
+
+    /// `count` small Codex sessions in `project_b` (`filler-0` …), one minute apart, newest
+    /// first; used to make the list scroll.
+    pub fn write_filler_sessions(&self, count: usize) {
+        let now = now_ms();
+        let b = self.project_b.display();
+        for n in 0..count {
+            let id = format!("0198bbbb-0000-0000-0000-{n:012}");
+            let t = iso(now - 6 * HOUR - (n as u64) * 60_000);
+            self.write(
+                &self.codex.join(format!("2026/10/14/rollout-2026-10-14T01-00-{n:02}-{id}.jsonl")),
+                &[
+                    format!(r#"{{"timestamp":"{t}","type":"session_meta","payload":{{"id":"{id}","cwd":"{b}"}}}}"#),
+                    format!(r#"{{"timestamp":"{t}","type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"filler session number {n}"}}]}}}}"#),
+                ],
+            );
+        }
     }
 
     /// Scripts named `claude`, `codex` and `omp` in [`Self::bin`] that say how they were started
