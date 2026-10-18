@@ -4,11 +4,14 @@ use super::chat::{ButtonKind, Look, button};
 use super::modal::PromptSpec;
 use super::ui::StyledExt as _;
 use super::view::Workbench;
+use crate::theme::DensityExt as _;
 use gpui::{
     AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, Window, div, prelude::*,
     px,
 };
+use hutan_client::ClientError;
 use hutan_core::{ModelInfo, SessionId};
+use hutan_protocol::ErrorCode;
 use hutan_protocol::messages::{Empty, Request, SessionResult};
 use hutan_protocol::provider::{
     ChatSetModel, ProviderAdd, ProviderDiscovery, ProviderInfo, ProviderList, ProviderModels,
@@ -20,12 +23,112 @@ use std::collections::HashMap;
 pub struct ProvidersState {
     pub providers: Vec<ProviderInfo>,
     pub models: HashMap<String, Vec<ModelInfo>>,
-    pub error: Option<String>,
+    pub error: Option<ProviderFailure>,
+    /// The "Details" of the failure on screen are open.
+    pub details_open: bool,
     pub loading: bool,
     /// Counts the local changes of `providers` (a provider added, updated or removed). A list
     /// requested at generation `n` is only applied while it is still `n`: an answer older than
     /// the latest local change would undo it.
     generation: u64,
+}
+
+/// What went wrong with a provider, for a person: a plain sentence that says what to check,
+/// and the technical text the daemon sent, behind "Details".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderFailure {
+    pub summary: String,
+    pub details: String,
+}
+
+impl ProviderFailure {
+    /// A message that needs no details.
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self {
+            summary: text.into(),
+            details: String::new(),
+        }
+    }
+}
+
+/// What kind of failure a provider's error is, by what the gateway says (its messages are the
+/// contract: `hutan_gateway::GatewayError`'s `Display`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderErrorKind {
+    /// Nothing answered at the address.
+    Connect,
+    /// Something answered too slowly.
+    Timeout,
+    /// 401 / 403, or no key at all.
+    Auth,
+    /// 404: the model or the address is wrong.
+    NotFound,
+    Other,
+}
+
+/// The kind of a provider error from its message.
+pub fn provider_error_kind(message: &str) -> ProviderErrorKind {
+    let message = message.to_ascii_lowercase();
+    if message.contains("could not connect to the provider") {
+        ProviderErrorKind::Connect
+    } else if message.contains("did not answer in time") || message.contains("timed out") {
+        ProviderErrorKind::Timeout
+    } else if message.contains("refused the credentials")
+        || message.contains("needs an api key")
+        || message.contains("(http 401)")
+        || message.contains("(http 403)")
+    {
+        ProviderErrorKind::Auth
+    } else if message.starts_with("not found:") {
+        ProviderErrorKind::NotFound
+    } else {
+        ProviderErrorKind::Other
+    }
+}
+
+/// The failure of a call about `provider` (its name and base URL, when the call was about one),
+/// in words a person can act on.
+pub fn provider_failure(provider: Option<(&str, &str)>, error: &ClientError) -> ProviderFailure {
+    let details = error.to_string();
+    let message = match error {
+        ClientError::Remote(body) if body.code == ErrorCode::ProviderError => body.message.as_str(),
+        ClientError::Remote(body) => {
+            // The daemon's own refusals (a missing name, an unknown provider) are plain already.
+            return ProviderFailure {
+                summary: body.message.clone(),
+                details,
+            };
+        }
+        ClientError::Disconnected => {
+            return ProviderFailure {
+                summary: "Hutan lost the connection to the daemon. It reconnects by itself; try again in a moment.".to_owned(),
+                details,
+            };
+        }
+        _ => "",
+    };
+    let named = provider.map(|(name, _)| name);
+    let subject = named.unwrap_or("the provider");
+    let capital = named.map_or_else(|| "The provider".to_owned(), str::to_owned);
+    let summary = match (provider_error_kind(message), provider) {
+        (ProviderErrorKind::Connect, Some((name, url))) if !url.is_empty() => format!(
+            "Could not connect to {name} at {url}. Check that the server is running and the address is right."
+        ),
+        (ProviderErrorKind::Connect, _) => format!(
+            "Could not connect to {subject}. Check that the server is running and the address is right."
+        ),
+        (ProviderErrorKind::Timeout, _) => format!(
+            "{capital} did not answer in time. Check that the server is running, then try again."
+        ),
+        (ProviderErrorKind::Auth, _) => format!(
+            "{capital} did not accept the API key, or has none. Set a valid key for it, and check that the key may use this model."
+        ),
+        (ProviderErrorKind::NotFound, _) => format!(
+            "{capital} does not know that model or address. Check the model name and the address of the provider."
+        ),
+        (ProviderErrorKind::Other, _) => format!("{capital} reported a problem."),
+    };
+    ProviderFailure { summary, details }
 }
 
 impl ProvidersState {
@@ -67,6 +170,11 @@ impl Workbench {
         &self.providers.providers
     }
 
+    /// The failure of the last provider call, in the words the Models page shows.
+    pub fn provider_failure(&self) -> Option<&ProviderFailure> {
+        self.providers.error.as_ref()
+    }
+
     /// Whether the provider list requested when the Models sheet opened is still on its way.
     pub fn providers_loading(&self) -> bool {
         self.providers.loading
@@ -80,26 +188,41 @@ impl Workbench {
         T: serde::de::DeserializeOwned + Send + 'static,
     {
         let connection = self.sessions.read(cx).connection().clone();
-        let task = cx.background_spawn(async move {
-            connection
-                .call::<T>(request)
-                .await
-                .map_err(|e| e.to_string())
-        });
+        // The name and address of the provider the call is about, for the words of a failure.
+        let about = match &request {
+            Request::ProviderUpdate(ProviderUpdate { provider_id, .. })
+            | Request::ProviderRemove(ProviderRef { provider_id })
+            | Request::ProviderSetCredential(ProviderSetCredential { provider_id, .. })
+            | Request::ProviderClearCredential(ProviderRef { provider_id })
+            | Request::ProviderModels(ProviderRef { provider_id }) => self
+                .providers
+                .providers
+                .iter()
+                .find(|p| p.id == *provider_id)
+                .map(|p| (p.name.clone(), p.base_url.clone())),
+            Request::ProviderAdd(add) => add.base_url.clone().map(|url| (add.name.clone(), url)),
+            _ => None,
+        };
+        let task = cx.background_spawn(async move { connection.call::<T>(request).await });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(answer) => done(this, answer, cx),
                     Err(error) => {
+                        let failure = provider_failure(
+                            about.as_ref().map(|(n, u)| (n.as_str(), u.as_str())),
+                            &error,
+                        );
                         this.providers.loading = false;
                         if let Some(picker) = &mut this.agent_picker
                             && picker.direct
                         {
                             picker.creating = false;
-                            picker.error = Some(error.clone());
+                            picker.error = Some(failure.clone());
                         }
-                        this.providers.error = Some(error);
+                        this.providers.details_open = false;
+                        this.providers.error = Some(failure);
                     }
                 }
                 cx.notify();
@@ -136,7 +259,9 @@ impl Workbench {
                         this.choose_direct_provider(&id, cx);
                     } else if let Some(picker) = &mut this.agent_picker {
                         picker.models = super::agents::Models::Ready(Vec::new());
-                        picker.error = Some("Configure a provider in Models settings first".into());
+                        picker.error = Some(ProviderFailure::plain(
+                            "Configure a provider in Models settings first",
+                        ));
                     }
                 }
             },
@@ -366,9 +491,9 @@ impl Workbench {
                     })
                     .collect::<Vec<_>>();
                 if entries.is_empty() {
-                    this.providers.error = Some(
-                        "No unconfigured local model servers found on ports 11434 or 1234".into(),
-                    );
+                    this.providers.error = Some(ProviderFailure::plain(
+                        "No unconfigured local model servers found on ports 11434 or 1234",
+                    ));
                 } else {
                     this.context_menu = Some(super::view::ContextMenu {
                         position: gpui::point(px(400.0), px(180.0)),
@@ -433,12 +558,8 @@ impl Workbench {
         if self.providers.loading {
             body = body.child("Loading providers…");
         }
-        if let Some(error) = &self.providers.error {
-            body = body.child(
-                div()
-                    .text_color(look.theme.danger)
-                    .child(SharedString::from(error.clone())),
-            );
+        if let Some(error) = self.providers.error.clone() {
+            body = body.child(self.render_provider_failure(&error, cx));
         }
         for provider in &self.providers.providers {
             let id = provider.id.clone();
@@ -650,6 +771,13 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let connection = self.sessions.read(cx).connection().clone();
+        let about = provider_id.as_deref().and_then(|id| {
+            self.providers
+                .providers
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| (p.name.clone(), p.base_url.clone()))
+        });
         let task = cx.background_spawn(async move {
             connection
                 .call::<SessionResult>(Request::ChatSetModel(ChatSetModel {
@@ -658,7 +786,6 @@ impl Workbench {
                     model,
                 }))
                 .await
-                .map_err(|e| e.to_string())
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
@@ -667,7 +794,10 @@ impl Workbench {
                 Err(error) => {
                     if let Some(picker) = &mut this.agent_picker {
                         picker.creating = false;
-                        picker.error = Some(error);
+                        picker.error = Some(provider_failure(
+                            about.as_ref().map(|(n, u)| (n.as_str(), u.as_str())),
+                            &error,
+                        ));
                     }
                     cx.notify();
                 }
@@ -675,6 +805,74 @@ impl Workbench {
             .ok();
         })
         .detach();
+    }
+
+    /// The failure to list models, as the Start sheet and the model picker show it: with its
+    /// "Details" when it is the provider failure on record, else as plain text.
+    pub(crate) fn render_models_failure(
+        &self,
+        summary: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match &self.providers.error {
+            Some(failure) if failure.summary == summary => {
+                self.render_provider_failure(failure, cx)
+            }
+            _ => div()
+                .text_color(self.theme.danger)
+                .child(SharedString::from(summary.to_owned()))
+                .into_any_element(),
+        }
+    }
+
+    /// A failure as the Models page, the Start sheet and the model picker show it: the plain
+    /// sentence, and "Details" with what the daemon said.
+    pub(crate) fn render_provider_failure(
+        &self,
+        failure: &ProviderFailure,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let open = self.providers.details_open;
+        let has_details = !failure.details.is_empty();
+        div()
+            .id("provider-failure")
+            .flex()
+            .flex_col()
+            .gap(px(tokens.spacing))
+            .child(
+                div()
+                    .text_color(theme.danger)
+                    .child(SharedString::from(failure.summary.clone())),
+            )
+            .when(has_details, |s| {
+                s.child(
+                    div()
+                        .id("provider-failure-details")
+                        .cursor_pointer()
+                        .text_size(px(tokens.secondary_font_size))
+                        .text_color(theme.muted)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.providers.details_open = !this.providers.details_open;
+                            cx.notify();
+                        }))
+                        .child(SharedString::from(format!(
+                            "{} {}",
+                            super::settings_labels::words::PROVIDER_DETAILS,
+                            if open { "▴" } else { "▾" }
+                        ))),
+                )
+            })
+            .when(has_details && open, |s| {
+                s.child(
+                    div()
+                        .text_size(px(tokens.secondary_font_size))
+                        .text_color(theme.muted)
+                        .child(SharedString::from(failure.details.clone())),
+                )
+            })
+            .into_any_element()
     }
 }
 
@@ -692,6 +890,109 @@ mod tests {
             has_credential: false,
             created_at_ms: 0,
         }
+    }
+
+    fn remote(message: &str) -> ClientError {
+        ClientError::Remote(hutan_protocol::ErrorBody::new(
+            ErrorCode::ProviderError,
+            message,
+        ))
+    }
+
+    const LOCAL: Option<(&str, &str)> = Some(("r4-local", "http://127.0.0.1:9"));
+
+    #[test]
+    fn a_refused_connection_names_the_provider_and_the_address() {
+        let error = remote(
+            "could not connect to the provider after 3 attempt(s): client error (Connect): tcp connect error: Connection refused (os error 61)",
+        );
+        assert_eq!(
+            provider_error_kind(&error.to_string()),
+            ProviderErrorKind::Connect
+        );
+        let failure = provider_failure(LOCAL, &error);
+        assert_eq!(
+            failure.summary,
+            "Could not connect to r4-local at http://127.0.0.1:9. Check that the server is running and the address is right."
+        );
+        // The technical text is kept, for Details.
+        assert!(failure.details.contains("os error 61"), "{failure:?}");
+        assert!(failure.details.contains("3 attempt(s)"), "{failure:?}");
+        assert!(!failure.summary.contains("os error"));
+        // Without a provider at hand the sentence still reads.
+        let failure = provider_failure(None, &error);
+        assert!(
+            failure
+                .summary
+                .starts_with("Could not connect to the provider."),
+            "{failure:?}"
+        );
+    }
+
+    #[test]
+    fn each_kind_of_failure_gets_its_own_sentence() {
+        let cases = [
+            (
+                "the provider did not answer in time",
+                ProviderErrorKind::Timeout,
+                "r4-local did not answer in time. Check that the server is running, then try again.",
+            ),
+            (
+                "the provider refused the credentials (HTTP 401): bad key",
+                ProviderErrorKind::Auth,
+                "r4-local did not accept the API key, or has none. Set a valid key for it, and check that the key may use this model.",
+            ),
+            (
+                "the provider refused the credentials (HTTP 403): no access",
+                ProviderErrorKind::Auth,
+                "r4-local did not accept the API key, or has none. Set a valid key for it, and check that the key may use this model.",
+            ),
+            (
+                "the provider needs an API key and none is stored",
+                ProviderErrorKind::Auth,
+                "r4-local did not accept the API key, or has none. Set a valid key for it, and check that the key may use this model.",
+            ),
+            (
+                "not found: model gpt-x does not exist; check the model name and the provider's base URL",
+                ProviderErrorKind::NotFound,
+                "r4-local does not know that model or address. Check the model name and the address of the provider.",
+            ),
+            (
+                "the provider failed (HTTP 500): boom",
+                ProviderErrorKind::Other,
+                "r4-local reported a problem.",
+            ),
+        ];
+        for (message, kind, summary) in cases {
+            let error = remote(message);
+            assert_eq!(provider_error_kind(message), kind, "{message}");
+            let failure = provider_failure(LOCAL, &error);
+            assert_eq!(failure.summary, summary, "{message}");
+            assert!(failure.details.contains(message), "{failure:?}");
+        }
+        // No provider: the subject is "The provider".
+        let failure = provider_failure(None, &remote("the provider did not answer in time"));
+        assert!(
+            failure
+                .summary
+                .starts_with("The provider did not answer in time.")
+        );
+    }
+
+    #[test]
+    fn the_daemons_own_refusals_and_a_lost_connection_stay_plain() {
+        let refusal = ClientError::Remote(hutan_protocol::ErrorBody::new(
+            ErrorCode::BadRequest,
+            "a provider needs a name",
+        ));
+        let failure = provider_failure(None, &refusal);
+        assert_eq!(failure.summary, "a provider needs a name");
+        let failure = provider_failure(LOCAL, &ClientError::Disconnected);
+        assert!(
+            failure.summary.contains("lost the connection"),
+            "{failure:?}"
+        );
+        assert!(failure.details.contains("disconnected"), "{failure:?}");
     }
 
     #[test]

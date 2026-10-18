@@ -181,6 +181,28 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
     }
 }
 
+/// The rule of a number that the daemon's minimum and maximum do not express.
+fn daemon_rule_hint(key: &str) -> Option<&'static str> {
+    match key {
+        "assistant.idle_stop_secs" => Some(words::IDLE_STOP_HINT),
+        _ => None,
+    }
+}
+
+/// The range line under a number: the rule the daemon enforces, as far as its minimum and
+/// maximum say it, else the rule in words.
+fn number_hint(e: &DaemonSetting) -> Option<String> {
+    let DaemonSettingKind::Int { min, max } = &e.kind else {
+        return None;
+    };
+    match (daemon_rule_hint(&e.key), min, max) {
+        (Some(rule), _, _) => Some(rule.to_owned()),
+        (None, Some(low), Some(high)) => Some(words::range_hint(*low as f64, *high as f64)),
+        (None, Some(low), None) => Some(words::at_least(*low)),
+        _ => None,
+    }
+}
+
 /// Whether the page shows daemon settings.
 pub(super) fn is_daemon_page(page: &str) -> bool {
     !sections(page).is_empty()
@@ -210,6 +232,9 @@ pub struct DaemonSettingsState {
     problem: Option<String>,
     /// What the daemon (or the text box) refused, by key.
     pub(super) errors: BTreeMap<String, String>,
+    /// The number or text last sent for a key and not accepted (yet): its box shows it, so a
+    /// refusal does not make the box snap back to the old value.
+    typed: BTreeMap<String, String>,
     /// The form of an MCP server that is being added or edited (`settings_mcp.rs`).
     pub(super) mcp_form: Option<McpForm>,
     requested: u64,
@@ -251,6 +276,20 @@ impl DaemonSettingsState {
     /// Why the last change of `key` was refused.
     pub fn error(&self, key: &str) -> Option<&str> {
         self.errors.get(key).map(String::as_str)
+    }
+
+    /// The text the daemon refused for `key`, still in its box.
+    pub fn refused_text(&self, key: &str) -> Option<&str> {
+        self.errors
+            .contains_key(key)
+            .then(|| self.typed.get(key).map(String::as_str))
+            .flatten()
+    }
+
+    /// Gives up the change of `key` that was refused: its box shows the setting again.
+    pub(super) fn discard_refused(&mut self, key: &str) {
+        self.errors.remove(key);
+        self.typed.remove(key);
     }
 
     /// Some option's file value is not what the running daemon uses.
@@ -340,12 +379,47 @@ impl Workbench {
         &self.daemon_settings
     }
 
+    /// The line under the number box of the daemon setting `key`: what values it takes.
+    pub fn daemon_number_hint(&self, key: &str) -> Option<String> {
+        number_hint(self.daemon_settings.entry(key)?)
+    }
+
     /// Where `daemon.toml` is: what the daemon said, else next to `settings.toml`.
     pub fn daemon_toml_path(&self) -> Option<PathBuf> {
         match self.daemon_settings.settings() {
             Some(settings) => Some(PathBuf::from(&settings.file)),
             None => self.data_path(DataTarget::Daemon),
         }
+    }
+
+    /// What the daemon's settings and the providers say is wrong on `page`, for the Problems
+    /// footer: a `daemon.toml` that cannot be read, what the daemon refused at a field of the
+    /// page, and the provider error on the Models page.
+    pub(super) fn daemon_page_problems(&self, page: &str) -> Vec<String> {
+        let mut problems = Vec::new();
+        if is_daemon_page(page) {
+            if let Some(problem) = self.daemon_settings.problem() {
+                problems.push(problem.to_owned());
+            }
+            let owns = |key: &str| {
+                sections(page).iter().any(|s| {
+                    s.keys
+                        .iter()
+                        .any(|k| *k == key || (*k == MCP_KEYS && key.starts_with("mcp.")))
+                }) || (page == "assistant" && key.starts_with("assistant."))
+            };
+            for (key, message) in &self.daemon_settings.errors {
+                if owns(key) {
+                    problems.push(format!("{}: {message}", daemon_field_title(key)));
+                }
+            }
+        }
+        if page == "models"
+            && let Some(failure) = &self.providers.error
+        {
+            problems.push(failure.summary.clone());
+        }
+        problems
     }
 
     // ---- asking the daemon ---------------------------------------------------------------
@@ -407,6 +481,22 @@ impl Workbench {
             return;
         }
         self.daemon_settings.errors.remove(key);
+        // What was typed stays in its box until the daemon takes it (or the change is given up).
+        match &value {
+            Some(Json::Number(n)) => {
+                self.daemon_settings
+                    .typed
+                    .insert(key.to_owned(), n.to_string());
+            }
+            Some(Json::String(text)) => {
+                self.daemon_settings
+                    .typed
+                    .insert(key.to_owned(), text.clone());
+            }
+            _ => {
+                self.daemon_settings.typed.remove(key);
+            }
+        }
         let seq = self.daemon_settings.next_request();
         let key = key.to_owned();
         cx.notify();
@@ -455,6 +545,7 @@ impl Workbench {
                 }
                 if let Some(key) = &key {
                     self.daemon_settings.errors.remove(key);
+                    self.daemon_settings.typed.remove(key);
                     if let Some(sheet) = &mut self.sheet {
                         if sheet
                             .edit
@@ -668,9 +759,12 @@ impl Workbench {
             return;
         };
         let (text, list_add) = match &entry.kind {
-            DaemonSettingKind::Int { .. } | DaemonSettingKind::String => {
-                (display_value(&entry.value), false)
-            }
+            DaemonSettingKind::Int { .. } | DaemonSettingKind::String => (
+                self.daemon_settings
+                    .refused_text(key)
+                    .map_or_else(|| display_value(&entry.value), str::to_owned),
+                false,
+            ),
             DaemonSettingKind::StringList { .. } | DaemonSettingKind::StringMap => {
                 (String::new(), true)
             }
@@ -696,7 +790,10 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         self.edits.sheet_value.reset();
-        self.daemon_settings.errors.remove(key);
+        // A refused number stays with its reason while it is corrected.
+        if self.daemon_settings.refused_text(key).is_none() {
+            self.daemon_settings.errors.remove(key);
+        }
         if let Some(sheet) = &mut self.sheet {
             sheet.dropdown = None;
             sheet.edit = Some(Edit {
@@ -1114,7 +1211,7 @@ impl Workbench {
         }
         if e.kind == DaemonSettingKind::StringMap {
             under.push(
-                note(words::ENV_WARNING, &theme, &tokens)
+                note(words::ENV_WARNING_DAEMON, &theme, &tokens)
                     .text_color(theme.warning)
                     .into_any_element(),
             );
@@ -1175,14 +1272,7 @@ impl Workbench {
                 .on_click(cx.listener(move |this, _, _, cx| this.daemon_toggle(&k, cx)))
                 .into_any_element()
             }
-            DaemonSettingKind::Int { min, max } => {
-                let hint = match (min, max) {
-                    (Some(low), Some(high)) => Some(words::range_hint(*low as f64, *high as f64)),
-                    (Some(low), None) => Some(words::at_least(*low)),
-                    _ => None,
-                };
-                self.render_daemon_box(e, hint, cx)
-            }
+            DaemonSettingKind::Int { .. } => self.render_daemon_box(e, number_hint(e), cx),
             DaemonSettingKind::String => self.render_daemon_box(e, None, cx),
             DaemonSettingKind::Path => {
                 let (k_choose, shown) = (key.clone(), self.daemon_value_text(e, &e.value));
@@ -1258,7 +1348,9 @@ impl Workbench {
                 };
                 cx.notify();
             }
-        }));
+        }))
+        .relative()
+        .child(probe(&self.regions, Region::Settings("ddropdown")));
         div()
             .flex()
             .flex_col()
@@ -1302,7 +1394,10 @@ impl Workbench {
             .and_then(|s| s.edit.as_ref())
             .is_some_and(|edit| edit.field == field);
         let failed = self.daemon_settings.error(&key).is_some();
-        let text = self.daemon_value_text(e, &e.value);
+        let text = match self.daemon_settings.refused_text(&key) {
+            Some(typed) => typed.to_owned(),
+            None => self.daemon_value_text(e, &e.value),
+        };
         let k = key.clone();
         div()
             .flex()

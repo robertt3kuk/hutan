@@ -395,10 +395,7 @@ impl Workbench {
                 Models::Loading => {
                     Some(note("Loading the models…".into(), theme.muted).into_any_element())
                 }
-                Models::Failed(error) => Some(
-                    note(format!("Could not list the models: {error}"), theme.danger)
-                        .into_any_element(),
-                ),
+                Models::Failed(error) => Some(self.render_models_failure(error, cx)),
                 Models::Ready(list) if list.is_empty() => Some(
                     note(
                         if direct {

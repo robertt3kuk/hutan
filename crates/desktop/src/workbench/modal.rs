@@ -156,6 +156,9 @@ impl Workbench {
     }
 
     pub(crate) fn open_modal(&mut self, modal: Modal, window: &mut Window, cx: &mut Context<Self>) {
+        if self.modal.is_none() {
+            self.modal_return = self.focus_to_restore(window, cx);
+        }
         self.palette = None;
         self.picker = None;
         self.context_menu = None;
@@ -163,6 +166,41 @@ impl Workbench {
         self.edits.modal.reset();
         window.focus(&self.modal_focus, cx);
         cx.notify();
+    }
+
+    /// What had the keyboard before a dialog opens: the settings sheet while it is open (its
+    /// search and controls live under one handle), else the focused element, unless that is
+    /// an overlay the dialog itself closes.
+    fn focus_to_restore(&self, window: &Window, cx: &gpui::App) -> Option<gpui::WeakFocusHandle> {
+        if self.sheet.is_some() {
+            return Some(self.sheet_focus.downgrade());
+        }
+        let focused = window.focused(cx)?;
+        let overlay = [
+            &self.modal_focus,
+            &self.palette_focus,
+            &self.picker_focus,
+            &self.menu_focus,
+        ]
+        .contains(&&focused);
+        (!overlay).then(|| focused.downgrade())
+    }
+
+    /// Gives the keyboard back to what had it before the dialog opened, if that is still
+    /// there; else to the settings sheet while it is open, else to the focused pane.
+    fn restore_modal_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let previous = self
+            .modal_return
+            .take()
+            .and_then(|weak| weak.upgrade())
+            .filter(|handle| *handle != self.modal_focus);
+        if let Some(handle) = previous {
+            window.focus(&handle, cx);
+        } else if self.sheet.is_some() {
+            window.focus(&self.sheet_focus, cx);
+        } else {
+            self.focus_root(window, cx);
+        }
     }
 
     /// The open dialog, if any.
@@ -187,7 +225,7 @@ impl Workbench {
 
     pub fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.modal.take().is_some() {
-            self.focus_root(window, cx);
+            self.restore_modal_focus(window, cx);
             cx.notify();
         }
     }
@@ -270,7 +308,7 @@ impl Workbench {
             input: modal.input,
             checked: modal.checkbox.is_some_and(|c| c.checked),
         };
-        self.focus_root(window, cx);
+        self.restore_modal_focus(window, cx);
         action(self, result, window, cx);
         cx.notify();
     }
@@ -324,7 +362,13 @@ impl Workbench {
                         .popover(&theme, &tokens)
                         .p(px(tokens.spacing * 4.0))
                         .text_size(px(tokens.font_size))
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, cx| {
+                                window.focus(&this.modal_focus, cx);
+                                cx.stop_propagation();
+                            }),
+                        )
                         .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                             // Typed text arrives through the field's platform text input.
                             if this.overlay_key(OverlayField::Modal, event, cx) {

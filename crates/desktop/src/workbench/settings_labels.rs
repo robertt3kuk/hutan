@@ -1242,6 +1242,14 @@ pub mod words {
         MCP_NEEDS_COMMAND = "Type the program to run.";
         MCP_NEEDS_URL = "Type the address of the server.";
         MCP_QUOTE_OPEN = "A quote in the arguments is not closed.";
+        // ---- R4-A ----
+        ENV_WARNING_DAEMON = "Do not put secrets here: the values stay in daemon.toml as plain text.";
+        IDLE_STOP_HINT = "0 (never) or at least 60";
+        PROBLEMS_NONE = "Problems · none";
+        PROVIDER_DETAILS = "Details";
+        RESTART_NEUTRAL = "What happens to them in the new daemon depends on the setting “Sessions after a restart”.";
+        RESTART_RESPAWN = "The new daemon restores them: shells start again in their folders, chats resume their conversations.";
+        RESTART_STOPPED = "The new daemon lists them stopped (your setting “Leave them stopped”); start each again from its Restart action.";
     }
 
     /// "Remove MCP server “docs”?".
@@ -1512,6 +1520,20 @@ pub mod words {
         }
     }
 
+    /// What restarting the daemon does to the live sessions, following the restore policy
+    /// (`daemon.restore_sessions`; `None` while the daemon's settings are not known).
+    pub fn restart_message(sessions: &str, restore_policy: Option<&str>) -> String {
+        match restore_policy {
+            Some("respawn") => format!(
+                "{sessions} will be stopped and running commands interrupted. {RESTART_RESPAWN}"
+            ),
+            Some("stopped") => format!("{sessions} will be stopped. {RESTART_STOPPED}"),
+            _ => format!(
+                "{sessions} will be stopped and running commands interrupted. {RESTART_NEUTRAL}"
+            ),
+        }
+    }
+
     pub fn preset_delete_message(builtin: bool) -> &'static str {
         if builtin {
             "Your saved version is removed and the built-in layout of that name is used again."
@@ -1716,6 +1738,32 @@ mod tests {
             "Keep in the menu bar"
         );
         assert_eq!(value_label("nowhere", "x", "some_value"), "Some Value");
+    }
+
+    #[test]
+    fn the_restart_question_follows_the_restore_policy_in_words() {
+        let respawn = words::restart_message("2 live sessions", Some("respawn"));
+        assert_eq!(
+            respawn,
+            "2 live sessions will be stopped and running commands interrupted. The new daemon restores them: shells start again in their folders, chats resume their conversations."
+        );
+        let stopped = words::restart_message("2 live sessions", Some("stopped"));
+        assert_eq!(
+            stopped,
+            "2 live sessions will be stopped. The new daemon lists them stopped (your setting “Leave them stopped”); start each again from its Restart action."
+        );
+        // Not known yet: no promise either way.
+        let unknown = words::restart_message("2 live sessions", None);
+        assert!(!unknown.contains("restores them") && !unknown.contains("lists them stopped"));
+        assert!(unknown.starts_with("2 live sessions will be stopped"));
+    }
+
+    #[test]
+    fn the_variables_warning_names_the_file_that_keeps_them() {
+        assert!(words::ENV_WARNING.contains("settings.toml"));
+        assert!(!words::ENV_WARNING.contains("daemon.toml"));
+        assert!(words::ENV_WARNING_DAEMON.contains("daemon.toml"));
+        assert!(!words::ENV_WARNING_DAEMON.contains("settings.toml"));
     }
 
     #[test]

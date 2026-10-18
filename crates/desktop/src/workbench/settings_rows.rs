@@ -198,7 +198,9 @@ impl Workbench {
                         };
                         cx.notify();
                     }
-                }));
+                }))
+                .relative()
+                .child(probe(&self.regions, Region::Settings("dropdown")));
                 div()
                     .flex()
                     .flex_col()

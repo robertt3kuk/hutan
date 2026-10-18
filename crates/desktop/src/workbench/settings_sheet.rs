@@ -114,6 +114,16 @@ impl SettingsSheet {
     }
 }
 
+/// One problem of the files, as a line of the Problems footer.
+fn problem_text(e: &hutan_settings::SettingsError) -> String {
+    match (&e.file, e.key_path.is_empty()) {
+        (Some(file), false) => format!("{} · {}: {}", file.display(), e.key_path, e.message),
+        (Some(file), true) => format!("{}: {}", file.display(), e.message),
+        (None, false) => format!("{}: {}", e.key_path, e.message),
+        (None, true) => e.message.clone(),
+    }
+}
+
 pub(super) fn display_value(json: &Json) -> String {
     match json {
         Json::String(s) => s.clone(),
@@ -171,6 +181,18 @@ impl Workbench {
         cx.notify();
     }
 
+    /// The lines of the Problems footer of the selected page, in the order they are drawn: the
+    /// settings files', then the daemon's (`daemon.toml` that cannot be read, a refused field,
+    /// a provider error on the Models page).
+    pub fn sheet_problems(&self) -> Vec<String> {
+        let Some(sheet) = &self.sheet else {
+            return Vec::new();
+        };
+        let mut lines: Vec<String> = self.settings.errors().iter().map(problem_text).collect();
+        lines.extend(self.daemon_page_problems(sheet.namespace));
+        lines
+    }
+
     pub fn settings_sheet(&self) -> Option<&SettingsSheet> {
         self.sheet.as_ref()
     }
@@ -191,7 +213,16 @@ impl Workbench {
         let Some(sheet) = &mut self.sheet else {
             return;
         };
-        if sheet.edit.take().is_some() || sheet.dropdown.take().is_some() {
+        let abandoned = sheet.edit.take();
+        let closed_dropdown = sheet.dropdown.take().is_some();
+        if abandoned.is_some() || closed_dropdown {
+            // Giving up an edit the daemon refused shows the setting as it is.
+            if let Some(key) = abandoned
+                .as_ref()
+                .and_then(|e| e.field.strip_prefix(super::settings_daemon::EDIT_PREFIX))
+            {
+                self.daemon_settings.discard_refused(key);
+            }
             cx.notify();
         } else {
             self.close_settings(window, cx);
@@ -873,20 +904,31 @@ impl Workbench {
                             .text_color(color)
                             .child(SharedString::from(e.severity.to_string())),
                     )
-                    .child(div().min_w_0().child(SharedString::from(
-                        match (&e.file, e.key_path.is_empty()) {
-                            (Some(file), false) => {
-                                format!("{} · {}: {}", file.display(), e.key_path, e.message)
-                            }
-                            (Some(file), true) => format!("{}: {}", file.display(), e.message),
-                            (None, false) => format!("{}: {}", e.key_path, e.message),
-                            (None, true) => e.message.clone(),
-                        },
-                    )))
+                    .child(div().min_w_0().child(SharedString::from(problem_text(e))))
                     .into_any_element()
             })
             .collect();
-        let has_errors = errors.iter().any(|e| e.severity == Severity::Error);
+        let daemon_problems = self.daemon_page_problems(selected);
+        let problems: Vec<AnyElement> = problems
+            .into_iter()
+            .chain(daemon_problems.iter().map(|message| {
+                div()
+                    .flex()
+                    .gap(px(tokens.spacing * 2.0))
+                    .text_size(px(tokens.secondary_font_size))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(theme.danger)
+                            .child(SharedString::from(Severity::Error.to_string())),
+                    )
+                    .child(div().min_w_0().child(SharedString::from(message.clone())))
+                    .into_any_element()
+            }))
+            .collect();
+        let problem_count = problems.len();
+        let has_errors =
+            !daemon_problems.is_empty() || errors.iter().any(|e| e.severity == Severity::Error);
         let no_match = !query.trim().is_empty() && pages.is_empty();
         let rows = if no_match {
             vec![self.render_no_match(cx)]
@@ -974,7 +1016,14 @@ impl Workbench {
                         .overflow_hidden()
                         .text_size(px(tokens.font_size))
                         .text_color(theme.fg)
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        // A click inside the sheet puts the keyboard back in it, whatever had it.
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, cx| {
+                                window.focus(&this.sheet_focus, cx);
+                                cx.stop_propagation();
+                            }),
+                        )
                         .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                             this.sheet_key(event, window, cx);
                         }))
@@ -1083,13 +1132,15 @@ impl Workbench {
                                         } else {
                                             theme.muted
                                         })
-                                        .child(if no_match && errors.is_empty() {
-                                            words::NO_MATCH_FOOTER
-                                        } else if errors.is_empty() {
-                                            "Problems · none"
-                                        } else {
-                                            "Problems"
-                                        }),
+                                        .child(SharedString::from(
+                                            if no_match && problem_count == 0 {
+                                                words::NO_MATCH_FOOTER.to_owned()
+                                            } else if problem_count == 0 {
+                                                words::PROBLEMS_NONE.to_owned()
+                                            } else {
+                                                format!("Problems · {problem_count}")
+                                            },
+                                        )),
                                 )
                                 .children(problems),
                         ),

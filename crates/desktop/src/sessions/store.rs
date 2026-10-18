@@ -147,6 +147,9 @@ pub struct SessionsStore {
     connected_since: Option<Instant>,
     /// The user stopped the daemon from the app; attached terminals say so.
     daemon_stopped: bool,
+    /// The daemon epoch the connection was on when the stop was asked (`None`: not connected
+    /// then). A daemon of another epoch connecting means it was started again, by any path.
+    stopped_epoch: Option<Epoch>,
     /// Permission requests this window answered, and with which option (the cards say
     /// "answered here" for them, "answered elsewhere" for the rest).
     answered: HashMap<ApprovalId, String>,
@@ -253,6 +256,7 @@ impl SessionsStore {
             colors: None,
             connected_since: None,
             daemon_stopped: false,
+            stopped_epoch: None,
             answered: HashMap::new(),
             answered_questions: std::collections::HashSet::new(),
             blocked_seen: None,
@@ -281,6 +285,11 @@ impl SessionsStore {
             self.tasks_loading = None;
         }
         self.state = latest;
+        // A daemon of a new epoch is up: whoever started it (the CLI, autostart, another
+        // client), the stop the user asked for is over.
+        if connected && self.daemon_stopped && self.state.epoch != self.stopped_epoch {
+            self.set_daemon_stopped(false, cx);
+        }
         if connected && !was_connected {
             self.load_tasks(cx);
         }
@@ -962,6 +971,11 @@ impl SessionsStore {
             return;
         }
         self.daemon_stopped = stopped;
+        self.stopped_epoch = if stopped && self.state.connection == ConnectionState::Connected {
+            self.state.epoch
+        } else {
+            None
+        };
         for terminal in self.terminals.values().filter_map(WeakEntity::upgrade) {
             terminal.update(cx, |terminal, cx| terminal.set_daemon_stopped(stopped, cx));
         }

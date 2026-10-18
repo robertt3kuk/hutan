@@ -271,6 +271,7 @@ impl Workbench {
 
     /// The connection changed: keep the menu, the popover data and the terminals current.
     pub(crate) fn on_daemon_state_changed(&mut self, cx: &mut Context<Self>) {
+        self.follow_daemon_started(cx);
         self.sync_daemon_menu(cx);
         self.sync_mac_surfaces(cx);
         self.daemon_settings_follow_run(cx);
@@ -374,13 +375,13 @@ impl Workbench {
             self.begin_stop(true, window, cx);
             return;
         }
+        let policy = self
+            .daemon_settings()
+            .value("daemon.restore_sessions")
+            .and_then(Value::as_str);
         self.open_confirm(
             "Restart the daemon?",
-            format!(
-                "{} will be stopped and running commands interrupted. The new daemon restores \
-                 them: shells start again in their folders, chats resume their conversations.",
-                sessions_phrase(live)
-            ),
+            super::settings_labels::words::restart_message(&sessions_phrase(live), policy),
             "Stop Sessions & Restart",
             |this, window, cx| this.begin_stop(true, window, cx),
             window,
@@ -394,10 +395,35 @@ impl Workbench {
             return;
         }
         if self.daemon_connected(cx) {
-            self.set_notice("The daemon is already running", cx);
+            if self.daemon.stopped || self.sessions.read(cx).daemon_stopped() {
+                // The daemon runs again (started elsewhere): reconnect for real, drop the
+                // stopped state.
+                self.resume_after_external_start(cx);
+            } else {
+                self.set_notice("The daemon is already running", cx);
+            }
             return;
         }
         self.begin_start(false, cx);
+    }
+
+    /// The store saw a daemon of a new epoch come up while this window showed the stopped
+    /// state: it was started by another path (CLI, autostart, another client).
+    fn follow_daemon_started(&mut self, cx: &mut Context<Self>) {
+        if self.daemon.stopped
+            && self.daemon.busy.is_none()
+            && !self.sessions.read(cx).daemon_stopped()
+        {
+            self.resume_after_external_start(cx);
+        }
+    }
+
+    /// Leaves the stopped state without launching anything and lets the connection bring a
+    /// daemon back again should this one go away.
+    fn resume_after_external_start(&mut self, cx: &mut Context<Self>) {
+        self.set_daemon_stopped(false, cx);
+        self.connection(cx).set_autostart(true);
+        cx.notify();
     }
 
     /// `daemon::OpenLogs`: reveals `hutand.log` in Finder. Nothing else happens.
@@ -467,6 +493,8 @@ impl Workbench {
             Ok(()) if restart => self.begin_start(true, cx),
             Ok(()) => {
                 self.daemon.busy = None;
+                // A daemon may have been started while the stop was finishing.
+                self.follow_daemon_started(cx);
                 self.sync_status_item(cx);
                 cx.notify();
             }

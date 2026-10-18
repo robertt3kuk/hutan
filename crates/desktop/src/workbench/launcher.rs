@@ -579,7 +579,7 @@ impl Workbench {
                     }
                     Models::Ready(models)
                 } else if let Some(error) = &self.providers.error {
-                    Models::Failed(error.clone())
+                    Models::Failed(error.summary.clone())
                 } else {
                     Models::Loading
                 }

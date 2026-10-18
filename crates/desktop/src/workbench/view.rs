@@ -467,6 +467,8 @@ pub struct Workbench {
     pub(crate) edits: super::vim_ui::OverlayEdits,
     pub(crate) context_menu: Option<ContextMenu>,
     pub(crate) modal: Option<Modal>,
+    /// Where the keyboard was when the open dialog took it; restored when it closes.
+    pub(crate) modal_return: Option<gpui::WeakFocusHandle>,
     pub(crate) sheet: Option<SettingsSheet>,
     pub(crate) resizing: Option<Resizing>,
     pub(crate) panel_views: HashMap<PanelId, AnyView>,
@@ -760,6 +762,7 @@ impl Workbench {
             edits: super::vim_ui::OverlayEdits::default(),
             context_menu: None,
             modal: None,
+            modal_return: None,
             sheet: None,
             resizing: None,
             panel_views: HashMap::new(),

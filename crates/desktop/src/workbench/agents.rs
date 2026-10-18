@@ -51,7 +51,7 @@ pub struct AgentPicker {
     pub selected: usize,
     /// `chat.set_model` is in flight.
     pub creating: bool,
-    pub error: Option<String>,
+    pub error: Option<super::providers::ProviderFailure>,
     pub provider_id: Option<String>,
     pub model_query: String,
     /// The chat whose model the dialog switches.
@@ -537,15 +537,29 @@ impl Workbench {
                     .into_any_element(),
             );
         }
-        let note: Option<(SharedString, gpui::Hsla)> = match (&picker.models, &picker.error) {
-            (_, Some(error)) => Some((format!("Could not switch: {error}").into(), theme.danger)),
-            (Models::Loading, _) => Some(("Loading the models…".into(), theme.muted)),
-            (Models::Failed(error), _) => Some((
-                format!("Could not list the models: {error}").into(),
-                theme.danger,
-            )),
+        let plain = |text: &'static str, color: gpui::Hsla| {
+            div()
+                .px(px(tokens.spacing * 2.0))
+                .text_color(color)
+                .child(text)
+                .into_any_element()
+        };
+        let note: Option<AnyElement> = match (&picker.models, &picker.error) {
+            (_, Some(error)) => Some(
+                div()
+                    .px(px(tokens.spacing * 2.0))
+                    .child(self.render_provider_failure(error, cx))
+                    .into_any_element(),
+            ),
+            (Models::Loading, _) => Some(plain("Loading the models…", theme.muted)),
+            (Models::Failed(error), _) => Some(
+                div()
+                    .px(px(tokens.spacing * 2.0))
+                    .child(self.render_models_failure(error, cx))
+                    .into_any_element(),
+            ),
             (Models::Ready(_), _) if picker.shown().is_empty() => {
-                Some(("The agent offers no models.".into(), theme.muted))
+                Some(plain("The agent offers no models.", theme.muted))
             }
             _ => None,
         };
@@ -631,12 +645,7 @@ impl Workbench {
                                 .overflow_y_scroll()
                                 .children(models),
                         )
-                        .children(note.as_ref().map(|(text, color)| {
-                            div()
-                                .px(px(tokens.spacing * 2.0))
-                                .text_color(*color)
-                                .child(text.clone())
-                        }))
+                        .children(note)
                         .child(
                             div()
                                 .flex()
