@@ -15,14 +15,15 @@ use super::vim_ui::OverlayField;
 use super::workspaces::PickerKind;
 use crate::theme::{Density, DensityExt as _};
 use gpui::{
-    Action, AnyElement, Bounds, ClickEvent, Context, ElementId, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, anchored, canvas, deferred, div, point, prelude::*,
-    px, relative,
+    Action, AnyElement, AnyView, Bounds, ClickEvent, Context, ElementId, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render,
+    SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window, anchored, canvas,
+    deferred, div, point, prelude::*, px, relative,
 };
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::cell::Cell;
 use std::rc::Rc;
+
+use super::regions::Regions;
 
 /// Height of the title bar region (and of the inset above the left dock's panel stack, and of
 /// the right sidebar's icon strip).
@@ -44,23 +45,34 @@ fn palette_key(window: &Window) -> SharedString {
 }
 
 /// An invisible child that records its parent's painted bounds under `region`.
-pub(super) fn probe(
-    regions: &Rc<RefCell<HashMap<Region, Bounds<Pixels>>>>,
-    region: Region,
-) -> impl IntoElement {
-    let regions = Rc::clone(regions);
+pub(super) fn probe(regions: &Regions, region: Region) -> impl IntoElement {
+    let regions = regions.clone();
     // Recorded when painted, not when laid out: a list measures its items off to the side before
     // it places them, and only the painted bounds are where the element is.
     canvas(
         |bounds, _, _| bounds,
-        move |_, bounds, _, _| {
-            regions.borrow_mut().insert(region, bounds);
-        },
+        move |_, bounds, window, _| regions.record(window.current_view(), region, bounds),
     )
     .absolute()
     .top_0()
     .left_0()
     .size_full()
+}
+
+/// `view` drawn through `AnyView::cached`: laid out, prepainted and painted again only when it
+/// notifies (or the window refreshes: focus, activation, theme, a click), otherwise its last
+/// frame is replayed. The view fills its parent. The regions its probes record are kept while
+/// it is replayed (see [`Regions`]).
+pub(super) fn cached_view(regions: &Regions, view: impl Into<AnyView>) -> AnyElement {
+    let view = view.into();
+    let (open, close) = regions.scope(view.entity_id());
+    div()
+        .relative()
+        .size_full()
+        .child(open)
+        .child(view.cached(StyleRefinement::default().size_full()))
+        .child(close)
+        .into_any_element()
 }
 
 fn id(text: impl Into<SharedString>) -> ElementId {
@@ -78,7 +90,7 @@ impl Render for Workbench {
         }
         let theme = self.theme;
         let tokens = self.density.ui();
-        self.regions.borrow_mut().clear();
+        self.regions.begin_frame();
         self.rendered_terminals.clear();
         self.rendered_chats.clear();
 
@@ -103,6 +115,10 @@ impl Render for Workbench {
         let recovery = self.render_recovery_summary(cx);
         let sheet = self.render_settings_sheet(cx);
         let setup = self.render_setup(window, cx);
+        self.regions.end_frame();
+        if self.regions.take_fresh() {
+            window.on_next_frame(|window, _| window.refresh());
+        }
 
         let root = div()
             .id("workbench")
@@ -1083,7 +1099,7 @@ impl Workbench {
             .as_ref()
             .and_then(|a| self.panel_view(a, window, cx))
         {
-            Some(view) => div().size_full().child(view).into_any_element(),
+            Some(view) => cached_view(&self.regions, view),
             None => div()
                 .size_full()
                 .p(px(tokens.spacing * 3.0))
@@ -1761,7 +1777,7 @@ impl Workbench {
         let tokens = self.density.ui();
         match item {
             ItemRef::Panel { panel } => match self.panel_view(panel, window, cx) {
-                Some(view) => div().size_full().child(view).into_any_element(),
+                Some(view) => cached_view(&self.regions, view),
                 None => self.placeholder_body(format!("Panel `{panel}` is not registered"), cx),
             },
             ItemRef::Placeholder { title } => ui::empty_state(
@@ -1778,7 +1794,7 @@ impl Workbench {
             ItemRef::Chat { session } => self.render_chat_item(pane, session, cx),
             ItemRef::Changes { path } => {
                 let view = self.changes_view(path, window, cx);
-                div().size_full().child(view).into_any_element()
+                cached_view(&self.regions, view)
             }
         }
     }

@@ -126,6 +126,93 @@ fn a_frame_does_not_lay_the_sidebar_out_again(cx: &mut TestAppContext) {
     );
 }
 
+/// A notification of the sessions store about something a panel does not show (an answer given
+/// here, the focus, a remembered choice) must not render the sessions panel or History; one
+/// about what they list must.
+#[gpui::test]
+fn a_store_notification_that_changes_nothing_they_show_renders_no_panel(cx: &mut TestAppContext) {
+    use hutan_desktop::workbench::panels::HistoryPanel;
+    let (daemon, view, cx) = crowded_sidebar(cx);
+    let sessions = sessions_panel(&view, cx);
+    let history = view.read_with(cx, |wb, _| wb.panel::<HistoryPanel>("history"));
+    for _ in 0..20 {
+        cx.executor().advance_clock(Duration::from_millis(50));
+        draw(cx);
+    }
+    let store = view.read_with(cx, |wb, _| wb.sessions().clone());
+    let renders = |cx: &mut VisualTestContext| {
+        (
+            sessions.read_with(cx, |p, _| p.renders()),
+            history
+                .as_ref()
+                .map(|h| h.read_with(cx, |p, _| p.renders())),
+        )
+    };
+    let before = renders(cx);
+
+    // Not about what they list: a remembered choice, and an answer nobody waits for.
+    store.update(cx, |store, cx| {
+        store.note_assistant_pinned(None, true, cx);
+        store.set_assistant_file_choice(true, cx);
+    });
+    for _ in 0..5 {
+        draw(cx);
+    }
+    assert_eq!(renders(cx), before, "nothing they show changed");
+
+    // About what they list: a new session.
+    daemon.sh("sleep 30");
+    wait_until(cx, "the new session in the sidebar", |cx| {
+        sessions.read_with(cx, |p, _| p.renders()) > before.0
+    });
+    let after = renders(cx);
+    assert!(after.0 > before.0);
+    if let (Some(before), Some(after)) = (before.1, after.1) {
+        // History follows the set of sessions (which it uses to tell what still exists).
+        assert!(after >= before);
+    }
+}
+
+/// A terminal in a cached pane is painted again when output arrives while it is visible (the
+/// paint is also what acks the frame, so a pane that stayed on its replayed frame would stall
+/// the daemon's stream after one frame).
+#[gpui::test]
+fn output_arriving_in_a_visible_cached_terminal_repaints_it(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let info = daemon.sh("printf 'first\\n'; read go; i=0; while [ $i -lt 400 ]; do echo line-$i; i=$((i+1)); done; sleep 30");
+    let (view, cx) = open(cx, &daemon);
+    view.update_in(cx, |wb, window, cx| wb.open_session(info.id, window, cx));
+    let screen = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |wb, cx| {
+            wb.terminal_view_of(info.id).map(|v| {
+                (
+                    v.read(cx).paints(),
+                    common::screen_text(&v.read(cx).model()),
+                )
+            })
+        })
+    };
+    wait_until(cx, "the first line", |cx| {
+        screen(cx).is_some_and(|(_, text)| text.contains("first"))
+    });
+    // Idle frames: nothing notifies the terminal, nothing may repaint it needlessly.
+    for _ in 0..5 {
+        draw(cx);
+    }
+    let (before, _) = screen(cx).expect("the terminal view exists");
+    assert!(before > 0, "painted at least once");
+    // More output, a frame at a time: each arrives while the pane is visible.
+    daemon.send_input(info.terminal_id.expect("a terminal session"), b"go\r");
+    wait_until(cx, "the output on the screen", |cx| {
+        screen(cx).is_some_and(|(_, text)| text.contains("line-399"))
+    });
+    let (after, _) = screen(cx).expect("the terminal view exists");
+    assert!(
+        after > before,
+        "the cached terminal repainted ({before} → {after})"
+    );
+}
+
 // ---- the transcript ---------------------------------------------------------------------------
 
 /// `plain-turn` with `MESSAGES` assistant messages (markdown with a code block) in place of its

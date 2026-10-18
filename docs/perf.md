@@ -264,6 +264,90 @@ stops the link]. Follow-up: stop the link
 while no frame is wanted (the `frame_waker` hook other platforms use) in the GPUI platform layer.
 The sessions panel's relative-age refresh (every 30 s) is the only timer Hutan keeps while idle.
 
+## P-3: narrow invalidation, cached views, faster flood
+
+Brief `docs/briefs/P-3.md`; baseline `docs/spikes/2026-10-18-perf-lag.md`.
+
+### What changed
+
+- **Cached view boundaries.** Dock panels, pane items (terminal, chat, changes view) are drawn through
+  `AnyView::cached` (`render.rs::cached_view`): GPUI replays their last frame unless their own entity
+  notified. The probes (`Region`) of a cached view are owned by it (`workbench/regions.rs`): kept while it
+  is replayed, replaced when it paints, dropped when it leaves the tree; probes in deferred draws (menus)
+  find their owner through `Window::current_view`. Theme, density and settings changes notify every cached
+  view (`Workbench::invalidate_cached_views`). A cached view created in the frame it first renders is not
+  followed by GPUI (its entity is not in the accessed set of that render), so a new one asks for one more
+  frame (`Regions::take_fresh`).
+- **Narrow invalidation.** `SessionsStore` emits `StoreChanged` (connection, sessions, session info,
+  workspaces, agents, attention, tasks, active, focus, other) with every notification and does not notify
+  when the daemon's state is unchanged. The sessions panel rebuilds its entries only for what it lists,
+  History only reacts to connection, scope, workspaces and the session set, the workbench only runs
+  `on_sessions_changed` for layout-relevant kinds; terminals are told only about their own session.
+  Tests: `perf_gpui::a_store_notification_that_changes_nothing_they_show_renders_no_panel` (render counters
+  `SessionsPanel::renders` / `HistoryPanel::renders`).
+- **History rows.** No `SessionItem` clone per row; title, meta line and the age tooltip are cached per item
+  and minute; home directory and `show_snippets` are read once per frame instead of per row.
+- **Emulator flood path** (`crates/terminal`): one state-aware scanner (`sniffer::StreamScanner`) replaces the
+  OSC sniffer, the `CSI 16 t` scanner and the history-clear scanner (three passes), skipping the ground state
+  eight bytes at a time; whole OSC 7 / OSC 133 strings are not handed to vte (its `unhandled` formats a
+  `String` for every one, also with logging off) while their marks keep their exact stream position;
+  the blank tail of a row is found with a field-wise compare; the viewport is converted to protocol rows once
+  per generation (every attached client asked again); `Block` events are produced from the marks
+  as before. Tests: `sniffer::tests::one_pass_equals_the_three_scanners_on_random_streams_and_chunkings`
+  (60 random streams, random chunking, against the old scanners kept verbatim in `sniffer/reference.rs`),
+  skip-range tests, `render::tests` (blank scan at every width and position), `equivalence::a_huge_read_…`
+  (a 60 000-line read at once, in 2 KiB reads and against the full-history engine: identical rows, line bound
+  and numbering) and the existing cold-store equivalence suite.
+
+Tried and rejected: settling the scrollback once per read instead of per 2 KiB slice (letting the grid grow
+for several slices) measured 2–5× *slower* on a `yes` flood (spilled rows are no longer in cache when they
+are converted), so the settle policy is unchanged: per slice that scrolled, once at the end of a read.
+
+### Emulator flood microbench
+
+`cargo run --release -p hutan-terminal --example corpora [-- <MB>]`: engine path only (no PTY), 120×40,
+10 000 lines of scrollback, 64 KiB reads, **MB per CPU second of the process** (not wall time: the machine
+was shared), best of 3, 12 MB corpora, quiet machine, three alternating runs each:
+
+| Corpus | Before | After | CPU for the same bytes |
+|---|---:|---:|---:|
+| `yes` (one-cell rows spilled) | 19.7 MB/s | 21.7–21.8 MB/s | −9.5 % |
+| colored numbered lines | 104–106 MB/s | 122 MB/s | −14 % |
+| prompt markers (OSC 7 / OSC 133 around every command) | 34.2–34.6 MB/s | 58.9–59.4 MB/s | −42 % |
+
+The brief's target (daemon flood CPU −20 % at equal throughput) is **met for the marker corpus only**:
+the `yes` flood stays dominated by converting one 120-cell row per line for the cold store
+(`RowScratch::fill`, still ~85 % of reader samples after the new scan); going further needs the engine to
+expose its occupied-cell count per row (`Row::occ` is `pub(crate)` in `alacritty_terminal` 0.26) or a
+row-level spill that does not look at cells at all. Not done here.
+
+### What could not be measured
+
+`just bench` B3, B5, B7 and B9 were **not re-run**: during this slice the console session was locked
+(`IOConsoleLocked = Yes` since the afternoon; the bench's desktop draws two frames and then no more, so
+`bench_start` times out, as in the earlier `-6661` display-link failures above). The baseline in
+`docs/spikes/2026-10-18-perf-lag.md` (B5 p95 55.6 ms, B9 filter incl. display p95 22.5 ms, B7 scroll work
+p95 5.1 ms) is therefore **not** compared against an after number, and none of the targets (B5 ≤ 25 ms,
+B9 ≤ 18 ms, no History/terminal layout in sidebar interaction samples) is claimed. What is verified instead
+is deterministic: a store notification that changes nothing the sessions panel or History shows renders
+neither (render counters), a layout change re-renders both, and every cached view keeps its probe regions
+(the full workspace suite passes), and `perf_gpui::output_arriving_in_a_visible_cached_terminal_repaints_it`
+counts the paints of a terminal in a cached pane (`TerminalView::paints`) while output arrives. To measure: unlock the session and run
+`just bench --only B3`, then `B5`, `B7`, `B9` one at a time under `caffeinate -d -u -i`.
+
+The presentation questions of the brief (item 5: GPUI's inactive-window throttling at
+`gpui/src/window.rs:1813-1847`, a terminal that receives output requesting one frame) were **not**
+investigated beyond reading that the throttle only applies to inactive windows without high-rate input.
+
+### Idle and the display link (GPUI patch, out of scope)
+
+The visible-idle floor (B3) is GPUI's `CVDisplayLink`, which stays subscribed while the window is visible
+(`gpui_macos/src/window.rs:836–855`, `display_link.rs:328–343`). The change needed: keep the link stopped
+while no frame is wanted, start it when `Window::request_frame`/`invalidator.wake_platform()`/`schedule_frame`
+asks for one (what the `platform_waker` hook already signals), and stop it from
+`display_link_output_callback` after a tick whose draw had nothing dirty and no next-frame callbacks. The
+timers Hutan keeps are unchanged and gated on being drawn (sessions ages, History refresh, Agents ticker).
+
 ## Crash found while building the harness
 
 Four `hutan-desktop` crash reports (SIGABRT, main thread) appeared while the harness was being

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use alacritty_terminal::grid::Row as GridRow;
 use alacritty_terminal::index::Column;
 use alacritty_terminal::term::cell::{Cell, Flags, Hyperlink};
-use alacritty_terminal::vte::ansi::Color as EngineColor;
+use alacritty_terminal::vte::ansi::{Color as EngineColor, NamedColor};
 use hutan_protocol::render::{CellFlags, Color, Cursor, Link, Modes, Palette, Row, Run};
 
 /// Upper bound on distinct hyperlinks remembered per terminal (ids are stable for the
@@ -186,6 +186,35 @@ pub(crate) struct RowScratch {
     pub(crate) blank_tail: u16,
 }
 
+/// Whether `cell` equals `Cell::default()`, field by field with no early exit (blank cells are
+/// the common case in the tail of a row, so the branch-free form is the fast one).
+#[inline(always)]
+fn is_blank(cell: &Cell) -> bool {
+    (cell.c == ' ')
+        & cell.flags.is_empty()
+        & cell.extra.is_none()
+        & matches!(cell.fg, EngineColor::Named(NamedColor::Foreground))
+        & matches!(cell.bg, EngineColor::Named(NamedColor::Background))
+}
+
+/// Number of cells up to and including the last one that is not blank: what follows is
+/// trimmed, so it is counted, not converted (most rows are mostly blank, and a `yes` flood
+/// spills millions of rows). The tail is skipped eight cells at a time.
+fn used_cells(cells: &[Cell]) -> usize {
+    let mut end = cells.len();
+    while end >= 8
+        && cells[end - 8..end]
+            .iter()
+            .fold(true, |blank, cell| blank & is_blank(cell))
+    {
+        end -= 8;
+    }
+    cells[..end]
+        .iter()
+        .rposition(|cell| !is_blank(cell))
+        .map_or(0, |last| last + 1)
+}
+
 impl RowScratch {
     /// Converts one engine row of `cols` cells, replacing the previous contents.
     pub(crate) fn fill(&mut self, row: &GridRow<Cell>, cols: usize, links: &mut LinkTable) {
@@ -200,11 +229,7 @@ impl RowScratch {
         // Cells after the last non-default one only add blanks that get trimmed below: count
         // them instead of converting them (most rows are mostly blank, and a `yes` flood
         // spills millions of rows).
-        let blank = Cell::default();
-        let used = cells
-            .iter()
-            .rposition(|cell| *cell != blank)
-            .map_or(0, |last| last + 1);
+        let used = used_cells(cells);
         self.blank_tail = u16::try_from(width - used).unwrap_or(u16::MAX);
         for cell in &cells[..used] {
             if cell
@@ -325,5 +350,103 @@ mod tests {
             convert_color(EngineColor::Spec(Rgb { r: 1, g: 2, b: 3 })),
             Color::Rgb(1, 2, 3)
         );
+    }
+
+    fn row_of(width: usize, set: &[(usize, Cell)]) -> Vec<Cell> {
+        let mut cells = vec![Cell::default(); width];
+        for (at, cell) in set {
+            cells[*at] = cell.clone();
+        }
+        cells
+    }
+
+    #[test]
+    fn blank_means_equal_to_the_default_cell() {
+        let blank = Cell::default();
+        assert!(is_blank(&blank));
+        let mut variants = Vec::new();
+        for edit in 0..6 {
+            let mut cell = Cell::default();
+            match edit {
+                0 => cell.c = 'x',
+                1 => cell.flags = Flags::BOLD,
+                2 => cell.fg = EngineColor::Indexed(1),
+                3 => cell.bg = EngineColor::Spec(Rgb { r: 0, g: 0, b: 0 }),
+                4 => cell.fg = EngineColor::Named(NamedColor::Background),
+                _ => cell.push_zerowidth('\u{301}'),
+            }
+            variants.push(cell);
+        }
+        let mut wide = Cell::default();
+        wide.flags.insert(Flags::WIDE_CHAR_SPACER);
+        variants.push(wide);
+        for cell in variants {
+            assert_eq!(is_blank(&cell), cell == blank, "{cell:?}");
+            assert!(!is_blank(&cell));
+        }
+    }
+
+    #[test]
+    fn used_cells_matches_the_last_non_blank_cell_at_every_width_and_position() {
+        let inked = Cell {
+            c: 'x',
+            ..Cell::default()
+        };
+        let styled = Cell {
+            bg: EngineColor::Indexed(4),
+            ..Cell::default()
+        };
+        for width in [0usize, 1, 7, 8, 9, 15, 16, 17, 80, 200] {
+            assert_eq!(used_cells(&row_of(width, &[])), 0, "width {width}");
+            for at in 0..width {
+                for cell in [&inked, &styled] {
+                    let row = row_of(width, &[(at, cell.clone())]);
+                    assert_eq!(used_cells(&row), at + 1, "width {width} at {at}");
+                    let two = row_of(width, &[(0, inked.clone()), (at, cell.clone())]);
+                    assert_eq!(used_cells(&two), at + 1, "width {width} at {at}");
+                }
+            }
+        }
+    }
+
+    /// `cargo test --release -p hutan-terminal --lib blank_scan_speed -- --ignored --nocapture`
+    #[test]
+    #[ignore = "timing, run by hand"]
+    fn blank_scan_speed() {
+        use std::hint::black_box;
+        use std::time::Instant;
+        let inked = Cell {
+            c: 'y',
+            ..Cell::default()
+        };
+        let rows: Vec<Vec<Cell>> = (0..2_000)
+            .map(|_| row_of(120, &[(0, inked.clone())]))
+            .collect();
+        let blank = Cell::default();
+        for round in 0..5 {
+            let start = Instant::now();
+            let mut total = 0;
+            for _ in 0..200 {
+                for row in &rows {
+                    total += black_box(row)
+                        .iter()
+                        .rposition(|cell| *cell != blank)
+                        .map_or(0, |last| last + 1);
+                }
+            }
+            let old = start.elapsed();
+            let start = Instant::now();
+            for _ in 0..200 {
+                for row in &rows {
+                    total += used_cells(black_box(row));
+                }
+            }
+            let new = start.elapsed();
+            println!(
+                "round {round}: derived eq {:.0} ns/row, used_cells {:.0} ns/row ({total})",
+                old.as_nanos() as f64 / 400_000.0,
+                new.as_nanos() as f64 / 400_000.0
+            );
+        }
     }
 }

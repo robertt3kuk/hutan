@@ -197,9 +197,7 @@ impl Element for TerminalElement {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             paint_grid(bounds, state, window, cx);
         });
-        if crate::trace::enabled() {
-            self.view.update(cx, |view, _| view.painted());
-        }
+        self.view.update(cx, |view, _| view.painted());
 
         // Ack only what has been painted. Painting happens at most once per display tick, so a
         // flood is still paced by the display, and the ack goes out at once: waiting for the

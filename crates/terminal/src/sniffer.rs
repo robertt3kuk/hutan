@@ -55,105 +55,307 @@ pub(crate) enum Signal {
     Cwd(PathBuf),
 }
 
+/// Longest sequence of digits in one CSI parameter that is still tracked exactly.
+const PARAM_SATURATION: u32 = 1 << 20;
+
+/// A sequence that erases the scrollback: `CSI 3 J` or `ESC c`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HistoryClear {
+    /// Offset of its `ESC` in the scanned bytes (0 when it began in an earlier call).
+    pub(crate) start: usize,
+    /// Offset just past its last byte.
+    pub(crate) end: usize,
+    /// `ESC c` (full reset: the screen is erased too) rather than `CSI 3 J`.
+    pub(crate) reset: bool,
+}
+
+/// What one [`StreamScanner::feed`] found in the bytes besides metadata events: every offset is
+/// just past the byte that ended the sequence, in stream order.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Scan {
+    /// OSC 4/10/11/12 colour queries: the engine has handled one once it consumed `bytes[..end]`.
+    pub(crate) color_queries: Vec<usize>,
+    /// Prompt marks and working directories.
+    pub(crate) signals: Vec<(usize, Signal)>,
+    /// `CSI 16 t` (the engine does not answer it).
+    pub(crate) cell_sizes: Vec<usize>,
+    /// `CSI 3 J` and `ESC c`.
+    pub(crate) erases: Vec<HistoryClear>,
+    /// Byte ranges (start, end) of whole OSC 7 / OSC 133 strings, `ESC ]` through BEL or ST,
+    /// that began and ended in this read: nothing in the engine reacts to them, so it can be
+    /// run over the bytes around them instead.
+    pub(crate) skips: Vec<(usize, usize)>,
+}
+
+/// The first parameter of a CSI that may still turn out to be `3` (for `CSI 3 J`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClearParam {
+    Empty,
+    Three,
+    Other,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
     Ground,
-    Escape,
+    /// After `ESC`; `start` is its offset in the current call, `None` when it was read earlier.
+    Escape {
+        start: Option<usize>,
+    },
     Osc,
+    /// Inside `ESC [`: `value` is the number read so far and `plain` stays true while the
+    /// sequence consists of digits only (no `;`, `:`, private markers or intermediates);
+    /// `param` follows the first parameter for `CSI 3 J`.
+    Csi {
+        start: Option<usize>,
+        value: u32,
+        plain: bool,
+        param: ClearParam,
+    },
 }
 
+/// One pass over the raw byte stream that finds everything Hutan has to know before the bytes
+/// reach the VT engine: the OSC metadata (title, working directory, prompt marks,
+/// notifications) and colour queries, `CSI 16 t`, and the sequences that erase the scrollback.
+/// All of them are `ESC`-introduced, so the ground state skips to the next `ESC` a word at a
+/// time (an output flood is almost all ground state).
+///
+/// OSC termination mirrors the engine's parser (`vte`): an OSC string ends at BEL, at ST
+/// (`ESC \`), at any other `ESC` (which starts a new escape sequence) and at CAN/SUB. State
+/// carries across calls, so sequences split over arbitrary read boundaries are handled.
 #[derive(Debug)]
-pub(crate) struct OscSniffer {
+pub(crate) struct StreamScanner {
     state: State,
     buf: Vec<u8>,
     overflow: bool,
+    /// Offset in the current call of the `ESC` that opened the OSC string being read (`None`
+    /// when it was opened by an earlier call).
+    osc_start: Option<usize>,
+    /// An OSC string for the engine to skip ended at an `ESC`, which is its ST when a `\`
+    /// follows at once: where the string started.
+    st_skip: Option<usize>,
 }
 
-impl OscSniffer {
+/// How an OSC string ended.
+#[derive(Debug, Clone, Copy)]
+enum Ended {
+    Bel,
+    Esc,
+    Abort,
+}
+
+/// Offset of the first `ESC` in `bytes`, eight bytes at a time.
+fn find_esc(bytes: &[u8]) -> Option<usize> {
+    const ESC: u64 = 0x1b1b_1b1b_1b1b_1b1b;
+    const LOW: u64 = 0x0101_0101_0101_0101;
+    const HIGH: u64 = 0x8080_8080_8080_8080;
+    let (words, rest) = bytes.as_chunks::<8>();
+    let mut base = 0;
+    for word in words {
+        let x = u64::from_le_bytes(*word) ^ ESC;
+        // A zero byte of `x` is an ESC; the classic "has zero byte" test is exact for the
+        // lowest one, which is all that is needed.
+        let zero = x.wrapping_sub(LOW) & !x & HIGH;
+        if zero != 0 {
+            return Some(base + (zero.trailing_zeros() / 8) as usize);
+        }
+        base += 8;
+    }
+    rest.iter().position(|&b| b == 0x1b).map(|at| base + at)
+}
+
+impl StreamScanner {
     pub(crate) fn new() -> Self {
         Self {
             state: State::Ground,
             buf: Vec::new(),
             overflow: false,
+            osc_start: None,
+            st_skip: None,
         }
     }
 
-    /// Scans `bytes`, appending any complete metadata events to `out` and, for every colour
-    /// query (OSC 4/10/11/12 with a `?`), the offset just past the byte that ended it to
-    /// `color_queries`: the engine has handled the query once it consumed `bytes[..offset]`.
-    /// Prompt marks and working directories also go to `signals`, each with its end offset.
-    pub(crate) fn feed(
-        &mut self,
-        bytes: &[u8],
-        out: &mut Vec<TerminalMeta>,
-        color_queries: &mut Vec<usize>,
-        signals: &mut Vec<(usize, Signal)>,
-    ) {
+    /// Scans `bytes`, appending any complete metadata events to `out` and everything the
+    /// emulator has to stop at to `scan`.
+    pub(crate) fn feed(&mut self, bytes: &[u8], out: &mut Vec<TerminalMeta>, scan: &mut Scan) {
         let mut i = 0;
         while i < bytes.len() {
-            match self.state {
-                State::Ground => {
-                    // Fast path: only ESC can leave the ground state.
-                    match bytes[i..].iter().position(|&b| b == 0x1b) {
-                        Some(offset) => {
-                            i += offset + 1;
-                            self.state = State::Escape;
-                        }
-                        None => return,
+            if self.state == State::Ground {
+                // Fast path: only ESC can leave the ground state.
+                match find_esc(&bytes[i..]) {
+                    Some(offset) => {
+                        self.state = State::Escape {
+                            start: Some(i + offset),
+                        };
+                        i += offset + 1;
+                        continue;
                     }
+                    None => return,
                 }
-                State::Escape => {
-                    match bytes[i] {
+            }
+            let byte = bytes[i];
+            i += 1;
+            // CAN and SUB abort a sequence (an OSC string completes); ESC restarts one.
+            match byte {
+                0x18 | 0x1a => {
+                    self.st_skip = None;
+                    if self.state == State::Osc {
+                        self.finish(out, scan, i, Ended::Abort);
+                    }
+                    self.state = State::Ground;
+                    continue;
+                }
+                0x1b => {
+                    self.st_skip = None;
+                    if self.state == State::Osc {
+                        self.finish(out, scan, i, Ended::Esc);
+                    }
+                    self.state = State::Escape { start: Some(i - 1) };
+                    continue;
+                }
+                _ => {}
+            }
+            self.state = match self.state {
+                State::Ground => State::Ground,
+                State::Escape { start } => {
+                    let st_skip = self.st_skip.take();
+                    match byte {
                         b']' => {
                             self.buf.clear();
                             self.overflow = false;
-                            self.state = State::Osc;
+                            self.osc_start = start;
+                            State::Osc
                         }
-                        0x1b => {}
-                        _ => self.state = State::Ground,
+                        b'[' => State::Csi {
+                            start,
+                            value: 0,
+                            plain: true,
+                            param: ClearParam::Empty,
+                        },
+                        b'c' => {
+                            scan.erases.push(HistoryClear {
+                                start: start.unwrap_or(0),
+                                end: i,
+                                reset: true,
+                            });
+                            State::Ground
+                        }
+                        // `ESC \` right after the OSC string it terminates: part of it.
+                        b'\\' => {
+                            if let Some(first) = st_skip {
+                                scan.skips.push((first, i));
+                            }
+                            State::Ground
+                        }
+                        _ => State::Ground,
                     }
-                    i += 1;
                 }
                 State::Osc => {
-                    let b = bytes[i];
-                    i += 1;
-                    match b {
-                        0x07 | 0x18 | 0x1a => {
-                            self.finish(out, color_queries, signals, i);
+                    match byte {
+                        0x07 => {
+                            self.finish(out, scan, i, Ended::Bel);
                             self.state = State::Ground;
-                        }
-                        0x1b => {
-                            self.finish(out, color_queries, signals, i);
-                            self.state = State::Escape;
+                            continue;
                         }
                         0x00..=0x06 | 0x08..=0x17 | 0x19 | 0x1c..=0x1f => {}
-                        _ if self.buf.len() < MAX_OSC_LEN => self.buf.push(b),
+                        _ if self.buf.len() < MAX_OSC_LEN => self.buf.push(byte),
                         _ => self.overflow = true,
                     }
+                    State::Osc
                 }
-            }
+                State::Csi {
+                    start,
+                    value,
+                    plain,
+                    param,
+                } => match byte {
+                    b'0'..=b'9' => State::Csi {
+                        start,
+                        value: value
+                            .saturating_mul(10)
+                            .saturating_add(u32::from(byte - b'0'))
+                            .min(PARAM_SATURATION),
+                        plain,
+                        param: if param == ClearParam::Empty && byte == b'3' {
+                            ClearParam::Three
+                        } else {
+                            ClearParam::Other
+                        },
+                    },
+                    0x20..=0x3f => State::Csi {
+                        start,
+                        value,
+                        plain: false,
+                        param: ClearParam::Other,
+                    },
+                    b't' => {
+                        if plain && value == 16 {
+                            scan.cell_sizes.push(i);
+                        }
+                        State::Ground
+                    }
+                    b'J' => {
+                        if param == ClearParam::Three {
+                            scan.erases.push(HistoryClear {
+                                start: start.unwrap_or(0),
+                                end: i,
+                                reset: false,
+                            });
+                        }
+                        State::Ground
+                    }
+                    0x40..=0x7e => State::Ground,
+                    // Other C0 controls and DEL are executed inside a sequence without ending it.
+                    _ => self.state,
+                },
+            };
         }
+        // Whatever is still open began before the next call's first byte.
+        self.st_skip = None;
+        self.osc_start = None;
+        self.state = match self.state {
+            State::Escape { .. } => State::Escape { start: None },
+            State::Csi {
+                value,
+                plain,
+                param,
+                ..
+            } => State::Csi {
+                start: None,
+                value,
+                plain,
+                param,
+            },
+            other => other,
+        };
     }
 
     /// Completes the OSC string that ended just before offset `end`.
-    fn finish(
-        &mut self,
-        out: &mut Vec<TerminalMeta>,
-        color_queries: &mut Vec<usize>,
-        signals: &mut Vec<(usize, Signal)>,
-        end: usize,
-    ) {
+    fn finish(&mut self, out: &mut Vec<TerminalMeta>, scan: &mut Scan, end: usize, ended: Ended) {
         if !self.overflow {
             if let Some(meta) = parse_osc(&self.buf) {
                 match &meta {
-                    TerminalMeta::PromptMark(mark) => signals.push((end, Signal::Mark(*mark))),
-                    TerminalMeta::Cwd(cwd) => signals.push((end, Signal::Cwd(cwd.clone()))),
+                    TerminalMeta::PromptMark(mark) => {
+                        scan.signals.push((end, Signal::Mark(*mark)));
+                    }
+                    TerminalMeta::Cwd(cwd) => scan.signals.push((end, Signal::Cwd(cwd.clone()))),
                     _ => {}
+                }
+                // The engine ignores these two; when the whole string is in this read the
+                // emulator does not hand it over (see `Scan::skips`).
+                if matches!(meta, TerminalMeta::PromptMark(_) | TerminalMeta::Cwd(_))
+                    && let Some(start) = self.osc_start
+                {
+                    match ended {
+                        Ended::Bel => scan.skips.push((start, end)),
+                        Ended::Esc => self.st_skip = Some(start),
+                        Ended::Abort => {}
+                    }
                 }
                 out.push(meta);
             }
             if is_color_query(&self.buf) {
-                color_queries.push(end);
+                scan.color_queries.push(end);
             }
         }
         self.buf.clear();
@@ -239,14 +441,17 @@ fn hex_pair(pair: &[u8]) -> Option<u8> {
 }
 
 #[cfg(test)]
+mod reference;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     fn sniff(chunks: &[&[u8]]) -> Vec<TerminalMeta> {
-        let mut sniffer = OscSniffer::new();
+        let mut scanner = StreamScanner::new();
         let mut out = Vec::new();
         for chunk in chunks {
-            sniffer.feed(chunk, &mut out, &mut Vec::new(), &mut Vec::new());
+            scanner.feed(chunk, &mut out, &mut Scan::default());
         }
         out
     }
@@ -326,5 +531,288 @@ mod tests {
         stream.extend(std::iter::repeat_n(b'x', MAX_OSC_LEN + 10));
         stream.extend_from_slice(b"\x07\x1b]0;ok\x07");
         assert_eq!(sniff(&[&stream]), [TerminalMeta::Title("ok".into())]);
+    }
+
+    fn scan_all(chunks: &[&[u8]]) -> Scan {
+        let mut scanner = StreamScanner::new();
+        let mut total = Scan::default();
+        for chunk in chunks {
+            let mut scan = Scan::default();
+            scanner.feed(chunk, &mut Vec::new(), &mut scan);
+            total.cell_sizes.extend(scan.cell_sizes);
+            total.erases.extend(scan.erases);
+        }
+        total
+    }
+
+    #[test]
+    fn finds_cell_size_queries_in_one_chunk_and_across_chunks() {
+        assert_eq!(scan_all(&[b"ab\x1b[16tcd\x1b[16t"]).cell_sizes, [7, 14]);
+        assert_eq!(scan_all(&[b"\x1b[", b"1", b"6", b"t"]).cell_sizes, [1]);
+    }
+
+    #[test]
+    fn ignores_other_sequences_than_cell_size_queries() {
+        for stream in [
+            &b"\x1b[18t"[..],
+            b"\x1b[?16t",
+            b"\x1b[16;1t",
+            b"\x1b[116t",
+            b"\x1b[16 t",
+            b"\x1b[16m",
+            b"\x1b[16\x18t",
+            b"\x1b]16t",
+            b"[16t",
+        ] {
+            assert!(scan_all(&[stream]).cell_sizes.is_empty(), "{stream:?}");
+        }
+    }
+
+    fn skips(chunks: &[&[u8]]) -> Vec<Vec<(usize, usize)>> {
+        let mut scanner = StreamScanner::new();
+        chunks
+            .iter()
+            .map(|chunk| {
+                let mut scan = Scan::default();
+                scanner.feed(chunk, &mut Vec::new(), &mut scan);
+                scan.skips
+            })
+            .collect()
+    }
+
+    #[test]
+    fn whole_mark_and_directory_strings_are_skippable_others_are_not() {
+        // BEL and ST terminated, back to back, with text around.
+        assert_eq!(
+            skips(&[b"a\x1b]133;A\x07b\x1b]7;file://h/tmp\x1b\\c\x1b]133;D;0\x07"]),
+            [[(1, 9), (10, 28), (29, 39)]]
+        );
+        // Titles, notifications, colour queries, unknown marks and aborted strings stay.
+        for stream in [
+            &b"\x1b]0;t\x07"[..],
+            b"\x1b]9;n\x07",
+            b"\x1b]11;?\x07",
+            b"\x1b]133;Z\x07",
+            b"\x1b]7;nonsense\x07",
+            b"\x1b]133;A\x18",
+            b"\x1b]133;A\x1bx",
+            b"\x1b]133;A\x1b",
+        ] {
+            assert_eq!(
+                skips(&[stream]),
+                [Vec::<(usize, usize)>::new()],
+                "{stream:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_string_split_across_reads_is_never_skipped() {
+        assert_eq!(
+            skips(&[b"x\x1b]13", b"3;A\x07y", b"\x1b]133;B", b"\x1b", b"\\z"]),
+            [vec![], vec![], vec![], vec![], vec![]]
+        );
+        // The next string, whole in one read, is.
+        assert_eq!(
+            skips(&[b"\x1b]133;B", b"\x07\x1b]133;A\x07"]),
+            [vec![], vec![(1, 9)]]
+        );
+    }
+
+    #[test]
+    fn escape_restarts_a_sequence() {
+        assert_eq!(scan_all(&[b"\x1b[1\x1b[16t"]).cell_sizes, [8]);
+    }
+
+    #[test]
+    fn finds_erase_saved_lines_and_reset() {
+        let found = scan_all(&[b"ab\x1b[3Jcd\x1bcef\x1b[2J\x1b[?3J\x1b[13J\x1b[3;J"]).erases;
+        assert_eq!(
+            found,
+            [
+                HistoryClear {
+                    start: 2,
+                    end: 6,
+                    reset: false
+                },
+                HistoryClear {
+                    start: 8,
+                    end: 10,
+                    reset: true
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_erase_split_across_reads_starts_at_zero_of_its_last_read() {
+        let found = scan_all(&[b"x\x1b", b"[3", b"Jy"]).erases;
+        assert_eq!(
+            found,
+            [HistoryClear {
+                start: 0,
+                end: 1,
+                reset: false
+            }]
+        );
+        let found = scan_all(&[b"\x1bc"]).erases;
+        assert_eq!(found.len(), 1);
+        assert!(found[0].reset);
+    }
+
+    #[test]
+    fn find_esc_agrees_with_position_at_every_alignment() {
+        let mut bytes = vec![b'a'; 70];
+        for esc_at in 0..bytes.len() {
+            bytes[esc_at] = 0x1b;
+            for from in 0..=esc_at.min(9) {
+                assert_eq!(
+                    find_esc(&bytes[from..]),
+                    bytes[from..].iter().position(|&b| b == 0x1b),
+                    "esc at {esc_at}, from {from}"
+                );
+            }
+            bytes[esc_at] = b'a';
+        }
+        assert_eq!(find_esc(&bytes), None);
+        // Bytes next to ESC in value must not be mistaken for it (the borrow of the classic
+        // zero-byte test can only flag higher bytes).
+        assert_eq!(
+            find_esc(&[0x1a, 0x1c, 0x1b, 0x1a, 0x1c, 0x1b, 0, 0x9b, 0x1b]),
+            Some(2)
+        );
+    }
+
+    /// xorshift64*: deterministic, no dependency.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    /// A stream of text, the sequences the scanners care about, near misses and noise.
+    fn stream(rng: &mut Rng, len: usize) -> Vec<u8> {
+        const PIECES: &[&[u8]] = &[
+            b"plain text line\r\n",
+            b"y\n",
+            b"\x1b[16t",
+            b"\x1b[3J",
+            b"\x1bc",
+            b"\x1b[31m",
+            b"\x1b[?3J",
+            b"\x1b[13J",
+            b"\x1b[3;J",
+            b"\x1b[18t",
+            b"\x1b[116t",
+            b"\x1b[16;1t",
+            b"\x1b[2J",
+            b"\x1b]133;A\x07",
+            b"\x1b]133;B\x1b\\",
+            b"\x1b]133;C\x07",
+            b"\x1b]133;D;7\x07",
+            b"\x1b]7;file://host/tmp/a%20b\x07",
+            b"\x1b]0;title\x07",
+            b"\x1b]2;two\x1b\\",
+            b"\x1b]9;note\x07",
+            b"\x1b]9;4;1;50\x07",
+            b"\x1b]777;notify;T;B\x07",
+            b"\x1b]11;?\x07",
+            b"\x1b]4;1;?\x1b\\",
+            b"\x1b]10;?",
+            b"\x1b]133;A",
+            b"\x1b[",
+            b"\x1b[16",
+            b"\x1b",
+            b"\x1b\x1b",
+            b"\x18",
+            b"\x1a",
+            b"\x07",
+            b"\x7f",
+            b"\x1b]",
+            b"\x01\x02\x03",
+            b"\xe6\xbc\xa2\xe5\xad\x97",
+            b"\x9b16t",
+        ];
+        let mut out = Vec::with_capacity(len + 64);
+        while out.len() < len {
+            if rng.below(40) == 0 {
+                // A payload longer than the OSC buffer.
+                out.extend_from_slice(b"\x1b]0;");
+                out.extend(std::iter::repeat_n(b'x', MAX_OSC_LEN + rng.below(40)));
+                if rng.below(2) == 0 {
+                    out.push(0x07);
+                }
+            } else {
+                out.extend_from_slice(PIECES[rng.below(PIECES.len())]);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn one_pass_equals_the_three_scanners_on_random_streams_and_chunkings() {
+        let mut events = 0;
+        for seed in 1..=60u64 {
+            let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+            let len = 2_000 + rng.below(30_000);
+            let bytes = stream(&mut rng, len);
+            let mut merged = StreamScanner::new();
+            let mut separate = reference::Separate::new();
+            let (mut merged_meta, mut separate_meta) = (Vec::new(), Vec::new());
+            let mut at = 0;
+            while at < bytes.len() {
+                // Mostly small reads (every boundary inside a sequence gets hit), sometimes
+                // large ones.
+                let take = match rng.below(8) {
+                    0 => 1,
+                    1..=4 => 1 + rng.below(24),
+                    5 | 6 => 1 + rng.below(700),
+                    _ => 1 + rng.below(9000),
+                }
+                .min(bytes.len() - at);
+                let chunk = &bytes[at..at + take];
+                let mut found = Scan::default();
+                merged.feed(chunk, &mut merged_meta, &mut found);
+                let expected = separate.feed(chunk, &mut separate_meta);
+                // The old scanners know nothing of skips; they are checked below.
+                let skips = std::mem::take(&mut found.skips);
+                for &(start, end) in &skips {
+                    assert!(start < end && end <= chunk.len(), "seed {seed}: {skips:?}");
+                    assert_eq!(&chunk[start..start + 2], b"\x1b]", "seed {seed}");
+                    assert!(
+                        chunk[end - 1] == 0x07 || chunk[end - 2..end] == *b"\x1b\\",
+                        "seed {seed}"
+                    );
+                    // A mark or directory string whose signal is reported at its end or one
+                    // byte before it (ST).
+                    assert!(
+                        expected
+                            .signals
+                            .iter()
+                            .any(|(at, _)| *at == end || *at + 1 == end),
+                        "seed {seed}: {skips:?}"
+                    );
+                }
+                events += skips.len();
+                assert_eq!(found, expected, "seed {seed}, chunk at {at}+{take}");
+                events += found.color_queries.len()
+                    + found.signals.len()
+                    + found.cell_sizes.len()
+                    + found.erases.len();
+                at += take;
+            }
+            assert_eq!(merged_meta, separate_meta, "seed {seed}");
+            events += merged_meta.len();
+        }
+        assert!(events > 500, "the streams found only {events} events");
     }
 }

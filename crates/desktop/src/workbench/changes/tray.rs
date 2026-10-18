@@ -1660,9 +1660,7 @@ impl ChangesView {
                 {
                     let regions = self.env.regions.clone();
                     move |bounds, window, _| {
-                        regions
-                            .borrow_mut()
-                            .insert(Region::ChangesComment(index, "card"), bounds);
+                        regions.record_prepaint(Region::ChangesComment(index, "card"), bounds);
                         if reveal.get() == Some(id) {
                             reveal.set(None);
                             let view = scroll.bounds();

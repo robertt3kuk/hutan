@@ -1,15 +1,14 @@
 //! [`ChatView`]: the chat tab. A header (who, in what state), the virtualized transcript, an
 //! optional banner, and the composer. Cards are drawn by `cards.rs`.
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, FocusHandle, Focusable, FollowMode,
-    InteractiveElement, IntoElement, KeyDownEvent, ListAlignment, ListOffset, ListState,
-    MouseButton, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Window, div, list, prelude::*, px,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, FollowMode, InteractiveElement,
+    IntoElement, KeyDownEvent, ListAlignment, ListOffset, ListState, MouseButton, ParentElement,
+    Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
+    list, prelude::*, px,
 };
 use hutan_chat_view::markdown::Block;
 use hutan_client::ConnectionState;
@@ -34,7 +33,7 @@ use crate::workbench::ui::{self, Mascot, StyledExt as _};
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::{self, CaretShape, VimConfig};
 
-pub(crate) type Regions = Rc<RefCell<HashMap<Region, Bounds<Pixels>>>>;
+pub(crate) use crate::workbench::regions::Regions;
 
 /// Key context of the chat view's root element, for keymap bindings.
 pub const KEY_CONTEXT: &str = "HutanChat";
@@ -1118,6 +1117,7 @@ impl ChatView {
 
 impl Render for ChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.regions.rendered(cx.entity_id());
         self.sync_questions(cx);
         self.sync_list(cx);
         self.pending = self

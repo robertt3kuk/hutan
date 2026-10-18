@@ -25,10 +25,10 @@ use parking_lot::Mutex;
 
 use crate::blocks::{BlockIndex, BlockText, BlockTextError, MAX_COMMAND_BYTES, now_ms};
 use crate::error::TerminalError;
-use crate::queries::{CellSizeScanner, HistoryClearScanner, Rgb, xterm_color};
+use crate::queries::{Rgb, xterm_color};
 use crate::render::{LinkTable, RenderTracker, RowScratch, row_text};
 use crate::scrollback::ScrollbackStore;
-use crate::sniffer::{OscSniffer, PromptMark, Signal, TerminalMeta};
+use crate::sniffer::{PromptMark, Scan, Signal, StreamScanner, TerminalMeta};
 
 /// Replies produced by one `feed` call beyond this are dropped (a hostile stream of queries
 /// must not grow memory without bound).
@@ -158,8 +158,7 @@ fn validate(size: TerminalSize) -> Result<Dims, TerminalError> {
 pub struct Emulator {
     term: Term<Sink>,
     parser: Processor,
-    sniffer: OscSniffer,
-    cell_size_scanner: CellSizeScanner,
+    scanner: StreamScanner,
     sink: Sink,
     links: LinkTable,
     meta: Vec<TerminalMeta>,
@@ -175,11 +174,12 @@ pub struct Emulator {
     /// History rows the engine keeps; older ones are spilled to `cold`.
     hot_margin: usize,
     scratch: RowScratch,
+    /// The viewport as protocol rows for the generation and size they were made at.
+    rows_cache: Option<((u64, TerminalSize), Vec<Row>)>,
     /// The terminal was resized while the alternate screen hid the primary grid.
     resized_in_alt: bool,
     /// The engine's own history cap (`scrollback_lines` + [`ENGINE_HEADROOM`]).
     engine_cap: usize,
-    clear_scanner: HistoryClearScanner,
     /// Prompt, command and output units (M10).
     blocks: BlockIndex,
     /// Absolute line number of the viewport's first row on the primary screen: the rows ever
@@ -241,8 +241,7 @@ impl Emulator {
         Ok(Self {
             term: Term::new(config, &dims, sink.clone()),
             parser: Processor::new(),
-            sniffer: OscSniffer::new(),
-            cell_size_scanner: CellSizeScanner::new(),
+            scanner: StreamScanner::new(),
             sink,
             links: LinkTable::default(),
             meta: Vec::new(),
@@ -255,9 +254,9 @@ impl Emulator {
             scrollback_lines,
             hot_margin,
             scratch: RowScratch::default(),
+            rows_cache: None,
             resized_in_alt: false,
             engine_cap: scrollback_lines.saturating_add(ENGINE_HEADROOM),
-            clear_scanner: HistoryClearScanner::new(),
             blocks: BlockIndex::new(),
             abs_top: 0,
             acct_hot: 0,
@@ -300,33 +299,65 @@ impl Emulator {
         // Queries are answered in stream order: the engine runs up to the end of each one (so a
         // colour query sees the colours as they were at that point) and its reply is queued
         // before the next query is handled. CSI 16 t is not known to the engine; its reply is
-        // produced here.
+        // produced here. One pass over the bytes finds all of it.
+        let mut scan = Scan::default();
+        self.scanner.feed(bytes, &mut self.meta, &mut scan);
         let mut breaks: Vec<(usize, Break)> = Vec::new();
-        let mut color_queries = Vec::new();
-        let mut signals = Vec::new();
-        self.sniffer
-            .feed(bytes, &mut self.meta, &mut color_queries, &mut signals);
-        breaks.extend(color_queries.into_iter().map(|end| (end, Break::Reply)));
         breaks.extend(
-            signals
+            scan.color_queries
+                .into_iter()
+                .map(|end| (end, Break::Reply)),
+        );
+        breaks.extend(
+            scan.signals
                 .into_iter()
                 .map(|(end, signal)| (end, Break::Signal(signal))),
         );
-        let mut cell_size_queries = Vec::new();
-        self.cell_size_scanner.feed(bytes, &mut cell_size_queries);
         breaks.extend(
-            cell_size_queries
+            scan.cell_sizes
                 .into_iter()
                 .map(|end| (end, Break::CellSize)),
         );
-        let mut erases = Vec::new();
-        self.clear_scanner.feed(bytes, &mut erases);
-        for erase in erases {
+        for erase in scan.erases {
             breaks.push((erase.start, Break::EraseStart));
             breaks.push((erase.end, Break::Erased { reset: erase.reset }));
         }
         // Equal offsets: whatever ended there first, then the start of an erase.
         breaks.sort_by_key(|(end, brk)| (*end, matches!(brk, Break::EraseStart)));
+        // The engine ignores OSC 7 and OSC 133 but formats a log line for each (vte's
+        // `unhandled`, a String per string even with logging off): the sniffer has them, so the
+        // engine runs over the bytes around them. Their marks stay where they were in the
+        // stream (`breaks` are re-aimed at the shortened input). Not while a synchronized batch
+        // is open: its byte accounting is of what was read.
+        let kept;
+        let bytes = if was_pending || scan.skips.is_empty() {
+            bytes
+        } else {
+            let mut shortened = Vec::with_capacity(bytes.len());
+            let mut from = 0;
+            for &(start, end) in &scan.skips {
+                shortened.extend_from_slice(&bytes[from..start]);
+                from = end;
+            }
+            shortened.extend_from_slice(&bytes[from..]);
+            let (mut removed, mut next) = (0, 0);
+            for (at, _) in &mut breaks {
+                while next < scan.skips.len() && scan.skips[next].1 <= *at {
+                    removed += scan.skips[next].1 - scan.skips[next].0;
+                    next += 1;
+                }
+                // A break inside a skipped string (the signal of an ST-terminated one) lands
+                // where the string began.
+                let inside = scan
+                    .skips
+                    .get(next)
+                    .filter(|(start, _)| *start < *at)
+                    .map_or(0, |(start, _)| *at - start);
+                *at -= removed + inside;
+            }
+            kept = shortened;
+            &kept[..]
+        };
         let mut done = 0;
         for (end, brk) in breaks {
             self.advance(&bytes[done..end]);
@@ -690,7 +721,15 @@ impl Emulator {
         }
     }
 
+    /// The viewport as protocol rows. Converted once per generation: every attached client asks
+    /// for them after each change, and the grid does not change in between.
     fn viewport_rows(&mut self) -> Vec<Row> {
+        let key = (self.generation, self.size);
+        if let Some((cached, rows)) = &self.rows_cache
+            && *cached == key
+        {
+            return rows.clone();
+        }
         let cols = self.term.columns();
         let lines = self.term.screen_lines();
         let mut rows = Vec::with_capacity(lines);
@@ -699,14 +738,32 @@ impl Emulator {
                 .fill(&self.term.grid()[Line(line as i32)], cols, &mut self.links);
             rows.push(self.scratch.to_row());
         }
+        self.rows_cache = Some((key, rows.clone()));
         rows
     }
 
-    /// Runs `bytes` through the engine in slices and settles the scrollback after each, so the
-    /// grid never holds much more than the hot window.
+    /// Runs `bytes` through the engine in slices and settles the scrollback when the slice left
+    /// more history in the grid than the hot window keeps, and once at the end (a read has to
+    /// be settled before anything that looks at the grid: a block mark, a query reply, a
+    /// frame). Settling every slice that scrolled keeps the grid at the size of the hot window:
+    /// letting rows pile up for a few slices measured 2–5× slower on a flood (the spilled rows
+    /// are no longer in cache when they are converted).
     fn advance(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let limit = self.hot_margin.min(self.scrollback_lines);
+        let mut settled = true;
         for slice in bytes.chunks(SLICE_BYTES) {
             self.parser.advance(&mut self.term, slice);
+            if self.term.history_size() > limit {
+                self.settle();
+                settled = true;
+            } else {
+                settled = false;
+            }
+        }
+        if !settled {
             self.settle();
         }
     }

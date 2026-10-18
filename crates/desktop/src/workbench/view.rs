@@ -24,7 +24,9 @@ use crate::cli_link::CliLink;
 use crate::harness_install::PackageRunner;
 use crate::integrations::IntegrationInstaller;
 use crate::macos::MacServices;
-use crate::sessions::{RecoverySummaryDue, SessionsStore, TerminalSession, UiOpenRequested};
+use crate::sessions::{
+    RecoverySummaryDue, SessionsStore, StoreChanged, TerminalSession, UiOpenRequested,
+};
 use crate::settings::{AppearanceSettings, LayoutSettings, PresetDef, TerminalSettings};
 use crate::theme::{Density, DensityExt as _, Theme};
 use gpui::Window;
@@ -36,7 +38,6 @@ use hutan_client::Connection;
 use hutan_core::{ApprovalId, SessionId};
 use hutan_settings::{AppearanceMode, SettingsStore, WatchGuard};
 use hutan_terminal_view::DefaultColors;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -511,7 +512,7 @@ pub struct Workbench {
     /// A large sidebar's one-row summary was opened into the full list ("Review").
     pub(crate) recovery_review: bool,
     pub(crate) last_title: String,
-    pub(crate) regions: Rc<RefCell<HashMap<Region, Bounds<Pixels>>>>,
+    pub(crate) regions: super::regions::Regions,
     state_path: Option<PathBuf>,
     last_saved: Option<String>,
     save_task: Option<Task<()>>,
@@ -589,7 +590,7 @@ impl Workbench {
         sessions.update(cx, |store, cx| {
             store.set_terminal_colors(DefaultColors::from(&terminal_style.palette), cx);
         });
-        let regions: Rc<RefCell<HashMap<Region, Bounds<Pixels>>>> = Rc::default();
+        let regions = super::regions::Regions::default();
         let harnesses = cx.new(|cx| super::harnesses::HarnessDirectory::new(sessions.clone(), cx));
         let env = PanelEnv {
             sessions: sessions.clone(),
@@ -682,10 +683,31 @@ impl Workbench {
             modal_guard,
             cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
             cx.on_app_quit(|this, cx| this.on_platform_quit(cx)),
-            cx.observe_in(&sessions, window, |this, _, window, cx| {
-                this.on_sessions_changed(window, cx);
-                this.schedule_publish(cx);
-            }),
+            cx.subscribe_in(
+                &sessions,
+                window,
+                |this, _, change: &StoreChanged, window, cx| {
+                    // The layout follows sessions, workspaces, agents and the connection;
+                    // attention and tasks only change what the chrome counts and
+                    // shows; answers given here and the like are for whoever shows them.
+                    if change.intersects(
+                        StoreChanged::CONNECTION
+                            | StoreChanged::SESSIONS
+                            | StoreChanged::SESSION_INFO
+                            | StoreChanged::WORKSPACES
+                            | StoreChanged::AGENTS
+                            | StoreChanged::ACTIVE
+                            | StoreChanged::FOCUS,
+                    ) {
+                        this.on_sessions_changed(window, cx);
+                    } else if change.intersects(StoreChanged::ATTENTION | StoreChanged::TASKS) {
+                        cx.notify();
+                    } else {
+                        return;
+                    }
+                    this.schedule_publish(cx);
+                },
+            ),
             cx.observe(&harnesses, |this, _, cx| this.on_harnesses_changed(cx)),
             cx.observe_window_activation(window, |this, window, cx| {
                 this.window_active = window.is_window_active();
@@ -881,7 +903,7 @@ impl Workbench {
 
     /// Painted bounds of `region` from the last frame (window coordinates), if it was drawn.
     pub fn region_bounds(&self, region: Region) -> Option<Bounds<Pixels>> {
-        self.regions.borrow().get(&region).copied()
+        self.regions.get(region)
     }
 
     pub fn notice(&self) -> Option<&SharedString> {
@@ -1093,6 +1115,23 @@ impl Workbench {
             theme: self.theme,
             density: self.density,
         });
+        self.invalidate_cached_views(cx);
+    }
+
+    /// Views drawn through `AnyView::cached` are re-rendered only when they notify: whatever
+    /// they read from outside their own entity and the sessions store (the theme, the density,
+    /// the settings) has to wake them itself.
+    pub(crate) fn invalidate_cached_views(&self, cx: &mut Context<Self>) {
+        let ids = self
+            .panel_views
+            .values()
+            .map(AnyView::entity_id)
+            .chain(self.chats.values().map(Entity::entity_id))
+            .chain(self.changes_views.values().map(Entity::entity_id))
+            .chain(self.terminals.values().map(|item| item.view.entity_id()));
+        for id in ids {
+            gpui::App::notify(cx, id);
+        }
     }
 
     /// Switches density and writes it back to `appearance.density` in the user's settings.

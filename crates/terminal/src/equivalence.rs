@@ -403,3 +403,73 @@ fn default_margin_matches_reference_on_long_runs() {
     }
     assert!(max_cold >= 100, "max cold {max_cold}");
 }
+
+/// Numbered lines, some styled, wide and wrapped: what a build log or `cat` of a big file feeds.
+fn flood(lines: usize, cols: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    for n in 0..lines {
+        match n % 7 {
+            0 => out.extend_from_slice(format!("\x1b[3{}mline {n}\x1b[0m\r\n", n % 8).as_bytes()),
+            1 => out.extend_from_slice(b"y\n"),
+            2 => out.extend_from_slice("漢字 wide ünï\r\n".as_bytes()),
+            3 => out.extend(std::iter::repeat_n(b'w', cols + 7)),
+            _ => out.extend_from_slice(format!("plain line number {n}\r\n").as_bytes()),
+        }
+        if n % 7 == 3 {
+            out.extend_from_slice(b"\r\n");
+        }
+    }
+    out
+}
+
+/// The line bound, the absolute numbering and every retained row are the same whether a read of
+/// sixty thousand lines arrives at once (settled when the history outgrows the hot window by
+/// a slack, and at its end) or in reads of one slice (settled after each). Reads are cut at the engine's slice size: the
+/// parser the engine uses drops the character after a multi-byte one that straddles two
+/// `advance` calls, so other cut points would not give the same text.
+#[test]
+fn a_huge_read_leaves_the_same_scrollback_as_small_reads_and_the_full_history() {
+    let bytes = flood(60_000, 80);
+    for (lines, margin) in [(5_000_usize, 256_usize), (300, 16), (20_000, 256)] {
+        let mut whole = Emulator::with_hot_margin(size(80, 24), lines, margin).expect("whole");
+        let mut small = Emulator::with_hot_margin(size(80, 24), lines, margin).expect("small");
+        let mut reference =
+            Emulator::with_hot_margin(size(80, 24), lines, usize::MAX).expect("reference");
+        whole.feed(&bytes);
+        for chunk in bytes.chunks(2048) {
+            small.feed(chunk);
+        }
+        for chunk in bytes.chunks(4096) {
+            reference.feed(chunk);
+        }
+        let mut rng = Rng::new(7);
+        assert_eq!(whole.history_len() as usize, lines, "bound ({lines})");
+        assert_eq!(whole.viewport_top(), small.viewport_top(), "numbering");
+        assert_eq!(whole.viewport_top(), reference.viewport_top(), "numbering");
+        assert_same(&mut whole, &mut reference, &mut rng, "whole read");
+        assert_same(&mut small, &mut reference, &mut rng, "small reads");
+    }
+}
+
+/// Viewport rows are converted once per generation and size, and never served stale.
+#[test]
+fn the_viewport_row_cache_follows_the_grid() {
+    let mut em = Emulator::new(size(20, 3), 100).expect("emulator");
+    em.feed(b"one\r\ntwo");
+    let first = em.grid_text();
+    assert_eq!(first, "one\ntwo\n");
+    let (mut a, mut b) = (RenderTracker::new(), RenderTracker::new());
+    assert_eq!(em.snapshot(&mut a).lines, em.snapshot(&mut b).lines);
+    em.feed(b"!");
+    assert_eq!(em.grid_text(), "one\ntwo!\n");
+    em.feed(b"\x1b[2J\x1b[Hnew");
+    assert_eq!(em.grid_text(), "new\n\n");
+    em.resize(size(10, 2)).expect("resize");
+    assert_eq!(em.snapshot(&mut a).lines.len(), 2);
+    // A frame for a tracker that saw the earlier state carries exactly the rows that differ.
+    let mut c = RenderTracker::new();
+    em.snapshot(&mut c);
+    em.feed(b"\r\nx");
+    let frame = em.frame(&mut c).expect("changed");
+    assert!(!frame.dirty.is_empty());
+}

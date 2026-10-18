@@ -267,6 +267,7 @@ impl AgentsPanel {
 
 impl Render for AgentsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.env.regions.rendered(cx.entity_id());
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let settings = self.env.settings.get::<AgentsSettings>();

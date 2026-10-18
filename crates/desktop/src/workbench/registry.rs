@@ -1,14 +1,11 @@
 //! Panel and status-item registries (ADR 0010: every UI feature is a registered component).
 
 use super::model::{DockPosition, PanelId};
-use super::view::Region;
 use crate::sessions::SessionsStore;
 use crate::theme::{Density, Theme};
-use gpui::{AnyElement, AnyView, App, Bounds, Entity, Pixels, SharedString, Window};
+use gpui::{AnyElement, AnyView, App, Entity, SharedString, Window};
 use hutan_client::ConnectionState;
 use hutan_settings::SettingsStore;
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 /// What panels need from the app: the live sessions, the settings, the harnesses (installed,
@@ -18,7 +15,7 @@ pub struct PanelEnv {
     pub sessions: Entity<SessionsStore>,
     pub settings: SettingsStore,
     pub harnesses: Entity<super::harnesses::HarnessDirectory>,
-    pub regions: Rc<RefCell<HashMap<Region, Bounds<Pixels>>>>,
+    pub regions: super::regions::Regions,
 }
 
 impl std::fmt::Debug for PanelEnv {

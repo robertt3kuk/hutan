@@ -231,7 +231,7 @@ impl Workbench {
         };
         self.rendered_chats.insert((pane, id));
         let view = self.chat_view(pane, id, cx);
-        div().size_full().child(view).into_any_element()
+        super::render::cached_view(&self.regions, view)
     }
 
     // ---- Start… and the Switch model dialog --------------------------------------------------

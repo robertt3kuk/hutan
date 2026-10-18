@@ -54,6 +54,101 @@ pub const REPLAY_WINDOW: Duration = Duration::from_millis(400);
 /// something the user did a while ago, not a request to move the window now.
 pub const UI_OPEN_MAX_AGE_MS: u64 = 15_000;
 
+/// What changed in the [`SessionsStore`], emitted with every notification so that a subscriber
+/// can ignore the ones that are not its business (a sidebar that lists sessions does not care
+/// that the focus moved to another tab).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StoreChanged(u16);
+
+impl StoreChanged {
+    /// The connection state or the daemon epoch.
+    pub const CONNECTION: Self = Self(1);
+    /// A session appeared, went away or moved in the list.
+    pub const SESSIONS: Self = Self(1 << 1);
+    /// A session's metadata (title, state, placement, agent report …).
+    pub const SESSION_INFO: Self = Self(1 << 2);
+    /// Workspaces and projects.
+    pub const WORKSPACES: Self = Self(1 << 3);
+    /// Approvals, questions and the agent trees.
+    pub const AGENTS: Self = Self(1 << 4);
+    /// Which sessions have something unread.
+    pub const ATTENTION: Self = Self(1 << 5);
+    /// The daemon's tasks.
+    pub const TASKS: Self = Self(1 << 6);
+    /// The workspace and project the window shows.
+    pub const ACTIVE: Self = Self(1 << 7);
+    /// The session in the focused tab.
+    pub const FOCUS: Self = Self(1 << 8);
+    /// Answers given here, remembered choices and flags nothing lists.
+    pub const OTHER: Self = Self(1 << 9);
+    /// Everything a list of the sessions and workspaces is made of.
+    pub const LISTED: Self = Self(
+        Self::CONNECTION.0
+            | Self::SESSIONS.0
+            | Self::SESSION_INFO.0
+            | Self::WORKSPACES.0
+            | Self::AGENTS.0
+            | Self::ATTENTION.0
+            | Self::TASKS.0
+            | Self::ACTIVE.0,
+    );
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// What differs between two states of the daemon.
+    fn between(before: &StoreState, after: &StoreState) -> Self {
+        let mut changed = Self::default();
+        if before.connection != after.connection || before.epoch != after.epoch {
+            changed |= Self::CONNECTION;
+        }
+        if before.workspaces != after.workspaces {
+            changed |= Self::WORKSPACES;
+        }
+        if before.sessions.len() != after.sessions.len()
+            || before
+                .sessions
+                .iter()
+                .zip(&after.sessions)
+                .any(|(a, b)| a.id != b.id)
+        {
+            changed |= Self::SESSIONS | Self::SESSION_INFO;
+        } else if before.sessions != after.sessions {
+            changed |= Self::SESSION_INFO;
+        }
+        if before.approvals != after.approvals
+            || before.questions != after.questions
+            || before.trees != after.trees
+        {
+            changed |= Self::AGENTS;
+        }
+        changed
+    }
+}
+
+impl std::ops::BitOr for StoreChanged {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
+impl std::ops::BitOrAssign for StoreChanged {
+    fn bitor_assign(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+}
+
 /// Emitted by [`SessionsStore`] when the daemon asks this window to show a session (the
 /// "Open" action of a notification intent, `ui.open`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,6 +295,7 @@ pub struct SessionsStore {
     _tasks: Vec<Task<()>>,
 }
 
+impl EventEmitter<StoreChanged> for SessionsStore {}
 impl EventEmitter<AgentAttentionChanged> for SessionsStore {}
 impl EventEmitter<UiOpenRequested> for SessionsStore {}
 impl EventEmitter<AccountsChanged> for SessionsStore {}
@@ -290,6 +386,12 @@ impl SessionsStore {
     }
 
     fn apply_state(&mut self, latest: Arc<StoreState>, cx: &mut Context<Self>) {
+        // The daemon's watch publishes after every event, whether or not it changed what this
+        // window shows: nothing to do (and nobody to wake) for the same state again.
+        if Arc::ptr_eq(&self.state, &latest) || *self.state == *latest {
+            return;
+        }
+        let mut changed = StoreChanged::between(&self.state, &latest);
         let was_connected = self.state.connection == ConnectionState::Connected;
         let connected = latest.connection == ConnectionState::Connected;
         if connected && !was_connected {
@@ -300,7 +402,7 @@ impl SessionsStore {
             self.connected_since = None;
             self.tasks_loading = None;
         }
-        self.state = latest;
+        let before = std::mem::replace(&mut self.state, latest);
         // A daemon of a new epoch is up: whoever started it (the CLI, autostart, another
         // client), the stop the user asked for is over.
         if connected && self.daemon_stopped && self.state.epoch != self.stopped_epoch {
@@ -310,23 +412,43 @@ impl SessionsStore {
             self.load_tasks(cx);
         }
         if connected {
+            let unread = self.attention.unread_map().clone();
             self.attention
                 .observe(self.state.epoch, &self.state.sessions);
+            if *self.attention.unread_map() != unread {
+                changed |= StoreChanged::ATTENTION;
+            }
             self.observe_blocked_nodes(cx);
             self.observe_recovery(cx);
             let known: Vec<SessionId> = self.state.sessions.iter().map(|s| s.id).collect();
             self.recent.retain(|id, _| !known.contains(id));
         }
         // Tell every attached terminal what the daemon now says about its session. While
-        // disconnected the last known state stays (a reconnect resyncs it).
-        if connected {
+        // disconnected the last known state stays (a reconnect resyncs it). Terminals of
+        // sessions that did not change have nothing to hear.
+        if connected
+            && changed.intersects(
+                StoreChanged::CONNECTION | StoreChanged::SESSIONS | StoreChanged::SESSION_INFO,
+            )
+        {
             let live: Vec<(SessionId, WeakEntity<TerminalSession>)> = self
                 .terminals
                 .iter()
                 .map(|(id, t)| (*id, t.clone()))
                 .collect();
+            let epoch_moved = before.epoch != self.state.epoch || !was_connected;
             for (id, terminal) in live {
                 let info = self.session(id).cloned();
+                let heard = epoch_moved
+                    || before
+                        .sessions
+                        .iter()
+                        .find(|s| s.id == id)
+                        .map(|s| s as &SessionInfo)
+                        != info.as_ref();
+                if !heard {
+                    continue;
+                }
                 match terminal.upgrade() {
                     Some(terminal) => {
                         let epoch = self.state.epoch;
@@ -347,6 +469,15 @@ impl SessionsStore {
             // The request, if any, was for the connection that is gone.
             self.focus_task = None;
         }
+        self.changed(changed, cx);
+    }
+
+    /// Wakes the observers and tells the subscribers what changed; nothing when nothing did.
+    fn changed(&mut self, what: StoreChanged, cx: &mut Context<Self>) {
+        if what.is_empty() {
+            return;
+        }
+        cx.emit(what);
         cx.notify();
     }
 
@@ -462,7 +593,7 @@ impl SessionsStore {
                 }
                 if let Some(session) = self.session_of(*terminal) {
                     self.attention.notified(session);
-                    cx.notify();
+                    self.changed(StoreChanged::ATTENTION, cx);
                 }
             }
             // Blocks go to the attachment that shows the terminal, if there is one.
@@ -509,11 +640,11 @@ impl SessionsStore {
             | Notice::UiCommand { .. } => {}
             Notice::TaskUpdated { task } => {
                 self.tasks.updated((**task).clone());
-                cx.notify();
+                self.changed(StoreChanged::TASKS, cx);
             }
             Notice::TaskRemoved { id } => {
                 self.tasks.removed(*id);
-                cx.notify();
+                self.changed(StoreChanged::TASKS, cx);
             }
             // A login or logout session of a harness ended: whoever lists the accounts asks
             // again.
@@ -606,7 +737,7 @@ impl SessionsStore {
         if self.active_workspace != workspace || self.active_project != project {
             self.active_workspace = workspace;
             self.active_project = project;
-            cx.notify();
+            self.changed(StoreChanged::ACTIVE, cx);
         }
     }
 
@@ -770,7 +901,7 @@ impl SessionsStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<(), String>> {
         self.answered_questions.insert(question);
-        cx.notify();
+        self.changed(StoreChanged::OTHER, cx);
         let connection = self.connection.clone();
         cx.spawn(async move |this, cx| {
             let answered = connection
@@ -780,7 +911,7 @@ impl SessionsStore {
             if answered.is_err() {
                 this.update(cx, |this, cx| {
                     this.answered_questions.remove(&question);
-                    cx.notify();
+                    this.changed(StoreChanged::OTHER, cx);
                 })
                 .ok();
             }
@@ -802,7 +933,7 @@ impl SessionsStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<(), String>> {
         self.answered.insert(approval, option_id.clone());
-        cx.notify();
+        self.changed(StoreChanged::OTHER, cx);
         let connection = self.connection.clone();
         cx.spawn(async move |this, cx| {
             let answered = connection
@@ -812,7 +943,7 @@ impl SessionsStore {
             if answered.is_err() {
                 this.update(cx, |this, cx| {
                     this.answered.remove(&approval);
-                    cx.notify();
+                    this.changed(StoreChanged::OTHER, cx);
                 })
                 .ok();
             }
@@ -861,7 +992,7 @@ impl SessionsStore {
                 self.last_focused = session;
             }
             self.report_focus(cx);
-            cx.notify();
+            self.changed(StoreChanged::FOCUS, cx);
         }
     }
 
@@ -907,7 +1038,7 @@ impl SessionsStore {
     /// The user looked at `session`.
     pub fn mark_read(&mut self, session: SessionId, cx: &mut Context<Self>) {
         if self.attention.mark_read(session) {
-            cx.notify();
+            self.changed(StoreChanged::ATTENTION, cx);
         }
     }
 
@@ -957,7 +1088,7 @@ impl SessionsStore {
             self.assistant_pinned.remove(&workspace)
         };
         if changed {
-            cx.notify();
+            self.changed(StoreChanged::OTHER, cx);
         }
     }
 
@@ -965,7 +1096,7 @@ impl SessionsStore {
     pub fn set_assistant_file_choice(&mut self, named: bool, cx: &mut Context<Self>) {
         if self.assistant_file_choice != Some(named) {
             self.assistant_file_choice = Some(named);
-            cx.notify();
+            self.changed(StoreChanged::OTHER, cx);
         }
     }
 
@@ -999,7 +1130,7 @@ impl SessionsStore {
         for terminal in self.terminals.values().filter_map(WeakEntity::upgrade) {
             terminal.update(cx, |terminal, cx| terminal.set_daemon_stopped(stopped, cx));
         }
-        cx.notify();
+        self.changed(StoreChanged::CONNECTION | StoreChanged::OTHER, cx);
     }
 
     /// The attachment of `session`'s terminal if some view holds it right now; never attaches.
@@ -1243,7 +1374,7 @@ impl SessionsStore {
             this.update(cx, |this, cx| {
                 this.tasks.merge_listed(listed);
                 this.tasks_loading = None;
-                cx.notify();
+                this.changed(StoreChanged::TASKS, cx);
             })
             .ok();
         }));

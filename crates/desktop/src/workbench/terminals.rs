@@ -843,7 +843,10 @@ impl Workbench {
                 hutan_terminal_view::ViewStatus::Ended(_)
             )
         });
-        let mut root = div().relative().size_full().child(view);
+        let mut root = div()
+            .relative()
+            .size_full()
+            .child(super::render::cached_view(&self.regions, view));
         if self.daemon.stopped {
             // The user stopped the daemon: one banner with the way back, instead of Close.
             root = root.child(
@@ -1123,6 +1126,7 @@ impl Workbench {
             self.on_integrations_setting_changed(cx);
         }
         self.on_mac_settings_changed(changes, window, cx);
+        self.invalidate_cached_views(cx);
         cx.notify();
     }
 

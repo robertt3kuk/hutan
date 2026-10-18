@@ -10,9 +10,6 @@ use gpui::{
 };
 use hutan_core::{SessionId, SessionKind};
 use hutan_protocol::messages::SessionInfo;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
 
 use crate::icons::{Icon, icon};
 use crate::sessions::{AgentBadge, PlacementBadge, Presentation, Tone};
@@ -54,7 +51,7 @@ pub fn agent_badge(
     badge: &AgentBadge,
     site: BadgeSite,
     session: SessionId,
-    regions: &Rc<RefCell<HashMap<Region, gpui::Bounds<gpui::Pixels>>>>,
+    regions: &crate::workbench::regions::Regions,
     cx: &App,
 ) -> Option<AnyElement> {
     if badge.is_empty() {
@@ -102,7 +99,7 @@ pub fn placement_badge(
     badge: &PlacementBadge,
     site: BadgeSite,
     session: SessionId,
-    regions: &Rc<RefCell<HashMap<Region, gpui::Bounds<gpui::Pixels>>>>,
+    regions: &crate::workbench::regions::Regions,
     cx: &App,
 ) -> AnyElement {
     let tokens = UiStyle::get(cx).density.ui();
@@ -149,7 +146,7 @@ pub fn recovery_chip(
     site: BadgeSite,
     session: SessionId,
     compact: bool,
-    regions: &Rc<RefCell<HashMap<Region, gpui::Bounds<gpui::Pixels>>>>,
+    regions: &crate::workbench::regions::Regions,
     cx: &App,
 ) -> AnyElement {
     let tokens = UiStyle::get(cx).density.ui();

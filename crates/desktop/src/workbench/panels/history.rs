@@ -15,7 +15,9 @@
 //! `OpenHistoryDirectory`, `RevealHistoryFile`) are the workbench's. Rendering is in
 //! `history_view.rs`.
 
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
@@ -38,6 +40,7 @@ use super::history_catalog::{
     session_id_text,
 };
 use super::history_model::{Filters, HutanTarget, SOURCES, shell_join};
+use crate::sessions::StoreChanged;
 use crate::settings::{HistoryScope as SettingsScope, HistorySettings};
 use crate::workbench::actions::{
     CopyHistoryCommand, Notify, OpenHistoryDirectory, OpenHistoryFile, OpenHistoryHit,
@@ -155,6 +158,16 @@ pub struct HistoryPanel {
     /// The last failed request, shown in the index details.
     pub(super) error: Option<String>,
     was_connected: bool,
+    /// Times the panel was rendered (tests).
+    renders: usize,
+    /// What each row shows that takes work to make, by item index, as of the last rebuild (see
+    /// [`RowText`](super::history_view::RowText)).
+    pub(super) row_cache: RefCell<HashMap<usize, super::history_view::RowText>>,
+    /// The user's home directory, read once (rows shorten paths against it).
+    pub(super) home: Option<PathBuf>,
+    /// `history.show_snippets` and the time, as of this frame: rows do not read them again.
+    pub(super) show_snippets: bool,
+    pub(super) render_ms: u64,
     /// The container and project the workbench showed when the catalog was last asked.
     last_ids: (Option<WorkspaceId>, Option<WorkspaceId>),
     /// Focus the search field once it is on screen.
@@ -191,27 +204,41 @@ fn index_rows(info: &HistoryStatusInfo) -> u64 {
 
 impl HistoryPanel {
     pub fn new(env: PanelEnv, cx: &mut Context<Self>) -> Self {
-        cx.observe(&env.sessions, |this, sessions, cx| {
-            let store = sessions.read(cx);
-            let connected = store.connection_state() == ConnectionState::Connected;
-            let ids = (store.active_workspace_id(), store.active_project_id());
-            if connected && !this.was_connected {
-                this.was_connected = true;
-                this.refresh_status(cx);
-                this.reload(false, cx);
-            }
-            this.was_connected = connected;
-            if ids != this.last_ids {
-                this.last_ids = ids;
-                // The workspace or project in view moved: a scoped list is another list.
-                if this.scope != HistoryScope::All {
-                    this.top_wanted = true;
-                    this.reload(false, cx);
-                    this.search(false, cx);
+        // The panel is a function of the connection, of the workspace and project in view
+        // (its scope), of their names and of which sessions exist; a notification about
+        // anything else (a session's title or state, the focus, attention) is not its business.
+        cx.subscribe(
+            &env.sessions,
+            |this, sessions, change: &StoreChanged, cx| {
+                if !change.intersects(
+                    StoreChanged::CONNECTION
+                        | StoreChanged::ACTIVE
+                        | StoreChanged::WORKSPACES
+                        | StoreChanged::SESSIONS,
+                ) {
+                    return;
                 }
-            }
-            cx.notify();
-        })
+                let store = sessions.read(cx);
+                let connected = store.connection_state() == ConnectionState::Connected;
+                let ids = (store.active_workspace_id(), store.active_project_id());
+                if connected && !this.was_connected {
+                    this.was_connected = true;
+                    this.refresh_status(cx);
+                    this.reload(false, cx);
+                }
+                this.was_connected = connected;
+                if ids != this.last_ids {
+                    this.last_ids = ids;
+                    // The workspace or project in view moved: a scoped list is another list.
+                    if this.scope != HistoryScope::All {
+                        this.top_wanted = true;
+                        this.reload(false, cx);
+                        this.search(false, cx);
+                    }
+                }
+                cx.notify();
+            },
+        )
         .detach();
         let timer = cx.spawn(async move |this, cx| {
             loop {
@@ -274,6 +301,11 @@ impl HistoryPanel {
             busy: None,
             error: None,
             was_connected,
+            renders: 0,
+            row_cache: RefCell::new(HashMap::new()),
+            home: std::env::home_dir(),
+            show_snippets: true,
+            render_ms: now_ms(),
             last_ids: (workspace, project),
             focus_wanted: false,
             search_task: None,
@@ -432,8 +464,7 @@ impl HistoryPanel {
     pub fn is_narrow(&self) -> bool {
         self.env
             .regions
-            .borrow()
-            .get(&crate::workbench::Region::History("panel"))
+            .get(crate::workbench::Region::History("panel"))
             .is_some_and(|b| f32::from(b.size.width) < NARROW_WIDTH)
     }
 
@@ -492,6 +523,12 @@ impl HistoryPanel {
 
     pub(super) fn mark_drawn(&mut self) {
         self.drawn = true;
+        self.renders += 1;
+    }
+
+    /// How many times the panel was rendered (tests).
+    pub fn renders(&self) -> usize {
+        self.renders
     }
 
     // ---- searching and filtering -----------------------------------------------------------
@@ -834,7 +871,8 @@ impl HistoryPanel {
             let top = self.list.logical_scroll_top();
             (self.entry_id(top.item_ix), top)
         });
-        let home = std::env::home_dir();
+        self.row_cache.borrow_mut().clear();
+        let home = self.home.clone();
         match &self.results {
             Results::Hits(hits) => {
                 self.items = hits.iter().map(SessionItem::from_hit).collect();

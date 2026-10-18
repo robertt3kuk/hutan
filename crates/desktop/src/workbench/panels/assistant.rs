@@ -1202,6 +1202,7 @@ impl AssistantPanel {
 
 impl Render for AssistantPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.env.regions.rendered(cx.entity_id());
         self.ensure_open(cx);
         if self.focus_wanted
             && let Some(chat) = self.session(cx).and_then(|s| self.chats.get(&s))

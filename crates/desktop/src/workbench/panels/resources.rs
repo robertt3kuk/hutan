@@ -18,7 +18,7 @@ use tokio::sync::broadcast::error::RecvError;
 use gpui::{
     AnyElement, App, Context, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
     MouseButton, MouseDownEvent, ParentElement, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement, Styled, Task, Window, div, prelude::*, px, relative,
+    StatefulInteractiveElement, Styled, Task, Window, canvas, div, prelude::*, px, relative,
 };
 use hutan_client::{ClientError, Connection, ConnectionState, Notice};
 use hutan_core::{NodeKind, SessionId};
@@ -1146,6 +1146,7 @@ impl ResourcesPanel {
 
 impl Render for ResourcesPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.env.regions.rendered(cx.entity_id());
         self.ensure_feed(cx);
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
@@ -1154,8 +1155,7 @@ impl Render for ResourcesPanel {
         let compact = self
             .env
             .regions
-            .borrow()
-            .get(&Region::ResourceControl("panel"))
+            .get(Region::ResourceControl("panel"))
             .is_some_and(|bounds| bounds.size.width < px(COMPACT_BELOW));
 
         // The headline numbers: what the sessions add up to.
@@ -1399,5 +1399,21 @@ impl Render for ResourcesPanel {
             .child(columns)
             .child(list)
             .child(probe(&self.env.regions, Region::ResourceControl("panel")))
+            .child(
+                // The layout above was chosen from the width of the last frame; when this
+                // frame's width is on the other side of the line, draw once more.
+                canvas(
+                    |bounds, _, _| bounds,
+                    move |_, bounds, window, cx| {
+                        if (bounds.size.width < px(COMPACT_BELOW)) != compact {
+                            cx.notify(window.current_view());
+                        }
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
     }
 }

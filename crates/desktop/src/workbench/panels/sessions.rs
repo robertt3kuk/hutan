@@ -27,6 +27,7 @@ use super::common::{
     recovery_chip, state_dot, time_tooltip, tone_color,
 };
 use crate::icons::{Icon, icon};
+use crate::sessions::StoreChanged;
 use crate::sessions::tree::{self, Node, ProjectNode, folder_label, session_folder};
 use crate::settings::{
     GroupBy, SessionsPanelSettings, SidebarSettings, WorkspaceSort, WorkspacesSettings,
@@ -212,6 +213,9 @@ pub struct SessionsPanel {
     renaming: Option<Renaming>,
     /// Counts the store's notifications: part of what the cached entries are keyed by.
     store_rev: u64,
+    /// Times the panel was rendered (tests: a store notification that changes nothing the
+    /// panel shows must not render it).
+    renders: usize,
     /// Drawn since the age timer last looked.
     drawn: bool,
     /// The entries of the last layout and what they were made from. A frame never rebuilds
@@ -239,9 +243,15 @@ impl std::fmt::Debug for SessionsPanel {
 
 impl SessionsPanel {
     pub fn new(env: PanelEnv, cx: &mut Context<Self>) -> Self {
-        cx.observe(&env.sessions, |this, _, cx| {
-            this.store_rev += 1;
-            cx.notify();
+        // Only what the list is made of rebuilds it; a move of the focus repaints the
+        // highlight; the rest (answers given here, flags nothing lists) is not its business.
+        cx.subscribe(&env.sessions, |this, _, change: &StoreChanged, cx| {
+            if change.intersects(StoreChanged::LISTED) {
+                this.store_rev += 1;
+                cx.notify();
+            } else if change.intersects(StoreChanged::FOCUS) {
+                cx.notify();
+            }
         })
         .detach();
         let ages = cx.spawn(async move |this, cx| {
@@ -271,6 +281,7 @@ impl SessionsPanel {
             anchor: None,
             renaming: None,
             store_rev: 0,
+            renders: 0,
             drawn: false,
             layout_cache: RefCell::new(None),
             layout_builds: Cell::new(0),
@@ -289,6 +300,11 @@ impl SessionsPanel {
             rows_rendered: Cell::new(0),
             _ages: ages,
         }
+    }
+
+    /// How many times the panel was rendered (tests).
+    pub fn renders(&self) -> usize {
+        self.renders
     }
 
     /// How many times the entries were built (tests: a frame must not build them).
@@ -925,11 +941,13 @@ impl Focusable for SessionsPanel {
 
 impl Render for SessionsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.env.regions.rendered(cx.entity_id());
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let settings = self.env.settings.get::<SessionsPanelSettings>();
         let ws_settings = self.env.settings.get::<WorkspacesSettings>();
         self.drawn = true;
+        self.renders += 1;
         let entries = self.entries(cx);
         self.sync_list(&entries);
         let (focused, active, active_project) = {

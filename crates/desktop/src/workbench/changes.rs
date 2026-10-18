@@ -707,6 +707,7 @@ fn status_mark(status: DiffStatus, theme: &Theme) -> (&'static str, gpui::Hsla) 
 
 impl Render for ChangesView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.env.regions.rendered(cx.entity_id());
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let look = Look::of(cx);
@@ -1157,16 +1158,16 @@ impl ChangesView {
     /// Records the view's painted bounds (what [`ChangesView::narrow`] reads next frame) and asks
     /// for another frame when the width crossed [`NARROW_BELOW`] since the layout was built.
     fn size_probe(&self, narrow: bool) -> impl IntoElement {
-        let regions = std::rc::Rc::clone(&self.env.regions);
+        let regions = self.env.regions.clone();
         let width = std::rc::Rc::clone(&self.width);
         canvas(
             |bounds, _, _| bounds,
-            move |_, bounds, window, _| {
-                regions.borrow_mut().insert(Region::Changes("root"), bounds);
+            move |_, bounds, window, cx| {
+                regions.record(window.current_view(), Region::Changes("root"), bounds);
                 width.set(Some(bounds.size.width));
                 if (bounds.size.width < px(NARROW_BELOW)) != narrow {
                     // The layout was built for the other width: build it again.
-                    window.refresh();
+                    cx.notify(window.current_view());
                 }
             },
         )

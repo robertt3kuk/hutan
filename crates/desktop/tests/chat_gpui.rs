@@ -1955,6 +1955,17 @@ fn a_question_card_is_filled_with_clicks_and_keys_and_submitted_with_cmd_enter(
     assert_eq!(values["scope"], "Only the CLI");
     assert_eq!(values["note"], "none1");
     assert_eq!(withheld, ["token"], "the secret is not in the transcript");
+    // Answering clears the question's own attention entry (the store notices a change of the
+    // daemon's question list even when no session or tree changed).
+    pump(cx, "the question to leave the attention list", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .attention_entries()
+                .iter()
+                .all(|e| e.kind != hutan_desktop::sessions::AttentionKind::Question)
+        })
+    });
     pump(cx, "the turn to end", |cx| {
         count(&model, cx, is_footer) == 1
     });
@@ -1968,8 +1979,13 @@ fn a_question_card_is_filled_with_clicks_and_keys_and_submitted_with_cmd_enter(
         json!({"answers": ["hunter2"]})
     );
     assert!(!format!("{:?}", model.read_with(cx, |m, _| m.transcript().len())).is_empty());
-    let attention = view.read_with(cx, |wb, cx| wb.sessions().read(cx).attention_entries());
-    assert!(attention.is_empty(), "{attention:?}");
+    // The daemon coalesces tree changes for `hutan_daemon::tree::EVENT_INTERVAL` (250 ms): the
+    // node leaves `Blocked` a moment after the turn ended, and with it the attention entry.
+    // Answering the question itself removes its `Question` entry at once.
+    pump(cx, "the attention entry to clear", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).attention_entries())
+            .is_empty()
+    });
 }
 
 #[gpui::test]

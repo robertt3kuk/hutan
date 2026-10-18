@@ -194,6 +194,9 @@ pub struct TerminalView {
     pub(crate) rows: RowCache,
     /// Keystroke → paint correlation, fed only while `HUTAN_TRACE_LATENCY` is on.
     latency: crate::trace::LatencyTracker,
+    /// How many times this view was painted (tests: a cached view must repaint when output
+    /// arrives).
+    paints: u64,
     /// Cursor position after the previous applied frame (tracing only).
     traced_cursor: Option<(u16, u16)>,
 
@@ -307,6 +310,7 @@ impl TerminalView {
             painted_overlay: blocks::OverlayReport::default(),
             rows: RowCache::default(),
             latency: crate::trace::LatencyTracker::default(),
+            paints: 0,
             traced_cursor: None,
             _subscriptions: subscriptions,
             blink_task: None,
@@ -694,6 +698,11 @@ impl TerminalView {
         self.marked.as_ref().map(|m| m.text.as_str())
     }
 
+    /// How many times this view was painted.
+    pub fn paints(&self) -> u64 {
+        self.paints
+    }
+
     pub(crate) fn send_ack(&self, frame: u64) {
         self.backend.ack(frame);
     }
@@ -701,6 +710,7 @@ impl TerminalView {
     /// Called when a paint of this view finished: completes the keystrokes its frame echoed and
     /// reports the first paint of a terminal that shows text (cold start trace).
     pub(crate) fn painted(&mut self) {
+        self.paints += 1;
         if !crate::trace::enabled() {
             return;
         }

@@ -303,6 +303,11 @@ impl AttentionTracker {
         self.unread.get(&id).copied()
     }
 
+    /// What is unread, for comparing before and after a change.
+    pub fn unread_map(&self) -> &BTreeMap<SessionId, Unread> {
+        &self.unread
+    }
+
     /// Sessions flagged unread.
     pub fn unread_ids(&self) -> impl Iterator<Item = SessionId> + '_ {
         self.unread.keys().copied()

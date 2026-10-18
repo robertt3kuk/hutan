@@ -3,10 +3,13 @@
 //! behind it, the list bar, the virtualized grouped list with its expandable rows, the menus, and
 //! the off-state card.
 
+use std::rc::Rc;
+
 use gpui::{
-    AnyElement, ClickEvent, Context, HighlightStyle, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, MouseDownEvent, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, StyledText, Window, anchored, deferred, div, point, prelude::*, px,
+    AnyElement, AnyView, App, ClickEvent, Context, HighlightStyle, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, StyledText, Window, anchored, deferred, div, point,
+    prelude::*, px,
 };
 use hutan_client::ConnectionState;
 use hutan_protocol::history::{HistoryScope, HistorySessionSort, HistorySource};
@@ -124,9 +127,27 @@ enum Pick {
     Row(RowAction, usize),
 }
 
+/// The tooltip of a time shown relative: the absolute local time.
+type Tooltip = Rc<dyn Fn(&mut Window, &mut App) -> AnyView>;
+
+/// What a history row shows that takes work to make (see [`HistoryPanel::row_text`]).
+pub(crate) struct RowText {
+    minute: u64,
+    title: SharedString,
+    meta: SharedString,
+    tooltip: Option<Tooltip>,
+}
+
 impl Render for HistoryPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.env.regions.rendered(cx.entity_id());
         self.mark_drawn();
+        self.show_snippets = self
+            .env
+            .settings
+            .get::<crate::settings::HistorySettings>()
+            .show_snippets;
+        self.render_ms = super::history::now_ms();
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let narrow = self.is_narrow();
@@ -1031,6 +1052,31 @@ impl HistoryPanel {
             .into_any_element()
     }
 
+    /// A row's title, meta line and the tooltip of its age, made once per item and minute: the
+    /// list asks for them again for every row it lays out, and building them formats times in
+    /// the local zone and shortens paths.
+    fn row_text(
+        &self,
+        index: usize,
+        item: &SessionItem,
+    ) -> (SharedString, SharedString, Option<Tooltip>) {
+        let minute = self.render_ms / 60_000;
+        let mut cache = self.row_cache.borrow_mut();
+        let text = match cache.get(&index) {
+            Some(text) if text.minute == minute => text,
+            _ => cache
+                .entry(index)
+                .insert_entry(RowText {
+                    minute,
+                    title: shared(item.display_title()),
+                    meta: shared(item.meta(self.home.as_deref(), self.render_ms)),
+                    tooltip: item.age_ms().map(|ms| Rc::new(time_tooltip(ms)) as Tooltip),
+                })
+                .into_mut(),
+        };
+        (text.title.clone(), text.meta.clone(), text.tooltip.clone())
+    }
+
     fn render_row(
         &mut self,
         index: usize,
@@ -1038,7 +1084,7 @@ impl HistoryPanel {
         tokens: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(item) = self.items.get(index).cloned() else {
+        let Some(item) = self.items.get(index) else {
             return div().into_any_element();
         };
         let key = item.item_key();
@@ -1049,13 +1095,8 @@ impl HistoryPanel {
             theme.right_sidebar_accent.opacity(0.6),
             theme.right_sidebar_accent,
         );
-        let home = std::env::home_dir();
-        let now = super::history::now_ms();
-        let show_snippets = self
-            .env
-            .settings
-            .get::<crate::settings::HistorySettings>()
-            .show_snippets;
+        let show_snippets = self.show_snippets;
+        let (title, meta, tooltip) = self.row_text(index, item);
 
         // The latest turn ("Agent: …"), or what matched in a full-text search.
         let preview: Option<AnyElement> = match &item.evidence {
@@ -1100,7 +1141,6 @@ impl HistoryPanel {
             }),
         };
 
-        let age = item.age_ms();
         let mut row = div()
             .id(("history-row", index))
             .relative()
@@ -1147,7 +1187,7 @@ impl HistoryPanel {
                             .text_size(px(tokens.font_size))
                             .line_height(px(20.0))
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(shared(item.display_title())),
+                            .child(title),
                     )
                     .child(
                         div()
@@ -1200,23 +1240,19 @@ impl HistoryPanel {
                     .text_size(px(tokens.secondary_font_size))
                     .line_height(px(16.0))
                     .text_color(theme.muted)
-                    .when_some(age, |s, ms| s.tooltip(time_tooltip(ms)))
+                    .when_some(tooltip, |s, tip| {
+                        s.tooltip(move |window, cx| tip(window, cx))
+                    })
                     .child(
                         div()
                             .flex_none()
                             .w(px(14.0))
                             .child(source_icon(item.source)),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(shared(item.meta(home.as_deref(), now))),
-                    ),
+                    .child(div().flex_1().min_w_0().truncate().child(meta)),
             );
         if expanded {
-            row = row.child(self.render_details(index, &item, theme, tokens, cx));
+            row = row.child(self.render_details(index, item, theme, tokens, cx));
         }
         row.child(probe(&self.env.regions, Region::HistoryItem("row", index)))
             .into_any_element()
