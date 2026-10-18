@@ -3,18 +3,21 @@
 //! ```text
 //! sources   one row per transcript file: path, size, mtime, offset, tail hash, format version,
 //!           adapter state, counters
-//! sessions  one row per indexed session (a transcript file, or a Hutan session)
+//! sessions  one row per indexed session (a transcript file, or a Hutan session), with the
+//!           summary the session catalog shows (title, first prompt, latest turns, counts)
 //! entries   one row per indexed chunk: role, timestamp, optional external key, and for a
 //!           Hutan block row the terminal and block it came from
 //! fts       FTS5 (body, idents), rowid = entries.id
+//! provider_titles  titles an agent keeps outside its transcripts (Codex `session_index.jsonl`)
 //! meta      small facts (last Hutan write)
 //! ```
 //!
 //! The database is a derived cache: a schema version this build does not know drops it and
-//! starts empty (the next scan rebuilds it from the transcripts). Version 1 (before protocol
-//! 0.15) is upgraded in place: the block columns are added, Hutan rows stay (nothing can derive
-//! them again), and the rows of the transcripts are dropped so that the next scan reads every
-//! file again.
+//! starts empty (the next scan rebuilds it from the transcripts). Versions 1 (before protocol
+//! 0.15) and 2 (before the session catalog, protocol 0.29) are upgraded in place: the missing
+//! columns are added, Hutan rows stay (nothing can derive them again; their catalog summary is
+//! rebuilt from their rows), and the rows of the transcripts are dropped so that the next scan
+//! reads every file again.
 
 use std::collections::HashMap;
 use std::fs;
@@ -27,12 +30,32 @@ use tracing::{info, warn};
 
 use crate::adapters::ParseState;
 use crate::error::{IndexError, Result};
-use crate::types::{BlockRef, Role, SessionText, Source, SourceStatus};
+use crate::summary::{Summary, Turn};
+use crate::types::{BlockRef, CatalogRow, Role, SessionText, Source, SourceStatus};
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
-/// The last schema [`open`] upgrades in place instead of rebuilding.
+/// The oldest schema [`open`] upgrades in place instead of rebuilding.
 const UPGRADABLE_FROM: u32 = 1;
+
+/// Columns of `sessions` the session catalog added (schema 3).
+const SUMMARY_COLUMNS: &str = "
+    ALTER TABLE sessions ADD COLUMN ptitle TEXT;
+    ALTER TABLE sessions ADD COLUMN first_prompt TEXT;
+    ALTER TABLE sessions ADD COLUMN latest TEXT;
+    ALTER TABLE sessions ADD COLUMN messages INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sessions ADD COLUMN model TEXT;
+    ALTER TABLE sessions ADD COLUMN branch TEXT;
+    ALTER TABLE sessions ADD COLUMN created_ms INTEGER;
+    ALTER TABLE sessions ADD COLUMN updated_ms INTEGER;
+    ALTER TABLE sessions ADD COLUMN modified_ms INTEGER;
+    ALTER TABLE sessions ADD COLUMN subagent INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE provider_titles (
+        source TEXT NOT NULL,
+        key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        PRIMARY KEY (source, key)
+    );";
 
 const SCHEMA: &str = "
 CREATE TABLE sources (
@@ -55,7 +78,17 @@ CREATE TABLE sessions (
     key TEXT NOT NULL,
     source_id INTEGER UNIQUE REFERENCES sources(id) ON DELETE CASCADE,
     title TEXT,
-    cwd TEXT
+    cwd TEXT,
+    ptitle TEXT,
+    first_prompt TEXT,
+    latest TEXT,
+    messages INTEGER NOT NULL DEFAULT 0,
+    model TEXT,
+    branch TEXT,
+    created_ms INTEGER,
+    updated_ms INTEGER,
+    modified_ms INTEGER,
+    subagent INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX sessions_hutan_key ON sessions(source, key) WHERE source_id IS NULL;
 CREATE TABLE entries (
@@ -72,6 +105,12 @@ CREATE INDEX entries_ts ON entries(ts_ms);
 CREATE UNIQUE INDEX entries_ext ON entries(session_id, ext_key) WHERE ext_key IS NOT NULL;
 CREATE VIRTUAL TABLE fts USING fts5(body, idents, tokenize = 'unicode61 remove_diacritics 2');
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE provider_titles (
+    source TEXT NOT NULL,
+    key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    PRIMARY KEY (source, key)
+);
 ";
 
 /// Companion files SQLite keeps next to the database in WAL mode.
@@ -106,13 +145,13 @@ pub fn open(path: &Path) -> Result<Connection> {
     let version: u32 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(IndexError::sqlite("reading the index schema version"))?;
-    if version == UPGRADABLE_FROM {
+    if (UPGRADABLE_FROM..SCHEMA_VERSION).contains(&version) {
         info!(
             found = version,
             wanted = SCHEMA_VERSION,
             "history index schema changed; upgrading it and re-reading the transcripts"
         );
-        upgrade_from_v1(&mut conn)?;
+        upgrade(&mut conn, version)?;
     } else if version != SCHEMA_VERSION {
         if version != 0 {
             info!(
@@ -140,21 +179,69 @@ pub fn open(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Schema 1 → 2: entries gain `terminal_id` and `block_id`. Rows of transcripts are dropped
-/// (with their `sources` rows, so the stat pass finds every file new and reads it again);
-/// Hutan rows are kept, without a block they can point at.
-fn upgrade_from_v1(conn: &mut Connection) -> Result<()> {
+/// Schema 1 or 2 → 3: version 1 entries gain `terminal_id` and `block_id`; sessions gain the
+/// catalog summary. Rows of transcripts are dropped (with their `sources` rows, so the stat
+/// pass finds every file new and reads it again); Hutan rows are kept, without a block they
+/// can point at, and their summaries are rebuilt from those rows.
+fn upgrade(conn: &mut Connection, from: u32) -> Result<()> {
     let context = "upgrading the index schema";
     let tx = conn.transaction().map_err(IndexError::sqlite(context))?;
-    tx.execute_batch(
-        "ALTER TABLE entries ADD COLUMN terminal_id INTEGER;
-         ALTER TABLE entries ADD COLUMN block_id INTEGER;",
-    )
-    .map_err(IndexError::sqlite(context))?;
+    if from == 1 {
+        tx.execute_batch(
+            "ALTER TABLE entries ADD COLUMN terminal_id INTEGER;
+             ALTER TABLE entries ADD COLUMN block_id INTEGER;",
+        )
+        .map_err(IndexError::sqlite(context))?;
+    }
+    tx.execute_batch(SUMMARY_COLUMNS)
+        .map_err(IndexError::sqlite(context))?;
     delete_external(&tx)?;
+    rebuild_hutan_summaries(&tx)?;
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(IndexError::sqlite(context))?;
     tx.commit().map_err(IndexError::sqlite(context))
+}
+
+/// Folds the stored rows of every Hutan session into its catalog summary again (what the
+/// daemon's records would have built had the session catalog existed).
+fn rebuild_hutan_summaries(conn: &Connection) -> Result<()> {
+    let context = "rebuilding the summaries of Hutan sessions";
+    let ids: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT id FROM sessions WHERE source = 'hutan'")
+            .map_err(IndexError::sqlite(context))?;
+        stmt.query_map([], |row| row.get(0))
+            .map_err(IndexError::sqlite(context))?
+            .collect::<Result<_, _>>()
+            .map_err(IndexError::sqlite(context))?
+    };
+    for id in ids {
+        let mut summary = Summary::default();
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT e.role, e.ts_ms, f.body FROM entries e JOIN fts f ON f.rowid = e.id
+                     WHERE e.session_id = ?1 AND (e.ext_key IS NULL OR e.ext_key NOT LIKE '%#%')
+                     ORDER BY COALESCE(e.ts_ms, 0), e.id",
+                )
+                .map_err(IndexError::sqlite(context))?;
+            let mut rows = stmt.query([id]).map_err(IndexError::sqlite(context))?;
+            while let Some(row) = rows.next().map_err(IndexError::sqlite(context))? {
+                let role: String = row.get(0).map_err(IndexError::sqlite(context))?;
+                let ts: Option<i64> = row.get(1).map_err(IndexError::sqlite(context))?;
+                let body: String = row.get(2).map_err(IndexError::sqlite(context))?;
+                let ts = ts.and_then(|t| u64::try_from(t).ok());
+                match role.parse().unwrap_or(Role::Tool) {
+                    role @ (Role::User | Role::Assistant | Role::Command) => {
+                        summary.note_message(role, ts, &body);
+                    }
+                    Role::Tool | Role::Output => summary.note_time(ts),
+                }
+            }
+        }
+        save_summary(conn, id, &summary, None)?;
+    }
+    Ok(())
 }
 
 fn open_raw(path: &Path) -> Result<Connection> {
@@ -399,6 +486,198 @@ pub fn ensure_session(
     }
 }
 
+/// Writes the catalog summary of a session (the session row exists). `modified_ms` is when the
+/// transcript was last read; `None` keeps the stored value.
+pub fn save_summary(
+    conn: &Connection,
+    session_id: i64,
+    summary: &Summary,
+    modified_ms: Option<u64>,
+) -> Result<()> {
+    let latest = if summary.latest.is_empty() {
+        None
+    } else {
+        serde_json::to_string(&summary.latest).ok()
+    };
+    conn.execute(
+        "UPDATE sessions SET ptitle = ?2, first_prompt = ?3, latest = ?4, messages = ?5,
+             model = ?6, branch = ?7, created_ms = ?8, updated_ms = ?9,
+             modified_ms = COALESCE(?10, modified_ms), subagent = ?11
+         WHERE id = ?1",
+        params![
+            session_id,
+            summary.provider_title(),
+            summary.first_prompt,
+            latest,
+            summary.messages,
+            summary.model,
+            summary.branch,
+            summary.created_ms.map(to_i64),
+            summary.updated_ms.map(to_i64),
+            modified_ms.map(to_i64),
+            summary.subagent,
+        ],
+    )
+    .map_err(IndexError::sqlite("writing a session summary"))?;
+    Ok(())
+}
+
+/// The summary stored for a session (what a Hutan record is folded into).
+pub fn load_summary(conn: &Connection, session_id: i64) -> Result<Summary> {
+    conn.query_row(
+        "SELECT ptitle, first_prompt, latest, messages, model, branch, created_ms, updated_ms, subagent
+         FROM sessions WHERE id = ?1",
+        [session_id],
+        |row| {
+            let latest: Option<String> = row.get(2)?;
+            let time = |index| -> rusqlite::Result<Option<u64>> {
+                Ok(row.get::<_, Option<i64>>(index)?.map(to_u64))
+            };
+            Ok(Summary {
+                custom_title: None,
+                generated_title: row.get(0)?,
+                first_prompt: row.get(1)?,
+                latest: latest
+                    .and_then(|json| serde_json::from_str::<Vec<Turn>>(&json).ok())
+                    .unwrap_or_default(),
+                messages: u32::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
+                model: row.get(4)?,
+                branch: row.get(5)?,
+                created_ms: time(6)?,
+                updated_ms: time(7)?,
+                subagent: row.get(8)?,
+            })
+        },
+    )
+    .map_err(IndexError::sqlite("reading a session summary"))
+}
+
+/// Conversation records of a Hutan session: chat messages and terminal commands, one per
+/// record (the chunks of a long record are not counted again, a record pushed twice is one).
+pub fn count_hutan_messages(conn: &Connection, session_id: i64) -> Result<u32> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM entries
+             WHERE session_id = ?1 AND role IN ('user', 'assistant', 'command')
+               AND (ext_key IS NULL OR ext_key NOT LIKE '%#%')",
+            [session_id],
+            |row| row.get(0),
+        )
+        .map_err(IndexError::sqlite("counting the messages of a session"))?;
+    Ok(u32::try_from(count).unwrap_or(u32::MAX))
+}
+
+/// Replaces the titles `source` keeps outside its transcripts (Codex `session_index.jsonl`).
+pub fn replace_provider_titles(
+    conn: &mut Connection,
+    source: Source,
+    titles: &[(String, String)],
+) -> Result<()> {
+    let context = "writing provider titles";
+    let tx = conn.transaction().map_err(IndexError::sqlite(context))?;
+    tx.execute(
+        "DELETE FROM provider_titles WHERE source = ?1",
+        [source.as_str()],
+    )
+    .map_err(IndexError::sqlite(context))?;
+    {
+        let mut insert = tx
+            .prepare(
+                "INSERT OR REPLACE INTO provider_titles (source, key, title) VALUES (?1, ?2, ?3)",
+            )
+            .map_err(IndexError::sqlite(context))?;
+        for (key, title) in titles {
+            insert
+                .execute(params![source.as_str(), key, title])
+                .map_err(IndexError::sqlite(context))?;
+        }
+    }
+    tx.commit().map_err(IndexError::sqlite(context))
+}
+
+/// One row per session of `sources` that has something to show (a message, or a title the
+/// agent gave), sub-agents left out. Two files that claim the same session id (a forked Codex
+/// rollout copies its parent's header) are one session: the most recently updated wins.
+pub fn catalog(conn: &Connection, sources: &[Source]) -> Result<Vec<CatalogRow>> {
+    let context = "reading the session catalog";
+    if sources.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "SELECT s.source, s.key, s.title, s.ptitle, pt.title, s.first_prompt, s.latest, s.messages,
+                s.model, s.branch, s.cwd, s.created_ms, s.updated_ms, s.modified_ms, src.path
+         FROM sessions s
+         LEFT JOIN sources src ON src.id = s.source_id
+         LEFT JOIN provider_titles pt ON pt.source = s.source AND pt.key = s.key
+         WHERE s.subagent = 0 AND s.source IN ({})
+           AND (s.messages > 0
+                OR (s.source <> 'hutan' AND (s.ptitle IS NOT NULL OR pt.title IS NOT NULL)))",
+        vec!["?"; sources.len()].join(",")
+    );
+    let mut stmt = conn.prepare(&sql).map_err(IndexError::sqlite(context))?;
+    let mut rows = stmt
+        .query(rusqlite::params_from_iter(
+            sources.iter().map(|s| s.as_str()),
+        ))
+        .map_err(IndexError::sqlite(context))?;
+    let mut by_key: HashMap<(Source, String), CatalogRow> = HashMap::new();
+    while let Some(row) = rows.next().map_err(IndexError::sqlite(context))? {
+        let get = |e| IndexError::sqlite(context)(e);
+        let source: String = row.get(0).map_err(get)?;
+        let source: Source = source.parse().unwrap_or(Source::Claude);
+        let key: String = row.get(1).map_err(get)?;
+        let session_title: Option<String> = row.get(2).map_err(get)?;
+        let provider: Option<String> = row.get(3).map_err(get)?;
+        let indexed_title: Option<String> = row.get(4).map_err(get)?;
+        let first_prompt: Option<String> = row.get(5).map_err(get)?;
+        let latest: Option<String> = row.get(6).map_err(get)?;
+        let time = |index: usize| -> Result<Option<u64>> {
+            Ok(row.get::<_, Option<i64>>(index).map_err(get)?.map(to_u64))
+        };
+        let title = if source == Source::Hutan {
+            session_title
+        } else {
+            // The title the agent keeps outside the transcript, the one in the transcript,
+            // else what the first prompt says.
+            indexed_title.or(provider).or_else(|| {
+                first_prompt
+                    .as_deref()
+                    .and_then(crate::adapters::title_from)
+            })
+        }
+        .filter(|title| !title.trim().is_empty());
+        let item = CatalogRow {
+            source,
+            key: key.clone(),
+            title,
+            cwd: row.get(10).map_err(get)?,
+            branch: row.get(9).map_err(get)?,
+            model: row.get(8).map_err(get)?,
+            messages: u32::try_from(row.get::<_, i64>(7).map_err(get)?).unwrap_or(0),
+            created_ms: time(11)?,
+            updated_ms: time(12)?,
+            modified_ms: time(13)?,
+            first_prompt,
+            latest: latest
+                .and_then(|json| serde_json::from_str::<Vec<Turn>>(&json).ok())
+                .unwrap_or_default(),
+            path: row.get(14).map_err(get)?,
+        };
+        let recency = |row: &CatalogRow| row.updated_ms.or(row.modified_ms).unwrap_or(0);
+        match by_key.entry((source, key)) {
+            std::collections::hash_map::Entry::Occupied(mut slot) => {
+                if recency(&item) > recency(slot.get()) {
+                    slot.insert(item);
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(item);
+            }
+        }
+    }
+    Ok(by_key.into_values().collect())
+}
+
 /// Adds one chunk. With an `ext_key`, an earlier row of the session with the same key is
 /// replaced. `block` says which terminal block a Hutan command or output row came from.
 #[expect(clippy::too_many_arguments, reason = "one row, one column each")]
@@ -495,6 +774,27 @@ pub fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
     conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
         .optional()
         .map_err(IndexError::sqlite("reading index metadata"))
+}
+
+/// How many transcript files each source has in `sources`.
+pub fn file_counts(conn: &Connection) -> Result<HashMap<Source, u64>> {
+    let context = "counting transcript files";
+    let mut stmt = conn
+        .prepare("SELECT source, COUNT(*) FROM sources GROUP BY source")
+        .map_err(IndexError::sqlite(context))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(IndexError::sqlite(context))?;
+    let mut counts = HashMap::new();
+    for row in rows {
+        let (source, count) = row.map_err(IndexError::sqlite(context))?;
+        if let Ok(source) = source.parse() {
+            counts.insert(source, to_u64(count));
+        }
+    }
+    Ok(counts)
 }
 
 /// Per-source counters for `status`, one entry for each of `sources`.

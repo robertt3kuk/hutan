@@ -23,6 +23,7 @@ use crate::adapters::{
 use crate::error::{IndexError, Result};
 use crate::redact::redact;
 use crate::store::{self, SourceRow, Stamp};
+use crate::summary::Summary;
 use crate::text::{chunks, idents};
 use crate::types::{Entry, Role};
 
@@ -301,6 +302,10 @@ pub fn process_file(
         None => (
             ParseState {
                 key: adapter.key_from_path(path),
+                summary: Summary {
+                    subagent: adapter.is_subagent(path),
+                    ..Summary::default()
+                },
                 ..ParseState::default()
             },
             0,
@@ -424,17 +429,17 @@ pub fn process_file(
                 }
             }
         }
-        // Title, cwd, and key may have changed on lines that carry no text.
-        if rows > 0 || session_id.is_some() {
-            store::ensure_session(
-                &tx,
-                adapter.source(),
-                &state.key,
-                Some(source_row.id),
-                state.title.as_deref(),
-                state.cwd.as_deref(),
-            )?;
-        }
+        // Title, cwd, key and the catalog summary may have changed on lines that carry no
+        // text (and a file with nothing to index still has its place in the catalog).
+        let id = store::ensure_session(
+            &tx,
+            adapter.source(),
+            &state.key,
+            Some(source_row.id),
+            state.title.as_deref(),
+            state.cwd.as_deref(),
+        )?;
+        store::save_summary(&tx, id, &state.summary, Some(mtime_ms))?;
         source_row.offset = offset;
         source_row.tail_hash = tail.hash();
         source_row.state = state.clone();
@@ -474,9 +479,27 @@ fn reread_head(path: &Path, adapter: &dyn Adapter, state: &mut ParseState) {
         return;
     }
     if let Ok(text) = std::str::from_utf8(&head) {
-        // Entries of this line are dropped: the line itself was indexed when it was appended.
+        // Entries of this line are dropped: the line itself was indexed (and folded into the
+        // summary) when it was appended; only the titles it carries are taken again.
+        let folded = state.summary.clone();
         let _ = adapter.parse_line(text.trim_end(), state);
+        let (custom, generated) = (
+            state.summary.custom_title.clone(),
+            state.summary.generated_title.clone(),
+        );
+        state.summary = folded;
+        state.summary.custom_title = custom;
+        state.summary.generated_title = generated;
     }
+}
+
+/// What one `stat` pass found below a source root.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Listing {
+    /// The transcript files that are new or whose stamp differs from the `sources` table.
+    pub changed: Vec<PathBuf>,
+    /// Every transcript file the adapter reads (inside the history range), changed or not.
+    pub total: u64,
 }
 
 /// The transcript files below `root` that `adapter` reads and whose stamp differs from the
@@ -487,9 +510,19 @@ pub fn changed_files(
     root: &Path,
     cutoff_ms: u64,
 ) -> Result<Vec<PathBuf>> {
+    Ok(list_files(conn, adapter, root, cutoff_ms)?.changed)
+}
+
+/// [`changed_files`], and how many transcript files there are in all.
+pub fn list_files(
+    conn: &Connection,
+    adapter: &dyn Adapter,
+    root: &Path,
+    cutoff_ms: u64,
+) -> Result<Listing> {
     let known: HashMap<String, Stamp> = store::all_stamps(conn)?;
     let version = adapter.format_version();
-    let mut changed = Vec::new();
+    let mut listing = Listing::default();
     for_each_file(root, &mut |path, meta| {
         if !adapter.accepts(path) {
             return;
@@ -498,16 +531,17 @@ pub fn changed_files(
         if cutoff_ms > 0 && u64::try_from(mtime / 1_000_000).unwrap_or(0) < cutoff_ms {
             return;
         }
+        listing.total += 1;
         let stamp = Stamp {
             size: meta.len(),
             mtime_ns: mtime,
             format_version: version,
         };
         if known.get(path.to_string_lossy().as_ref()) != Some(&stamp) {
-            changed.push(path.to_owned());
+            listing.changed.push(path.to_owned());
         }
     });
-    Ok(changed)
+    Ok(listing)
 }
 
 /// Calls `visit` for every regular file below `root` (symlinks are not followed).

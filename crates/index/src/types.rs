@@ -3,6 +3,10 @@
 use std::fmt;
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
+
+use crate::summary::Turn;
+
 /// Where an indexed session came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Source {
@@ -44,7 +48,8 @@ impl FromStr for Source {
 }
 
 /// Who or what wrote an indexed row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Role {
     User,
     Assistant,
@@ -222,4 +227,44 @@ pub struct SessionText {
     pub ts_ms: Option<u64>,
     /// Redacted text, as indexed.
     pub text: String,
+}
+
+/// One session of the catalog (`history.sessions`), before the daemon attributes it to a
+/// project, filters and sorts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogRow {
+    pub source: Source,
+    /// The session's id in its source (the Hutan session id for [`Source::Hutan`]).
+    pub key: String,
+    /// The agent's own title (the one the user gave, the generated one, Codex's
+    /// `session_index.jsonl`), else the first line of the first prompt; a Hutan session's
+    /// title; `None` without a prompt.
+    pub title: Option<String>,
+    pub cwd: Option<String>,
+    pub branch: Option<String>,
+    pub model: Option<String>,
+    pub messages: u32,
+    pub created_ms: Option<u64>,
+    pub updated_ms: Option<u64>,
+    /// When the transcript file was last read (a fallback for sorting and display).
+    pub modified_ms: Option<u64>,
+    pub first_prompt: Option<String>,
+    /// Oldest first, at most three.
+    pub latest: Vec<Turn>,
+    /// The transcript file (absolute, as it was scanned); `None` for Hutan sessions.
+    pub path: Option<String>,
+}
+
+/// The last (or running) look at the transcript files.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ScanInfo {
+    /// Transcript files found, all sources.
+    pub files: u64,
+    /// Files looked at so far in a running scan; equals `files` when it is done.
+    pub done: u64,
+    pub scanning: bool,
+    /// When the last complete scan finished (Unix milliseconds).
+    pub finished_ms: Option<u64>,
+    /// Files found per source (the sources with a transcript root).
+    pub per_source: Vec<(Source, u64)>,
 }

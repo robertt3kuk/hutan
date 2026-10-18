@@ -182,8 +182,11 @@ impl Ctx {
     }
 
     pub(super) async fn history(&self, args: HistoryArgs) -> Result<(), CliError> {
+        let target = args
+            .target
+            .ok_or_else(|| CliError::Usage("history needs a session".to_owned()))?;
         let client = self.connect().await?;
-        let session = self.resolve(&client, &args.target).await?;
+        let session = self.resolve(&client, &target).await?;
         if session.kind == hutan_core::SessionKind::Harness {
             return Err(CliError::Failed(format!(
                 "session {} is a chat session; `hutan chat log` prints its history",

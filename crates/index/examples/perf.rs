@@ -290,6 +290,21 @@ fn main() {
         hits.len()
     );
 
+    // The session catalog: every session of the corpus with its summary.
+    let mut catalog_times = Vec::new();
+    let mut sessions = 0;
+    for _ in 0..5 {
+        let t = Instant::now();
+        sessions = handle.catalog().unwrap().len();
+        catalog_times.push(t.elapsed());
+    }
+    catalog_times.sort();
+    println!(
+        "catalog: {sessions} sessions, median {:.1} ms (max {:.1} ms)",
+        catalog_times[catalog_times.len() / 2].as_secs_f64() * 1e3,
+        catalog_times[catalog_times.len() - 1].as_secs_f64() * 1e3
+    );
+
     // One appended line becomes searchable.
     let target = corpus.join("-work-proj0/00000000-0000-4000-8000-000000000000.jsonl");
     let before = handle.metrics().bytes_read();

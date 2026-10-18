@@ -15,7 +15,7 @@ macOS-first Rust agentic development environment: `hutand` (Tokio daemon, source
 - `docs/protocol.md` — IPC framing, handshake, sequencing, message catalog
 - `docs/roadmap.md` — milestones, slices (checkboxes), risk register
 - `docs/shell-integration.md` — automatic OSC 133/OSC 7 injection for zsh, bash, fish
-- `docs/history-index.md` — opt-in session history index and search (sources, formats, ranking, privacy, performance)
+- `docs/history-index.md` — opt-in session history index and search, and the session catalog behind `hutan history sessions` (sources, formats, ranking, titles, scopes, privacy, performance)
 - `docs/gateway.md` — direct model chat: providers (OpenAI-compatible, Anthropic, Ollama), Keychain credentials, direct chat sessions, `hutan provider` / `hutan chat` commands, tests
 - `docs/assistant.md` — assistant chat: scopes, context attachments (shell, agent transcripts, files, search), redaction and budgets, permissions, `hutan ask`
 - `docs/agents.md` — agent chat sessions: the Codex adapter, ACP harnesses (OMP, Claude Code) and accounts, `AgentEvent`, approvals, journal, how to re-record the test transcripts

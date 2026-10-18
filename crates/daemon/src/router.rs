@@ -256,10 +256,7 @@ impl Router {
             Request::HistorySearch(req) => ok(&self.history.search(req).await?),
             Request::HistoryStatus(_) => ok(&self.history.status().await?),
             // The catalog is built by slice OL-1; until then the capability is not advertised.
-            Request::HistorySessions(_) => Err(ErrorBody::new(
-                ErrorCode::Unsupported,
-                "this hutand has no session catalog (capability `history.sessions`)",
-            )),
+            Request::HistorySessions(req) => ok(&self.history.sessions(req).await?),
             Request::HistorySetEnabled(req) => ok(&self.history.set_enabled(req.enabled).await?),
             Request::HistoryClear(_) => {
                 self.history.clear().await?;

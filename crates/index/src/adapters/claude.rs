@@ -12,7 +12,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::{
-    Adapter, ParseState, Parsed, content_text, is_uuid, summarize_arguments, timestamp, title_from,
+    Adapter, ParseState, Parsed, content_text, fold_messages, is_harness_injected, is_uuid,
+    summarize_arguments, timestamp, title_from,
 };
 use crate::types::{Entry, Role, Source};
 
@@ -28,19 +29,17 @@ impl Adapter for ClaudeAdapter {
         1
     }
 
+    /// A transcript below a session directory (`<session>/subagents/agent-x.jsonl`).
+    fn is_subagent(&self, path: &Path) -> bool {
+        session_dir(path).is_some()
+    }
+
     /// The file name; for a sub-agent transcript below a session directory
     /// (`<session>/subagents/agent-x.jsonl`) the id of that session, so that resuming the hit
     /// resumes the conversation it belongs to.
     fn key_from_path(&self, path: &Path) -> String {
-        let session_dir = path
-            .parent()
-            .into_iter()
-            .flat_map(Path::ancestors)
-            .filter_map(|dir| dir.file_name())
-            .map(|name| name.to_string_lossy())
-            .find(|name| is_uuid(name));
-        match session_dir {
-            Some(id) => id.into_owned(),
+        match session_dir(path) {
+            Some(id) => id,
             None => path
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().into_owned())
@@ -58,17 +57,29 @@ impl Adapter for ClaudeAdapter {
         if let Some(cwd) = object.get("cwd").and_then(Value::as_str) {
             state.cwd = Some(cwd.to_owned());
         }
+        if let Some(branch) = object.get("gitBranch").and_then(Value::as_str) {
+            state.summary.set_branch(branch);
+        }
         let ts = object.get("timestamp").and_then(timestamp);
+        state.summary.note_time(ts);
         let kind = object
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default();
         match kind {
+            // A title the user gave beats the generated one, which beats the first prompt.
+            "custom-title" => {
+                if let Some(title) = object.get("customTitle").and_then(Value::as_str) {
+                    state.summary.set_custom_title(title);
+                }
+                Parsed::Skip
+            }
             "ai-title" => {
                 if let Some(title) = object.get("aiTitle").and_then(Value::as_str)
                     && !title.trim().is_empty()
                 {
                     state.title = Some(title.trim().to_owned());
+                    state.summary.set_generated_title(title);
                 }
                 Parsed::Skip
             }
@@ -84,11 +95,32 @@ impl Adapter for ClaudeAdapter {
                 } else {
                     Role::Assistant
                 };
-                Parsed::Entries(message_entries(role, message.get("content"), ts, state))
+                if role == Role::Assistant
+                    && let Some(model) = message.get("model").and_then(Value::as_str)
+                    && !model.starts_with('<')
+                {
+                    state.summary.set_model(model);
+                }
+                let entries = message_entries(role, message.get("content"), ts, state);
+                fold_messages(state, ts, &entries, |entry| {
+                    entry.role == Role::User && is_harness_injected(&entry.text)
+                });
+                Parsed::Entries(entries)
             }
             _ => Parsed::Skip,
         }
     }
+}
+
+/// The session directory (a UUID) a sub-agent transcript lives below, if it does.
+fn session_dir(path: &Path) -> Option<String> {
+    path.parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .filter_map(|dir| dir.file_name())
+        .map(|name| name.to_string_lossy())
+        .find(|name| is_uuid(name))
+        .map(|name| name.into_owned())
 }
 
 fn message_entries(

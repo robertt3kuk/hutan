@@ -1,20 +1,30 @@
-//! `hutan search` and `hutan index …`: the session history index (roadmap M17).
+//! `hutan search`, `hutan index …` and `hutan history sessions`: the session history index
+//! (roadmap M17) and the session catalog built on it.
 
+use std::collections::HashMap;
 use std::io::IsTerminal as _;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hutan_client::Client;
 use hutan_client::time::local_time_text;
+use hutan_core::WorkspaceId;
 use hutan_protocol::history::{
-    HistoryHit, HistoryHits, HistorySearch, HistorySetEnabled, HistorySource, HistoryStatusInfo,
+    HistoryHit, HistoryHits, HistoryScope, HistorySearch, HistorySessionSort, HistorySessions,
+    HistorySessionsRequest, HistorySetEnabled, HistorySource, HistoryStatusInfo,
 };
-use hutan_protocol::messages::{Empty, Request};
+use hutan_protocol::messages::{Empty, Request, WorkspaceInfo};
 use serde_json::Value;
 
 use super::Ctx;
-use crate::args::{IndexCommand, NewArgs, SearchArgs, SourceArg};
+use super::workspaces::{resolve_workspace, workspace_target};
+use crate::args::{
+    HistorySessionsArgs, IndexCommand, NewArgs, ScopeArg, SearchArgs, SessionSortArg, SourceArg,
+};
 use crate::error::CliError;
+
+/// Longest title in the `history sessions` table, in characters.
+const TITLE_WIDTH: usize = 60;
 
 impl Ctx {
     /// A connection to a daemon that speaks the `history.*` requests.
@@ -49,6 +59,51 @@ impl Ctx {
         self.print(&found, || {
             hits_text(&found.hits, std::io::stdout().is_terminal())
         })
+    }
+
+    /// `hutan history sessions`: the session catalog as a table (or JSON).
+    pub(super) async fn history_sessions(&self, args: HistorySessionsArgs) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        if !client.supports_history_sessions() {
+            return Err(CliError::Failed(
+                "this hutand has no session catalog (protocol 0.29); \
+                 restart it with `hutan daemon restart`"
+                    .to_owned(),
+            ));
+        }
+        let workspaces = self.workspace_list(&client).await?.workspaces;
+        let scope = match (args.scope, &args.workspace) {
+            (Some(ScopeArg::All), _) | (None, None) => HistoryScope::All,
+            (Some(ScopeArg::Workspace) | None, _) => HistoryScope::Workspace,
+            (Some(ScopeArg::Project), _) => HistoryScope::Project,
+        };
+        let workspace_id = if scope == HistoryScope::All {
+            None
+        } else {
+            let (target, _) = workspace_target(args.workspace).ok_or_else(|| {
+                CliError::Usage(
+                    "--scope workspace and --scope project need --ws <id|name> (or $HUTAN_WORKSPACE)"
+                        .to_owned(),
+                )
+            })?;
+            Some(resolve_workspace(&workspaces, &target)?.id)
+        };
+        let request = HistorySessionsRequest {
+            scope,
+            workspace_id,
+            filter: args.filter.unwrap_or_default(),
+            sort: match args.sort {
+                SessionSortArg::Updated => HistorySessionSort::Updated,
+                SessionSortArg::Created => HistorySessionSort::Created,
+            },
+            sources: args.source.iter().map(|s| source_of(*s)).collect(),
+            limit: args.limit,
+            refresh: args.refresh,
+        };
+        let answer: HistorySessions = self
+            .call(&client, Request::HistorySessions(request))
+            .await?;
+        self.print(&answer, || sessions_text(&answer, &workspaces, now_ms()))
     }
 
     /// Opens hit `number` (1-based) in a new session: its working directory, its resume command.
@@ -212,6 +267,143 @@ fn snippet_text(snippet: &str, color: bool) -> String {
     out
 }
 
+/// Text from a transcript, safe to print: escape sequences (CSI, OSC such as OSC 52 clipboard
+/// writes, two-character escapes) are dropped whole and every other control character,
+/// line breaks included, becomes a space.
+pub(crate) fn terminal_safe(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\u{1b}' => match chars.peek().copied() {
+                // CSI: parameters and intermediates, then a final byte 0x40-0x7e.
+                Some('[') => {
+                    chars.next();
+                    for next in chars.by_ref() {
+                        if ('\u{40}'..='\u{7e}').contains(&next) {
+                            break;
+                        }
+                    }
+                }
+                // OSC / DCS / SOS / PM / APC: up to BEL or the string terminator `ESC \`.
+                Some(']' | 'P' | 'X' | '^' | '_') => {
+                    chars.next();
+                    while let Some(next) = chars.next() {
+                        if next == '\u{7}' {
+                            break;
+                        }
+                        if next == '\u{1b}' {
+                            chars.next_if_eq(&'\\');
+                            break;
+                        }
+                    }
+                }
+                Some(_) => {
+                    chars.next();
+                }
+                None => {}
+            },
+            c if c.is_control() => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// At most `max` characters of `text`, ending in `…` when it was cut.
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(max.saturating_sub(1)).collect();
+    cut.push('…');
+    cut
+}
+
+/// `3m`, `2h`, `5d`: how long before `now_ms` the session was last active.
+fn age_short(now_ms: u64, then_ms: u64) -> String {
+    super::sessions::age_text(now_ms.saturating_sub(then_ms) / 1000)
+}
+
+/// The catalog for people: one line per session (agent, title, messages, age, model, project)
+/// and a footer with the counts and the scan state. Everything that came from a transcript goes
+/// through [`terminal_safe`].
+fn sessions_text(answer: &HistorySessions, workspaces: &[WorkspaceInfo], now_ms: u64) -> String {
+    let names: HashMap<WorkspaceId, &str> =
+        workspaces.iter().map(|w| (w.id, w.name.as_str())).collect();
+    let mut rows: Vec<[String; 6]> = vec![[
+        "AGENT".to_owned(),
+        "TITLE".to_owned(),
+        "MSGS".to_owned(),
+        "AGE".to_owned(),
+        "MODEL".to_owned(),
+        "PROJECT".to_owned(),
+    ]];
+    for session in &answer.sessions {
+        let title = session
+            .title
+            .as_deref()
+            .or(session.first_prompt.as_deref())
+            .unwrap_or("(untitled)");
+        rows.push([
+            session.source.as_str().to_owned(),
+            clip(terminal_safe(title).trim(), TITLE_WIDTH),
+            session.messages.to_string(),
+            session
+                .updated_ms
+                .map_or_else(|| "-".to_owned(), |ms| age_short(now_ms, ms)),
+            terminal_safe(session.model.as_deref().unwrap_or("-")),
+            session
+                .workspace_id
+                .and_then(|id| names.get(&id))
+                .map_or_else(|| "-".to_owned(), |name| terminal_safe(name)),
+        ]);
+    }
+    let mut widths = [0_usize; 5];
+    for row in &rows {
+        for (width, cell) in widths.iter_mut().zip(row) {
+            *width = (*width).max(cell.chars().count());
+        }
+    }
+    let mut out = String::new();
+    if answer.sessions.is_empty() {
+        out.push_str("no sessions\n");
+    } else {
+        for row in &rows {
+            let mut line = String::new();
+            for (column, (cell, width)) in row.iter().zip(widths).enumerate() {
+                if column == 2 {
+                    // Message counts line up on the right.
+                    line.push_str(&format!("{cell:>width$}  "));
+                } else {
+                    line.push_str(&format!("{cell:<width$}  "));
+                }
+            }
+            line.push_str(&row[5]);
+            out.push_str(line.trim_end());
+            out.push('\n');
+        }
+    }
+    out.push_str(&format!("{} of {} sessions", answer.matched, answer.loaded));
+    if (answer.sessions.len() as u64) < answer.matched {
+        out.push_str(&format!(" (showing {})", answer.sessions.len()));
+    }
+    let scan = &answer.scan;
+    if scan.scanning {
+        out.push_str(&format!(
+            " · scanning {} / {} files…",
+            scan.done, scan.files
+        ));
+    } else if let Some(finished) = scan.finished_ms {
+        out.push_str(&format!(
+            " · scanned {} files {}",
+            scan.files,
+            hutan_client::time::relative_text(now_ms, finished)
+        ));
+    }
+    out
+}
+
 fn status_text(info: &HistoryStatusInfo) -> String {
     let mut out = if info.enabled {
         "history index: enabled".to_owned()
@@ -244,7 +436,115 @@ fn status_text(info: &HistoryStatusInfo) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hutan_protocol::history::HistoryRole;
+    use hutan_protocol::history::{
+        HistoryRole, HistoryScanInfo, HistorySessionRow, HistorySourceFiles, HistoryTurn,
+    };
+
+    #[test]
+    fn terminal_safe_drops_escape_sequences_and_controls() {
+        assert_eq!(
+            terminal_safe("a\u{1b}[31mred\u{1b}[0m b\u{1b}]52;c;aGVsbG8=\u{7}c\u{1b}]0;t\u{1b}\\d"),
+            "ared bcd"
+        );
+        assert_eq!(
+            terminal_safe("one\ntwo\r\tthree\u{0}x\u{9b}y"),
+            "one two  three x y"
+        );
+        assert_eq!(terminal_safe("lone \u{1b}"), "lone ");
+        assert_eq!(terminal_safe("ünïcode ✓"), "ünïcode ✓");
+    }
+
+    fn session(key: &str, title: Option<&str>, messages: u32, ago_ms: u64) -> HistorySessionRow {
+        HistorySessionRow {
+            source: HistorySource::Omp,
+            session_key: key.into(),
+            title: title.map(str::to_owned),
+            cwd: None,
+            branch: None,
+            model: Some("gpt-5.6-luna".into()),
+            messages,
+            created_ms: None,
+            updated_ms: Some(1_000_000_000_000 - ago_ms),
+            first_prompt: Some("the first prompt".into()),
+            latest: vec![HistoryTurn {
+                role: HistoryRole::User,
+                text: "x".into(),
+                ts_ms: None,
+            }],
+            workspace_id: None,
+            resume_argv: None,
+            path: None,
+            session_id: None,
+        }
+    }
+
+    fn answer(sessions: Vec<HistorySessionRow>, matched: u64, scanning: bool) -> HistorySessions {
+        HistorySessions {
+            sessions,
+            matched,
+            loaded: 250,
+            scan: HistoryScanInfo {
+                files: 986,
+                done: 100,
+                scanning,
+                finished_ms: Some(1_000_000_000_000 - 120_000),
+                per_source: vec![HistorySourceFiles {
+                    name: "omp".into(),
+                    files: 986,
+                }],
+            },
+        }
+    }
+
+    #[test]
+    fn the_catalog_table_aligns_columns_and_counts() {
+        let long = "T".repeat(100);
+        let mut bare = session("c", None, 0, 90_000_000);
+        bare.first_prompt = None;
+        let rows = vec![
+            session("a", Some("Short"), 8, 180_000),
+            session("b", Some(&long), 1234, 7_200_000),
+            bare,
+        ];
+        let text = sessions_text(&answer(rows, 3, false), &[], 1_000_000_000_000);
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines.len(), 5, "{text}");
+        assert!(lines[0].starts_with("AGENT"), "{text}");
+        assert!(
+            lines[1].contains("Short") && lines[1].contains("3m"),
+            "{text}"
+        );
+        assert!(lines[2].contains("2h"), "{text}");
+        let clipped = format!("{}…", "T".repeat(TITLE_WIDTH - 1));
+        assert!(lines[2].contains(&clipped), "{text}");
+        assert!(
+            lines[3].contains("1d") && lines[3].contains("(untitled)"),
+            "{text}"
+        );
+        // The model column starts at the same place on every row.
+        let at = |line: &str| {
+            line.split("gpt-5.6-luna")
+                .next()
+                .map(|head| head.chars().count())
+        };
+        assert_eq!(at(lines[1]), at(lines[2]));
+        assert_eq!(lines[4], "3 of 250 sessions · scanned 986 files 2 min ago");
+
+        let cut = sessions_text(
+            &answer(vec![session("a", Some("x"), 1, 0)], 5, true),
+            &[],
+            1_000_000_000_000,
+        );
+        assert!(
+            cut.ends_with("5 of 250 sessions (showing 1) · scanning 100 / 986 files…"),
+            "{cut}"
+        );
+        let empty = sessions_text(&answer(Vec::new(), 0, false), &[], 1_000_000_000_000);
+        assert!(
+            empty.starts_with("no sessions\n0 of 250 sessions"),
+            "{empty}"
+        );
+    }
 
     fn hit() -> HistoryHit {
         HistoryHit {

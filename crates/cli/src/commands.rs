@@ -15,7 +15,9 @@ use serde_json::Value;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::sleep;
 
-use crate::args::{AgentCommand, ApiArgs, Cli, Command, DaemonCommand, EventsArgs};
+use crate::args::{
+    AgentCommand, ApiArgs, Cli, Command, DaemonCommand, EventsArgs, HistoryArgs, HistorySubcommand,
+};
 use crate::error::{CliError, is_unreachable};
 
 mod accounts;
@@ -81,6 +83,10 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Restart(args) => ctx?.restart(&args.target).await,
         Command::Recovery(args) => ctx?.recovery(args).await,
         Command::Rename(args) => ctx?.rename(args).await,
+        Command::History(HistoryArgs {
+            command: Some(HistorySubcommand::Sessions(args)),
+            ..
+        }) => ctx?.history_sessions(args).await,
         Command::History(args) => ctx?.history(args).await,
         Command::Search(args) => ctx?.search(args).await,
         Command::Index(command) => ctx?.index(command).await,

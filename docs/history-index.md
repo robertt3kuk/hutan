@@ -1,8 +1,8 @@
 # Session history index (roadmap M17)
 
-A local, opt-in full-text index over what you did and what your agents did: Hutan terminal blocks and agent state changes, and the transcripts of Claude Code, Codex and OMP. `hutan search "<query>"` finds the session, `--resume N` opens it again.
+A local, opt-in full-text index over what you did and what your agents did: Hutan terminal blocks and agent state changes, and the transcripts of Claude Code, Codex and OMP. `hutan search "<query>"` finds the session, `--resume N` opens it again. The same reading also builds a **session catalog** (one row per session: title, first prompt, latest turns, counts, model, project) that `hutan history sessions` and the desktop's Agent Session History browse (§ The session catalog).
 
-Code: `crates/index` (`hutan-index`: adapters, scanner, store, search, redaction, indexer thread), `crates/daemon/src/history.rs` (lifecycle, Hutan feed, requests), `crates/protocol/src/history.rs` (DTOs), `crates/cli/src/commands/history.rs`. Wire: `docs/protocol.md` § Session history search.
+Code: `crates/index` (`hutan-index`: adapters, scanner, store, search, session summaries, redaction, indexer thread), `crates/daemon/src/history.rs` (lifecycle, Hutan feed, requests), `crates/daemon/src/history_catalog.rs` (the session catalog), `crates/protocol/src/history.rs` (DTOs), `crates/cli/src/commands/history.rs`. Wire: `docs/protocol.md` § Session history search and § Session catalog.
 
 ## Privacy
 
@@ -49,9 +49,10 @@ A title falls back to the first line (80 characters) of the first user message. 
 
 ```text
 sources   path, source, size, mtime_ns, offset, tail_hash, format_version, adapter state (JSON), rows, errors, last_indexed_ms
-sessions  one per transcript file or Hutan session: source, key, title, cwd
+sessions  one per transcript file or Hutan session: source, key, title, cwd, and the catalog summary (ptitle, first_prompt, latest, messages, model, branch, created_ms, updated_ms, modified_ms, subagent)
 entries   one per chunk: session, role, ts_ms, ext_key (Hutan records), terminal_id + block_id (Hutan block rows, schema 2)
 fts       FTS5(body, idents; tokenize = 'unicode61 remove_diacritics 2'), rowid = entries.id
+provider_titles  titles an agent keeps outside its transcripts (Codex `session_index.jsonl`): source, key, title
 meta      small facts
 ```
 
@@ -60,7 +61,7 @@ meta      small facts
 - **Ranking.** `bm25(fts, 1.0, 2.0)` (identifier column counts double) multiplied by a role weight in SQL: command 1.4, user 1.3, assistant 1.0, tool 0.7, output 0.6. Then one hit per session: the best row, with the number of matching rows (`ROW_NUMBER`/`COUNT` window over the session), best session first; the snippet comes from FTS5 `snippet()` with `«»` around matches.
 - **Query language.** Words and `"quoted phrases"`, all must match; no operators (everything is quoted before it reaches FTS5), so punctuation can never raise a syntax error. Filters: sources, roles, project (cwd prefix), `since_ms`/`until_ms`.
 - **Where a hit comes from** (schema 2, protocol 0.15). A hit of a transcript source carries the absolute `path` of the file (`sources.path` of its session). A `hutan` command or output row stores the `terminal_id` and `block_id` of the block it was indexed from (`HutanRecord.block`), and its hit carries them. `terminal_id`s belong to one daemon run, `block_id`s to one terminal: a client compares the hit's terminal with the session's current one before it jumps to the block. Agent-report and chat rows have none, and neither have Hutan rows written before schema 2.
-- The database is a cache: a schema version (`PRAGMA user_version`) that is neither 1 nor the build's (2) drops it and starts empty. **Schema 1 → 2 is upgraded in place**: `terminal_id` and `block_id` are added to `entries`, the rows of the transcript files and their `sources` rows are dropped so that the first stat pass finds every file new and reads it again (their hits then carry `path`), and the Hutan rows stay (nothing can derive them again; they have no block). A crash in the middle leaves schema 1 and the upgrade runs again.
+- The database is a cache: a schema version (`PRAGMA user_version`) that is neither 1, 2 nor the build's (3) drops it and starts empty. **Schemas 1 and 2 are upgraded in place**: (1 → 2, protocol 0.15) `terminal_id` and `block_id` are added to `entries`; (→ 3, protocol 0.29) the catalog summary columns and `provider_titles` are added to `sessions`; the rows of the transcript files and their `sources` rows are dropped so that the first stat pass finds every file new and reads it again (their hits then carry `path`, their sessions get a summary), and the Hutan rows stay (nothing can derive them again; they have no block, and their summaries are rebuilt from their rows). A crash in the middle leaves the old schema and the upgrade runs again.
 
 ## Incremental scanning
 
@@ -84,7 +85,30 @@ meta      small facts
 | `hutan index clear` | delete `index.sqlite` (also while disabled) and, if enabled, start an empty one. Files are indexed again when they change, or on `rebuild`; Hutan rows are gone for good |
 | `hutan index rebuild` | forget everything read from transcript files and read all of them again in the background; Hutan rows are kept (they cannot be derived again) |
 | `hutan search "<query>" [--source …] [--since 7d] [--limit N] [--json]` | one hit per session: source, time, title, cwd, role, snippet, resume command |
+| `hutan history sessions [--scope all\|workspace\|project] [--ws ID\|NAME] [--filter TEXT] [--sort updated\|created] [--source …] [--limit N] [--refresh] [--json]` | the session catalog as a table (agent, title, msgs, age, model, project) and a footer (`2 of 250 sessions · scanned 986 files 3 min ago`); text from transcripts has escape sequences and control characters stripped before it reaches the terminal (`--json` carries it as it is, escaped by JSON). `--ws` alone means `--scope workspace`; `--refresh` looks at the files again first |
 | `hutan search … --resume N` | open hit N (1-based, as numbered by the same search) in a new terminal session in its cwd running its resume command (`session.create`); attaches when run from a terminal; a vanished cwd falls back to the current directory with a warning |
+
+## The session catalog
+
+`history.sessions` (protocol 0.29, `docs/protocol.md` § Session catalog) answers "what sessions are there on this machine": one row per session of the enabled sources, summarised while the indexer reads, so listing a thousand sessions takes milliseconds and never opens a transcript.
+
+**Fields.** Each row has the source and the agent's session key; `title`; `cwd`, `branch`, `model`; `messages`; `created_ms`/`updated_ms`; `first_prompt` (at most 2 000 characters); `latest` (the last 3 turns, oldest first: role, one line of at most 400 characters, time); the transcript `path`; `resume_argv`; for a Hutan session its `session_id`; and the project it belongs to (`workspace_id`, § Scopes). Every text goes through the redaction before it is kept (a prompt with a key in it shows `[REDACTED]`), and nothing but the first prompt and the last three turns is stored: the catalog is not a second copy of the transcript.
+
+**How the summary is folded.** The summary lives in the adapter's `ParseState` (persisted in `sources.state`) and is copied into the `sessions` row at every batch commit. An appended file resumes from the stored byte offset and updates the summary from the new lines only; a rewritten or truncated file is dropped and folded again from the start; OMP's title line, rewritten in place, is read again and takes only the title from it. A text part of a message is not a message: the text parts of one line (one role) are one message; tool calls and results are not counted. Records longer than 4 MiB are skipped like for the index (`MAX_LINE_BYTES`, stricter than Orca's 10 MiB), at most 3 turns are in memory per session, and a message is looked at only for its first 64 KiB.
+
+**What counts.** `messages` = user and assistant messages. For a Hutan terminal it counts the commands (terminals have no other conversation), for a Hutan chat the user and assistant messages; the latest turns of a terminal are its last commands (role `command`). Claude Code's injected turns (`<system-reminder>`, `<local-command-stdout>`, slash-command envelopes, interruption and compaction notices, the tags Orca lists as harness machinery) are not messages and never become the first prompt; a prompt that merely starts with some other `<tag>` is one. Sub-agent transcripts (Claude `<session>/subagents/…`, OMP `<ts>_<id>/…`, a Codex thread started by another thread, a session with `parentSession`) are not rows of their own. A session with neither a message nor a title the agent gave is not listed (`loaded` does not count it); a Hutan session needs at least one command or chat message.
+
+**Title precedence** (as Orca): Claude Code — the title you gave (`custom-title`) > the generated one (`ai-title`, the latest) > the first line of the first prompt; Codex — the thread name in `<codex home>/session_index.jsonl` (written lazily by Codex; read when the file changes, on every scan and refresh) > `thread_name` in `session_meta` > the first prompt; OMP — the `title` / `title_change` records > the first prompt; Hutan — the session's title. The first-prompt fallback is its first line, 80 characters. Model: the last turn that names one (Claude and OMP assistant lines, `turn_context.model` for Codex, OMP `model_change`). Branch: Claude's `gitBranch`, Codex's `session_meta.git.branch`; nothing is invented through `git` (OMP records none).
+
+**Scan state.** `files` per source = transcript files below the roots (inside the history range), looked at by the last stat pass (startup, `refresh`, an overflowed event queue) and, between passes, the number of files read (`sources` rows); `done` counts up during a pass; `finished_ms` is when the last pass or the last live read finished. `refresh: true` queues a rescan of changed files (the same stat pass as at startup: it opens only files whose size or mtime changed) and answers when it has run, waiting at most 10 s; a longer wait answers with `scanning: true` and the rescan still pending. Live changes arrive through FSEvents as before; a refresh is for the button.
+
+**Scopes and attribution** (`crates/daemon/src/history_catalog.rs`). The index knows nothing of projects; the daemon maps each `cwd` to the project (or Home, or workspace) with the longest root containing it, a project beating Home beating a workspace on equal roots. A `cwd` that no root contains but that sits in a linked git worktree of a project's repository (found through the checkout's git common directory, as when a session is created) belongs to that project; so does everything below a symlinked root (both sides are resolved). `workspace` scope = inside a root of the workspace or one of its member projects (or a worktree of one of them); `project` scope = attributed to the id. A live Hutan session belongs to the workspace it runs in. Attribution is computed per request from the daemon's current workspaces (cached per distinct `cwd`), so it follows a project being added or moved without reindexing.
+
+**Filter** is a case-insensitive substring match, every term required, over title, first prompt, latest turns, agent name, model, branch, `cwd` and session key; `repo:` matches the attributed project's name or its folder's name, `path:` the `cwd` or the transcript path. Quoted values (`repo:"my repo"`, `"two words"`). Over 2 KiB: no rows. This is Orca's legacy row filter; full-text search (`history.search`) stays the ranked, ungrouped mode for typed queries.
+
+**Order and counts.** `updated` (the last message; else when the transcript was last read) or `created` (the first message; else the same fallbacks), newest first, ties by session key. Two files that claim one session id (a forked Codex rollout copies its parent's header) are one session, the most recently updated. `matched` = rows after scope, sources and filter, `sessions` = the first `limit` (default 250, at most 1 000), `loaded` = rows of the enabled sources before all of that, which is what "2 of 250 sessions" shows.
+
+**Performance.** On the synthetic corpus of the next section (1 000 sessions) a catalog read takes about 2 ms (median of five, release build); the database grew from 156 to 162 MiB (the summaries). The daemon adds attribution and filtering over the rows in memory: bounded by the number of sessions, no file access except one `canonicalize` or git-worktree lookup per distinct `cwd` that no root contains.
 
 ## Performance
 
@@ -100,7 +124,7 @@ meta      small facts
 | Append of one line | searchable after **237 – 368 ms** (200 ms debounce + FSEvents); 184 bytes read |
 | **Idle CPU after indexing** | **0 ms over 10 s (0.000 % of a core)** in all three runs: no timers, no polling |
 
-Unit-level numbers on real-format data: copies of 222 real transcript files (12 Claude Code, 60 Codex, 150 OMP; 43 700 rows, 283 MB read) in a temp directory indexed with 0 unreadable lines. The copies were deleted afterwards and nothing from them is in the repository.
+The catalog read is measured by the same example (`catalog: 1000 sessions, median 2.1 ms`). Unit-level numbers on real-format data: copies of 222 real transcript files (12 Claude Code, 60 Codex, 150 OMP; 43 700 rows, 283 MB read) in a temp directory indexed with 0 unreadable lines. The copies were deleted afterwards and nothing from them is in the repository.
 
 ## Known limits
 
@@ -110,4 +134,5 @@ Unit-level numbers on real-format data: copies of 222 real transcript files (12 
 - Hutan rows only cover blocks and reports seen while indexing was on; terminal output without shell integration (no OSC 133 marks) has no blocks.
 - OpenCode, Cursor and Gemini adapters are not implemented (M17 roadmap lists them; OpenCode is deferred above).
 - The desktop History panel and the ⌘K / ⌘J integration are in (`docs/design.md` § History panel); assistant `@search` is M16. Since 0.15 a hit names its origin: the transcript's `path` (the panel's **Reveal File**) and, for a Hutan block, `terminal_id` + `block_id` (**Open Block** jumps to it exactly). The id of a block is only meaningful while the daemon run that indexed it lives: after a daemon restart the session has another terminal and the panel says the block is gone.
+- The catalog's Hutan rows only cover sessions seen while indexing was on (like the index); the file count of a scan is the number of transcript files found by the last stat pass or read since, not a re-count of the directory after every live change; a Codex title written after the last scan or file change appears at the next one.
 - Chat journals (Codex, direct, assistant) are indexed as source `hutan` since M16-A (`docs/assistant.md` § Indexing of chats); `history.search` hits of Hutan sessions carry `session_id`. `IndexHandle::session_text` returns the rows of one session in order (used by the assistant's `agent_transcript` and `search` attachments); the assistant's `@search` is now the `search` attachment.

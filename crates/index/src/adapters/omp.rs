@@ -14,7 +14,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::{
-    Adapter, ParseState, Parsed, content_text, summarize_arguments, timestamp, title_from,
+    Adapter, ParseState, Parsed, content_text, fold_messages, summarize_arguments, timestamp,
+    title_from,
 };
 use crate::types::{Entry, Role, Source};
 
@@ -30,26 +31,17 @@ impl Adapter for OmpAdapter {
         1
     }
 
+    /// A transcript in a directory named like its parent's file (`<timestamp>_<id>/<Name>.jsonl`).
+    fn is_subagent(&self, path: &Path) -> bool {
+        parent_session(path).is_some()
+    }
+
     /// `2026-09-28T05-01-22-983Z_<id>.jsonl`: everything after the first underscore. A sub-agent
     /// transcript lives in a directory named like its parent's file
     /// (`<timestamp>_<id>/<Name>.jsonl`) and takes the parent's id, so that resuming the hit
     /// resumes the conversation it belongs to.
     fn key_from_path(&self, path: &Path) -> String {
-        let id_of = |name: &str| -> Option<String> {
-            let (stamp, id) = name.split_once('_')?;
-            let looks_like_time =
-                stamp.len() >= 10 && stamp.as_bytes()[4] == b'-' && stamp.contains('T');
-            (looks_like_time && !id.is_empty()).then(|| id.to_owned())
-        };
-        // The outermost such directory is the top-level session.
-        let parent = path
-            .parent()
-            .into_iter()
-            .flat_map(Path::ancestors)
-            .filter_map(|dir| dir.file_name())
-            .filter_map(|name| id_of(&name.to_string_lossy()))
-            .last();
-        if let Some(id) = parent {
+        if let Some(id) = parent_session(path) {
             return id;
         }
         let stem = path
@@ -71,6 +63,7 @@ impl Adapter for OmpAdapter {
             return Parsed::Malformed;
         };
         let ts = object.get("timestamp").and_then(timestamp);
+        state.summary.note_time(ts);
         match object
             .get("type")
             .and_then(Value::as_str)
@@ -81,15 +74,27 @@ impl Adapter for OmpAdapter {
                     && !title.trim().is_empty()
                 {
                     state.title = Some(title.trim().to_owned());
+                    state.summary.set_generated_title(title);
+                }
+                Parsed::Skip
+            }
+            "model_change" => {
+                // Pi writes `modelId`, OMP `model`.
+                let model = object
+                    .get("modelId")
+                    .and_then(Value::as_str)
+                    .or_else(|| object.get("model").and_then(Value::as_str));
+                if let Some(model) = model {
+                    state.summary.set_model(model);
                 }
                 Parsed::Skip
             }
             "session" => {
                 // A sub-agent has an id of its own; its hits resume the parent (the key comes
                 // from the path).
-                if object.get("parentSession").is_none()
-                    && let Some(id) = object.get("id").and_then(Value::as_str)
-                {
+                if object.get("parentSession").is_some() {
+                    state.summary.subagent = true;
+                } else if let Some(id) = object.get("id").and_then(Value::as_str) {
                     state.key = id.to_owned();
                 }
                 if let Some(cwd) = object.get("cwd").and_then(Value::as_str) {
@@ -101,11 +106,33 @@ impl Adapter for OmpAdapter {
                 let Some(message) = object.get("message") else {
                     return Parsed::Malformed;
                 };
-                message_entries(message, ts, state)
+                let parsed = message_entries(message, ts, state);
+                if let Parsed::Entries(entries) = &parsed {
+                    fold_messages(state, ts, entries, |_| false);
+                }
+                parsed
             }
             _ => Parsed::Skip,
         }
     }
+}
+
+/// The id in a name like `2026-09-28T05-01-22-983Z_<id>`.
+fn id_of(name: &str) -> Option<String> {
+    let (stamp, id) = name.split_once('_')?;
+    let looks_like_time = stamp.len() >= 10 && stamp.as_bytes()[4] == b'-' && stamp.contains('T');
+    (looks_like_time && !id.is_empty()).then(|| id.to_owned())
+}
+
+/// The id of the top-level session whose directory holds the transcript at `path`: the
+/// outermost directory named like a session file.
+fn parent_session(path: &Path) -> Option<String> {
+    path.parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .filter_map(|dir| dir.file_name())
+        .filter_map(|name| id_of(&name.to_string_lossy()))
+        .last()
 }
 
 fn message_entries(message: &Value, ts: Option<u64>, state: &mut ParseState) -> Parsed {
@@ -119,6 +146,9 @@ fn message_entries(message: &Value, ts: Option<u64>, state: &mut ParseState) -> 
             Parsed::Entries(vec![Entry::new(Role::User, ts, text)])
         }
         Some("assistant") => {
+            if let Some(model) = message.get("model").and_then(Value::as_str) {
+                state.summary.set_model(model);
+            }
             let mut entries = Vec::new();
             match content {
                 Some(Value::Array(parts)) => {

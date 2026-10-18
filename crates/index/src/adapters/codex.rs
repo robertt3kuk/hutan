@@ -13,7 +13,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::{
-    Adapter, ParseState, Parsed, content_text, is_uuid, summarize_arguments, timestamp, title_from,
+    Adapter, ParseState, Parsed, content_text, fold_messages, is_uuid, summarize_arguments,
+    timestamp, title_from,
 };
 use crate::types::{Entry, Role, Source};
 
@@ -56,6 +57,7 @@ impl Adapter for CodexAdapter {
         let ts = object.get("timestamp").and_then(timestamp);
         let payload = object.get("payload");
         let field = |name: &str| payload.and_then(|p| p.get(name));
+        state.summary.note_time(ts);
         match object
             .get("type")
             .and_then(Value::as_str)
@@ -68,11 +70,28 @@ impl Adapter for CodexAdapter {
                 if let Some(cwd) = field("cwd").and_then(Value::as_str) {
                     state.cwd = Some(cwd.to_owned());
                 }
+                if let Some(branch) = field("git")
+                    .and_then(|git| git.get("branch"))
+                    .and_then(Value::as_str)
+                {
+                    state.summary.set_branch(branch);
+                }
+                if let Some(name) = field("thread_name").and_then(Value::as_str) {
+                    state.summary.set_generated_title(name);
+                }
+                // A thread started by another thread (review, compaction worker, …) is a
+                // helper, not a session of its own.
+                if field("source").is_some_and(|source| source.get("subagent").is_some()) {
+                    state.summary.subagent = true;
+                }
                 Parsed::Skip
             }
             "turn_context" => {
                 if let Some(cwd) = field("cwd").and_then(Value::as_str) {
                     state.cwd = Some(cwd.to_owned());
+                }
+                if let Some(model) = field("model").and_then(Value::as_str) {
+                    state.summary.set_model(model);
                 }
                 Parsed::Skip
             }
@@ -80,7 +99,11 @@ impl Adapter for CodexAdapter {
                 let Some(payload) = payload else {
                     return Parsed::Malformed;
                 };
-                response_item(payload, ts, state)
+                let parsed = response_item(payload, ts, state);
+                if let Parsed::Entries(entries) = &parsed {
+                    fold_messages(state, ts, entries, |_| false);
+                }
+                parsed
             }
             _ => Parsed::Skip,
         }

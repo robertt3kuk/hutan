@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use hutan_core::agent::MessageRole;
 use hutan_core::{AgentEvent, AgentEventKind, SessionId, TerminalId};
@@ -19,8 +20,8 @@ use hutan_index::{
 use hutan_protocol::blocks::{BlockPart, BlockState, TerminalBlockText};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::history::{
-    HistoryHit, HistoryHits, HistoryRole, HistorySearch, HistorySource, HistorySourceStatus,
-    HistoryStatusInfo, SEARCH_MAX_LIMIT,
+    HistoryHit, HistoryHits, HistoryRole, HistorySearch, HistorySessions, HistorySessionsRequest,
+    HistorySource, HistorySourceStatus, HistoryStatusInfo, SEARCH_MAX_LIMIT,
 };
 use hutan_protocol::messages::{AgentState, Event, SessionInfo};
 use tokio::sync::{Mutex, mpsc};
@@ -30,6 +31,7 @@ use tracing::{debug, info, warn};
 use crate::agent::validate_resume_argv;
 use crate::bus::EventBus;
 use crate::config::{self, HistorySettings};
+use crate::history_catalog;
 use crate::paths::Paths;
 use crate::registry::RegistryHandle;
 use crate::terminals::TerminalHub;
@@ -38,6 +40,9 @@ use crate::terminals::TerminalHub;
 const TAP_QUEUE: usize = 1024;
 /// Most bytes of a block's output the index reads from the terminal.
 const BLOCK_OUTPUT_BYTES: u32 = 16 * 1024;
+/// How long `history.sessions` with `refresh` waits for the rescan before it answers with the
+/// scan still running.
+const REFRESH_WAIT: Duration = Duration::from_secs(10);
 
 struct Running {
     indexer: Indexer,
@@ -225,6 +230,47 @@ impl HistoryService {
         Ok(HistoryHits {
             hits: hits.into_iter().map(hit_out).collect(),
         })
+    }
+
+    /// The session catalog (`history.sessions`): the sessions of the enabled sources with their
+    /// summaries, attributed to Hutan projects, narrowed by scope and filter, sorted, and cut to
+    /// the limit. With `refresh` the transcript files are looked at again first (waiting at most
+    /// [`REFRESH_WAIT`]; then the answer says the scan is still running).
+    pub async fn sessions(
+        &self,
+        req: HistorySessionsRequest,
+    ) -> Result<HistorySessions, ErrorBody> {
+        let limit = history_catalog::check_request(&req)?;
+        let handle = self.handle().await?;
+        let refresh = req.refresh;
+        let read = {
+            let handle = handle.clone();
+            tokio::task::spawn_blocking(move || {
+                let finished = if refresh {
+                    handle.refresh(REFRESH_WAIT)?
+                } else {
+                    true
+                };
+                let rows = handle.catalog()?;
+                let mut scan = handle.scan_info();
+                scan.scanning |= !finished;
+                Ok::<_, IndexError>((rows, scan))
+            })
+        };
+        let (rows, scan) = read.await.map_err(internal)?.map_err(index_error)?;
+        let workspaces = self.registry.list_workspaces().await?.workspaces;
+        // Only Hutan rows need the live sessions (their title, folder and workspace).
+        let sessions = if rows.iter().any(|row| row.source == Source::Hutan) {
+            self.registry.snapshot().await?.sessions
+        } else {
+            Vec::new()
+        };
+        // Attribution reads the file system (canonical paths, git worktrees).
+        tokio::task::spawn_blocking(move || {
+            history_catalog::answer(&req, limit, rows, scan, &workspaces, &sessions)
+        })
+        .await
+        .map_err(internal)?
     }
 
     /// The newest rows of one indexed session, oldest first (what an `agent_transcript`

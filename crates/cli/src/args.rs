@@ -1082,13 +1082,69 @@ pub struct RenameArgs {
     pub title: String,
 }
 
+/// `hutan history <session>` prints a terminal's output; `hutan history sessions` lists the
+/// agent sessions of this machine (so a session cannot be called `sessions` here: use its id).
 #[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 pub struct HistoryArgs {
-    #[arg(help = TARGET_HELP)]
-    pub target: String,
+    #[command(subcommand)]
+    pub command: Option<HistorySubcommand>,
+    #[arg(help = TARGET_HELP, required = true)]
+    pub target: Option<String>,
     /// Print at most this many lines, counted from the newest
     #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..))]
     pub lines: u32,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HistorySubcommand {
+    /// List the agent sessions on this machine, newest first: Hutan's own chats and terminals and
+    /// the transcripts of Claude Code, Codex and OMP (needs `hutan index enable`)
+    Sessions(HistorySessionsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct HistorySessionsArgs {
+    /// Which sessions: everywhere (default), those that ran in a workspace's folders, or those
+    /// of one project. `--ws` alone means `workspace`
+    #[arg(long, value_enum)]
+    pub scope: Option<ScopeArg>,
+    /// The workspace or project of `--scope workspace|project`: id, unique id prefix, or name
+    /// (default: $HUTAN_WORKSPACE)
+    #[arg(long = "ws", value_name = "ID|NAME")]
+    pub workspace: Option<String>,
+    /// Words that must all occur in a session's title, first prompt, latest messages, agent,
+    /// model, branch, folder or id; `repo:NAME` and `path:TEXT` narrow to a project or a path
+    /// (quote values with spaces)
+    #[arg(long, value_name = "TEXT")]
+    pub filter: Option<String>,
+    /// Order, newest first
+    #[arg(long, value_enum, default_value_t = SessionSortArg::Updated)]
+    pub sort: SessionSortArg,
+    /// Only this source; repeatable
+    #[arg(long, value_enum)]
+    pub source: Vec<SourceArg>,
+    /// Most sessions listed
+    #[arg(long, default_value_t = 250, value_parser = clap::value_parser!(u32).range(1..=1000))]
+    pub limit: u32,
+    /// Look at the transcript files again first (waits up to 10 s)
+    #[arg(long)]
+    pub refresh: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ScopeArg {
+    All,
+    Workspace,
+    Project,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SessionSortArg {
+    /// By the last message
+    Updated,
+    /// By the first message
+    Created,
 }
 
 /// The `agent` subcommands run inside Hutan sessions on behalf of agent hooks: outside a

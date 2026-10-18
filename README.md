@@ -160,6 +160,7 @@ hutan ask "what does this error mean?" --attach file:src/main.rs   # needs [assi
 hutan chat new                               # Codex agent chat (needs codex >= 0.160)
 hutan approvals && hutan approve <id> accept
 hutan index enable && hutan search "cargo test -p daemon"
+hutan history sessions --filter repo:hutan   # every agent session on this machine, newest first
 hutan integration status claude              # agent hooks; install only when you want them
 ```
 

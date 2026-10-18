@@ -19,6 +19,8 @@
 //!   groups.
 //! - [`terminals`]: live terminals, ack-paced attachments, resize, history, and input.
 //! - [`history`]: the opt-in session history index (`hutan-index`) and the `history.*` requests.
+//! - [`history_catalog`]: `history.sessions`, the session catalog: attribution to projects, scopes,
+//!   filter, sort.
 //! - [`chat`]: chat sessions: agent adapters, direct model chats, the approval engine, the journal.
 //! - [`direct`]: direct model chat: a session whose "agent" is the model gateway.
 //! - [`providers`]: model providers: SQLite config, Keychain credentials, adapters.
@@ -59,6 +61,7 @@ pub mod direct;
 pub mod error;
 pub mod harness;
 pub mod history;
+pub mod history_catalog;
 pub mod mcp_wiring;
 pub mod menu_bar;
 pub mod notify;

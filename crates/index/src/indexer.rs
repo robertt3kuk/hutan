@@ -8,9 +8,9 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -26,8 +26,10 @@ use crate::search;
 use crate::store;
 use crate::sys;
 use crate::text::{chunks, idents};
+use crate::titles::{CODEX_TITLES_FILE, read_codex_titles};
 use crate::types::{
-    Hit, HutanRecord, Role, SearchQuery, SessionText, SessionTextQuery, Source, Status,
+    CatalogRow, Hit, HutanRecord, Role, ScanInfo, SearchQuery, SessionText, SessionTextQuery,
+    Source, Status,
 };
 
 /// Quiet time after the last file event before the changed files are read.
@@ -56,6 +58,8 @@ enum Msg {
     Flush(SyncSender<()>),
     Clear(SyncSender<Result<()>>),
     Rebuild,
+    /// Look at every transcript file again (the stat pass), then answer.
+    Refresh(SyncSender<()>),
     Stop,
 }
 
@@ -69,6 +73,8 @@ struct Shared {
     dropped: AtomicU64,
     metrics: Arc<Metrics>,
     sources: Vec<Source>,
+    /// Progress of the stat pass, for the catalog's "Scanned N files".
+    scan: Mutex<ScanInfo>,
 }
 
 /// Cheap, cloneable access to a running [`Indexer`].
@@ -97,6 +103,39 @@ impl IndexHandle {
             sources: store::source_status(&conn, &self.shared.sources)?,
             db_bytes: store::database_bytes(&self.shared.db_path),
         })
+    }
+
+    /// Every session of the enabled sources that has something to show, unfiltered and
+    /// unsorted (`history.sessions` attributes, filters, and sorts them).
+    pub fn catalog(&self) -> Result<Vec<CatalogRow>> {
+        let conn = store::open_read_only(&self.shared.db_path)?;
+        store::catalog(&conn, &self.shared.sources)
+    }
+
+    /// The last (or running) look at the transcript files.
+    pub fn scan_info(&self) -> ScanInfo {
+        self.shared
+            .scan
+            .lock()
+            .map(|scan| scan.clone())
+            .unwrap_or_default()
+    }
+
+    /// Looks at the transcript files again (new and changed ones are read) and returns `true`
+    /// once that is done; `false` when it is not done within `wait` (a scan that is already
+    /// running first finishes; the refresh still happens afterwards).
+    pub fn refresh(&self, wait: Duration) -> Result<bool> {
+        let (reply, done) = sync_channel(1);
+        match self.shared.tx.try_send(Msg::Refresh(reply)) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => return Ok(false),
+            Err(TrySendError::Disconnected(_)) => return Err(IndexError::Stopped),
+        }
+        match done.recv_timeout(wait) {
+            Ok(()) => Ok(true),
+            Err(RecvTimeoutError::Timeout) => Ok(false),
+            Err(RecvTimeoutError::Disconnected) => Err(IndexError::Stopped),
+        }
     }
 
     /// Queues one Hutan record. `false` when the queue is full (the record is dropped and
@@ -196,10 +235,22 @@ impl Indexer {
             dropped: AtomicU64::new(0),
             metrics: Arc::new(Metrics::default()),
             sources,
+            // The first stat pass is about to start.
+            scan: Mutex::new(ScanInfo {
+                scanning: true,
+                ..ScanInfo::default()
+            }),
         });
 
         let watcher = watch_roots(&roots, &tx, &shared)?;
+        let titles_file = roots
+            .iter()
+            .find(|root| root.adapter.source() == Source::Codex)
+            .and_then(|root| root.path.parent())
+            .map(|home| home.join(CODEX_TITLES_FILE));
         let worker = Worker {
+            titles_file,
+            titles_stamp: None,
             conn: Some(conn),
             db_path: config.db_path,
             range_days: config.range_days,
@@ -287,6 +338,10 @@ struct Root {
 }
 
 struct Worker {
+    /// Codex's `session_index.jsonl`, when Codex is a source.
+    titles_file: Option<PathBuf>,
+    /// Size and mtime of that file when it was last read (`Some(None)`: it was missing).
+    titles_stamp: Option<Option<(u64, i64)>>,
     conn: Option<Connection>,
     db_path: PathBuf,
     range_days: u32,
@@ -333,6 +388,11 @@ impl Worker {
                     let _ = reply.send(self.clear());
                 }
                 Msg::Rebuild => self.rebuild(),
+                Msg::Refresh(reply) => {
+                    self.read_pending();
+                    self.stat_pass();
+                    let _ = reply.send(());
+                }
                 Msg::Stop => break,
             }
             if self.shared.overflow.swap(false, Ordering::AcqRel) {
@@ -384,28 +444,80 @@ impl Worker {
         self.stat_pass();
     }
 
+    fn update_scan(&self, update: impl FnOnce(&mut ScanInfo)) {
+        if let Ok(mut scan) = self.shared.scan.lock() {
+            update(&mut scan);
+        }
+    }
+
+    /// Reads Codex's thread titles when `session_index.jsonl` changed since the last look.
+    fn refresh_titles(&mut self) {
+        let Some(file) = self.titles_file.clone() else {
+            return;
+        };
+        let stamp = std::fs::metadata(&file)
+            .ok()
+            .map(|meta| (meta.len(), scan::mtime_ns(&meta)));
+        if self.titles_stamp == Some(stamp) {
+            return;
+        }
+        let titles = if stamp.is_some() {
+            let Some(titles) = read_codex_titles(&file) else {
+                return;
+            };
+            titles
+        } else {
+            Vec::new()
+        };
+        let result = self
+            .conn()
+            .and_then(|conn| store::replace_provider_titles(conn, Source::Codex, &titles));
+        match result {
+            Ok(()) => self.titles_stamp = Some(stamp),
+            Err(error) => warn!(%error, "storing the Codex thread titles failed"),
+        }
+    }
+
     /// One `stat` pass over every root; reads only the files whose stamp changed.
     fn stat_pass(&mut self) {
         let started = Instant::now();
         let cutoff_ms = self.cutoff_ms();
+        self.update_scan(|scan| scan.scanning = true);
+        self.refresh_titles();
         let mut changed: Vec<(usize, PathBuf)> = Vec::new();
+        let mut per_source: Vec<(Source, u64)> = Vec::new();
         for (index, root) in self.roots.iter().enumerate() {
             let Some(conn) = self.conn.as_ref() else {
                 break;
             };
-            match scan::changed_files(conn, root.adapter.as_ref(), &root.path, cutoff_ms) {
-                Ok(files) => changed.extend(files.into_iter().map(|file| (index, file))),
+            match scan::list_files(conn, root.adapter.as_ref(), &root.path, cutoff_ms) {
+                Ok(listing) => {
+                    per_source.push((root.adapter.source(), listing.total));
+                    changed.extend(listing.changed.into_iter().map(|file| (index, file)));
+                }
                 Err(error) => {
                     warn!(root = %root.path.display(), %error, "scanning a history source failed")
                 }
             }
         }
+        let files: u64 = per_source.iter().map(|(_, count)| count).sum();
         let total = changed.len();
+        self.update_scan(|scan| {
+            scan.files = files;
+            scan.done = files.saturating_sub(total as u64);
+            scan.per_source = per_source;
+        });
         let mut rows = 0;
         for (index, path) in changed {
             rows += self.process(index, &path);
+            self.update_scan(|scan| scan.done = (scan.done + 1).min(scan.files));
             std::thread::yield_now();
         }
+        self.update_scan(|scan| {
+            scan.scanning = false;
+            scan.done = scan.files;
+            scan.finished_ms = Some(now_ms());
+        });
         if total > 0 {
             info!(
                 files = total,
@@ -420,6 +532,9 @@ impl Worker {
         self.first_pending = None;
         self.last_event = None;
         let pending = std::mem::take(&mut self.pending);
+        if pending.is_empty() {
+            return;
+        }
         for path in pending {
             let Some(index) = self.root_of(&path) else {
                 continue;
@@ -436,6 +551,31 @@ impl Worker {
                 self.process(index, &path);
             }
         }
+        self.refresh_titles();
+        self.count_files();
+    }
+
+    /// After files were read because they changed (not in a stat pass): the files known per
+    /// source are the `sources` rows, and the catalog is as current as now.
+    fn count_files(&mut self) {
+        let sources: Vec<Source> = self
+            .roots
+            .iter()
+            .map(|root| root.adapter.source())
+            .collect();
+        let counts = self
+            .conn()
+            .and_then(|conn| store::file_counts(conn))
+            .unwrap_or_default();
+        self.update_scan(|scan| {
+            scan.per_source = sources
+                .iter()
+                .map(|source| (*source, counts.get(source).copied().unwrap_or(0)))
+                .collect();
+            scan.files = scan.per_source.iter().map(|(_, count)| count).sum();
+            scan.done = scan.files;
+            scan.finished_ms = Some(now_ms());
+        });
     }
 
     fn root_of(&self, path: &Path) -> Option<usize> {
@@ -533,6 +673,16 @@ impl Worker {
                     &idents,
                 )?;
             }
+            // The catalog's view of the session: what was said last, and how often.
+            let mut summary = store::load_summary(&tx, session)?;
+            match record.role {
+                Role::User | Role::Assistant | Role::Command => {
+                    summary.note_turn(record.role, Some(record.ts_ms), &record.text);
+                }
+                Role::Tool | Role::Output => summary.note_time(Some(record.ts_ms)),
+            }
+            summary.messages = store::count_hutan_messages(&tx, session)?;
+            store::save_summary(&tx, session, &summary, Some(now_ms()))?;
             store::set_meta(&tx, "hutan_last_indexed_ms", &now_ms().to_string())?;
             tx.commit()
                 .map_err(IndexError::sqlite("committing a Hutan write"))
@@ -550,6 +700,13 @@ impl Worker {
         self.conn = None;
         store::remove_database(&self.db_path)?;
         self.conn = Some(store::open(&self.db_path)?);
+        // The titles file is read again; nothing in the new database knows about it.
+        self.titles_stamp = None;
+        self.update_scan(|scan| {
+            scan.files = 0;
+            scan.done = 0;
+            scan.per_source.clear();
+        });
         info!("history index cleared");
         Ok(())
     }

@@ -210,7 +210,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "task.review",
             "session.recovery",
             "task.chat_model",
-            "daemon.settings"
+            "daemon.settings",
+            "history.sessions"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);
