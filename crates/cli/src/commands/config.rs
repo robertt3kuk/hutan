@@ -67,6 +67,19 @@ impl Ctx {
     /// What `set` and `reset` print: the key as it is now, and when the running daemon will
     /// not use it before a restart.
     fn changed(&self, settings: &DaemonSettings, key: &str, verb: &str) -> Result<(), CliError> {
+        // An MCP server that was removed is no longer listed (unless it still runs).
+        if verb == "reset"
+            && key.starts_with("mcp.")
+            && !settings.entries.iter().any(|entry| entry.key == key)
+        {
+            return self.print(&Value::Null, || {
+                let mut text = format!("removed: {key}");
+                if settings.restart_pending {
+                    text.push_str(&format!("\n{RESTART_HINT}"));
+                }
+                text
+            });
+        }
         let entry = entry(settings, key)?;
         self.print(entry, || {
             let mut text = format!("{verb}: {key} = {}", render(&entry.value));

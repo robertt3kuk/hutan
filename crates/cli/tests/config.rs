@@ -145,6 +145,74 @@ async fn config_set_get_and_reset_edit_the_file_and_say_when_a_restart_is_needed
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn mcp_servers_are_added_edited_and_removed_with_config() {
+    let t = TestDaemon::start_toml("# mine\n[notify]\nenabled = true\n", |_| {}).await;
+
+    let out = t
+        .hutan(&[
+            "config",
+            "set",
+            "mcp.docs",
+            "{command = \"npx\", args = [\"-y\", \"docs\"]}",
+        ])
+        .await
+        .ok();
+    assert!(
+        out.stdout
+            .starts_with("set: mcp.docs = {\"command\":\"npx\",\"args\":[\"-y\",\"docs\"]}"),
+        "{}",
+        out.stdout
+    );
+    assert!(out.stdout.contains(RESTART), "{}", out.stdout);
+    assert!(file(&t).contains("[mcp.docs]\ncommand = \"npx\"\nargs = [\"-y\", \"docs\"]\n"));
+    assert!(file(&t).starts_with("# mine\n[notify]\n"));
+
+    // Edit: a remote server in its place.
+    t.hutan(&[
+        "config",
+        "set",
+        "mcp.docs",
+        "{url = \"https://x.test/mcp\", transport = \"sse\"}",
+    ])
+    .await
+    .ok();
+    assert!(!file(&t).contains("npx"), "{}", file(&t));
+    assert!(file(&t).contains("transport = \"sse\""));
+
+    // Refused: not both, and a name outside the rule.
+    for (args, wanted) in [
+        (
+            &[
+                "config",
+                "set",
+                "mcp.both",
+                "{command = \"x\", url = \"https://a\"}",
+            ][..],
+            "not both",
+        ),
+        (
+            &["config", "set", "mcp.Bad", "{command = \"x\"}"],
+            "lowercase",
+        ),
+    ] {
+        let out = t.hutan(args).await;
+        assert_eq!(out.code, 1, "{args:?}: {out:?}");
+        assert!(out.stderr.contains(wanted), "{args:?}: {}", out.stderr);
+    }
+
+    // Remove.
+    let out = t.hutan(&["config", "reset", "mcp.docs"]).await.ok();
+    assert!(
+        out.stdout.starts_with("removed: mcp.docs"),
+        "{}",
+        out.stdout
+    );
+    assert!(!file(&t).contains("mcp"), "{}", file(&t));
+    assert!(file(&t).starts_with("# mine\n[notify]\n"));
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn config_refuses_what_the_daemon_refuses() {
     let t = TestDaemon::start().await;
     for (args, wanted) in [

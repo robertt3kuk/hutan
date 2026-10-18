@@ -129,6 +129,8 @@ impl Workbench {
 
     /// A page was selected: asks for what it shows that is not in the settings files.
     pub(super) fn settings_page_opened(&mut self, page: &str, cx: &mut Context<Self>) {
+        // A form that was not finished (an MCP server) does not outlive the page.
+        self.daemon_settings.mcp_form = None;
         match page {
             "models" => self.refresh_providers(cx),
             "accounts" => self.refresh_accounts(cx),

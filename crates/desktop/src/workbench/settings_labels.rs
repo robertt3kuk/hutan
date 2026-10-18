@@ -1160,7 +1160,6 @@ pub mod words {
         DAEMON_ASKING = "Asking the daemon…";
         DAEMON_FILE_BROKEN = "daemon.toml cannot be read";
         OPEN_DAEMON_TOML = "Open daemon.toml";
-        EDIT_DAEMON_TOML = "Edit daemon.toml";
         CHECK_AGAIN = "Check again";
         RESTART_BANNER = "Some changes apply after the daemon restarts.";
         RESTART_NOW = "Restart now";
@@ -1174,7 +1173,7 @@ pub mod words {
         NONE_SET = "none";
         LOOKED_UP = "looked up automatically";
         USUAL_PLACE = "the usual place";
-        MCP_NONE = "No MCP servers are set in daemon.toml.";
+        MCP_NONE = "No MCP servers are set yet.";
         SEC_NOTIFY = "Notifications";
         SEC_SESSIONS = "Sessions";
         SEC_AGENT_CONTROL = "What agents may do to Hutan";
@@ -1213,6 +1212,41 @@ pub mod words {
         NO_MATCH_HINT = "Clear the search to see every page, or try another word.";
         NO_MATCH_FOOTER = "No matches";
         CLEAR_SEARCH = "Clear search";
+        MCP_HELP = "Tool servers Hutan hands to the agents it starts: a program to run, or an address to reach. They are written in daemon.toml and reach agent sessions once the daemon has restarted.";
+        MCP_ADD = "Add server…";
+        MCP_ADD_TITLE = "Add an MCP server";
+        MCP_EDIT_TITLE = "Edit the MCP server";
+        MCP_EDIT = "Edit";
+        MCP_REMOVE = "Remove…";
+        MCP_REMOVE_CONFIRM = "Remove";
+        MCP_REMOVE_MESSAGE = "The server is taken out of daemon.toml. Agent sessions started after the daemon restarts will not get it.";
+        MCP_REMOVED = "Removed from the file; it stays until the daemon restarts";
+        MCP_NAME = "Name";
+        MCP_NAME_HINT = "docs";
+        MCP_KIND = "Runs as";
+        MCP_KIND_PROGRAM = "A program on this Mac";
+        MCP_KIND_REMOTE = "A remote server";
+        MCP_COMMAND = "Program";
+        MCP_COMMAND_HINT = "npx";
+        MCP_ARGS = "Arguments";
+        MCP_ARGS_HINT = "-y @example/docs-server";
+        MCP_URL = "Address";
+        MCP_URL_HINT = "https://example.com/mcp";
+        MCP_TRANSPORT = "Transport";
+        MCP_HTTP = "HTTP";
+        MCP_SSE = "SSE";
+        MCP_CREATE = "Add server";
+        MCP_SAVE = "Save";
+        MCP_CANCEL = "Cancel";
+        MCP_NEEDS_NAME = "Give the server a name first (lowercase letters, digits, - and _).";
+        MCP_NEEDS_COMMAND = "Type the program to run.";
+        MCP_NEEDS_URL = "Type the address of the server.";
+        MCP_QUOTE_OPEN = "A quote in the arguments is not closed.";
+    }
+
+    /// "Remove MCP server “docs”?".
+    pub fn mcp_remove_title(name: &str) -> String {
+        format!("Remove MCP server “{name}”?")
     }
 
     /// "Workspace api", or just "Workspace" when the container's name is not known.
@@ -1628,6 +1662,7 @@ mod tests {
             words::inheriting_permission(false),
             words::at_least(1),
             words::no_match("zzz"),
+            words::mcp_remove_title("docs"),
         ];
         for sentence in &sentences {
             assert_user_facing("a sentence of the sheet", sentence);

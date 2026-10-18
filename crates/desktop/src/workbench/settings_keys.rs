@@ -13,7 +13,7 @@ use gpui::{
 };
 use hutan_protocol::daemon_settings::DaemonSettingKind;
 
-use super::settings_daemon::{choice_text, choices_of, sections};
+use super::settings_daemon::{MCP_KEYS, choice_text, choices_of, sections};
 use super::settings_labels::{value_label, words};
 use super::settings_schema::FieldKind;
 use super::view::Workbench;
@@ -92,7 +92,7 @@ impl Workbench {
         if ready {
             for section in sections(page) {
                 for key in section.keys {
-                    if *key == "mcp.*" {
+                    if *key == MCP_KEYS {
                         daemon.extend(
                             self.daemon_settings
                                 .settings()
@@ -101,6 +101,7 @@ impl Workbench {
                                 .filter(|e| e.key.starts_with("mcp."))
                                 .map(|e| format!("{ROW_DAEMON}{}", e.key)),
                         );
+                        daemon.push(format!("{ROW_DAEMON}{MCP_KEYS}"));
                     } else if self.daemon_settings.entry(key).is_some() {
                         daemon.push(format!("{ROW_DAEMON}{key}"));
                     }
@@ -242,6 +243,10 @@ impl Workbench {
                 FieldKind::Unsupported(_) => {}
             }
         } else if let Some(key) = row.strip_prefix(ROW_DAEMON) {
+            if key == MCP_KEYS {
+                self.mcp_begin_add(cx);
+                return;
+            }
             let Some(entry) = self.daemon_settings.entry(key).cloned() else {
                 return;
             };
@@ -259,7 +264,9 @@ impl Workbench {
                 | DaemonSettingKind::StringList { .. }
                 | DaemonSettingKind::StringMap => self.daemon_begin_edit(key, cx),
                 DaemonSettingKind::Path => self.daemon_choose_path(key, cx),
-                DaemonSettingKind::Table => self.open_daemon_toml(cx),
+                DaemonSettingKind::Table => {
+                    self.mcp_begin_edit(key.strip_prefix("mcp.").unwrap_or(key), cx);
+                }
                 DaemonSettingKind::Enum { .. } => {}
             }
         }

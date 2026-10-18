@@ -459,7 +459,7 @@ enum Target {
         workspace: String,
         permission: Permission,
     },
-    /// `mcp.<name>`: shown, edited in the file.
+    /// `mcp.<name>`: one `[mcp.<name>]` table, set as a whole from an object.
     Mcp(String),
 }
 
@@ -499,7 +499,8 @@ impl Target {
     /// The TOML path of the key.
     fn segments(&self, key: &str) -> Vec<String> {
         match self {
-            Self::Spec(_) | Self::Mcp(_) => key.split('.').map(str::to_owned).collect(),
+            Self::Spec(_) => key.split('.').map(str::to_owned).collect(),
+            Self::Mcp(name) => vec!["mcp".to_owned(), name.clone()],
             Self::Workspace {
                 workspace,
                 permission,
@@ -518,7 +519,16 @@ impl Target {
 enum Change {
     Remove,
     Set(toml_edit::Value),
+    /// The keys of one `[mcp.<name>]` table: the listed ones are written, the other keys of
+    /// the table (a server that changes from `command` to `url`) are dropped.
+    McpServer(Vec<(&'static str, toml_edit::Value)>),
 }
+
+/// The keys of an `[mcp.<name>]` table, in the order they are written.
+const MCP_FIELDS: [&str; 4] = ["command", "args", "url", "transport"];
+
+/// The longest name of an MCP server `set` accepts.
+const MCP_NAME_MAX: usize = 32;
 
 /// Checks `value` against the kind of `key` and turns it into the TOML value to write; `None`
 /// (or `null`, or an empty string for text, paths and choices) removes the key.
@@ -624,6 +634,129 @@ fn validate(
     }
 }
 
+/// An optional text field of an MCP server: absent, `null` and blank are all "not set".
+fn mcp_text(
+    key: &str,
+    object: &Map<String, Value>,
+    field: &str,
+) -> Result<Option<String>, ErrorBody> {
+    match object.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) => {
+            let text = text.trim();
+            if text.chars().any(char::is_control) {
+                return Err(bad_request(format!(
+                    "`{key}`: `{field}` must not contain control characters"
+                )));
+            }
+            Ok((!text.is_empty()).then(|| text.to_owned()))
+        }
+        Some(_) => Err(bad_request(format!("`{key}`: `{field}` is text"))),
+    }
+}
+
+/// Checks the object `{command, args, url, transport}` of `mcp.<name>` with the rules the
+/// config loader applies to `[mcp.<name>]`, and turns it into the keys to write. `None` and
+/// `null` remove the server (whatever its name: a server with an old-style name can go).
+fn validate_mcp(name: &str, value: Option<Value>) -> Result<Change, ErrorBody> {
+    let key = format!("mcp.{name}");
+    let object = match value {
+        None | Some(Value::Null) => return Ok(Change::Remove),
+        Some(Value::Object(object)) => object,
+        Some(_) => {
+            return Err(bad_request(format!(
+                "`{key}` is a table with `command` (and `args`) or `url` (and `transport`)"
+            )));
+        }
+    };
+    if name.is_empty()
+        || name.len() > MCP_NAME_MAX
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
+    {
+        return Err(bad_request(format!(
+            "the name of an MCP server is 1 to {MCP_NAME_MAX} lowercase letters, digits, `-` \
+             or `_`, not `{name}`"
+        )));
+    }
+    if let Some(unknown) = object.keys().find(|k| !MCP_FIELDS.contains(&k.as_str())) {
+        return Err(bad_request(format!(
+            "`{key}` has no field `{unknown}` (`command`, `args`, `url`, `transport`)"
+        )));
+    }
+    let command = mcp_text(&key, &object, "command")?;
+    let url = mcp_text(&key, &object, "url")?;
+    let transport = mcp_text(&key, &object, "transport")?;
+    let args = match object.get("args") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| bad_request(format!("`{key}`: `args` is a list of text")))
+            })
+            .collect::<Result<_, _>>()?,
+        Some(_) => return Err(bad_request(format!("`{key}`: `args` is a list of text"))),
+    };
+    let mut fields: Vec<(&'static str, toml_edit::Value)> = Vec::new();
+    match (command, url) {
+        (Some(_), Some(_)) => {
+            return Err(bad_request(format!(
+                "`{key}`: set either `command` (a program on this Mac) or `url` (a remote \
+                 server), not both"
+            )));
+        }
+        (None, None) => {
+            return Err(bad_request(format!(
+                "`{key}`: set `command` (a program on this Mac) or `url` (a remote server)"
+            )));
+        }
+        (Some(command), None) => {
+            if transport.is_some() {
+                return Err(bad_request(format!(
+                    "`{key}`: `transport` is for a server with a `url`"
+                )));
+            }
+            fields.push(("command", command.into()));
+            if !args.is_empty() {
+                fields.push((
+                    "args",
+                    args.iter()
+                        .map(String::as_str)
+                        .collect::<toml_edit::Array>()
+                        .into(),
+                ));
+            }
+        }
+        (None, Some(url)) => {
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                return Err(bad_request(format!(
+                    "`{key}`: `url` must start with http:// or https://"
+                )));
+            }
+            if !args.is_empty() {
+                return Err(bad_request(format!(
+                    "`{key}`: `args` is for a server with a `command`"
+                )));
+            }
+            if let Some(transport) = &transport
+                && !matches!(transport.as_str(), "http" | "sse")
+            {
+                return Err(bad_request(format!(
+                    "`{key}`: `transport` is `http` or `sse`, not `{transport}`"
+                )));
+            }
+            fields.push(("url", url.into()));
+            if let Some(transport) = transport {
+                fields.push(("transport", transport.into()));
+            }
+        }
+    }
+    Ok(Change::McpServer(fields))
+}
+
 fn check_path(
     key: &str,
     rule: PathRule,
@@ -718,34 +851,64 @@ fn apply_change(
         return Err(internal("a setting key without a name"));
     };
     match change {
-        Change::Set(mut value) => {
-            let mut table: &mut dyn TableLike = doc.as_table_mut();
-            for segment in parents {
-                let item = table.entry(segment).or_insert_with(|| {
-                    let mut created = toml_edit::Table::new();
-                    created.set_implicit(true);
-                    Item::Table(created)
-                });
-                table = item
-                    .as_table_like_mut()
-                    .ok_or_else(|| not_a_table(segment))?;
+        Change::Set(value) => {
+            let table = walk(doc, parents)?;
+            set_value(table, last, value);
+            Ok(())
+        }
+        Change::McpServer(fields) => {
+            let table = walk(doc, parents)?;
+            let server = table
+                .entry(last)
+                .or_insert_with(|| Item::Table(toml_edit::Table::new()))
+                .as_table_like_mut()
+                .ok_or_else(|| not_a_table(last))?;
+            for field in MCP_FIELDS {
+                if !fields.iter().any(|(name, _)| *name == field) {
+                    server.remove(field);
+                }
             }
-            match table.get_mut(last) {
-                Some(Item::Value(old)) => {
-                    // The comment after the old value stays after the new one.
-                    *value.decor_mut() = old.decor().clone();
-                    *old = value;
-                }
-                Some(item) => *item = Item::Value(value),
-                None => {
-                    table.insert(last, Item::Value(value));
-                }
+            for (field, value) in fields {
+                set_value(server, field, value);
             }
             Ok(())
         }
         Change::Remove => {
             remove_path(doc.as_table_mut(), segments)?;
             Ok(())
+        }
+    }
+}
+
+/// The table `parents` names, created (implicit, so no header of its own) where it is missing.
+fn walk<'a>(
+    doc: &'a mut DocumentMut,
+    parents: &[String],
+) -> Result<&'a mut dyn TableLike, ErrorBody> {
+    let mut table: &mut dyn TableLike = doc.as_table_mut();
+    for segment in parents {
+        let item = table.entry(segment).or_insert_with(|| {
+            let mut created = toml_edit::Table::new();
+            created.set_implicit(true);
+            Item::Table(created)
+        });
+        table = item
+            .as_table_like_mut()
+            .ok_or_else(|| not_a_table(segment))?;
+    }
+    Ok(table)
+}
+
+/// Writes `value` at `key`: an existing key keeps its place and the comment after its value.
+fn set_value(table: &mut dyn TableLike, key: &str, mut value: toml_edit::Value) {
+    match table.get_mut(key) {
+        Some(Item::Value(old)) => {
+            *value.decor_mut() = old.decor().clone();
+            *old = value;
+        }
+        Some(item) => *item = Item::Value(value),
+        None => {
+            table.insert(key, Item::Value(value));
         }
     }
 }
@@ -1009,16 +1172,11 @@ impl SettingsService {
     /// `daemon.settings.set`.
     pub async fn set(&self, req: DaemonSettingSet) -> Result<Listing, ErrorBody> {
         let target = resolve_key(&req.key)?;
+        // `None`: an MCP server, checked as a whole by `validate_mcp`.
         let (kind, group) = match &target {
-            Target::Spec(spec) => (spec.kind, spec.group),
-            Target::Workspace { .. } => (Kind::Bool, Some(Group::Assistant)),
-            Target::Mcp(name) => {
-                return Err(bad_request(format!(
-                    "`mcp.{name}` is edited in {} (a server has a command or a URL, \
-                     arguments and a transport); `hutan config ls` shows it",
-                    self.file.display()
-                )));
-            }
+            Target::Spec(spec) => (Some(spec.kind), spec.group),
+            Target::Workspace { .. } => (Some(Kind::Bool), Some(Group::Assistant)),
+            Target::Mcp(_) => (None, None),
         };
         if let Target::Workspace { workspace, .. } = &target
             && req.value.is_some()
@@ -1034,7 +1192,11 @@ impl SettingsService {
             req.value,
         );
         let fresh = tokio::task::spawn_blocking(move || {
-            let change = validate(&key, kind, value, user_home.as_deref())?;
+            let change = match (kind, &target) {
+                (Some(kind), _) => validate(&key, kind, value, user_home.as_deref())?,
+                (None, Target::Mcp(name)) => validate_mcp(name, value)?,
+                (None, _) => return Err(internal("a setting without a kind")),
+            };
             edit_file(&path, user_home.as_deref(), &key, &segments, change)
         })
         .await
@@ -1320,7 +1482,7 @@ mod tests {
                 .filter(|k| !expected.iter().any(|e| e == **k))
                 .collect::<Vec<_>>()
         );
-        // Left out on purpose: `[mcp.<name>]` (shown read-only, one entry per server) and
+        // Left out on purpose: `[mcp.<name>]` (one entry per server, set as a whole) and
         // `[assistant.workspaces.<workspace>]` (one entry per override, created by `set`).
     }
 
@@ -1506,11 +1668,11 @@ x = 1
         let Ok(target) = resolve_key(key) else {
             panic!("{key}")
         };
-        let kind = match &target {
-            Target::Spec(spec) => spec.kind,
-            _ => Kind::Bool,
+        let change = match &target {
+            Target::Spec(spec) => validate(key, spec.kind, value, None).unwrap(),
+            Target::Mcp(name) => validate_mcp(name, value).unwrap(),
+            Target::Workspace { .. } => validate(key, Kind::Bool, value, None).unwrap(),
         };
-        let change = validate(key, kind, value, None).unwrap();
         let mut doc = doc(text);
         apply_change(&mut doc, &target.segments(key), change).unwrap();
         doc.to_string()
@@ -1612,6 +1774,103 @@ x = 1
             Config::parse(&out, None).unwrap().harness["omp"].args,
             ["acp", "--x"]
         );
+    }
+
+    // ---- MCP servers ----
+
+    fn mcp_refused(name: &str, value: Value) -> String {
+        let error = validate_mcp(name, Some(value)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::BadRequest);
+        error.message
+    }
+
+    #[test]
+    fn an_mcp_server_is_written_as_its_own_table_and_edited_in_place() {
+        let text = "# mine\n[tasks]\nmax_parallel = 2 # two\n";
+        let added = edited(
+            text,
+            "mcp.docs",
+            Some(json!({"command": "npx", "args": ["-y", "docs"]})),
+        );
+        assert_eq!(
+            added,
+            format!("{text}\n[mcp.docs]\ncommand = \"npx\"\nargs = [\"-y\", \"docs\"]\n")
+        );
+        let parsed = Config::parse(&added, None).unwrap();
+        assert_eq!(parsed.mcp["docs"].command.as_deref(), Some("npx"));
+        assert_eq!(parsed.mcp["docs"].args, ["-y", "docs"]);
+
+        // An edit keeps the comments of the table and of the keys it still has.
+        let commented = "[mcp.docs]  # the docs\ncommand = \"npx\"  # runs it\nargs = [\"-y\"]\n\n[tasks]\nmax_parallel = 4\n";
+        let changed = edited(commented, "mcp.docs", Some(json!({"command": "uvx"})));
+        assert_eq!(
+            changed,
+            "[mcp.docs]  # the docs\ncommand = \"uvx\"  # runs it\n\n[tasks]\nmax_parallel = 4\n"
+        );
+
+        // From a program to a URL: the old keys go.
+        let remote = edited(
+            commented,
+            "mcp.docs",
+            Some(json!({"url": "https://x.test/mcp", "transport": "sse"})),
+        );
+        let parsed = Config::parse(&remote, None).unwrap();
+        let server = &parsed.mcp["docs"];
+        assert_eq!(server.command, None);
+        assert!(server.args.is_empty());
+        assert_eq!(server.url.as_deref(), Some("https://x.test/mcp"));
+        assert_eq!(server.transport.as_deref(), Some("sse"));
+        assert!(remote.contains("# the docs") && remote.contains("[tasks]"));
+    }
+
+    #[test]
+    fn removing_an_mcp_server_keeps_the_rest_and_null_is_a_removal() {
+        let text = "# top\n[tasks]\nmax_parallel = 2\n\n# the a server\n[mcp.a]\ncommand = \"a\"\n\n[mcp.b]\ncommand = \"b\"\n";
+        // The comments of a server go with it; everything else stays.
+        let out = edited(text, "mcp.a", None);
+        assert_eq!(
+            out,
+            "# top\n[tasks]\nmax_parallel = 2\n\n[mcp.b]\ncommand = \"b\"\n"
+        );
+        let out = edited(&out, "mcp.b", Some(Value::Null));
+        assert_eq!(out, "# top\n[tasks]\nmax_parallel = 2\n");
+        // Removing what is not there changes nothing.
+        assert_eq!(edited(&out, "mcp.gone", None), out);
+        // Blank values are "not set", not errors.
+        let blank = edited(
+            "",
+            "mcp.x",
+            Some(json!({"command": " npx ", "url": "", "transport": null, "args": null})),
+        );
+        assert_eq!(blank, "[mcp.x]\ncommand = \"npx\"\n");
+    }
+
+    #[test]
+    fn an_mcp_server_that_the_loader_would_refuse_is_refused_first() {
+        assert!(mcp_refused("x", json!({})).contains("`command`"));
+        assert!(mcp_refused("x", json!({"command": "a", "url": "https://x"})).contains("not both"));
+        assert!(mcp_refused("x", json!({"url": "ftp://x"})).contains("http"));
+        assert!(
+            mcp_refused("x", json!({"url": "https://x", "transport": "ws"}))
+                .contains("`http` or `sse`")
+        );
+        assert!(mcp_refused("x", json!({"command": "a", "transport": "http"})).contains("`url`"));
+        assert!(mcp_refused("x", json!({"url": "https://x", "args": ["a"]})).contains("`command`"));
+        assert!(mcp_refused("x", json!({"command": "a", "env": {}})).contains("no field `env`"));
+        assert!(mcp_refused("x", json!({"command": "a", "args": [1]})).contains("list of text"));
+        assert!(mcp_refused("x", json!({"command": 3})).contains("is text"));
+        assert!(mcp_refused("x", json!("npx")).contains("is a table"));
+        assert!(mcp_refused("x", json!({"command": "a\nb"})).contains("control"));
+        for name in ["", "Docs", "a.b", "a b", "ü", &"x".repeat(33)] {
+            assert!(
+                mcp_refused(name, json!({"command": "a"})).contains("name of an MCP server"),
+                "{name:?}"
+            );
+        }
+        assert!(validate_mcp(&"x".repeat(32), Some(json!({"command": "a"}))).is_ok());
+        assert!(validate_mcp("a-b_9", Some(json!({"command": "a"}))).is_ok());
+        // A server with an old-style name can still be removed.
+        assert!(matches!(validate_mcp("Old.Name", None), Ok(Change::Remove)));
     }
 
     #[test]

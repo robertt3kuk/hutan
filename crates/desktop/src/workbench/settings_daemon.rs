@@ -7,7 +7,8 @@
 //! of the sheet that show these options (Notifications, Sessions & restore, Agent control &
 //! security, Agents & tools, and sections of History and Assistant) are drawn from that list
 //! with the same controls as the settings of the app: a toggle, a range-checked number, a
-//! choice, a path with "Choose…", a list, a table of variables, and a read-only table.
+//! choice, a path with "Choose…", a list, a table of variables, and the MCP servers (a row with
+//! Edit and Remove each, and a form to add one: `settings_mcp.rs`).
 //!
 //! The window keeps nothing but the last answer. A change is sent and the answer replaces the
 //! list; a refusal (`bad_request`) shows under the field, a `daemon.toml` the daemon cannot
@@ -31,6 +32,7 @@ use super::render::probe;
 use super::settings_labels::{
     daemon_field_help, daemon_field_search_text, daemon_field_title, daemon_value_label, words,
 };
+use super::settings_mcp::McpForm;
 use super::settings_pages::{DataTarget, valid_env_name};
 use super::settings_rows::{note, sheet_row, small_button};
 use super::settings_sheet::{Edit, display_value};
@@ -49,7 +51,7 @@ pub(super) struct Section {
     pub keys: &'static [&'static str],
 }
 
-const MCP_KEYS: &str = "mcp.*";
+pub(super) const MCP_KEYS: &str = "mcp.*";
 
 /// The sections of a page that shows daemon settings; empty for the other pages.
 pub(super) fn sections(page: &str) -> &'static [Section] {
@@ -134,7 +136,7 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
             },
             Section {
                 title: words::SEC_MCP,
-                help: "",
+                help: words::MCP_HELP,
                 keys: &[MCP_KEYS],
             },
             Section {
@@ -207,7 +209,9 @@ pub struct DaemonSettingsState {
     /// The daemon cannot read `daemon.toml`: its message, with the file, line and column.
     problem: Option<String>,
     /// What the daemon (or the text box) refused, by key.
-    errors: BTreeMap<String, String>,
+    pub(super) errors: BTreeMap<String, String>,
+    /// The form of an MCP server that is being added or edited (`settings_mcp.rs`).
+    pub(super) mcp_form: Option<McpForm>,
     requested: u64,
     applied: u64,
     /// The daemon run the list was asked of.
@@ -487,6 +491,9 @@ impl Workbench {
             self.refresh_history_index(cx);
             self.refresh_history_panel(cx);
         }
+        if key.starts_with("mcp.") {
+            self.mcp_changed(key);
+        }
     }
 
     // ---- changing ------------------------------------------------------------------------
@@ -680,7 +687,7 @@ impl Workbench {
         self.daemon_start_edit(key, text, false, Some(name.to_owned()), cx);
     }
 
-    fn daemon_start_edit(
+    pub(super) fn daemon_start_edit(
         &mut self,
         key: &str,
         text: String,
@@ -706,6 +713,10 @@ impl Workbench {
     /// Enter in a text box of a daemon setting: what fits is sent (the daemon checks the rest
     /// and answers with the reason under the box); what cannot be parsed stays in the box.
     pub(super) fn daemon_commit_edit(&mut self, key: &str, edit: &Edit, cx: &mut Context<Self>) {
+        if let Some(field) = key.strip_prefix("mcp-form:") {
+            self.mcp_commit_field(field, cx);
+            return;
+        }
         let Some(entry) = self.daemon_settings.entry(key) else {
             return;
         };
@@ -952,24 +963,7 @@ impl Workbench {
         }
         for key in section.keys {
             if *key == MCP_KEYS {
-                let servers: Vec<DaemonSetting> = self
-                    .daemon_settings
-                    .settings
-                    .iter()
-                    .flat_map(|s| s.entries.iter())
-                    .filter(|e| e.key.starts_with("mcp."))
-                    .cloned()
-                    .collect();
-                if servers.is_empty() {
-                    rows.push(
-                        note(words::MCP_NONE, &theme, &tokens)
-                            .py(px(tokens.spacing * 2.0))
-                            .into_any_element(),
-                    );
-                }
-                for server in &servers {
-                    rows.push(self.render_daemon_row(server, cx));
-                }
+                rows.extend(self.render_mcp_rows(cx));
             } else if let Some(entry) = self.daemon_settings.entry(key).cloned() {
                 rows.push(self.render_daemon_row(&entry, cx));
             }
@@ -1053,7 +1047,7 @@ impl Workbench {
     }
 
     /// "Default: On · applies at once": whether the file sets it and when a change counts.
-    fn daemon_source_line(&self, e: &DaemonSetting) -> AnyElement {
+    pub(super) fn daemon_source_line(&self, e: &DaemonSetting) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
         let table = e.kind == DaemonSettingKind::Table;
@@ -1222,7 +1216,8 @@ impl Workbench {
                 self.render_daemon_list(e, choices.clone(), cx)
             }
             DaemonSettingKind::StringMap => self.render_daemon_map(e, cx),
-            DaemonSettingKind::Table => self.render_daemon_table(e, cx),
+            // An MCP server has its own rows (`settings_mcp.rs`).
+            DaemonSettingKind::Table => div().into_any_element(),
             DaemonSettingKind::Enum { .. } => div().into_any_element(),
         }
     }
@@ -1605,54 +1600,6 @@ impl Workbench {
             .max_w(px(360.0))
             .children(lines)
             .child(add)
-            .into_any_element()
-    }
-
-    /// A table the file defines (an MCP server): its parts as text, and the way to the file.
-    fn render_daemon_table(&self, e: &DaemonSetting, cx: &mut Context<Self>) -> AnyElement {
-        let theme = self.theme;
-        let tokens = self.density.ui();
-        let text = match e.value.as_object() {
-            Some(table) if !table.is_empty() => table
-                .iter()
-                .map(|(name, value)| match value {
-                    Json::String(s) => format!("{name}: {s}"),
-                    Json::Array(items) => format!(
-                        "{name}: {}",
-                        items
-                            .iter()
-                            .map(|i| i.as_str().map_or_else(|| i.to_string(), str::to_owned))
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    ),
-                    other => format!("{name}: {other}"),
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-            _ => "removed from the file".to_owned(),
-        };
-        div()
-            .flex()
-            .flex_col()
-            .items_end()
-            .gap(px(tokens.spacing))
-            .max_w(px(320.0))
-            .child(
-                div()
-                    .id(SharedString::from(format!("dtable-{}", e.key)))
-                    .text_color(theme.muted)
-                    .child(SharedString::from(text)),
-            )
-            .child(
-                small_button(
-                    SharedString::from(format!("dedit-{}", e.key)),
-                    words::EDIT_DAEMON_TOML,
-                    false,
-                    &theme,
-                    &tokens,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.open_daemon_toml(cx))),
-            )
             .into_any_element()
     }
 }

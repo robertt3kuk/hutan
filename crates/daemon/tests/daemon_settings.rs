@@ -113,7 +113,7 @@ async fn an_empty_home_lists_every_setting_at_its_default() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_file_is_listed_with_what_it_sets_and_mcp_servers_read_only() {
+async fn the_file_is_listed_with_what_it_sets_and_its_mcp_servers() {
     let t = TestDaemon::start_with(
         "[tasks]\nmax_parallel = 2\n[mcp.docs]\ncommand = \"npx\"\nargs = [\"-y\", \"docs\"]\n",
         |_| {},
@@ -133,13 +133,124 @@ async fn the_file_is_listed_with_what_it_sets_and_mcp_servers_read_only() {
     );
     assert!(!docs.pending_restart);
 
-    let (code, message) = refused(&client, "mcp.docs", json!({"command": "x"})).await;
-    assert_eq!(code, ErrorCode::BadRequest);
-    assert!(message.contains("daemon.toml"), "{message}");
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_servers_are_added_edited_and_removed_with_the_comments_kept() {
+    let start =
+        "# my daemon\n[tasks]\nmax_parallel = 2 # two\n\n[mcp.keep]\ncommand = \"keep\" # stays\n";
+    let t = TestDaemon::start_with(start, |_| {}).await;
+    let client = t.connect().await;
+
+    // Add: a program with arguments, and a remote server.
+    let settings = set(
+        &client,
+        "mcp.docs",
+        json!({"command": "npx", "args": ["-y", "docs"]}),
+    )
+    .await;
+    let docs = entry(&settings, "mcp.docs");
+    assert_eq!(docs.kind, DaemonSettingKind::Table);
+    assert_eq!(docs.applies, Applies::Restart);
     assert_eq!(
-        remote_code(client.daemon_setting_set("mcp.docs", None).await),
-        ErrorCode::BadRequest
+        docs.value,
+        json!({"command": "npx", "args": ["-y", "docs"]})
     );
+    assert!(docs.set_in_file && docs.pending_restart);
+    assert!(settings.restart_pending);
+    let settings = set(
+        &client,
+        "mcp.search",
+        json!({"url": "https://mcp.example.com/mcp", "transport": "sse"}),
+    )
+    .await;
+    assert_eq!(
+        entry(&settings, "mcp.search").value,
+        json!({"url": "https://mcp.example.com/mcp", "transport": "sse"})
+    );
+    let text = file(&t);
+    assert!(
+        text.starts_with(start),
+        "everything before is kept:\n{text}"
+    );
+    assert!(text.contains("[mcp.docs]\ncommand = \"npx\"\nargs = [\"-y\", \"docs\"]\n"));
+    assert!(
+        text.contains("[mcp.search]\nurl = \"https://mcp.example.com/mcp\"\ntransport = \"sse\"\n")
+    );
+
+    // Edit: a program becomes another one, without arguments.
+    let settings = set(&client, "mcp.docs", json!({"command": "uvx"})).await;
+    assert_eq!(
+        entry(&settings, "mcp.docs").value,
+        json!({"command": "uvx"})
+    );
+    assert!(file(&t).contains("[mcp.docs]\ncommand = \"uvx\"\n"));
+    assert!(!file(&t).contains("npx"));
+
+    // Refused: nothing is written.
+    let before = file(&t);
+    for (name, value, needle) in [
+        ("mcp.bad", json!({}), "command"),
+        (
+            "mcp.bad",
+            json!({"command": "a", "url": "https://x"}),
+            "not both",
+        ),
+        ("mcp.bad", json!({"url": "gopher://x"}), "http"),
+        (
+            "mcp.bad",
+            json!({"url": "https://x", "transport": "ws"}),
+            "transport",
+        ),
+        ("mcp.Bad", json!({"command": "a"}), "name"),
+        ("mcp.bad.dot", json!({"command": "a"}), "name"),
+        ("mcp.bad", json!("npx"), "table"),
+    ] {
+        let (code, message) = refused(&client, name, value).await;
+        assert_eq!(code, ErrorCode::BadRequest, "{name}");
+        assert!(message.contains(needle), "{message}");
+    }
+    assert_eq!(file(&t), before);
+
+    // Remove: the server and only it; `null` and a reset are the same.
+    let settings = client.daemon_setting_set("mcp.search", None).await.unwrap();
+    assert!(
+        settings.entries.iter().all(|e| e.key != "mcp.search"),
+        "a server that never ran is gone from the list"
+    );
+    let settings = set(&client, "mcp.docs", Value::Null).await;
+    assert!(settings.entries.iter().all(|e| e.key != "mcp.docs"));
+    let text = file(&t);
+    assert_eq!(text, start, "back to what the file was, comments and all");
+    let keep = entry(&settings, "mcp.keep");
+    assert_eq!(keep.value, json!({"command": "keep"}));
+    assert!(!keep.pending_restart);
+    assert!(!settings.restart_pending);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_mcp_server_change_is_pending_until_the_daemon_restarts() {
+    let t = TestDaemon::start_with("[mcp.old]\ncommand = \"old\"\n", |_| {}).await;
+    let client = t.connect().await;
+    set(&client, "mcp.new", json!({"command": "new"})).await;
+    let settings = client.daemon_setting_set("mcp.old", None).await.unwrap();
+    assert!(settings.restart_pending);
+    assert!(entry(&settings, "mcp.new").pending_restart);
+    let old = entry(&settings, "mcp.old");
+    assert_eq!(old.value, Value::Null, "it still runs until the restart");
+    assert!(old.pending_restart && !old.set_in_file);
+    drop(client);
+
+    let t = t.restart().await;
+    let client = t.connect().await;
+    let settings = client.daemon_settings().await.unwrap();
+    assert!(!settings.restart_pending);
+    assert!(settings.entries.iter().all(|e| e.key != "mcp.old"));
+    let new = entry(&settings, "mcp.new");
+    assert_eq!(new.value, json!({"command": "new"}));
+    assert!(!new.pending_restart);
     t.stop().await;
 }
 

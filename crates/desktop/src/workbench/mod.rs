@@ -34,6 +34,7 @@ mod settings_daemon;
 mod settings_keys;
 pub mod settings_labels;
 mod settings_layers;
+pub mod settings_mcp;
 mod settings_pages;
 mod settings_rows;
 pub mod settings_schema;
