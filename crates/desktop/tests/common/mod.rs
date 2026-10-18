@@ -214,6 +214,10 @@ impl TestDaemon {
         config.codex = codex;
         config.gateway = gateway;
         config.login_shell = login_shell;
+        // A GPUI test window answers `ui.command`s only while the test pumps it; on a loaded
+        // machine that can take longer than the 5 s a real window gets. No desktop test is about
+        // the timeout itself (the daemon's own tests cover it).
+        config.ui_command_timeout = std::time::Duration::from_secs(30);
         let daemon = runtime.block_on(hutan_daemon::start(config)).unwrap();
         Self {
             dir,
