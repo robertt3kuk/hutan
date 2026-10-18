@@ -384,7 +384,7 @@ impl Workbench {
         let look = Look::of(cx);
         let mut body = div().flex().flex_col().gap(px(12.0)).py(px(12.0))
             .child(div().child("Models and providers"))
-            .child(div().text_color(look.theme.muted).child("Provider configuration belongs to hutand. Keys are write-only and stored in Keychain."));
+            .child(div().text_color(look.theme.muted).child("Hutan keeps provider settings and keys for you. Keys are stored in the macOS Keychain and are never shown again."));
         let mut add = div().flex().flex_wrap().gap(px(6.0));
         for (kind, label) in [
             ("openai", "Add OpenAI"),

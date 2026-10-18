@@ -72,6 +72,10 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("launcher", "Start Sheet"),
     ("accounts", "Accounts"),
     ("models", "Models"),
+    ("notifications", "Notifications"),
+    ("sessions_restore", "Sessions & restore"),
+    ("control", "Agent control & security"),
+    ("agents_tools", "Agents & tools"),
 ];
 
 const FIELDS: &[FieldText] = &[
@@ -522,6 +526,418 @@ fn entry(namespace: &str, key: &str) -> Option<&'static FieldText> {
         .find(|f| f.namespace == namespace && f.key == key)
 }
 
+/// Daemon settings (`daemon.toml`): the wording of every key `daemon.settings.get` answers.
+/// Kept apart from [`FIELDS`] because these keys are the daemon's, not a namespace of the
+/// settings store; a test checks that each key of the daemon's table has an entry.
+const DAEMON_FIELDS: &[FieldText] = &[
+    // ---- notifications ----
+    field(
+        "daemon",
+        "notify.enabled",
+        "Notifications",
+        "Raise a notification when an agent needs you or finishes something. Off, nothing is raised, in Hutan or in the notification centre.",
+    ),
+    field(
+        "daemon",
+        "notify.native",
+        "Show in the macOS notification centre",
+        "Also post notifications to the system. Only the Hutan app can do this; the daemon of a development build posts nothing.",
+    ),
+    choice(
+        "daemon",
+        "notify.kinds",
+        "What to be told about",
+        "The events that raise a notification. Remove the ones you do not want.",
+        &[
+            ("approval_required", "An agent asks for permission"),
+            ("agent_blocked", "An agent is blocked"),
+            ("agent_finished", "An agent finished a long turn"),
+            ("session_exited_with_error", "A session ended with an error"),
+            (
+                "chat_turn_finished",
+                "A chat answered while you were elsewhere",
+            ),
+            ("task_done", "A task finished"),
+            ("task_failed", "A task failed"),
+            ("question_required", "An agent asks you a question"),
+        ],
+    ),
+    field(
+        "daemon",
+        "notify.min_turn_secs",
+        "Shortest turn that counts as finished",
+        "An agent's turn must take at least this many seconds before finishing it raises a notification. 0 tells you about every turn.",
+    ),
+    field(
+        "daemon",
+        "notify.expire_secs",
+        "Forget a notification after",
+        "A notification nobody answered lapses after this many seconds. A request for permission stays for as long as the agent waits.",
+    ),
+    // ---- sessions & restore ----
+    choice(
+        "daemon",
+        "daemon.restore_sessions",
+        "Sessions after a restart",
+        "What happens to your sessions when the daemon starts again. Terminals start again in their folder and agents resume where they can. “Leave them stopped” brings every session back stopped, with a Restart action.",
+        &[
+            ("respawn", "Start them again"),
+            ("stopped", "Leave them stopped"),
+        ],
+    ),
+    field(
+        "daemon",
+        "workspaces.home_folder",
+        "Home folder",
+        "The folder of the Home workspace, where the global assistant works. Default: the Hutan folder in your home folder.",
+    ),
+    choice(
+        "daemon",
+        "terminal.env_inherit",
+        "Environment of new terminals",
+        "“Login environment” gives each terminal the environment a fresh login shell sets up, so the tools on your PATH are found. “The daemon's environment” hands over what the daemon itself was started with.",
+        &[
+            ("login", "Login environment"),
+            ("daemon", "The daemon's environment"),
+        ],
+    ),
+    field(
+        "daemon",
+        "projects.auto",
+        "Projects from folders",
+        "Place each session in the project of its folder, creating the project the first time. Off, sessions go to Home unless you choose a workspace.",
+    ),
+    // ---- assistant ----
+    choice(
+        "daemon",
+        "assistant.backend",
+        "Backend when nothing is chosen",
+        "What answers an assistant that has no choice of its own above. Empty: the first backend that is ready answers.",
+        &[
+            ("omp", "OMP"),
+            ("claude", "Claude Code"),
+            ("codex", "Codex"),
+            ("provider", "A model provider"),
+        ],
+    ),
+    field(
+        "daemon",
+        "assistant.provider",
+        "Provider when nothing is chosen",
+        "The model provider used when the backend is a provider and nothing above names one.",
+    ),
+    field(
+        "daemon",
+        "assistant.model",
+        "Model when nothing is chosen",
+        "The model used when nothing above names one. Empty: Hutan picks a model that suits a read-only helper.",
+    ),
+    field(
+        "daemon",
+        "assistant.context_budget_chars",
+        "Size of attachments per message",
+        "How many characters of attached context one message may carry, shared between its attachments. Longer attachments are cut.",
+    ),
+    field(
+        "daemon",
+        "assistant.context.shell",
+        "Projects: terminal output",
+        "Lets the assistant of a project read the commands and output of terminals you attach to a message.",
+    ),
+    field(
+        "daemon",
+        "assistant.context.agents",
+        "Projects: agent transcripts",
+        "Lets the assistant of a project read what an agent said and did in a session you attach.",
+    ),
+    field(
+        "daemon",
+        "assistant.context.files",
+        "Projects: files",
+        "Lets the assistant of a project read a file you attach, inside the project's folders only. It can never read outside them.",
+    ),
+    field(
+        "daemon",
+        "assistant.context.search",
+        "Projects: session search",
+        "Lets the assistant of a project use the results of a search of your indexed sessions that you attach.",
+    ),
+    field(
+        "daemon",
+        "assistant.global_context.shell",
+        "Home: terminal output",
+        "Lets the Home assistant read the commands and output of terminals you attach to a message.",
+    ),
+    field(
+        "daemon",
+        "assistant.global_context.agents",
+        "Home: agent transcripts",
+        "Lets the Home assistant read what an agent said and did in a session you attach.",
+    ),
+    field(
+        "daemon",
+        "assistant.global_context.files",
+        "Home: files",
+        "Lets the Home assistant read a file you attach, inside the Home folder only. Off by default, because the Home folder is where private notes tend to be.",
+    ),
+    field(
+        "daemon",
+        "assistant.global_context.search",
+        "Home: session search",
+        "Lets the Home assistant use the results of a search of your indexed sessions that you attach.",
+    ),
+    // ---- agent control & security ----
+    choice(
+        "daemon",
+        "control.agents",
+        "Agents driving Hutan",
+        "What an agent running inside a Hutan session may do to Hutan itself: start and stop sessions, type into them, change layouts. “Ask me” asks you each time. “Allow” lets it act without asking. “Read only” lets it look and never change anything. Your own clicks are never affected.",
+        &[
+            ("ask", "Ask me"),
+            ("allow", "Allow"),
+            ("read_only", "Read only"),
+        ],
+    ),
+    field(
+        "daemon",
+        "control.mcp",
+        "Give agents Hutan's tools",
+        "Agents that Hutan starts get a tool server, so they can drive Hutan under the rule above. Off, they get none and can only use the command line.",
+    ),
+    field(
+        "daemon",
+        "control.approval_timeout_secs",
+        "Time to answer an agent's request",
+        "A request that waits for your answer is refused after this many seconds.",
+    ),
+    // ---- history indexing ----
+    field(
+        "daemon",
+        "history.enabled",
+        "Index sessions for search",
+        "Lets you search what was said and run in your agents' sessions and in Hutan.",
+    ),
+    field(
+        "daemon",
+        "history.hutan",
+        "Index Hutan sessions",
+        "Include the conversations and terminals of Hutan itself in the index.",
+    ),
+    field(
+        "daemon",
+        "history.claude",
+        "Index Claude Code sessions",
+        "Include the transcripts Claude Code keeps on this Mac.",
+    ),
+    field(
+        "daemon",
+        "history.codex",
+        "Index Codex sessions",
+        "Include the transcripts Codex keeps on this Mac.",
+    ),
+    field(
+        "daemon",
+        "history.omp",
+        "Index OMP sessions",
+        "Include the transcripts OMP keeps on this Mac.",
+    ),
+    choice(
+        "daemon",
+        "history.range_days",
+        "How far back to index",
+        "Only sessions of the last 30 or 90 days, or everything there is.",
+        &[
+            ("0", "Everything"),
+            ("30", "The last 30 days"),
+            ("90", "The last 90 days"),
+        ],
+    ),
+    field(
+        "daemon",
+        "history.roots.claude",
+        "Claude Code transcript folder",
+        "Where Hutan reads Claude Code's transcripts. Default: Claude Code's own folder.",
+    ),
+    field(
+        "daemon",
+        "history.roots.codex",
+        "Codex transcript folder",
+        "Where Hutan reads Codex's transcripts. Default: Codex's own folder.",
+    ),
+    field(
+        "daemon",
+        "history.roots.omp",
+        "OMP transcript folder",
+        "Where Hutan reads OMP's transcripts. Default: OMP's own folder.",
+    ),
+    // ---- agents & tools ----
+    field(
+        "daemon",
+        "harness.omp.bin",
+        "OMP program",
+        "The program Hutan starts to chat with OMP. Default: omp, found on the PATH of your login shell.",
+    ),
+    field(
+        "daemon",
+        "harness.omp.args",
+        "OMP arguments",
+        "Arguments passed to that program. Default: acp.",
+    ),
+    field(
+        "daemon",
+        "harness.omp.env",
+        "OMP environment",
+        "Extra environment variables for OMP. Do not put secrets here: the values stay in daemon.toml as plain text.",
+    ),
+    field(
+        "daemon",
+        "harness.omp.cli",
+        "OMP command line tool",
+        "The tool Hutan runs to list and start OMP logins. Default: the program above, else omp.",
+    ),
+    field(
+        "daemon",
+        "harness.claude.bin",
+        "Claude Code adapter",
+        "The program Hutan starts to chat with Claude Code. Default: claude-agent-acp, else claude-code-acp, found on the PATH of your login shell.",
+    ),
+    field(
+        "daemon",
+        "harness.claude.args",
+        "Claude Code arguments",
+        "Arguments passed to that program. Default: none.",
+    ),
+    field(
+        "daemon",
+        "harness.claude.env",
+        "Claude Code environment",
+        "Extra environment variables for Claude Code. Do not put secrets here: the values stay in daemon.toml as plain text.",
+    ),
+    field(
+        "daemon",
+        "harness.claude.cli",
+        "Claude Code command line tool",
+        "The tool Hutan runs to list and start Claude Code logins. Default: claude.",
+    ),
+    field(
+        "daemon",
+        "codex.bin",
+        "Codex program",
+        "The program Hutan starts to chat with Codex. Default: codex, found on the PATH of the daemon.",
+    ),
+    field(
+        "daemon",
+        "codex.args",
+        "Codex arguments",
+        "Arguments passed to that program. Default: app-server.",
+    ),
+    field(
+        "daemon",
+        "gateway.max_context_chars",
+        "Conversation length sent to a model",
+        "A direct chat leaves out its oldest messages once a request would be longer than this many characters.",
+    ),
+    field(
+        "daemon",
+        "tasks.max_parallel",
+        "Tasks that start by themselves",
+        "How many tasks set to start automatically may run at the same time.",
+    ),
+];
+
+fn daemon_entry(key: &str) -> Option<&'static FieldText> {
+    DAEMON_FIELDS.iter().find(|f| f.key == key)
+}
+
+/// What a permission of an assistant is called and lets it do: the part of a key after
+/// `assistant.context.` and so on.
+fn permission_text(name: &str) -> Option<(&'static str, &'static str)> {
+    Some(match name {
+        "shell" => (
+            "terminal output",
+            "read the commands and output of terminals you attach",
+        ),
+        "agents" => (
+            "agent transcripts",
+            "read what an agent said and did in a session you attach",
+        ),
+        "files" => (
+            "files",
+            "read a file you attach, inside this workspace's folders only",
+        ),
+        "search" => (
+            "session search",
+            "use the results of a search of your indexed sessions that you attach",
+        ),
+        _ => return None,
+    })
+}
+
+/// The part of `assistant.workspaces.<workspace>.<permission>` that names the permission.
+fn workspace_permission(key: &str) -> Option<&str> {
+    let rest = key.strip_prefix("assistant.workspaces.")?;
+    rest.rsplit_once('.').map(|(_, permission)| permission)
+}
+
+/// The title of a daemon setting.
+pub fn daemon_field_title(key: &str) -> String {
+    if let Some(f) = daemon_entry(key) {
+        return f.title.to_owned();
+    }
+    if let Some((what, _)) = workspace_permission(key).and_then(permission_text) {
+        return format!("This workspace: {what}");
+    }
+    if let Some(name) = key.strip_prefix("mcp.") {
+        return format!("MCP server “{name}”");
+    }
+    humanize(key)
+}
+
+/// The help under a daemon setting.
+pub fn daemon_field_help(key: &str) -> String {
+    if let Some(f) = daemon_entry(key) {
+        return f.help.to_owned();
+    }
+    if let Some((_, does)) = workspace_permission(key).and_then(permission_text) {
+        return format!(
+            "Whether the assistant of this workspace may {does}. Inherit follows the setting for projects."
+        );
+    }
+    if key.starts_with("mcp.") {
+        return "A tool server Hutan hands to the agents it starts. It is written in daemon.toml: a program to run, or an address to reach, with its arguments.".to_owned();
+    }
+    String::new()
+}
+
+/// The label of one value of a daemon choice (`ask`, `respawn`, `30`, …).
+pub fn daemon_value_label(key: &str, value: &str) -> String {
+    daemon_entry(key)
+        .and_then(|f| f.values.iter().find(|(v, _)| *v == value))
+        .map_or_else(|| humanize(value), |(_, label)| (*label).to_owned())
+}
+
+/// What a search of the sheet matches in a daemon setting: its title, help, the labels of its
+/// choices and its key.
+pub fn daemon_field_search_text(key: &str) -> String {
+    let mut text = format!(
+        "{} {} {key}",
+        daemon_field_title(key),
+        daemon_field_help(key)
+    );
+    if let Some(f) = daemon_entry(key) {
+        for (_, label) in f.values {
+            text.push(' ');
+            text.push_str(label);
+        }
+    }
+    text
+}
+
+/// Every key of the daemon wording, for the tests.
+pub fn daemon_wording_keys() -> Vec<&'static str> {
+    DAEMON_FIELDS.iter().map(|f| f.key).collect()
+}
+
 /// `font_size` → `Font Size`: the fallback for a key without an entry.
 fn humanize(key: &str) -> String {
     key.rsplit('.')
@@ -607,7 +1023,23 @@ pub fn page_keywords(page: &str) -> &'static str {
             "Data folder settings.toml keymap.toml daemon.toml logs folder Reveal in Finder \
              Open database size history index size restart daemon stop daemon"
         }
-        "history" => "Index sessions indexing on off sources index size",
+        "history" => {
+            "Index sessions indexing on off sources index size Hutan Claude Code Codex OMP \
+             how far back range days transcript folders"
+        }
+        "notifications" => "Notify notifications alerts native notification centre",
+        "sessions_restore" => {
+            "Restore sessions restart respawn home folder environment login shell projects"
+        }
+        "control" => "Agents control approval security MCP tools read only allow ask permission",
+        "agents_tools" => {
+            "OMP Claude Code Codex program arguments environment MCP servers gateway context \
+             tasks parallel"
+        }
+        "assistant" => {
+            "Backend model default inherit global workspace permissions files terminal output \
+             agent transcripts search budget"
+        }
         "integrations" => "Hooks install repair uninstall status Claude Code Codex OMP agent hooks",
         "launcher" => "Remembered choices Don't ask again revoke exemptions",
         "keymap" => "Bindings shortcuts keys keymap.toml reload open",
@@ -718,6 +1150,63 @@ pub mod words {
         CLEAR_KEY_CONFIRM = "Clear key";
         STARTER_SETTINGS = "# Hutan settings. Hutan edits this file in place and keeps your comments.\n";
         STARTER_KEYMAP = "# Your key bindings, on top of the set chosen in Settings. For example:\n# [[binding]]\n# keys = \"cmd-shift-d\"\n# action = \"workbench::SplitDown\"\n";
+        DAEMON_UNSUPPORTED = "Update the daemon to manage these settings here.";
+        DAEMON_ASKING = "Asking the daemon…";
+        DAEMON_FILE_BROKEN = "daemon.toml cannot be read";
+        OPEN_DAEMON_TOML = "Open daemon.toml";
+        EDIT_DAEMON_TOML = "Edit daemon.toml";
+        CHECK_AGAIN = "Check again";
+        RESTART_BANNER = "Some changes apply after the daemon restarts.";
+        RESTART_NOW = "Restart now";
+        APPLIES_LIVE = "applies at once";
+        APPLIES_RESTART = "applies after the daemon restarts";
+        PENDING_RESTART = "saved, applies after the daemon restarts";
+        SET_IN_FILE = "Set in daemon.toml";
+        USE_DEFAULT = "Use default";
+        CHOOSE_PATH = "Choose…";
+        CHOOSE_PROMPT = "Choose";
+        NONE_SET = "none";
+        LOOKED_UP = "looked up automatically";
+        USUAL_PLACE = "the usual place";
+        MCP_NONE = "No MCP servers are set in daemon.toml.";
+        SEC_NOTIFY = "Notifications";
+        SEC_SESSIONS = "Sessions";
+        SEC_AGENT_CONTROL = "What agents may do to Hutan";
+        SEC_HISTORY = "What to index";
+        SEC_HISTORY_FOLDERS = "Where the transcripts are";
+        SEC_HISTORY_PANEL = "The History panel";
+        SEC_OMP = "OMP";
+        SEC_CLAUDE = "Claude Code";
+        SEC_CODEX = "Codex";
+        SEC_MCP = "MCP servers";
+        SEC_LIMITS = "Limits";
+        SEC_ASSISTANT_PANEL = "The assistant panel";
+        SEC_ASSISTANT_BACKEND = "Backend and model";
+        SEC_ASSISTANT_BACKEND_HELP = "What answers the assistant of each place. Inherit follows the place above it: a workspace follows its parent workspace, then Global, then daemon.toml, then Automatic, the first backend that is ready.";
+        SEC_ASSISTANT_DEFAULT = "When nothing is chosen";
+        SEC_ASSISTANT_PROJECTS = "What assistants of projects may read";
+        SEC_ASSISTANT_HOME = "What the Home assistant may read";
+        SEC_ASSISTANT_THIS = "What this workspace's assistant may read";
+        SEC_ASSISTANT_THIS_HELP = "Overrides for this workspace only. Inherit follows the setting for projects.";
+        SEC_ASSISTANT_LIMITS = "Attachments";
+        SCOPE_GLOBAL = "Global (Home)";
+        INHERIT = "Inherit";
+        ALLOW = "Allow";
+        DENY = "Deny";
+        AUTOMATIC = "Automatic";
+        BACKEND_OMP = "OMP";
+        BACKEND_CLAUDE = "Claude Code";
+        BACKEND_CODEX = "Codex";
+        BACKEND_PROVIDER = "Provider";
+        MODEL_TITLE = "Model";
+        MODEL_LOADING = "Loading the models…";
+        MODEL_NONE = "No models were listed.";
+        PROVIDERS_NONE = "No model provider is set up: add one on the Models page.";
+        NOT_OPENED = "Not opened yet: the assistant starts on its backend the first time you use it.";
+        NO_PROJECT_NOTE = "Open a project to set its own backend and permissions here.";
+        NO_MATCH_HINT = "Clear the search to see every page, or try another word.";
+        NO_MATCH_FOOTER = "No matches";
+        CLEAR_SEARCH = "Clear search";
     }
 
     /// "Workspace api", or just "Workspace" when the container's name is not known.
@@ -733,6 +1222,55 @@ pub mod words {
         format!("editing {layer}")
     }
 
+    /// "Until then, edit /path by hand.": where the file is when this daemon cannot change it.
+    pub fn daemon_file_line(path: &str) -> String {
+        format!("Until then, edit {path} by hand.")
+    }
+
+    /// "Default: On": what the setting is when daemon.toml does not set it.
+    pub fn default_is(value: &str) -> String {
+        format!("Default: {value}")
+    }
+
+    /// "Set in daemon.toml (default: On)".
+    pub fn set_with_default(default: &str) -> String {
+        format!("{SET_IN_FILE} (default: {default})")
+    }
+
+    /// "Runs on OMP · model": what the assistant of a place runs on.
+    pub fn runs_on(backend: &str, model: Option<&str>) -> String {
+        match model {
+            Some(model) => format!("Runs on {backend} · {model}"),
+            None => format!("Runs on {backend}"),
+        }
+    }
+
+    /// What "Inherit" follows, and where it comes from.
+    pub fn inherits(from: &str, backend: Option<&str>) -> String {
+        match backend {
+            Some(backend) => format!("Inherits {from}: {backend}"),
+            None => format!("Inherits {from}"),
+        }
+    }
+
+    /// "x (not in the list)": a stored model the catalog does not list.
+    pub fn model_unlisted(model: &str) -> String {
+        format!("{model} (not in the list)")
+    }
+
+    /// "Automatic · runs gpt-5": the model Automatic picked.
+    pub fn automatic_runs(model: &str) -> String {
+        format!("Automatic · runs {model}")
+    }
+
+    /// What an assistant permission follows when it is not overridden.
+    pub fn inheriting_permission(allowed: bool) -> String {
+        format!(
+            "Inherits the setting for projects: {}",
+            if allowed { "allowed" } else { "not allowed" }
+        )
+    }
+
     /// A value the app does not offer.
     pub fn not_available(value: &str) -> String {
         format!("{value} (not available)")
@@ -740,6 +1278,24 @@ pub mod words {
 
     pub fn range_hint(low: f64, high: f64) -> String {
         format!("{} to {}", number(low), number(high))
+    }
+
+    /// "at least 1": the lower end of a number that has no upper end.
+    pub fn at_least(low: i64) -> String {
+        format!("at least {low}")
+    }
+
+    /// "Automatic · OMP · model": the backend was picked by Hutan, not chosen.
+    pub fn automatic_runs_on(backend: &str, model: Option<&str>) -> String {
+        match model {
+            Some(model) => format!("Automatic · {backend} · {model}"),
+            None => format!("Automatic · {backend}"),
+        }
+    }
+
+    /// "No settings match “word”": the page that stands in while the search finds nothing.
+    pub fn no_match(query: &str) -> String {
+        format!("No settings match “{query}”")
     }
 
     fn number(n: f64) -> String {
@@ -1051,6 +1607,20 @@ mod tests {
             words::preset_delete_message(false).to_owned(),
             words::preset_delete_message(true).to_owned(),
             words::field_name("terminal", "font_size"),
+            words::daemon_file_line("/tmp/hutan/daemon.toml"),
+            words::default_is("On"),
+            words::set_with_default("On"),
+            words::runs_on("OMP", Some("model")),
+            words::runs_on("OMP", None),
+            words::automatic_runs_on("OMP", Some("model")),
+            words::inherits("Global", Some("OMP")),
+            words::inherits("Global", None),
+            words::model_unlisted("x"),
+            words::automatic_runs("x"),
+            words::inheriting_permission(true),
+            words::inheriting_permission(false),
+            words::at_least(1),
+            words::no_match("zzz"),
         ];
         for sentence in &sentences {
             assert_user_facing("a sentence of the sheet", sentence);
@@ -1110,5 +1680,40 @@ mod tests {
     fn the_checker_rejects_what_it_is_for() {
         assert!(has_snake_case("see on_last_window_close"));
         assert!(!has_snake_case("Font size, in points."));
+    }
+
+    #[test]
+    fn every_daemon_key_has_user_facing_wording() {
+        let keys = daemon_wording_keys();
+        assert_eq!(keys.len(), 45);
+        for key in &keys {
+            assert_user_facing(&format!("{key} title"), &daemon_field_title(key));
+            assert_user_facing(&format!("{key} help"), &daemon_field_help(key));
+            let entry = daemon_entry(key).unwrap();
+            for (value, label) in entry.values {
+                assert!(!value.is_empty());
+                assert_user_facing(&format!("{key} choice {value}"), label);
+            }
+            assert!(daemon_field_search_text(key).contains(key));
+        }
+        // The keys that depend on the file's contents.
+        for key in [
+            "assistant.workspaces.proj.shell",
+            "assistant.workspaces.proj.agents",
+            "assistant.workspaces.proj.files",
+            "assistant.workspaces.proj.search",
+            "mcp.docs",
+        ] {
+            assert_user_facing(&format!("{key} title"), &daemon_field_title(key));
+            assert_user_facing(&format!("{key} help"), &daemon_field_help(key));
+        }
+        assert_eq!(
+            daemon_value_label("control.agents", "read_only"),
+            "Read only"
+        );
+        assert_eq!(
+            daemon_value_label("history.range_days", "30"),
+            "The last 30 days"
+        );
     }
 }

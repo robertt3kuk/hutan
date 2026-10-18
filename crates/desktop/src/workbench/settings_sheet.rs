@@ -23,6 +23,7 @@ use serde_json::Value as Json;
 
 use super::actions::sheet as sheet_actions;
 use super::modal::PromptSpec;
+use super::settings_keys::SheetFocus;
 use super::settings_labels::{namespace_title, words};
 use super::settings_pages::{preset_name, valid_env_name};
 use super::settings_schema::{
@@ -60,6 +61,12 @@ pub struct SettingsSheet {
     pub(super) pages: BTreeMap<&'static str, Vec<Field>>,
     /// The layer the user chose to edit; `None`: each field edits the layer it comes from.
     pub(super) layer: Option<SettingsLayer>,
+    /// Where the keyboard is: the search box, the list of pages or the controls of the page.
+    pub(super) zone: super::settings_keys::SheetFocus,
+    /// The row of the page the keyboard is on while `zone` is the controls.
+    pub(super) focus_row: Option<String>,
+    /// The option of the open dropdown the arrow keys are on: the dropdown and the value.
+    pub(super) cursor: Option<(String, String)>,
 }
 
 impl SettingsSheet {
@@ -74,6 +81,12 @@ impl SettingsSheet {
 
     pub fn edit(&self) -> Option<&Edit> {
         self.edit.as_ref()
+    }
+
+    /// The open dropdown: the field's key, `add:<key>` for the menu that adds to a list,
+    /// `daemon:<key>` for a daemon setting.
+    pub fn dropdown(&self) -> Option<&str> {
+        self.dropdown.as_deref()
     }
 
     pub fn message(&self) -> Option<&str> {
@@ -143,11 +156,18 @@ impl Workbench {
             entries,
             pages,
             layer: None,
+            zone: super::settings_keys::SheetFocus::Search,
+            focus_row: None,
+            cursor: None,
         });
         window.focus(&self.sheet_focus, cx);
         self.edits.sheet_query.reset();
         self.edits.sheet_value.reset();
         self.settings_page_opened(selected, cx);
+        if !super::settings_daemon::is_daemon_page(selected) {
+            // The banner of a pending restart is on every page.
+            self.refresh_daemon_settings(cx);
+        }
         cx.notify();
     }
 
@@ -214,6 +234,9 @@ impl Workbench {
             sheet.dropdown = None;
             sheet.message = None;
             sheet.layer = None;
+            sheet.zone = super::settings_keys::SheetFocus::Categories;
+            sheet.focus_row = None;
+            sheet.cursor = None;
         }
         self.settings_page_opened(page, cx);
         cx.notify();
@@ -239,6 +262,8 @@ impl Workbench {
                 sheet.edit = None;
                 sheet.dropdown = None;
                 sheet.layer = None;
+                sheet.focus_row = None;
+                sheet.cursor = None;
                 moved = Some(*first);
             }
         }
@@ -596,6 +621,10 @@ impl Workbench {
         let Some(edit) = self.sheet.as_ref().and_then(|s| s.edit.clone()) else {
             return;
         };
+        if let Some(key) = edit.field.strip_prefix(super::settings_daemon::EDIT_PREFIX) {
+            self.daemon_commit_edit(key, &edit, cx);
+            return;
+        }
         let Some((_, f, _)) = self.sheet_field(&edit.field) else {
             return;
         };
@@ -710,15 +739,20 @@ impl Workbench {
 
     /// A key in the sheet: the search box or the value being edited takes it. Typed text arrives
     /// through the field's platform text input.
-    fn sheet_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+    fn sheet_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let Some(sheet) = &self.sheet else {
             return;
         };
         let editing = sheet.edit.is_some();
+        if event.keystroke.key == "enter" && editing {
+            self.sheet_commit_edit(cx);
+            return;
+        }
+        if self.sheet_navigation_key(event, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         if event.keystroke.key == "enter" {
-            if editing {
-                self.sheet_commit_edit(cx);
-            }
             return;
         }
         let which = if editing {
@@ -792,6 +826,7 @@ impl Workbench {
         let editing = sheet.edit.clone();
         let message = sheet.message.clone();
         let query = sheet.query.clone();
+        let zone = sheet.zone;
         let pages = self.sheet_pages();
         let errors = self.settings.errors();
 
@@ -808,6 +843,9 @@ impl Workbench {
                     .rounded(px(tokens.radius))
                     .cursor_pointer()
                     .when(ns == selected, move |s| s.bg(theme.accent_soft))
+                    .when(ns == selected && zone == SheetFocus::Categories, move |s| {
+                        s.border_1().border_color(theme.accent)
+                    })
                     .hover(move |s| s.bg(hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.select_settings_namespace(ns, cx);
@@ -849,13 +887,23 @@ impl Workbench {
             })
             .collect();
         let has_errors = errors.iter().any(|e| e.severity == Severity::Error);
-        let rows = match selected {
-            "models" => vec![self.render_providers(cx)],
-            "accounts" => vec![self.render_accounts(cx)],
-            "data" => vec![self.render_data_page(cx)],
-            page => self.render_page_rows(page, cx),
+        let no_match = !query.trim().is_empty() && pages.is_empty();
+        let rows = if no_match {
+            vec![self.render_no_match(cx)]
+        } else {
+            match selected {
+                "models" => vec![self.render_providers(cx)],
+                "accounts" => vec![self.render_accounts(cx)],
+                "data" => vec![self.render_data_page(cx)],
+                page => self.render_page_rows(page, cx),
+            }
         };
-        let actions = self.render_sheet_actions(cx);
+        let banner = self.render_restart_banner(cx);
+        let actions = if no_match {
+            div().into_any_element()
+        } else {
+            self.render_sheet_actions(cx)
+        };
 
         let search_box = div()
             .id("sheet-search")
@@ -868,7 +916,7 @@ impl Workbench {
             .rounded(px(tokens.radius))
             .bg(theme.surface)
             .border_1()
-            .border_color(if editing.is_none() {
+            .border_color(if editing.is_none() && zone == SheetFocus::Search {
                 theme.accent
             } else {
                 theme.border
@@ -876,6 +924,7 @@ impl Workbench {
             .on_click(cx.listener(|this, _, _, cx| {
                 if let Some(sheet) = &mut this.sheet {
                     sheet.edit = None;
+                    sheet.zone = super::settings_keys::SheetFocus::Search;
                     cx.notify();
                 }
             }))
@@ -926,8 +975,8 @@ impl Workbench {
                         .text_size(px(tokens.font_size))
                         .text_color(theme.fg)
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                            this.sheet_key(event, cx);
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                            this.sheet_key(event, window, cx);
                         }))
                         .on_action(cx.listener(|this, _: &sheet_actions::Dismiss, window, cx| {
                             this.sheet_dismiss(window, cx);
@@ -975,12 +1024,15 @@ impl Workbench {
                                                 .child(
                                                     div()
                                                         .font_weight(gpui::FontWeight::MEDIUM)
-                                                        .child(SharedString::from(
-                                                            namespace_title(selected),
-                                                        )),
+                                                        .child(SharedString::from(if no_match {
+                                                            "Search".to_owned()
+                                                        } else {
+                                                            namespace_title(selected)
+                                                        })),
                                                 )
                                                 .child(actions),
                                         )
+                                        .children(banner)
                                         .child(
                                             div()
                                                 .id("sheet-fields")
@@ -1031,7 +1083,9 @@ impl Workbench {
                                         } else {
                                             theme.muted
                                         })
-                                        .child(if errors.is_empty() {
+                                        .child(if no_match && errors.is_empty() {
+                                            words::NO_MATCH_FOOTER
+                                        } else if errors.is_empty() {
                                             "Problems · none"
                                         } else {
                                             "Problems"

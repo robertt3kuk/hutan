@@ -212,6 +212,9 @@ impl Workbench {
                                 &theme,
                                 &tokens,
                             )
+                            .when(self.dropdown_cursor_at(&key, option), |b| {
+                                b.bg(theme.surface_hover)
+                            })
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
                                     this.sheet_choose(&k, &o, cx);
@@ -307,7 +310,7 @@ impl Workbench {
             });
         let id = SharedString::from(format!("field-{key}"));
         let help = field_help(ns, &key, &field.doc);
-        sheet_row(
+        let row = sheet_row(
             id,
             field_title(ns, &key),
             help,
@@ -321,7 +324,8 @@ impl Workbench {
                 .into_any_element(),
             &theme,
             &tokens,
-        )
+        );
+        self.focus_ring(&format!("f:{key}"), row)
     }
 
     /// The On/Off toggle of a boolean field; Start at login also shows what the system says
@@ -521,6 +525,9 @@ impl Workbench {
                                 &theme,
                                 &tokens,
                             )
+                            .when(self.dropdown_cursor_at(&menu, choice), |b| {
+                                b.bg(theme.surface_hover)
+                            })
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
                                     this.sheet_add_list_item(&k, &c, cx);

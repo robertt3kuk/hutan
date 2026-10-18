@@ -118,6 +118,7 @@ pub struct TestDaemon {
     runtime: Option<tokio::runtime::Runtime>,
     daemon: Option<RunningDaemon>,
     proxy: Option<Proxy>,
+    older: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl TestDaemon {
@@ -220,7 +221,67 @@ impl TestDaemon {
             runtime: Some(runtime),
             daemon: Some(daemon),
             proxy: None,
+            older: None,
         }
+    }
+
+    /// A connection to this daemon as if it were older than protocol 0.28: the proxy it goes
+    /// through renames the capability `daemon.settings` in the daemon's welcome (to a name of
+    /// the same length, so the frame stays valid), and passes everything else on.
+    pub fn older_connection(&mut self) -> Connection {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::{UnixListener, UnixStream};
+        let path = self.dir.path().join("older.sock");
+        let upstream = self.paths.socket.clone();
+        let listener = {
+            let _guard = self.rt().enter();
+            UnixListener::bind(&path).unwrap()
+        };
+        let task = self.rt().spawn(async move {
+            loop {
+                let Ok((client, _)) = listener.accept().await else {
+                    return;
+                };
+                let upstream = upstream.clone();
+                tokio::spawn(async move {
+                    let Ok(daemon) = UnixStream::connect(&upstream).await else {
+                        return;
+                    };
+                    let (mut daemon_read, mut daemon_write) = daemon.into_split();
+                    let (mut client_read, mut client_write) = client.into_split();
+                    tokio::spawn(async move {
+                        let mut buf = vec![0u8; 64 * 1024];
+                        let mut renamed = false;
+                        loop {
+                            let Ok(n) = daemon_read.read(&mut buf).await else {
+                                return;
+                            };
+                            if n == 0 {
+                                return;
+                            }
+                            let chunk = &mut buf[..n];
+                            if !renamed {
+                                let needle = b"daemon.settings";
+                                if let Some(at) =
+                                    chunk.windows(needle.len()).position(|w| w == needle)
+                                {
+                                    chunk[at + needle.len() - 1] = b'z';
+                                    renamed = true;
+                                }
+                            }
+                            if client_write.write_all(chunk).await.is_err() {
+                                return;
+                            }
+                        }
+                    });
+                    let _ = tokio::io::copy(&mut client_read, &mut daemon_write).await;
+                });
+            }
+        });
+        self.older = Some(task);
+        let mut options = self.options();
+        options.socket = Some(path);
+        Connection::start(options)
     }
 
     /// A connection that goes through a proxy whose link [`TestDaemon::sever`] can cut.

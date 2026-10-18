@@ -132,21 +132,32 @@ impl Workbench {
         match page {
             "models" => self.refresh_providers(cx),
             "accounts" => self.refresh_accounts(cx),
-            "history" => self.refresh_history_index(cx),
+            "history" => {
+                self.refresh_history_index(cx);
+                self.refresh_daemon_settings(cx);
+            }
             "data" => {
                 self.refresh_history_index(cx);
                 self.refresh_daemon_status(cx);
             }
             "integrations" => self.refresh_all_integration_statuses(cx),
+            "assistant" => {
+                self.refresh_daemon_settings(cx);
+                self.refresh_assistant_defaults(cx);
+                self.refresh_providers(cx);
+            }
+            "notifications" | "sessions_restore" | "control" | "agents_tools" => {
+                self.refresh_daemon_settings(cx);
+            }
             _ => {}
         }
     }
 
     /// What a search of the sheet matches on `page` besides its title, fields and keywords: the
-    /// bindings of the Keyboard page.
+    /// bindings of the Keyboard page, the wording of the daemon settings of a daemon page.
     pub(super) fn page_search_text(&self, page: &str) -> String {
         if page != "keymap" {
-            return String::new();
+            return super::settings_daemon::search_text(page);
         }
         self.custom_bindings()
             .iter()
@@ -169,7 +180,12 @@ impl Workbench {
         let mut rows = Vec::new();
         match page {
             "app" => rows.push(self.render_run_setup_row(cx)),
-            "history" => rows.push(self.render_history_indexing(cx)),
+            "history" => {
+                rows.push(self.render_history_indexing(cx));
+                rows.extend(self.render_daemon_page("history", cx));
+                rows.push(self.section_heading(words::SEC_HISTORY_PANEL, ""));
+            }
+            "assistant" => rows.push(self.section_heading(words::SEC_ASSISTANT_PANEL, "")),
             _ => {}
         }
         rows.extend(fields.iter().map(|f| self.render_field_row(f, cx)));
@@ -177,6 +193,10 @@ impl Workbench {
             "integrations" => rows.push(self.render_integrations(cx)),
             "launcher" => rows.push(self.render_exemptions(cx)),
             "keymap" => rows.push(self.render_keybindings(cx)),
+            "assistant" => rows.extend(self.render_assistant_daemon(cx)),
+            page if super::settings_daemon::is_daemon_page(page) => {
+                rows.extend(self.render_daemon_page(page, cx));
+            }
             _ => {}
         }
         rows
@@ -246,6 +266,7 @@ impl Workbench {
                     }
                 }
                 this.refresh_history_panel(cx);
+                this.refresh_daemon_settings(cx);
                 cx.notify();
             })
             .ok();

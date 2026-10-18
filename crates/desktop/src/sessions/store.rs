@@ -174,6 +174,11 @@ pub struct SessionsStore {
     tasks: TaskBook,
     /// The `task.list` in flight; dropped (cancelled) with the connection.
     tasks_loading: Option<Task<()>>,
+    /// The places (`None`: Global) whose assistant backend was chosen with `assistant.configure`,
+    /// as far as this window knows: the daemon cannot say what is stored.
+    assistant_pinned: std::collections::HashSet<Option<WorkspaceId>>,
+    /// Whether `daemon.toml` names the assistants' backend or provider; `None` until asked.
+    assistant_file_choice: Option<bool>,
     _tasks: Vec<Task<()>>,
 }
 
@@ -258,6 +263,8 @@ impl SessionsStore {
             recovery_shown: None,
             tasks: TaskBook::default(),
             tasks_loading: None,
+            assistant_pinned: std::collections::HashSet::new(),
+            assistant_file_choice: None,
             _tasks: vec![state_task, notice_task],
         }
     }
@@ -905,6 +912,48 @@ impl SessionsStore {
     /// Whether the user stopped the daemon from the app (it stays down until they start it).
     pub fn daemon_stopped(&self) -> bool {
         self.daemon_stopped
+    }
+
+    /// Records that the backend of `workspace`'s assistants (`None`: Global) was chosen
+    /// (`pinned`) or handed back to inheritance.
+    pub fn note_assistant_pinned(
+        &mut self,
+        workspace: Option<WorkspaceId>,
+        pinned: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = if pinned {
+            self.assistant_pinned.insert(workspace)
+        } else {
+            self.assistant_pinned.remove(&workspace)
+        };
+        if changed {
+            cx.notify();
+        }
+    }
+
+    /// Records whether `daemon.toml` names the assistants' backend or provider.
+    pub fn set_assistant_file_choice(&mut self, named: bool, cx: &mut Context<Self>) {
+        if self.assistant_file_choice != Some(named) {
+            self.assistant_file_choice = Some(named);
+            cx.notify();
+        }
+    }
+
+    /// Whether the assistants of `workspace` (`None`: Global) run on the automatic backend: no
+    /// choice of theirs, of their parent workspace or of Global is known to this window, and
+    /// `daemon.toml` names none. The daemon does not say, so a choice made by another client
+    /// or before this window started is not known.
+    pub fn assistant_is_automatic(&self, workspace: Option<WorkspaceId>) -> bool {
+        if self.assistant_file_choice == Some(true) || self.assistant_pinned.contains(&None) {
+            return false;
+        }
+        let Some(id) = workspace else {
+            return true;
+        };
+        let parent = self.workspace(id).and_then(|w| w.parent_id);
+        !self.assistant_pinned.contains(&Some(id))
+            && !parent.is_some_and(|p| self.assistant_pinned.contains(&Some(p)))
     }
 
     /// Tells every attached terminal that the daemon was stopped on purpose (or started again).

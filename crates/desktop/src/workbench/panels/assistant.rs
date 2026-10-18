@@ -584,6 +584,13 @@ impl AssistantPanel {
                 .await;
             this.update(cx, |this, cx| match stored {
                 Ok(_) => {
+                    let pinned = match key {
+                        ScopeKey::Global => None,
+                        ScopeKey::Workspace(id) => Some(id),
+                    };
+                    this.env.sessions.update(cx, |store, cx| {
+                        store.note_assistant_pinned(pinned, true, cx)
+                    });
                     this.scopes.remove(&key);
                     this.open(key, cx);
                 }
@@ -612,6 +619,9 @@ impl AssistantPanel {
                 .await;
             this.update(cx, |this, cx| match stored {
                 Ok(_) => {
+                    this.env
+                        .sessions
+                        .update(cx, |store, cx| store.note_assistant_pinned(None, true, cx));
                     this.scopes.remove(&key);
                     this.open(key, cx);
                 }
@@ -743,11 +753,17 @@ impl AssistantPanel {
     }
 
     /// The header's backend and model: what the shown assistant runs on, opening the chooser.
-    /// A session whose model is unknown (the harness's own default runs) says "Automatic": the
-    /// daemon picks the model of an assistant that was given none.
-    fn backend_button(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
-        let label = self
-            .session(cx)
+    /// With nothing chosen (no choice of this window's, none in `daemon.toml`) the daemon picked
+    /// the backend, and the label begins "Automatic · " so it does not read like a pinned
+    /// choice. A session whose model is unknown (the harness's own default runs) says
+    /// "Automatic" for the model.
+    pub fn backend_label(&self, cx: &App) -> String {
+        let workspace = match self.key(cx) {
+            ScopeKey::Global => None,
+            ScopeKey::Workspace(id) => Some(id),
+        };
+        let automatic = self.env.sessions.read(cx).assistant_is_automatic(workspace);
+        self.session(cx)
             .and_then(|session| {
                 let store = self.env.sessions.read(cx);
                 let chat = store.session(session)?.chat.clone()?;
@@ -756,14 +772,18 @@ impl AssistantPanel {
                 } else {
                     harnesses::harness_name(&chat.agent)
                 };
-                let model = if chat.model.is_empty() {
-                    "Automatic".to_owned()
-                } else {
-                    chat.model
-                };
-                Some(format!("{backend} · {model}"))
+                Some(match (automatic, chat.model.is_empty()) {
+                    (true, true) => format!("Automatic · {backend}"),
+                    (true, false) => format!("Automatic · {backend} · {}", chat.model),
+                    (false, true) => format!("{backend} · Automatic"),
+                    (false, false) => format!("{backend} · {}", chat.model),
+                })
             })
-            .unwrap_or_else(|| "Choose backend".to_owned());
+            .unwrap_or_else(|| "Choose backend".to_owned())
+    }
+
+    fn backend_button(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+        let label = self.backend_label(cx);
         button(
             "assistant-backend",
             format!("{label} ▾"),

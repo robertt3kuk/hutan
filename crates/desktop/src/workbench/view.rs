@@ -409,6 +409,10 @@ pub struct Workbench {
     pub(crate) providers: super::providers::ProvidersState,
     /// What the settings sheet knows about the history index.
     pub(crate) history_index: super::settings_pages::HistoryIndex,
+    /// What the settings sheet knows about `daemon.toml` (`settings_daemon.rs`).
+    pub(crate) daemon_settings: super::settings_daemon::DaemonSettingsState,
+    /// What the Assistant page knows about the backends of the assistants (`settings_assistant.rs`).
+    pub(crate) assistant_defaults: super::settings_assistant::AssistantDefaults,
     pub(crate) agent_focus: FocusHandle,
     pub(crate) held: HashMap<SessionId, Entity<TerminalSession>>,
     /// Folded blocks per terminal, saved with the layout (see [`persistence::CollapsedBlocks`]).
@@ -703,6 +707,8 @@ impl Workbench {
             launcher_focus,
             providers: super::providers::ProvidersState::default(),
             history_index: super::settings_pages::HistoryIndex::default(),
+            daemon_settings: super::settings_daemon::DaemonSettingsState::default(),
+            assistant_defaults: super::settings_assistant::AssistantDefaults::default(),
             agent_focus,
             held: HashMap::new(),
             collapsed_blocks: options

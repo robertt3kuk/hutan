@@ -273,6 +273,7 @@ impl Workbench {
     pub(crate) fn on_daemon_state_changed(&mut self, cx: &mut Context<Self>) {
         self.sync_daemon_menu(cx);
         self.sync_mac_surfaces(cx);
+        self.daemon_settings_follow_run(cx);
         if self.daemon.popover {
             self.refresh_daemon_status(cx);
         }
