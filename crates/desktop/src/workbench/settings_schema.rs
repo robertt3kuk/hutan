@@ -4,16 +4,17 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use hutan_settings::themes;
 use hutan_settings::{AppearanceSettings, Setting, SettingsStore};
 use serde_json::Value as Json;
 
 use crate::settings::{
     AgentsSettings, AppSettings, AssistantSettings, ChatSettings, EditorSettings, HistorySettings,
     InspectorPanelSettings, IntegrationsSettings, KeymapSettings, LauncherSettings, LayoutSettings,
-    OverviewPanelSettings, ResourcesSettings, SessionsPanelSettings, TasksSettings,
-    TerminalSettings, WorkspacesSettings,
+    OverviewPanelSettings, ResourcesSettings, SessionsPanelSettings, SidebarSettings,
+    TasksSettings, TerminalSettings, WorkspacesSettings,
 };
-use crate::workbench::settings_labels::{field_search_text, namespace_title};
+use crate::workbench::settings_labels::{field_search_text, namespace_title, page_keywords};
 
 /// How a field is edited.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +26,10 @@ pub enum FieldKind {
     Number,
     String,
     StringList,
+    /// A list whose items come from this set (add from a menu, reorder, remove).
+    ChoiceList(Vec<String>),
+    /// A map of text to text (`terminal.env`): rows of name and value.
+    StringMap,
     /// Shown read-only with this hint (maps and other shapes the UI cannot edit).
     Unsupported(String),
 }
@@ -32,6 +37,9 @@ pub enum FieldKind {
 /// One editable key of a namespace.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Field {
+    /// The settings namespace the key belongs to (`terminal`); a page can show several. Empty
+    /// until [`Field::in_namespace`] says where the field lives.
+    pub namespace: &'static str,
     /// Key path inside the namespace (`["cursor", "style"]`).
     pub path: Vec<String>,
     pub doc: String,
@@ -42,6 +50,18 @@ impl Field {
     /// `cursor.style`
     pub fn dotted(&self) -> String {
         self.path.join(".")
+    }
+
+    /// The same field, known to live in `namespace`.
+    #[must_use]
+    pub fn in_namespace(mut self, namespace: &'static str) -> Self {
+        self.namespace = namespace;
+        self
+    }
+
+    /// `terminal.cursor.style`: the key in the settings files.
+    pub fn key_path(&self) -> String {
+        format!("{}.{}", self.namespace, self.dotted())
     }
 }
 
@@ -154,15 +174,18 @@ fn collect(root: &Json, schema: &Json, prefix: &mut Vec<String>, out: &mut Vec<F
         if nested {
             collect(root, property, prefix, out);
         } else {
-            let kind = if target
-                .get("additionalProperties")
-                .is_some_and(Json::is_object)
-            {
-                FieldKind::Unsupported("edit settings.toml".to_owned())
-            } else {
-                classify(root, target)
+            let kind = match target.get("additionalProperties") {
+                Some(extra) if extra.is_object() => {
+                    if primary_type(resolve(root, extra)) == Some("string") {
+                        FieldKind::StringMap
+                    } else {
+                        FieldKind::Unsupported("edit settings.toml".to_owned())
+                    }
+                }
+                _ => classify(root, target),
             };
             out.push(Field {
+                namespace: "",
                 path: prefix.clone(),
                 doc: doc_of(property, target),
                 kind,
@@ -177,6 +200,53 @@ pub fn fields_of(schema: &Json) -> Vec<Field> {
     let mut out = Vec::new();
     collect(schema, schema, &mut Vec::new(), &mut out);
     out
+}
+
+/// The row part ids of `panels.sessions.row`, with the line each shows on.
+pub const SESSION_ROW_PARTS: [&str; 6] = ["state", "kind", "title", "folder", "placement", "age"];
+
+/// The tab ids of `panels.inspector.tabs`.
+pub const INSPECTOR_TABS: [&str; 3] = ["approvals", "changes", "info"];
+
+/// `field` knowing what the app accepts: a theme, a row part or an inspector tab is picked
+/// from the known ones. A layout preset depends on the presets saved, which the workbench
+/// knows (`Workbench::sheet_kind`).
+pub fn refine_kind(namespace: &str, key: &str, kind: &FieldKind) -> FieldKind {
+    let own = |values: &[&str]| values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
+    match (namespace, key, kind) {
+        ("terminal", "theme", FieldKind::String) => {
+            let mut values = own(&[themes::AUTO]);
+            values.extend(themes::builtin().iter().map(|t| t.name.to_owned()));
+            FieldKind::Enum(values)
+        }
+        ("panels.sessions", "row", FieldKind::StringList) => {
+            FieldKind::ChoiceList(own(&SESSION_ROW_PARTS))
+        }
+        ("panels.inspector", "tabs", FieldKind::StringList) => {
+            FieldKind::ChoiceList(own(&INSPECTOR_TABS))
+        }
+        _ => kind.clone(),
+    }
+}
+
+/// The range the app works within for a number: `(smallest, largest)`. A value outside it is
+/// clamped when it is typed, so the file never holds one the app would silently ignore.
+pub fn number_range(namespace: &str, key: &str) -> Option<(f64, f64)> {
+    match (namespace, key) {
+        ("terminal", "font_size") => Some((
+            TerminalSettings::MIN_FONT_SIZE,
+            TerminalSettings::MAX_FONT_SIZE,
+        )),
+        ("terminal", "line_height") => Some((
+            TerminalSettings::MIN_LINE_HEIGHT,
+            TerminalSettings::MAX_LINE_HEIGHT,
+        )),
+        ("resources", "interval_ms") => Some((
+            f64::from(hutan_protocol::resources::MIN_INTERVAL_MS),
+            f64::from(crate::workbench::panels::MAX_INTERVAL_MS),
+        )),
+        _ => None,
+    }
 }
 
 /// The value at `path` inside `value`.
@@ -201,10 +271,13 @@ pub fn json_to_toml(json: &Json) -> Option<toml::Value> {
 }
 
 /// A namespace the settings UI can show: its title and how to read its current and default
-/// values as JSON.
+/// values as JSON. A namespace is a page of its own unless it names another `page` to share
+/// (`sidebar` shows on the Projects Sidebar page).
 #[derive(Clone)]
 pub struct CatalogEntry {
     pub namespace: &'static str,
+    /// The page that shows this namespace's fields (the namespace of the page's first entry).
+    pub page: &'static str,
     pub workspace_overridable: bool,
     current: Rc<dyn Fn(&SettingsStore) -> Json>,
     pub default: Json,
@@ -214,6 +287,7 @@ impl std::fmt::Debug for CatalogEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CatalogEntry")
             .field("namespace", &self.namespace)
+            .field("page", &self.page)
             .finish_non_exhaustive()
     }
 }
@@ -222,6 +296,7 @@ impl CatalogEntry {
     fn of<T: Setting>() -> Self {
         Self {
             namespace: T::NAMESPACE,
+            page: T::NAMESPACE,
             workspace_overridable: T::WORKSPACE_OVERRIDABLE,
             current: Rc::new(|store| {
                 serde_json::to_value(&*store.get::<T>()).unwrap_or(Json::Null)
@@ -230,20 +305,46 @@ impl CatalogEntry {
         }
     }
 
+    /// A page the app draws itself: no settings namespace behind it.
+    fn custom(namespace: &'static str) -> Self {
+        Self {
+            namespace,
+            page: namespace,
+            workspace_overridable: false,
+            current: Rc::new(|_| Json::Null),
+            default: Json::Null,
+        }
+    }
+
+    /// The same entry, shown on the page of `page`.
+    #[must_use]
+    fn on_page(mut self, page: &'static str) -> Self {
+        self.page = page;
+        self
+    }
+
+    /// Whether this entry is a page of the sheet's list (not a section of another page).
+    pub fn is_page(&self) -> bool {
+        self.page == self.namespace
+    }
+
     pub fn current(&self, store: &SettingsStore) -> Json {
         (self.current)(store)
     }
 }
 
-/// All namespaces of the app, in display order.
+/// All namespaces of the app, in display order. A page shows its own namespace and every
+/// later entry that names it as its `page`.
 pub fn catalog() -> Vec<CatalogEntry> {
     vec![
         CatalogEntry::of::<AppearanceSettings>(),
         CatalogEntry::of::<AppSettings>(),
+        CatalogEntry::custom("data"),
         CatalogEntry::of::<KeymapSettings>(),
         CatalogEntry::of::<TerminalSettings>(),
         CatalogEntry::of::<LayoutSettings>(),
         CatalogEntry::of::<SessionsPanelSettings>(),
+        CatalogEntry::of::<SidebarSettings>().on_page(SessionsPanelSettings::NAMESPACE),
         CatalogEntry::of::<InspectorPanelSettings>(),
         CatalogEntry::of::<OverviewPanelSettings>(),
         CatalogEntry::of::<WorkspacesSettings>(),
@@ -256,18 +357,8 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<AssistantSettings>(),
         CatalogEntry::of::<IntegrationsSettings>(),
         CatalogEntry::of::<LauncherSettings>(),
-        CatalogEntry {
-            namespace: "accounts",
-            workspace_overridable: false,
-            current: Rc::new(|_| Json::Null),
-            default: Json::Null,
-        },
-        CatalogEntry {
-            namespace: "models",
-            workspace_overridable: false,
-            current: Rc::new(|_| Json::Null),
-            default: Json::Null,
-        },
+        CatalogEntry::custom("accounts"),
+        CatalogEntry::custom("models"),
     ]
 }
 
@@ -280,26 +371,48 @@ pub fn namespace_schema(schema: &Json, namespace: &str) -> Option<Json> {
         .cloned()
 }
 
-/// Namespaces matching `query` (case-insensitive substring of the namespace key or title, or
-/// of any field's key, title, help or choice labels), in catalog order.
+/// The fields of every page of `entries`, by page: its own namespace's fields, then those of
+/// the entries that share it, each knowing its namespace.
+pub fn page_fields(entries: &[CatalogEntry], schema: &Json) -> BTreeMap<&'static str, Vec<Field>> {
+    let mut pages: BTreeMap<&'static str, Vec<Field>> = BTreeMap::new();
+    for entry in entries {
+        let fields = namespace_schema(schema, entry.namespace)
+            .map(|s| fields_of(&s))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|f| f.in_namespace(entry.namespace));
+        pages.entry(entry.page).or_default().extend(fields);
+    }
+    pages
+}
+
+/// Pages matching `query` (case-insensitive substring of the namespace key or title, or of
+/// any field's key, title, help or choice labels, or of the page's `keywords`: what its
+/// custom controls are called), in catalog order. `keywords` gives the extra text of a page.
 pub fn search<'a>(
     entries: &'a [CatalogEntry],
-    schemas: &BTreeMap<&'static str, Vec<Field>>,
+    pages: &BTreeMap<&'static str, Vec<Field>>,
     query: &str,
+    keywords: &dyn Fn(&str) -> String,
 ) -> Vec<&'a CatalogEntry> {
     let query = query.trim().to_lowercase();
     entries
         .iter()
+        .filter(|entry| entry.is_page())
         .filter(|entry| {
             query.is_empty()
                 || entry.namespace.to_lowercase().contains(&query)
                 || namespace_title(entry.namespace)
                     .to_lowercase()
                     .contains(&query)
-                || schemas.get(entry.namespace).is_some_and(|fields| {
+                || page_keywords(entry.namespace)
+                    .to_lowercase()
+                    .contains(&query)
+                || keywords(entry.namespace).to_lowercase().contains(&query)
+                || pages.get(entry.namespace).is_some_and(|fields| {
                     fields.iter().any(|f| {
                         f.dotted().to_lowercase().contains(&query)
-                            || field_search_text(entry.namespace, &f.dotted(), &f.doc)
+                            || field_search_text(f.namespace, &f.dotted(), &f.doc)
                                 .to_lowercase()
                                 .contains(&query)
                     })
@@ -381,6 +494,10 @@ mod tests {
             FieldKind::Unsupported(_)
         ));
         assert_eq!(
+            kind(&fields(&store, "terminal"), "env"),
+            FieldKind::StringMap
+        );
+        assert_eq!(
             kind(&fields(&store, "app"), "on_last_window_close"),
             FieldKind::Enum(["quit", "menu_bar"].map(str::to_owned).to_vec())
         );
@@ -418,12 +535,9 @@ mod tests {
     fn search_matches_namespaces_and_field_docs() {
         let (_dir, store) = store();
         let entries = catalog();
-        let schemas: BTreeMap<&'static str, Vec<Field>> = entries
-            .iter()
-            .map(|e| (e.namespace, fields(&store, e.namespace)))
-            .collect();
+        let pages = page_fields(&entries, &store.schema());
         let names = |q: &str| -> Vec<&'static str> {
-            search(&entries, &schemas, q)
+            search(&entries, &pages, q, &|_| String::new())
                 .into_iter()
                 .map(|e| e.namespace)
                 .collect()
@@ -437,5 +551,66 @@ mod tests {
         assert_eq!(names("Keep in the menu bar"), ["app"]);
         assert_eq!(names("Login Items"), ["app"]);
         assert!(names("zzzz").is_empty());
+    }
+
+    #[test]
+    fn the_sidebar_namespace_is_a_section_of_the_projects_sidebar_page() {
+        let (_dir, store) = store();
+        let entries = catalog();
+        let pages = page_fields(&entries, &store.schema());
+        let sidebar = entries.iter().find(|e| e.namespace == "sidebar").unwrap();
+        assert_eq!(sidebar.page, "panels.sessions");
+        assert!(!sidebar.is_page());
+        assert!(!pages.contains_key("sidebar"));
+        let fields = &pages["panels.sessions"];
+        let organize = fields.iter().find(|f| f.dotted() == "organize").unwrap();
+        assert_eq!(organize.namespace, "sidebar");
+        assert_eq!(organize.key_path(), "sidebar.organize");
+        assert_eq!(
+            organize.kind,
+            FieldKind::Enum(vec!["workspaces".into(), "projects".into()])
+        );
+        let group_by = fields.iter().find(|f| f.dotted() == "group_by").unwrap();
+        assert_eq!(group_by.namespace, "panels.sessions");
+        // The page is found by what the section says.
+        let found = |q: &str| {
+            search(&entries, &pages, q, &|_| String::new())
+                .into_iter()
+                .map(|e| e.namespace)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(found("organize"), ["panels.sessions"]);
+    }
+
+    #[test]
+    fn known_sets_become_choices_and_numbers_have_a_range() {
+        let theme = refine_kind("terminal", "theme", &FieldKind::String);
+        assert_eq!(
+            theme,
+            FieldKind::Enum(vec![
+                "auto".into(),
+                "hutan-dark".into(),
+                "hutan-light".into()
+            ])
+        );
+        let row = refine_kind("panels.sessions", "row", &FieldKind::StringList);
+        assert!(matches!(&row, FieldKind::ChoiceList(v) if v.len() == 6 && v[0] == "state"));
+        let tabs = refine_kind("panels.inspector", "tabs", &FieldKind::StringList);
+        assert_eq!(
+            tabs,
+            FieldKind::ChoiceList(vec!["approvals".into(), "changes".into(), "info".into()])
+        );
+        // Everything else stays as it is.
+        assert_eq!(
+            refine_kind("terminal", "font_family", &FieldKind::String),
+            FieldKind::String
+        );
+        assert_eq!(number_range("terminal", "font_size"), Some((4.0, 72.0)));
+        assert_eq!(number_range("terminal", "line_height"), Some((0.8, 3.0)));
+        assert_eq!(
+            number_range("resources", "interval_ms"),
+            Some((1000.0, 60000.0))
+        );
+        assert_eq!(number_range("chat", "attach_max_bytes"), None);
     }
 }

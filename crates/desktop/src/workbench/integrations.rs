@@ -49,6 +49,26 @@ impl IntegrationControl {
     }
 }
 
+/// What `hutan integration install` writes for `harness`, and where (the agent's own
+/// configuration, as the setup's Agents step and the settings' Agent Integrations page name it
+/// before anything is written).
+pub(crate) fn hook_files(harness: &str) -> (&'static str, &'static str) {
+    match harness {
+        "omp" => (
+            "an extension file",
+            "~/.omp/agent/extensions/hutan-agent-state.ts",
+        ),
+        "claude" => (
+            "a hook script and its entries in settings.json",
+            "~/.claude/hooks/hutan-agent-state.sh, ~/.claude/settings.json",
+        ),
+        _ => (
+            "a hook script and its entries in hooks.json",
+            "~/.codex/hutan-agent-state.sh, ~/.codex/hooks.json",
+        ),
+    }
+}
+
 /// What one run found out.
 struct Outcome {
     statuses: Vec<(&'static str, IntegrationStatus)>,
@@ -240,6 +260,12 @@ impl Workbench {
             .filter(|harness| !self.integrations.asked.contains(harness))
             .collect();
         self.ask_integration_statuses(targets, cx);
+    }
+
+    /// Asks `hutan integration status` about all three agents, found on this Mac or not: the
+    /// hooks live in configuration files, whatever the daemon found.
+    pub(crate) fn refresh_all_integration_statuses(&mut self, cx: &mut Context<Self>) {
+        self.ask_integration_statuses(HARNESSES.iter().map(|h| h.id).collect(), cx);
     }
 
     fn ask_integration_statuses(&mut self, targets: Vec<&'static str>, cx: &mut Context<Self>) {

@@ -55,7 +55,7 @@ pub const WATCH: Duration = Duration::from_millis(500);
 pub const REFRESH_AFTER: Duration = Duration::from_millis(300);
 
 /// Longest interval the setting may ask for.
-const MAX_INTERVAL_MS: u32 = 60_000;
+pub const MAX_INTERVAL_MS: u32 = 60_000;
 
 /// Narrower than this (previous frame), the threads and command columns are left out.
 const COMPACT_BELOW: f32 = 520.0;

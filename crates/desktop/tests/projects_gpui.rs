@@ -511,6 +511,70 @@ fn both_organize_modes_render_the_right_tree(cx: &mut TestAppContext) {
     );
 }
 
+/// `sidebar.organize` is a setting of the Projects Sidebar page, with its own wording, and
+/// changing it there changes the sidebar and `settings.toml` like the sidebar's own menu does.
+#[gpui::test]
+fn sidebar_organize_is_on_the_projects_sidebar_page_and_changes_the_sidebar(
+    cx: &mut TestAppContext,
+) {
+    let w = World::new();
+    let (view, cx) = w.synced(cx, None);
+    let panel = panel(&view, cx);
+    assert_eq!(outline(&panel, cx)[0], "W shop");
+
+    // The page of the sidebar shows both namespaces; `sidebar` opens it too.
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_settings(Some("sidebar"), window, cx);
+    });
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb
+            .settings_sheet()
+            .map(|s| s.namespace().to_owned())),
+        Some("panels.sessions".to_owned())
+    );
+    let fields: Vec<String> = view.read_with(cx, |wb, _| {
+        wb.settings_sheet()
+            .unwrap()
+            .fields()
+            .iter()
+            .map(|f| f.key_path())
+            .collect()
+    });
+    for expected in [
+        "panels.sessions.group_by",
+        "panels.sessions.row",
+        "sidebar.organize",
+    ] {
+        assert!(
+            fields.iter().any(|f| f == expected),
+            "{expected} in {fields:?}"
+        );
+    }
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.sheet_value("organize")),
+        Some(serde_json::json!("workspaces"))
+    );
+    assert_eq!(
+        hutan_desktop::workbench::settings_labels::field_title("sidebar", "organize"),
+        "Organize the sidebar"
+    );
+    draw(cx);
+
+    view.update(cx, |wb, cx| wb.sheet_choose("organize", "projects", cx));
+    wait_until(cx, "the flat list", |cx| outline(&panel, cx)[0] == "P api");
+    let text = fs::read_to_string(w.daemon.home().join("settings.toml")).unwrap();
+    assert!(text.contains("organize = \"projects\""), "{text}");
+    assert!(!outline(&panel, cx).iter().any(|l| l.starts_with("W ")));
+
+    // Reset removes the key: the default (workspaces first) is back.
+    view.update(cx, |wb, cx| wb.sheet_reset("organize", cx));
+    wait_until(cx, "the workspaces", |cx| {
+        outline(&panel, cx)[0] == "W shop"
+    });
+    let text = fs::read_to_string(w.daemon.home().join("settings.toml")).unwrap();
+    assert!(!text.contains("organize"), "{text}");
+}
+
 #[gpui::test]
 fn session_rows_show_the_live_folder_and_the_placement_badge(cx: &mut TestAppContext) {
     let w = World::new();

@@ -152,6 +152,65 @@ enum Kind {
     Project,
 }
 
+/// A settings file a value can live in, lowest first (the runtime layer is in memory only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SettingsLayer {
+    /// `settings.toml` of the user.
+    User,
+    /// `<workspace root>/.hutan/settings.toml`.
+    Workspace,
+    /// `<project root>/.hutan/settings.toml`, above the workspace layer.
+    Project,
+}
+
+impl SettingsLayer {
+    fn kind(self) -> Kind {
+        match self {
+            SettingsLayer::User => Kind::User,
+            SettingsLayer::Workspace => Kind::Workspace,
+            SettingsLayer::Project => Kind::Project,
+        }
+    }
+}
+
+/// A layer that exists now (see [`SettingsStore::layers`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayerInfo {
+    pub layer: SettingsLayer,
+    /// The folder of a workspace or project layer.
+    pub root: Option<PathBuf>,
+    /// The file (it may not exist yet).
+    pub path: Option<PathBuf>,
+}
+
+fn layer_of(state: &State, kind: Kind) -> &Layer {
+    match kind {
+        Kind::Workspace => &state.workspace,
+        Kind::Project => &state.project,
+        Kind::User | Kind::Keymap => &state.user,
+    }
+}
+
+fn refresh_layer(state: &mut State, kind: Kind) {
+    match kind {
+        Kind::Workspace => state.workspace.refresh(Kind::Workspace),
+        Kind::Project => state.project.refresh(Kind::Project),
+        Kind::User | Kind::Keymap => state.user.refresh(Kind::User),
+    };
+}
+
+fn missing_layer(kind: Kind, key_path: &str) -> SettingsError {
+    SettingsError::error(
+        None,
+        key_path,
+        match kind {
+            Kind::Workspace => "no workspace folder is active",
+            Kind::Project => "no project folder is active",
+            Kind::User | Kind::Keymap => "no user settings path",
+        },
+    )
+}
+
 /// One file on disk and its last accepted contents.
 #[derive(Default)]
 struct Layer {
@@ -748,16 +807,25 @@ impl SettingsStore {
     }
 
     /// Writes `key_path` into `<root>/.hutan/settings.toml` of a project folder (created with
-    /// its directory when missing). When `root` is the active workspace root the change applies
-    /// at once; otherwise it is only written (the file takes effect when that folder is shown).
+    /// its directory when missing). When `root` is the active workspace or project root the
+    /// change applies at once; otherwise it is only written (the file takes effect when that
+    /// folder is shown).
     pub fn write_project(
         &self,
         root: &Path,
         key_path: &str,
         value: Value,
     ) -> Result<(), SettingsError> {
-        if self.shared.state.read().workspace_root.as_deref() == Some(root) {
-            return self.write_layer(Kind::Workspace, key_path, value);
+        {
+            let state = self.shared.state.read();
+            if state.workspace_root.as_deref() == Some(root) {
+                drop(state);
+                return self.write_layer(Kind::Workspace, key_path, value);
+            }
+            if state.project_root.as_deref() == Some(root) {
+                drop(state);
+                return self.write_layer(Kind::Project, key_path, value);
+            }
         }
         let path = workspace_file(root);
         let fail = |message: String| SettingsError::error(Some(&path), key_path, message);
@@ -770,22 +838,153 @@ impl SettingsStore {
         write_atomic(&path, &updated).map_err(|e| fail(format!("cannot write file: {e}")))
     }
 
+    /// Where the settings files are: `settings.toml` and `keymap.toml`.
+    pub fn paths(&self) -> Option<SettingsPaths> {
+        let state = self.shared.state.read();
+        Some(SettingsPaths {
+            user: state.user.path.clone()?,
+            keymap: state.keymap.path.clone()?,
+        })
+    }
+
+    /// The layers a value can be written to right now: the user's file always, the workspace
+    /// and project files while their roots are set (see
+    /// [`set_workspace_root`](Self::set_workspace_root)), lowest first.
+    pub fn layers(&self) -> Vec<LayerInfo> {
+        let state = self.shared.state.read();
+        let mut out = vec![LayerInfo {
+            layer: SettingsLayer::User,
+            root: None,
+            path: state.user.path.clone(),
+        }];
+        for (layer, root, file) in [
+            (
+                SettingsLayer::Workspace,
+                &state.workspace_root,
+                &state.workspace,
+            ),
+            (SettingsLayer::Project, &state.project_root, &state.project),
+        ] {
+            if root.is_some() {
+                out.push(LayerInfo {
+                    layer,
+                    root: root.clone(),
+                    path: file.path.clone(),
+                });
+            }
+        }
+        out
+    }
+
+    /// What `layer`'s file holds at `key_path` (`terminal.font_size`); `None` when the layer
+    /// does not exist or does not set it. A table comes back as a TOML table.
+    pub fn layer_value(&self, layer: SettingsLayer, key_path: &str) -> Option<Value> {
+        let state = self.shared.state.read();
+        let table = match layer {
+            SettingsLayer::User => &state.user.table,
+            SettingsLayer::Workspace => &state.workspace.table,
+            SettingsLayer::Project => &state.project.table,
+        };
+        let mut node: Option<&Value> = None;
+        for (index, segment) in key_path.split('.').enumerate() {
+            node = match (index, node) {
+                (0, _) => table.get(segment),
+                (_, Some(Value::Table(inner))) => inner.get(segment),
+                _ => None,
+            };
+            node?;
+        }
+        node.cloned()
+    }
+
+    /// The layer the effective value of `key_path` comes from: the highest of project,
+    /// workspace and user that sets it (the workspace and project files only count for
+    /// namespaces that may be overridden). `None` when it is the built-in default.
+    pub fn source_of(&self, key_path: &str) -> Option<SettingsLayer> {
+        let overridable = {
+            let state = self.shared.state.read();
+            state
+                .registry
+                .iter()
+                .filter(|(namespace, _)| {
+                    key_path
+                        .strip_prefix(**namespace)
+                        .is_some_and(|rest| rest.starts_with('.'))
+                })
+                .max_by_key(|(namespace, _)| namespace.len())
+                .is_some_and(|(_, entry)| entry.overridable)
+        };
+        let candidates: &[SettingsLayer] = if overridable {
+            &[
+                SettingsLayer::Project,
+                SettingsLayer::Workspace,
+                SettingsLayer::User,
+            ]
+        } else {
+            &[SettingsLayer::User]
+        };
+        candidates
+            .iter()
+            .copied()
+            .find(|layer| self.layer_value(*layer, key_path).is_some())
+    }
+
+    /// Sets `key_path` in `layer`'s file ([`write_user`](Self::write_user),
+    /// [`write_workspace`](Self::write_workspace), or the project layer). An error when the
+    /// layer has no folder.
+    pub fn write(
+        &self,
+        layer: SettingsLayer,
+        key_path: &str,
+        value: Value,
+    ) -> Result<(), SettingsError> {
+        self.write_layer(layer.kind(), key_path, value)
+    }
+
+    /// Removes `key` of `namespace` (`terminal` and `font_size`; `key` may be dotted) from
+    /// `layer`'s file, so the value falls back to the layer below. Comments elsewhere survive.
+    /// `Ok(false)` when the file does not set it. The change is applied at once.
+    pub fn remove(
+        &self,
+        layer: SettingsLayer,
+        namespace: &str,
+        key: &str,
+    ) -> Result<bool, SettingsError> {
+        let key_path = join(namespace, key);
+        let kind = layer.kind();
+        let mut state = self.shared.state.write();
+        let path = layer_of(&state, kind)
+            .path
+            .clone()
+            .ok_or_else(|| missing_layer(kind, &key_path))?;
+        let fail = |message: String| SettingsError::error(Some(&path), key_path.clone(), message);
+        let existing = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(fail(format!("cannot read file: {e}"))),
+        };
+        let Some(updated) = edit::remove_key(&existing, &key_path).map_err(fail)? else {
+            return Ok(false);
+        };
+        write_atomic(&path, &updated).map_err(|e| fail(format!("cannot write file: {e}")))?;
+        refresh_layer(&mut state, kind);
+        let changed = state.recompute();
+        self.shared.commit(&mut state, changed, false);
+        Ok(true)
+    }
+
+    /// Reads `settings.toml`, `keymap.toml` and the workspace and project files again and
+    /// publishes what changed (what the file watcher does on a change).
+    pub fn reload(&self) {
+        self.shared.reload_from_disk();
+    }
+
     fn write_layer(&self, kind: Kind, key_path: &str, value: Value) -> Result<(), SettingsError> {
         let mut state = self.shared.state.write();
-        let layer = match kind {
-            Kind::Workspace => &state.workspace,
-            _ => &state.user,
-        };
-        let path = layer.path.clone().ok_or_else(|| {
-            SettingsError::error(
-                None,
-                key_path,
-                match kind {
-                    Kind::Workspace => "no workspace folder is active",
-                    _ => "no user settings path",
-                },
-            )
-        })?;
+        let path = layer_of(&state, kind)
+            .path
+            .clone()
+            .ok_or_else(|| missing_layer(kind, key_path))?;
         let fail = |message: String| SettingsError::error(Some(&path), key_path, message);
 
         let existing = match std::fs::read_to_string(&path) {
@@ -796,10 +995,7 @@ impl SettingsStore {
         let updated = edit::set_key(&existing, key_path, &value).map_err(fail)?;
         write_atomic(&path, &updated).map_err(|e| fail(format!("cannot write file: {e}")))?;
 
-        match kind {
-            Kind::Workspace => state.workspace.refresh(Kind::Workspace),
-            _ => state.user.refresh(Kind::User),
-        };
+        refresh_layer(&mut state, kind);
         let changed = state.recompute();
         self.shared.commit(&mut state, changed, false);
         Ok(())

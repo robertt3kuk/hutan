@@ -1296,20 +1296,7 @@ impl Workbench {
             let id = harness.id;
             let ticked = state.hooks.contains(id);
             let present = matches!(hooks, Some(IntegrationStatus::Installed));
-            let (writes, place) = match id {
-                "omp" => (
-                    "an extension file",
-                    "~/.omp/agent/extensions/hutan-agent-state.ts",
-                ),
-                "claude" => (
-                    "a hook script and its entries in settings.json",
-                    "~/.claude/hooks/hutan-agent-state.sh, ~/.claude/settings.json",
-                ),
-                _ => (
-                    "a hook script and its entries in hooks.json",
-                    "~/.codex/hutan-agent-state.sh, ~/.codex/hooks.json",
-                ),
-            };
+            let (writes, place) = super::integrations::hook_files(id);
             let text = if present {
                 "Already installed.".to_owned()
             } else {

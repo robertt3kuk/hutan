@@ -177,7 +177,21 @@ impl Workbench {
         }
     }
 
-    pub fn clear_provider_key(&mut self, id: &str, cx: &mut Context<Self>) {
+    /// "Clear key": asks first. The key leaves the Keychain and Hutan cannot show it again.
+    pub fn clear_provider_key(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let id = id.to_owned();
+        self.open_confirm(
+            super::settings_labels::words::CLEAR_KEY_TITLE,
+            super::settings_labels::words::CLEAR_KEY_MESSAGE,
+            super::settings_labels::words::CLEAR_KEY_CONFIRM,
+            move |this, _, cx| this.clear_provider_key_now(&id, cx),
+            window,
+            cx,
+        );
+    }
+
+    /// Removes the key of provider `id` from the Keychain (what Clear key does once confirmed).
+    pub fn clear_provider_key_now(&mut self, id: &str, cx: &mut Context<Self>) {
         self.provider_call(
             Request::ProviderClearCredential(ProviderRef {
                 provider_id: id.to_owned(),
@@ -499,7 +513,9 @@ impl Workbench {
                                 &look,
                             )
                             .on_click(cx.listener(
-                                move |this, _, _, cx| this.clear_provider_key(&clear, cx),
+                                move |this, _, window, cx| {
+                                    this.clear_provider_key(&clear, window, cx)
+                                },
                             )),
                         )
                         .child(

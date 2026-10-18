@@ -35,13 +35,14 @@ pub(crate) use history::pill;
 pub use history::{Confirm as HistoryConfirm, HistoryPanel};
 pub use history_model::{
     BlockTarget, DEBOUNCE as HISTORY_DEBOUNCE, Filters as HistoryFilters, HistoryResume,
-    HutanTarget, PICKER_LIMIT as HISTORY_PICKER_LIMIT, Snippet, hit_title, hutan_target,
-    parse_snippet, shell_join, short_path, source_icon, source_label, transcript_path,
+    HutanTarget, PICKER_LIMIT as HISTORY_PICKER_LIMIT, Snippet, format_bytes, hit_title,
+    hutan_target, parse_snippet, shell_join, short_path, source_icon, source_label,
+    transcript_path,
 };
 pub use inspector::{BlockRow, InspectorPanel};
 pub use overview::OverviewPanel;
 pub use resources::{
-    Link as ResourcesLink, REFRESH_AFTER as RESOURCES_REFRESH, ResourcesPanel,
+    Link as ResourcesLink, MAX_INTERVAL_MS, REFRESH_AFTER as RESOURCES_REFRESH, ResourcesPanel,
     WATCH as RESOURCES_WATCH,
 };
 pub use resources_model::{

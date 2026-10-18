@@ -61,6 +61,59 @@ pub(crate) fn set_key(text: &str, key_path: &str, value: &toml::Value) -> Result
     Ok(format!("{header}{doc}"))
 }
 
+/// Removes `key_path` (dotted) from `text`. `Ok(None)` when the key is not there. Comments and
+/// formatting elsewhere survive; a table the removal leaves empty is dropped too unless a
+/// comment is attached to it.
+pub(crate) fn remove_key(text: &str, key_path: &str) -> Result<Option<String>, String> {
+    let segments: Vec<&str> = key_path.split('.').collect();
+    if segments.iter().any(|s| s.trim().is_empty()) {
+        return Err(format!(
+            "invalid key path `{key_path}`: empty segment (expected e.g. `terminal.font_size`)"
+        ));
+    }
+    let mut doc: DocumentMut = text
+        .parse()
+        .map_err(|e: toml_edit::TomlError| format!("invalid TOML: {e}"))?;
+    if !remove_in(doc.as_table_mut(), &segments) {
+        return Ok(None);
+    }
+    Ok(Some(doc.to_string()))
+}
+
+/// Removes the key `path` below `table`; `false` when it is not there.
+fn remove_in(table: &mut dyn TableLike, path: &[&str]) -> bool {
+    let Some((first, rest)) = path.split_first() else {
+        return false;
+    };
+    if rest.is_empty() {
+        return table.remove(first).is_some();
+    }
+    let Some(child) = table.get_mut(first).and_then(Item::as_table_like_mut) else {
+        return false;
+    };
+    if !remove_in(child, rest) {
+        return false;
+    }
+    let emptied = child.is_empty();
+    let commented = child_has_comment(table.get(first));
+    if emptied && !commented {
+        table.remove(first);
+    }
+    true
+}
+
+/// Whether the comments of `item` (a table) are more than whitespace.
+fn child_has_comment(item: Option<&Item>) -> bool {
+    let prefix = match item {
+        Some(Item::Table(table)) => table.decor().prefix().and_then(|p| p.as_str()),
+        Some(Item::Value(toml_edit::Value::InlineTable(table))) => {
+            table.decor().prefix().and_then(|p| p.as_str())
+        }
+        _ => None,
+    };
+    prefix.is_some_and(|text| !text.trim().is_empty())
+}
+
 fn copy_decor(from: &Item, to: &mut Item) {
     match (from, to) {
         (Item::Value(from), Item::Value(to)) => *to.decor_mut() = from.decor().clone(),
@@ -225,5 +278,57 @@ preset = \"default\"
                 .unwrap_err()
                 .contains("invalid TOML")
         );
+    }
+}
+
+#[cfg(test)]
+mod remove_tests {
+    use super::*;
+
+    #[test]
+    fn removing_a_key_keeps_everything_else() {
+        let text = "# top\n[terminal]\nfont_size = 13 # keep\ncopy_on_select = true\n";
+        let out = remove_key(text, "terminal.copy_on_select")
+            .unwrap()
+            .unwrap();
+        assert_eq!(out, "# top\n[terminal]\nfont_size = 13 # keep\n");
+        assert_eq!(remove_key(text, "terminal.nope").unwrap(), None);
+        assert_eq!(remove_key(text, "nope.font_size").unwrap(), None);
+        assert!(remove_key("[broken", "a.b").is_err());
+        assert!(remove_key(text, "a..b").is_err());
+    }
+
+    #[test]
+    fn a_table_left_empty_goes_unless_it_carries_a_comment() {
+        let out = remove_key(
+            "[panels.sessions]\ngroup_by = \"state\"\n",
+            "panels.sessions.group_by",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(out, "");
+        let out = remove_key("[a]\nx = 1\n[b]\ny = 2\n", "a.x")
+            .unwrap()
+            .unwrap();
+        assert_eq!(out, "[b]\ny = 2\n");
+        let commented = "# my terminal\n[terminal]\nfont_size = 13\n";
+        let out = remove_key(commented, "terminal.font_size")
+            .unwrap()
+            .unwrap();
+        assert!(out.contains("# my terminal"), "{out}");
+    }
+
+    #[test]
+    fn keys_inside_inline_tables_and_maps_can_go() {
+        let text = "[terminal]\ncursor = { style = \"bar\", blink = false }\n[terminal.env]\nA = \"1\"\nB = \"2\"\n";
+        let out = remove_key(text, "terminal.cursor.style").unwrap().unwrap();
+        assert!(
+            out.contains("blink = false") && !out.contains("style"),
+            "{out}"
+        );
+        let out = remove_key(text, "terminal.env").unwrap().unwrap();
+        assert!(!out.contains("env") && out.contains("cursor"), "{out}");
+        let out = remove_key(text, "terminal.env.A").unwrap().unwrap();
+        assert!(!out.contains("A = ") && out.contains("B = \"2\""), "{out}");
     }
 }

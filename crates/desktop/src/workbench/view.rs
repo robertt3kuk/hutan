@@ -172,8 +172,8 @@ pub enum Region {
     NoWorkspace,
     /// A control of the sessions panel's header, by name (`plus`, `sort`).
     SidebarControl(&'static str),
-    /// A control of the history panel, by name (`search`, `enable`, `clear`, `rebuild`,
-    /// `confirm`).
+    /// A control of the history panel, by name (`search`, `enable`, `disable`, `clear`,
+    /// `rebuild`, `confirm`).
     History(&'static str),
     /// A control of the chat view, by name (`composer`, `send`, `interrupt`, `restart`,
     /// `header`, `banner`).
@@ -215,6 +215,15 @@ pub enum Region {
     /// An option of a row of the Start… sheet: the row (`what`, `agent`, `install`, `login`,
     /// `where`, `mode`) and its key (a kind, a harness id, `main`, `new`, `now`, `queue`).
     LauncherChoice(&'static str, &'static str),
+    /// A control of the settings sheet's pages, by name (`reset-page`, `history-index`,
+    /// `restart-daemon`, `stop-daemon`, `revoke-all`, `open-keymap`, `reload-keymap`,
+    /// `env-add`, `preset-save`).
+    Settings(&'static str),
+    /// Row `index` of a list of the settings sheet: `layer` (the header's switch), `reveal` and
+    /// `open` (the Data & logs page, per `DataTarget`), `hooks-install`, `hooks-repair` and
+    /// `hooks-uninstall` (per agent), `revoke` (per remembered choice), `env-remove`,
+    /// `preset-rename`, `preset-delete`.
+    SettingsItem(&'static str, usize),
     /// Entry `index` of a list of the Start… sheet (`project`, `provider`, `model`, `worktree`,
     /// `after`), top to bottom.
     LauncherItem(&'static str, usize),
@@ -398,6 +407,8 @@ pub struct Workbench {
     pub(crate) launcher: Option<super::launcher::Launcher>,
     pub(crate) launcher_focus: FocusHandle,
     pub(crate) providers: super::providers::ProvidersState,
+    /// What the settings sheet knows about the history index.
+    pub(crate) history_index: super::settings_pages::HistoryIndex,
     pub(crate) agent_focus: FocusHandle,
     pub(crate) held: HashMap<SessionId, Entity<TerminalSession>>,
     /// Folded blocks per terminal, saved with the layout (see [`persistence::CollapsedBlocks`]).
@@ -691,6 +702,7 @@ impl Workbench {
             launcher: None,
             launcher_focus,
             providers: super::providers::ProvidersState::default(),
+            history_index: super::settings_pages::HistoryIndex::default(),
             agent_focus,
             held: HashMap::new(),
             collapsed_blocks: options

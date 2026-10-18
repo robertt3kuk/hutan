@@ -124,6 +124,9 @@ impl TerminalSettings {
     /// The font sizes (points) a terminal view accepts; larger or smaller values are clamped.
     pub const MIN_FONT_SIZE: f64 = 4.0;
     pub const MAX_FONT_SIZE: f64 = 72.0;
+    /// The line heights (multiples of the font size) a terminal view accepts.
+    pub const MIN_LINE_HEIGHT: f64 = 0.8;
+    pub const MAX_LINE_HEIGHT: f64 = 3.0;
 
     /// Puts `shell` and `env` into the session `spec` a new terminal is created with: `env`, and
     /// a non-empty `shell` as `SHELL` (over `env.SHELL`). Variables `spec` already carries win
@@ -156,7 +159,10 @@ impl TerminalSettings {
             font_size: self
                 .font_size
                 .clamp(Self::MIN_FONT_SIZE, Self::MAX_FONT_SIZE) as f32,
-            line_height: self.line_height.clamp(0.8, 3.0) as f32,
+            line_height: self
+                .line_height
+                .clamp(Self::MIN_LINE_HEIGHT, Self::MAX_LINE_HEIGHT)
+                as f32,
             palette: TerminalPalette {
                 ansi,
                 foreground: rgb(theme.foreground),

@@ -365,6 +365,11 @@ impl HistoryPanel {
                     Ok(info) => {
                         let was_enabled = this.status().is_some_and(|s| s.enabled);
                         this.index = Index::Known(info);
+                        if was_enabled && !this.status().is_some_and(|s| s.enabled) {
+                            // Indexing was switched off elsewhere (the settings, the CLI).
+                            this.results = Results::Idle;
+                            this.selected = None;
+                        }
                         let rows: u64 = this
                             .status()
                             .map_or(0, |s| s.sources.iter().map(|s| s.rows).sum());
@@ -389,26 +394,53 @@ impl HistoryPanel {
 
     /// **Enable indexing**: `history.set_enabled`, then follows the first scan.
     pub fn enable_indexing(&mut self, cx: &mut Context<Self>) {
+        self.set_indexing(true, cx);
+    }
+
+    /// **Disable**: `history.set_enabled` off. The daemon stops reading transcripts and keeps
+    /// the index file.
+    pub fn disable_indexing(&mut self, cx: &mut Context<Self>) {
+        self.set_indexing(false, cx);
+    }
+
+    fn set_indexing(&mut self, enabled: bool, cx: &mut Context<Self>) {
         if self.busy.is_some() {
             return;
         }
         let connection = self.env.sessions.read(cx).connection().clone();
-        self.busy = Some("Enabling…");
+        self.busy = Some(if enabled {
+            "Enabling…"
+        } else {
+            "Disabling…"
+        });
         self.error = None;
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { connection.history_set_enabled(true).await })
+                .spawn(async move { connection.history_set_enabled(enabled).await })
                 .await;
             this.update(cx, |this, cx| {
                 this.busy = None;
                 match result {
                     Ok(info) => {
                         this.index = Index::Known(info);
-                        this.settle(cx);
-                        this.search(false, cx);
+                        if enabled {
+                            this.settle(cx);
+                            this.search(false, cx);
+                        } else {
+                            this.settle_task = None;
+                            this.search_task = None;
+                            this.searching = false;
+                            this.results = Results::Idle;
+                            this.selected = None;
+                        }
                     }
-                    Err(error) => this.error = Some(format!("Cannot enable indexing: {error}")),
+                    Err(error) => {
+                        this.error = Some(format!(
+                            "Cannot {} indexing: {error}",
+                            if enabled { "enable" } else { "disable" }
+                        ));
+                    }
                 }
                 cx.notify();
             })
@@ -1376,6 +1408,11 @@ impl HistoryPanel {
                     button("history-rebuild", "Rebuild…", !busy, theme, tokens)
                         .on_click(cx.listener(|this, _, _, cx| this.ask(Confirm::Rebuild, cx)))
                         .child(probe(&self.env.regions, Region::History("rebuild"))),
+                )
+                .child(
+                    button("history-disable", "Disable", !busy, theme, tokens)
+                        .on_click(cx.listener(|this, _, _, cx| this.disable_indexing(cx)))
+                        .child(probe(&self.env.regions, Region::History("disable"))),
                 )
                 .when_some(self.busy, |s, busy| {
                     s.child(div().text_color(theme.muted).child(busy))

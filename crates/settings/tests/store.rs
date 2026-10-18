@@ -8,7 +8,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use common::*;
-use hutan_settings::{AppearanceSettings, Density, SettingsPaths, SettingsStore, Severity, keymap};
+use hutan_settings::{
+    AppearanceSettings, Density, SettingsLayer, SettingsPaths, SettingsStore, Severity, keymap,
+};
 use tempfile::TempDir;
 
 struct Fixture {
@@ -754,4 +756,139 @@ fn application_notes_join_the_diagnostics_and_publish_a_change() {
     fixture.store.set_notes("check", Vec::new());
     assert!(fixture.store.errors().is_empty());
     assert!(changes.has_changed().unwrap());
+}
+
+#[test]
+fn layers_say_where_a_value_comes_from_and_remove_falls_back_to_the_layer_below() {
+    let f = Fixture::new(Some("# mine\n[layout]\npreset = \"user\"\n"));
+    f.store.register::<Layout>();
+    f.store.register::<Terminal>();
+    assert_eq!(f.store.layers().len(), 1, "only the user's file at first");
+    assert_eq!(
+        f.store.source_of("layout.preset"),
+        Some(SettingsLayer::User)
+    );
+    assert_eq!(f.store.source_of("layout.presets"), None);
+
+    let workspace = f.root("workspace", "[layout]\npreset = \"workspace\"\n");
+    let project = f.root("project", "");
+    f.store.set_workspace_root(Some(workspace.clone()));
+    f.store.set_project_root(Some(project.clone()));
+    let layers = f.store.layers();
+    assert_eq!(
+        layers.iter().map(|l| l.layer).collect::<Vec<_>>(),
+        [
+            SettingsLayer::User,
+            SettingsLayer::Workspace,
+            SettingsLayer::Project
+        ]
+    );
+    assert_eq!(layers[2].root.as_deref(), Some(project.as_path()));
+    assert_eq!(
+        f.store.source_of("layout.preset"),
+        Some(SettingsLayer::Workspace)
+    );
+
+    // The project layer is writable and applies at once.
+    f.store
+        .write(
+            SettingsLayer::Project,
+            "layout.preset",
+            toml::Value::String("project".into()),
+        )
+        .unwrap();
+    assert_eq!(f.store.get::<Layout>().preset, "project");
+    assert_eq!(
+        f.store.source_of("layout.preset"),
+        Some(SettingsLayer::Project)
+    );
+    assert!(
+        std::fs::read_to_string(project.join(".hutan/settings.toml"))
+            .unwrap()
+            .contains("project")
+    );
+    assert_eq!(
+        f.store.layer_value(SettingsLayer::User, "layout.preset"),
+        Some(toml::Value::String("user".into()))
+    );
+
+    // Removing falls back one layer at a time, and the file really loses the key.
+    assert!(
+        f.store
+            .remove(SettingsLayer::Project, "layout", "preset")
+            .unwrap()
+    );
+    assert_eq!(f.store.get::<Layout>().preset, "workspace");
+    assert!(
+        !std::fs::read_to_string(project.join(".hutan/settings.toml"))
+            .unwrap()
+            .contains("preset")
+    );
+    assert!(
+        f.store
+            .remove(SettingsLayer::Workspace, "layout", "preset")
+            .unwrap()
+    );
+    assert_eq!(f.store.get::<Layout>().preset, "user");
+    assert!(
+        !f.store
+            .remove(SettingsLayer::Workspace, "layout", "preset")
+            .unwrap()
+    );
+    assert!(
+        f.store
+            .remove(SettingsLayer::User, "layout", "preset")
+            .unwrap()
+    );
+    assert_eq!(f.store.get::<Layout>().preset, "default");
+    assert_eq!(f.store.source_of("layout.preset"), None);
+    assert!(
+        std::fs::read_to_string(f.user_path())
+            .unwrap()
+            .starts_with("# mine"),
+        "comments stay"
+    );
+
+    // Not overridable: the workspace file does not count as the source.
+    write_file(
+        &workspace.join(".hutan/settings.toml"),
+        "[terminal]\nfont_size = 20\n",
+    );
+    f.store.set_workspace_root(Some(workspace.clone()));
+    assert_eq!(f.store.source_of("terminal.font_size"), None);
+}
+
+#[test]
+fn removing_from_a_layer_that_does_not_exist_is_an_error_and_a_missing_file_is_not() {
+    let f = Fixture::new(None);
+    f.store.register::<Layout>();
+    let error = f
+        .store
+        .remove(SettingsLayer::Project, "layout", "preset")
+        .unwrap_err();
+    assert!(error.to_string().contains("no project folder"), "{error}");
+    assert!(
+        !f.store
+            .remove(SettingsLayer::User, "layout", "preset")
+            .unwrap()
+    );
+    let error = f
+        .store
+        .write(
+            SettingsLayer::Workspace,
+            "layout.preset",
+            toml::Value::String("x".into()),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("no workspace folder"), "{error}");
+}
+
+#[test]
+fn reload_reads_the_files_again() {
+    let f = Fixture::new(Some("[layout]\npreset = \"a\"\n"));
+    f.store.register::<Layout>();
+    assert_eq!(f.store.get::<Layout>().preset, "a");
+    write_file(&f.user_path(), "[layout]\npreset = \"b\"\n");
+    f.store.reload();
+    assert_eq!(f.store.get::<Layout>().preset, "b");
 }

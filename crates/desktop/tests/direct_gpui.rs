@@ -300,7 +300,7 @@ fn rejected_key_offers_a_masked_replacement_and_provider_removal_clears_it(
     cx.simulate_click(bounds.center(), Modifiers::none());
     assert!(view.read_with(cx, |wb, _| wb.modal().is_some_and(|m| m.secure_input)));
     view.update_in(cx, |wb, window, cx| wb.close_modal(window, cx));
-    view.update(cx, |wb, cx| wb.clear_provider_key(&id, cx));
+    view.update(cx, |wb, cx| wb.clear_provider_key_now(&id, cx));
     wait_until(cx, "key cleared", |cx| {
         view.read_with(cx, |wb, _| {
             wb.providers()

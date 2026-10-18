@@ -1335,6 +1335,133 @@ fn the_first_chat_with_a_prompt_asks_once_per_agent_and_model(cx: &mut TestAppCo
     });
 }
 
+/// The "Don't ask again" choices are listed in Settings → Start Sheet; revoking one asks again
+/// at the next start on that agent and model, and turning the question back on offers to
+/// forget the rest.
+#[gpui::test]
+fn remembered_choices_are_listed_in_settings_and_revoking_asks_again(cx: &mut TestAppContext) {
+    let env = Env::both();
+    let (view, cx) = open(cx, &env);
+    let open_chat = |view: &Entity<Workbench>, cx: &mut VisualTestContext, prompt: &str| {
+        open_sheet(
+            view,
+            cx,
+            LauncherPreset {
+                project: Some(env.api_id),
+                kind: Some(LaunchKind::Chat),
+                prompt: Some(prompt.into()),
+                ..LauncherPreset::default()
+            },
+        );
+        chat_ready(view, cx);
+    };
+    assert!(
+        view.read_with(cx, |wb, _| wb.start_exemptions().is_empty()),
+        "nothing is remembered at first"
+    );
+
+    // Remember OMP on its model.
+    open_chat(&view, cx, "First prompt");
+    click(&view, cx, Region::Launcher("start"));
+    assert!(confirm_shown(&view, cx));
+    click(&view, cx, Region::Launcher("confirm-remember"));
+    click(&view, cx, Region::Launcher("confirm-start"));
+    wait_until(cx, "the first chat", |_| {
+        env.task("First prompt")
+            .is_some_and(|t| !t.sessions.is_empty())
+    });
+    wait_until(cx, "the sheet to close", |cx| !launcher_open(&view, cx));
+    open_chat(&view, cx, "Second prompt");
+    click(&view, cx, Region::Launcher("start"));
+    wait_until(cx, "the second chat, started without asking", |_| {
+        env.task("Second prompt")
+            .is_some_and(|t| !t.sessions.is_empty())
+    });
+    wait_until(cx, "the sheet to close", |cx| !launcher_open(&view, cx));
+
+    // The page lists it, by agent and model, with Revoke and Revoke all.
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_settings(Some("launcher"), window, cx);
+    });
+    let listed = view.read_with(cx, |wb, _| wb.start_exemptions());
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    let label = view.read_with(cx, |wb, _| wb.exemption_label(&listed[0]));
+    assert!(label.starts_with("OMP · "), "{label}");
+    draw(cx);
+    assert!(region(&view, cx, Region::SettingsItem("revoke", 0)));
+    assert!(region(&view, cx, Region::Settings("revoke-all")));
+
+    // Revoke: gone from the list and from the saved state; the next start asks again.
+    click(&view, cx, Region::SettingsItem("revoke", 0));
+    assert!(view.read_with(cx, |wb, _| wb.start_exemptions().is_empty()));
+    view.update_in(cx, |wb, window, cx| wb.close_settings(window, cx));
+    open_chat(&view, cx, "Third prompt");
+    click(&view, cx, Region::Launcher("start"));
+    assert!(confirm_shown(&view, cx), "revoked: it asks again");
+    click(&view, cx, Region::Launcher("confirm-remember"));
+    click(&view, cx, Region::Launcher("confirm-start"));
+    wait_until(cx, "the third chat", |_| {
+        env.task("Third prompt")
+            .is_some_and(|t| !t.sessions.is_empty())
+    });
+    wait_until(cx, "the sheet to close", |cx| !launcher_open(&view, cx));
+    assert_eq!(view.read_with(cx, |wb, _| wb.start_exemptions().len()), 1);
+
+    // Turning the question back on asks whether to forget what was remembered.
+    view.read_with(cx, |wb, _| {
+        wb.settings_store()
+            .write_user("launcher.confirm_agent_start", toml::Value::Boolean(false))
+    })
+    .unwrap();
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_settings(Some("launcher"), window, cx);
+        wb.sheet_toggle_in("confirm_agent_start", window, cx);
+    });
+    let (title, alternative) = view.read_with(cx, |wb, _| {
+        let modal = wb.modal().unwrap();
+        (
+            modal.title.to_string(),
+            modal.choice_label().map(str::to_owned),
+        )
+    });
+    assert_eq!(title, "Ask again for remembered choices?");
+    assert_eq!(alternative.as_deref(), Some("Turn on, keep them"));
+    view.update_in(cx, |wb, window, cx| wb.choose_modal_alternative(window, cx));
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.sheet_value("confirm_agent_start")),
+        Some(serde_json::json!(true))
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.start_exemptions().len()),
+        1,
+        "kept"
+    );
+    // Forget them: the question is on and nothing is exempt.
+    view.read_with(cx, |wb, _| {
+        wb.settings_store()
+            .write_user("launcher.confirm_agent_start", toml::Value::Boolean(false))
+    })
+    .unwrap();
+    view.update_in(cx, |wb, window, cx| {
+        wb.sheet_toggle_in("confirm_agent_start", window, cx);
+    });
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
+    assert!(view.read_with(cx, |wb, _| wb.start_exemptions().is_empty()));
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.sheet_value("confirm_agent_start")),
+        Some(serde_json::json!(true))
+    );
+    // With nothing remembered the toggle needs no question.
+    view.update_in(cx, |wb, window, cx| {
+        wb.sheet_toggle_in("confirm_agent_start", window, cx);
+    });
+    assert!(view.read_with(cx, |wb, _| wb.modal().is_none()));
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.sheet_value("confirm_agent_start")),
+        Some(serde_json::json!(false))
+    );
+}
+
 #[gpui::test]
 fn terminals_commands_and_queued_chats_never_ask(cx: &mut TestAppContext) {
     let env = Env::new();

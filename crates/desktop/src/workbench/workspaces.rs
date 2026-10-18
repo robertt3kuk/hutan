@@ -304,6 +304,26 @@ impl Workbench {
         }
     }
 
+    /// The container shown and the project worked in, whose `.hutan/settings.toml` files
+    /// layer over the user's settings (see [`layer_roots`]): the shown workspace or project
+    /// and, inside a workspace, the project the user chose.
+    pub(crate) fn layer_containers(
+        &self,
+        cx: &gpui::App,
+    ) -> (Option<WorkspaceInfo>, Option<WorkspaceInfo>) {
+        let store = self.sessions.read(cx);
+        let container = self.active_workspace().and_then(|id| store.workspace(id));
+        let project = match container {
+            Some(container) if container.kind == WorkspaceKind::Project => Some(container),
+            Some(container) if container.kind == WorkspaceKind::Workspace => self
+                .chosen_project
+                .and_then(|id| store.workspace(id))
+                .filter(|p| p.parent_id == Some(container.id)),
+            _ => None,
+        };
+        (container.cloned(), project.cloned())
+    }
+
     /// Tells the sessions store which container and project are active, and layers their
     /// `.hutan/settings.toml` files over the user settings: the first project root of the
     /// workspace (or Home's folder) is the workspace layer, the root of the project the user
@@ -331,17 +351,8 @@ impl Workbench {
         }
         self.synced_container = active;
         let (project, workspace_root, project_root) = {
-            let store = self.sessions.read(cx);
-            let container = active.and_then(|id| store.workspace(id));
-            let project = match container {
-                Some(container) if container.kind == WorkspaceKind::Project => Some(container),
-                Some(container) if container.kind == WorkspaceKind::Workspace => self
-                    .chosen_project
-                    .and_then(|id| store.workspace(id))
-                    .filter(|p| p.parent_id == Some(container.id)),
-                _ => None,
-            };
-            let (workspace_root, project_root) = layer_roots(container, project);
+            let (container, project) = self.layer_containers(cx);
+            let (workspace_root, project_root) = layer_roots(container.as_ref(), project.as_ref());
             (project.map(|p| p.id), workspace_root, project_root)
         };
         self.sessions

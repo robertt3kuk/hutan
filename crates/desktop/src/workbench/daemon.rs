@@ -75,6 +75,8 @@ pub(crate) struct DaemonControl {
     pub log_path: Option<PathBuf>,
     /// Reveals a file in Finder (also for workspace folders).
     pub reveal: RevealHandler,
+    /// Opens a file or folder with the system (the Data & logs page's "Open").
+    pub open: RevealHandler,
 }
 
 impl DaemonControl {
@@ -91,6 +93,7 @@ impl DaemonControl {
             fetch: None,
             log_path: log_file(),
             reveal: Rc::new(|path, cx| cx.reveal_path(path)),
+            open: Rc::new(|path, _| open_with_system(path)),
         }
     }
 }
@@ -98,6 +101,16 @@ impl DaemonControl {
 /// `hutand.log` where the daemon writes it, next to `desktop.log` ([`crate::crash::log_dir`]).
 pub fn log_file() -> Option<PathBuf> {
     crate::crash::log_dir().map(|dir| dir.join("hutand.log"))
+}
+
+/// Opens `path` the way a double click in Finder does (`open`); the result is not waited for.
+fn open_with_system(path: &Path) {
+    match std::process::Command::new("open").arg(path).spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait().ok());
+        }
+        Err(error) => tracing::warn!("cannot open {}: {error}", path.display()),
+    }
 }
 
 fn sessions_phrase(live: usize) -> String {
@@ -288,7 +301,7 @@ impl Workbench {
         }
     }
 
-    fn refresh_daemon_status(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_daemon_status(&mut self, cx: &mut Context<Self>) {
         if !self.daemon_connected(cx) {
             self.daemon.status = None;
             return;
@@ -405,6 +418,11 @@ impl Workbench {
     /// platform).
     pub fn set_reveal_handler(&mut self, reveal: impl Fn(&Path, &mut App) + 'static) {
         self.daemon.reveal = Rc::new(reveal);
+    }
+
+    /// How "Open" on the Data & logs page opens a file or folder (default: the system's `open`).
+    pub fn set_open_handler(&mut self, open: impl Fn(&Path, &mut App) + 'static) {
+        self.daemon.open = Rc::new(open);
     }
 
     /// Stops reconnecting, asks the daemon to shut down (stopping its sessions) and waits for

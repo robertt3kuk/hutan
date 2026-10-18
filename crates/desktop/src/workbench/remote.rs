@@ -32,7 +32,8 @@ use tokio::sync::broadcast::error::RecvError;
 use super::actions::{self, Command};
 use super::model::{DockPosition, FocusTarget, ItemRef, PaneTree};
 use super::settings_schema::{
-    FieldKind, catalog, fields_of, json_to_toml, namespace_schema, value_at,
+    FieldKind, catalog, fields_of, json_to_toml, namespace_schema, number_range, refine_kind,
+    value_at,
 };
 use super::view::Workbench;
 use crate::sessions::SessionsStore;
@@ -262,6 +263,19 @@ fn check_value(kind: &FieldKind, value: &Value) -> Result<(), String> {
             Ok(())
         }
         FieldKind::StringList => Err("expected a list of strings".to_owned()),
+        FieldKind::ChoiceList(values)
+            if value.as_array().is_some_and(|items| {
+                items
+                    .iter()
+                    .all(|item| item.as_str().is_some_and(|i| values.iter().any(|v| v == i)))
+            }) =>
+        {
+            Ok(())
+        }
+        FieldKind::ChoiceList(values) => Err(format!("expected a list of: {}", values.join(", "))),
+        FieldKind::StringMap => {
+            Err("cannot be set here (edit the variables in Settings)".to_owned())
+        }
         FieldKind::Unsupported(hint) => Err(format!("cannot be set here ({hint})")),
     }
 }
@@ -276,7 +290,7 @@ fn writable_kind(namespace: &str, key: &str, kind: &FieldKind) -> FieldKind {
         ("app", "start_at_login") => {
             FieldKind::Unsupported("use the action daemon::ToggleStartAtLogin".to_owned())
         }
-        _ => kind.clone(),
+        _ => refine_kind(namespace, key, kind),
     }
 }
 
@@ -422,14 +436,15 @@ impl Workbench {
                     FieldKind::Number => ("number", Vec::new()),
                     FieldKind::String => ("string", Vec::new()),
                     FieldKind::StringList => ("string_list", Vec::new()),
-                    FieldKind::Unsupported(_) => ("unsupported", Vec::new()),
+                    FieldKind::ChoiceList(values) => ("string_list", values.clone()),
+                    FieldKind::StringMap | FieldKind::Unsupported(_) => ("unsupported", Vec::new()),
                 };
                 out.push(UiSetting {
                     namespace: entry.namespace.to_owned(),
                     key,
                     kind: type_name.to_owned(),
                     doc: field.doc.clone(),
-                    layers: if matches!(kind, FieldKind::Unsupported(_)) {
+                    layers: if matches!(kind, FieldKind::Unsupported(_) | FieldKind::StringMap) {
                         Vec::new()
                     } else {
                         layers_of(entry.workspace_overridable)
@@ -708,6 +723,15 @@ impl Workbench {
         let kind = writable_kind(entry.namespace, &req.key, &field.kind);
         check_value(&kind, &req.value)
             .map_err(|why| bad_request(format!("`{}.{}`: {why}", req.namespace, req.key)))?;
+        if let (Some((low, high)), Some(n)) =
+            (number_range(entry.namespace, &req.key), req.value.as_f64())
+            && !(low..=high).contains(&n)
+        {
+            return Err(bad_request(format!(
+                "`{}.{}`: must be between {low} and {high}; the app keeps it inside that range",
+                req.namespace, req.key
+            )));
+        }
         let value = json_to_toml(&req.value).ok_or_else(|| {
             bad_request(format!(
                 "`{}.{}`: the value cannot be written as TOML",

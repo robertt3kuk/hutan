@@ -754,8 +754,9 @@ fn the_settings_sheet_writes_values_and_keeps_comments(cx: &mut TestAppContext) 
     // Lists: add and remove items of `panels.sessions.row`.
     cx.dispatch_action(actions::OpenSettingsFor("panels.sessions".into()));
     view.update(cx, |wb, cx| wb.sheet_remove_list_item("row", 5, cx));
-    view.update(cx, |wb, cx| wb.sheet_begin_edit("row", cx));
-    cx.simulate_keystrokes("a g e enter");
+    // The parts come from a menu of the ones that exist (a list without a known set takes
+    // typed text: see `known_sets_are_choices_and_numbers_stay_in_their_range`).
+    view.update(cx, |wb, cx| wb.sheet_add_list_item("row", "age", cx));
     let row = view.read_with(cx, |wb, _| wb.sheet_value("row")).unwrap();
     assert_eq!(
         row,
@@ -812,6 +813,11 @@ fn save_layout_as_preset_writes_settings_and_hot_reloads_presets(cx: &mut TestAp
     assert_eq!(preset["right"]["visible"].as_bool(), Some(false));
     assert_eq!(preset["left"]["panels"].as_array().unwrap().len(), 2);
     assert_eq!(state_of(&view, cx).preset, "My-Layout");
+    assert_eq!(
+        parsed["layout"]["preset"].as_str(),
+        Some("My-Layout"),
+        "saving makes it the preset in use for the next start too"
+    );
     wait_until(cx, "the palette to list the preset", |cx| {
         view.read_with(cx, |wb, _| {
             wb.commands()
@@ -831,7 +837,7 @@ fn save_layout_as_preset_writes_settings_and_hot_reloads_presets(cx: &mut TestAp
     write(
         daemon.home(),
         "settings.toml",
-        "[layout.presets.My-Layout]\nleft = { panels = [\"sessions\"], size = 333, visible = true }\nright = { panels = [], size = 300, visible = false }\nbottom = { panels = [], size = 200, visible = false }\nstatus_bar = { left = [\"connection\"], right = [] }\n",
+        "[layout]\npreset = \"My-Layout\"\n[layout.presets.My-Layout]\nleft = { panels = [\"sessions\"], size = 333, visible = true }\nright = { panels = [], size = 300, visible = false }\nbottom = { panels = [], size = 200, visible = false }\nstatus_bar = { left = [\"connection\"], right = [] }\n",
     );
     wait_until(cx, "the preset definition", |cx| {
         state_of(&view, cx).docks.left.size == 333.0
@@ -995,6 +1001,85 @@ fn terminal_shell_and_env_settings_reach_new_sessions_with_workspace_overrides(
         cx,
         project,
         &format!("mark=workspace user=u ws=w shell={}", shell.display()),
+    );
+}
+
+/// The settings sheet's variable editor writes `terminal.env`, and the next terminal starts with
+/// what it holds: a variable added there is in the shell, and one removed there is not.
+#[gpui::test]
+fn the_variable_editor_feeds_the_next_terminal(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let daemon = TestDaemon::start();
+    let tools = tempfile::tempdir().unwrap();
+    let shell = tools.path().join("stand-in-shell");
+    std::fs::write(
+        &shell,
+        "#!/bin/sh\necho \"edited=$B2_EDITED other=$B2_OTHER\"\nexec cat\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // macOS vets the first execution of a new executable, which can take a long time.
+    let _ = std::process::Command::new(&shell)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    write(
+        daemon.home(),
+        "settings.toml",
+        &format!("[terminal]\nshell = \"{}\"\n", shell.display()),
+    );
+    let (view, cx) = open(cx, &daemon);
+    wait_synced(&view, cx, 0);
+
+    // Add two variables the way a person does: `NAME=value` in the box, and in the row.
+    cx.dispatch_action(actions::OpenSettingsFor("terminal".into()));
+    view.update(cx, |wb, cx| wb.sheet_begin_edit("env", cx));
+    view.update(cx, |wb, cx| {
+        wb.sheet_set_edit_text("B2_EDITED=from-the-editor", cx)
+    });
+    view.update(cx, |wb, cx| wb.sheet_commit_edit(cx));
+    view.update(cx, |wb, cx| wb.sheet_begin_edit("env", cx));
+    view.update(cx, |wb, cx| {
+        wb.sheet_set_edit_text("B2_OTHER=gone-soon", cx)
+    });
+    view.update(cx, |wb, cx| wb.sheet_commit_edit(cx));
+    let text = std::fs::read_to_string(daemon.home().join("settings.toml")).unwrap();
+    let parsed: toml::Table = toml::from_str(&text).unwrap();
+    assert_eq!(
+        parsed["terminal"]["env"]["B2_EDITED"].as_str(),
+        Some("from-the-editor")
+    );
+    assert!(text.contains("shell ="), "the shell stays: {text}");
+    cx.simulate_keystrokes("escape");
+    cx.simulate_keystrokes("cmd-t");
+    wait_until(cx, "the first terminal", |cx| {
+        view.read_with(cx, |wb, _| wb.focused_session()).is_some()
+    });
+    let first = view.read_with(cx, |wb, _| wb.focused_session()).unwrap();
+    wait_screen(&view, cx, first, "edited=from-the-editor other=gone-soon");
+
+    // Remove one: the next terminal does not have it, the one running keeps what it had.
+    cx.dispatch_action(actions::OpenSettingsFor("terminal".into()));
+    view.update(cx, |wb, cx| wb.sheet_map_remove("env", "B2_OTHER", cx));
+    cx.simulate_keystrokes("escape");
+    cx.simulate_keystrokes("cmd-t");
+    wait_until(cx, "the second terminal", |cx| {
+        view.read_with(cx, |wb, _| wb.focused_session())
+            .is_some_and(|s| s != first)
+    });
+    let second = view.read_with(cx, |wb, _| wb.focused_session()).unwrap();
+    wait_screen(&view, cx, second, "edited=from-the-editor other=");
+    assert!(
+        !screen_of(&view, cx, second)
+            .unwrap_or_default()
+            .contains("gone-soon")
+    );
+    assert!(
+        screen_of(&view, cx, first)
+            .unwrap_or_default()
+            .contains("gone-soon")
     );
 }
 
