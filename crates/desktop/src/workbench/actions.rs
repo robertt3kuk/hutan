@@ -27,6 +27,8 @@ actions!(
         ToggleRightDock,
         ToggleBottomDock,
         ToggleOverview,
+        ToggleAgentsDrawer,
+        CloseAgentsDrawer,
         ClosePaneItem,
         ToggleZoom,
         TogglePalette,
@@ -294,6 +296,12 @@ data_actions! {
     ShowPlacementMenu(SessionMenuAt);
     /// Open the Changes view of the checkout at this path (a worktree or a main checkout).
     ReviewChangesAt(String);
+    /// Show the menu of the Assistant page's scope dropdown (Global / the workspace) at this
+    /// position.
+    ShowAssistantScopeMenu(gpui::Point<gpui::Pixels>);
+    /// Show the menu of the Assistant page's backend and model chip (Switch model…) at this
+    /// position.
+    ShowAssistantModelMenu(gpui::Point<gpui::Pixels>);
 }
 
 /// Where to open the context menu of a workspace.
@@ -450,6 +458,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("View: Decrease Terminal Font Size", DecreaseFontSize),
         command("View: Reset Terminal Font Size", ResetFontSize),
         command("View: Toggle Overview", ToggleOverview),
+        command("View: Toggle Agent Dashboard", ToggleAgentsDrawer),
         command("View: Density Compact", SetDensityCompact),
         command("View: Density Comfortable", SetDensityComfortable),
         command("View: Toggle Density", ToggleDensity),
@@ -740,6 +749,7 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<modal::Cancel>("escape", Some("Modal")),
         bind::<sheet::Dismiss>("escape", Some("SettingsSheet")),
         bind::<palette::Dismiss>("escape", Some("DaemonPopover")),
+        bind::<CloseAgentsDrawer>("escape", Some("AgentsDrawer")),
         bind::<chat::SendMessage>("cmd-enter", Some(super::chat::KEY_CONTEXT)),
         bind::<chat::InterruptTurn>("cmd-.", Some(super::chat::KEY_CONTEXT)),
         bind::<palette::SelectNext>("down", Some("AgentPicker")),
@@ -1069,6 +1079,7 @@ mod tests {
             "escape | modal::Cancel | Modal",
             "escape | settings_sheet::Dismiss | SettingsSheet",
             "escape | palette::Dismiss | DaemonPopover",
+            "escape | workbench::CloseAgentsDrawer | AgentsDrawer",
             "cmd-enter | chat::SendMessage | HutanChat",
             "cmd-. | chat::InterruptTurn | HutanChat",
             "down | palette::SelectNext | AgentPicker",

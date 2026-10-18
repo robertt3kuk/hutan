@@ -4,7 +4,8 @@
 //!   other panel the user put in the left dock), the active page below it (Projects by default;
 //!   a nav item replaces the project list with its page and shows a back row), and a bottom
 //!   toolbar (New session, Settings). The pages are the left dock's panels; the active one is
-//!   the dock's `active`, so presets, restore and `ui` see nothing new.
+//!   the dock's `active`, so presets, restore and `ui` see nothing new. Agents is no page: it
+//!   opens the Agent Dashboard drawer (`agents_drawer.rs`) over the center.
 //! - **Right**: a 36 px strip of panel icons with tooltips; icons that do not fit move into a
 //!   More menu. The active panel's body fills the rest.
 
@@ -18,11 +19,14 @@ use super::model::{Dock, DockPosition, DropTarget, ItemRef, ItemSource, PanelId}
 use super::render::{TITLEBAR_HEIGHT, probe};
 use super::style::TextTooltip;
 use super::view::{DragPreview, DraggedItem, Region, Workbench};
+use crate::icons::{Icon, icon};
 use crate::theme::DensityExt as _;
 
-/// Nav rows are 13 px medium labels with 16 px icons, 8 px × 6 px padding, 2 px apart (Orca).
-const NAV_LABEL: f32 = 13.0;
-const NAV_ICON: f32 = 16.0;
+/// Nav rows are 13 px medium labels with 16 px icons, 8 px × 6 px padding, 2 px apart (Orca):
+/// 30 px rows. The label's line is 18 px so the font's own line height does not stretch them.
+pub const NAV_LABEL: f32 = 13.0;
+pub const NAV_ICON: f32 = 16.0;
+const NAV_LINE: f32 = 18.0;
 /// A strip icon button and the gap between two.
 const STRIP_BUTTON: f32 = 28.0;
 const STRIP_GAP: f32 = 4.0;
@@ -34,6 +38,8 @@ pub enum NavTarget {
     Search,
     /// Show the Assistant page (and put the keyboard in its composer).
     Assistant,
+    /// Open or close the Agent Dashboard drawer.
+    Agents,
     /// Show this panel as a page of the left sidebar.
     Page(PanelId),
 }
@@ -44,19 +50,15 @@ pub struct NavEntry {
     /// Stable name of the row (`search`, `tasks`, `agents`, `assistant`, or the panel id).
     pub key: String,
     pub label: SharedString,
-    pub icon: SharedString,
+    /// The row's icon of the set; a panel the set has no icon for shows `glyph`.
+    pub icon: Option<Icon>,
+    pub glyph: SharedString,
     /// A count shown as a pill (the agents that need you).
     pub badge: Option<usize>,
     pub target: NavTarget,
-    /// The page the row stands for is the one showing.
+    /// The page (or the drawer) the row stands for is the one showing.
     pub selected: bool,
 }
-
-/// The panels the nav names itself; any other panel of the left dock gets a row of its own.
-const PAGES: [(&str, &str, &str); 2] = [
-    ("tasks", "tasks", "Tasks"),
-    ("agents", "overview", "Agents"),
-];
 
 /// Which icons of a right strip show for `panels` in a dock `width` px wide, the active one
 /// always among them, and which go into the More menu: `(shown, hidden)` as indices into
@@ -83,44 +85,47 @@ pub fn strip_split(panels: usize, active: Option<usize>, width: f32) -> (Vec<usi
 impl Workbench {
     // ---- left ------------------------------------------------------------------------------
 
-    /// The rows of the left nav, top to bottom, with the page the dock shows marked.
+    /// The rows of the left nav, top to bottom, with the page the dock shows marked (and, for
+    /// Agents, the drawer when it is open).
     pub fn nav_entries(&self, cx: &gpui::App) -> Vec<NavEntry> {
         let dock = &self.state.docks.left;
         let page = dock.active.as_ref();
         let selected = |panel: &str| page.is_some_and(|a| a.as_str() == panel);
-        let mut entries = vec![NavEntry {
-            key: "search".to_owned(),
-            label: "Search".into(),
-            icon: "⌕".into(),
-            badge: None,
-            target: NavTarget::Search,
-            selected: false,
-        }];
-        for (key, panel, label) in PAGES {
-            let id = PanelId::new(panel);
-            let icon = self
-                .panels
-                .get(&id)
-                .map_or_else(|| "▫".into(), |s| s.icon.clone());
-            entries.push(NavEntry {
-                key: key.to_owned(),
-                label: label.into(),
-                icon,
-                badge: (key == "agents")
-                    .then(|| self.sessions.read(cx).needs_you().len())
-                    .filter(|n| *n > 0),
-                target: NavTarget::Page(id),
-                selected: selected(panel),
-            });
-        }
+        let mut entries = vec![
+            NavEntry {
+                key: "search".to_owned(),
+                label: "Search".into(),
+                icon: Some(Icon::Search),
+                glyph: "⌕".into(),
+                badge: None,
+                target: NavTarget::Search,
+                selected: false,
+            },
+            NavEntry {
+                key: "tasks".to_owned(),
+                label: "Tasks".into(),
+                icon: Some(Icon::ListChecks),
+                glyph: "☑".into(),
+                badge: None,
+                target: NavTarget::Page(PanelId::new("tasks")),
+                selected: selected("tasks"),
+            },
+            NavEntry {
+                key: "agents".to_owned(),
+                label: "Agents".into(),
+                icon: Some(Icon::LayoutDashboard),
+                glyph: "⊞".into(),
+                badge: Some(self.sessions.read(cx).needs_you().len()).filter(|n| *n > 0),
+                target: NavTarget::Agents,
+                selected: self.agents_drawer,
+            },
+        ];
         if self.assistant_enabled() {
             entries.push(NavEntry {
                 key: "assistant".to_owned(),
                 label: "Assistant".into(),
-                icon: self
-                    .panels
-                    .get(&PanelId::new("assistant"))
-                    .map_or_else(|| "✦".into(), |s| s.icon.clone()),
+                icon: Some(Icon::Sparkles),
+                glyph: "✦".into(),
                 badge: None,
                 target: NavTarget::Assistant,
                 selected: selected("assistant"),
@@ -135,7 +140,7 @@ impl Workbench {
             if named {
                 continue;
             }
-            let (icon, title) = self.item_icon_and_title(
+            let (glyph, title) = self.item_icon_and_title(
                 &ItemRef::Panel {
                     panel: panel.clone(),
                 },
@@ -144,7 +149,8 @@ impl Workbench {
             entries.push(NavEntry {
                 key: panel.to_string(),
                 label: title,
-                icon,
+                icon: Icon::for_panel(panel.as_str()),
+                glyph,
                 badge: None,
                 target: NavTarget::Page(panel.clone()),
                 selected: selected(panel.as_str()),
@@ -193,12 +199,12 @@ impl Workbench {
                     NavTarget::Assistant => {
                         dock.panels.iter().position(|p| p.as_str() == "assistant")
                     }
-                    NavTarget::Search => None,
+                    NavTarget::Search | NavTarget::Agents => None,
                 };
                 let menu_panel = match &entry.target {
                     NavTarget::Page(panel) => Some(panel.clone()),
                     NavTarget::Assistant => Some(PanelId::new("assistant")),
-                    NavTarget::Search => None,
+                    NavTarget::Search | NavTarget::Agents => None,
                 };
                 let selected = entry.selected;
                 let color = if selected { theme.fg } else { theme.muted };
@@ -218,6 +224,13 @@ impl Workbench {
                     .when(selected, |s| s.bg(theme.sidebar_accent))
                     .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        if target == NavTarget::Agents {
+                            // The drawer holds the keyboard itself (Escape closes it).
+                            this.toggle_agents_drawer(window, cx);
+                            return;
+                        }
+                        // Any other row is where the user goes next.
+                        this.agents_drawer = false;
                         match &target {
                             NavTarget::Search => {
                                 window.dispatch_action(Box::new(actions::OpenJump), cx);
@@ -233,24 +246,29 @@ impl Workbench {
                                 }
                             }
                             NavTarget::Page(panel) => this.toggle_left_page(panel, cx),
+                            NavTarget::Agents => {}
                         }
                         this.focus_root(window, cx);
+                        cx.notify();
                     }))
-                    .child(
-                        div()
+                    .child(match entry.icon {
+                        Some(glyph) => icon(glyph, NAV_ICON, color).into_any_element(),
+                        None => div()
                             .flex_none()
-                            .w(px(NAV_ICON + 4.0))
+                            .w(px(NAV_ICON))
                             .flex()
                             .justify_center()
-                            .text_size(px(NAV_ICON))
-                            .text_color(if selected { theme.accent } else { theme.muted })
-                            .child(entry.icon.clone()),
-                    )
+                            .text_size(px(NAV_ICON - 2.0))
+                            .text_color(color)
+                            .child(entry.glyph.clone())
+                            .into_any_element(),
+                    })
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .truncate()
+                            .line_height(px(NAV_LINE))
                             .child(entry.label.clone()),
                     )
                     .children(entry.badge.map(|count| {
@@ -261,6 +279,7 @@ impl Workbench {
                             .bg(theme.warning.opacity(0.18))
                             .text_color(theme.warning)
                             .text_size(px(tokens.secondary_font_size))
+                            .line_height(px(16.0))
                             .child(SharedString::from(count.to_string()))
                     }))
                     .child(probe(&self.regions, Region::Nav(key)));
@@ -336,8 +355,8 @@ impl Workbench {
                         this.open_panel("sessions", cx);
                         this.focus_root(window, cx);
                     }))
-                    .child("‹")
-                    .child("Projects")
+                    .child(icon(Icon::ChevronLeft, 14.0, theme.muted))
+                    .child(div().min_w_0().truncate().child("Projects"))
                     .child(probe(&self.regions, Region::Nav("projects")))
                     .into_any_element(),
             );
@@ -350,25 +369,25 @@ impl Workbench {
         let theme = self.theme;
         let tokens = self.density.ui();
         let hover = theme.fg.opacity(0.08);
-        let button =
-            |id: &'static str, glyph: &'static str, label: &'static str, region: &'static str| {
-                div()
-                    .id(id)
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .px(px(8.0))
-                    .h(px(28.0))
-                    .rounded(px(tokens.radius))
-                    .cursor_pointer()
-                    .text_size(px(12.0))
-                    .text_color(theme.muted)
-                    .hover(move |s| s.bg(hover).text_color(theme.fg))
-                    .child(glyph)
-                    .child(label)
-                    .child(probe(&self.regions, Region::Toolbar(region)))
-            };
+        let button = |id: &'static str, glyph: Icon, label: &'static str, region: &'static str| {
+            div()
+                .id(id)
+                .relative()
+                .flex()
+                .items_center()
+                .min_w_0()
+                .gap(px(6.0))
+                .px(px(8.0))
+                .h(px(28.0))
+                .rounded(px(tokens.radius))
+                .cursor_pointer()
+                .text_size(px(12.0))
+                .text_color(theme.muted)
+                .hover(move |s| s.bg(hover).text_color(theme.fg))
+                .child(icon(glyph, 14.0, theme.muted))
+                .child(div().min_w_0().truncate().child(label))
+                .child(probe(&self.regions, Region::Toolbar(region)))
+        };
         div()
             .id("left-toolbar")
             .flex()
@@ -380,12 +399,14 @@ impl Workbench {
             .border_t_1()
             .border_color(theme.border)
             .child(
-                button("toolbar-new", "＋", "New session", "new").on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(actions::NewTerminal), cx);
-                }),
+                button("toolbar-new", Icon::Plus, "New session", "new").on_click(
+                    |_, window, cx| {
+                        window.dispatch_action(Box::new(actions::NewTerminal), cx);
+                    },
+                ),
             )
             .child(
-                button("toolbar-settings", "⚙", "Settings", "settings").on_click(
+                button("toolbar-settings", Icon::Settings, "Settings", "settings").on_click(
                     |_, window, cx| {
                         window.dispatch_action(Box::new(actions::OpenSettings), cx);
                     },
@@ -419,7 +440,7 @@ impl Workbench {
             .filter_map(|index| dock.panels.get(index).map(|panel| (index, panel.clone())))
             .map(|(index, panel)| {
                 let active = dock.active.as_ref() == Some(&panel);
-                let (icon, title) = self.item_icon_and_title(
+                let (glyph, title) = self.item_icon_and_title(
                     &ItemRef::Panel {
                         panel: panel.clone(),
                     },
@@ -484,7 +505,13 @@ impl Workbench {
                     .on_drop(cx.listener(move |this, d: &DraggedItem, window, cx| {
                         this.drop_item(d, DropTarget::Dock { pos, index }, window, cx);
                     }))
-                    .child(icon)
+                    .child(match Icon::for_panel(panel.as_str()) {
+                        Some(set_icon) => {
+                            icon(set_icon, 16.0, if active { accent } else { theme.muted })
+                                .into_any_element()
+                        }
+                        None => glyph.into_any_element(),
+                    })
                     .child(probe(&self.regions, Region::DockTab(pos, index)))
                     .into_any_element()
             })
@@ -526,7 +553,7 @@ impl Workbench {
                         .collect();
                     this.open_menu(event.position(), entries, window, cx);
                 }))
-                .child("⋯")
+                .child(icon(Icon::Ellipsis, 16.0, theme.muted))
                 .child(probe(&self.regions, Region::StripMore))
                 .into_any_element()
         });

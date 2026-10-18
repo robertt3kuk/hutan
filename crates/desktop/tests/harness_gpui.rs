@@ -84,6 +84,15 @@ fn open<'a>(
     (view, cx)
 }
 
+/// The header's backend·model chip opens a menu; its second row is the chooser of backends and
+/// models.
+fn open_backend_chooser(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    click(view, cx, Region::Assistant("backend"));
+    let entries = view.read_with(cx, |wb, _| wb.context_menu_entries().unwrap());
+    assert_eq!(entries[1].0.as_ref(), "Backends and models…");
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(1, window, cx));
+}
+
 fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
     wait_until(cx, &format!("{region:?} to be drawn"), |cx| {
         view.read_with(cx, |wb, _| wb.region_bounds(region).is_some())
@@ -354,7 +363,7 @@ fn an_unconfigured_assistant_opens_on_the_ready_omp_with_the_model_one_tier_down
         "nothing is left to choose"
     );
     // The header says what runs; the chooser's default is the automatic choice.
-    click(&view, cx, Region::Assistant("backend"));
+    open_backend_chooser(&view, cx);
     click(&view, cx, Region::Assistant("backend-omp"));
     common::draw(cx);
     assert!(
@@ -385,7 +394,7 @@ fn the_panel_header_switches_the_backend_and_model(cx: &mut TestAppContext) {
     });
     // The header says what it runs on; the chooser lists the backends and the models of the
     // one picked, and the default model of OMP is one click.
-    click(&view, cx, Region::Assistant("backend"));
+    open_backend_chooser(&view, cx);
     click(&view, cx, Region::Assistant("backend-omp"));
     click(&view, cx, Region::Assistant("use-default"));
     wait_until(

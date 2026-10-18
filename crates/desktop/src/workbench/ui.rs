@@ -79,6 +79,11 @@ pub trait StyledExt: Styled + Sized {
         self.font_weight(FontWeight::MEDIUM)
     }
 
+    /// At most `lines` lines of text, the cut one ending in "…".
+    fn clamp_lines(self, lines: usize) -> Self {
+        self.line_clamp(lines).text_ellipsis()
+    }
+
     /// A card: `surface`, hairline border, card radius. No shadow.
     fn card(self, theme: &Theme, tokens: &Tokens) -> Self {
         self.bg(theme.surface)
@@ -201,10 +206,16 @@ pub fn round_button(
     }
 }
 
+/// The widest a [`pill`] gets before its text is cut with "…".
+const PILL_MAX_WIDTH: f32 = 140.0;
+
 /// A small label in a tone's color on a faint tint of it ("exit 0", "running"). Fully rounded.
 pub fn pill(text: impl Into<SharedString>, color: Hsla, tokens: &Tokens) -> gpui::Div {
     div()
         .flex_none()
+        // A long branch or label is cut with "…" instead of pushing its row wider.
+        .max_w(px(PILL_MAX_WIDTH))
+        .truncate()
         .px(px(tokens.spacing * 2.0))
         .rounded(px(PILL_RADIUS))
         .bg(color.opacity(0.12))
@@ -354,6 +365,8 @@ pub fn empty_state(
         .child(mascot(state, MASCOT_SIZE))
         .child(
             div()
+                .w_full()
+                .min_w_0()
                 .max_w(px(420.0))
                 .text_center()
                 .text_color(theme.muted)

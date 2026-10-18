@@ -146,6 +146,15 @@ fn user_items(model: &Entity<ChatModel>, cx: &VisualTestContext) -> Vec<hutan_co
 
 // ---- scenario 1: the global assistant, streaming, scopes ----------------------------------------
 
+/// Picks row `index` (0 Global, 1 the workspace) of the header's scope dropdown.
+fn choose_scope(view: &Entity<Workbench>, cx: &mut VisualTestContext, index: usize) {
+    click(view, cx, Region::Assistant("scope"));
+    let labels = view.read_with(cx, |wb, _| wb.context_menu_entries().unwrap());
+    assert_eq!(labels.len(), 2, "Global and the workspace");
+    assert_eq!(labels[0].0.as_ref(), "Global");
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(index, window, cx));
+}
+
 #[gpui::test]
 fn the_global_assistant_streams_without_a_terminal_and_each_scope_keeps_its_conversation(
     cx: &mut TestAppContext,
@@ -252,7 +261,7 @@ fn the_global_assistant_streams_without_a_terminal_and_each_scope_keeps_its_conv
         m.attach_context(ContextChip::file("src/lib.rs", None), cx);
     });
     type_message(&project_model, cx, "unsent project draft");
-    click(&view, cx, Region::Assistant("global"));
+    choose_scope(&view, cx, 0);
     draw(cx);
     assert_eq!(panel.read_with(cx, |p, cx| p.session(cx)), Some(global));
     assert_eq!(
@@ -284,7 +293,7 @@ fn the_global_assistant_streams_without_a_terminal_and_each_scope_keeps_its_conv
         project_model.read_with(cx, |m, _| m.input().text().to_owned()),
         "unsent project draft"
     );
-    click(&view, cx, Region::Assistant("workspace"));
+    choose_scope(&view, cx, 1);
     draw(cx);
     assert_eq!(panel.read_with(cx, |p, cx| p.session(cx)), Some(project));
 
@@ -1139,11 +1148,17 @@ fn an_assistants_provider_errors_offer_the_recovery_of_a_direct_chat(cx: &mut Te
             wb.region_bounds(Region::Chat("fix-key")).is_some()
         })
     });
-    // The header offers the model switch, as for any gateway chat.
+    // The header's backend chip opens the menu with the model switch, as for any gateway chat.
+    click(&view, cx, Region::Assistant("backend"));
+    let entries = view.read_with(cx, |wb, _| wb.context_menu_entries().unwrap());
+    assert_eq!(entries[0].0.as_ref(), "Switch model…");
+    assert_eq!(entries[1].0.as_ref(), "Backends and models…");
     assert!(
-        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("switch-model")))
-            .is_some()
+        view.read_with(cx, |wb, _| wb.context_menu_disabled().is_empty()),
+        "between turns both rows work"
     );
+    cx.simulate_keystrokes("escape");
+    assert!(view.read_with(cx, |wb, _| wb.context_menu_entries().is_none()));
     click(&view, cx, Region::Chat("fix-key"));
     assert!(view.read_with(cx, |wb, _| wb.modal().is_some_and(|m| m.secure_input)));
 }

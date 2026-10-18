@@ -420,7 +420,7 @@ pub fn run() {
         Startup::Exit(0) => return,
         Startup::Exit(code) => std::process::exit(code),
     };
-    let application = gpui_platform::application();
+    let application = gpui_platform::application().with_assets(crate::icons::Assets);
     // The Dock icon was clicked while no window is on screen.
     application.on_reopen(|cx| {
         activate_main_window(cx, |cx| {

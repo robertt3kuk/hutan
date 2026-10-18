@@ -60,16 +60,13 @@ impl LayoutPreset {
         }
     }
 
-    /// `sessions` (Projects), `tasks` and `overview` (the Agents page) as pages of the left
-    /// sidebar; `history`, `changes`, `inspector`, `agents` and `resources` in the right
+    /// `sessions` (Projects) and `tasks` as pages of the left sidebar (Agents is the dashboard
+    /// drawer, not a page); `history`, `changes`, `inspector`, `agents` and `resources` in the right
     /// sidebar's strip; the bottom dock hidden and empty; center untouched.
     pub fn default_preset() -> Self {
         Self {
             name: Self::DEFAULT.to_owned(),
-            docks: Self::docks(
-                Self::left(true, &["sessions", "tasks", "overview"]),
-                Self::right(true),
-            ),
+            docks: Self::docks(Self::left(true, &["sessions", "tasks"]), Self::right(true)),
             center: CenterLayout::Keep,
             zoom_active: false,
         }
@@ -80,7 +77,7 @@ impl LayoutPreset {
         Self {
             name: Self::FOCUS.to_owned(),
             docks: Self::docks(
-                Self::left(false, &["sessions", "tasks", "overview"]),
+                Self::left(false, &["sessions", "tasks"]),
                 Self::right(false),
             ),
             center: CenterLayout::Keep,
@@ -88,8 +85,7 @@ impl LayoutPreset {
         }
     }
 
-    /// `overview` panel as the first center item, side docks visible (the board is in the center,
-    /// so the left sidebar's Agents page is not listed).
+    /// `overview` panel as the first center item, side docks visible.
     pub fn overview_preset() -> Self {
         Self {
             name: Self::OVERVIEW.to_owned(),

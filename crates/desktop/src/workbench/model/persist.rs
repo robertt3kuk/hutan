@@ -6,9 +6,11 @@ use super::{
 
 /// The saved layout's version. 2 is the Orca-style relayout (OL-2): Projects, Tasks and the
 /// Agents page as pages of the left sidebar, History / Changes / Requests / Agents / Resources
-/// in the right sidebar's strip, no Assistant in any dock. A version 1 file is migrated once
-/// when it is read (see [`migrate_v1`]); the next save writes version 2.
-pub const STATE_VERSION: u32 = 2;
+/// in the right sidebar's strip, no Assistant in any dock. 3 (OL-4) turns Agents from a left page
+/// into the dashboard drawer: the `overview` panel leaves the left dock. A version 1 file is
+/// migrated once when it is read (see [`migrate_v1`], then [`migrate_v2`]), a version 2 file by
+/// [`migrate_v2`]; the next save writes version 3.
+pub const STATE_VERSION: u32 = 3;
 
 /// Result of reading a saved state.
 #[derive(Debug)]
@@ -19,7 +21,7 @@ pub struct LoadOutcome {
 }
 
 impl WorkbenchState {
-    /// `{ "version": 2, "docks": …, "center": …, … }`, pretty-printed.
+    /// `{ "version": 3, "docks": …, "center": …, … }`, pretty-printed.
     pub fn to_json(&self) -> Result<String, ModelError> {
         let mut value =
             serde_json::to_value(self).map_err(|e| ModelError::Invalid(e.to_string()))?;
@@ -35,7 +37,7 @@ impl WorkbenchState {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| ModelError::Invalid(e.to_string()))?;
         let version = match value.get("version").and_then(serde_json::Value::as_u64) {
-            Some(v @ (1 | 2)) => v,
+            Some(v @ (1..=3)) => v,
             Some(v) => return Err(ModelError::Invalid(format!("unsupported version {v}"))),
             None => return Err(ModelError::Invalid("missing version".to_owned())),
         };
@@ -43,6 +45,9 @@ impl WorkbenchState {
             serde_json::from_value(value).map_err(|e| ModelError::Invalid(e.to_string()))?;
         if version == 1 {
             migrate_v1(&mut state);
+        }
+        if version <= 2 {
+            migrate_v2(&mut state);
         }
         state.normalize();
         Ok(state)
@@ -60,6 +65,35 @@ impl WorkbenchState {
                 warning: Some(format!("saved layout ignored: {err}")),
             },
         }
+    }
+}
+
+/// The one-time move of a version 2 layout to the Agent Dashboard drawer: the `overview` panel,
+/// which was the Agents page of the left sidebar, is dropped from the left dock (the live layout,
+/// the overview stash and every parked workspace layout). The overview board itself stays a
+/// preset (⌘⇧O) and is not touched where it is a center item or lives in another dock.
+pub fn migrate_v2(state: &mut WorkbenchState) {
+    drop_agents_page(&mut state.docks);
+    if let Some(saved) = state.stashed.as_deref_mut() {
+        drop_agents_page(&mut saved.docks);
+    }
+    for parked in state.parked.values_mut() {
+        drop_agents_page(&mut parked.layout.docks);
+        if let Some(saved) = parked.stashed.as_deref_mut() {
+            drop_agents_page(&mut saved.docks);
+        }
+    }
+}
+
+fn drop_agents_page(docks: &mut Docks) {
+    let left = &mut docks.left;
+    left.panels.retain(|p| p.as_str() != "overview");
+    if left
+        .active
+        .as_ref()
+        .is_some_and(|a| a.as_str() == "overview")
+    {
+        left.active = left.panels.first().cloned();
     }
 }
 

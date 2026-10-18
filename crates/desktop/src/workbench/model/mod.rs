@@ -188,6 +188,12 @@ impl WorkbenchState {
         }
     }
 
+    /// Item shown in the focused (else the first) center pane, whatever has focus: what the
+    /// window title names. A sidebar page never becomes the title of the window.
+    pub fn active_center_item(&self) -> Option<ItemRef> {
+        self.active_pane().and_then(|p| p.active_item().cloned())
+    }
+
     /// Every open item exactly once: dock panels (left, right, bottom) then center items in tree
     /// order, then what a center-override preset (the overview) keeps stashed out of sight
     /// (panels already shown are not repeated). Used to assert conservation across operations.

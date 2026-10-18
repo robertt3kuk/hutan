@@ -155,10 +155,7 @@ fn default_presets() -> Vec<LayoutPreset> {
 fn default_state_is_valid() {
     let state = WorkbenchState::default();
     check(&state);
-    assert_eq!(
-        state.docks.left.panels,
-        ids(&["sessions", "tasks", "overview"])
-    );
+    assert_eq!(state.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(state.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(
         state.docks.right.panels,
@@ -552,7 +549,7 @@ fn panel_dock_to_center_and_back() {
         .move_panel(&PanelId::new("sessions"), PanelDest::Center)
         .unwrap();
     check(&state);
-    assert_eq!(state.docks.left.panels, ids(&["tasks", "overview"]));
+    assert_eq!(state.docks.left.panels, ids(&["tasks"]));
     assert!(
         state
             .active_pane()
@@ -568,10 +565,7 @@ fn panel_dock_to_center_and_back() {
         )
         .unwrap();
     check(&state);
-    assert_eq!(
-        state.docks.left.panels,
-        ids(&["tasks", "overview", "sessions"])
-    );
+    assert_eq!(state.docks.left.panels, ids(&["tasks", "sessions"]));
     assert_eq!(sorted_items(&state), before);
 }
 
@@ -605,7 +599,7 @@ fn dock_reorder() {
     state.open_panel(&PanelId::new("notifications"), DockPosition::Left);
     assert_eq!(
         state.docks.left.panels,
-        ids(&["sessions", "tasks", "overview", "notifications"])
+        ids(&["sessions", "tasks", "notifications"])
     );
     state
         .move_item(
@@ -622,7 +616,7 @@ fn dock_reorder() {
     check(&state);
     assert_eq!(
         state.docks.left.panels,
-        ids(&["notifications", "sessions", "tasks", "overview"])
+        ids(&["notifications", "sessions", "tasks"])
     );
     assert_eq!(state.docks.left.active, Some(PanelId::new("notifications")));
 }
@@ -1183,15 +1177,9 @@ fn toggle_overview_round_trips() {
     state.toggle_preset("overview", &presets).unwrap();
     check(&state);
     assert_eq!(state.preset, "focus");
-    // The board only lives in the center while its preset is selected; `focus` lists it as the
-    // Agents page of the (hidden) left sidebar.
-    assert_eq!(
-        state.find_panel(&PanelId::new("overview")),
-        Some(ItemSource::Dock {
-            pos: DockPosition::Left,
-            panel: PanelId::new("overview")
-        })
-    );
+    // The board only lives in the center while its preset is selected; no dock lists it (Agents
+    // is the dashboard drawer, not a page).
+    assert_eq!(state.find_panel(&PanelId::new("overview")), None);
     assert_eq!(
         state.panes().iter().map(|p| p.items.len()).sum::<usize>(),
         4
@@ -1372,7 +1360,7 @@ fn json_roundtrip_preserves_state() {
         .unwrap();
     let json = state.to_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 2);
+    assert_eq!(value["version"], 3);
     let back = WorkbenchState::from_json(&json).unwrap();
     assert_eq!(back, state);
     check(&back);
@@ -1599,19 +1587,13 @@ fn builtin_presets_place_the_pages_and_the_strip_and_never_the_assistant() {
     let strip = ids(&["history", "changes", "inspector", "agents", "resources"]);
 
     let default = by("default");
-    assert_eq!(
-        default.docks.left.panels,
-        ids(&["sessions", "tasks", "overview"])
-    );
+    assert_eq!(default.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(default.docks.right.panels, strip);
     assert!(default.docks.left.visible && default.docks.right.visible);
     assert!(default.docks.bottom.panels.is_empty() && !default.docks.bottom.visible);
 
     let focus = by("focus");
-    assert_eq!(
-        focus.docks.left.panels,
-        ids(&["sessions", "tasks", "overview"])
-    );
+    assert_eq!(focus.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(focus.docks.right.panels, strip);
     assert!(!focus.docks.left.visible && !focus.docks.right.visible && focus.zoom_active);
 
@@ -1849,11 +1831,60 @@ fn as_version_1_json(state: &WorkbenchState) -> String {
 }
 
 #[test]
-fn the_state_version_is_two() {
+fn the_state_version_is_three() {
     let value: serde_json::Value =
         serde_json::from_str(&WorkbenchState::default().to_json().unwrap()).unwrap();
-    assert_eq!(value["version"], 2);
-    assert_eq!(STATE_VERSION, 2);
+    assert_eq!(value["version"], 3);
+    assert_eq!(STATE_VERSION, 3);
+}
+
+fn as_version_2_json(state: &WorkbenchState) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
+    value["version"] = 2.into();
+    serde_json::to_string(&value).unwrap()
+}
+
+#[test]
+fn a_version_2_layout_loses_the_agents_page_once_and_keeps_everything_else() {
+    // Version 2 listed the overview board as the Agents page of the left sidebar.
+    let mut old = WorkbenchState::default();
+    old.docks.left.panels = ids(&["sessions", "tasks", "overview"]);
+    old.docks.left.active = Some(PanelId::new("overview"));
+    old.resize_dock(DockPosition::Left, 311.0);
+    let migrated = WorkbenchState::from_json(&as_version_2_json(&old)).unwrap();
+    check(&migrated);
+    assert_eq!(migrated.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert_eq!(migrated.docks.left.active, Some(PanelId::new("sessions")));
+    assert_eq!(migrated.docks.left.size, 311.0);
+    assert_eq!(migrated.docks.right, old.docks.right);
+    assert_eq!(migrated.center, old.center);
+
+    // The overview stash and a parked workspace are migrated too.
+    let mut with_stash = old.clone();
+    with_stash.adopt_workspace("a");
+    with_stash.switch_workspace("b");
+    with_stash.docks.left.panels = ids(&["sessions", "tasks", "overview"]);
+    with_stash
+        .switch_preset("overview", &default_presets())
+        .unwrap();
+    let migrated = WorkbenchState::from_json(&as_version_2_json(&with_stash)).unwrap();
+    check(&migrated);
+    let stash = migrated.stashed.as_ref().unwrap();
+    assert!(!stash.docks.left.panels.contains(&PanelId::new("overview")));
+    assert!(
+        !migrated.parked["a"]
+            .layout
+            .docks
+            .left
+            .panels
+            .contains(&PanelId::new("overview"))
+    );
+
+    // A version 3 file is read as it is: an overview the user put in a dock stays.
+    let mut kept = migrated.clone();
+    kept.open_panel(&PanelId::new("overview"), DockPosition::Right);
+    let again = WorkbenchState::from_json(&kept.to_json().unwrap()).unwrap();
+    assert_eq!(again, kept);
 }
 
 #[test]

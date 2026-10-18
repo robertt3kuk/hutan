@@ -51,11 +51,7 @@ fn opens_with_default_layout_and_title(cx: &mut TestAppContext) {
     assert!(state.docks.left.visible && state.docks.right.visible && !state.docks.bottom.visible);
     assert_eq!(
         state.docks.left.panels,
-        vec![
-            PanelId::new("sessions"),
-            PanelId::new("tasks"),
-            PanelId::new("overview")
-        ]
+        vec![PanelId::new("sessions"), PanelId::new("tasks")]
     );
     assert_eq!(state.docks.right.active, Some(PanelId::new("history")));
     assert_eq!(state.panes().len(), 1);
@@ -336,7 +332,7 @@ fn state_is_saved_debounced_and_restored(cx: &mut TestAppContext) {
 
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 2);
+    assert_eq!(on_disk["version"], 3);
 
     // A second window (a "restart") restores exactly that layout.
     let (view2, cx2) = open(cx, Some(path.clone()));
@@ -774,7 +770,6 @@ fn dragging_a_panel_tab_to_a_pane_and_to_another_dock(cx: &mut TestAppContext) {
         vec![
             PanelId::new("sessions"),
             PanelId::new("tasks"),
-            PanelId::new("overview"),
             PanelId::new("inspector")
         ]
     );

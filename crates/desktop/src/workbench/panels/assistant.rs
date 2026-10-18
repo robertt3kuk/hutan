@@ -28,12 +28,15 @@ use hutan_protocol::messages::{Empty, Request};
 use hutan_protocol::messages::{WorkspaceInfo, WorkspaceKind};
 use hutan_protocol::provider::{ProviderInfo, ProviderList, ProviderModels, ProviderRef};
 
-use crate::workbench::actions::ManageProviders;
+use super::common::state_dot;
+use crate::icons::{Icon, icon};
+use crate::workbench::actions::{ManageProviders, ShowAssistantModelMenu, ShowAssistantScopeMenu};
 use crate::workbench::agents::Models;
 use crate::workbench::chat::{ButtonKind, ChatModel, ChatView, ContextChip, Look, button};
 use crate::workbench::harnesses::{self, Detection, HARNESSES, Listing};
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
+use crate::workbench::style::TextTooltip;
 use crate::workbench::ui::{self, Mascot, StyledExt as _};
 use crate::workbench::view::Region;
 
@@ -88,13 +91,13 @@ pub enum Opened {
     Failed(Failure),
 }
 
-/// One of the two scope buttons of the header.
-struct ScopeButton {
-    id: &'static str,
-    label: String,
-    selected: bool,
-    enabled: bool,
-    choose: Choice,
+/// One row of the scope dropdown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeEntry {
+    pub label: String,
+    pub selected: bool,
+    pub enabled: bool,
+    pub choose: Choice,
 }
 
 /// What an assistant can run on: a harness, or a provider (`assistant.configure`).
@@ -641,48 +644,59 @@ impl AssistantPanel {
 
     // ---- rendering -----------------------------------------------------------------------
 
-    fn scope_button(&self, scope: ScopeButton, look: &Look, cx: &mut Context<Self>) -> AnyElement {
-        let ScopeButton {
-            id,
-            label,
-            selected,
-            enabled,
-            choose,
-        } = scope;
-        button(
-            format!("assistant-{id}"),
-            label,
-            if selected {
-                ButtonKind::Secondary
-            } else {
-                ButtonKind::Ghost
+    /// The rows of the scope dropdown: Global, and the workspace the panel follows (greyed out
+    /// while there is none).
+    pub fn scope_entries(&self, cx: &App) -> Vec<ScopeEntry> {
+        let key = self.key(cx);
+        let project = self.active_project(cx);
+        let pinned = matches!(self.choice, Choice::Pinned(_));
+        let workspace_label = match (&self.choice, &project) {
+            (Choice::Pinned(id), _) => self.env.sessions.read(cx).workspace(*id).map_or_else(
+                || "Workspace".to_owned(),
+                |w| format!("Workspace · {}", w.name),
+            ),
+            (_, Some(project)) => format!("Workspace · {}", project.name),
+            _ => "Workspace".to_owned(),
+        };
+        vec![
+            ScopeEntry {
+                label: "Global".to_owned(),
+                selected: !matches!(key, ScopeKey::Workspace(_)),
+                enabled: true,
+                choose: Choice::Global,
             },
-            enabled,
-            look,
-        )
-        .when(selected, |b| b.bg(look.theme.accent_soft))
-        .when(enabled, |b| {
-            b.on_click(cx.listener(move |this, _, _, cx| this.choose(choose, cx)))
-        })
-        .child(probe(&self.env.regions, Region::Assistant(id)))
-        .into_any_element()
+            ScopeEntry {
+                label: workspace_label,
+                selected: matches!(key, ScopeKey::Workspace(_)),
+                enabled: project.is_some() || pinned,
+                choose: if pinned { self.choice } else { Choice::Active },
+            },
+        ]
+    }
+
+    /// The session whose model the menu's Switch model… changes: the shown assistant when it
+    /// runs on a harness or a provider and is between turns.
+    pub fn switchable_session(&self, cx: &App) -> Option<SessionId> {
+        if !self.connected(cx) {
+            return None;
+        }
+        let session = self.session(cx)?;
+        let chat = self.env.sessions.read(cx).session(session)?.chat.as_ref()?;
+        (!chat.turn_active).then_some(session)
     }
 
     fn render_header(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
         let (theme, tokens) = (&look.theme, &look.tokens);
         let key = self.key(cx);
-        let project = self.active_project(cx);
-        let workspace_label = match (&self.choice, &project, key) {
-            (Choice::Pinned(id), _, _) => self.env.sessions.read(cx).workspace(*id).map_or_else(
-                || "Workspace".to_owned(),
-                |w| format!("Workspace · {}", w.name),
-            ),
-            (_, Some(project), _) => format!("Workspace · {}", project.name),
-            _ => "Workspace".to_owned(),
+        let scope_label = match key {
+            ScopeKey::Global => "Global".to_owned(),
+            ScopeKey::Workspace(id) => self
+                .env
+                .sessions
+                .read(cx)
+                .workspace(id)
+                .map_or_else(|| "Workspace".to_owned(), |w| w.name.clone()),
         };
-        let pinned = matches!(self.choice, Choice::Pinned(_));
-        let workspace_selected = matches!(key, ScopeKey::Workspace(_));
-        let workspace_choice = if pinned { self.choice } else { Choice::Active };
         let scope_note = match key {
             ScopeKey::Global => "Sees the Home folder only".to_owned(),
             ScopeKey::Workspace(id) => {
@@ -694,47 +708,62 @@ impl AssistantPanel {
                 })
             }
         };
-        div()
+        let state = {
+            let store = self.env.sessions.read(cx);
+            self.session(cx)
+                .and_then(|session| store.session(session))
+                .map(|info| store.presentation(info))
+        };
+        let hover = theme.surface_hover;
+        let scope = div()
+            .id("assistant-scope")
             .relative()
             .flex()
             .flex_none()
+            .min_w_0()
+            .max_w(px(112.0))
             .items_center()
-            .gap(px(tokens.spacing * 2.0))
-            .h(px(tokens.pane_header))
-            .px(px(tokens.spacing * 3.0))
-            .border_b_1()
-            .border_color(theme.border)
-            .child(self.scope_button(
-                ScopeButton {
-                    id: "global",
-                    label: "Global".to_owned(),
-                    selected: !workspace_selected,
-                    enabled: true,
-                    choose: Choice::Global,
-                },
-                look,
-                cx,
-            ))
-            .child(self.scope_button(
-                ScopeButton {
-                    id: "workspace",
-                    label: workspace_label,
-                    selected: workspace_selected,
-                    enabled: project.is_some() || pinned,
-                    choose: workspace_choice,
-                },
-                look,
-                cx,
-            ))
+            .gap(px(4.0))
+            .h(px(24.0))
+            .px(px(8.0))
+            .rounded(px(tokens.radius))
+            .cursor_pointer()
+            .text_size(px(tokens.secondary_font_size))
+            .hover(move |s| s.bg(hover))
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip(scope_note.clone().into())).into())
+            .on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
+                window.dispatch_action(Box::new(ShowAssistantScopeMenu(e.position())), cx);
+            }))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_color(theme.muted)
-                    .text_size(px(tokens.secondary_font_size))
-                    .child(SharedString::from(scope_note)),
+                    .child(SharedString::from(scope_label)),
             )
+            .child(icon(Icon::ChevronDown, 12.0, theme.muted))
+            .child(probe(&self.env.regions, Region::Assistant("scope")));
+        div()
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(tokens.spacing))
+            .h(px(tokens.pane_header))
+            .px(px(tokens.spacing * 2.0))
+            .border_b_1()
+            .border_color(theme.border)
+            .child(scope)
+            .children(state.map(|presentation| {
+                let label = SharedString::from(presentation.label.clone());
+                div()
+                    .id("assistant-state")
+                    .flex_none()
+                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(label.clone())).into())
+                    .child(state_dot(theme, &presentation))
+            }))
+            .child(self.backend_chip(look, cx))
+            .child(probe(&self.env.regions, Region::Assistant("header")))
             .into_any_element()
     }
 
@@ -782,20 +811,47 @@ impl AssistantPanel {
             .unwrap_or_else(|| "Choose backend".to_owned())
     }
 
-    fn backend_button(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+    /// The header's backend·model chip: what the shown assistant runs on, cut with "…" to the
+    /// room the sidebar leaves it. It opens the menu with Switch model… and the chooser.
+    fn backend_chip(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+        let (theme, tokens) = (look.theme, look.tokens);
         let label = self.backend_label(cx);
-        button(
-            "assistant-backend",
-            format!("{label} ▾"),
-            ButtonKind::Secondary,
-            self.connected(cx),
-            look,
-        )
-        .when(self.connected(cx), |b| {
-            b.on_click(cx.listener(|this, _, _, cx| this.toggle_switcher(cx)))
-        })
-        .child(probe(&self.env.regions, Region::Assistant("backend")))
-        .into_any_element()
+        let enabled = self.connected(cx);
+        let hover = theme.surface_hover;
+        div()
+            .id("assistant-backend")
+            .relative()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .items_center()
+            .gap(px(4.0))
+            .h(px(24.0))
+            .px(px(8.0))
+            .rounded(px(tokens.radius))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.surface)
+            .text_size(px(tokens.secondary_font_size))
+            .when(enabled, move |s| {
+                s.cursor_pointer().hover(move |s| s.bg(hover))
+            })
+            .when(!enabled, |s| s.opacity(0.5))
+            .when(enabled, |s| {
+                s.on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
+                    window.dispatch_action(Box::new(ShowAssistantModelMenu(e.position())), cx);
+                }))
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(SharedString::from(label)),
+            )
+            .child(icon(Icon::ChevronDown, 12.0, theme.muted))
+            .child(probe(&self.env.regions, Region::Assistant("backend")))
+            .into_any_element()
     }
 
     /// The chooser: backends first, then the models of the one picked; a model (or the
@@ -1156,7 +1212,6 @@ impl Render for AssistantPanel {
         }
         let look = Look::of(cx);
         let header = self.render_header(&look, cx);
-        let backend = self.backend_button(&look, cx);
         let body = self.render_body(&look, cx);
         let (theme, tokens) = (look.theme, look.tokens);
         div()
@@ -1168,17 +1223,6 @@ impl Render for AssistantPanel {
             .text_color(theme.fg)
             .text_size(px(tokens.font_size))
             .child(header)
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .px(px(tokens.spacing * 3.0))
-                    .py(px(tokens.spacing))
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(backend),
-            )
             .child(div().relative().flex_1().min_h_0().child(body))
     }
 }

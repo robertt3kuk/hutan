@@ -26,6 +26,7 @@ use super::common::{
     age_label, agent_badge, kind_icon, panel_header_with, placement, placement_badge,
     recovery_chip, state_dot, time_tooltip, tone_color,
 };
+use crate::icons::{Icon, icon};
 use crate::sessions::tree::{self, Node, ProjectNode, folder_label, session_folder};
 use crate::settings::{
     GroupBy, SessionsPanelSettings, SidebarSettings, WorkspaceSort, WorkspacesSettings,
@@ -1000,11 +1001,24 @@ impl Render for SessionsPanel {
             .on_click(|event, window, cx| {
                 window.dispatch_action(Box::new(ShowSortMenu(event.position())), cx);
             })
-            .child(format!("⇅ {} ▾", ws_settings.sort.label()))
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .min_w_0()
+            .child(icon(Icon::ArrowUpDown, 12.0, theme.muted))
+            .child(
+                div()
+                    .min_w_0()
+                    .max_w(px(80.0))
+                    .truncate()
+                    .child(ws_settings.sort.label().to_string()),
+            )
+            .child(icon(Icon::ChevronDown, 12.0, theme.muted))
             .into_any_element();
         let plus_button = div()
             .id("sessions-plus")
             .relative()
+            .flex_none()
             .px(px(tokens.spacing * 1.5))
             .rounded(px(tokens.radius))
             .cursor_pointer()
@@ -1014,12 +1028,14 @@ impl Render for SessionsPanel {
             .on_click(|event, window, cx| {
                 window.dispatch_action(Box::new(ShowPlusMenu(event.position())), cx);
             })
-            .child("＋")
+            .child(icon(Icon::Plus, 14.0, theme.muted))
             .child(probe(&self.env.regions, Region::SidebarControl("plus")))
             .into_any_element();
         let start_button = div()
             .id("sessions-start")
             .relative()
+            .flex_none()
+            .whitespace_nowrap()
             .px(px(tokens.spacing * 1.5))
             .rounded(px(tokens.radius))
             .cursor_pointer()
@@ -1521,7 +1537,8 @@ impl SessionsPanel {
             .items_center()
             .gap(px(tokens.spacing * 1.5))
             .h(px(tokens.sidebar_row))
-            .w_full();
+            .w_full()
+            .min_w_0();
         for field in &settings.row {
             line = match field.as_str() {
                 "state" => line.child(
@@ -1666,6 +1683,8 @@ impl SessionsPanel {
             };
             element = element.child(
                 div()
+                    .min_w_0()
+                    .truncate()
                     .pl(px(STATUS_LANE + tokens.spacing * 1.5))
                     .pb(px(tokens.spacing))
                     .text_size(px(tokens.secondary_font_size))

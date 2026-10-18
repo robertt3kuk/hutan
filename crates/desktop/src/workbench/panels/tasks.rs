@@ -310,6 +310,11 @@ impl Focusable for TasksPanel {
 // ---- rendering ----------------------------------------------------------------------------
 
 /// A compact text button for rows and forms.
+/// One line of a row's detail, cut with "…" at the row's width.
+fn clipped(text: impl Into<SharedString>) -> gpui::Div {
+    div().min_w_0().max_w_full().truncate().child(text.into())
+}
+
 fn small_button(
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
@@ -360,6 +365,7 @@ impl Render for TasksPanel {
         let chips = div()
             .flex()
             .flex_none()
+            .flex_wrap()
             .items_center()
             .gap(px(tokens.spacing))
             .px(px(tokens.spacing * 2.0))
@@ -498,6 +504,7 @@ impl TasksPanel {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap(px(tokens.spacing))
                     .child(
                         small_button(
@@ -568,36 +575,27 @@ impl TasksPanel {
             .text_size(px(tokens.secondary_font_size))
             .text_color(theme.muted)
             .child(ui::pill(row.placement.clone(), theme.muted, tokens))
-            .child(SharedString::from(row.run.clone()));
+            .child(clipped(row.run.clone()));
         if row.auto_start {
             detail = detail.child("auto");
         }
         if let Some(elapsed) = &row.elapsed {
-            detail = detail.child(SharedString::from(elapsed.clone()));
+            detail = detail.child(clipped(elapsed.clone()));
         }
         if let Some(outcome) = &row.outcome {
-            detail = detail.child(
-                div()
-                    .text_color(if row.state == TaskState::Failed {
-                        theme.danger
-                    } else {
-                        theme.muted
-                    })
-                    .child(SharedString::from(format!("({outcome})"))),
-            );
+            detail = detail.child(clipped(format!("({outcome})")).text_color(
+                if row.state == TaskState::Failed {
+                    theme.danger
+                } else {
+                    theme.muted
+                },
+            ));
         }
         if !row.also_after.is_empty() {
-            detail = detail.child(SharedString::from(format!(
-                "also after {}",
-                row.also_after.join(", ")
-            )));
+            detail = detail.child(clipped(format!("also after {}", row.also_after.join(", "))));
         }
         if let Some(note) = &row.change_request {
-            detail = detail.child(
-                div()
-                    .text_color(theme.warning)
-                    .child(SharedString::from(format!("“{note}”"))),
-            );
+            detail = detail.child(clipped(format!("“{note}”")).text_color(theme.warning));
         }
 
         let mut element = div()

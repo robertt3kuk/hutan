@@ -16,6 +16,7 @@ use hutan_client::ConnectionState;
 use hutan_core::WorkspaceId;
 use hutan_protocol::worktree::WorktreeInfo;
 
+use crate::icons::{Icon, icon};
 use crate::theme::DensityExt as _;
 use crate::workbench::Region;
 use crate::workbench::actions::ReviewChangesAt;
@@ -263,11 +264,10 @@ impl Render for ChangesPanel {
             .px(px(tokens.spacing * 1.5))
             .rounded(px(tokens.radius))
             .cursor_pointer()
-            .text_color(theme.muted)
-            .hover(move |s| s.bg(hover).text_color(theme.fg))
+            .hover(move |s| s.bg(hover))
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
-            .child("↻")
+            .child(icon(Icon::RefreshCw, 14.0, theme.muted))
             .child(probe(&self.env.regions, Region::Changes("panel-refresh")))
             .into_any_element();
 

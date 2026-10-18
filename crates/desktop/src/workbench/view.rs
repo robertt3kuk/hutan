@@ -170,6 +170,12 @@ pub enum Region {
     Nav(&'static str),
     /// A control of the left sidebar's bottom toolbar (`new`, `settings`).
     Toolbar(&'static str),
+    /// The Agent Dashboard drawer.
+    AgentsDrawer,
+    /// The header of a column of the drawer's board.
+    DrawerColumn(super::agents_drawer::DashboardColumn),
+    /// The card of a session in the drawer's board.
+    DrawerCard(hutan_core::SessionId),
     /// The right strip's More menu button.
     StripMore,
     /// A container row (workspace, project or Home) of the sessions panel.
@@ -470,6 +476,10 @@ pub struct Workbench {
     pub(crate) modal_focus: FocusHandle,
     pub(crate) sheet_focus: FocusHandle,
     pub(crate) daemon_focus: FocusHandle,
+    /// Holds the keyboard while the Agent Dashboard drawer is open, so Escape closes it.
+    pub(crate) drawer_focus: FocusHandle,
+    /// The Agent Dashboard drawer (the Agents nav row) is open.
+    pub(crate) agents_drawer: bool,
     pub(crate) daemon: DaemonControl,
     pub(crate) mac: MacControl,
     pub(crate) setup: super::setup::SetupControl,
@@ -593,6 +603,7 @@ impl Workbench {
         let modal_focus = cx.focus_handle();
         let sheet_focus = cx.focus_handle();
         let daemon_focus = cx.focus_handle();
+        let drawer_focus = cx.focus_handle();
         let agent_focus = cx.focus_handle();
         let launcher_focus = cx.focus_handle();
         window.focus(&focus_handle, cx);
@@ -761,6 +772,8 @@ impl Workbench {
             modal_focus,
             sheet_focus,
             daemon_focus,
+            drawer_focus,
+            agents_drawer: false,
             daemon: DaemonControl::new(),
             mac,
             setup: super::setup::SetupControl::new(cx.focus_handle(), options.cli_link),
@@ -902,9 +915,10 @@ impl Workbench {
         self.mutate(cx, change);
     }
 
-    /// Title shown in the title bar and window title for what has focus.
+    /// Title shown in the title bar and window title: the active item of the center (a session
+    /// or tab), never the page a sidebar shows.
     pub fn active_title(&self, cx: &App) -> String {
-        match self.state.active_item() {
+        match self.state.active_center_item() {
             Some(item) => self.item_title(&item, cx).to_string(),
             None => "Hutan".to_owned(),
         }
@@ -1189,6 +1203,11 @@ impl Workbench {
     }
 
     pub(crate) fn open_panel(&mut self, id: &str, cx: &mut Context<Self>) {
+        // The board is the center of the overview preset, no longer a page of the left sidebar.
+        if id == "overview" && self.state.find_panel(&PanelId::new("overview")).is_none() {
+            self.toggle_overview(cx);
+            return;
+        }
         if id == "assistant" && !self.assistant_enabled() {
             return;
         }

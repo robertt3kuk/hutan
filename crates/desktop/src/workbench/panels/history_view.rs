@@ -18,6 +18,7 @@ use super::history_catalog::{
     scan_line, sort_label, turn_label,
 };
 use super::history_model::{SOURCES, format_bytes, source_icon, source_label};
+use crate::icons::{Icon, icon};
 use crate::theme::{DensityExt as _, Theme, Tokens};
 use crate::workbench::Region;
 use crate::workbench::actions::OpenSettingsFor;
@@ -39,6 +40,7 @@ pub(crate) fn pill(
     div()
         .id(id.into())
         .flex_none()
+        .max_w_full()
         .px(px(tokens.spacing * 2.0))
         .h(px(tokens.font_size + 6.0))
         .flex()
@@ -56,7 +58,7 @@ pub(crate) fn pill(
         .cursor_pointer()
         .when(!active, move |s| s.hover(move |s| s.bg(hover)))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(label.into())
+        .child(div().min_w_0().truncate().child(label.into()))
 }
 
 /// A text button; `enabled == false` draws it dim and makes it inert.
@@ -74,15 +76,15 @@ fn button(
         .text_size(px(tokens.secondary_font_size))
 }
 
-/// A square header button with a glyph and a tooltip.
+/// A square header button with an icon and a tooltip.
 fn icon_button(
     id: &'static str,
-    glyph: &'static str,
+    glyph: Icon,
     tip: &'static str,
     theme: &Theme,
     tokens: &Tokens,
 ) -> gpui::Stateful<gpui::Div> {
-    let (hover, fg, muted) = (theme.surface_hover, theme.fg, theme.muted);
+    let (hover, muted) = (theme.surface_hover, theme.muted);
     div()
         .id(id)
         .relative()
@@ -93,11 +95,24 @@ fn icon_button(
         .size(px(24.0))
         .rounded(px(tokens.radius))
         .cursor_pointer()
-        .text_color(muted)
-        .hover(move |s| s.bg(hover).text_color(fg))
+        .hover(move |s| s.bg(hover))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.into())).into())
-        .child(glyph)
+        .child(icon(glyph, 14.0, muted))
+}
+
+/// Right (and left) padding of a row: the preview and the title never touch the panel's edge.
+const ROW_PAD: f32 = 12.0;
+
+/// The latest-turn preview of a row: two lines with "…" when it does not fit, all of it while
+/// the row is expanded. It fills the row's width and may shrink below its text.
+fn preview_style<E: Styled>(element: E, expanded: bool) -> E {
+    let element = element.w_full().min_w_0();
+    if expanded {
+        element
+    } else {
+        element.clamp_lines(2)
+    }
 }
 
 /// What a menu entry does when it is picked.
@@ -176,7 +191,7 @@ impl HistoryPanel {
         let mut controls = div().flex().flex_none().items_center().gap(px(2.0));
         if catalog && self.mode() == Mode::Catalog {
             controls = controls.child(
-                icon_button("history-group", "▤", "Group by", theme, tokens)
+                icon_button("history-group", Icon::Rows3, "Group by", theme, tokens)
                     .on_click(cx.listener(|this, e: &ClickEvent, _, cx| {
                         this.open_menu(Menu::GroupBy(e.position()), cx);
                     }))
@@ -186,24 +201,35 @@ impl HistoryPanel {
         if enabled {
             controls = controls
                 .child(
-                    icon_button("history-sources", "◉", "Sources", theme, tokens)
-                        .on_click(cx.listener(|this, e: &ClickEvent, _, cx| {
-                            this.open_menu(Menu::Sources(e.position()), cx);
-                        }))
-                        .child(probe(&self.env.regions, Region::History("sources"))),
+                    icon_button(
+                        "history-sources",
+                        Icon::ListFilter,
+                        "Sources",
+                        theme,
+                        tokens,
+                    )
+                    .on_click(cx.listener(|this, e: &ClickEvent, _, cx| {
+                        this.open_menu(Menu::Sources(e.position()), cx);
+                    }))
+                    .child(probe(&self.env.regions, Region::History("sources"))),
                 )
                 .child(
-                    icon_button("history-refresh", "↻", "Refresh", theme, tokens)
+                    icon_button("history-refresh", Icon::RefreshCw, "Refresh", theme, tokens)
                         .on_click(cx.listener(|this, _, _, cx| this.refresh_now(cx)))
                         .child(probe(&self.env.regions, Region::History("refresh"))),
                 );
         }
         controls = controls.child(
-            icon_button("history-gear", "⚙", "History settings", theme, tokens).on_click(
-                |_, window, cx| {
-                    window.dispatch_action(Box::new(OpenSettingsFor("history".to_owned())), cx);
-                },
-            ),
+            icon_button(
+                "history-gear",
+                Icon::Settings,
+                "History settings",
+                theme,
+                tokens,
+            )
+            .on_click(|_, window, cx| {
+                window.dispatch_action(Box::new(OpenSettingsFor("history".to_owned())), cx);
+            }),
         );
         div()
             .flex()
@@ -483,7 +509,7 @@ impl HistoryPanel {
                     .rounded(px(tokens.radius - 2.0))
                     .text_size(px(tokens.secondary_font_size))
                     .when(active, |s| {
-                        s.bg(theme.accent_soft)
+                        s.bg(theme.right_sidebar_accent)
                             .text_color(fg)
                             .font_weight(gpui::FontWeight::MEDIUM)
                     })
@@ -592,7 +618,15 @@ impl HistoryPanel {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, _, cx| this.toggle_scan(cx)))
             .child(div().truncate().child(shared(text)))
-            .child(if self.scan_open() { "⌃" } else { "⌄" })
+            .child(icon(
+                if self.scan_open() {
+                    Icon::ChevronUp
+                } else {
+                    Icon::ChevronDown
+                },
+                14.0,
+                theme.muted,
+            ))
             .child(probe(&self.env.regions, Region::History("scan")))
             .into_any_element()
     }
@@ -827,7 +861,7 @@ impl HistoryPanel {
                             this.open_menu(Menu::Sort(e.position()), cx);
                         }))
                         .child(label)
-                        .child("⌄")
+                        .child(icon(Icon::ChevronDown, 14.0, theme.muted))
                         .child(probe(&self.env.regions, Region::History("sort"))),
                 )
             })
@@ -1010,7 +1044,11 @@ impl HistoryPanel {
         let key = item.item_key();
         let selected = self.selected.as_ref() == Some(&key);
         let expanded = self.expanded.contains(&key);
-        let hover = theme.surface_hover;
+        // Orca's sidebar-accent: a step off the panel, never the brand tint.
+        let (hover, subtle) = (
+            theme.right_sidebar_accent.opacity(0.6),
+            theme.right_sidebar_accent,
+        );
         let home = std::env::home_dir();
         let now = super::history::now_ms();
         let show_snippets = self
@@ -1075,12 +1113,15 @@ impl HistoryPanel {
             .flex_col()
             .gap(px(2.0))
             .min_h(px(98.0))
-            .px(px(12.0))
+            .pl(px(ROW_PAD))
+            .pr(px(ROW_PAD))
             .py(px(8.0))
             .border_b_1()
             .border_color(theme.border)
-            .when(selected, |s| s.bg(theme.accent_soft))
-            .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
+            .when(selected || expanded, move |s| s.bg(subtle))
+            .when(!(selected || expanded), move |s| {
+                s.hover(move |s| s.bg(hover))
+            })
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_expanded(index, cx)))
             .on_mouse_down(
@@ -1114,14 +1155,22 @@ impl HistoryPanel {
                             .flex_none()
                             .w(px(16.0))
                             .text_color(theme.muted)
-                            .child(if expanded { "⌃" } else { "⌄" })
+                            .child(icon(
+                                if expanded {
+                                    Icon::ChevronUp
+                                } else {
+                                    Icon::ChevronDown
+                                },
+                                14.0,
+                                theme.muted,
+                            ))
                             .child(probe(
                                 &self.env.regions,
                                 Region::HistoryItem("chevron", index),
                             )),
                     )
                     .child(
-                        icon_button("history-more", "⋯", "Actions", theme, tokens)
+                        icon_button("history-more", Icon::Ellipsis, "Actions", theme, tokens)
                             .id(("history-more", index))
                             .on_click({
                                 let key = key.clone();
@@ -1135,11 +1184,10 @@ impl HistoryPanel {
             )
             .when_some(preview, |s, preview| {
                 s.child(
-                    div()
+                    preview_style(div(), expanded)
                         .text_size(px(tokens.secondary_font_size + 1.0))
                         .line_height(px(16.0))
                         .text_color(theme.muted)
-                        .when(!expanded, |s| s.line_clamp(2))
                         .child(preview),
                 )
             })
@@ -1430,5 +1478,24 @@ impl HistoryPanel {
             Pick::Sort(sort) => self.set_sort(sort, cx),
             Pick::Row(action, item) => self.run_action(action, item, window, cx),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_collapsed_preview_is_two_lines_with_an_ellipsis_and_an_expanded_one_is_whole() {
+        let mut clamped = preview_style(div(), false);
+        let text = &clamped.style().text;
+        assert_eq!(text.line_clamp, Some(2));
+        assert!(
+            matches!(text.text_overflow, Some(gpui::TextOverflow::Truncate(ref s)) if s.as_ref() == "…"),
+            "the cut line ends in an ellipsis"
+        );
+        let mut whole = preview_style(div(), true);
+        assert_eq!(whole.style().text.line_clamp, None);
+        assert!(whole.style().text.text_overflow.is_none());
     }
 }

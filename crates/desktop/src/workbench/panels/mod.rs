@@ -28,7 +28,9 @@ use gpui::{
 use std::rc::Rc;
 
 pub use agents::{AgentsPanel, RowView, SectionView, TICK as AGENTS_TICK};
-pub use assistant::{AssistantPanel, Choice as AssistantChoice, Failure, Opened, ScopeKey};
+pub use assistant::{
+    AssistantPanel, Choice as AssistantChoice, Failure, Opened, ScopeEntry, ScopeKey,
+};
 pub use changes::{ChangesPanel, Checkouts as ChangesCheckouts, REFRESH_AFTER as CHANGES_REFRESH};
 pub use common::{
     age_label, agent_badge, kind_icon, placement_badge, recovery_chip, state_dot, time_tooltip,

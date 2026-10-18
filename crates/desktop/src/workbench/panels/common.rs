@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::icons::{Icon, icon};
 use crate::sessions::{AgentBadge, PlacementBadge, Presentation, Tone};
 use crate::theme::{Theme, Tokens};
 use crate::workbench::actions::{OpenSettingsFor, SessionMenuAt, ShowPlacementMenu};
@@ -343,6 +344,8 @@ pub fn panel_header_with(
         .px(px(tokens.spacing * 3.0))
         .child(
             div()
+                .flex_none()
+                .whitespace_nowrap()
                 .text_size(px(12.0))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(style.theme.muted)
@@ -351,17 +354,18 @@ pub fn panel_header_with(
         .child(
             div()
                 .flex()
+                .min_w_0()
                 .items_center()
                 .gap(px(tokens.spacing))
                 .children(extra)
                 .child(
                     div()
                         .id(SharedString::from(format!("gear-{namespace}")))
+                        .flex_none()
                         .px(px(tokens.spacing * 1.5))
                         .rounded(px(tokens.radius))
                         .cursor_pointer()
-                        .text_color(style.theme.muted)
-                        .hover(move |s| s.bg(hover).text_color(style.theme.fg))
+                        .hover(move |s| s.bg(hover))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
@@ -369,7 +373,7 @@ pub fn panel_header_with(
                                 cx,
                             );
                         })
-                        .child("⚙"),
+                        .child(icon(Icon::Settings, 14.0, style.theme.muted)),
                 ),
         )
         .into_any_element()

@@ -210,6 +210,8 @@ impl InspectorPanel {
                         "inspector-open-question-{}",
                         question.id
                     )))
+                    .min_w_0()
+                    .truncate()
                     .text_color(theme.accent)
                     .cursor_pointer()
                     .on_click(move |_, window, cx| {
@@ -296,6 +298,8 @@ impl InspectorPanel {
                         "inspector-open-{}",
                         approval.id
                     )))
+                    .min_w_0()
+                    .truncate()
                     .text_color(theme.accent)
                     .cursor_pointer()
                     .on_click(move |_, window, cx| {
@@ -432,11 +436,14 @@ impl Render for InspectorPanel {
                                 .child(state_dot(&theme, &presentation))
                                 .child(
                                     div()
+                                        .min_w_0()
+                                        .truncate()
                                         .font_weight(gpui::FontWeight::MEDIUM)
                                         .child(SharedString::from(info.title.clone())),
                                 )
                                 .child(
                                     div()
+                                        .flex_none()
                                         .text_color(tone_color(&theme, presentation.tone))
                                         .child(SharedString::from(presentation.label.clone())),
                                 ),
@@ -513,8 +520,7 @@ impl Render for InspectorPanel {
                                                 div()
                                                     .flex_1()
                                                     .min_w_0()
-                                                    .overflow_hidden()
-                                                    .whitespace_nowrap()
+                                                    .truncate()
                                                     .child(SharedString::from(row.command)),
                                             )
                                             .child(
@@ -532,8 +538,8 @@ impl Render for InspectorPanel {
                                     )
                                     .children(row.cwd.map(|cwd| {
                                         div()
-                                            .overflow_hidden()
-                                            .whitespace_nowrap()
+                                            .min_w_0()
+                                            .truncate()
                                             .text_size(px(tokens.font_size - 1.0))
                                             .text_color(theme.muted)
                                             .child(SharedString::from(cwd))
@@ -557,6 +563,7 @@ impl Render for InspectorPanel {
                 div()
                     .flex()
                     .flex_none()
+                    .flex_wrap()
                     .gap(px(2.0))
                     .px(px(tokens.spacing * 2.0))
                     .pb(px(tokens.spacing))

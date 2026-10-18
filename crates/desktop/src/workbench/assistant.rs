@@ -10,6 +10,7 @@
 use gpui::{Context, Entity, Window};
 use hutan_core::SessionId;
 
+use super::actions;
 use super::chat::ContextChip;
 use super::model::PanelId;
 use super::panels::{AssistantPanel, ScopeKey};
@@ -71,6 +72,68 @@ impl Workbench {
             panel.ensure_open(cx);
             panel.focus_composer(cx);
         });
+    }
+
+    /// Opens the menu of the Assistant page's scope dropdown at `position`: Global and the
+    /// workspace, the shown one checked.
+    pub fn show_assistant_scope_menu(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(panel) = self.panel::<AssistantPanel>("assistant") else {
+            return;
+        };
+        let entries = panel
+            .read(cx)
+            .scope_entries(cx)
+            .into_iter()
+            .map(|scope| {
+                let mut entry = if scope.enabled {
+                    let panel = panel.clone();
+                    let choose = scope.choose;
+                    Self::entry(scope.label, move |_, _, cx| {
+                        panel.update(cx, |panel, cx| panel.choose(choose, cx));
+                    })
+                } else {
+                    Self::disabled_entry(scope.label)
+                };
+                entry.checked = scope.selected;
+                entry
+            })
+            .collect();
+        self.open_menu(position, entries, window, cx);
+    }
+
+    /// Opens the menu of the Assistant page's backend·model chip at `position`: Switch model…
+    /// (the model of the running assistant) and the chooser of backends and models.
+    pub fn show_assistant_model_menu(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(panel) = self.panel::<AssistantPanel>("assistant") else {
+            return;
+        };
+        let switch = match panel.read(cx).switchable_session(cx) {
+            Some(session) => Self::entry("Switch model…", move |_, window, cx| {
+                window.dispatch_action(
+                    Box::new(actions::SwitchChatModelById(session.to_string())),
+                    cx,
+                );
+            }),
+            None => Self::disabled_entry("Switch model…"),
+        };
+        let chooser = Self::entry("Backends and models…", move |_, _, cx| {
+            panel.update(cx, |panel, cx| {
+                if panel.switcher().is_none() {
+                    panel.toggle_switcher(cx);
+                }
+            });
+        });
+        self.open_menu(position, vec![switch, chooser], window, cx);
     }
 
     /// Whether `session` is an assistant conversation.

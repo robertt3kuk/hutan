@@ -8,6 +8,7 @@ pub mod cli_link;
 pub mod crash;
 pub mod frames;
 pub mod harness_install;
+pub mod icons;
 pub mod instance;
 pub mod integrations;
 pub mod macos;

@@ -522,25 +522,40 @@ impl ChatView {
         let Some(info) = info else {
             return div().into_any_element();
         };
+        if info.chat.as_ref().is_some_and(|chat| chat.is_assistant()) {
+            // The Assistant page's own header row says who runs and in what state (dot, scope,
+            // backend·model chip); this one only has to say that approvals wait.
+            let pending = self.pending.len();
+            if pending == 0 {
+                return div().into_any_element();
+            }
+            return div()
+                .relative()
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(px(tokens.pane_header))
+                .px(px(tokens.spacing * 3.0))
+                .border_b_1()
+                .border_color(theme.border)
+                .child(div().min_w_0().truncate().text_color(theme.warning).child(
+                    SharedString::from(format!(
+                        "● {pending} approval{} waiting",
+                        if pending == 1 { "" } else { "s" }
+                    )),
+                ))
+                .child(probe(&self.regions, Region::Chat("header")))
+                .into_any_element();
+        }
         let presentation = self.sessions.read(cx).presentation(info);
         let chat = info.chat.as_ref();
         let detail = chat.map(|chat| {
-            if is_gateway_chat(&chat.agent) && chat.agent != "assistant" {
+            if is_gateway_chat(&chat.agent) {
                 format!(
                     "{} · {}",
                     chat.provider_id.as_deref().unwrap_or("provider"),
                     chat.model
                 )
-            } else if chat.is_assistant() {
-                // The harness or provider the assistant runs on, and what it may do.
-                let backend = if is_gateway_chat(&chat.agent) {
-                    chat.provider_id
-                        .clone()
-                        .unwrap_or_else(|| "provider".into())
-                } else {
-                    harness_name(&chat.agent)
-                };
-                format!("{backend} · {} · assistant", chat.model)
             } else if is_harness_chat(&chat.agent) {
                 // The harness decides what asks and what is sandboxed: no Hutan policy to show.
                 format!("{} · {}", harness_name(&chat.agent), chat.model)

@@ -97,6 +97,7 @@ impl Render for Workbench {
         let launcher = self.render_launcher(window, cx);
         let menu = self.render_context_menu(cx);
         let modal = self.render_modal(cx);
+        let agents_drawer = self.render_agents_drawer(window, cx);
         let daemon_popover = self.render_daemon_popover(cx);
         let recovery = self.render_recovery_summary(cx);
         let sheet = self.render_settings_sheet(cx);
@@ -152,6 +153,7 @@ impl Render for Workbench {
                 .children(right),
         )
         .child(status)
+        .children(agents_drawer)
         .children(daemon_popover)
         .children(recovery)
         .children(edge_targets)
@@ -207,6 +209,16 @@ impl Workbench {
             this.mutate(cx, |s| s.toggle_dock(DockPosition::Bottom));
         }))
         .on_action(cx.listener(|this, _: &actions::ToggleOverview, _, cx| this.toggle_overview(cx)))
+        .on_action(
+            cx.listener(|this, _: &actions::ToggleAgentsDrawer, window, cx| {
+                this.toggle_agents_drawer(window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::CloseAgentsDrawer, window, cx| {
+                this.close_agents_drawer(window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, _: &actions::ClosePaneItem, _, cx| {
             this.mutate(cx, |s| {
                 s.close_active_item();
@@ -787,6 +799,16 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::NewWorkspace, window, cx| {
             this.new_workspace_dialog(Vec::new(), true, window, cx);
         }))
+        .on_action(
+            cx.listener(|this, a: &actions::ShowAssistantScopeMenu, window, cx| {
+                this.show_assistant_scope_menu(a.0, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::ShowAssistantModelMenu, window, cx| {
+                this.show_assistant_model_menu(a.0, window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, a: &actions::ShowPlusMenu, window, cx| {
             this.show_plus_menu(a.0, window, cx);
         }))

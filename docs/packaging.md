@@ -101,7 +101,7 @@ Code: `crates/daemon/src/menu_bar.rs`, `menu_bar/cocoa.rs` (real), `menu_bar/fak
 
 ## Menu bar glyph
 
-`assets/macos/MenuBarIcon.png` (18 px) and `MenuBarIcon@2x.png` (36 px) are committed, black template images (only the alpha channel counts; macOS tints them for light, dark and highlighted states). `just menubar-icon` (`cargo run -p xtask -- menubar-icon`) renders them from `assets/brand/05-mascot/svg/favicon.svg` without its background tile and cuts the eyes and nostrils out; an xtask test checks sizes, that every pixel is black, and that rendering again reproduces the committed files. The desktop and the daemon (its own menu bar item) embed them (`include_bytes!`), so the executables need no resource folder.
+`assets/macos/MenuBarIcon.png` (18 px) and `MenuBarIcon@2x.png` (36 px) are committed, black template images (only the alpha channel counts; macOS tints them for light, dark and highlighted states). `just menubar-icon` (`cargo run -p xtask -- menubar-icon`) renders them from `assets/brand/05-mascot/svg/favicon.svg` without its background tile and cuts the eyes and nostrils out; an xtask test checks sizes, that every pixel is black, and that rendering again reproduces the committed files. The desktop and the daemon (its own menu bar item) embed them (`include_bytes!`), so the executables need no resource folder. The same goes for the desktop's UI icons: the Lucide SVGs of `assets/icons/` (ISC, license beside them) are `include_bytes!`d into `hutan-desktop` and served to GPUI as an asset source, so `bundle` has nothing to copy for them.
 
 ## Homebrew
 

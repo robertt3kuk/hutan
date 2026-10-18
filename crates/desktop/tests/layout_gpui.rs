@@ -111,7 +111,7 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     let (view, cx) = open(cx);
     let s = state(&view, cx);
     assert_eq!(s.preset, "default");
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "overview"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(s.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(
         s.docks.right.panels,
@@ -196,12 +196,16 @@ fn nav_items_switch_the_left_page_and_the_back_row_returns_to_projects(cx: &mut 
     // The panel list of the dock is untouched: pages are the dock's panels.
     assert_eq!(
         state(&view, cx).docks.left.panels,
-        ids(&["sessions", "tasks", "overview"])
+        ids(&["sessions", "tasks"])
     );
 
+    // Agents is no page: it opens the dashboard drawer and leaves the page as it is.
     click(&view, cx, Region::Nav("agents"));
-    assert_eq!(page(cx).as_str(), "overview");
-    assert_eq!(selected_nav(&view, cx), ["agents"]);
+    assert_eq!(page(cx).as_str(), "tasks");
+    assert_eq!(selected_nav(&view, cx), ["tasks", "agents"]);
+    assert!(view.read_with(cx, |wb, _| wb.agents_drawer_open()));
+    click(&view, cx, Region::Nav("agents"));
+    assert!(!view.read_with(cx, |wb, _| wb.agents_drawer_open()));
 
     // The back row, and a second click on the selected row, both return to Projects.
     click(&view, cx, Region::Nav("projects"));
@@ -252,8 +256,8 @@ fn a_panel_left_in_the_left_dock_gets_its_own_nav_row(cx: &mut TestAppContext) {
         ["resources"],
         "the move made it the page"
     );
-    // It is the dock's panel at index 3: the same probe the right strip uses.
-    assert!(painted(&view, cx, Region::DockTab(DockPosition::Left, 3)));
+    // It is the dock's panel at index 2: the same probe the right strip uses.
+    assert!(painted(&view, cx, Region::DockTab(DockPosition::Left, 2)));
 }
 
 // ---- assistant ---------------------------------------------------------------------------------
@@ -539,7 +543,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
     cx.dispatch_action(actions::ApplyPreset("focus".into()));
     let s = state(&view, cx);
     assert_eq!(visible(&view, cx), [false, false, false]);
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "overview"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(
         s.docks.right.panels,
         ids(&["history", "changes", "inspector", "agents", "resources"])
@@ -549,7 +553,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
     cx.dispatch_action(actions::ApplyPreset("default".into()));
     assert_eq!(visible(&view, cx), [true, true, false]);
 
-    // The overview preset shows the board in the center, so the left nav has no Agents page.
+    // The overview preset shows the board in the center.
     cx.dispatch_action(actions::ToggleOverview);
     let s = state(&view, cx);
     assert_eq!(s.preset, "overview");
@@ -563,7 +567,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
     cx.dispatch_action(actions::ToggleOverview);
     let s = state(&view, cx);
     assert_eq!(s.preset, "default");
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "overview"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
 }
 
 #[gpui::test]
@@ -666,7 +670,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
         ]
     );
 
-    // The next save is version 2, and loading that again changes nothing.
+    // The next save is version 3, and loading that again changes nothing.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| s.toggle_dock(DockPosition::Bottom))
     });
@@ -675,7 +679,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
     view.update(cx, |wb, _| wb.flush_save());
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 2);
+    assert_eq!(on_disk["version"], 3);
     let reloaded = load_state(&path);
     assert_eq!(reloaded.docks, state(&view, cx).docks);
     assert_eq!(reloaded.center, state(&view, cx).center);
