@@ -330,6 +330,12 @@ impl HistoryPanel {
                         .position(|h| h.source == source && h.session_key == key),
                     None => self.selected.filter(|i| *i < self.hits().len()),
                 };
+                // The footer's counts come from `history.status`; records indexed since it was
+                // read (new terminal commands, a finished scan) are in these hits, so read it
+                // again. The settle loop reads it on its own while it runs.
+                if self.settle_task.is_none() {
+                    self.refresh_status(cx);
+                }
             }
             Err(error) if is_disabled(&error) => {
                 // Indexing was switched off behind our back.

@@ -376,7 +376,8 @@ impl Workbench {
         self.open_confirm(
             "Restart the daemon?",
             format!(
-                "{} will be stopped. The new daemon starts empty.",
+                "{} will be stopped and running commands interrupted. The new daemon restores \
+                 them: shells start again in their folders, chats resume their conversations.",
                 sessions_phrase(live)
             ),
             "Stop Sessions & Restart",

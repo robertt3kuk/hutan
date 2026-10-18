@@ -513,6 +513,13 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
     assert_eq!(block_hit.source, HistorySource::Hutan);
     assert_eq!(block_hit.session_key, block_session.id.to_string());
     assert!(block_hit.resume_argv.is_none());
+    // The footer's counts follow: the Hutan record found here is counted without reopening.
+    pump_until(cx, "the footer to count the Hutan record", |cx| {
+        history.read_with(cx, |p, _| {
+            p.status()
+                .is_some_and(|s| s.sources.iter().any(|s| s.name == "hutan" && s.rows > 0))
+        })
+    });
     let terminal = block_session.terminal_id.expect("a terminal");
     let block = daemon
         .blocks(terminal)
