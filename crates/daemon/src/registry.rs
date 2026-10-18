@@ -147,11 +147,20 @@ enum Command {
     /// `chat.create` with a canonical `cwd` and, when it names no workspace, where the `cwd`
     /// goes; answered once the agent is up (or failed).
     CreateChat(ChatCreate, Option<Assignment>, bool, Reply<SessionInfo>),
-    /// From the task that started a chat agent.
+    /// From the task that started a chat agent (`wake`: the agent of a sleeping assistant,
+    /// started to be used; the session was idle all along).
     ChatStarted {
         session: SessionId,
         outcome: Result<Started, ErrorBody>,
         reply: Option<Reply<SessionInfo>>,
+        wake: bool,
+    },
+    /// A message (or a model switch) needs the agent of a sleeping assistant: start it, and
+    /// answer once it runs.
+    WakeChat(SessionId, Reply<SessionInfo>),
+    /// From a chat session's pump: the idle sleeper stopped the agent and the session sleeps.
+    ChatSlept {
+        session: SessionId,
     },
     /// From a chat session's pump: a turn started or ended (`turn`), and how many approvals
     /// and questions are pending now.
@@ -219,6 +228,22 @@ impl ChatNotifier {
 
     pub(crate) async fn exited(&self, session: SessionId, exit: ExitInfo) {
         self.send(Command::ChatExited { session, exit }).await;
+    }
+
+    pub(crate) async fn slept(&self, session: SessionId) {
+        self.send(Command::ChatSlept { session }).await;
+    }
+
+    /// Asks the registry to start the agent of a sleeping assistant; returns once it runs, or
+    /// with the reason it did not.
+    pub(crate) async fn wake(&self, session: SessionId) -> Result<(), ErrorBody> {
+        let unavailable = || ErrorBody::new(ErrorCode::Internal, "session registry unavailable");
+        let tx = self.tx.upgrade().ok_or_else(unavailable)?;
+        let (reply, response) = oneshot::channel();
+        tx.send(Command::WakeChat(session, reply))
+            .await
+            .map_err(|_| unavailable())?;
+        response.await.map_err(|_| unavailable())?.map(|_| ())
     }
 
     /// The adapter saw something about an agent of the session (the main one or a subagent).
@@ -707,6 +732,8 @@ pub struct RegistryConfig {
     pub providers: Arc<ProviderService>,
     /// `gateway.max_context_chars`.
     pub max_context_chars: usize,
+    /// How long an idle harness assistant keeps its agent process (`Duration::ZERO`: forever).
+    pub idle_stop: Duration,
     /// `<home>/tmp`: scratch files of chat deliveries (clipboard images for Codex).
     pub tmp_dir: PathBuf,
 }
@@ -731,6 +758,7 @@ pub fn spawn(
         config.harnesses,
         config.providers,
         config.max_context_chars,
+        config.idle_stop,
         config.tmp_dir,
     );
     let (workspaces, home, next_position) =
@@ -1151,7 +1179,10 @@ impl SessionRegistry {
                     session,
                     outcome,
                     reply,
-                } => self.on_chat_started(session, outcome, reply),
+                    wake,
+                } => self.on_chat_started(session, outcome, reply, wake),
+                Command::WakeChat(session, reply) => self.wake_chat(session, reply),
+                Command::ChatSlept { session } => self.on_chat_slept(session),
                 Command::ChatState {
                     session,
                     turn,
@@ -2083,6 +2114,7 @@ impl SessionRegistry {
         session.request_stop(&self.chats);
         session.stop_waiters.push(reply);
         self.clear_recovery(index);
+        self.end_if_asleep(index);
     }
 
     fn restart_session(&mut self, id: SessionId) -> Result<SessionInfo, ErrorBody> {
@@ -2360,17 +2392,40 @@ impl SessionRegistry {
     }
 
     fn stop_all(&mut self, forget: bool, reply: Reply<()>) {
-        for session in self.sessions.iter_mut().filter(|s| s.info.state.is_live()) {
+        let mut asleep = Vec::new();
+        for (index, session) in self
+            .sessions
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, s)| s.info.state.is_live())
+        {
             // A session the user is already stopping stays stopped; the others die with the
             // daemon but remain in the restore set unless the user asked to forget them.
             if !session.stopping && !forget {
                 session.keep_live = Some(session.info.state.clone());
             }
             session.request_stop(&self.chats);
+            asleep.push(index);
+        }
+        // Nothing to stop in a sleeping assistant: it ends here.
+        for index in asleep {
+            self.end_if_asleep(index);
         }
         self.flush_dirty();
         self.stop_all_waiters.push(reply);
         self.settle_stop_all();
+    }
+
+    /// A chat session whose agent was stopped for being idle has no process to report its end:
+    /// a stop or kill of it completes here.
+    fn end_if_asleep(&mut self, index: usize) {
+        let session = &self.sessions[index];
+        let id = session.info.id;
+        if session.chat.is_none() || self.chats.is_running(id) || !self.chats.is_asleep(id) {
+            return;
+        }
+        self.chats.forget_sleeper(id);
+        self.on_chat_exited(id, &ExitInfo::default());
     }
 
     fn settle_stop_all(&mut self) {
@@ -2588,6 +2643,7 @@ impl SessionRegistry {
         }
         session.request_kill(&self.chats);
         session.stop_waiters.push(reply);
+        self.end_if_asleep(index);
     }
 
     // Chat sessions ---------------------------------------------------------------------------
@@ -2611,7 +2667,7 @@ impl SessionRegistry {
         reply: Reply<SessionInfo>,
     ) {
         match self.begin_chat(req, assignment, assistant) {
-            Ok(index) => self.spawn_chat_start(index, Some(reply)),
+            Ok(index) => self.spawn_chat_start(index, Some(reply), false),
             Err(error) => {
                 let _ = reply.send(Err(error));
             }
@@ -2837,7 +2893,9 @@ impl SessionRegistry {
         let checked = (|| {
             let index = self.session_index(req.session_id)?;
             let session = &self.sessions[index];
-            if !session.info.state.is_live() || !self.chats.is_running(req.session_id) {
+            let startable =
+                self.chats.is_running(req.session_id) || self.chats.is_asleep(req.session_id);
+            if !session.info.state.is_live() || !startable {
                 return Err(ErrorBody::new(
                     ErrorCode::InvalidState,
                     format!(
@@ -2969,7 +3027,7 @@ impl SessionRegistry {
 
     /// Starts the agent of a `Starting` chat session on a task; the outcome comes back as
     /// `ChatStarted`.
-    fn spawn_chat_start(&mut self, index: usize, reply: Option<Reply<SessionInfo>>) {
+    fn spawn_chat_start(&mut self, index: usize, reply: Option<Reply<SessionInfo>>, wake: bool) {
         let session = &self.sessions[index];
         let Some(spec) = session.chat.clone() else {
             return;
@@ -2979,11 +3037,16 @@ impl SessionRegistry {
         let chats = self.chats.clone();
         let mailbox = self.mailbox.clone();
         tokio::spawn(async move {
-            let outcome = chats.start(id, cwd, &spec).await;
+            let outcome = if wake {
+                chats.start_waking(id, cwd, &spec).await
+            } else {
+                chats.start(id, cwd, &spec).await
+            };
             let command = Command::ChatStarted {
                 session: id,
                 outcome,
                 reply,
+                wake,
             };
             match mailbox.upgrade() {
                 Some(tx) => {
@@ -3003,6 +3066,7 @@ impl SessionRegistry {
         id: SessionId,
         outcome: Result<Started, ErrorBody>,
         reply: Option<Reply<SessionInfo>>,
+        wake: bool,
     ) {
         let respond = |reply: Option<Reply<SessionInfo>>,
                        result: Result<SessionInfo, ErrorBody>| {
@@ -3025,6 +3089,7 @@ impl SessionRegistry {
         let session = &mut self.sessions[index];
         match outcome {
             Ok(started) => {
+                let before = wake.then(|| session.info.clone());
                 if !started.resumed
                     && let Some(Recovery {
                         kind: RecoveryKind::ChatResumed { thread_id, .. },
@@ -3046,7 +3111,9 @@ impl SessionRegistry {
                         chat.agent_session_id = Some(started.thread_id);
                     }
                 }
-                session.advance(SessionEvent::Ready);
+                if !wake {
+                    session.advance(SessionEvent::Ready);
+                }
                 if session.stopping {
                     // A stop arrived while the agent was starting; it goes down right away
                     // and the exit finishes the session.
@@ -3059,11 +3126,23 @@ impl SessionRegistry {
                         )),
                     );
                 } else {
-                    self.sync_chat_state(index);
+                    if !wake {
+                        self.sync_chat_state(index);
+                    }
                     respond(reply, Ok(self.sessions[index].info.clone()));
                 }
-                self.emit_session(index);
+                // A woken session was idle all along: clients hear of it only when what they
+                // know of it changed (the model the agent came back with, a new conversation).
+                if before.is_none_or(|before| before != self.sessions[index].info) {
+                    self.emit_session(index);
+                }
                 self.persist_session(index);
+            }
+            Err(error) if wake && !session.stopping => {
+                // The session stays asleep and usable for a retry: nothing about it changed.
+                warn!(session = %id, message = %error.message, "the agent of a sleeping assistant failed to start");
+                self.chats.mark_asleep(id);
+                respond(reply, Err(error));
             }
             Err(error) => {
                 warn!(session = %id, message = %error.message, "chat agent failed to start");
@@ -3161,6 +3240,50 @@ impl SessionRegistry {
         }
     }
 
+    /// A message or a model switch needs the agent of a sleeping assistant: it starts again
+    /// and continues the conversation; the reply comes when it runs.
+    fn wake_chat(&mut self, id: SessionId, reply: Reply<SessionInfo>) {
+        let index = match self.session_index(id) {
+            Ok(index) => index,
+            Err(error) => {
+                let _ = reply.send(Err(error));
+                return;
+            }
+        };
+        let session = &self.sessions[index];
+        if session.chat.is_none()
+            || !session.info.state.is_live()
+            || session.stopping
+            || !self.chats.take_asleep(id)
+        {
+            let _ = reply.send(Err(ErrorBody::new(
+                ErrorCode::InvalidState,
+                format!("chat session {id} is not asleep"),
+            )));
+            return;
+        }
+        self.spawn_chat_start(index, Some(reply), true);
+    }
+
+    /// The idle sleeper stopped the agent of an assistant. For its clients the session is what
+    /// it was, idle; only what the dead process knew (its agents) is let go.
+    fn on_chat_slept(&mut self, id: SessionId) {
+        let Ok(index) = self.session_index(id) else {
+            return;
+        };
+        let session = &mut self.sessions[index];
+        if !session.info.state.is_live() {
+            return;
+        }
+        if let Some(chat) = &mut session.info.chat {
+            chat.turn_active = false;
+            chat.pending_approvals = 0;
+            chat.pending_questions = 0;
+        }
+        session.tree.session_ended(now_ms());
+        self.tree_changed(index);
+    }
+
     fn on_chat_exited(&mut self, id: SessionId, exit: &ExitInfo) {
         let Ok(index) = self.session_index(id) else {
             return;
@@ -3227,7 +3350,7 @@ impl SessionRegistry {
         }
         self.emit_session(index);
         self.persist_session(index);
-        self.spawn_chat_start(index, None);
+        self.spawn_chat_start(index, None, false);
         self.sessions[index].info.clone()
     }
 
@@ -3281,6 +3404,18 @@ impl SessionRegistry {
                     action = ChatRestoreKind::Rewrite;
                     RecoveryKind::NotRestarted {
                         reason: STOPPED_MODE_REASON.to_owned(),
+                    }
+                }
+                (None, RestoreMode::Respawn) if spec.assistant => {
+                    // An assistant is a helper for occasional questions: it comes back asleep
+                    // (idle, same conversation) and its agent starts on first use.
+                    state = SessionState::Idle;
+                    ended_at_ms = None;
+                    action = ChatRestoreKind::Rewrite;
+                    self.chats.mark_asleep(row.id);
+                    RecoveryKind::ChatResumed {
+                        thread_id: spec.thread_id.clone(),
+                        last_turn: recovery::last_turn(cut_off),
                     }
                 }
                 (None, RestoreMode::Respawn) => {
@@ -3542,7 +3677,7 @@ impl SessionRegistry {
             self.start_terminal(index);
         }
         for index in chat_starts {
-            self.spawn_chat_start(index, None);
+            self.spawn_chat_start(index, None, false);
         }
         for index in rewrite {
             self.persist_session(index);

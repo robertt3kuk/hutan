@@ -25,7 +25,7 @@ use hutan_agents::{
     AcpAdapter, AcpSession, AdapterMessage, AgentAdapter, AgentError, CodexAppServerAdapter,
     CodexConfig, CodexSession, ExitInfo, ImageBlock, MessageExtras, StartSpec, Started,
 };
-use hutan_core::agent::{DecidedBy, PermissionOutcome};
+use hutan_core::agent::{DecidedBy, NoticeLevel, PermissionOutcome};
 use hutan_core::question::{self, QuestionResponse};
 use hutan_core::{
     AgentEvent, AgentEventDraft, AgentEventKind, ApprovalId, ApprovalPolicy, ItemId, ModelInfo,
@@ -77,6 +77,16 @@ pub fn is_gateway_agent(agent: &str) -> bool {
 const MODEL_CACHE: Duration = Duration::from_secs(60);
 /// How long a harness's model list is reused (`omp models` is a subprocess of seconds).
 const HARNESS_MODEL_CACHE: Duration = Duration::from_secs(5 * 60);
+/// The longest the idle sleeper waits between two looks at the assistants.
+const SLEEP_CHECK_MAX: Duration = Duration::from_secs(5);
+/// The shortest.
+const SLEEP_CHECK_MIN: Duration = Duration::from_millis(20);
+/// How long a message waits for an assistant that is going to sleep to finish doing so.
+const SLEEP_WAIT: Duration = Duration::from_secs(30);
+/// The journal notice of a wake that could not continue the conversation. The same words as the
+/// restart recovery's chip for a chat that started a new conversation (`hutan-client`).
+const NEW_CONVERSATION_NOTICE: &str =
+    "The agent started a new conversation; the transcript is kept.";
 
 /// What a chat session is, as stored in the session row's `spec_json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,6 +128,11 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// A duration in whole milliseconds, saturating.
+fn millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
 /// Pending approvals that are not an agent's tool permissions (the control gate's, protocol
 /// 0.21), offered through the same `approval.*` requests, notification intents and events.
 pub trait ApprovalSource: Send + Sync + std::fmt::Debug {
@@ -132,13 +147,50 @@ pub trait ApprovalSource: Send + Sync + std::fmt::Debug {
     ) -> Option<Result<(), ErrorBody>>;
 }
 
+/// Why an agent could not be started, and whether the agent refused to continue the stored
+/// conversation (a wake then starts a new one).
+#[derive(Debug)]
+struct StartFailure {
+    error: ErrorBody,
+    resume_refused: bool,
+}
+
+impl StartFailure {
+    fn agent(cause: &AgentError, error: ErrorBody) -> Self {
+        let resume_refused = match cause {
+            AgentError::Rpc { method, .. } => {
+                matches!(
+                    method.as_str(),
+                    "session/load" | "session/resume" | "thread/resume"
+                )
+            }
+            AgentError::Unsupported(message) => message.contains("cannot continue a conversation"),
+            _ => false,
+        };
+        Self {
+            error,
+            resume_refused,
+        }
+    }
+}
+
+impl From<ErrorBody> for StartFailure {
+    fn from(error: ErrorBody) -> Self {
+        Self {
+            error,
+            resume_refused: false,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Live {
     id: SessionId,
     backend: Backend,
     /// The next event's `seq`.
     next_seq: AtomicU64,
-    /// A turn is in progress, or `chat.send` is starting one.
+    /// A turn is in progress, or `chat.send` is starting one (or the idle sleeper holds the
+    /// session while it stops the agent).
     busy: AtomicBool,
     /// The turn the journal shows as open.
     open_turn: Mutex<Option<TurnId>>,
@@ -153,6 +205,43 @@ struct Live {
     partials: Mutex<Partials>,
     /// What the message being sent carries, until its turn ends.
     delivery: Mutex<Delivery>,
+    /// An assistant: the idle sleeper may stop its agent.
+    assistant: bool,
+    /// The idle sleeper stops the agent; its exit puts the session to sleep, it does not end
+    /// it.
+    sleeping: AtomicBool,
+    /// When the session last did something: started, ended a turn, had an approval or a
+    /// question answered.
+    active_at: Mutex<Instant>,
+}
+
+impl Live {
+    fn new(id: SessionId, backend: Backend, last_seq: u64, assistant: bool) -> Arc<Self> {
+        Arc::new(Self {
+            id,
+            backend,
+            next_seq: AtomicU64::new(last_seq + 1),
+            busy: AtomicBool::new(false),
+            open_turn: Mutex::new(None),
+            stopping: AtomicBool::new(false),
+            daemon_stop: AtomicBool::new(false),
+            partials: Mutex::new(Partials::default()),
+            delivery: Mutex::new(Delivery::default()),
+            assistant,
+            sleeping: AtomicBool::new(false),
+            active_at: Mutex::new(Instant::now()),
+        })
+    }
+
+    /// The idle clock starts again.
+    fn touch(&self) {
+        *lock(&self.active_at) = Instant::now();
+    }
+
+    /// How long since the session last did something.
+    fn idle_for(&self) -> Duration {
+        lock(&self.active_at).elapsed()
+    }
 }
 
 /// Attachments of the message a turn started with.
@@ -187,7 +276,15 @@ pub struct ChatManager {
     harnesses: Arc<Harnesses>,
     providers: Arc<ProviderService>,
     max_context_chars: Arc<AtomicUsize>,
+    /// `assistant.idle_stop_secs` in milliseconds; `0` never puts an assistant to sleep.
+    idle_stop_ms: AtomicU64,
     live: Mutex<HashMap<SessionId, Arc<Live>>>,
+    /// Assistants whose agent was stopped for being idle (or that a daemon restart brought
+    /// back without starting it): sessions that are idle for their clients and have no
+    /// process. Changes together with `live`, under its lock.
+    asleep: Mutex<HashSet<SessionId>>,
+    /// One wake of a session at a time: a second message waits for the first one's agent.
+    wakes: Mutex<HashMap<SessionId, Arc<tokio::sync::Mutex<()>>>>,
     approvals: Mutex<HashMap<ApprovalId, Pending>>,
     questions: Mutex<HashMap<QuestionId, PendingQuestion>>,
     /// Model catalogs by agent.
@@ -268,6 +365,7 @@ impl ChatManager {
         harnesses: Arc<Harnesses>,
         providers: Arc<ProviderService>,
         max_context_chars: usize,
+        idle_stop: Duration,
         tmp_dir: PathBuf,
     ) -> Arc<Self> {
         // A daemon that was killed mid-turn left its images behind: nothing is in flight yet.
@@ -286,7 +384,7 @@ impl ChatManager {
                 }
             }
         });
-        Arc::new(Self {
+        let manager = Arc::new(Self {
             bus,
             storage,
             notifier,
@@ -294,14 +392,19 @@ impl ChatManager {
             harnesses,
             providers,
             max_context_chars: Arc::new(AtomicUsize::new(max_context_chars)),
+            idle_stop_ms: AtomicU64::new(millis(idle_stop)),
             live: Mutex::new(HashMap::new()),
+            asleep: Mutex::new(HashSet::new()),
+            wakes: Mutex::new(HashMap::new()),
             approvals: Mutex::new(HashMap::new()),
             questions: Mutex::new(HashMap::new()),
             models: Mutex::new(HashMap::new()),
             external: Mutex::new(None),
             mcp: OnceLock::new(),
             tmp_dir,
-        })
+        });
+        tokio::spawn(Self::sleeper(Arc::downgrade(&manager)));
+        manager
     }
 
     /// The model providers of this daemon.
@@ -385,6 +488,178 @@ impl ChatManager {
         lock(&self.live).contains_key(&id)
     }
 
+    // Idle assistants --------------------------------------------------------------------------
+
+    /// `assistant.idle_stop_secs` from now on (`Duration::ZERO`: never).
+    pub(crate) fn set_assistant_idle_stop(&self, idle: Duration) {
+        self.idle_stop_ms.store(millis(idle), Ordering::Relaxed);
+    }
+
+    /// Whether the session is an assistant whose agent is stopped: idle for its clients, with
+    /// no process until something needs the agent.
+    pub(crate) fn is_asleep(&self, id: SessionId) -> bool {
+        lock(&self.asleep).contains(&id)
+    }
+
+    /// The session has no agent process until it is used: an assistant a daemon restart brought
+    /// back, or one whose wake failed.
+    pub(crate) fn mark_asleep(&self, id: SessionId) {
+        lock(&self.asleep).insert(id);
+    }
+
+    /// Takes the session out of the sleeping ones because its agent is being started; whether it
+    /// was asleep.
+    pub(crate) fn take_asleep(&self, id: SessionId) -> bool {
+        lock(&self.asleep).remove(&id)
+    }
+
+    /// The session ended without an agent to end (it was asleep): nothing of it is kept here.
+    pub(crate) fn forget_sleeper(&self, id: SessionId) {
+        lock(&self.asleep).remove(&id);
+        lock(&self.wakes).remove(&id);
+    }
+
+    /// Looks at the assistants every so often and stops the agent of each that has been idle
+    /// for `assistant.idle_stop_secs` (read at every look, so a change applies live). Ends with
+    /// the manager.
+    async fn sleeper(manager: Weak<Self>) {
+        loop {
+            let Some(this) = manager.upgrade() else {
+                return;
+            };
+            let idle = Duration::from_millis(this.idle_stop_ms.load(Ordering::Relaxed));
+            let wait = if idle.is_zero() {
+                SLEEP_CHECK_MAX
+            } else {
+                this.put_idle_to_sleep(idle);
+                (idle / 4).clamp(SLEEP_CHECK_MIN, SLEEP_CHECK_MAX)
+            };
+            drop(this);
+            tokio::time::sleep(wait).await;
+        }
+    }
+
+    fn put_idle_to_sleep(&self, idle: Duration) {
+        let due: Vec<Arc<Live>> = lock(&self.live)
+            .values()
+            .filter(|live| {
+                live.assistant
+                    && matches!(live.backend, Backend::Agent(_))
+                    && !live.busy.load(Ordering::Acquire)
+                    && !live.stopping.load(Ordering::Acquire)
+                    && live.idle_for() >= idle
+            })
+            .cloned()
+            .collect();
+        for live in due {
+            self.put_to_sleep(&live, idle);
+        }
+    }
+
+    /// Stops the agent of an idle assistant. The session stays what it is for its clients: its
+    /// exit is reported as sleep, not as an end ([`Self::finish`]), and the next message starts
+    /// the agent again ([`Self::awake`]).
+    fn put_to_sleep(&self, live: &Arc<Live>, idle: Duration) {
+        let waiting = || {
+            !self.approval_list(Some(live.id)).approvals.is_empty()
+                || !self.question_list(Some(live.id)).questions.is_empty()
+        };
+        if waiting() {
+            return;
+        }
+        // `sleeping` before the claim: a message that finds `busy` taken then knows it is the
+        // sleeper's, not a turn, and waits for the wake instead of failing.
+        live.sleeping.store(true, Ordering::Release);
+        let claimed = live
+            .busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
+        if !claimed || waiting() || live.idle_for() < idle {
+            if claimed {
+                live.busy.store(false, Ordering::Release);
+            }
+            live.sleeping.store(false, Ordering::Release);
+            return;
+        }
+        // Asleep before the agent goes: the session is never neither running nor asleep.
+        lock(&self.asleep).insert(live.id);
+        info!(session = %live.id, "assistant {} asleep, process stopped after {} s idle", live.id, live.idle_for().as_secs());
+        let live = live.clone();
+        tokio::spawn(async move {
+            if let Backend::Agent(adapter) = &live.backend {
+                adapter.shutdown().await;
+            }
+        });
+    }
+
+    /// The session's running backend. A sleeping assistant is woken first (its agent starts
+    /// again and continues the conversation), and one that is going to sleep is waited for.
+    async fn awake(&self, id: SessionId) -> Result<Arc<Live>, ErrorBody> {
+        let deadline = Instant::now() + SLEEP_WAIT;
+        loop {
+            let live = lock(&self.live).get(&id).cloned();
+            match live {
+                Some(live) if !live.sleeping.load(Ordering::Acquire) => return Ok(live),
+                Some(_) => {
+                    if Instant::now() >= deadline {
+                        return Err(ErrorBody::new(
+                            ErrorCode::InvalidState,
+                            format!("chat session {id} is going to sleep; send again"),
+                        ));
+                    }
+                    tokio::time::sleep(SLEEP_CHECK_MIN).await;
+                }
+                None if self.is_asleep(id) => self.wake(id).await?,
+                None => return self.live(id),
+            }
+        }
+    }
+
+    /// Starts the agent of a sleeping assistant (the registry knows how); returns once it runs.
+    async fn wake(&self, id: SessionId) -> Result<(), ErrorBody> {
+        let gate = lock(&self.wakes).entry(id).or_default().clone();
+        let _one_at_a_time = gate.lock().await;
+        // Another message woke it while this one waited.
+        if lock(&self.live).contains_key(&id) || !self.is_asleep(id) {
+            return Ok(());
+        }
+        self.notifier.wake(id).await
+    }
+
+    /// Starts the agent of a sleeping assistant, continuing its conversation the way a restart
+    /// does. An agent that refuses to continue it starts a new conversation and the journal
+    /// says so. Called by the registry on behalf of [`Self::wake`].
+    pub(crate) async fn start_waking(
+        self: &Arc<Self>,
+        id: SessionId,
+        cwd: PathBuf,
+        spec: &ChatSpec,
+    ) -> Result<Started, ErrorBody> {
+        let first = self.start_agent(id, cwd.clone(), spec).await;
+        let refused = match first {
+            Ok(started) => return Ok(started),
+            Err(failure) if failure.resume_refused && spec.thread_id.is_some() => failure,
+            Err(failure) => return Err(failure.error),
+        };
+        warn!(session = %id, message = %refused.error.message, "the agent would not continue the conversation; starting a new one");
+        let fresh = ChatSpec {
+            thread_id: None,
+            ..spec.clone()
+        };
+        let started = self
+            .start_agent(id, cwd, &fresh)
+            .await
+            .map_err(|failure| failure.error)?;
+        if let Ok(live) = self.live(id) {
+            let notice = AgentEventDraft::new(AgentEventKind::Notice {
+                level: NoticeLevel::Info,
+                message: NEW_CONVERSATION_NOTICE.to_owned(),
+            });
+            self.handle(&live, notice).await;
+        }
+        Ok(started)
+    }
+
     /// The highest journaled `seq` of a session.
     async fn journal_end(&self, id: SessionId) -> Result<u64, ErrorBody> {
         let storage = self.storage.clone();
@@ -405,6 +680,18 @@ impl ChatManager {
         if is_gateway_agent(&spec.agent) {
             return self.start_direct(id, spec).await;
         }
+        self.start_agent(id, cwd, spec)
+            .await
+            .map_err(|failure| failure.error)
+    }
+
+    /// Starts (or resumes) the agent process of a Codex or harness chat.
+    async fn start_agent(
+        self: &Arc<Self>,
+        id: SessionId,
+        cwd: PathBuf,
+        spec: &ChatSpec,
+    ) -> Result<Started, StartFailure> {
         if is_harness_agent(&spec.agent) {
             return self.start_harness(id, cwd, spec).await;
         }
@@ -415,7 +702,8 @@ impl ChatManager {
                     "unsupported agent `{}` (supported: {AGENT_CODEX}, omp, claude, {AGENT_DIRECT}, {AGENT_ASSISTANT})",
                     spec.agent
                 ),
-            ));
+            )
+            .into());
         }
         let last = self.journal_end(id).await?;
         let start = StartSpec {
@@ -432,19 +720,9 @@ impl ChatManager {
             events,
         } = CodexAppServerAdapter::start(&codex, &start)
             .await
-            .map_err(|e| provider_error(&e, &codex.program))?;
-        let live = Arc::new(Live {
-            id,
-            backend: Backend::Agent(adapter),
-            next_seq: AtomicU64::new(last + 1),
-            busy: AtomicBool::new(false),
-            open_turn: Mutex::new(None),
-            stopping: AtomicBool::new(false),
-            daemon_stop: AtomicBool::new(false),
-            partials: Mutex::new(Partials::default()),
-            delivery: Mutex::new(Delivery::default()),
-        });
-        lock(&self.live).insert(id, live.clone());
+            .map_err(|e| StartFailure::agent(&e, provider_error(&e, &codex.program)))?;
+        let live = Live::new(id, Backend::Agent(adapter), last, spec.assistant);
+        self.adopt(&live);
         info!(session = %id, model = %started.model, resumed = started.resumed, "chat agent started");
         tokio::spawn(self.clone().pump(live, events));
         Ok(started)
@@ -457,7 +735,7 @@ impl ChatManager {
         id: SessionId,
         cwd: PathBuf,
         spec: &ChatSpec,
-    ) -> Result<Started, ErrorBody> {
+    ) -> Result<Started, StartFailure> {
         let harnesses = self.harnesses.clone();
         let agent = spec.agent.clone();
         let assistant = spec.assistant;
@@ -485,25 +763,24 @@ impl ChatManager {
             models,
         } = AcpAdapter::start(&config, &start, spec.mode.as_deref(), &servers)
             .await
-            .map_err(|e| harness_error(&e, &spec.agent, &config.program))?;
+            .map_err(|e| {
+                StartFailure::agent(&e, harness_error(&e, &spec.agent, &config.program))
+            })?;
         if !models.is_empty() {
             lock(&self.models).insert(spec.agent.clone(), (Instant::now(), models));
         }
-        let live = Arc::new(Live {
-            id,
-            backend: Backend::Agent(adapter),
-            next_seq: AtomicU64::new(last + 1),
-            busy: AtomicBool::new(false),
-            open_turn: Mutex::new(None),
-            stopping: AtomicBool::new(false),
-            daemon_stop: AtomicBool::new(false),
-            partials: Mutex::new(Partials::default()),
-            delivery: Mutex::new(Delivery::default()),
-        });
-        lock(&self.live).insert(id, live.clone());
+        let live = Live::new(id, Backend::Agent(adapter), last, spec.assistant);
+        self.adopt(&live);
         info!(session = %id, agent = %spec.agent, model = %started.model, resumed = started.resumed, "chat harness started");
         tokio::spawn(self.clone().pump(live, events));
         Ok(started)
+    }
+
+    /// Makes `live` the session's running backend; a sleeping session wakes.
+    fn adopt(&self, live: &Arc<Live>) {
+        let mut running = lock(&self.live);
+        running.insert(live.id, live.clone());
+        lock(&self.asleep).remove(&live.id);
     }
 
     /// Opens a direct chat: no process, just the session's target and its journal.
@@ -552,18 +829,8 @@ impl ChatManager {
             },
             usage,
         );
-        let live = Arc::new(Live {
-            id,
-            backend: Backend::Direct(session),
-            next_seq: AtomicU64::new(last + 1),
-            busy: AtomicBool::new(false),
-            open_turn: Mutex::new(None),
-            stopping: AtomicBool::new(false),
-            daemon_stop: AtomicBool::new(false),
-            partials: Mutex::new(Partials::default()),
-            delivery: Mutex::new(Delivery::default()),
-        });
-        lock(&self.live).insert(id, live.clone());
+        let live = Live::new(id, Backend::Direct(session), last, false);
+        self.adopt(&live);
         info!(session = %id, provider = %provider_id, %model, "direct chat started");
         tokio::spawn(self.clone().pump(live, events));
         Ok(Started {
@@ -584,7 +851,7 @@ impl ChatManager {
         provider_id: String,
         model: String,
     ) -> Result<(), ErrorBody> {
-        let live = self.live(id)?;
+        let live = self.awake(id).await?;
         match &live.backend {
             Backend::Direct(session) => {
                 session.set_model(provider_id, model).await;
@@ -681,13 +948,19 @@ impl ChatManager {
                 ),
             ));
         }
-        let live = self.live(id)?;
-        if live.busy.swap(true, Ordering::AcqRel) {
-            return Err(ErrorBody::new(
-                ErrorCode::InvalidState,
-                "a turn is already in progress; wait for it or interrupt it",
-            ));
-        }
+        let live = loop {
+            let live = self.awake(id).await?;
+            if !live.busy.swap(true, Ordering::AcqRel) {
+                break live;
+            }
+            // Held by the idle sleeper, not by a turn: the agent is going away, wake it.
+            if !live.sleeping.load(Ordering::Acquire) {
+                return Err(ErrorBody::new(
+                    ErrorCode::InvalidState,
+                    "a turn is already in progress; wait for it or interrupt it",
+                ));
+            }
+        };
         let started = match &live.backend {
             Backend::Agent(adapter) => {
                 // ACP harnesses take each text attachment as an embedded resource and each
@@ -757,6 +1030,12 @@ impl ChatManager {
     }
 
     pub async fn interrupt(&self, id: SessionId) -> Result<(), ErrorBody> {
+        if !self.is_running(id) && self.is_asleep(id) {
+            return Err(ErrorBody::new(
+                ErrorCode::InvalidState,
+                "no turn is in progress",
+            ));
+        }
         let live = self.live(id)?;
         let adapter = match &live.backend {
             Backend::Agent(adapter) => adapter,
@@ -787,6 +1066,9 @@ impl ChatManager {
         id: SessionId,
         thread: &str,
     ) -> Result<(), ThreadInterruptError> {
+        if !self.is_running(id) && self.is_asleep(id) {
+            return Err(ThreadInterruptError::NoTurn);
+        }
         let live = self.live(id).map_err(ThreadInterruptError::Failed)?;
         let Backend::Agent(adapter) = &live.backend else {
             return Err(ThreadInterruptError::Unsupported);
@@ -1290,6 +1572,14 @@ impl ChatManager {
         self.flush_partials(live, Flush::Final);
         lock(&self.live).remove(&live.id);
         self.drop_temp_images(live);
+        // The idle sleeper stopped it, and nobody else asked: the session sleeps on.
+        let slept = live.sleeping.load(Ordering::Acquire) && !live.stopping.load(Ordering::Acquire);
+        if slept {
+            debug!(session = %live.id, code = ?exit.code, signal = ?exit.signal, "assistant agent exited asleep");
+            self.notifier.slept(live.id).await;
+            return;
+        }
+        lock(&self.asleep).remove(&live.id);
         info!(session = %live.id, code = ?exit.code, signal = ?exit.signal, "chat agent exited");
         self.notifier.exited(live.id, exit).await;
     }
@@ -1297,6 +1587,18 @@ impl ChatManager {
     async fn handle(&self, live: &Live, mut draft: AgentEventDraft) {
         let ts_ms = registry::now_ms();
         let ends_turn = draft.kind.ends_turn();
+        if ends_turn
+            || matches!(
+                draft.kind,
+                AgentEventKind::TurnStarted
+                    | AgentEventKind::PermissionRequested { .. }
+                    | AgentEventKind::PermissionResolved { .. }
+                    | AgentEventKind::QuestionRequested { .. }
+                    | AgentEventKind::QuestionResolved { .. }
+            )
+        {
+            live.touch();
+        }
         // The user's message of a turn that carried attachments says what they were, whichever
         // adapter journals the message.
         if matches!(

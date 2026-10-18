@@ -101,6 +101,10 @@ pub struct DaemonConfig {
     /// whose socket was deleted (its `HUTAN_HOME` removed) or replaced can never be reached
     /// again and stops instead of running forever. Tests shorten it.
     pub socket_check_interval: Duration,
+    /// Overrides `[assistant] idle_stop_secs` at start (a finer unit, and below its minimum of
+    /// 60 s): how long an idle harness assistant keeps its agent process. `None` reads the
+    /// setting. Tests shorten it.
+    pub assistant_idle_stop: Option<Duration>,
 }
 
 impl DaemonConfig {
@@ -119,6 +123,7 @@ impl DaemonConfig {
             menu_bar: None,
             ui_command_timeout: Duration::from_millis(hutan_protocol::ui::COMMAND_TIMEOUT_MS),
             socket_check_interval: SOCKET_CHECK_INTERVAL,
+            assistant_idle_stop: None,
         }
     }
 }
@@ -284,6 +289,9 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             harnesses: harnesses.clone(),
             providers,
             max_context_chars: settings.gateway.max_context_chars,
+            idle_stop: config
+                .assistant_idle_stop
+                .unwrap_or(Duration::from_secs(settings.assistant.idle_stop_secs)),
             tmp_dir: paths.base.join("tmp"),
         },
         stored,

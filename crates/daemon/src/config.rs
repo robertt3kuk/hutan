@@ -44,6 +44,7 @@
 //! provider = "openrouter"        # provider of the `provider` backend
 //! model = "meta-llama/llama-3.3-70b-instruct"
 //! context_budget_chars = 60000   # attached context per message, split over the attachments
+//! idle_stop_secs = 600           # a harness assistant idle this long stops its agent process and wakes on the next message; 0 = never, else at least 60
 //!
 //! [assistant.context]            # what assistants of project workspaces may read
 //! shell = true
@@ -265,6 +266,10 @@ impl Default for HistorySettings {
 
 /// `assistant.context_budget_chars` when the setting is absent.
 pub const DEFAULT_CONTEXT_BUDGET_CHARS: usize = 60_000;
+/// `assistant.idle_stop_secs` when the setting is absent.
+pub const DEFAULT_ASSISTANT_IDLE_STOP_SECS: u64 = 600;
+/// The shortest `assistant.idle_stop_secs` that is not `0` (never).
+pub const MIN_ASSISTANT_IDLE_STOP_SECS: u64 = 60;
 
 /// What an assistant may read when a message attaches it (`docs/assistant.md`). Nothing is read
 /// that is not attached; these only decide whether an attachment is accepted.
@@ -351,6 +356,11 @@ pub struct AssistantSettings {
     pub model: Option<String>,
     /// Characters of attached context one message carries, split evenly over its attachments.
     pub context_budget_chars: usize,
+    /// Seconds a harness assistant (omp, claude, codex) may sit idle, with no turn, approval or
+    /// question pending, before the daemon stops its agent process; the next message starts it
+    /// again and resumes the conversation. `0` never stops it; otherwise at least
+    /// [`MIN_ASSISTANT_IDLE_STOP_SECS`].
+    pub idle_stop_secs: u64,
     /// What assistants of project workspaces may read.
     pub context: ContextPermissions,
     /// What the global assistant (Home) may read.
@@ -366,6 +376,7 @@ impl Default for AssistantSettings {
             provider: None,
             model: None,
             context_budget_chars: DEFAULT_CONTEXT_BUDGET_CHARS,
+            idle_stop_secs: DEFAULT_ASSISTANT_IDLE_STOP_SECS,
             context: ContextPermissions::default(),
             global_context: ContextPermissions::global_default(),
             workspaces: std::collections::BTreeMap::new(),
@@ -565,6 +576,12 @@ impl DaemonSettings {
             return Err(toml::de::Error::custom(
                 "assistant.context_budget_chars must be at least 1",
             ));
+        }
+        let idle = file.assistant.idle_stop_secs;
+        if idle != 0 && idle < MIN_ASSISTANT_IDLE_STOP_SECS {
+            return Err(toml::de::Error::custom(format!(
+                "assistant.idle_stop_secs must be 0 (never) or at least {MIN_ASSISTANT_IDLE_STOP_SECS}, not {idle}"
+            )));
         }
         if file.notify.expire_secs == 0 {
             return Err(toml::de::Error::custom(
@@ -934,6 +951,21 @@ mod tests {
     fn assistant_budget_must_be_positive() {
         assert!(DaemonSettings::parse("[assistant]\ncontext_budget_chars = 0\n", None).is_err());
         assert!(DaemonSettings::parse("[assistant.context]\nshell = \"yes\"\n", None).is_err());
+    }
+
+    #[test]
+    fn assistant_idle_stop_is_ten_minutes_never_or_at_least_a_minute() {
+        let idle =
+            |toml: &str| DaemonSettings::parse(toml, None).map(|s| s.assistant.idle_stop_secs);
+        assert_eq!(idle("").unwrap(), 600);
+        assert_eq!(idle("[assistant]\nidle_stop_secs = 0\n").unwrap(), 0);
+        assert_eq!(idle("[assistant]\nidle_stop_secs = 60\n").unwrap(), 60);
+        assert_eq!(idle("[assistant]\nidle_stop_secs = 3600\n").unwrap(), 3600);
+        let error = idle("[assistant]\nidle_stop_secs = 59\n")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("assistant.idle_stop_secs"), "{error}");
+        assert!(idle("[assistant]\nidle_stop_secs = -1\n").is_err());
     }
 
     #[test]

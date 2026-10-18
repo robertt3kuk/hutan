@@ -231,6 +231,8 @@ async fn the_other_live_settings_are_in_use_when_the_answer_arrives() {
         ("assistant.context.files", json!(false)),
         ("assistant.global_context.files", json!(true)),
         ("assistant.context_budget_chars", json!(1234)),
+        ("assistant.idle_stop_secs", json!(120)),
+        ("assistant.idle_stop_secs", json!(0)),
         ("assistant.provider", json!("somewhere")),
         ("notify.kinds", json!(["task_failed"])),
         ("notify.min_turn_secs", json!(0)),
@@ -384,6 +386,11 @@ async fn values_that_do_not_fit_are_refused_and_nothing_is_written() {
     std::fs::write(&plain, "x").unwrap();
 
     for (key, value, wanted) in [
+        (
+            "assistant.idle_stop_secs",
+            json!(30),
+            "0 (never) or at least 60",
+        ),
         ("nope", json!(true), "not a daemon setting"),
         ("notify", json!(true), "not a daemon setting"),
         ("notify.enabled", json!("yes"), "true or false"),

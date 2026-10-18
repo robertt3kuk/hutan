@@ -17,6 +17,7 @@ use std::io;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::daemon_settings::{
@@ -333,6 +334,16 @@ fn build_specs() -> Vec<Spec> {
             POSITIVE,
             Group::Assistant,
             |c| int_value(c.assistant.context_budget_chars as u64),
+        ),
+        live(
+            "assistant.idle_stop_secs",
+            Kind::Int {
+                min: Some(0),
+                max: None,
+                only: &[],
+            },
+            Group::Assistant,
+            |c| int_value(c.assistant.idle_stop_secs),
         ),
     ]);
     permission_specs!(specs, context);
@@ -1069,7 +1080,12 @@ impl SettingsService {
                         ))
                     })?;
             }
-            Group::Assistant => self.assistant.apply_settings(fresh.assistant.clone()),
+            Group::Assistant => {
+                self.registry
+                    .chats()
+                    .set_assistant_idle_stop(Duration::from_secs(fresh.assistant.idle_stop_secs));
+                self.assistant.apply_settings(fresh.assistant.clone());
+            }
             Group::Control => {
                 let current = self.control.settings();
                 self.control.apply_settings(ControlSettings {
@@ -1212,6 +1228,7 @@ mod tests {
             provider: _,
             model: _,
             context_budget_chars: _,
+            idle_stop_secs: _,
             context:
                 ContextPermissions {
                     shell: _,
@@ -1266,6 +1283,7 @@ mod tests {
             "assistant.provider",
             "assistant.model",
             "assistant.context_budget_chars",
+            "assistant.idle_stop_secs",
             "notify.enabled",
             "notify.min_turn_secs",
             "notify.kinds",
