@@ -484,6 +484,13 @@ fn commands_split_apply_presets_open_panels_focus_sessions_and_write_settings(
         },
     ));
     let in_other = created.session;
+    // The window opens sessions it knows: wait for the new one to reach it (under load the
+    // event can trail the request by more than the 5 s a window has to answer).
+    wait_until(cx, "the window to know the new session", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).session(in_other.id).is_some()
+        })
+    });
     run(
         &daemon,
         cx,
