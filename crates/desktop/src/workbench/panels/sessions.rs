@@ -1132,7 +1132,25 @@ impl Render for SessionsPanel {
 
 impl SessionsPanel {
     /// One row of the list: what entry `ix` of the frame's entries is.
+    /// One row of the virtualized list. A list lays an item out as a root with the list's width
+    /// only *available*: an element that does not say otherwise shrinks to its content, so the
+    /// row cards (and the hover × at their end) would be as wide as their title. The wrapper
+    /// takes the list's width and stretches the row in it.
     fn render_entry(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .child(self.render_row_entry(ix, window, cx))
+            .into_any_element()
+    }
+
+    fn render_row_entry(
         &mut self,
         ix: usize,
         _window: &mut Window,

@@ -281,6 +281,95 @@ async fn a_desktop_that_reconnects_within_the_delay_never_lets_the_item_show() {
     t.stop().await;
 }
 
+/// A desktop process, as far as the daemon can tell: it listens on `desktop.sock` in the data
+/// folder (`hutan_desktop::instance`), whether or not it is connected to the daemon.
+fn desktop_process(t: &Env) -> std::os::unix::net::UnixListener {
+    std::os::unix::net::UnixListener::bind(
+        t.daemon
+            .paths
+            .base
+            .join(hutan_daemon::menu_bar::DESKTOP_SOCKET_FILE),
+    )
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desktop_that_is_running_but_not_connected_keeps_the_item_off_the_menu_bar() {
+    // The desktop reconnecting after the daemon restarted (or after its connection dropped) is
+    // not connected for longer than the show delay, and its own item is on the menu bar: the
+    // daemon must not put a second one next to it.
+    let t = Env::start().await;
+    let connected = t.desktop().await;
+    t.item.wait_hidden("the item to hide for the desktop").await;
+    let process = desktop_process(&t);
+    drop(connected);
+    // Several show delays and polls later: still no second Hutan icon.
+    sleep(SHOW_DELAY * 10).await;
+    assert_eq!(
+        t.item.shown(),
+        None,
+        "a desktop process runs; its item is the one on the menu bar"
+    );
+
+    // The desktop quits (its socket goes with it): now the daemon's item is the only one.
+    drop(process);
+    std::fs::remove_file(
+        t.daemon
+            .paths
+            .base
+            .join(hutan_daemon::menu_bar::DESKTOP_SOCKET_FILE),
+    )
+    .unwrap();
+    t.shown("the item after the desktop process quit", |_| true)
+        .await;
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_socket_file_left_by_a_crashed_desktop_does_not_keep_the_item_off() {
+    let t = Env::start().await;
+    // A socket file nobody listens on refuses connections: no desktop runs.
+    let socket = t
+        .daemon
+        .paths
+        .base
+        .join(hutan_daemon::menu_bar::DESKTOP_SOCKET_FILE);
+    drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+    assert!(socket.exists());
+    t.shown("the item with only a stale socket file", |_| true)
+        .await;
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_daemon_that_starts_while_a_desktop_runs_shows_no_item_until_it_is_gone() {
+    // The daemon restarted under a running desktop: no connection yet, the desktop's item is on
+    // the menu bar.
+    let process = std::cell::RefCell::new(None);
+    let item = FakeStatusItem::new();
+    let launcher = FakeLauncher::new();
+    let bar = menu_bar(&item, &launcher, SHOW_DELAY, PATIENCE);
+    let daemon = common::TestDaemon::start_with("", |c| {
+        c.menu_bar = Some(bar);
+        *process.borrow_mut() = Some(
+            std::os::unix::net::UnixListener::bind(
+                c.paths
+                    .base
+                    .join(hutan_daemon::menu_bar::DESKTOP_SOCKET_FILE),
+            )
+            .unwrap(),
+        );
+    })
+    .await;
+    sleep(SHOW_DELAY * 10).await;
+    assert_eq!(item.shown(), None, "a desktop runs; the daemon shows none");
+    assert_eq!(item.calls(), Vec::<Call>::new());
+    drop(process.take());
+    item.wait_shown("the item after the desktop went", |_| true)
+        .await;
+    daemon.stop().await;
+}
+
 // ---- what it shows ------------------------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]

@@ -431,6 +431,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             bus,
             ui,
             settings_file: paths.base.join("settings.toml"),
+            desktop_socket: paths.base.join(menu_bar::DESKTOP_SOCKET_FILE),
             shutdown: shutdown.clone(),
         })
     });

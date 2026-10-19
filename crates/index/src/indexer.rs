@@ -69,6 +69,8 @@ struct Shared {
     tx: SyncSender<Msg>,
     /// Events were dropped because the queue was full: the worker repeats the stat pass.
     overflow: AtomicBool,
+    /// [`Indexer::stop`] was called: a scan in progress ends at the next file.
+    stopping: AtomicBool,
     /// Hutan records dropped because the queue was full.
     dropped: AtomicU64,
     metrics: Arc<Metrics>,
@@ -232,6 +234,7 @@ impl Indexer {
             db_path: config.db_path.clone(),
             tx: tx.clone(),
             overflow: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
             dropped: AtomicU64::new(0),
             metrics: Arc::new(Metrics::default()),
             sources,
@@ -276,11 +279,12 @@ impl Indexer {
         self.handle.clone()
     }
 
-    /// Stops the watcher and the worker (after it finishes the file it is reading) and waits for
-    /// it. Idempotent.
+    /// Stops the watcher and the worker (after it finishes the file it is reading, not the scan
+    /// it is in) and waits for it. Idempotent.
     pub fn stop(&mut self) {
         self.watcher = None;
         if let Some(thread) = self.thread.take() {
+            self.handle.shared.stopping.store(true, Ordering::Release);
             // A failed send means the worker is already gone.
             let _ = self.handle.shared.tx.send(Msg::Stop);
             if thread.join().is_err() {
@@ -444,6 +448,11 @@ impl Worker {
         self.stat_pass();
     }
 
+    /// The indexer is being stopped: long loops end instead of finishing their pass.
+    fn stopping(&self) -> bool {
+        self.shared.stopping.load(Ordering::Acquire)
+    }
+
     fn update_scan(&self, update: impl FnOnce(&mut ScanInfo)) {
         if let Ok(mut scan) = self.shared.scan.lock() {
             update(&mut scan);
@@ -509,6 +518,11 @@ impl Worker {
         });
         let mut rows = 0;
         for (index, path) in changed {
+            // A stop does not wait for the whole pass: the files not read yet keep their old
+            // stamps and are read by the next pass.
+            if self.stopping() {
+                return;
+            }
             rows += self.process(index, &path);
             self.update_scan(|scan| scan.done = (scan.done + 1).min(scan.files));
             std::thread::yield_now();
@@ -536,6 +550,9 @@ impl Worker {
             return;
         }
         for path in pending {
+            if self.stopping() {
+                return;
+            }
             let Some(index) = self.root_of(&path) else {
                 continue;
             };
@@ -544,6 +561,9 @@ impl Worker {
                 let mut files = Vec::new();
                 scan::for_each_file(&path, &mut |file, _| files.push(file.to_owned()));
                 for file in files {
+                    if self.stopping() {
+                        return;
+                    }
                     self.process(index, &file);
                     std::thread::yield_now();
                 }

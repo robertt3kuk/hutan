@@ -1,7 +1,11 @@
 //! The daemon's own menu bar item (M6-D): while `hutand` runs from `Hutan.app` and no desktop is
 //! connected, it shows the orangutan glyph in the menu bar, so a daemon that outlives the app
-//! (keep running, start at login) is never invisible. While a desktop is connected the desktop's
+//! (keep running, start at login) is never invisible. While a desktop is there the desktop's
 //! item is the one on the menu bar (it is richer) and the daemon shows none: one icon at a time.
+//! "There" is a desktop *process*, not only a connection: a desktop that is reconnecting (the
+//! daemon restarted, the connection dropped) still has its item on the menu bar, so the daemon
+//! waits until neither a connection nor the desktop's single-instance socket
+//! ([`DESKTOP_SOCKET_FILE`]) answers.
 //!
 //! Layers, like [`notify_native`](crate::notify_native):
 //!
@@ -15,8 +19,8 @@
 //!   work to the main thread's run loop that also hosts the native notifications.
 //! - [`AppLauncher`] is the seam to "open Hutan.app" ([`cocoa::OpenApp`] starts the app's
 //!   desktop executable).
-//! - [`DesktopPresence`] counts the handshaken `desktop` clients; [`start`] is the task that
-//!   follows it.
+//! - [`DesktopPresence`] counts the handshaken `desktop` clients; [`desktop_running`] asks whether
+//!   a desktop process runs without being connected; [`start`] is the task that follows both.
 //!
 //! **Who needs the user.** Entries are one per session, strongest first: a permission request
 //! waits for an answer (`approval.list`), an agent's question waits (`question.list`), an agent is blocked (the session's agent report), or
@@ -75,6 +79,14 @@ const DETAIL_MAX_CHARS: usize = 60;
 /// a desktop that is starting (it started the daemon) or reconnecting after a dropped
 /// connection is back sooner, and the menu bar never shows two Hutan icons.
 pub const SHOW_DELAY: Duration = Duration::from_millis(750);
+/// How often the daemon looks again while a desktop process runs without a connection (see
+/// [`desktop_running`]): the item appears once that desktop is gone.
+pub const DESKTOP_POLL: Duration = Duration::from_secs(1);
+/// The single-instance socket the desktop listens on in the data folder
+/// (`hutan_desktop::instance::SOCKET_FILE`; the desktop's tests pin the name).
+pub const DESKTOP_SOCKET_FILE: &str = "desktop.sock";
+/// Longest a probe of the desktop's socket may take.
+const DESKTOP_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 /// How long after a click the daemon keeps waiting for a desktop window to ask it to show what
 /// was chosen.
 pub const OPEN_PATIENCE: Duration = Duration::from_secs(30);
@@ -277,6 +289,8 @@ pub struct MenuBar {
     pub show_delay: Duration,
     /// [`OPEN_PATIENCE`].
     pub open_patience: Duration,
+    /// [`DESKTOP_POLL`].
+    pub desktop_poll: Duration,
 }
 
 impl MenuBar {
@@ -286,6 +300,7 @@ impl MenuBar {
             launcher,
             show_delay: SHOW_DELAY,
             open_patience: OPEN_PATIENCE,
+            desktop_poll: DESKTOP_POLL,
         }
     }
 }
@@ -340,6 +355,8 @@ pub(crate) struct Inputs {
     pub ui: Arc<UiHub>,
     /// The user's `settings.toml`, for `app.start_at_login`.
     pub settings_file: PathBuf,
+    /// The desktop's single-instance socket ([`DESKTOP_SOCKET_FILE`] in the data folder).
+    pub desktop_socket: PathBuf,
     pub shutdown: CancellationToken,
 }
 
@@ -364,6 +381,7 @@ struct Service {
     launcher: Arc<dyn AppLauncher>,
     show_delay: Duration,
     open_patience: Duration,
+    desktop_poll: Duration,
     desktops: watch::Receiver<u32>,
     changes: mpsc::Receiver<()>,
     notify: Arc<NotifyService>,
@@ -371,6 +389,7 @@ struct Service {
     bus: Arc<EventBus>,
     ui: Arc<UiHub>,
     settings_file: PathBuf,
+    desktop_socket: PathBuf,
     shutdown: CancellationToken,
     /// On the menu bar now, with this content.
     shown: Option<MenuModel>,
@@ -392,6 +411,7 @@ impl Service {
             bus,
             ui,
             settings_file,
+            desktop_socket,
             shutdown,
         } = inputs;
         Self {
@@ -399,6 +419,7 @@ impl Service {
             launcher: menu_bar.launcher,
             show_delay: menu_bar.show_delay,
             open_patience: menu_bar.open_patience,
+            desktop_poll: menu_bar.desktop_poll,
             desktops,
             changes,
             notify,
@@ -406,6 +427,7 @@ impl Service {
             bus,
             ui,
             settings_file,
+            desktop_socket,
             shutdown,
             shown: None,
             away_since_ms: 0,
@@ -460,7 +482,13 @@ impl Service {
                     if show_at.is_some_and(|at| at <= now) {
                         show_at = None;
                         if !self.desktop_present() {
-                            self.refresh().await;
+                            if desktop_running(&self.desktop_socket).await {
+                                // A desktop with no connection (reconnecting, the daemon just
+                                // restarted) has its own item on the menu bar: look again later.
+                                show_at = Some(Instant::now() + self.desktop_poll);
+                            } else {
+                                self.refresh().await;
+                            }
                         }
                     }
                     if refresh_at.is_some_and(|at| at <= now) {
@@ -757,6 +785,20 @@ impl Service {
         );
         self.shutdown.cancel();
     }
+}
+
+/// Whether a desktop process runs on this data folder: its single-instance socket accepts a
+/// connection (a socket file left by a crashed desktop refuses). Connecting and hanging up
+/// asks it nothing; the desktop reads that as a request it does not know and goes on.
+pub async fn desktop_running(socket: &std::path::Path) -> bool {
+    matches!(
+        tokio::time::timeout(
+            DESKTOP_PROBE_TIMEOUT,
+            tokio::net::UnixStream::connect(socket)
+        )
+        .await,
+        Ok(Ok(_))
+    )
 }
 
 async fn next_choice(choices: &mut Option<mpsc::Receiver<MenuChoice>>) -> Option<MenuChoice> {

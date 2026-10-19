@@ -181,5 +181,6 @@ pub fn menu_bar(
         launcher: launcher.clone(),
         show_delay,
         open_patience,
+        desktop_poll: show_delay,
     }
 }

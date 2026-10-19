@@ -103,6 +103,10 @@ impl Render for Workbench {
         self.rescue_orphaned_focus(window, cx);
         self.sync_assistant_focus(window, cx);
         let edge_targets = self.render_hidden_dock_targets(cx);
+        let handles: Vec<AnyElement> = DockPosition::ALL
+            .into_iter()
+            .filter_map(|pos| self.render_dock_handle(pos, cx))
+            .collect();
         let palette = self.render_palette(window, cx);
         let picker = self.render_picker(window, cx);
         let agent_picker = self.render_agent_picker(window, cx);
@@ -174,6 +178,7 @@ impl Render for Workbench {
         .children(daemon_popover)
         .children(recovery)
         .children(edge_targets)
+        .children(handles)
         .children(palette)
         .children(picker)
         .children(agent_picker)
@@ -1111,40 +1116,6 @@ impl Workbench {
                 .into_any_element(),
         };
 
-        let handle = {
-            let base = div()
-                .id(id(format!("dock-resize-{pos:?}")))
-                .absolute()
-                .hover(move |s| s.bg(accent.opacity(0.35)))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                        this.start_dock_resize(pos, event.position);
-                        cx.stop_propagation();
-                    }),
-                );
-            match pos {
-                DockPosition::Left => base
-                    .right_0()
-                    .top_0()
-                    .h_full()
-                    .w(px(HANDLE_THICKNESS))
-                    .cursor_col_resize(),
-                DockPosition::Right => base
-                    .left_0()
-                    .top_0()
-                    .h_full()
-                    .w(px(HANDLE_THICKNESS))
-                    .cursor_col_resize(),
-                DockPosition::Bottom => base
-                    .top_0()
-                    .left_0()
-                    .w_full()
-                    .h(px(HANDLE_THICKNESS))
-                    .cursor_row_resize(),
-            }
-        };
-
         let root = div()
             .id(id(format!("dock-{pos:?}")))
             .relative()
@@ -1241,9 +1212,72 @@ impl Workbench {
                         .child(body),
                 )
                 .children(toolbar)
-                .child(handle)
                 .child(probe(&self.regions, Region::Dock(pos)))
                 .into_any_element(),
+        )
+    }
+
+    /// The drag handle of a dock's inner edge. It is a child of the workbench root, painted after
+    /// every dock and split and occluding what is under it, so nothing inside a dock (nav rows,
+    /// a cached panel's replayed hitboxes, the toolbar) can sit above it or take its click.
+    fn render_dock_handle(
+        &mut self,
+        pos: DockPosition,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let dock = self.state.docks.get(pos);
+        if !dock.visible {
+            return None;
+        }
+        let size = dock.size;
+        let accent = self.theme.accent;
+        let status_h = self.density.ui().status_bar;
+        let base = div()
+            .id(id(format!("dock-resize-{pos:?}")))
+            .absolute()
+            .occlude()
+            .hover(move |s| s.bg(accent.opacity(0.35)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    this.start_dock_resize(pos, event.position);
+                    cx.stop_propagation();
+                }),
+            );
+        let left = self
+            .state
+            .docks
+            .left
+            .visible
+            .then_some(self.state.docks.left.size);
+        let right = self
+            .state
+            .docks
+            .right
+            .visible
+            .then_some(self.state.docks.right.size);
+        Some(
+            match pos {
+                DockPosition::Left => base
+                    .left(px(size - HANDLE_THICKNESS))
+                    .top_0()
+                    .bottom(px(status_h))
+                    .w(px(HANDLE_THICKNESS))
+                    .cursor_col_resize(),
+                DockPosition::Right => base
+                    .right(px(size - HANDLE_THICKNESS))
+                    .top_0()
+                    .bottom(px(status_h))
+                    .w(px(HANDLE_THICKNESS))
+                    .cursor_col_resize(),
+                DockPosition::Bottom => base
+                    .left(px(left.unwrap_or(0.0)))
+                    .right(px(right.unwrap_or(0.0)))
+                    .bottom(px(status_h + size - HANDLE_THICKNESS))
+                    .h(px(HANDLE_THICKNESS))
+                    .cursor_row_resize(),
+            }
+            .into_any_element(),
         )
     }
 

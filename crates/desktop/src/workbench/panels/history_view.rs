@@ -961,7 +961,23 @@ impl HistoryPanel {
         }
     }
 
+    /// A list lays an item out as a root with the list's width only available, so the wrapper
+    /// takes that width and stretches the entry in it (see the sessions panel).
     fn render_entry(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .child(self.render_list_entry(ix, window, cx))
+            .into_any_element()
+    }
+
+    fn render_list_entry(
         &mut self,
         ix: usize,
         _window: &mut Window,

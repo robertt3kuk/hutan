@@ -1373,3 +1373,31 @@ fn an_old_on_quit_key_is_ignored_with_a_diagnostic(cx: &mut TestAppContext) {
         Some("Quit Hutan and stop 1 live session?".to_owned())
     );
 }
+
+#[gpui::test]
+fn quitting_from_the_menu_bar_with_live_sessions_brings_a_background_window_forward(
+    cx: &mut TestAppContext,
+) {
+    // The item's Quit (or the Dock's) is clicked while Hutan is behind other apps: the question
+    // is in the window, so the window has to come forward or the click looks like it did nothing.
+    let daemon = TestDaemon::start();
+    let _session = daemon.sh("sleep 600");
+    let (tx, rx) = event_channel();
+    let fakes = Fakes::new();
+    let mut mac = fakes.services();
+    mac.events = Some(rx);
+    let (view, cx) = open_with_services(cx, &daemon, mac);
+    wait_synced(&view, cx, 1);
+    cx.deactivate_window();
+    assert!(!cx.update(|window, _| window.is_window_active()));
+
+    tx.try_send(MacEvent::Menu(MenuCommand::Quit)).unwrap();
+    wait_until(cx, "the question", |cx| {
+        view.read_with(cx, |wb, _| wb.modal().is_some())
+    });
+    assert!(
+        cx.update(|window, _| window.is_window_active()),
+        "the window came forward with the question"
+    );
+    assert!(!view.read_with(cx, |wb, _| wb.quitting()));
+}

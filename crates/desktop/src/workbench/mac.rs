@@ -502,6 +502,11 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         if self.daemon.quitting {
+            // Everything else is moot while the app is going away; a Quit is asked again (see
+            // `request_quit`).
+            if matches!(event, MacEvent::Menu(MenuCommand::Quit)) {
+                self.request_quit(window, cx);
+            }
             return;
         }
         match event {

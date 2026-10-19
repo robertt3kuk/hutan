@@ -546,6 +546,10 @@ impl Workbench {
     /// While disconnected there is no daemon to stop and the app quits at once.
     pub fn request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.daemon.quitting {
+            // The first Quit has settled everything and asked the platform to end the process;
+            // it is still here. Ask again rather than leave the user with an item that does
+            // nothing.
+            cx.quit();
             return;
         }
         if !self.daemon_connected(cx) || self.daemon_outlives_app() {
@@ -562,8 +566,9 @@ impl Workbench {
     /// "Quit Hutan and stop N sessions?": Stop Sessions & Quit, Keep Running in Background
     /// (turns `app.keep_running` on, so the daemon stays; no login item), Cancel.
     fn open_quit_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Quitting from the menu bar item while the window is hidden: the question needs it.
-        self.show_if_hidden(window, cx);
+        // Quit from the menu bar item or the Dock while the window is hidden, minimised or behind
+        // other apps: the question is in that window, so the window comes forward with it.
+        self.bring_forward(window, cx);
         let live = self.live_sessions(cx);
         let modal = Modal {
             title: SharedString::from(format!("Quit Hutan and stop {}?", sessions_phrase(live))),
