@@ -22,6 +22,10 @@ pub struct StartSpec {
     pub sandbox: SandboxMode,
     /// Continue this provider conversation instead of starting a new one.
     pub resume_thread_id: Option<String>,
+    /// Text the agent is given as instructions of the thread, next to its own (Codex
+    /// `developerInstructions` on `thread/start` and `thread/resume`, MW-2: the memory the user
+    /// approved). ACP agents take their instructions on the command line and ignore it.
+    pub developer_instructions: Option<String>,
 }
 
 /// The conversation that is open after [`StartSpec`] was applied.

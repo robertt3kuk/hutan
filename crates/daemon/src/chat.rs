@@ -21,9 +21,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
+use futures::future::BoxFuture;
 use hutan_agents::{
     AcpAdapter, AcpSession, AdapterMessage, AgentAdapter, AgentError, CodexAppServerAdapter,
-    CodexConfig, CodexSession, ExitInfo, ImageBlock, MessageExtras, StartSpec, Started,
+    CodexConfig, CodexSession, ContextBlock, ExitInfo, ImageBlock, MessageExtras, StartSpec,
+    Started,
 };
 use hutan_core::agent::{DecidedBy, NoticeLevel, PermissionOutcome};
 use hutan_core::question::{self, QuestionResponse};
@@ -50,8 +52,11 @@ use crate::bus::EventBus;
 use crate::config::AssistantMode;
 use crate::context::Attached;
 use crate::direct::{DirectSession, Target};
-use crate::harness::{Harnesses, assistant_profile, is_harness_agent};
+use crate::harness::{
+    AGENT_CLAUDE, AGENT_OMP, Harnesses, assistant_profile, is_harness_agent, omp_assistant_prompt,
+};
 use crate::mcp_wiring::{McpServerSpec, McpWiring};
+use crate::memory::{MemoryContext, PreparedDelta, StartContext};
 use crate::partial::{Flush, PARTIAL_INTERVAL, Partials};
 use crate::providers::ProviderService;
 use crate::registry::{self, ChatNotifier};
@@ -133,6 +138,15 @@ enum Backend {
     Direct(Arc<DirectSession>),
 }
 
+/// The name a harness conversation's memory snapshot records as its backend.
+fn harness_backend(agent: &str) -> &'static str {
+    match agent {
+        AGENT_OMP => "omp",
+        AGENT_CLAUDE => "claude",
+        _ => "codex",
+    }
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // The guarded data is never left half-updated across a panic point.
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -148,13 +162,14 @@ fn millis(duration: Duration) -> u64 {
 pub trait ApprovalSource: Send + Sync + std::fmt::Debug {
     /// The pending approvals, optionally of one session.
     fn list(&self, session: Option<SessionId>) -> Vec<ApprovalInfo>;
-    /// Answers `approval` when it is the source's: `None` when it is not.
+    /// Answers `approval` when it is the source's: `None` when it is not. The answer may take
+    /// work (a memory proposal is applied), so it is a future.
     fn respond(
         &self,
         approval: ApprovalId,
         option_id: String,
         client: Option<ClientKind>,
-    ) -> Option<Result<(), ErrorBody>>;
+    ) -> Option<BoxFuture<'static, Result<(), ErrorBody>>>;
 }
 
 /// Why an agent could not be started, and whether the agent refused to continue the stored
@@ -226,6 +241,13 @@ struct Live {
     /// When the session last did something: started, ended a turn, had an approval or a
     /// question answered.
     active_at: Mutex<Instant>,
+    /// A Mawas conversation: it is given the memory the user approved (`crate::memory`), and a
+    /// delta of it when the memory moved between turns.
+    mawas: bool,
+    /// Memory the conversation's first turn carries because its backend has no instruction
+    /// channel of its own (Claude Code): taken by the first `chat.send`, put back when that
+    /// send fails.
+    first_turn: Mutex<Option<String>>,
 }
 
 impl Live {
@@ -235,6 +257,7 @@ impl Live {
         last_seq: u64,
         assistant: bool,
         mode: AssistantMode,
+        mawas: bool,
     ) -> Arc<Self> {
         Arc::new(Self {
             id,
@@ -250,6 +273,8 @@ impl Live {
             mode,
             sleeping: AtomicBool::new(false),
             active_at: Mutex::new(Instant::now()),
+            mawas,
+            first_turn: Mutex::new(None),
         })
     }
 
@@ -272,6 +297,37 @@ struct Delivery {
     meta: Option<Vec<AttachmentMeta>>,
     /// Temporary files holding clipboard images for the agent; removed when the turn ends.
     temp_files: Vec<PathBuf>,
+}
+
+/// What Hutan adds to one turn of a Mawas conversation (`crate::memory`): context blocks that
+/// are Hutan's, never text the user typed.
+#[derive(Debug, Default)]
+struct TurnMemory {
+    blocks: Vec<ContextBlock>,
+    /// What the journal says about them.
+    notices: Vec<String>,
+    /// The delta to record once the turn is accepted.
+    delta: Option<PreparedDelta>,
+    /// The first-turn block taken from the session, put back when the send fails.
+    first_turn: Option<String>,
+}
+
+impl TurnMemory {
+    /// `text` followed by each block, for backends that take one text (Codex, direct chats).
+    fn appended_to(&self, mut text: String) -> String {
+        for block in &self.blocks {
+            text.push_str("\n\n");
+            text.push_str(&block.text);
+        }
+        text
+    }
+
+    /// The send failed: nothing was delivered.
+    fn undo(&self, live: &Live) {
+        if let Some(text) = &self.first_turn {
+            *lock(&live.first_turn) = Some(text.clone());
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -311,7 +367,9 @@ pub struct ChatManager {
     questions: Mutex<HashMap<QuestionId, PendingQuestion>>,
     /// Model catalogs by agent.
     models: Mutex<HashMap<String, (Instant, Vec<ModelInfo>)>>,
-    external: Mutex<Option<Weak<dyn ApprovalSource>>>,
+    external: Mutex<Vec<Weak<dyn ApprovalSource>>>,
+    /// Mawas's memory (MW-2): what a conversation is given. Weak, like `external`.
+    memory: Mutex<Option<Weak<dyn MemoryContext>>>,
     mcp: OnceLock<McpWiring>,
     /// `<home>/tmp`: where clipboard images wait for an agent that reads images from disk.
     tmp_dir: PathBuf,
@@ -438,7 +496,8 @@ impl ChatManager {
             approvals: Mutex::new(HashMap::new()),
             questions: Mutex::new(HashMap::new()),
             models: Mutex::new(HashMap::new()),
-            external: Mutex::new(None),
+            external: Mutex::new(Vec::new()),
+            memory: Mutex::new(None),
             mcp: OnceLock::new(),
             tmp_dir,
         });
@@ -461,15 +520,27 @@ impl ChatManager {
         self.max_context_chars.store(chars, Ordering::Relaxed);
     }
 
-    /// The pending approvals of another service (the control gate, protocol 0.21) that
-    /// `approval.list` and `approval.respond` serve next to the agents' own. Weak: the service
-    /// owns the registry that owns this manager.
-    pub(crate) fn set_external_approvals(&self, source: Weak<dyn ApprovalSource>) {
-        *lock(&self.external) = Some(source);
+    /// Pending approvals of another service (the control gate, protocol 0.21; Mawas's memory
+    /// proposals, 0.32) that `approval.list` and `approval.respond` serve next to the agents'
+    /// own. Weak: the services own the registry that owns this manager.
+    pub(crate) fn add_external_approvals(&self, source: Weak<dyn ApprovalSource>) {
+        lock(&self.external).push(source);
     }
 
-    fn external_approvals(&self) -> Option<Arc<dyn ApprovalSource>> {
-        lock(&self.external).as_ref().and_then(Weak::upgrade)
+    fn external_approvals(&self) -> Vec<Arc<dyn ApprovalSource>> {
+        lock(&self.external)
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect()
+    }
+
+    /// Mawas's memory: what its conversations are given at their start and between turns.
+    pub(crate) fn set_memory_context(&self, memory: Weak<dyn MemoryContext>) {
+        *lock(&self.memory) = Some(memory);
+    }
+
+    fn memory_context(&self) -> Option<Arc<dyn MemoryContext>> {
+        lock(&self.memory).as_ref().and_then(Weak::upgrade)
     }
 
     /// How `hutan mcp` is described to the agents of this daemon (protocol 0.21): set once at
@@ -837,12 +908,20 @@ impl ChatManager {
             .into());
         }
         let last = self.journal_end(id).await?;
+        // Mawas's memory is the thread's developer instructions (`developerInstructions`),
+        // next to Codex's own base instructions.
+        let memory = if spec.assistant {
+            self.start_memory(id, "codex", spec).await
+        } else {
+            None
+        };
         let start = StartSpec {
             cwd,
             model: spec.model.clone(),
             approval_policy: spec.approval_policy,
             sandbox: spec.sandbox,
             resume_thread_id: spec.thread_id.clone(),
+            developer_instructions: memory.map(|memory| memory.text),
         };
         let codex = self.codex_for(id).await;
         let CodexSession {
@@ -858,6 +937,7 @@ impl ChatManager {
             last,
             spec.assistant,
             self.assistant_policy().mode,
+            spec.assistant,
         );
         self.adopt(&live);
         info!(session = %id, model = %started.model, resumed = started.resumed, "chat agent started");
@@ -876,11 +956,25 @@ impl ChatManager {
         let harnesses = self.harnesses.clone();
         let agent = spec.agent.clone();
         let mode = spec.assistant.then(|| self.assistant_policy().mode);
-        let config = tokio::task::spawn_blocking(move || harnesses.acp_config(&agent, mode))
-            .await
-            .map_err(|e| {
-                ErrorBody::new(ErrorCode::Internal, format!("locating the agent: {e}"))
-            })??;
+        // Mawas's memory: OMP gets it in a private prompt file named on its command line (never
+        // in argv itself), Claude Code on its first turn, below.
+        let memory = if spec.assistant {
+            self.start_memory(id, harness_backend(&spec.agent), spec)
+                .await
+        } else {
+            None
+        };
+        let prompt_file = match (&memory, mode) {
+            (Some(memory), Some(mode)) if spec.agent == AGENT_OMP => {
+                self.omp_prompt_file(memory, mode)
+            }
+            _ => None,
+        };
+        let config = tokio::task::spawn_blocking(move || {
+            harnesses.acp_config_with(&agent, mode, prompt_file.as_deref())
+        })
+        .await
+        .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("locating the agent: {e}")))??;
         let last = self.journal_end(id).await?;
         let start = StartSpec {
             cwd,
@@ -888,6 +982,7 @@ impl ChatManager {
             approval_policy: spec.approval_policy,
             sandbox: spec.sandbox,
             resume_thread_id: spec.thread_id.clone(),
+            developer_instructions: None,
         };
         // The user's `[mcp.*]` servers, and Hutan's own (`[control] mcp`), which carries this
         // session's id so that its requests are attributed to it.
@@ -912,7 +1007,16 @@ impl ChatManager {
             last,
             spec.assistant,
             self.assistant_policy().mode,
+            spec.assistant,
         );
+        if spec.agent == AGENT_CLAUDE
+            && let Some(memory) = memory
+            && memory.fresh
+        {
+            // Claude Code has no instruction channel Hutan can rely on: the memory rides on the
+            // conversation's first turn, labelled as Hutan's.
+            *lock(&live.first_turn) = Some(memory.text);
+        }
         self.adopt(&live);
         info!(session = %id, agent = %spec.agent, model = %started.model, resumed = started.resumed, "chat harness started");
         tokio::spawn(self.clone().pump(live, events));
@@ -924,6 +1028,33 @@ impl ChatManager {
         let mut running = lock(&self.live);
         running.insert(live.id, live.clone());
         lock(&self.asleep).remove(&live.id);
+    }
+
+    /// The memory a Mawas conversation starts with (`None`: memory is off, or there is nothing
+    /// to give).
+    async fn start_memory(
+        &self,
+        id: SessionId,
+        backend: &'static str,
+        spec: &ChatSpec,
+    ) -> Option<StartContext> {
+        let memory = self.memory_context()?;
+        memory.open(id, backend, spec.thread_id.is_some()).await
+    }
+
+    /// The prompt file of an OMP assistant: its Mawas prompt for `mode` and the memory, private
+    /// to the daemon. `None` (the plain prompt on the command line) when it cannot be written:
+    /// the assistant still starts, without memory.
+    fn omp_prompt_file(&self, memory: &StartContext, mode: AssistantMode) -> Option<PathBuf> {
+        let context = self.memory_context()?;
+        let content = format!("{}\n\n{}\n", omp_assistant_prompt(mode), memory.text);
+        match context.prompt_file(&memory.snapshot_id, &content) {
+            Ok(path) => Some(path),
+            Err(error) => {
+                warn!(%error, "could not write the memory prompt file; the assistant starts without memory");
+                None
+            }
+        }
     }
 
     /// Opens a direct chat: no process, just the session's target and its journal.
@@ -959,6 +1090,16 @@ impl ChatManager {
                 })
                 .unwrap_or_default();
         let (tx, events) = mpsc::channel(256);
+        // Mawas's memory is a system message ahead of the conversation, fixed for this start.
+        let mut system_prompt = spec.system_prompt.clone();
+        if spec.agent == AGENT_ASSISTANT
+            && let Some(memory) = self.start_memory(id, "provider", spec).await
+        {
+            system_prompt = Some(match system_prompt {
+                Some(prompt) => format!("{prompt}\n\n{}", memory.text),
+                None => memory.text,
+            });
+        }
         let session = DirectSession::new(
             id,
             self.storage.clone(),
@@ -968,7 +1109,7 @@ impl ChatManager {
             Target {
                 provider_id: provider_id.clone(),
                 model: model.clone(),
-                system_prompt: spec.system_prompt.clone(),
+                system_prompt,
             },
             usage,
         );
@@ -978,6 +1119,7 @@ impl ChatManager {
             last,
             false,
             AssistantMode::default(),
+            spec.agent == AGENT_ASSISTANT,
         );
         self.adopt(&live);
         info!(session = %id, provider = %provider_id, %model, "direct chat started");
@@ -1110,6 +1252,9 @@ impl ChatManager {
                 ));
             }
         };
+        // Mawas's memory: the first turn of a Claude Code conversation carries it, and any turn
+        // carries what changed since the conversation last heard of it.
+        let memory = self.turn_memory(&live).await;
         let started = match &live.backend {
             Backend::Agent(adapter) => {
                 // ACP harnesses take each text attachment as an embedded resource and each
@@ -1134,6 +1279,15 @@ impl ChatManager {
                         Some(attached.meta),
                     ),
                     None => (text, MessageExtras::default(), None),
+                };
+                // What Hutan adds (Mawas's memory) is labelled as Hutan's, apart from what the
+                // user typed and attached: a resource of its own for the ACP harnesses, a
+                // delimited block after the message for Codex.
+                let text = if codex {
+                    memory.appended_to(text)
+                } else {
+                    extras.context.splice(0..0, memory.blocks.iter().cloned());
+                    text
                 };
                 let prepared = if codex {
                     self.give_images_a_file(&live, &mut extras.images).await
@@ -1170,12 +1324,64 @@ impl ChatManager {
                     }
                 }
             }
-            Backend::Direct(session) => session.send(text, attached).await,
+            Backend::Direct(session) => {
+                let text = memory.appended_to(text);
+                session.send(text, attached).await
+            }
         };
         if started.is_err() {
             live.busy.store(false, Ordering::Release);
+            memory.undo(&live);
+        } else {
+            self.memory_delivered(&live, memory).await;
         }
         started
+    }
+
+    /// What Hutan adds to the turn `live` is about to start.
+    async fn turn_memory(&self, live: &Live) -> TurnMemory {
+        let mut memory = TurnMemory::default();
+        if !live.mawas {
+            return memory;
+        }
+        if let Some(text) = lock(&live.first_turn).take() {
+            memory.blocks.push(ContextBlock {
+                label: "Hutan memory".to_owned(),
+                text: text.clone(),
+            });
+            memory.notices.push(
+                "Hutan memory added to this conversation's first turn (the backend has no instruction channel of its own).".to_owned(),
+            );
+            memory.first_turn = Some(text);
+        }
+        if let Some(context) = self.memory_context()
+            && let Some(delta) = context.prepare_delta(live.id).await
+        {
+            memory.blocks.push(ContextBlock {
+                label: "Hutan memory update".to_owned(),
+                text: delta.text.clone(),
+            });
+            memory.notices.push(delta.notice.clone());
+            memory.delta = Some(delta);
+        }
+        memory
+    }
+
+    /// The turn that carried `memory` was accepted: the delta is now what the conversation
+    /// knows, and the journal says what Hutan added.
+    async fn memory_delivered(&self, live: &Live, memory: TurnMemory) {
+        if let Some(delta) = memory.delta
+            && let Some(context) = self.memory_context()
+        {
+            context.commit_delta(delta).await;
+        }
+        for message in memory.notices {
+            let notice = AgentEventDraft::new(AgentEventKind::Notice {
+                level: NoticeLevel::Info,
+                message,
+            });
+            self.handle(live, notice).await;
+        }
     }
 
     pub async fn interrupt(&self, id: SessionId) -> Result<(), ErrorBody> {
@@ -1252,7 +1458,7 @@ impl ChatManager {
             .map(|p| p.info.clone())
             .filter(|info| session.is_none_or(|s| s == info.session_id))
             .collect();
-        if let Some(source) = self.external_approvals() {
+        for source in self.external_approvals() {
             approvals.extend(source.list(session));
         }
         approvals.sort_by(|a, b| {
@@ -1270,10 +1476,10 @@ impl ChatManager {
         option_id: String,
         client: Option<ClientKind>,
     ) -> Result<(), ErrorBody> {
-        if let Some(source) = self.external_approvals()
-            && let Some(answered) = source.respond(approval, option_id.clone(), client)
-        {
-            return answered;
+        for source in self.external_approvals() {
+            if let Some(answered) = source.respond(approval, option_id.clone(), client) {
+                return answered.await;
+            }
         }
         let session = {
             let mut approvals = lock(&self.approvals);

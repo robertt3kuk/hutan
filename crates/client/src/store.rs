@@ -112,6 +112,13 @@ pub enum Notice {
     AccountsChanged {
         harness: String,
     },
+    /// Mawas's memory changed, or a proposal arrived or was answered (`memory.changed`,
+    /// protocol 0.32): list the entries and proposals again.
+    MemoryChanged {
+        scope: hutan_protocol::memory::MemoryScope,
+        workspace: Option<WorkspaceId>,
+        scope_revision: u64,
+    },
     /// A periodic sample of the processes of the live sessions (`resources.updated`, protocol
     /// 0.18), sent while [`Connection::resources_subscribe`](crate::Connection::resources_subscribe)
     /// is in force; also the first sample after a reconnect re-subscribed. Outside the event
@@ -406,6 +413,15 @@ impl StoreState {
             Event::AccountChanged { harness } => {
                 effects.notices.push(Notice::AccountsChanged { harness });
             }
+            Event::MemoryChanged {
+                scope,
+                workspace_id,
+                scope_revision,
+            } => effects.notices.push(Notice::MemoryChanged {
+                scope,
+                workspace: workspace_id,
+                scope_revision,
+            }),
             // A stream for one subscriber, outside the replay ring and the sequence.
             Event::ResourcesUpdated { sample } => {
                 effects.notices.push(Notice::ResourcesUpdated { sample });

@@ -669,6 +669,18 @@ const DAEMON_FIELDS: &[FieldText] = &[
     ),
     field(
         "daemon",
+        "assistant.memory",
+        "Give Mawas its memory",
+        "When on, a Mawas conversation is given the entries you approved (a snapshot at its start, a short update when they change). When off, nothing of the memory is sent to any backend.",
+    ),
+    field(
+        "daemon",
+        "assistant.memory_max_entries",
+        "Most memory entries",
+        "How many active entries Mawas may remember. A new one is refused until you archive another.",
+    ),
+    field(
+        "daemon",
         "assistant.context.shell",
         "Projects: terminal output",
         "Lets the assistant of a project read the commands and output of terminals you attach to a message.",
@@ -1225,6 +1237,8 @@ pub mod words {
         SEC_ASSISTANT_THIS = "What Mawas may read in this workspace";
         SEC_ASSISTANT_THIS_HELP = "Overrides for this workspace only. Inherit follows the setting for projects.";
         SEC_ASSISTANT_LIMITS = "Attachments";
+        SEC_ASSISTANT_MEMORY = "Memory";
+        SEC_ASSISTANT_MEMORY_HELP = "What Mawas remembers because you approved it: see and edit it on the Memory page (Mawas: Memory). A model's proposals are never saved until you approve them. Archived entries are no longer given to new conversations; text already sent to a provider or kept in a transcript cannot be taken back.";
         SCOPE_GLOBAL = "Global (Home)";
         INHERIT = "Inherit";
         ALLOW = "Allow";

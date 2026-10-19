@@ -690,6 +690,86 @@ impl Connection {
         client.control_grant_revoke(id).await
     }
 
+    /// True while connected to a daemon that advertised capability `memory`
+    /// ([`Client::supports_memory`]); false when disconnected.
+    pub fn supports_memory(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_memory())
+    }
+
+    /// `memory.list` ([`Client::memory_list`]).
+    pub async fn memory_list(
+        &self,
+        req: hutan_protocol::memory::MemoryList,
+    ) -> Result<Vec<hutan_protocol::memory::MemoryEntry>, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.memory_list(req).await
+    }
+
+    /// `memory.history` ([`Client::memory_history`]).
+    pub async fn memory_history(
+        &self,
+        entry_id: &str,
+    ) -> Result<hutan_protocol::memory::MemoryHistory, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.memory_history(entry_id).await
+    }
+
+    /// `memory.write` ([`Client::memory_write`]).
+    pub async fn memory_write(
+        &self,
+        req: hutan_protocol::memory::MemoryWrite,
+    ) -> Result<hutan_protocol::memory::MemoryReceipt, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.memory_write(req).await
+    }
+
+    /// `memory.update` ([`Client::memory_update`]).
+    pub async fn memory_update(
+        &self,
+        req: hutan_protocol::memory::MemoryUpdate,
+    ) -> Result<hutan_protocol::memory::MemoryReceipt, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.memory_update(req).await
+    }
+
+    /// `memory.archive` ([`Client::memory_archive`]).
+    pub async fn memory_archive(
+        &self,
+        req: hutan_protocol::memory::MemoryTransition,
+    ) -> Result<hutan_protocol::memory::MemoryReceipt, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.memory_archive(req).await
+    }
+
+    /// `memory.restore` ([`Client::memory_restore`]).
+    pub async fn memory_restore(
+        &self,
+        req: hutan_protocol::memory::MemoryTransition,
+    ) -> Result<hutan_protocol::memory::MemoryReceipt, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.memory_restore(req).await
+    }
+
+    /// `memory.proposals.list` ([`Client::memory_proposals`]).
+    pub async fn memory_proposals(
+        &self,
+        include_resolved: bool,
+    ) -> Result<Vec<hutan_protocol::memory::MemoryProposal>, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.memory_proposals(include_resolved).await
+    }
+
+    /// `memory.proposals.resolve` ([`Client::memory_resolve`]).
+    pub async fn memory_resolve(
+        &self,
+        req: hutan_protocol::memory::MemoryProposalResolve,
+    ) -> Result<hutan_protocol::memory::MemoryProposalResolved, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.memory_resolve(req).await
+    }
+
     /// `assistant.reset` ([`Client::assistant_reset`]): the scope inherits its backend again.
     pub async fn assistant_reset(
         &self,

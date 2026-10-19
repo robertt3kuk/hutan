@@ -375,6 +375,14 @@ fn describe_success(mut result: Value) -> (String, Option<Value>) {
     if let Some(note) = note {
         text = format!("{note}\n{text}");
     }
+    if shown.get("status").and_then(Value::as_str) == Some("proposed")
+        && shown.get("applied") == Some(&json!(false))
+    {
+        text = format!(
+            "[This is only a PROPOSAL. It is NOT saved to memory until the user approves it in \
+             Hutan: do not tell the user it was saved, and do not rely on it.]\n{text}"
+        );
+    }
     (text, Some(result))
 }
 

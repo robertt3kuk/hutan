@@ -45,6 +45,10 @@ pub struct ThreadStartParams<'a> {
     pub sandbox: &'a str,
     /// Approvals go to the client (us), never to Codex's own reviewer.
     pub approvals_reviewer: &'static str,
+    /// Added to the thread's instructions; `baseInstructions` is left alone so that Codex keeps
+    /// its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub developer_instructions: Option<&'a str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -59,6 +63,8 @@ pub struct ThreadResumeParams<'a> {
     pub approvals_reviewer: &'static str,
     /// Hutan's journal is the history; the provider's copy is not sent back.
     pub exclude_turns: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub developer_instructions: Option<&'a str>,
 }
 
 #[derive(Debug, Serialize)]

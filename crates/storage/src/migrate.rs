@@ -88,6 +88,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "control_grants",
         sql: include_str!("../migrations/0012_control_grants.sql"),
     },
+    Migration {
+        version: 13,
+        name: "memory",
+        sql: include_str!("../migrations/0013_memory.sql"),
+    },
 ];
 
 /// Schema version recorded in the database; 0 for a database without `app_meta`.

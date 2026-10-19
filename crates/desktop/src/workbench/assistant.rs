@@ -13,7 +13,7 @@ use hutan_core::SessionId;
 use super::actions;
 use super::chat::ContextChip;
 use super::model::PanelId;
-use super::panels::{AssistantPanel, MawasMode, ScopeKey};
+use super::panels::{AssistantPanel, MawasMode, MemoryPanel, ScopeKey};
 use super::view::Workbench;
 
 impl Workbench {
@@ -28,9 +28,11 @@ impl Workbench {
     /// global shortcut go (or brings them back).
     pub(crate) fn apply_assistant_enabled(&mut self, cx: &mut Context<Self>) {
         if !self.assistant_enabled() {
-            let id = PanelId::new("assistant");
-            self.try_mutate(cx, |s| s.close_panel(&id));
-            self.panel_views.remove(&id);
+            for page in ["assistant", "mawas-memory"] {
+                let id = PanelId::new(page);
+                self.try_mutate(cx, |s| s.close_panel(&id));
+                self.panel_views.remove(&id);
+            }
         }
         self.commands = std::rc::Rc::new(super::actions::commands(
             &self.presets,
@@ -72,6 +74,39 @@ impl Workbench {
             panel.ensure_open(cx);
             panel.focus_composer(cx);
         });
+    }
+
+    /// ⌘K "Mawas: Memory" (and the Today rail's link): the Memory page, a tab of the center (one
+    /// instance, shown where it is when it is open already), listing what Mawas remembers.
+    pub fn open_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.memory_panel(window, cx) else {
+            return;
+        };
+        panel.update(cx, |panel, cx| panel.refresh(cx));
+    }
+
+    /// "Edit & approve" of a memory proposal in Today: the Memory page with that proposal's
+    /// editor open.
+    pub fn edit_memory_proposal(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.memory_panel(window, cx) else {
+            return;
+        };
+        let id = id.to_owned();
+        panel.update(cx, |panel, cx| panel.edit_proposal_by_id(&id, cx));
+    }
+
+    fn memory_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<MemoryPanel>> {
+        if !self.assistant_enabled() {
+            self.set_notice("Mawas is off (assistant.enabled)", cx);
+            return None;
+        }
+        self.open_panel("mawas-memory", cx);
+        let view = self.panel_view(&PanelId::new("mawas-memory"), window, cx)?;
+        view.downcast::<MemoryPanel>().ok()
     }
 
     /// ⌘K "Mawas: New chat": Home, with a fresh conversation in its scope.

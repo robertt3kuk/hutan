@@ -27,6 +27,9 @@ const COMMAND_CHARS: usize = 40;
 /// What the daemon appends to a message that carries attachments (`context::assemble`).
 const APPENDIX_MARKER: &str = "--- attached context (read-only";
 
+/// What the daemon opens a block of Mawas's memory with (`crate::memory::BLOCK_MARKER`).
+const MEMORY_MARKER: &str = "--- Hutan memory";
+
 /// Whether `agent` (`chat.agent`) is a gateway chat — a provider's chat API, no tools, no
 /// approvals: a direct chat or an assistant. Both switch models and report provider errors.
 pub fn is_gateway_chat(agent: &str) -> bool {
@@ -418,9 +421,15 @@ pub fn clamp_hits(hits: u32) -> u32 {
 // ---- journaled messages ------------------------------------------------------------------
 
 /// A user message as the journal has it, split into what the user typed and the context the
-/// daemon appended (`None` when the message has none).
+/// daemon appended (`None` when the message has none): attached context, and Hutan's own
+/// additions to a Mawas turn (the memory the user approved, `--- Hutan memory …`), which the
+/// user did not type.
 pub fn split_context(message: &str) -> (&str, Option<&str>) {
-    match message.find(&format!("\n\n{APPENDIX_MARKER}")) {
+    let at = [APPENDIX_MARKER, MEMORY_MARKER]
+        .iter()
+        .filter_map(|marker| message.find(&format!("\n\n{marker}")))
+        .min();
+    match at {
         Some(at) => (&message[..at], Some(message[at + 2..].trim_end())),
         None => (message, None),
     }
@@ -429,6 +438,19 @@ pub fn split_context(message: &str) -> (&str, Option<&str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_hutan_added_to_a_turn_is_not_what_the_user_typed() {
+        let message = "why?\n\n--- Hutan memory update (added by Hutan to this turn; the user did not type this) ---\nAdded:\n- fact · global: x\n--- end of Hutan memory update ---";
+        let (typed, context) = split_context(message);
+        assert_eq!(typed, "why?");
+        assert!(context.unwrap().starts_with("--- Hutan memory update"));
+        // Attached context and memory together: both are the daemon's, from the first marker on.
+        let both =
+            "why?\n\n--- Hutan memory ---\nm\n\n--- attached context (read-only, redacted) ---\nc";
+        assert_eq!(split_context(both).0, "why?");
+        assert_eq!(split_context("just words"), ("just words", None));
+    }
 
     #[test]
     fn chips_say_kind_source_and_bounds() {

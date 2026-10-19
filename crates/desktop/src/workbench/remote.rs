@@ -349,7 +349,7 @@ impl Workbench {
     fn openable_panels(&self) -> Vec<String> {
         self.panels
             .iter()
-            .filter(|s| self.assistant_enabled() || s.id.as_str() != "assistant")
+            .filter(|s| self.assistant_enabled() || !actions::is_mawas_page(s.id.as_str()))
             .map(|s| s.id.to_string())
             .collect()
     }

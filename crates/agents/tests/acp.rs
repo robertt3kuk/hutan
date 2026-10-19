@@ -72,6 +72,7 @@ impl Harness {
             approval_policy: ApprovalPolicy::default(),
             sandbox: SandboxMode::default(),
             resume_thread_id: resume.map(str::to_owned),
+            developer_instructions: None,
         }
     }
 

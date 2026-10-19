@@ -1063,6 +1063,7 @@ pub async fn list_models(config: &AcpConfig, cwd: PathBuf) -> Result<Vec<ModelIn
         approval_policy: hutan_core::ApprovalPolicy::default(),
         sandbox: hutan_core::SandboxMode::default(),
         resume_thread_id: None,
+        developer_instructions: None,
     };
     let session = AcpAdapter::start(config, &spec, None, &[]).await?;
     let models = session.models.clone();

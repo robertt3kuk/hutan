@@ -9,10 +9,15 @@ use super::view::Workbench;
 use crate::sessions::UiOpenRequested;
 
 impl Workbench {
-    /// Whether Mawas Home is on screen: the active tab of a pane outside the overview (or, when
-    /// the user moved it there, the active panel of a visible dock).
+    /// Whether Mawas Home is on screen.
     fn assistant_visible(&self) -> bool {
-        let id = PanelId::new("assistant");
+        self.page_visible("assistant")
+    }
+
+    /// Whether the page `panel` is on screen: the active tab of a pane outside the overview (or,
+    /// when the user moved it there, the active panel of a visible dock).
+    fn page_visible(&self, panel: &str) -> bool {
+        let id = PanelId::new(panel);
         let docked = [
             DockPosition::Left,
             DockPosition::Right,
@@ -41,6 +46,10 @@ impl Workbench {
         // A page that is not on screen does no work: it hears of the store only when shown.
         if let Some(panel) = self.panel::<AssistantPanel>("assistant") {
             panel.update(cx, |panel, cx| panel.set_visible(visible, cx));
+        }
+        let memory_visible = self.page_visible("mawas-memory");
+        if let Some(panel) = self.panel::<super::panels::MemoryPanel>("mawas-memory") {
+            panel.update(cx, |panel, cx| panel.set_visible(memory_visible, cx));
         }
         let session = (window.is_window_active() && visible)
             .then(|| self.panel::<AssistantPanel>("assistant"))

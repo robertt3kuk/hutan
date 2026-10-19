@@ -34,6 +34,7 @@ use crate::config::{
 };
 use crate::control::ControlService;
 use crate::history::HistoryService;
+use crate::memory::MemoryService;
 use crate::notify::NotifyService;
 use crate::registry::RegistryHandle;
 use crate::tasks::TaskService;
@@ -360,6 +361,19 @@ fn build_specs() -> Vec<Spec> {
             },
             Group::Assistant,
             |c| int_value(u64::from(c.assistant.max_actions_per_turn)),
+        ),
+        live("assistant.memory", Kind::Bool, Group::Assistant, |c| {
+            json!(c.assistant.memory)
+        }),
+        live(
+            "assistant.memory_max_entries",
+            Kind::Int {
+                min: Some(1),
+                max: Some(10_000),
+                only: &[],
+            },
+            Group::Assistant,
+            |c| int_value(u64::from(c.assistant.memory_max_entries)),
         ),
     ]);
     permission_specs!(specs, context);
@@ -1109,6 +1123,7 @@ pub struct SettingsService {
     notify: Arc<NotifyService>,
     tasks: Arc<TaskService>,
     control: Arc<ControlService>,
+    memory: Arc<MemoryService>,
     registry: RegistryHandle,
     /// One edit of the file at a time.
     write: Mutex<()>,
@@ -1122,6 +1137,7 @@ pub struct Targets {
     pub notify: Arc<NotifyService>,
     pub tasks: Arc<TaskService>,
     pub control: Arc<ControlService>,
+    pub memory: Arc<MemoryService>,
     pub registry: RegistryHandle,
 }
 
@@ -1141,6 +1157,7 @@ impl SettingsService {
             notify: targets.notify,
             tasks: targets.tasks,
             control: targets.control,
+            memory: targets.memory,
             registry: targets.registry,
             write: Mutex::new(()),
         })
@@ -1267,6 +1284,7 @@ impl SettingsService {
                     fresh.assistant.max_actions_per_turn,
                 );
                 self.assistant.apply_settings(fresh.assistant.clone());
+                self.memory.apply_settings(&fresh.assistant);
             }
             Group::Control => {
                 let current = self.control.settings();
@@ -1413,6 +1431,8 @@ mod tests {
             idle_stop_secs: _,
             mode: _,
             max_actions_per_turn: _,
+            memory: _,
+            memory_max_entries: _,
             context:
                 ContextPermissions {
                     shell: _,
@@ -1470,6 +1490,8 @@ mod tests {
             "assistant.idle_stop_secs",
             "assistant.mode",
             "assistant.max_actions_per_turn",
+            "assistant.memory",
+            "assistant.memory_max_entries",
             "notify.enabled",
             "notify.min_turn_secs",
             "notify.kinds",

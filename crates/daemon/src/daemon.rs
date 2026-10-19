@@ -32,6 +32,7 @@ use crate::error::{DaemonError, MAX_SOCKET_PATH_BYTES};
 use crate::harness::Harnesses;
 use crate::history::HistoryService;
 use crate::mcp_wiring::McpWiring;
+use crate::memory::MemoryService;
 use crate::menu_bar::{self, MenuBar};
 use crate::notify::NotifyService;
 use crate::notify_native::NativePoster;
@@ -368,6 +369,13 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         registry.clone(),
         shutdown.clone(),
     );
+    let memory = MemoryService::new(
+        &settings.assistant,
+        bus.clone(),
+        registry.clone(),
+        storage.clone(),
+        &paths.base,
+    );
     let ui = UiHub::with_timeout(bus.clone(), config.ui_command_timeout);
     let menu_bar = menu_bar.map(|(menu_bar, _, changes)| {
         (
@@ -393,6 +401,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             notify: notify.clone(),
             tasks: tasks.clone(),
             control: control.clone(),
+            memory: memory.clone(),
             registry: registry.clone(),
         },
     );
@@ -408,6 +417,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             accounts,
             resources,
             control,
+            memory,
             ui,
             settings: settings_service,
         },

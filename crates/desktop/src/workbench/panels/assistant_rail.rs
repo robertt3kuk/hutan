@@ -5,8 +5,9 @@
 //!
 //! *Needs you* lists Mawas's approvals first (each with the options the daemon offered, answered
 //! in place), then other agents' approvals, questions and blocked agents. *Working* lists the
-//! agents that are running. *Upcoming* says there are no schedules yet: Memory, Skills, Schedules
-//! and Traces have no link here until those services exist.
+//! agents that are running; a memory proposal is a card with its own *Edit & approve*. *Memory*
+//! links to the Memory page; *Upcoming* says there are no schedules yet: Skills, Schedules and
+//! Traces have no link here until those services exist.
 
 use gpui::{
     AnyElement, App, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
@@ -18,7 +19,7 @@ use hutan_protocol::messages::AgentState;
 
 use super::assistant::AssistantPanel;
 use crate::sessions::{AttentionKind, SessionsStore};
-use crate::workbench::actions::OpenSession;
+use crate::workbench::actions::{EditMemoryProposal, OpenMawasMemory, OpenSession};
 use crate::workbench::chat::{ButtonKind, Look, button};
 use crate::workbench::render::probe;
 use crate::workbench::ui;
@@ -51,6 +52,9 @@ pub enum NeedsKind {
         /// Hutan's own gate asks (`PermissionKind::Control`): the transcript of the chat does
         /// not hold it, so the page shows it above the conversation too.
         control: bool,
+        /// A memory proposal (`memory.propose`): besides its options the card offers *Edit &
+        /// approve*, which opens the Memory page on it.
+        memory: bool,
     },
     /// An agent's question.
     Question { question: QuestionId },
@@ -122,6 +126,10 @@ pub fn today(store: &SessionsStore) -> Today {
                     .collect(),
                 mawas: is_mawas(approval.session_id),
                 control: approval.kind == hutan_core::agent::PermissionKind::Control,
+                memory: approval.kind == hutan_core::agent::PermissionKind::Control
+                    && approval
+                        .title
+                        .starts_with(hutan_protocol::memory::PROPOSAL_TITLE_PREFIX),
             },
         })
         .collect();
@@ -369,6 +377,26 @@ impl AssistantPanel {
             .children(needs)
             .child(heading("Working", Some(today.working.len())))
             .children(working)
+            .child(heading("Memory", None))
+            .child(
+                div()
+                    .text_color(theme.muted)
+                    .text_size(px(tokens.secondary_font_size))
+                    .child("What Mawas remembers because you approved it."),
+            )
+            .child(
+                button(
+                    "today-memory",
+                    "Open Memory",
+                    ButtonKind::Secondary,
+                    true,
+                    look,
+                )
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(OpenMawasMemory), cx);
+                })
+                .child(probe(&self.env.regions, Region::Assistant("today-memory"))),
+            )
             .child(heading("Upcoming", None))
             .child(
                 div()
@@ -390,6 +418,7 @@ impl AssistantPanel {
         let (theme, tokens) = (look.theme, look.tokens);
         let session = row.session;
         let (label, mawas) = match &row.kind {
+            NeedsKind::Approval { memory: true, .. } => ("Memory proposal", true),
             NeedsKind::Approval { mawas, .. } => {
                 (if *mawas { "Mawas asks" } else { "Approval" }, *mawas)
             }
@@ -430,9 +459,12 @@ impl AssistantPanel {
         }
         match &row.kind {
             NeedsKind::Approval {
-                approval, options, ..
+                approval,
+                options,
+                memory,
+                ..
             } => {
-                let approval = *approval;
+                let (approval, memory) = (*approval, *memory);
                 let buttons: Vec<AnyElement> = options
                     .iter()
                     .enumerate()
@@ -462,12 +494,32 @@ impl AssistantPanel {
                         .into_any_element()
                     })
                     .collect();
+                let edit = memory.then(|| {
+                    button(
+                        SharedString::from(format!("today-edit-approve-{row_index}")),
+                        "Edit & approve",
+                        ButtonKind::Secondary,
+                        true,
+                        look,
+                    )
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(EditMemoryProposal(approval.to_string())),
+                            cx,
+                        );
+                    })
+                    .child(probe(
+                        &self.env.regions,
+                        Region::AssistantItem("today-edit-approve", row_index),
+                    ))
+                });
                 card = card.child(
                     div()
                         .flex()
                         .flex_wrap()
                         .gap(px(tokens.spacing))
-                        .children(buttons),
+                        .children(buttons)
+                        .children(edit),
                 );
             }
             NeedsKind::Question { .. } | NeedsKind::Blocked | NeedsKind::Failed => {

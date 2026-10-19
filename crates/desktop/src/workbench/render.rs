@@ -535,6 +535,16 @@ impl Workbench {
             this.new_mawas_chat(window, cx);
         }))
         .on_action(
+            cx.listener(|this, _: &actions::OpenMawasMemory, window, cx| {
+                this.open_memory(window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::EditMemoryProposal, window, cx| {
+                this.edit_memory_proposal(&a.0, window, cx);
+            }),
+        )
+        .on_action(
             cx.listener(|this, a: &actions::ResumeHistoryHit, window, cx| {
                 this.resume_history_hit(a.0.clone(), window, cx);
             }),

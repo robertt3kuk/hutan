@@ -181,6 +181,11 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
                 help: "",
                 keys: &["assistant.context_budget_chars", "assistant.idle_stop_secs"],
             },
+            Section {
+                title: words::SEC_ASSISTANT_MEMORY,
+                help: words::SEC_ASSISTANT_MEMORY_HELP,
+                keys: &["assistant.memory", "assistant.memory_max_entries"],
+            },
         ],
         _ => &[],
     }

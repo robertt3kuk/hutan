@@ -28,6 +28,7 @@ use crate::conn::{ConnHandle, ConnId};
 use crate::control::{Access, ControlService};
 use crate::daemon_settings::SettingsService;
 use crate::history::HistoryService;
+use crate::memory::MemoryService;
 use crate::notify::NotifyService;
 use crate::providers::ProviderService;
 use crate::registry::RegistryHandle;
@@ -49,6 +50,7 @@ pub struct Services {
     pub accounts: Arc<AccountService>,
     pub resources: Arc<ResourceService>,
     pub control: Arc<ControlService>,
+    pub memory: Arc<MemoryService>,
     pub ui: Arc<UiHub>,
     pub settings: Arc<SettingsService>,
 }
@@ -69,6 +71,7 @@ pub struct Router {
     shutdown: CancellationToken,
     clients: Arc<AtomicU32>,
     control: Arc<ControlService>,
+    memory: Arc<MemoryService>,
     ui: Arc<UiHub>,
     settings: Arc<SettingsService>,
     /// The shutdown in progress asked to drop the stopped sessions from the restore set.
@@ -99,6 +102,7 @@ impl Router {
             shutdown,
             clients,
             control: services.control,
+            memory: services.memory,
             ui: services.ui,
             settings: services.settings,
             forget: AtomicBool::new(false),
@@ -362,6 +366,23 @@ impl Router {
             Request::ControlGrantRevoke(req) => {
                 self.control.grant_revoke(req.id)?;
                 ok(&Empty {})
+            }
+            Request::MemoryList(req) => ok(&self.memory.list(req).await?),
+            Request::MemoryHistory(req) => ok(&self.memory.history(req).await?),
+            Request::MemoryWrite(req) => ok(&self.memory.write(req, conn.client_kind()).await?),
+            Request::MemoryUpdate(req) => ok(&self.memory.update(req, conn.client_kind()).await?),
+            Request::MemoryArchive(req) => ok(&self
+                .memory
+                .transition(req, true, conn.client_kind())
+                .await?),
+            Request::MemoryRestore(req) => ok(&self
+                .memory
+                .transition(req, false, conn.client_kind())
+                .await?),
+            Request::MemoryPropose(req) => ok(&self.memory.propose(req, conn.origin()).await?),
+            Request::MemoryProposalsList(req) => ok(&self.memory.proposals(req).await?),
+            Request::MemoryProposalsResolve(req) => {
+                ok(&self.memory.resolve(req, conn.client_kind()).await?)
             }
             Request::NotifyList(_) => ok(&NotifyList {
                 intents: self.notify.list(),
@@ -675,6 +696,17 @@ fn classification(request: &Request) -> (&'static str, Access) {
         // take away what the user allowed it (ADR 0017).
         Request::ControlGrantsList(_) => ("control.grants.list", UserOnly),
         Request::ControlGrantRevoke(_) => ("control.grants.revoke", UserOnly),
+        // Mawas's memory (protocol 0.32): reading is free; what is remembered is the user's
+        // (ADR 0017): an agent only proposes, which changes nothing until the user answers.
+        Request::MemoryList(_) => ("memory.list", Read),
+        Request::MemoryHistory(_) => ("memory.history", Read),
+        Request::MemoryWrite(_) => ("memory.write", UserOnly),
+        Request::MemoryUpdate(_) => ("memory.update", UserOnly),
+        Request::MemoryArchive(_) => ("memory.archive", UserOnly),
+        Request::MemoryRestore(_) => ("memory.restore", UserOnly),
+        Request::MemoryPropose(_) => ("memory.propose", Read),
+        Request::MemoryProposalsList(_) => ("memory.proposals.list", UserOnly),
+        Request::MemoryProposalsResolve(_) => ("memory.proposals.resolve", UserOnly),
         Request::AssistantList(_) => ("assistant.list", Read),
         Request::NotifyList(_) => ("notify.list", Read),
         Request::NotifyAck(_) => ("notify.ack", Mutate),

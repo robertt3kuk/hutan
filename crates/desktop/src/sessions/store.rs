@@ -179,6 +179,13 @@ pub struct AccountsChanged {
     pub harness: String,
 }
 
+/// Emitted by [`SessionsStore`] when Mawas's memory changed or a proposal arrived or was answered
+/// (`memory.changed`, protocol 0.32): whoever lists memory asks again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryChanged {
+    pub scope_revision: u64,
+}
+
 /// Emitted by [`SessionsStore`] when the summary of what a daemon restart did to the sessions
 /// should be put in front of the user: once for each restart this window gets to know about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,6 +306,7 @@ impl EventEmitter<StoreChanged> for SessionsStore {}
 impl EventEmitter<AgentAttentionChanged> for SessionsStore {}
 impl EventEmitter<UiOpenRequested> for SessionsStore {}
 impl EventEmitter<AccountsChanged> for SessionsStore {}
+impl EventEmitter<MemoryChanged> for SessionsStore {}
 impl EventEmitter<SessionClosed> for SessionsStore {}
 impl EventEmitter<RecoverySummaryDue> for SessionsStore {}
 
@@ -650,6 +658,10 @@ impl SessionsStore {
             // again.
             Notice::AccountsChanged { harness } => cx.emit(AccountsChanged {
                 harness: harness.clone(),
+            }),
+            // The Memory page listens for itself and lists again when it is on screen.
+            Notice::MemoryChanged { scope_revision, .. } => cx.emit(MemoryChanged {
+                scope_revision: *scope_revision,
             }),
         }
     }

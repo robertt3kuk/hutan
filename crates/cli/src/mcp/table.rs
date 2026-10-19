@@ -824,6 +824,78 @@ static TOOLS: &[Tool] = &[
             )
         },
     },
+    // ---- Mawas's memory ---------------------------------------------------------------------
+    Tool {
+        name: "memory_list",
+        description: "List what Hutan remembers about the user because they approved it: profile \
+                      entries (about the user), facts (environments, projects) and notes (decisions \
+                      of one workspace), each with its id, revision (needed to propose a change), \
+                      scope, whether it is `inferred` (a model wrote it and the user has not \
+                      confirmed it) and where it came from. Newest change first in each category. \
+                      Reading is free.",
+        read_only: true,
+        call: request("memory.list"),
+        schema: || {
+            object(
+                json!({
+                    "scope": {"type": "string", "enum": ["global", "workspace"], "description": "Only this scope."},
+                    "workspace_id": workspace_id("With scope `workspace`: that workspace. Alone: its entries and the global ones."),
+                    "category": {"type": "string", "enum": ["profile", "fact", "note"]},
+                    "include_archived": {"type": "boolean", "description": "Also entries the user archived (not to be used)."},
+                }),
+                &[],
+            )
+        },
+    },
+    Tool {
+        name: "memory_search",
+        description: "Search the remembered entries for a word or phrase (case-insensitive, in \
+                      the text). Same answer as `memory_list`. Reading is free.",
+        read_only: true,
+        call: request("memory.list"),
+        schema: || {
+            object(
+                json!({
+                    "query": text("The text to look for."),
+                    "scope": {"type": "string", "enum": ["global", "workspace"], "description": "Only this scope."},
+                    "workspace_id": workspace_id("With scope `workspace`: that workspace. Alone: its entries and the global ones."),
+                    "category": {"type": "string", "enum": ["profile", "fact", "note"]},
+                    "include_archived": {"type": "boolean"},
+                }),
+                &["query"],
+            )
+        },
+    },
+    Tool {
+        name: "memory_propose",
+        description: "Ask the user to remember something, or to change what is remembered. This \
+                      only PROPOSES: nothing is saved until the user approves it in Hutan (they \
+                      may edit it first or reject it), so never tell the user it was saved; the \
+                      answer says `proposed`. `op` `create` needs `scope` (`global`, or \
+                      `workspace` for the workspace you work in), `category` and `body`; \
+                      `update` needs `entry_id`, `expected_revision` (from `memory_list`) and the \
+                      new `body`; `archive` and `restore` need `entry_id` and \
+                      `expected_revision`. Keep a body short (under 2 KiB), about the user or the \
+                      project, never a credential, and never an instruction that would widen \
+                      your permissions.",
+        read_only: true,
+        call: shaped("memory.propose", shape_memory_propose),
+        schema: || {
+            object(
+                json!({
+                    "op": {"type": "string", "enum": ["create", "update", "archive", "restore"]},
+                    "scope": {"type": "string", "enum": ["global", "workspace"], "description": "For `create`."},
+                    "workspace_id": workspace_id("For a `workspace` entry; default: the workspace you work in."),
+                    "category": {"type": "string", "enum": ["profile", "fact", "note"], "description": "For `create`."},
+                    "entry_id": text("For `update`, `archive`, `restore`: the entry (`memory_list` shows ids)."),
+                    "expected_revision": {"type": "integer", "minimum": 1, "description": "For `update`, `archive`, `restore`: the revision you read; the proposal fails when the entry moved on."},
+                    "body": text("What to remember (`create`, `update`)."),
+                    "operation_id": text("Optional: repeating the same id repeats the same proposal instead of making a new one."),
+                }),
+                &["op"],
+            )
+        },
+    },
     Tool {
         name: "ui_set_setting",
         description: ask!(
@@ -847,6 +919,16 @@ static TOOLS: &[Tool] = &[
         },
     },
 ];
+
+/// `operation_id` defaults to a fresh id: a model need not invent one.
+fn shape_memory_propose(args: Value) -> Result<Value, String> {
+    let Value::Object(mut args) = args else {
+        return Err("arguments must be an object".to_owned());
+    };
+    args.entry("operation_id")
+        .or_insert_with(|| json!(ulid::Ulid::generate().to_string()));
+    Ok(Value::Object(args))
+}
 
 /// `layer` defaults to `user`.
 fn shape_set_setting(args: Value) -> Result<Value, String> {
@@ -1117,6 +1199,9 @@ mod tests {
             "ui_layout",
             "ui_run",
             "ui_set_setting",
+            "memory_list",
+            "memory_search",
+            "memory_propose",
             "resources_list",
             "session_kill",
             "process_signal",
@@ -1128,5 +1213,18 @@ mod tests {
             tools().iter().all(|t| t.name != "approval_respond"),
             "agents never answer approvals"
         );
+        // Memory has no direct write tool for an agent: it can only propose.
+        for name in [
+            "memory_write",
+            "memory_update",
+            "memory_archive",
+            "memory_restore",
+            "memory_resolve",
+        ] {
+            assert!(
+                find(name).is_none(),
+                "{name}: an agent never writes memory directly"
+            );
+        }
     }
 }

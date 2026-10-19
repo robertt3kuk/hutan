@@ -1807,3 +1807,507 @@ fn control_grants_are_stored_listed_newest_first_and_deleted() {
     assert!(storage.control_grants().insert(both).is_err());
     storage.close();
 }
+
+// Mawas memory (MW-2) ---------------------------------------------------------------------------
+
+mod memory {
+    use super::*;
+    use crate::{
+        Action, Author, Category, Change, EntryState, MemoryError, Operation, ProposalRow,
+        ProposalState, Resolution, Scope, ScopeFilter, SnapshotRow,
+    };
+
+    fn open() -> (tempfile::TempDir, Storage) {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(db(&dir)).unwrap();
+        (dir, storage)
+    }
+
+    fn change(operation_id: &str, action: Action) -> Change {
+        Change {
+            operation_id: operation_id.to_owned(),
+            action,
+            author: Author::User,
+            provenance_json: r#"{"author":"user"}"#.to_owned(),
+            approval_id: None,
+            now_ms: 1_000,
+            max_entries: 200,
+        }
+    }
+
+    fn create(id: &str, scope: Scope, category: Category, body: &str) -> Action {
+        Action::Create {
+            entry_id: id.to_owned(),
+            scope,
+            category,
+            body: body.to_owned(),
+        }
+    }
+
+    #[test]
+    fn revisions_are_immutable_and_every_change_adds_one() {
+        let (_dir, storage) = open();
+        let memory = storage.memory();
+        let made = memory
+            .apply(change(
+                "op-1",
+                create("e1", Scope::Global, Category::Fact, "uses jj"),
+            ))
+            .unwrap();
+        assert_eq!((made.revision, made.scope_revision), (1, 1));
+        let updated = memory
+            .apply(change(
+                "op-2",
+                Action::Update {
+                    entry_id: "e1".into(),
+                    expected_revision: 1,
+                    body: "uses git".into(),
+                },
+            ))
+            .unwrap();
+        assert_eq!((updated.revision, updated.scope_revision), (2, 2));
+        let history = memory.history("e1").unwrap();
+        assert_eq!(
+            history
+                .iter()
+                .map(|r| (r.revision, r.body.as_str()))
+                .collect::<Vec<_>>(),
+            [(2, "uses git"), (1, "uses jj")]
+        );
+        assert_eq!(history[1].content_hash, crate::hash_text("uses jj"));
+        // The schema refuses to rewrite or drop history, even for a direct statement.
+        storage
+            .read(|conn| {
+                let update = conn.execute("UPDATE memory_revisions SET body = 'x'", []);
+                assert!(update.unwrap_err().to_string().contains("immutable"));
+                let delete = conn.execute("DELETE FROM memory_revisions", []);
+                assert!(delete.unwrap_err().to_string().contains("immutable"));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(memory.history("e1").unwrap().len(), 2);
+        storage.close();
+    }
+
+    #[test]
+    fn a_stale_expected_revision_is_a_conflict_and_changes_nothing() {
+        let (_dir, storage) = open();
+        let memory = storage.memory();
+        memory
+            .apply(change(
+                "a",
+                create("e1", Scope::Global, Category::Profile, "terse"),
+            ))
+            .unwrap();
+        memory
+            .apply(change(
+                "b",
+                Action::Update {
+                    entry_id: "e1".into(),
+                    expected_revision: 1,
+                    body: "very terse".into(),
+                },
+            ))
+            .unwrap();
+        let stale = memory.apply(change(
+            "c",
+            Action::Update {
+                entry_id: "e1".into(),
+                expected_revision: 1,
+                body: "chatty".into(),
+            },
+        ));
+        assert!(matches!(
+            stale,
+            Err(MemoryError::Conflict {
+                expected: 1,
+                current: 2
+            })
+        ));
+        let missing = memory.apply(change(
+            "d",
+            Action::Archive {
+                entry_id: "nope".into(),
+                expected_revision: 1,
+            },
+        ));
+        assert!(matches!(missing, Err(MemoryError::NotFound(_))));
+        let entry = memory.get("e1").unwrap().unwrap();
+        assert_eq!(
+            (entry.entry.current_revision, entry.current.body.as_str()),
+            (2, "very terse")
+        );
+        assert_eq!(memory.scope_revision(Scope::Global).unwrap(), 2);
+        storage.close();
+    }
+
+    #[test]
+    fn a_repeated_operation_id_returns_the_original_receipt() {
+        let (_dir, storage) = open();
+        let memory = storage.memory();
+        let first = memory
+            .apply(change(
+                "same",
+                create("e1", Scope::Global, Category::Fact, "one"),
+            ))
+            .unwrap();
+        memory
+            .apply(change(
+                "other",
+                create("e2", Scope::Global, Category::Fact, "two"),
+            ))
+            .unwrap();
+        let again = memory
+            .apply(change(
+                "same",
+                create("e3", Scope::Global, Category::Note, "different"),
+            ))
+            .unwrap();
+        assert!(again.duplicate && !first.duplicate);
+        assert_eq!(
+            (
+                again.entry_id.as_str(),
+                again.revision,
+                again.scope_revision
+            ),
+            ("e1", 1, 1),
+            "the receipt of the first application, not the scope's current revision"
+        );
+        assert_eq!(memory.list(ScopeFilter::Any, true).unwrap().len(), 2);
+        storage.close();
+    }
+
+    #[test]
+    fn archive_and_restore_are_revisions_that_keep_the_body() {
+        let (_dir, storage) = open();
+        let memory = storage.memory();
+        memory
+            .apply(change(
+                "a",
+                create("e1", Scope::Global, Category::Fact, "kept"),
+            ))
+            .unwrap();
+        let archived = memory
+            .apply(change(
+                "b",
+                Action::Archive {
+                    entry_id: "e1".into(),
+                    expected_revision: 1,
+                },
+            ))
+            .unwrap();
+        assert_eq!(archived.revision, 2);
+        let entry = memory.get("e1").unwrap().unwrap();
+        assert_eq!(entry.entry.state, EntryState::Archived);
+        assert!(memory.list(ScopeFilter::Any, false).unwrap().is_empty());
+        assert_eq!(memory.list(ScopeFilter::Any, true).unwrap().len(), 1);
+        // An archived entry is not edited, nor archived twice, until it is restored.
+        let edit = memory.apply(change(
+            "c",
+            Action::Update {
+                entry_id: "e1".into(),
+                expected_revision: 2,
+                body: "x".into(),
+            },
+        ));
+        assert!(matches!(edit, Err(MemoryError::InvalidState(_))));
+        let twice = memory.apply(change(
+            "d",
+            Action::Archive {
+                entry_id: "e1".into(),
+                expected_revision: 2,
+            },
+        ));
+        assert!(matches!(twice, Err(MemoryError::InvalidState(_))));
+        memory
+            .apply(change(
+                "e",
+                Action::Restore {
+                    entry_id: "e1".into(),
+                    expected_revision: 2,
+                },
+            ))
+            .unwrap();
+        let history = memory.history("e1").unwrap();
+        assert_eq!(
+            history
+                .iter()
+                .map(|r| (r.revision, r.operation))
+                .collect::<Vec<_>>(),
+            [
+                (3, Operation::Restore),
+                (2, Operation::Archive),
+                (1, Operation::Create)
+            ]
+        );
+        assert!(history.iter().all(|r| r.body == "kept"));
+        assert_eq!(
+            memory.get("e1").unwrap().unwrap().entry.state,
+            EntryState::Active
+        );
+        storage.close();
+    }
+
+    #[test]
+    fn the_number_of_active_entries_is_bounded() {
+        let (_dir, storage) = open();
+        let memory = storage.memory();
+        let capped = |id: &str, action| Change {
+            max_entries: 2,
+            ..change(id, action)
+        };
+        for n in 0..2 {
+            memory
+                .apply(capped(
+                    &format!("op{n}"),
+                    create(&format!("e{n}"), Scope::Global, Category::Note, "x"),
+                ))
+                .unwrap();
+        }
+        let third = memory.apply(capped(
+            "op2",
+            create("e2", Scope::Global, Category::Note, "x"),
+        ));
+        assert!(matches!(third, Err(MemoryError::Full { max: 2 })));
+        assert!(memory.get("e2").unwrap().is_none());
+        // Archiving frees a place; restoring needs one again.
+        memory
+            .apply(capped(
+                "arch",
+                Action::Archive {
+                    entry_id: "e0".into(),
+                    expected_revision: 1,
+                },
+            ))
+            .unwrap();
+        memory
+            .apply(capped(
+                "op3",
+                create("e3", Scope::Global, Category::Note, "y"),
+            ))
+            .unwrap();
+        let restore = memory.apply(capped(
+            "rest",
+            Action::Restore {
+                entry_id: "e0".into(),
+                expected_revision: 2,
+            },
+        ));
+        assert!(matches!(restore, Err(MemoryError::Full { max: 2 })));
+        assert_eq!(memory.count_active().unwrap(), 2);
+        storage.close();
+    }
+
+    #[test]
+    fn scopes_count_their_own_changes_and_list_in_snapshot_order() {
+        let (_dir, storage) = open();
+        let memory = storage.memory();
+        let ws = WorkspaceId::new();
+        let other = WorkspaceId::new();
+        let mut at = 100;
+        for (id, scope, category) in [
+            ("n1", Scope::Workspace(ws), Category::Note),
+            ("f1", Scope::Global, Category::Fact),
+            ("p1", Scope::Global, Category::Profile),
+            ("f2", Scope::Workspace(ws), Category::Fact),
+            ("o1", Scope::Workspace(other), Category::Fact),
+        ] {
+            at += 1;
+            let mut c = change(&format!("op-{id}"), create(id, scope, category, id));
+            c.now_ms = at;
+            memory.apply(c).unwrap();
+        }
+        assert_eq!(memory.scope_revision(Scope::Global).unwrap(), 2);
+        assert_eq!(memory.scope_revision(Scope::Workspace(ws)).unwrap(), 2);
+        assert_eq!(memory.scope_revision(Scope::Workspace(other)).unwrap(), 1);
+        let ids = |filter| {
+            memory
+                .list(filter, false)
+                .unwrap()
+                .into_iter()
+                .map(|v| v.entry.id)
+                .collect::<Vec<_>>()
+        };
+        // Profile, then fact, then note; newest first inside a category.
+        assert_eq!(ids(ScopeFilter::Both(ws)), ["p1", "f2", "f1", "n1"]);
+        assert_eq!(ids(ScopeFilter::Global), ["p1", "f1"]);
+        assert_eq!(ids(ScopeFilter::Workspace(ws)), ["f2", "n1"]);
+        assert_eq!(ids(ScopeFilter::Any).len(), 5);
+        storage.close();
+    }
+
+    fn proposal(id: &str, operation: Operation, action_entry: Option<(&str, u64)>) -> ProposalRow {
+        ProposalRow {
+            id: id.to_owned(),
+            operation_id: format!("prop-{id}"),
+            scope: Scope::Global,
+            operation,
+            entry_id: action_entry.map(|(e, _)| e.to_owned()),
+            expected_revision: action_entry.map(|(_, r)| r),
+            category: Category::Fact,
+            body: "proposed".to_owned(),
+            provenance_json: r#"{"author":"agent"}"#.to_owned(),
+            state: ProposalState::Pending,
+            origin_chat_session_id: Some(SessionId::new()),
+            created_ms: 5,
+            resolved_ms: None,
+        }
+    }
+
+    #[test]
+    fn a_proposal_is_applied_rejected_or_left_visible_as_a_conflict_in_one_transaction() {
+        let (_dir, storage) = open();
+        let memory = storage.memory();
+        // A duplicate operation id is the same proposal.
+        let stored = memory
+            .insert_proposal(proposal("p1", Operation::Create, None))
+            .unwrap();
+        let again = memory
+            .insert_proposal(ProposalRow {
+                id: "p1-again".into(),
+                ..proposal("p1", Operation::Create, None)
+            })
+            .unwrap();
+        assert_eq!(again.id, stored.id);
+        assert_eq!(memory.proposals(0).unwrap().len(), 1);
+
+        let approve = |entry: &str| Change {
+            approval_id: Some("p1".into()),
+            author: Author::Agent,
+            ..change(
+                "proposal:p1",
+                create(entry, Scope::Global, Category::Fact, "proposed"),
+            )
+        };
+        let done = memory
+            .resolve_proposal("p1", Resolution::Apply(approve("e1")), 9)
+            .unwrap();
+        assert_eq!(done.proposal.state, ProposalState::Applied);
+        assert_eq!(done.receipt.unwrap().revision, 1);
+        let revision = &memory.history("e1").unwrap()[0];
+        assert_eq!(
+            (revision.author, revision.approval_id.as_deref()),
+            (Author::Agent, Some("p1"))
+        );
+        // Answered once only.
+        let twice = memory.resolve_proposal("p1", Resolution::Reject, 10);
+        assert!(matches!(twice, Err(MemoryError::InvalidState(_))));
+
+        // A proposal against a revision that moved on stays visible as a conflict, applying nothing.
+        memory
+            .insert_proposal(proposal("p2", Operation::Update, Some(("e1", 1))))
+            .unwrap();
+        memory
+            .apply(change(
+                "user-edit",
+                Action::Update {
+                    entry_id: "e1".into(),
+                    expected_revision: 1,
+                    body: "user's".into(),
+                },
+            ))
+            .unwrap();
+        let stale = Change {
+            author: Author::Agent,
+            ..change(
+                "proposal:p2",
+                Action::Update {
+                    entry_id: "e1".into(),
+                    expected_revision: 1,
+                    body: "proposed".into(),
+                },
+            )
+        };
+        let conflict = memory
+            .resolve_proposal("p2", Resolution::Apply(stale), 11)
+            .unwrap();
+        assert_eq!(conflict.proposal.state, ProposalState::Conflict);
+        assert!(conflict.receipt.is_none());
+        assert_eq!(memory.get("e1").unwrap().unwrap().current.body, "user's");
+        assert_eq!(memory.history("e1").unwrap().len(), 2);
+
+        // Rejecting never touches the entries; resolved ones list after the pending.
+        memory
+            .insert_proposal(proposal("p3", Operation::Create, None))
+            .unwrap();
+        memory
+            .insert_proposal(ProposalRow {
+                operation_id: "prop-p4".into(),
+                created_ms: 6,
+                ..proposal("p4", Operation::Create, None)
+            })
+            .unwrap();
+        let rejected = memory
+            .resolve_proposal("p3", Resolution::Reject, 12)
+            .unwrap();
+        assert_eq!(rejected.proposal.state, ProposalState::Rejected);
+        let listed = memory.proposals(10).unwrap();
+        assert_eq!(
+            listed
+                .iter()
+                .map(|p| (p.id.as_str(), p.state))
+                .collect::<Vec<_>>(),
+            [
+                ("p4", ProposalState::Pending),
+                ("p1", ProposalState::Applied),
+                ("p2", ProposalState::Conflict),
+                ("p3", ProposalState::Rejected),
+            ]
+        );
+        storage.close();
+    }
+
+    #[test]
+    fn a_proposal_that_cannot_apply_for_another_reason_stays_pending() {
+        let (_dir, storage) = open();
+        let memory = storage.memory();
+        memory
+            .insert_proposal(proposal("p1", Operation::Create, None))
+            .unwrap();
+        let full = Change {
+            max_entries: 0,
+            ..change(
+                "proposal:p1",
+                create("e1", Scope::Global, Category::Fact, "proposed"),
+            )
+        };
+        let refused = memory.resolve_proposal("p1", Resolution::Apply(full), 9);
+        assert!(matches!(refused, Err(MemoryError::Full { max: 0 })));
+        assert_eq!(
+            memory.proposal("p1").unwrap().unwrap().state,
+            ProposalState::Pending
+        );
+        storage.close();
+    }
+
+    #[test]
+    fn snapshots_are_stored_per_chat_newest_last() {
+        let (_dir, storage) = open();
+        let memory = storage.memory();
+        let chat = SessionId::new();
+        let snapshot = |id: &str, at| SnapshotRow {
+            id: id.to_owned(),
+            chat_session_id: chat,
+            backend: "omp".to_owned(),
+            manifest_json: "{}".to_owned(),
+            rendered: format!("context {id}"),
+            content_hash: crate::hash_text(id),
+            created_ms: at,
+        };
+        assert!(memory.latest_snapshot(chat).unwrap().is_none());
+        memory.insert_snapshot(snapshot("s1", 1)).unwrap();
+        memory.insert_snapshot(snapshot("s2", 2)).unwrap();
+        assert_eq!(memory.latest_snapshot(chat).unwrap().unwrap().id, "s2");
+        assert_eq!(
+            memory
+                .snapshots(chat)
+                .unwrap()
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
+            ["s1", "s2"]
+        );
+        assert!(memory.snapshots(SessionId::new()).unwrap().is_empty());
+        storage.close();
+    }
+}

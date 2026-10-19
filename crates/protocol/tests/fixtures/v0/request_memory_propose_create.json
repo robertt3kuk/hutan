@@ -1,0 +1,1 @@
+{"id":168,"method":"memory.propose","params":{"body":"The staging cluster is called `kite`.","category":"fact","op":"create","operation_id":"op-6","scope":"global"}}

@@ -29,6 +29,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
+use futures::future::BoxFuture;
 use hutan_core::agent::{DecidedBy, PermissionKind, PermissionOption, PermissionOptionKind};
 use hutan_core::{ApprovalId, SessionId, SessionKind, TurnId, WorkspaceId};
 use hutan_protocol::chat::ApprovalInfo;
@@ -187,7 +188,7 @@ impl ControlService {
         });
         let source: Weak<dyn ApprovalSource> =
             Arc::downgrade(&(service.clone() as Arc<dyn ApprovalSource>));
-        registry.chats().set_external_approvals(source);
+        registry.chats().add_external_approvals(source);
         service
     }
 
@@ -857,8 +858,9 @@ impl ApprovalSource for ControlService {
         approval: ApprovalId,
         option_id: String,
         client: Option<ClientKind>,
-    ) -> Option<Result<(), ErrorBody>> {
-        self.respond_inner(approval, option_id, client)
+    ) -> Option<BoxFuture<'static, Result<(), ErrorBody>>> {
+        let answered = self.respond_inner(approval, option_id, client)?;
+        Some(Box::pin(std::future::ready(answered)))
     }
 }
 

@@ -219,6 +219,13 @@ pub enum Region {
     /// A repeated control of Mawas Home's Today rail: its name (`today-row`, `today-option`,
     /// `today-open`, `today-working`) and index (the row; for an option `row * 8 + option`).
     AssistantItem(&'static str, usize),
+    /// A control of the Memory page, by name (`add`, `scope-all`, `scope-global`,
+    /// `scope-workspace`, `archived`, `editor`, `save`, `cancel`, `error`, …).
+    Memory(&'static str),
+    /// A repeated control of the Memory page: its name (`entry`, `edit`, `archive`, `restore`,
+    /// `confirm`, `history`, `proposal`, `approve`, `edit-approve`, `reject`) and the index of
+    /// its row (entries and proposals count separately, in the order drawn).
+    MemoryItem(&'static str, usize),
     /// The control that opens or closes part `part` of entry `index` (a command's output, a
     /// file's diff, reasoning).
     ChatPart(usize, u32),
@@ -1269,12 +1276,13 @@ impl Workbench {
             self.toggle_overview(cx);
             return;
         }
-        if id == "assistant" && !self.assistant_enabled() {
+        if actions::is_mawas_page(id) && !self.assistant_enabled() {
             return;
         }
         let id = PanelId::new(id);
-        // Mawas Home is a page of the center: a tab of the active pane, not a dock's panel.
-        if id.as_str() == "assistant" {
+        // Mawas Home and its Memory are pages of the center: a tab of the active pane, not a
+        // dock's panel.
+        if actions::is_mawas_page(id.as_str()) {
             self.mutate(cx, |s| s.open_panel_in_center(&id));
             return;
         }

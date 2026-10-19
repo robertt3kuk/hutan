@@ -9,6 +9,7 @@
 //! reads, [`Storage::flush`], [`Storage::close`]) on a blocking thread.
 
 mod error;
+mod memory;
 mod migrate;
 mod rows;
 mod sql;
@@ -28,6 +29,11 @@ use rusqlite::Connection;
 use tracing::{debug, error};
 
 pub use error::{Result, StorageError};
+pub use memory::{
+    Action, Author, Category, Change, EntryRow, EntryState, EntryView, Memory, MemoryError,
+    Operation, ProposalRow, ProposalState, Receipt, Resolution, Resolved, RevisionRow, Scope,
+    ScopeFilter, SnapshotRow, hash_text,
+};
 pub use migrate::{BACKUPS_KEPT, MIGRATIONS, Migration};
 pub use rows::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
@@ -181,6 +187,10 @@ impl Storage {
         ControlGrants(self)
     }
 
+    pub fn memory(&self) -> Memory<'_> {
+        Memory(self)
+    }
+
     /// Queues one write. Returns once it is queued, not once it is durable.
     pub fn write(&self, write: Write) -> Result<()> {
         self.send(Cmd::Write(write))
@@ -219,6 +229,16 @@ impl Storage {
         &self,
         query: impl FnOnce(&Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        self.read_raw(query)
+    }
+
+    /// [`read`](Self::read) for a query with an error type of its own (the memory repository's
+    /// refusals): it runs on the writer thread, so a transaction it opens is atomic against
+    /// every other command.
+    fn read_raw<T: Send + 'static, E: From<StorageError> + Send + 'static>(
+        &self,
+        query: impl FnOnce(&Connection) -> std::result::Result<T, E> + Send + 'static,
+    ) -> std::result::Result<T, E> {
         let (reply, answer) = sync_channel(1);
         self.send(Cmd::Read(Box::new(move |conn| {
             // The asker may have gone away; nothing to do then.

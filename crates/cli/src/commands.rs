@@ -31,6 +31,7 @@ mod grants;
 mod help;
 mod history;
 mod integration;
+mod memory;
 mod notify;
 mod projects;
 mod providers;
@@ -100,6 +101,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Ask(args) => ctx?.ask(args).await,
         Command::Assistant(command) => ctx?.assistant(command).await,
         Command::Grants(command) => ctx?.grants(command).await,
+        Command::Memory(command) => ctx?.memory(command).await,
         Command::Approvals => ctx?.approvals().await,
         Command::Approve(args) => ctx?.approve(args).await,
         Command::Questions => ctx?.questions().await,

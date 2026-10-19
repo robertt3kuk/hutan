@@ -63,6 +63,7 @@ pub mod harness;
 pub mod history;
 pub mod history_catalog;
 pub mod mcp_wiring;
+pub mod memory;
 pub mod menu_bar;
 pub mod notify;
 pub mod notify_native;

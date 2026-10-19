@@ -11,6 +11,7 @@ mod history_catalog;
 mod history_model;
 mod history_view;
 mod inspector;
+mod memory;
 mod overview;
 mod resources;
 mod resources_model;
@@ -52,6 +53,9 @@ pub use history_model::{
     transcript_path,
 };
 pub use inspector::{BlockRow, InspectorPanel};
+pub use memory::{
+    EditorTarget as MemoryEditorTarget, MemoryPanel, ScopeChoice as MemoryScopeChoice,
+};
 pub use overview::OverviewPanel;
 pub use resources::{
     Link as ResourcesLink, MAX_INTERVAL_MS, REFRESH_AFTER as RESOURCES_REFRESH, ResourcesPanel,
@@ -204,6 +208,16 @@ pub fn builtin_panels() -> PanelRegistry {
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
             AnyView::from(cx.new(|cx| AssistantPanel::new(env, cx)))
+        }),
+    });
+    registry.register(PanelSpec {
+        id: "mawas-memory".into(),
+        title: "Memory".into(),
+        icon: "◈".into(),
+        default_dock: DockPosition::Left,
+        factory: Rc::new(|env, _window, cx| {
+            let env = env.clone();
+            AnyView::from(cx.new(|cx| MemoryPanel::new(env, cx)))
         }),
     });
     registry.register(PanelSpec {

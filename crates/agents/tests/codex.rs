@@ -59,12 +59,17 @@ impl Harness {
     }
 
     fn spec(&self, resume: Option<&str>) -> StartSpec {
+        self.spec_with(resume, None)
+    }
+
+    fn spec_with(&self, resume: Option<&str>, instructions: Option<&str>) -> StartSpec {
         StartSpec {
             cwd: self.dir.path().to_owned(),
             model: None,
             approval_policy: ApprovalPolicy::Untrusted,
             sandbox: SandboxMode::ReadOnly,
             resume_thread_id: resume.map(str::to_owned),
+            developer_instructions: instructions.map(str::to_owned),
         }
     }
 
@@ -1104,4 +1109,67 @@ fn committed_fixtures_are_already_scrubbed() {
         count += 1;
     }
     assert!(count >= 11, "{count} fixtures");
+}
+
+#[tokio::test]
+async fn developer_instructions_ride_on_thread_start_and_resume_and_base_instructions_stay_absent()
+{
+    let h = Harness::new();
+    let started = timeout(
+        WAIT,
+        CodexAppServerAdapter::start(
+            &h.config(&fixture("plain-turn")),
+            &h.spec_with(None, Some("Hutan memory: the user prefers short answers.")),
+        ),
+    )
+    .await
+    .expect("start timed out")
+    .expect("start failed");
+    started.adapter.shutdown().await;
+    let received = h.received();
+    let start = &received
+        .iter()
+        .find(|(m, _)| m == "thread/start")
+        .unwrap()
+        .1["params"];
+    assert_eq!(
+        start["developerInstructions"],
+        "Hutan memory: the user prefers short answers."
+    );
+    assert!(
+        start.get("baseInstructions").is_none(),
+        "Codex keeps its own base instructions: {start}"
+    );
+
+    let h = Harness::new();
+    let resumed = timeout(
+        WAIT,
+        CodexAppServerAdapter::start(
+            &h.config(&fixture("resume-turn")),
+            &h.spec_with(Some("thread-from-the-journal"), Some("remembered")),
+        ),
+    )
+    .await
+    .expect("start timed out")
+    .expect("start failed");
+    resumed.adapter.shutdown().await;
+    let received = h.received();
+    let resume = &received
+        .iter()
+        .find(|(m, _)| m == "thread/resume")
+        .unwrap()
+        .1["params"];
+    assert_eq!(resume["developerInstructions"], "remembered");
+    assert!(resume.get("baseInstructions").is_none());
+
+    // Without instructions the field is not sent at all.
+    let h = Harness::new();
+    h.start("plain-turn").await.adapter.shutdown().await;
+    let received = h.received();
+    let start = &received
+        .iter()
+        .find(|(m, _)| m == "thread/start")
+        .unwrap()
+        .1["params"];
+    assert!(start.get("developerInstructions").is_none(), "{start}");
 }

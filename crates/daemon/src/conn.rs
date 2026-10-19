@@ -62,6 +62,7 @@ pub const CAPABILITIES: &[&str] = &[
     "history.sessions",
     "session.close",
     "control.grants",
+    "memory",
 ];
 
 /// How long a closing connection may take to flush already queued messages.

@@ -118,6 +118,14 @@ say what you are about to do and why, make one change at a time, and never try t
 a refusal. If a request is refused or denied, stop and tell the user. You can never change \
 Hutan's settings, approvals or grants yourself.";
 
+/// What an OMP assistant's system prompt gets appended in `mode`.
+pub fn omp_assistant_prompt(mode: AssistantMode) -> &'static str {
+    match mode {
+        AssistantMode::Advisor => HARNESS_ASSISTANT_PROMPT,
+        AssistantMode::Ask => HARNESS_ASK_PROMPT,
+    }
+}
+
 /// What is fixed about a harness.
 struct Def {
     /// The ACP executables looked for on `PATH`, preferred first.
@@ -283,6 +291,18 @@ impl Harnesses {
         agent: &str,
         assistant: Option<AssistantMode>,
     ) -> Result<AcpConfig, ErrorBody> {
+        self.acp_config_with(agent, assistant, None)
+    }
+
+    /// [`acp_config`](Self::acp_config) with the append-system-prompt of an OMP assistant given
+    /// as the path of a file (`prompt_file`, which holds the prompt and Mawas's memory: memory
+    /// never goes into argv) instead of the prompt's text.
+    pub fn acp_config_with(
+        &self,
+        agent: &str,
+        assistant: Option<AssistantMode>,
+        prompt_file: Option<&Path>,
+    ) -> Result<AcpConfig, ErrorBody> {
         let def = def(agent)
             .filter(|_| is_harness_agent(agent))
             .ok_or_else(|| {
@@ -299,22 +319,23 @@ impl Harnesses {
         } else {
             settings.args.clone()
         };
-        if agent == AGENT_OMP {
-            match assistant {
-                Some(AssistantMode::Advisor) => args.extend([
-                    "--tools".to_owned(),
-                    OMP_ASSISTANT_TOOLS.to_owned(),
-                    "--append-system-prompt".to_owned(),
-                    HARNESS_ASSISTANT_PROMPT.to_owned(),
-                ]),
-                Some(AssistantMode::Ask) => args.extend([
+        if agent == AGENT_OMP
+            && let Some(mode) = assistant
+        {
+            let prompt = prompt_file.map_or_else(
+                || omp_assistant_prompt(mode).to_owned(),
+                |file| file.to_string_lossy().into_owned(),
+            );
+            match mode {
+                AssistantMode::Advisor => {
+                    args.extend(["--tools".to_owned(), OMP_ASSISTANT_TOOLS.to_owned()]);
+                }
+                AssistantMode::Ask => args.extend([
                     "--approval-mode".to_owned(),
                     OMP_ASK_APPROVAL_MODE.to_owned(),
-                    "--append-system-prompt".to_owned(),
-                    HARNESS_ASK_PROMPT.to_owned(),
                 ]),
-                None => {}
             }
+            args.extend(["--append-system-prompt".to_owned(), prompt]);
         }
         env.extend(settings.env);
         with_program_dir(&mut env, &program);

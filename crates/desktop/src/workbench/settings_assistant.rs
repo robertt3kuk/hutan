@@ -683,6 +683,8 @@ impl Workbench {
         // What Mawas may do, and what it may do without asking.
         out.extend(self.render_daemon_section(&all[0], cx));
         out.extend(self.render_mawas_grants(cx));
+        // What Mawas remembers: on or off, and how much.
+        out.extend(self.render_daemon_section(&all[5], cx));
         // When nothing is chosen: the file's own backend, provider and model.
         out.extend(self.render_daemon_section(&all[1], cx));
         out.extend(self.render_daemon_section(&all[2], cx));

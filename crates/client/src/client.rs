@@ -28,6 +28,11 @@ use hutan_protocol::chat::{
 };
 use hutan_protocol::daemon_settings::{DaemonSettingSet, DaemonSettings};
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
+use hutan_protocol::memory::{
+    MemoryEntries, MemoryEntry, MemoryHistory, MemoryHistoryRequest, MemoryList, MemoryProposal,
+    MemoryProposalResolve, MemoryProposalResolved, MemoryProposals, MemoryProposalsList,
+    MemoryPropose, MemoryProposed, MemoryReceipt, MemoryTransition, MemoryUpdate, MemoryWrite,
+};
 use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, ClientInfo, Empty, Event, Hello,
     Request, ResumePoint, SessionInfo, SessionRef, SessionResult, Welcome, WorkspaceCreate,
@@ -139,6 +144,8 @@ pub(crate) const HISTORY_SESSIONS_CAPABILITY: &str = "history.sessions";
 pub(crate) const SESSION_CLOSE_CAPABILITY: &str = "session.close";
 /// Capability for `control.grants.list` / `.revoke` (protocol 0.31).
 pub(crate) const CONTROL_GRANTS_CAPABILITY: &str = "control.grants";
+/// Capability for `memory.*` and the `memory.changed` event (protocol 0.32).
+pub(crate) const MEMORY_CAPABILITY: &str = "memory";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -170,6 +177,7 @@ const CAPABILITIES: &[&str] = &[
     HISTORY_SESSIONS_CAPABILITY,
     SESSION_CLOSE_CAPABILITY,
     CONTROL_GRANTS_CAPABILITY,
+    MEMORY_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -839,6 +847,85 @@ impl Client {
         self.call::<Empty>(Request::ControlGrantRevoke(ControlGrantRevoke { id }))
             .await
             .map(|_| ())
+    }
+
+    /// True when the daemon advertised capability `memory` (protocol 0.32): Mawas's curated
+    /// memory, its proposals and the `memory.changed` event.
+    pub fn supports_memory(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == MEMORY_CAPABILITY)
+    }
+
+    /// `memory.list`: entries of Mawas's memory.
+    pub async fn memory_list(&self, req: MemoryList) -> Result<Vec<MemoryEntry>, ClientError> {
+        let entries: MemoryEntries = self.call(Request::MemoryList(req)).await?;
+        Ok(entries.entries)
+    }
+
+    /// `memory.history`: an entry with every revision of it, newest first.
+    pub async fn memory_history(&self, entry_id: &str) -> Result<MemoryHistory, ClientError> {
+        self.call(Request::MemoryHistory(MemoryHistoryRequest {
+            entry_id: entry_id.to_owned(),
+        }))
+        .await
+    }
+
+    /// `memory.write`: the user enters an entry (`forbidden` for a client inside an agent's
+    /// session). The receipt says it was applied.
+    pub async fn memory_write(&self, req: MemoryWrite) -> Result<MemoryReceipt, ClientError> {
+        self.call(Request::MemoryWrite(req)).await
+    }
+
+    /// `memory.update`: replaces an entry's body as it was read at `expected_revision`
+    /// (`conflict` when it moved on).
+    pub async fn memory_update(&self, req: MemoryUpdate) -> Result<MemoryReceipt, ClientError> {
+        self.call(Request::MemoryUpdate(req)).await
+    }
+
+    /// `memory.archive`.
+    pub async fn memory_archive(
+        &self,
+        req: MemoryTransition,
+    ) -> Result<MemoryReceipt, ClientError> {
+        self.call(Request::MemoryArchive(req)).await
+    }
+
+    /// `memory.restore`.
+    pub async fn memory_restore(
+        &self,
+        req: MemoryTransition,
+    ) -> Result<MemoryReceipt, ClientError> {
+        self.call(Request::MemoryRestore(req)).await
+    }
+
+    /// `memory.propose`: what an agent does. Answers `proposed`; nothing is applied until the
+    /// user resolves it.
+    pub async fn memory_propose(&self, req: MemoryPropose) -> Result<MemoryProposed, ClientError> {
+        self.call(Request::MemoryPropose(req)).await
+    }
+
+    /// `memory.proposals.list`: the proposals waiting for the user, and with
+    /// `include_resolved` the latest answered ones.
+    pub async fn memory_proposals(
+        &self,
+        include_resolved: bool,
+    ) -> Result<Vec<MemoryProposal>, ClientError> {
+        let list: MemoryProposals = self
+            .call(Request::MemoryProposalsList(MemoryProposalsList {
+                include_resolved,
+            }))
+            .await?;
+        Ok(list.proposals)
+    }
+
+    /// `memory.proposals.resolve`: the user approves, edits and approves, or rejects.
+    pub async fn memory_resolve(
+        &self,
+        req: MemoryProposalResolve,
+    ) -> Result<MemoryProposalResolved, ClientError> {
+        self.call(Request::MemoryProposalsResolve(req)).await
     }
 
     /// `assistant.reset`: the scope inherits its backend again.

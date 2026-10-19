@@ -25,6 +25,10 @@ use crate::daemon_settings::DaemonSettingSet;
 use crate::error::ProtocolError;
 use crate::grants::{ControlGrantRevoke, ControlGrantsList};
 use crate::history::{HistorySearch, HistorySetEnabled};
+use crate::memory::{
+    MemoryHistoryRequest, MemoryList, MemoryProposalResolve, MemoryProposalsList, MemoryPropose,
+    MemoryScope, MemoryTransition, MemoryUpdate, MemoryWrite,
+};
 use crate::notify::{ClientFocus, NotificationIntent, NotifyAck, NotifyAct};
 use crate::project::{ProjectInfo, WorkspaceAssign, WorkspaceDelete};
 use crate::provider::{
@@ -267,6 +271,41 @@ pub enum Request {
     /// an agent-originated connection.
     #[serde(rename = "control.grants.revoke")]
     ControlGrantRevoke(ControlGrantRevoke),
+    /// Capability `memory` (protocol 0.32): the curated entries of Mawas's memory; answered
+    /// with `MemoryEntries`. Read-only.
+    #[serde(rename = "memory.list")]
+    MemoryList(MemoryList),
+    /// Capability `memory`: the revisions of one entry; answered with `MemoryHistory`.
+    #[serde(rename = "memory.history")]
+    MemoryHistory(MemoryHistoryRequest),
+    /// Capability `memory`: the user enters a new entry; answered with `MemoryReceipt`. Never
+    /// allowed to an agent-originated connection.
+    #[serde(rename = "memory.write")]
+    MemoryWrite(MemoryWrite),
+    /// Capability `memory`: the user replaces an entry's body at `expected_revision`; answered
+    /// with `MemoryReceipt`. Never allowed to an agent-originated connection.
+    #[serde(rename = "memory.update")]
+    MemoryUpdate(MemoryUpdate),
+    /// Capability `memory`: the user archives an entry; answered with `MemoryReceipt`. Never
+    /// allowed to an agent-originated connection.
+    #[serde(rename = "memory.archive")]
+    MemoryArchive(MemoryTransition),
+    /// Capability `memory`: the user restores an archived entry; answered with
+    /// `MemoryReceipt`. Never allowed to an agent-originated connection.
+    #[serde(rename = "memory.restore")]
+    MemoryRestore(MemoryTransition),
+    /// Capability `memory`: an agent proposes a change; answered with `MemoryProposed` and an
+    /// approval for the user. Nothing is applied.
+    #[serde(rename = "memory.propose")]
+    MemoryPropose(MemoryPropose),
+    /// Capability `memory`: the proposals (waiting, and optionally answered); answered with
+    /// `MemoryProposals`. Never allowed to an agent-originated connection.
+    #[serde(rename = "memory.proposals.list")]
+    MemoryProposalsList(MemoryProposalsList),
+    /// Capability `memory`: the user's answer to a proposal; answered with
+    /// `MemoryProposalResolved`. Never allowed to an agent-originated connection.
+    #[serde(rename = "memory.proposals.resolve")]
+    MemoryProposalsResolve(MemoryProposalResolve),
     /// Capability `notify.intents` (protocol 0.13): the pending notification intents; answered
     /// with `NotifyList`.
     #[serde(rename = "notify.list")]
@@ -1106,6 +1145,16 @@ pub enum Event {
     /// on their next `session.list`.
     #[serde(rename = "session.closed")]
     SessionClosed { session_id: SessionId },
+    /// Capability `memory` (protocol 0.32): the memory of a scope changed (an entry was
+    /// written, updated, archived or restored: `scope_revision` is the scope's new counter) or
+    /// a proposal arrived or was answered (`scope_revision` is unchanged); clients list again.
+    #[serde(rename = "memory.changed")]
+    MemoryChanged {
+        scope: MemoryScope,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace_id: Option<WorkspaceId>,
+        scope_revision: u64,
+    },
 }
 
 impl Event {
@@ -1148,6 +1197,7 @@ impl Event {
         "resources.updated",
         "ui.command",
         "session.closed",
+        "memory.changed",
     ];
 }
 

@@ -105,6 +105,7 @@ actions!(
         SwitchChatModel,
         OpenAssistant,
         NewMawasChat,
+        OpenMawasMemory,
         NewTerminalInWorktree,
         RemoveWorktree,
         NewTask,
@@ -310,6 +311,9 @@ data_actions! {
     ShowAssistantModelMenu(gpui::Point<gpui::Pixels>);
     /// Show the menu of Mawas Home's mode chip (Ask before acting / Advisor) at this position.
     ShowAssistantModeMenu(gpui::Point<gpui::Pixels>);
+    /// Open the Memory page with the editor of this memory proposal (its id) open: "Edit &
+    /// approve" of a card in Today.
+    EditMemoryProposal(String);
 }
 
 /// Where to open the context menu of a workspace.
@@ -564,6 +568,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
     if assistant {
         out.push(command("Mawas: Open", OpenAssistant));
         out.push(command("Mawas: New chat", NewMawasChat));
+        out.push(command("Mawas: Memory", OpenMawasMemory));
     }
     out.extend([
         command("Worktree: New Terminal in Worktree…", NewTerminalInWorktree),
@@ -647,7 +652,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
     }
     for spec in panels
         .iter()
-        .filter(|s| assistant || s.id.as_str() != "assistant")
+        .filter(|s| assistant || !is_mawas_page(s.id.as_str()))
     {
         out.push(command(
             format!("Panel: Open {}", spec.title),
@@ -655,6 +660,11 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         ));
     }
     out
+}
+
+/// The pages of Mawas (Home, Memory): they go away with `assistant.enabled`.
+pub fn is_mawas_page(panel: &str) -> bool {
+    matches!(panel, "assistant" | "mawas-memory")
 }
 
 fn bind<A: Action>(keys: &str, context: Option<&str>) -> BindingSpec {

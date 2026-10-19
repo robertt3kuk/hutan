@@ -113,6 +113,10 @@ pub enum Command {
     /// ls|revoke`)
     #[command(subcommand)]
     Grants(GrantsCommand),
+    /// Mawas's memory: what the assistant remembers because you approved it (`hutan memory
+    /// ls|add|edit|archive|restore|history|proposals`)
+    #[command(subcommand)]
+    Memory(MemoryCommand),
     /// List the permission requests of agent chats that wait for an answer
     Approvals,
     /// Answer a permission request with one of the options it offers (see `hutan approvals`)
@@ -773,6 +777,88 @@ pub struct GrantsRevokeArgs {
     pub id: Option<u64>,
     /// Remove every grant
     #[arg(long)]
+    pub all: bool,
+}
+
+/// What a memory entry is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum MemoryCategoryArg {
+    /// About you: communication preferences and personal facts you approved
+    Profile,
+    /// A stable fact about an environment or a project
+    Fact,
+    /// A decision or working note of one workspace
+    Note,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MemoryCommand {
+    /// List the entries (newest change first in each category): id, scope, category, revision,
+    /// whether a model wrote it and you have not confirmed it yet (inferred), and the text
+    Ls(MemoryLsArgs),
+    /// Remember something: a global entry, or with --workspace one of a workspace
+    Add(MemoryAddArgs),
+    /// Replace an entry's text (saving the same text confirms an inferred entry)
+    Edit(MemoryEditArgs),
+    /// Stop using an entry; its history is kept
+    Archive(MemoryIdArgs),
+    /// Use an archived entry again
+    Restore(MemoryIdArgs),
+    /// Every revision of an entry, newest first, with who wrote it
+    History(MemoryIdArgs),
+    /// The proposals agents made, waiting for you; --approve or --reject answers one
+    Proposals(MemoryProposalsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct MemoryLsArgs {
+    /// Only the global entries and those of this workspace (id, unique id prefix, or exact name)
+    #[arg(long = "ws", visible_alias = "workspace", value_name = "ID|NAME")]
+    pub workspace: Option<String>,
+    /// Only this category
+    #[arg(long, value_enum)]
+    pub category: Option<MemoryCategoryArg>,
+    /// Include archived entries
+    #[arg(long)]
+    pub archived: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct MemoryAddArgs {
+    /// What to remember (at most 2 KiB; credentials are refused)
+    pub text: String,
+    /// The category (default: note with --workspace, else profile)
+    #[arg(long, value_enum)]
+    pub category: Option<MemoryCategoryArg>,
+    /// Remember it for this workspace only (id, unique id prefix, or exact name)
+    #[arg(long = "ws", visible_alias = "workspace", value_name = "ID|NAME")]
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct MemoryEditArgs {
+    /// The entry (id or unique id prefix of at least 6 characters; see `hutan memory ls`)
+    pub id: String,
+    /// The new text
+    pub text: String,
+}
+
+#[derive(Debug, Args)]
+pub struct MemoryIdArgs {
+    /// The entry (id or unique id prefix of at least 6 characters; see `hutan memory ls`)
+    pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct MemoryProposalsArgs {
+    /// Approve this proposal (id or unique id prefix): it is applied exactly as listed
+    #[arg(long, value_name = "ID", conflicts_with = "reject")]
+    pub approve: Option<String>,
+    /// Reject this proposal (id or unique id prefix): nothing is saved
+    #[arg(long, value_name = "ID")]
+    pub reject: Option<String>,
+    /// Also list the answered ones
+    #[arg(long, conflicts_with_all = ["approve", "reject"])]
     pub all: bool,
 }
 

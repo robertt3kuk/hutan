@@ -27,6 +27,7 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "signal", "sync", "time", "io-std", "io-util"] }
 toml_edit.workspace = true
+ulid.workspace = true
 unicode-width.workspace = true
 
 [dev-dependencies]

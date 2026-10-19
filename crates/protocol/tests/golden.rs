@@ -34,6 +34,7 @@ use hutan_protocol::chat::*;
 use hutan_protocol::control::ControlMessage;
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
 use hutan_protocol::history::*;
+use hutan_protocol::memory::*;
 use hutan_protocol::messages::*;
 use hutan_protocol::notify::{
     ActRoute, ClientFocus, IntentAction, IntentKind, NotificationIntent, NotifyAck, NotifyAct,
@@ -1064,6 +1065,98 @@ fn control_grants_approval() -> ApprovalInfo {
                 PermissionOptionKind::AllowAlways,
             ),
             option("deny", "Deny", PermissionOptionKind::RejectOnce),
+        ],
+        requested_at_ms: 1_791_894_180_000,
+    }
+}
+
+fn memory_user_provenance() -> MemoryProvenance {
+    MemoryProvenance {
+        author: MemoryAuthor::User,
+        client: Some("desktop".into()),
+        session_id: None,
+        turn_id: None,
+        at_ms: 1_791_894_100_000,
+    }
+}
+
+fn memory_agent_provenance() -> MemoryProvenance {
+    MemoryProvenance {
+        author: MemoryAuthor::Agent,
+        client: None,
+        session_id: Some(sid()),
+        turn_id: Some(turn()),
+        at_ms: 1_791_894_180_000,
+    }
+}
+
+fn memory_entry() -> MemoryEntry {
+    MemoryEntry {
+        id: "01K7F3B5N2Q9W8E4R6T1Y0V3KP".into(),
+        scope: MemoryScope::Global,
+        workspace_id: None,
+        category: MemoryCategory::Profile,
+        state: MemoryState::Active,
+        revision: 1,
+        body: "Prefers short answers.".into(),
+        inferred: false,
+        provenance: memory_user_provenance(),
+        created_ms: 1_791_894_100_000,
+        updated_ms: 1_791_894_100_000,
+    }
+}
+
+fn memory_entry_inferred() -> MemoryEntry {
+    MemoryEntry {
+        id: "01K7F3B5N2Q9W8E4R6T1Y0V3KQ".into(),
+        scope: MemoryScope::Workspace,
+        workspace_id: Some(ws()),
+        category: MemoryCategory::Fact,
+        state: MemoryState::Active,
+        revision: 2,
+        body: "Uses jj for version control; main branch is `trunk`.".into(),
+        inferred: true,
+        provenance: memory_agent_provenance(),
+        created_ms: 1_791_894_100_000,
+        updated_ms: 1_791_894_200_000,
+    }
+}
+
+fn memory_proposal() -> MemoryProposal {
+    MemoryProposal {
+        id: approval(),
+        operation: MemoryOp::Update,
+        state: ProposalState::Pending,
+        scope: MemoryScope::Workspace,
+        workspace_id: Some(ws()),
+        category: MemoryCategory::Fact,
+        entry_id: Some("01K7F3B5N2Q9W8E4R6T1Y0V3KQ".into()),
+        expected_revision: Some(1),
+        body: "Uses jj for version control; main branch is `trunk`.".into(),
+        current_body: Some("Uses jj for version control.".into()),
+        provenance: memory_agent_provenance(),
+        created_ms: 1_791_894_180_000,
+        resolved_ms: None,
+    }
+}
+
+fn memory_approval() -> ApprovalInfo {
+    let option = |id: &str, label: &str, kind| PermissionOption {
+        id: id.into(),
+        label: label.into(),
+        kind,
+        provider: None,
+    };
+    ApprovalInfo {
+        id: approval(),
+        session_id: sid(),
+        turn_id: None,
+        kind: PermissionKind::Control,
+        title: "Mawas proposes to remember (update a fact of this workspace)".into(),
+        detail: Some("Uses jj for version control; main branch is `trunk`.".into()),
+        options: vec![
+            option("approve", "Approve", PermissionOptionKind::AllowOnce),
+            option("reject", "Reject", PermissionOptionKind::RejectOnce),
         ],
         requested_at_ms: 1_791_894_180_000,
     }
@@ -2311,6 +2404,114 @@ fn requests() -> Vec<(&'static str, Request)> {
             "control_grant_revoke",
             Request::ControlGrantRevoke(ControlGrantRevoke { id: 7 }),
         ),
+        ("memory_list", Request::MemoryList(MemoryList::default())),
+        (
+            "memory_list_filtered",
+            Request::MemoryList(MemoryList {
+                scope: Some(MemoryScope::Workspace),
+                workspace_id: Some(ws()),
+                category: Some(MemoryCategory::Note),
+                include_archived: true,
+                query: Some("branch".into()),
+            }),
+        ),
+        (
+            "memory_history",
+            Request::MemoryHistory(MemoryHistoryRequest {
+                entry_id: "01K7F3B5N2Q9W8E4R6T1Y0V3KP".into(),
+            }),
+        ),
+        (
+            "memory_write",
+            Request::MemoryWrite(MemoryWrite {
+                operation_id: "op-1".into(),
+                scope: MemoryScope::Global,
+                workspace_id: None,
+                category: MemoryCategory::Profile,
+                body: "Prefers short answers.".into(),
+            }),
+        ),
+        (
+            "memory_write_workspace",
+            Request::MemoryWrite(MemoryWrite {
+                operation_id: "op-2".into(),
+                scope: MemoryScope::Workspace,
+                workspace_id: Some(ws()),
+                category: MemoryCategory::Note,
+                body: "Releases are cut from `trunk`.".into(),
+            }),
+        ),
+        (
+            "memory_update",
+            Request::MemoryUpdate(MemoryUpdate {
+                operation_id: "op-3".into(),
+                entry_id: "01K7F3B5N2Q9W8E4R6T1Y0V3KP".into(),
+                expected_revision: 2,
+                body: "Prefers very short answers.".into(),
+            }),
+        ),
+        (
+            "memory_archive",
+            Request::MemoryArchive(MemoryTransition {
+                operation_id: "op-4".into(),
+                entry_id: "01K7F3B5N2Q9W8E4R6T1Y0V3KP".into(),
+                expected_revision: 3,
+            }),
+        ),
+        (
+            "memory_restore",
+            Request::MemoryRestore(MemoryTransition {
+                operation_id: "op-5".into(),
+                entry_id: "01K7F3B5N2Q9W8E4R6T1Y0V3KP".into(),
+                expected_revision: 4,
+            }),
+        ),
+        (
+            "memory_propose_create",
+            Request::MemoryPropose(MemoryPropose {
+                operation_id: "op-6".into(),
+                op: MemoryOp::Create,
+                scope: Some(MemoryScope::Global),
+                workspace_id: None,
+                category: Some(MemoryCategory::Fact),
+                entry_id: None,
+                expected_revision: None,
+                body: Some("The staging cluster is called `kite`.".into()),
+            }),
+        ),
+        (
+            "memory_propose_update",
+            Request::MemoryPropose(MemoryPropose {
+                operation_id: "op-7".into(),
+                op: MemoryOp::Update,
+                scope: None,
+                workspace_id: None,
+                category: None,
+                entry_id: Some("01K7F3B5N2Q9W8E4R6T1Y0V3KP".into()),
+                expected_revision: Some(2),
+                body: Some("Uses jj for version control; main branch is `trunk`.".into()),
+            }),
+        ),
+        (
+            "memory_proposals_list",
+            Request::MemoryProposalsList(MemoryProposalsList::default()),
+        ),
+        (
+            "memory_proposals_resolve_approve",
+            Request::MemoryProposalsResolve(MemoryProposalResolve {
+                proposal_id: approval(),
+                decision: ProposalDecision::Approve,
+                edited_body: None,
+            }),
+        ),
+        (
+            "memory_proposals_resolve_edit",
+            Request::MemoryProposalsResolve(MemoryProposalResolve {
+                proposal_id: approval(),
+                decision: ProposalDecision::Edit,
+                edited_body: Some("Uses jj; the main branch is `trunk`.".into()),
+            }),
+        ),
     ]
 }
 
@@ -3078,6 +3279,28 @@ fn events() -> Vec<(&'static str, Event)> {
             "approval_required_control_grants",
             Event::ApprovalRequired {
                 approval: Box::new(control_grants_approval()),
+            },
+        ),
+        (
+            "memory_changed_global",
+            Event::MemoryChanged {
+                scope: MemoryScope::Global,
+                workspace_id: None,
+                scope_revision: 4,
+            },
+        ),
+        (
+            "memory_changed_workspace",
+            Event::MemoryChanged {
+                scope: MemoryScope::Workspace,
+                workspace_id: Some(ws()),
+                scope_revision: 2,
+            },
+        ),
+        (
+            "approval_required_memory",
+            Event::ApprovalRequired {
+                approval: Box::new(memory_approval()),
             },
         ),
     ]
@@ -4474,6 +4697,124 @@ fn responses_match_fixtures() {
                             created_ms: 1_791_894_185_000,
                         },
                     ],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "memory_entries",
+            ControlMessage::ok(
+                20,
+                &MemoryEntries {
+                    entries: vec![memory_entry(), memory_entry_inferred()],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "memory_history",
+            ControlMessage::ok(
+                21,
+                &MemoryHistory {
+                    entry: memory_entry_inferred(),
+                    revisions: vec![
+                        MemoryRevision {
+                            revision: 2,
+                            operation: MemoryOp::Update,
+                            body: "Uses jj for version control; main branch is `trunk`.".into(),
+                            content_hash: "5b0e0e56c1d8a4c3b2b6f4f0d8c2a1e7f3d9b5a7c1e3f5a7b9d1c3e5f7a9b1c3".into(),
+                            author: MemoryAuthor::Agent,
+                            provenance: memory_agent_provenance(),
+                            approval_id: Some(approval()),
+                            operation_id: "op-2".into(),
+                            scope_revision: 5,
+                            created_ms: 1_791_894_200_000,
+                        },
+                        MemoryRevision {
+                            revision: 1,
+                            operation: MemoryOp::Create,
+                            body: "Uses jj for version control.".into(),
+                            content_hash: "9c1d3e5f7a9b1c3d5e7f9a1b3c5d7e9f1a3b5c7d9e1f3a5b7c9d1e3f5a7b9c1d".into(),
+                            author: MemoryAuthor::User,
+                            provenance: memory_user_provenance(),
+                            approval_id: None,
+                            operation_id: "op-1".into(),
+                            scope_revision: 4,
+                            created_ms: 1_791_894_100_000,
+                        },
+                    ],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "memory_receipt",
+            ControlMessage::ok(
+                22,
+                &MemoryReceipt {
+                    status: "applied".into(),
+                    operation_id: "op-1".into(),
+                    entry_id: "01K7F3B5N2Q9W8E4R6T1Y0V3KP".into(),
+                    revision: 1,
+                    scope_revision: 4,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "memory_proposed",
+            ControlMessage::ok(
+                23,
+                &MemoryProposed {
+                    status: "proposed".into(),
+                    proposal_id: approval(),
+                    applied: false,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "memory_proposals",
+            ControlMessage::ok(
+                24,
+                &MemoryProposals {
+                    proposals: vec![memory_proposal()],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "memory_proposal_resolved",
+            ControlMessage::ok(
+                25,
+                &MemoryProposalResolved {
+                    proposal: MemoryProposal {
+                        state: ProposalState::Applied,
+                        resolved_ms: Some(1_791_894_260_000),
+                        ..memory_proposal()
+                    },
+                    receipt: Some(MemoryReceipt {
+                        status: "applied".into(),
+                        operation_id: "proposal:01K7F3B5N2Q9W8E4R6T1Y0V3KM".into(),
+                        entry_id: "01K7F3B5N2Q9W8E4R6T1Y0V3KP".into(),
+                        revision: 2,
+                        scope_revision: 5,
+                    }),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "memory_proposal_conflict",
+            ControlMessage::ok(
+                26,
+                &MemoryProposalResolved {
+                    proposal: MemoryProposal {
+                        state: ProposalState::Conflict,
+                        resolved_ms: Some(1_791_894_260_000),
+                        ..memory_proposal()
+                    },
+                    receipt: None,
                 },
             )
             .unwrap(),

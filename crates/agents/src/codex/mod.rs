@@ -325,6 +325,7 @@ impl CodexAppServerAdapter {
                         sandbox,
                         approvals_reviewer: "user",
                         exclude_turns: true,
+                        developer_instructions: spec.developer_instructions.as_deref(),
                     },
                 )
                 .await?;
@@ -347,6 +348,7 @@ impl CodexAppServerAdapter {
                         approval_policy: policy,
                         sandbox,
                         approvals_reviewer: "user",
+                        developer_instructions: spec.developer_instructions.as_deref(),
                     },
                 )
                 .await?;

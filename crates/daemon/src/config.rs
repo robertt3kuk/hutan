@@ -47,6 +47,8 @@
 //! idle_stop_secs = 600           # a harness assistant idle this long stops its agent process and wakes on the next message; 0 = never, else at least 60
 //! mode = "ask"                   # Mawas: "ask" (ask before acting, the default) or "advisor" (read and propose only)
 //! max_actions_per_turn = 10      # Mawas: changes it may make in one turn before every further one asks
+//! memory = true                  # Mawas: give a conversation the memory you approved (false: nothing is injected)
+//! memory_max_entries = 200       # Mawas: most active memory entries
 //!
 //! [assistant.context]            # what assistants of project workspaces may read
 //! shell = true
@@ -272,6 +274,8 @@ pub const DEFAULT_CONTEXT_BUDGET_CHARS: usize = 60_000;
 pub const DEFAULT_ASSISTANT_IDLE_STOP_SECS: u64 = 600;
 /// `assistant.max_actions_per_turn` when the setting is absent.
 pub const DEFAULT_ASSISTANT_MAX_ACTIONS: u32 = 10;
+/// `assistant.memory_max_entries` when the setting is absent.
+pub const DEFAULT_ASSISTANT_MEMORY_MAX_ENTRIES: u32 = 200;
 /// The shortest `assistant.idle_stop_secs` that is not `0` (never).
 pub const MIN_ASSISTANT_IDLE_STOP_SECS: u64 = 60;
 
@@ -392,6 +396,11 @@ pub struct AssistantSettings {
     pub mode: AssistantMode,
     /// Mutating requests Mawas may make in one turn before every further one asks.
     pub max_actions_per_turn: u32,
+    /// Whether a Mawas conversation is given the memory the user approved (MW-2): the snapshot
+    /// at its start and the deltas at later turns. `false` injects nothing.
+    pub memory: bool,
+    /// Most active memory entries; a write past it is refused until one is archived.
+    pub memory_max_entries: u32,
     /// What assistants of project workspaces may read.
     pub context: ContextPermissions,
     /// What the global assistant (Home) may read.
@@ -410,6 +419,8 @@ impl Default for AssistantSettings {
             idle_stop_secs: DEFAULT_ASSISTANT_IDLE_STOP_SECS,
             mode: AssistantMode::default(),
             max_actions_per_turn: DEFAULT_ASSISTANT_MAX_ACTIONS,
+            memory: true,
+            memory_max_entries: DEFAULT_ASSISTANT_MEMORY_MAX_ENTRIES,
             context: ContextPermissions::default(),
             global_context: ContextPermissions::global_default(),
             workspaces: std::collections::BTreeMap::new(),
@@ -619,6 +630,11 @@ impl DaemonSettings {
         if file.assistant.max_actions_per_turn == 0 {
             return Err(toml::de::Error::custom(
                 "assistant.max_actions_per_turn must be at least 1",
+            ));
+        }
+        if file.assistant.memory_max_entries == 0 {
+            return Err(toml::de::Error::custom(
+                "assistant.memory_max_entries must be at least 1",
             ));
         }
         if file.notify.expire_secs == 0 {

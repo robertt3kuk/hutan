@@ -477,3 +477,130 @@ async fn a_read_only_policy_refuses_to_close_sessions() {
     assert_eq!(t.session(&target).await["state"]["state"], "running");
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn memory_tools_read_freely_and_only_propose_nothing_is_saved_until_the_user_approves() {
+    // Even under `agents = "allow"`: a proposal changes nothing and waits for the user.
+    let t = start_with_policy("allow").await;
+    t.hutan(&["memory", "add", "Prefers short answers."])
+        .await
+        .ok();
+    let agent = t.new_session(&[], &["sh", "-c", "exec sleep 600"]).await;
+    report_agent(&t, &agent).await;
+    let mut mcp = Mcp::start(&t.paths.socket, Some(&agent)).await;
+    let init = mcp.initialize().await;
+    assert!(
+        init["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("never say it was saved"),
+        "{init}"
+    );
+    let list = mcp.call("tools/list", json!({})).await;
+    let names: Vec<&str> = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    for wanted in ["memory_list", "memory_search", "memory_propose"] {
+        assert!(names.contains(&wanted), "{wanted} missing from {names:?}");
+    }
+    assert!(
+        !names.iter().any(|n| matches!(
+            *n,
+            "memory_write" | "memory_update" | "memory_archive" | "memory_restore"
+        )),
+        "no direct write tool for an agent: {names:?}"
+    );
+
+    // Reads are free and carry the revision a proposal needs.
+    let call = mcp.tool_request("memory_list", json!({})).await;
+    let listed = mcp.answer(call).await;
+    assert!(!is_error(&listed), "{listed}");
+    let entries = listed["result"]["structuredContent"]["entries"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(entries.len(), 1);
+    let call = mcp
+        .tool_request("memory_search", json!({"query": "SHORT"}))
+        .await;
+    let found = mcp.answer(call).await;
+    assert_eq!(
+        found["result"]["structuredContent"]["entries"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let call = mcp
+        .tool_request("memory_search", json!({"query": "nothing like this"}))
+        .await;
+    assert!(
+        mcp.answer(call).await["result"]["structuredContent"]["entries"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    // A proposal comes back `proposed`, and the text says it is not saved.
+    let call = mcp
+        .tool_request(
+            "memory_propose",
+            json!({"op": "create", "scope": "global", "category": "fact", "body": "Staging is called kite."}),
+        )
+        .await;
+    let proposed = mcp.answer(call).await;
+    assert!(!is_error(&proposed), "{proposed}");
+    let text = text_of(&proposed);
+    assert!(
+        text.contains("NOT saved to memory until the user approves"),
+        "{text}"
+    );
+    assert_eq!(
+        proposed["result"]["structuredContent"]["status"],
+        "proposed"
+    );
+    assert_eq!(proposed["result"]["structuredContent"]["applied"], false);
+    let listing = t.hutan(&["memory", "ls", "--json"]).await.ok().json();
+    assert_eq!(
+        listing["entries"].as_array().unwrap().len(),
+        1,
+        "nothing saved yet"
+    );
+    let approvals = t.hutan(&["approvals", "--json"]).await.ok().json();
+    assert_eq!(
+        approvals["approvals"].as_array().unwrap().len(),
+        1,
+        "{approvals}"
+    );
+
+    // A bad proposal is refused in words, and a credential is not remembered.
+    let call = mcp
+        .tool_request(
+            "memory_propose",
+            json!({"op": "create", "scope": "global", "category": "fact", "body": "password = hunter2hunter2"}),
+        )
+        .await;
+    let refused = mcp.answer(call).await;
+    assert!(is_error(&refused), "{refused}");
+    assert!(
+        text_of(&refused).contains("Memory is not a secret store"),
+        "{refused}"
+    );
+
+    // The user approves from the CLI; only then is it an entry, and the model's own entry is
+    // still labelled inferred.
+    let id = approvals["approvals"][0]["id"].as_str().unwrap().to_owned();
+    t.hutan(&["approve", &id, "approve"]).await.ok();
+    let listing = t.hutan(&["memory", "ls", "--json"]).await.ok().json();
+    let entries = listing["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(
+        entries
+            .iter()
+            .any(|e| e["body"] == "Staging is called kite." && e["inferred"] == true)
+    );
+    t.stop().await;
+}
