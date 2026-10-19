@@ -119,3 +119,35 @@ pub fn write_file(path: &std::path::Path, text: &str) {
     std::fs::write(&tmp, text).unwrap();
     std::fs::rename(&tmp, path).unwrap();
 }
+
+/// A namespace that renamed `old_size` (a number) to `size` (a string).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Renamed {
+    pub size: String,
+}
+
+impl Default for Renamed {
+    fn default() -> Self {
+        Self {
+            size: "medium".into(),
+        }
+    }
+}
+
+impl Setting for Renamed {
+    const NAMESPACE: &'static str = "renamed";
+
+    fn upgrade(layer: &mut toml::Table) {
+        if let Some(old) = layer.remove("old_size") {
+            let size = if old.as_integer().is_some_and(|n| n > 10) {
+                "large"
+            } else {
+                "small"
+            };
+            layer
+                .entry("size")
+                .or_insert_with(|| toml::Value::String(size.to_owned()));
+        }
+    }
+}

@@ -23,11 +23,12 @@ use super::markdown_view::Look;
 use super::model::{ChatModel, LoadStatus};
 use super::widgets::{ButtonKind, button, round_button};
 use crate::sessions::SessionsStore;
-use crate::settings::ChatSettings;
+use crate::settings::{ChatSettings, SendKey};
 use crate::workbench::actions::{self, RestartSessionById};
 use crate::workbench::harnesses::harness_name;
 use crate::workbench::panels::{kind_icon, recovery_chip, state_dot, tone_color};
 use crate::workbench::render::probe;
+use crate::workbench::send_key::{send_key_control, stop_asking, write_send_key};
 use crate::workbench::text_field::{EditableText, FieldRef, FieldState, edit_keys};
 use crate::workbench::ui::{self, Mascot, StyledExt as _};
 use crate::workbench::view::Region;
@@ -73,6 +74,9 @@ pub struct ChatView {
     pub(super) question_focus: Option<hutan_core::QuestionId>,
     /// The Attach menu or form of an assistant chat.
     pub(super) attach: Option<Attaching>,
+    /// The composer has had the keyboard: from then on it may show the first-run question
+    /// about the send key.
+    send_key_armed: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -146,6 +150,7 @@ impl ChatView {
             forms: HashMap::new(),
             question_focus: None,
             attach: None,
+            send_key_armed: false,
             _subscriptions: subscriptions,
         }
     }
@@ -382,7 +387,7 @@ impl ChatView {
         let normal = self.model.read(cx).vim().mode() != super::vim::Mode::Insert;
         if normal && event.keystroke.key == "enter" && !mods.platform {
             // Enter is not a newline in Normal mode: it sends when it would send in Insert mode.
-            if self.settings.get::<ChatSettings>().send_on_enter && !mods.shift {
+            if self.send_key().return_sends(mods.shift, mods.alt) {
                 self.send(cx);
             }
             return true;
@@ -391,6 +396,11 @@ impl ChatView {
     }
 
     // ---- keys ------------------------------------------------------------------------------
+
+    /// The send key now in force (`chat.send_key`), read live.
+    pub(super) fn send_key(&self) -> SendKey {
+        self.settings.get::<ChatSettings>().send_key
+    }
 
     fn edit(&mut self, change: impl FnOnce(&mut TextInput), cx: &mut Context<Self>) {
         self.model.update(cx, |model, cx| model.edit(change, cx));
@@ -456,26 +466,28 @@ impl ChatView {
             cx.stop_propagation();
             return;
         }
-        // Return sends or breaks the line; Backspace in an empty composer takes the last
-        // attachment off.
-        if !mods.platform && !mods.control && !mods.alt {
-            match key {
-                "enter" => {
-                    let send_on_enter = self.settings.get::<ChatSettings>().send_on_enter;
-                    if send_on_enter && !mods.shift {
-                        self.send(cx);
-                    } else {
-                        self.edit(|input| input.insert("\n"), cx);
-                    }
-                    cx.stop_propagation();
-                    return;
-                }
-                "backspace" if self.backspace_removes_chip(cx) => {
-                    cx.stop_propagation();
-                    return;
-                }
-                _ => {}
+        // Return sends or breaks the line (`chat.send_key`); ⌘Return is the Send action. A
+        // Return that commits an input method's marked text never sends.
+        if key == "enter" && !mods.platform && !mods.control {
+            if self.model.read(cx).input().marked().is_some() {
+                self.edit(TextInput::unmark, cx);
+            } else if self.send_key().return_sends(mods.shift, mods.alt) {
+                self.send(cx);
+            } else {
+                self.edit(|input| input.insert("\n"), cx);
             }
+            cx.stop_propagation();
+            return;
+        }
+        // Backspace in an empty composer takes the last attachment off.
+        if key == "backspace"
+            && !mods.platform
+            && !mods.control
+            && !mods.alt
+            && self.backspace_removes_chip(cx)
+        {
+            cx.stop_propagation();
+            return;
         }
         // Vim's Normal and Visual modes use no key Vim left alone, except ⌘ shortcuts.
         if vim.enabled
@@ -977,6 +989,65 @@ impl ChatView {
             .into_any_element()
     }
 
+    /// The one-line question about the send key (once, dismissible): the two choices and a
+    /// dismiss. Either choice, or the dismiss, ends the question for good.
+    fn render_send_key_offer(
+        &self,
+        current: SendKey,
+        look: &Look,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (theme, tokens) = (&look.theme, &look.tokens);
+        let choices = SendKey::ALL.map(|key| {
+            let (id, region) = match key {
+                SendKey::CmdEnter => ("chat-send-key-cmd-enter", "send-key-cmd-enter"),
+                SendKey::Enter => ("chat-send-key-enter", "send-key-enter"),
+            };
+            let settings = self.settings.clone();
+            ui::choice(id, key.short_label(), key == current, theme, tokens)
+                .relative()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Err(error) = write_send_key(&settings, key) {
+                        this.model.update(cx, |model, cx| {
+                            model.set_error(format!("Could not save the send key: {error}"), cx);
+                        });
+                    }
+                    cx.notify();
+                }))
+                .child(probe(&self.regions, Region::Chat(region)))
+        });
+        let settings = self.settings.clone();
+        let hover = theme.surface_hover;
+        div()
+            .flex()
+            .items_center()
+            .gap(px(tokens.spacing * 2.0))
+            .text_size(px(tokens.secondary_font_size))
+            .text_color(theme.muted)
+            .child("Which key sends a message?")
+            .children(choices)
+            .child(
+                div()
+                    .id("chat-send-key-dismiss")
+                    .relative()
+                    .px(px(tokens.spacing))
+                    .rounded(px(tokens.radius - 2.0))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Err(error) = stop_asking(&settings) {
+                            this.model.update(cx, |model, cx| {
+                                model.set_error(format!("Could not save the setting: {error}"), cx);
+                            });
+                        }
+                        cx.notify();
+                    }))
+                    .child("×")
+                    .child(probe(&self.regions, Region::Chat("send-key-dismiss"))),
+            )
+            .into_any_element()
+    }
+
     fn render_composer(
         &mut self,
         gate: &Gate,
@@ -994,7 +1065,19 @@ impl ChatView {
                 self.attach.as_ref().map(|attaching| attaching.stage),
                 Some(Stage::Form(_))
             );
-        let send_on_enter = self.settings.get::<ChatSettings>().send_on_enter;
+        let send_key = self.send_key();
+        // The one-line question about the send key: once, above the first composer that has the
+        // keyboard, after the setup is done.
+        if focused {
+            self.send_key_armed = true;
+        }
+        let offer = (self.send_key_armed
+            && self.settings.get::<ChatSettings>().ask_send_key
+            && self
+                .settings
+                .get::<crate::settings::AppSettings>()
+                .setup_done)
+            .then(|| self.render_send_key_offer(send_key, look, cx));
         let (chips, context, sending, can_send) = {
             let model = self.model.read(cx);
             (
@@ -1012,14 +1095,41 @@ impl ChatView {
                 .relative()
                 .child(probe(&self.regions, Region::Chat("vim-mode")))
         });
-        let hint = if gate.running {
-            "⌘. interrupts the turn".to_owned()
+        // What the footer says in place of the send-key control.
+        let plain_hint: Option<String> = if let Some(blocked) = &gate.blocked {
+            Some(blocked.to_string())
+        } else if gate.running {
+            Some("⌘. interrupts the turn".to_owned())
         } else if self.refused_attachment(cx).is_some() {
-            "Remove the refused attachment to send".to_owned()
-        } else if send_on_enter {
-            "↩ send · ⇧↩ newline".to_owned()
+            Some("Remove the refused attachment to send".to_owned())
         } else {
-            "⌘↩ send · ↩ newline".to_owned()
+            None
+        };
+        let hint = match plain_hint {
+            Some(text) => div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_color(theme.muted)
+                .text_size(px(tokens.secondary_font_size))
+                .child(SharedString::from(text))
+                .into_any_element(),
+            None => div()
+                .flex()
+                .flex_1()
+                .min_w_0()
+                .items_center()
+                .child(
+                    send_key_control("chat-send-key", send_key.hint("send"), theme, tokens)
+                        .on_click(|event, window, cx| {
+                            window.dispatch_action(
+                                Box::new(actions::ShowSendKeyMenu(event.position())),
+                                cx,
+                            );
+                        })
+                        .child(probe(&self.regions, Region::Chat("send-key"))),
+                )
+                .into_any_element(),
         };
         let session = self.session;
         let chip_row = div().flex().flex_wrap().gap(px(tokens.spacing)).children(
@@ -1096,6 +1206,7 @@ impl ChatView {
             .children(open_pastes)
             .child(input)
             .children(mention_hint)
+            .children(offer)
             .child(
                 div()
                     .flex()
@@ -1111,19 +1222,7 @@ impl ChatView {
                             .gap(px(tokens.spacing * 2.0))
                             .child(attach_button)
                             .children(vim_pill)
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_color(theme.muted)
-                                    .text_size(px(tokens.secondary_font_size))
-                                    .child(SharedString::from(
-                                        gate.blocked
-                                            .as_ref()
-                                            .map_or(hint, std::string::ToString::to_string),
-                                    )),
-                            ),
+                            .child(hint),
                     )
                     .child(
                         div()

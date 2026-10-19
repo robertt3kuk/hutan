@@ -175,6 +175,7 @@ impl ChatView {
             }
             return false;
         };
+        let send_key = self.send_key();
         self.sync_questions(cx);
         let Some(form) = self.forms.get_mut(&id) else {
             self.question_focus = None;
@@ -224,13 +225,24 @@ impl ChatView {
                 _ => return true,
             }
         }
+        let last = focus.is_none_or(|at| at + 1 >= form.inputs.len());
         let Some(text) = form.focused_text() else {
             return true;
         };
-        // Return in a one-line field moves on to the next. The rest is editing; typed text is
-        // no key press: it reaches the field through the platform's text input.
-        if key == "enter" && plain && !multiline {
-            form.move_focus(true);
+        if key == "enter" && !mods.control && !mods.function {
+            // Return (`chat.send_key`): submits the answer, adds a line to a multi-line one, or
+            // moves on from a one-line field; a Return that commits an input method's marked
+            // text only commits it. Under `enter` the last field's Return submits.
+            if text.marked().is_some() {
+                text.unmark();
+            } else if send_key.return_sends(mods.shift, mods.alt) && (multiline || last) {
+                self.submit_question(id, cx);
+                return true;
+            } else if multiline {
+                text.insert("\n");
+            } else if !mods.alt {
+                form.move_focus(true);
+            }
         } else if !edit_keys(
             &mut FieldMut {
                 input: text,
@@ -240,6 +252,8 @@ impl ChatView {
             event,
             cx,
         ) {
+            // The rest is editing; typed text is no key press: it reaches the field through
+            // the platform's text input.
             return false;
         }
         if let Some(form) = self.forms.get_mut(&id) {

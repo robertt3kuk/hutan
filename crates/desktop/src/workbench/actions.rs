@@ -50,6 +50,7 @@ actions!(
         ZoomWindow,
         ToggleDensity,
         ToggleVimMode,
+        ToggleSendKey,
         SetDensityCompact,
         SetDensityComfortable,
         OpenActivePanelAsTab,
@@ -311,6 +312,9 @@ data_actions! {
     ShowAssistantModelMenu(gpui::Point<gpui::Pixels>);
     /// Show the menu of Mawas Home's mode chip (Ask before acting / Advisor) at this position.
     ShowAssistantModeMenu(gpui::Point<gpui::Pixels>);
+    /// Show the menu behind a composer's send-key control (⌘Return or Return sends) at this
+    /// position.
+    ShowSendKeyMenu(gpui::Point<gpui::Pixels>);
     /// Open the Memory page with the editor of this memory proposal (its id) open: "Edit &
     /// approve" of a card in Today.
     EditMemoryProposal(String);
@@ -564,6 +568,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Models: Manage Providers…", ManageProviders),
         command("Accounts…", ManageAccounts),
         command("Chat: Switch Model…", SwitchChatModel),
+        command("Chat: Toggle Send Key", ToggleSendKey),
     ]);
     if assistant {
         out.push(command("Mawas: Open", OpenAssistant));

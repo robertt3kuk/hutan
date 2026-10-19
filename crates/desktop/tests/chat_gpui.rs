@@ -1280,13 +1280,13 @@ fn return_inserts_a_newline_and_the_keys_edit_the_draft(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
-fn send_on_enter_makes_return_send_and_shift_return_a_newline(cx: &mut TestAppContext) {
+fn the_enter_send_key_makes_return_send_and_shift_return_a_newline(cx: &mut TestAppContext) {
     let env = ChatEnv::new();
     let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
     let info = daemon.create_chat(&env.cwd());
     std::fs::write(
         daemon.home().join("settings.toml"),
-        "[chat]\nsend_on_enter = true\n",
+        "[chat]\nsend_key = \"enter\"\n",
     )
     .unwrap();
     let (view, cx) = open(cx, &daemon);
@@ -1302,6 +1302,219 @@ fn send_on_enter_makes_return_send_and_shift_return_a_newline(cx: &mut TestAppCo
     pump(cx, "the message to arrive", |_| env.sent_texts().len() == 1);
     assert_eq!(env.sent_texts(), ["one\ntwo"]);
     assert!(model.read_with(cx, |m, _| m.input().is_empty()));
+}
+
+/// Switches `chat.send_key` the way a settings change does, while everything stays open.
+fn set_send_key(view: &Entity<Workbench>, cx: &mut VisualTestContext, key: &str) {
+    view.update(cx, |wb, _| {
+        wb.settings_store()
+            .write_user("chat.send_key", toml::Value::String(key.to_owned()))
+            .unwrap();
+    });
+    draw(cx);
+}
+
+#[gpui::test]
+fn with_the_cmd_enter_send_key_return_and_shift_return_add_a_line_and_cmd_return_sends(
+    cx: &mut TestAppContext,
+) {
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
+    let info = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    let (_chat, model) = open_chat(&view, cx, info.id);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.send_key()),
+        hutan_desktop::settings::SendKey::CmdEnter,
+        "the default"
+    );
+    cx.simulate_input("one");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("two");
+    cx.simulate_keystrokes("shift-enter");
+    cx.simulate_input("three");
+    assert_eq!(
+        model.read_with(cx, |m, _| m.input().text().to_owned()),
+        "one\ntwo\nthree"
+    );
+    assert!(env.sent_texts().is_empty(), "no Return sent");
+    cx.simulate_keystrokes("cmd-enter");
+    pump(cx, "the message to arrive", |_| env.sent_texts().len() == 1);
+    assert_eq!(env.sent_texts(), ["one\ntwo\nthree"]);
+}
+
+#[gpui::test]
+fn with_the_enter_send_key_alt_return_adds_a_line_and_cmd_return_still_sends(
+    cx: &mut TestAppContext,
+) {
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
+    let info = daemon.create_chat(&env.cwd());
+    std::fs::write(
+        daemon.home().join("settings.toml"),
+        "[chat]\nsend_key = \"enter\"\n",
+    )
+    .unwrap();
+    let (view, cx) = open(cx, &daemon);
+    let (_chat, model) = open_chat(&view, cx, info.id);
+    cx.simulate_input("one");
+    cx.simulate_keystrokes("alt-enter");
+    cx.simulate_input("two");
+    assert_eq!(
+        model.read_with(cx, |m, _| m.input().text().to_owned()),
+        "one\ntwo"
+    );
+    assert!(env.sent_texts().is_empty(), "⌥Return added a line");
+    cx.simulate_keystrokes("cmd-enter");
+    pump(cx, "the message to arrive", |_| env.sent_texts().len() == 1);
+    assert_eq!(
+        env.sent_texts(),
+        ["one\ntwo"],
+        "⌘Return is never a dead key"
+    );
+}
+
+#[gpui::test]
+fn a_return_that_commits_marked_text_never_sends(cx: &mut TestAppContext) {
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
+    let info = daemon.create_chat(&env.cwd());
+    std::fs::write(
+        daemon.home().join("settings.toml"),
+        "[chat]\nsend_key = \"enter\"\n",
+    )
+    .unwrap();
+    let (view, cx) = open(cx, &daemon);
+    let (_chat, model) = open_chat(&view, cx, info.id);
+    cx.simulate_input("ab");
+    // An input method is composing: the text is marked.
+    model.update(cx, |m, cx| {
+        m.edit(|input| input.mark(None, "かな", None), cx)
+    });
+    assert!(model.read_with(cx, |m, _| m.input().marked().is_some()));
+    cx.simulate_keystrokes("enter");
+    assert!(
+        env.sent_texts().is_empty(),
+        "Return only committed the text"
+    );
+    assert!(model.read_with(cx, |m, _| m.input().marked().is_none()));
+    assert_eq!(
+        model.read_with(cx, |m, _| m.input().text().to_owned()),
+        "abかな"
+    );
+    // The next Return sends.
+    cx.simulate_keystrokes("enter");
+    pump(cx, "the message to arrive", |_| env.sent_texts().len() == 1);
+    assert_eq!(env.sent_texts(), ["abかな"]);
+}
+
+#[gpui::test]
+fn the_hint_switches_the_send_key_in_an_open_composer_and_the_palette_toggles_it(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::settings::SendKey;
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
+    let info = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    let (chat, model) = open_chat(&view, cx, info.id);
+    cx.simulate_input("one");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("two");
+    assert_eq!(
+        model.read_with(cx, |m, _| m.input().text().to_owned()),
+        "one\ntwo",
+        "⌘Return mode: Return added a line"
+    );
+
+    // The hint is a control: it opens a menu of the two choices, the current one checked.
+    click(&view, cx, Region::Chat("send-key"));
+    let entries = view
+        .read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("the menu is open");
+    assert_eq!(
+        entries
+            .iter()
+            .map(|(label, checked)| (label.to_string(), *checked))
+            .collect::<Vec<_>>(),
+        [
+            ("⌘Return (Return adds a line)".to_owned(), true),
+            ("Return (⇧Return adds a line)".to_owned(), false)
+        ]
+    );
+    click(&view, cx, Region::MenuEntry(1));
+    assert_eq!(view.read_with(cx, |wb, _| wb.send_key()), SendKey::Enter);
+    assert!(view.read_with(cx, |wb, _| wb.context_menu_entries().is_none()));
+    let saved = std::fs::read_to_string(daemon.home().join("settings.toml")).unwrap();
+    assert!(saved.contains("send_key = \"enter\""), "{saved}");
+
+    // The composer that was open follows at once, keyboard and all: Return sends now.
+    assert!(cx.update(|window, cx| chat.read(cx).focus_handle_is_focused(window)));
+    cx.simulate_keystrokes("enter");
+    pump(cx, "the message to arrive", |_| env.sent_texts().len() == 1);
+    assert_eq!(env.sent_texts(), ["one\ntwo"]);
+
+    // ⌘K "Chat: Toggle Send Key" flips it back and says what sends now.
+    cx.simulate_keystrokes("cmd-shift-p");
+    cx.simulate_input("toggle send key");
+    let titles = view.read_with(cx, |wb, _| wb.palette_titles());
+    assert_eq!(titles[0].as_ref(), "Chat: Toggle Send Key");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(view.read_with(cx, |wb, _| wb.send_key()), SendKey::CmdEnter);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.notice().map(ToString::to_string)),
+        Some("⌘Return now sends".to_owned())
+    );
+    cx.dispatch_action(hutan_desktop::workbench::actions::ToggleSendKey);
+    assert_eq!(view.read_with(cx, |wb, _| wb.send_key()), SendKey::Enter);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.notice().map(ToString::to_string)),
+        Some("Return now sends".to_owned())
+    );
+}
+
+#[gpui::test]
+fn the_first_composer_asks_once_which_key_sends_after_the_setup_is_done(cx: &mut TestAppContext) {
+    use hutan_desktop::settings::{ChatSettings, SendKey};
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
+    let info = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    let (_chat, _model) = open_chat(&view, cx, info.id);
+    draw(cx);
+    assert!(
+        region(&view, cx, Region::Chat("send-key-enter")).is_none(),
+        "not before the setup is done"
+    );
+    view.update(cx, |wb, _| {
+        wb.settings_store()
+            .write_user("app.setup_done", toml::Value::Boolean(true))
+            .unwrap();
+    });
+    draw(cx);
+    click(&view, cx, Region::Chat("send-key-enter"));
+    assert_eq!(view.read_with(cx, |wb, _| wb.send_key()), SendKey::Enter);
+    assert!(!view.read_with(cx, |wb, _| {
+        wb.settings_store().get::<ChatSettings>().ask_send_key
+    }));
+    draw(cx);
+    assert!(
+        region(&view, cx, Region::Chat("send-key-enter")).is_none(),
+        "the question is gone for good"
+    );
+
+    // Dismissing it keeps the key and stops the question too.
+    view.update(cx, |wb, _| {
+        wb.settings_store()
+            .write_user("chat.ask_send_key", toml::Value::Boolean(true))
+            .unwrap();
+    });
+    draw(cx);
+    click(&view, cx, Region::Chat("send-key-dismiss"));
+    assert_eq!(view.read_with(cx, |wb, _| wb.send_key()), SendKey::Enter);
+    assert!(!view.read_with(cx, |wb, _| {
+        wb.settings_store().get::<ChatSettings>().ask_send_key
+    }));
 }
 
 #[gpui::test]
@@ -2045,4 +2258,122 @@ fn a_question_can_be_declined_from_its_card_and_counts_as_attention_while_it_wai
             wb.sessions().read(cx).attention_entries().is_empty()
         })
     });
+}
+
+// ---- the send key in the other message inputs -------------------------------------------------
+
+#[gpui::test]
+fn the_enter_send_key_submits_a_question_card_from_its_last_field(cx: &mut TestAppContext) {
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("question-user-input"));
+    let info = daemon.create_chat(&env.cwd());
+    std::fs::write(
+        daemon.home().join("settings.toml"),
+        "[chat]\nsend_key = \"enter\"\n",
+    )
+    .unwrap();
+    let (view, cx) = open(cx, &daemon);
+    let (chat, model) = open_chat(&view, cx, info.id);
+    // ⌘↩ still sends under the Enter key.
+    say(cx, "ask me");
+    pump(cx, "the question to be pending", |cx| {
+        !pending_questions(&model, cx).is_empty()
+    });
+    let id = pending_questions(&model, cx)[0];
+    pump(cx, "the card", |cx| {
+        draw(cx);
+        region(&view, cx, Region::ChatQuestion(0)).is_some()
+    });
+
+    // The note field is not the last: Return moves on to the token field and submits nothing.
+    click(&view, cx, Region::ChatQuestion(100));
+    click(&view, cx, Region::ChatQuestion(8 + 1));
+    cx.simulate_input("none1");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("hunter2");
+    assert_eq!(
+        question_state(&model, cx, id),
+        hutan_chat_view::QuestionState::Pending
+    );
+    assert!(env.received().iter().all(|(m, _)| m != "response"));
+    // Return in the last field submits.
+    cx.simulate_keystrokes("enter");
+    pump(cx, "the answer", |cx| {
+        question_state(&model, cx, id) != hutan_chat_view::QuestionState::Pending
+            || chat.read_with(cx, |c, _| c.question_error(id).is_some())
+    });
+    let error = chat.read_with(cx, |c, _| c.question_error(id));
+    assert!(error.is_none(), "the card says: {error:?}");
+    let hutan_chat_view::QuestionState::Answered { values, .. } = question_state(&model, cx, id)
+    else {
+        panic!("not answered")
+    };
+    assert_eq!(values["note"], "none1");
+}
+
+#[gpui::test]
+fn the_start_sheet_prompt_follows_the_send_key_and_its_hint_switches_it(cx: &mut TestAppContext) {
+    use hutan_desktop::settings::SendKey;
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
+    let (view, cx) = open(cx, &daemon);
+    cx.simulate_keystrokes("cmd-shift-t");
+    view.update(cx, |wb, cx| {
+        wb.launcher_set_kind(hutan_desktop::sessions::launch::LaunchKind::Chat, cx);
+    });
+    pump(cx, "Codex to be startable", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.launcher_harness_choices(cx)
+                .iter()
+                .any(|h| h.id == "codex" && h.enabled())
+                && wb
+                    .launcher()
+                    .is_some_and(|l| l.agent() == &LaunchAgent::Harness("codex".into()))
+                && matches!(wb.launcher_models(cx), Models::Ready(_))
+        })
+    });
+    let prompt = |cx: &VisualTestContext| {
+        view.read_with(cx, |wb, _| wb.launcher().unwrap().prompt().to_owned())
+    };
+    let asking = |cx: &VisualTestContext| {
+        view.read_with(cx, |wb, _| wb.launcher().unwrap().confirm().is_some())
+    };
+    click(&view, cx, Region::Launcher("prompt"));
+    cx.simulate_input("Say hello");
+
+    // ⌘Return mode: Return and ⇧Return add lines; nothing starts.
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("x");
+    cx.simulate_keystrokes("shift-enter");
+    assert_eq!(prompt(cx), "Say hello\nx\n");
+    assert!(!asking(cx));
+
+    // Under the Enter key, in the sheet that is already open: ⇧Return and ⌥Return add lines,
+    // Return starts (the first start of this agent and model asks before it goes).
+    set_send_key(&view, cx, "enter");
+    cx.simulate_keystrokes("alt-enter");
+    assert_eq!(prompt(cx), "Say hello\nx\n\n");
+    assert!(!asking(cx));
+    cx.simulate_keystrokes("enter");
+    assert!(asking(cx), "Return started it");
+    assert_eq!(prompt(cx), "Say hello\nx\n\n");
+    cx.simulate_keystrokes("escape");
+    assert!(!asking(cx));
+
+    // The hint under the prompt is the same quick switch.
+    click(&view, cx, Region::Launcher("send-key"));
+    assert!(view.read_with(cx, |wb, _| wb.context_menu_entries().is_some()));
+    click(&view, cx, Region::MenuEntry(0));
+    assert_eq!(view.read_with(cx, |wb, _| wb.send_key()), SendKey::CmdEnter);
+    assert!(
+        view.read_with(cx, |wb, _| wb.launcher().is_some()),
+        "the sheet stays open"
+    );
+    cx.simulate_keystrokes("enter");
+    assert_eq!(
+        prompt(cx),
+        "Say hello\nx\n\n\n",
+        "the sheet has the keys back"
+    );
+    assert!(!asking(cx));
 }

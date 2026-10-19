@@ -32,6 +32,7 @@ mod remote;
 mod render;
 mod resources;
 mod review;
+pub(crate) mod send_key;
 mod settings_assistant;
 mod settings_daemon;
 mod settings_keys;

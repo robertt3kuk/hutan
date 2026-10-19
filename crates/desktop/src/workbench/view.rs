@@ -1468,7 +1468,13 @@ impl Workbench {
 
     pub(crate) fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.context_menu.take().is_some() {
-            self.focus_root(window, cx);
+            // A menu opened from the Start sheet (its send-key control) gives the keyboard back
+            // to the sheet.
+            if self.launcher.is_some() {
+                self.launcher_refocus(window, cx);
+            } else {
+                self.focus_root(window, cx);
+            }
             cx.notify();
         }
     }

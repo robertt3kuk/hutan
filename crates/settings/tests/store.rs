@@ -892,3 +892,24 @@ fn reload_reads_the_files_again() {
     f.store.reload();
     assert_eq!(f.store.get::<Layout>().preset, "b");
 }
+
+#[test]
+fn an_upgrade_hook_maps_an_old_key_in_each_layer_and_never_touches_the_defaults() {
+    use common::Renamed;
+    let f = Fixture::new(Some("[renamed]\nold_size = 12\n"));
+    assert_eq!(f.store.get::<Renamed>().size, "large");
+    assert!(f.store.errors().is_empty(), "{:?}", f.store.errors());
+
+    // A layer that sets the new key itself wins over the old one beside it.
+    write_file(
+        &f.user_path(),
+        "[renamed]\nold_size = 12\nsize = \"tiny\"\n",
+    );
+    f.store.reload();
+    assert_eq!(f.store.get::<Renamed>().size, "tiny");
+
+    // A layer that sets neither leaves the default alone.
+    write_file(&f.user_path(), "[renamed]\n");
+    f.store.reload();
+    assert_eq!(f.store.get::<Renamed>().size, "medium");
+}

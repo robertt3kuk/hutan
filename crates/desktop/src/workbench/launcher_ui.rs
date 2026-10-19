@@ -2,9 +2,9 @@
 //! sheet with a label column and one row per field, in Tab order.
 
 use gpui::{
-    AnyElement, Context, ElementId, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::*, px,
-    transparent_black,
+    AnyElement, ClickEvent, Context, ElementId, InteractiveElement, IntoElement, KeyDownEvent,
+    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    prelude::*, px, transparent_black,
 };
 
 use super::agents::Models;
@@ -14,6 +14,7 @@ use super::launcher::{
 };
 use super::panels::field_box;
 use super::render::probe;
+use super::send_key::send_key_control;
 use super::ui::{self, ButtonKind, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::VimConfig;
@@ -606,21 +607,44 @@ impl Workbench {
             );
         }
         if kind.takes_prompt() {
+            let send_key = self
+                .settings
+                .get::<crate::settings::ChatSettings>()
+                .send_key;
             input_rows.push(
                 row(
                     "Prompt",
-                    text_field(
-                        LauncherField::Prompt,
-                        LauncherStop::Prompt,
-                        "prompt",
-                        if kind == LaunchKind::Chat {
-                            "What should the agent do? It is the first message."
-                        } else {
-                            "What the agent starts with (optional)"
-                        },
-                        true,
-                        cx,
-                    ),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(text_field(
+                            LauncherField::Prompt,
+                            LauncherStop::Prompt,
+                            "prompt",
+                            if kind == LaunchKind::Chat {
+                                "What should the agent do? It is the first message."
+                            } else {
+                                "What the agent starts with (optional)"
+                            },
+                            true,
+                            cx,
+                        ))
+                        .child(
+                            div().flex().child(
+                                send_key_control(
+                                    "launch-send-key",
+                                    send_key.hint("start"),
+                                    &theme,
+                                    &tokens,
+                                )
+                                .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
+                                    this.show_send_key_menu(event.position(), window, cx);
+                                }))
+                                .child(probe(&self.regions, Region::Launcher("send-key"))),
+                            ),
+                        )
+                        .into_any_element(),
                 )
                 .into_any_element(),
             );

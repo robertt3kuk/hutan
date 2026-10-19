@@ -871,3 +871,67 @@ fn start_a_new_agent_opens_the_start_sheet_on_the_checkout_and_sends_it_the_revi
     });
     assert!(view.read_with(cx, |wb, _| wb.launcher().is_none()));
 }
+
+// The send key -------------------------------------------------------------------------------
+
+#[gpui::test]
+fn with_the_cmd_enter_send_key_return_in_the_comment_box_adds_a_line(cx: &mut TestAppContext) {
+    let fx = Fx::new();
+    let (view, cx) = open(cx, &fx, None);
+    let changes = open_changes(&view, cx, &fx.wt);
+    click(&view, cx, Region::ChangesLine(2));
+    cx.simulate_keystrokes("c");
+    assert!(changes.read_with(cx, |c, _| c.comment_box_open()));
+    cx.simulate_input("Why");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_input("upper");
+    assert!(changes.read_with(cx, |c, _| c.comment_box_open()));
+    assert!(comments(&changes, cx).is_empty(), "Return did not add it");
+    cx.simulate_keystrokes("cmd-enter");
+    assert_eq!(texts(&changes, cx), ["Why\nupper"]);
+}
+
+#[gpui::test]
+fn with_the_enter_send_key_return_adds_the_comment_and_sends_the_review(cx: &mut TestAppContext) {
+    let fx = Fx::new();
+    let (_terminal, log) = fx.terminal_agent();
+    fs::write(
+        fx.daemon.home().join("settings.toml"),
+        "[chat]\nsend_key = \"enter\"\n",
+    )
+    .unwrap();
+    let (view, cx) = open(cx, &fx, None);
+    let changes = open_changes(&view, cx, &fx.wt);
+    wait_targets(&changes, cx, 1);
+
+    // ⇧Return and ⌥Return add lines; Return adds the comment.
+    click(&view, cx, Region::ChangesLine(2));
+    cx.simulate_keystrokes("c");
+    cx.simulate_input("Why");
+    cx.simulate_keystrokes("shift-enter");
+    cx.simulate_input("upper");
+    cx.simulate_keystrokes("alt-enter");
+    cx.simulate_input("?");
+    assert!(comments(&changes, cx).is_empty());
+    cx.simulate_keystrokes("enter");
+    assert_eq!(texts(&changes, cx), ["Why\nupper\n?"]);
+    assert!(!changes.read_with(cx, |c, _| c.comment_box_open()));
+
+    // ⌘Return adds from the box too.
+    click(&view, cx, Region::ChangesLine(5));
+    cx.simulate_keystrokes("c");
+    cx.simulate_input("Drop this.");
+    cx.simulate_keystrokes("cmd-enter");
+    assert_eq!(texts(&changes, cx).len(), 2);
+
+    // Return with the diff focused sends the review.
+    click(&view, cx, Region::ChangesLine(1));
+    assert!(changes.update_in(cx, |c, window, _| c.review_focused(window)));
+    cx.simulate_keystrokes("enter");
+    wait_until(cx, "the terminal to receive the paste", |_| {
+        fs::read(&log).is_ok_and(|bytes| bytes.ends_with(b"\x1b[201~\n"))
+    });
+    wait_until(cx, "the comments to be marked sent", |cx| {
+        comments(&changes, cx).iter().all(|c| c.sent_ms.is_some())
+    });
+}

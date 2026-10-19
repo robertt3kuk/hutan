@@ -700,13 +700,95 @@ impl Setting for HistorySettings {
     const NAMESPACE: &'static str = "history";
 }
 
+/// Which key sends a message from every composer (the chat composer, the Start sheet's prompt,
+/// review comments, free-text answers in question cards). ⌘Return always sends as well.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum SendKey {
+    /// ⌘Return sends; Return adds a line.
+    #[default]
+    CmdEnter,
+    /// Return sends; ⇧Return (or ⌥Return) adds a line.
+    Enter,
+}
+
+impl SendKey {
+    pub const ALL: [SendKey; 2] = [SendKey::CmdEnter, SendKey::Enter];
+
+    /// The value in `settings.toml`.
+    pub fn key(self) -> &'static str {
+        match self {
+            SendKey::CmdEnter => "cmd-enter",
+            SendKey::Enter => "enter",
+        }
+    }
+
+    /// The choice as the quick-switch menu and the settings sheet word it.
+    pub fn label(self) -> &'static str {
+        match self {
+            SendKey::CmdEnter => "⌘Return (Return adds a line)",
+            SendKey::Enter => "Return (⇧Return adds a line)",
+        }
+    }
+
+    /// The short form of the choice, for the one-line first-run question.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            SendKey::CmdEnter => "⌘Return",
+            SendKey::Enter => "Return",
+        }
+    }
+
+    /// The keys that send, as a button label shows them.
+    pub fn combo(self) -> &'static str {
+        match self {
+            SendKey::CmdEnter => "⌘↩",
+            SendKey::Enter => "↩",
+        }
+    }
+
+    /// The hint line of a composer whose Return does `verb` (`send`, `start`, `comment`).
+    pub fn hint(self, verb: &str) -> String {
+        match self {
+            SendKey::CmdEnter => format!("⌘↩ {verb} · ↩ newline"),
+            SendKey::Enter => format!("↩ {verb} · ⇧↩ newline"),
+        }
+    }
+
+    /// The other choice.
+    pub fn other(self) -> SendKey {
+        match self {
+            SendKey::CmdEnter => SendKey::Enter,
+            SendKey::Enter => SendKey::CmdEnter,
+        }
+    }
+
+    /// What the toast says after a toggle to this choice.
+    pub fn toast(self) -> &'static str {
+        match self {
+            SendKey::CmdEnter => "⌘Return now sends",
+            SendKey::Enter => "Return now sends",
+        }
+    }
+
+    /// Whether a Return without ⌘ or ⌃ sends. ⇧Return and ⌥Return always add a line;
+    /// ⌘Return sends under both choices and never gets here.
+    pub fn return_sends(self, shift: bool, alt: bool) -> bool {
+        self == SendKey::Enter && !shift && !alt
+    }
+}
+
 /// The `chat` namespace: the agent chat view's composer and what "Send to agent" attaches.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ChatSettings {
-    /// Whether Return sends the message (Shift-Return then inserts a newline). Off, Return
-    /// inserts a newline and ⌘-Return sends.
-    pub send_on_enter: bool,
+    /// `cmd-enter` (default: ⌘Return sends, Return adds a line) or `enter` (Return sends,
+    /// ⇧Return adds a line). Applies to every place a message is written. Files written before
+    /// this key existed call it `send_on_enter` (a boolean; `true` is `enter`).
+    pub send_key: SendKey,
+    /// Ask once, in the first composer you focus, which key should send. Off after you answer
+    /// or dismiss the question (or chose in the first-run setup).
+    pub ask_send_key: bool,
     /// Most bytes of a terminal block's output that "Send to agent" attaches to the composer;
     /// longer output is cut (the chip says so).
     pub attach_max_bytes: u64,
@@ -715,7 +797,8 @@ pub struct ChatSettings {
 impl Default for ChatSettings {
     fn default() -> Self {
         Self {
-            send_on_enter: false,
+            send_key: SendKey::CmdEnter,
+            ask_send_key: true,
             attach_max_bytes: 64 * 1024,
         }
     }
@@ -723,6 +806,24 @@ impl Default for ChatSettings {
 
 impl Setting for ChatSettings {
     const NAMESPACE: &'static str = "chat";
+
+    /// The boolean `send_on_enter` of earlier versions (`true` is `enter`) counts as `send_key`
+    /// unless the layer sets `send_key` itself.
+    fn upgrade(layer: &mut toml::Table) {
+        let Some(old) = layer.remove("send_on_enter") else {
+            return;
+        };
+        if let Some(on) = old.as_bool() {
+            let key = if on {
+                SendKey::Enter
+            } else {
+                SendKey::CmdEnter
+            };
+            layer
+                .entry("send_key")
+                .or_insert_with(|| toml::Value::String(key.key().to_owned()));
+        }
+    }
 }
 
 /// The `editor` namespace: how Hutan's text inputs (the chat composer, the palette, prompts and
@@ -1293,13 +1394,84 @@ mod tests {
     }
 
     #[test]
-    fn chat_settings_default_to_newline_on_return_and_a_64_kib_attachment() {
+    fn chat_settings_default_to_cmd_enter_and_a_64_kib_attachment() {
         let defaults = ChatSettings::default();
-        assert!(!defaults.send_on_enter);
+        assert_eq!(defaults.send_key, SendKey::CmdEnter);
+        assert!(defaults.ask_send_key);
         assert_eq!(defaults.attach_max_bytes, 65_536);
-        let parsed: ChatSettings = toml::from_str("send_on_enter = true").unwrap();
-        assert!(parsed.send_on_enter);
+        let parsed: ChatSettings = toml::from_str("send_key = \"enter\"").unwrap();
+        assert_eq!(parsed.send_key, SendKey::Enter);
         assert_eq!(parsed.attach_max_bytes, 65_536);
+        let empty: ChatSettings = toml::from_str("").unwrap();
+        assert_eq!(empty, defaults);
+        assert!(toml::from_str::<ChatSettings>("send_key = \"ctrl-enter\"").is_err());
+    }
+
+    #[test]
+    fn the_old_send_on_enter_reads_as_send_key_and_send_key_wins() {
+        let send_key = |text: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = hutan_settings::SettingsPaths::in_dir(dir.path());
+            std::fs::write(&paths.user, text).unwrap();
+            let store = SettingsStore::new(paths);
+            register_all(&store);
+            assert!(store.errors().is_empty(), "{text}: {:?}", store.errors());
+            store.get::<ChatSettings>().send_key
+        };
+        assert_eq!(send_key(""), SendKey::CmdEnter);
+        assert_eq!(send_key("[chat]\nsend_on_enter = true\n"), SendKey::Enter);
+        assert_eq!(
+            send_key("[chat]\nsend_on_enter = false\n"),
+            SendKey::CmdEnter
+        );
+        assert_eq!(send_key("[chat]\nsend_key = \"enter\"\n"), SendKey::Enter);
+        assert_eq!(
+            send_key("[chat]\nsend_on_enter = true\nsend_key = \"cmd-enter\"\n"),
+            SendKey::CmdEnter,
+            "the new key wins"
+        );
+    }
+
+    #[test]
+    fn writing_the_send_key_writes_send_key_and_overrides_the_old_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = hutan_settings::SettingsPaths::in_dir(dir.path());
+        std::fs::write(&paths.user, "[chat]\nsend_on_enter = true\n").unwrap();
+        let store = SettingsStore::new(paths.clone());
+        register_all(&store);
+        assert_eq!(store.get::<ChatSettings>().send_key, SendKey::Enter);
+        store
+            .write_user(
+                "chat.send_key",
+                toml::Value::String(SendKey::CmdEnter.key().to_owned()),
+            )
+            .unwrap();
+        let text = std::fs::read_to_string(&paths.user).unwrap();
+        assert!(text.contains("send_key = \"cmd-enter\""), "{text}");
+        assert_eq!(store.get::<ChatSettings>().send_key, SendKey::CmdEnter);
+        assert!(
+            store
+                .errors()
+                .iter()
+                .all(|e| e.severity != hutan_settings::Severity::Error),
+            "{:?}",
+            store.errors()
+        );
+    }
+
+    #[test]
+    fn only_return_sends_under_the_enter_key_and_never_with_shift_or_alt() {
+        for (key, shift, alt, sends) in [
+            (SendKey::CmdEnter, false, false, false),
+            (SendKey::CmdEnter, true, false, false),
+            (SendKey::Enter, false, false, true),
+            (SendKey::Enter, true, false, false),
+            (SendKey::Enter, false, true, false),
+        ] {
+            assert_eq!(key.return_sends(shift, alt), sends, "{key:?} {shift} {alt}");
+        }
+        assert_eq!(SendKey::CmdEnter.other(), SendKey::Enter);
+        assert_eq!(SendKey::Enter.other(), SendKey::CmdEnter);
     }
 
     #[test]

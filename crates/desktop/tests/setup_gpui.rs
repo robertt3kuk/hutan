@@ -1286,3 +1286,53 @@ fn the_fakes_of_a_login_item_work_with_the_setup_services(cx: &mut TestAppContex
     wait_synced(&view, cx);
     assert!(view.read_with(cx, |wb, _| wb.start_at_login_available()));
 }
+
+// ---- Send key ----------------------------------------------------------------------------------
+
+#[gpui::test]
+fn the_agents_step_offers_the_send_key_and_leaving_it_stops_the_composer_asking(
+    cx: &mut TestAppContext,
+) {
+    let scripts = tempfile::tempdir().unwrap();
+    let daemon = daemon_with_harnesses(scripts.path());
+    let env = Env::new();
+    let (view, cx) = open_first_run(cx, &daemon, &env);
+    go_to(&view, cx, SetupStep::Agents);
+    wait_listing(&view, cx);
+    assert!(!saved(&daemon).contains("send_key"));
+
+    // The one line is on the page and writes the user's choice at once.
+    assert!(drawn(&view, cx, Region::Setup("send-key-enter")));
+    // It is the last row of a page that scrolls: bring it above the footer.
+    let at = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Setup("sheet")))
+        .unwrap()
+        .center();
+    for _ in 0..20 {
+        let row = view
+            .read_with(cx, |wb, _| {
+                wb.region_bounds(Region::Setup("send-key-enter"))
+            })
+            .unwrap();
+        if row.bottom() < gpui::px(900.0) {
+            break;
+        }
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-60.0))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        draw(cx);
+    }
+    click(&view, cx, Region::Setup("send-key-enter"));
+    let text = saved(&daemon);
+    assert!(text.contains("send_key = \"enter\""), "{text}");
+    click(&view, cx, Region::Setup("send-key-cmd-enter"));
+    assert!(saved(&daemon).contains("send_key = \"cmd-enter\""));
+
+    // Leaving the page counts as having been asked: the composer will not ask again.
+    click(&view, cx, Region::Setup("continue"));
+    let text = saved(&daemon);
+    assert!(text.contains("ask_send_key = false"), "{text}");
+}

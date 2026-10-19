@@ -869,6 +869,14 @@ impl Workbench {
                 this.show_assistant_mode_menu(a.0, window, cx);
             }),
         )
+        .on_action(
+            cx.listener(|this, a: &actions::ShowSendKeyMenu, window, cx| {
+                this.show_send_key_menu(a.0, window, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::ToggleSendKey, _, cx| {
+            this.toggle_send_key(cx);
+        }))
         .on_action(cx.listener(|this, a: &actions::ShowPlusMenu, window, cx| {
             this.show_plus_menu(a.0, window, cx);
         }))

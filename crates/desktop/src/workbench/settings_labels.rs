@@ -422,11 +422,21 @@ const FIELDS: &[FieldText] = &[
         "Shows the matching text under each search result.",
     ),
     // ---- chat ----
+    choice(
+        "chat",
+        "send_key",
+        "Send messages with",
+        "Which key sends a message, in every place you write one: chats and Mawas, the Start sheet's prompt, review comments and free-text answers to an agent's questions. ⌘Return always sends too. Merge and delivery messages, memory notes and settings fields keep their own keys.",
+        &[
+            ("cmd-enter", "⌘Return (Return adds a line)"),
+            ("enter", "Return (⇧Return adds a line)"),
+        ],
+    ),
     field(
         "chat",
-        "send_on_enter",
-        "Send with Return",
-        "Return sends the message and Shift-Return starts a new line. Off, Return starts a new line and ⌘-Return sends.",
+        "ask_send_key",
+        "Ask which key sends",
+        "Shows a one-line question about the send key once, above the first message box you use. Off after you answer or dismiss it.",
     ),
     field(
         "chat",

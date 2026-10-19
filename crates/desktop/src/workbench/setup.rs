@@ -28,7 +28,9 @@ use super::view::{Region, Workbench};
 use crate::cli_link::{CliLink, Manual, Plan};
 use crate::integrations::IntegrationStatus;
 use crate::macos::{LoginItemStatus, NotificationAnswer};
-use crate::settings::{AppSettings, AppearanceSettings, AssistantSettings, IntegrationsSettings};
+use crate::settings::{
+    AppSettings, AppearanceSettings, AssistantSettings, IntegrationsSettings, SendKey,
+};
 use crate::theme::{DensityExt as _, Theme};
 
 /// Width of the sheet.
@@ -394,6 +396,10 @@ impl Workbench {
             }
             SetupStep::Agents => {
                 self.setup_write_bool("assistant.enabled", state.assistant_enabled, cx);
+                // The send key was offered on this page: the composer need not ask again.
+                if let Err(error) = super::send_key::stop_asking(&self.settings) {
+                    tracing::warn!("cannot save chat.ask_send_key: {error}");
+                }
                 self.setup_write_bool("integrations.auto_install", state.auto_install, cx);
                 let ticked: Vec<&'static str> = state.hooks.iter().copied().collect();
                 if !ticked.is_empty() {
@@ -1166,12 +1172,40 @@ impl Workbench {
                         .child(backends),
                 )
             })
+            .child(self.setup_send_key_row(cx))
             .into_any_element();
         self.setup_page(
             "Bring your agents",
             "Hutan works with the logins you already made in OMP, Claude Code and Codex. It \
              never sees a token.",
             Some(content),
+        )
+    }
+
+    /// The Agents step's one-line send-key choice: ⌘Return or Return sends a message. It is
+    /// saved at once (the same setting the composers' quick switch writes).
+    fn setup_send_key_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let current = self.send_key();
+        let choices = div()
+            .flex()
+            .gap(px(tokens.spacing * 2.0))
+            .children(SendKey::ALL.map(|key| {
+                let (id, region) = match key {
+                    SendKey::CmdEnter => ("send-key-cmd-enter", "send-key-cmd-enter"),
+                    SendKey::Enter => ("send-key-enter", "send-key-enter"),
+                };
+                ui::choice(id, key.short_label(), current == key, &theme, &tokens)
+                    .relative()
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_send_key(key, cx)))
+                    .child(probe(&self.regions, Region::Setup(region)))
+            }));
+        self.setup_row(
+            "Send messages with",
+            "In chats, Mawas, the Start sheet, review comments and answers to an agent's \
+             questions. ⌘Return always sends too; ⌘K “Chat: Toggle Send Key” switches it later.",
+            choices.into_any_element(),
         )
     }
 

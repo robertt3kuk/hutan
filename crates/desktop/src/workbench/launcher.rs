@@ -1963,7 +1963,7 @@ impl Workbench {
     }
 
     /// The sheet keeps the keyboard after a session opened behind it.
-    fn launcher_refocus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn launcher_refocus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.launcher.is_some() {
             window.focus(&self.launcher_focus, cx);
         }
@@ -1978,6 +1978,38 @@ impl Workbench {
     }
 
     // ---- keyboard ----------------------------------------------------------------------------
+
+    /// Return in the prompt (`chat.send_key`): starts, or adds a line, as the setting says;
+    /// ⇧Return and ⌥Return always add one. A Return that commits an input method's marked text
+    /// only commits it, and in Vim's Normal mode it is no newline.
+    fn launcher_prompt_return(
+        &mut self,
+        shift: bool,
+        alt: bool,
+        vim_on: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let sends = self
+            .settings
+            .get::<crate::settings::ChatSettings>()
+            .send_key
+            .return_sends(shift, alt);
+        let Some(launcher) = &mut self.launcher else {
+            return;
+        };
+        let normal = vim_on && launcher.vim.mode() != super::chat::vim::Mode::Insert;
+        let (_, input) = launcher.vim_and_input(LauncherField::Prompt);
+        if input.marked().is_some() {
+            input.unmark();
+        } else if sends {
+            self.launcher_start(false, window, cx);
+            return;
+        } else if !normal {
+            input.insert("\n");
+        }
+        cx.notify();
+    }
 
     /// A key in the sheet; the stop says what it edits.
     pub(crate) fn launcher_key(
@@ -2078,9 +2110,21 @@ impl Workbench {
                 LauncherStop::After => self.launcher_after_key(key, cx),
                 _ => {
                     let Some(field) = field else { return };
-                    // Return starts from a one-line field; in the prompt it is a new line.
+                    // Return starts from a one-line field; in the prompt it follows the send
+                    // key (`chat.send_key`).
                     if key == "enter" && field != LauncherField::Prompt {
                         self.launcher_start(false, window, cx);
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if key == "enter" && !ks.modifiers.control {
+                        self.launcher_prompt_return(
+                            ks.modifiers.shift,
+                            ks.modifiers.alt,
+                            vim.enabled,
+                            window,
+                            cx,
+                        );
                         cx.stop_propagation();
                         return;
                     }

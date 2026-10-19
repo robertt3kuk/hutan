@@ -24,8 +24,9 @@ use super::comments::{
     diff_text, now_ms, snippet,
 };
 use super::{ChangesEvent, ChangesView, FilePatch, hunk_ranges};
+use crate::settings::{ChatSettings, SendKey};
 use crate::theme::{Theme, Tokens};
-use crate::workbench::chat::vim::{Outcome, Vim};
+use crate::workbench::chat::vim::{Mode, Outcome, Vim};
 use crate::workbench::chat::{Look, TextInput, diff_row};
 use crate::workbench::panels::{age_label, edit_text, field_box};
 use crate::workbench::render::probe;
@@ -790,6 +791,14 @@ impl ChangesView {
         let pending = self.review.bracket.take();
         match ks.key.as_str() {
             "enter" if ks.modifiers.platform => self.send_review(None, cx),
+            // Under `chat.send_key = "enter"` Return sends the review too, once there is one.
+            "enter"
+                if plain
+                    && self.send_key().return_sends(false, false)
+                    && !self.drafts().is_empty() =>
+            {
+                self.send_review(None, cx);
+            }
             "c" if plain => match pending {
                 Some(bracket) => self.step_comment(bracket == ']', cx),
                 None => {
@@ -809,6 +818,39 @@ impl ChangesView {
             _ => return,
         }
         cx.stop_propagation();
+    }
+
+    /// The send key now in force (`chat.send_key`), read live.
+    fn send_key(&self) -> SendKey {
+        self.env.settings.get::<ChatSettings>().send_key
+    }
+
+    /// Return in the comment box (`chat.send_key`): adds the comment, or a line, as the setting
+    /// says; ⇧Return and ⌥Return always add a line. A Return that commits an input method's
+    /// marked text only commits it, and in Vim's Normal mode it is no newline.
+    fn comment_return(
+        &mut self,
+        shift: bool,
+        alt: bool,
+        vim_on: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let sends = self.send_key().return_sends(shift, alt);
+        if let Some(draft) = &mut self.review.draft {
+            let normal = vim_on && draft.vim.mode() != Mode::Insert;
+            if draft.input.marked().is_some() {
+                draft.input.unmark();
+            } else if sends {
+                if self.add_comment(cx) {
+                    window.focus(&self.review.focus, cx);
+                }
+                return;
+            } else if !normal {
+                draft.input.insert("\n");
+            }
+        }
+        cx.notify();
     }
 
     fn on_comment_key(
@@ -841,6 +883,10 @@ impl ChangesView {
                 if self.add_comment(cx) {
                     window.focus(&self.review.focus, cx);
                 }
+            }
+            "enter" if !event.keystroke.modifiers.control => {
+                let mods = &event.keystroke.modifiers;
+                self.comment_return(mods.shift, mods.alt, vim.enabled, window, cx);
             }
             _ => {
                 let Some(draft) = &mut self.review.draft else {
@@ -1486,9 +1532,9 @@ impl ChangesView {
                         ui::button(
                             "changes-comment-save",
                             if editing.is_some() {
-                                "Save  ⌘↩"
+                                format!("Save  {}", self.send_key().combo())
                             } else {
-                                "Comment  ⌘↩"
+                                format!("Comment  {}", self.send_key().combo())
                             },
                             ui::ButtonKind::Primary,
                             !empty,

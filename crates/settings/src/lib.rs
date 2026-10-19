@@ -41,4 +41,10 @@ pub trait Setting:
     const NAMESPACE: &'static str;
     /// Whether `<repo>/.hutan/settings.toml` may override this namespace.
     const WORKSPACE_OVERRIDABLE: bool = false;
+    /// Rewrites one layer's table of this namespace before the layers are merged and read, so a
+    /// key an older Hutan wrote still counts (`chat.send_on_enter` is `chat.send_key`). Runs on
+    /// the user, workspace, project and runtime layers alone, never on the defaults: a key the
+    /// layer sets itself must win over the one it replaces, and a layer that sets neither must
+    /// leave the default alone.
+    fn upgrade(_layer: &mut toml::Table) {}
 }

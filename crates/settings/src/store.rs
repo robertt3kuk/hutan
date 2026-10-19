@@ -104,6 +104,8 @@ struct Entry {
     default: Value,
     initial: Computed,
     load: fn(&Value) -> Result<Loaded, String>,
+    /// [`Setting::upgrade`] over a layer's value of the namespace.
+    upgrade: fn(&mut Value),
     schema: Json,
 }
 
@@ -118,6 +120,12 @@ fn load_typed<T: Setting>(value: &Value) -> Result<Loaded, String> {
         },
         unknown,
     })
+}
+
+fn upgrade_layer<T: Setting>(layer: &mut Value) {
+    if let Value::Table(table) = layer {
+        T::upgrade(table);
+    }
 }
 
 fn make_entry<T: Setting>() -> Result<Entry, String> {
@@ -140,6 +148,7 @@ fn make_entry<T: Setting>() -> Result<Entry, String> {
             json,
         },
         load: load_typed::<T>,
+        upgrade: upgrade_layer::<T>,
         schema,
     })
 }
@@ -386,19 +395,24 @@ impl State {
             let Some(entry) = self.registry.get(namespace) else {
                 continue;
             };
-            let mut layers: Vec<(Option<&Path>, &Value)> = Vec::new();
+            let upgraded = |v: &Value| {
+                let mut v = v.clone();
+                (entry.upgrade)(&mut v);
+                v
+            };
+            let mut layers: Vec<(Option<&Path>, Value)> = Vec::new();
             if let Some(v) = subtree(&self.user.table, namespace) {
-                layers.push((self.user.path.as_deref(), v));
+                layers.push((self.user.path.as_deref(), upgraded(v)));
             }
             if entry.overridable {
                 for layer in [&self.workspace, &self.project] {
                     if let Some(v) = subtree(&layer.table, namespace) {
-                        layers.push((layer.path.as_deref(), v));
+                        layers.push((layer.path.as_deref(), upgraded(v)));
                     }
                 }
             }
             if let Some(v) = self.runtime.get(namespace) {
-                layers.push((None, v));
+                layers.push((None, upgraded(v)));
             }
 
             let mut layers_ok = true;
@@ -726,7 +740,9 @@ impl SettingsStore {
             .chain(std::iter::once(state.runtime.get(T::NAMESPACE)))
             .flatten()
         {
-            deep_merge(&mut merged, layer);
+            let mut layer = layer.clone();
+            (entry.upgrade)(&mut layer);
+            deep_merge(&mut merged, &layer);
         }
         match (entry.load)(&merged) {
             Ok(loaded) => loaded.computed.value.downcast::<T>().unwrap_or(active),

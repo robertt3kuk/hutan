@@ -160,14 +160,14 @@ fn vim_on_the_composer_starts_in_insert_and_escape_goes_to_normal(cx: &mut TestA
 }
 
 #[gpui::test]
-fn normal_mode_enter_sends_only_with_send_on_enter(cx: &mut TestAppContext) {
+fn normal_mode_enter_sends_only_with_the_enter_send_key(cx: &mut TestAppContext) {
     let env = ChatEnv::new();
     let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
     let info = daemon.create_chat(&env.cwd());
     let (_view, chat, model, cx) = open_chat_with(
         cx,
         &daemon,
-        "[editor]\nvim_mode = true\n[chat]\nsend_on_enter = false\n",
+        "[editor]\nvim_mode = true\n[chat]\nsend_key = \"cmd-enter\"\n",
         info.id,
     );
     cx.simulate_input("ping");
@@ -179,7 +179,7 @@ fn normal_mode_enter_sends_only_with_send_on_enter(cx: &mut TestAppContext) {
     );
     assert!(
         env.sent_texts().is_empty(),
-        "and it does not send without send_on_enter"
+        "and it does not send under the ⌘Return send key"
     );
     assert_eq!(mode(&chat, cx), Some(Mode::Normal));
     // ⌘↩ sends from any mode.
@@ -195,14 +195,14 @@ fn normal_mode_enter_sends_only_with_send_on_enter(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn normal_mode_enter_sends_with_send_on_enter(cx: &mut TestAppContext) {
+fn normal_mode_enter_sends_with_the_enter_send_key(cx: &mut TestAppContext) {
     let env = ChatEnv::new();
     let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
     let info = daemon.create_chat(&env.cwd());
     let (_view, _chat, model, cx) = open_chat_with(
         cx,
         &daemon,
-        "[editor]\nvim_mode = true\n[chat]\nsend_on_enter = true\n",
+        "[editor]\nvim_mode = true\n[chat]\nsend_key = \"enter\"\n",
         info.id,
     );
     cx.simulate_input("pong");

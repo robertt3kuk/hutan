@@ -444,6 +444,8 @@ A centered sheet in the v2 style (surface card, 12 px radius, serif headline, sa
 
 Every choice is written when its step is left (Continue or Back); Skip writes `app.setup_done` and leaves what was not written at its default. Not part of any test: the real `SMAppService`, notification permission, `~/.local/bin`, `~/.omp` / `~/.claude` / `~/.codex` and npm — each is behind a fake (`crate::macos`, `cli_link`, `integrations`, `harness_install`).
 
+The Agents step also carries one line, **Send messages with** (⌘Return / Return, `chat.send_key`, § Send key): it is saved when pressed, and leaving the step counts as having been asked (`chat.ask_send_key` goes off). A setup that was skipped, or finished before the question existed, gets the same question once, in one line above the first composer that gets the keyboard (no modal; ⌘Return / Return / ×).
+
 **Agent integrations never install by themselves** (`integrations.auto_install`, default **off**; a setup that never chose is off too): only after the user turned it on, once the daemon answers, off the main thread, the desktop runs `hutan integration install <harness>` (the CLI beside the app) for each harness the Accounts page detects whose `status` is not `installed`. Results go to the log; failures show one notice with the commands. Off stops future installs; it never uninstalls.
 
 **Install… for a missing harness** (setup, Accounts page, new-agent dialog, the assistant's failure card for "was not found"): the package is checked against a fixed table (`harness_install.rs`: Claude Code → `@agentclientprotocol/claude-agent-acp`, OMP → `@oh-my-pi/pi-coding-agent` with `bun`, Codex → `@openai/codex`) with `npm view <pkg>@latest name version repository.url bin dist.integrity --json`; the name, repository and executable must match, else nothing is offered. A confirmation shows the version, repository and integrity; on confirm a terminal tab runs `npm install -g <pkg>@<version>` (`bun install -g` for OMP) and when it exits 0 the detection asks again (the failed assistant offers Retry). Without npm the command and the source link are shown. Nothing is downloaded without a click and `npx` is never used.
@@ -514,9 +516,19 @@ Every Hutan text field (composer, palette and pickers, prompt dialogs, settings 
 - **Visual.** Motions extend; `d x y c s ~` act on the selection; `o` swaps its ends; `iw` selects a word. Changes made in Visual mode are not repeated by `.`.
 - **Registers.** One unnamed register. With `editor.vim_use_system_clipboard` (default on) yanks and deletes also write the system clipboard (a line with its newline) and `p` / `P` paste from it, lines staying lines; off, the register is private to the field.
 - **Single-line fields.** `j k` do nothing, `dd` / `cc` take the whole text, `o` / `O` are `A` / `I`; pasted newlines become spaces. Enter in Normal mode is the field's confirm.
-- **The composer.** Enter and ⌘Enter keep their rules in Insert; in Normal mode Enter is never a newline and sends only with `chat.send_on_enter`; ⌘Enter sends from any mode. A sent composer is back in Insert.
+- **The composer.** Return and ⌘Return follow the send key (`chat.send_key`, § Send key) in Insert; in Normal mode Return is never a newline and sends only when the send key is `enter`; ⌘Return sends from any mode. A sent composer is back in Insert.
 - **Undo** is a step per typed run and per Normal command (a `cw` with its typing is one step). ⌘Z / ⌘⇧Z work in the composer and the forms with or without Vim; the Vim-less path is unchanged otherwise.
 - Not in scope: counts on `i`, marks, named registers, macros, `/` search, blockwise and linewise Visual.
+
+## Send key (SK-1)
+
+`chat.send_key` (`cmd-enter` default, or `enter`; Settings → Chat → *Send messages with*; the earlier boolean `chat.send_on_enter = true` still reads as `enter`, writes go to `send_key`) is the one rule for every place a *message* is written, read live by each of them:
+
+- **Message composers**: the chat composer (harness chats, direct chats, Mawas Home), the Start sheet's prompt, the review comment box and "send review" in the Changes tray, and free-text answers in question cards.
+- **`cmd-enter`**: Return adds a line, ⌘Return sends. **`enter`**: Return sends; ⇧Return and ⌥Return add a line; ⌘Return still sends (never a dead key). A Return that commits an input method's marked text never sends. In a question card, under `enter` Return submits from a multi-line field and from the last field, and moves on from any other one-line field.
+- **Forms that are not messages keep their keys**: the merge and delivery commit messages (⌘Return confirms, Return is a newline), the memory editor (⌘Return saves), one-line fields (Return confirms or starts), the palette and pickers, and every settings field.
+- **Quick switch in place**: the composer hint (`⌘↩ send · ↩ newline`, or `↩ send · ⇧↩ newline`) and the hint under the Start sheet's prompt are small controls; clicking one opens a menu of the two choices (⌘Return (Return adds a line) / Return (⇧Return adds a line)) that writes `chat.send_key`, and every open composer and hint updates at once. ⌘K **Chat: Toggle Send Key** flips it and shows "Return now sends" / "⌘Return now sends".
+- **First-run choice**: § First-run setup (the Agents step's *Send messages with* line, else one line above the first focused composer; `chat.ask_send_key`).
 
 ## Keyboard defaults
 
@@ -551,6 +563,7 @@ The **Zed** base follows Zed's published macOS keymap (`default-macos.json`) whe
 | Previous / next prompt (highlights the block) | ⌘↑ / ⌘↓ | same |
 | Select / copy the current block's output | ⌘⇧A / ⌘⇧C | same |
 | Approve / deny focused approval | ⌘↩ / ⎋ (only when the approval card has focus) | same |
+| Send a message (chat, Start sheet prompt, review comment, question answer) | ⌘↩, or ↩ with `chat.send_key = "enter"` (⇧↩ / ⌥↩ then add a line) | same |
 
 The block keys apply while the primary screen shows (a program on the alternate screen — vim, htop — hides blocks and gets every key). Inside a focused terminal every other key goes to the PTY; Option-as-Meta follows `terminal.option_as_meta`. Global keys (docks, palette, splits) work while a terminal has focus.
 
