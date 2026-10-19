@@ -124,6 +124,7 @@ impl WorkbenchState {
             next_pane: self.next_pane,
             active_workspace: None,
             parked: Default::default(),
+            dock_memory: self.dock_memory.clone(),
         };
         if state.preset.is_empty() {
             state.preset = default_preset_name();

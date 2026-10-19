@@ -299,12 +299,12 @@ fn the_setup_is_modal_shortcuts_wait_and_escape_skips_it(cx: &mut TestAppContext
     };
 
     // ⌘T and ⌘B do nothing behind the sheet.
-    let left = view.read_with(cx, |wb, _| wb.state().docks.left.visible);
+    let left = view.read_with(cx, |wb, _| wb.state().docks.left.mode());
     cx.simulate_keystrokes("cmd-t cmd-b");
     pump_for(cx, Duration::from_millis(300));
     assert_eq!(sessions(cx), 0, "no terminal started behind the setup");
     assert_eq!(
-        view.read_with(cx, |wb, _| wb.state().docks.left.visible),
+        view.read_with(cx, |wb, _| wb.state().docks.left.mode()),
         left
     );
     assert!(setup_open(&view, cx));

@@ -2,7 +2,7 @@
 
 use super::actions::{self, palette};
 use super::model::{
-    Axis, Direction, DockPosition, DropTarget, Edge, FocusTarget, ItemRef, ItemSource,
+    Axis, Direction, DockMode, DockPosition, DropTarget, Edge, FocusTarget, ItemRef, ItemSource,
     LayoutPreset, Pane, PaneId, PaneTree, PanelDest,
 };
 use super::registry::{DockState, PerDock, StatusContext, StatusData};
@@ -94,6 +94,7 @@ impl Render for Workbench {
         self.rendered_terminals.clear();
         self.rendered_chats.clear();
 
+        self.sync_docks(window, cx);
         let left = self.render_dock(DockPosition::Left, window, cx);
         let right = self.render_dock(DockPosition::Right, window, cx);
         let bottom = self.render_dock(DockPosition::Bottom, window, cx);
@@ -103,6 +104,7 @@ impl Render for Workbench {
         self.rescue_orphaned_focus(window, cx);
         self.sync_assistant_focus(window, cx);
         let edge_targets = self.render_hidden_dock_targets(cx);
+        let collapse_preview = self.render_collapse_preview();
         let handles: Vec<AnyElement> = DockPosition::ALL
             .into_iter()
             .filter_map(|pos| self.render_dock_handle(pos, cx))
@@ -124,9 +126,14 @@ impl Render for Workbench {
             window.on_next_frame(|window, _| window.refresh());
         }
 
+        let resizing_docks = matches!(self.resizing, Some(Resizing::Dock { .. }));
         let root = div()
             .id("workbench")
-            .key_context("Workbench")
+            .key_context(if resizing_docks {
+                "Workbench DockResize"
+            } else {
+                "Workbench"
+            })
             .track_focus(&self.focus_handle)
             .relative()
             .size_full()
@@ -140,7 +147,7 @@ impl Render for Workbench {
             }))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, _, _| this.on_mouse_up()),
+                cx.listener(|this, _, _, cx| this.finish_resize(cx)),
             );
         let root = self.bind_actions(root, cx);
 
@@ -169,11 +176,12 @@ impl Render for Workbench {
                                 .children(bottom),
                         ),
                 )
-                // Orca's right sidebar is a column of its own: its icon strip is the title bar
-                // row of that side.
+                // The right side is a column of its own: the panel body (a 36 px header, the
+                // panel) and, outside it, the activity rail.
                 .children(right),
         )
         .child(status)
+        .children(collapse_preview)
         .children(agents_drawer)
         .children(daemon_popover)
         .children(recovery)
@@ -223,13 +231,22 @@ impl Workbench {
             this.reset_font_size(cx);
         }))
         .on_action(cx.listener(|this, _: &actions::ToggleLeftDock, _, cx| {
-            this.mutate(cx, |s| s.toggle_dock(DockPosition::Left));
+            this.toggle_dock_cmd(DockPosition::Left, cx);
         }))
         .on_action(cx.listener(|this, _: &actions::ToggleRightDock, _, cx| {
-            this.mutate(cx, |s| s.toggle_dock(DockPosition::Right));
+            this.toggle_dock_cmd(DockPosition::Right, cx);
         }))
         .on_action(cx.listener(|this, _: &actions::ToggleBottomDock, _, cx| {
-            this.mutate(cx, |s| s.toggle_dock(DockPosition::Bottom));
+            this.toggle_dock_cmd(DockPosition::Bottom, cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::HideLeftSidebar, _, cx| {
+            this.set_dock_mode_cmd(DockPosition::Left, DockMode::Hidden, cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::HideRightRail, _, cx| {
+            this.set_dock_mode_cmd(DockPosition::Right, DockMode::Hidden, cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::CancelDockResize, _, cx| {
+            this.cancel_resize(cx);
         }))
         .on_action(cx.listener(|this, _: &actions::ToggleOverview, _, cx| this.toggle_overview(cx)))
         .on_action(
@@ -944,7 +961,7 @@ impl Workbench {
     fn render_titlebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
-        let left_visible = self.state.docks.left.visible;
+        let left_extent = self.dock_extent(DockPosition::Left);
         let overview_active = self.state.preset == LayoutPreset::OVERVIEW;
         let overview_hint =
             key_hint(window, &actions::ToggleOverview).unwrap_or_else(|| "⌘⇧O".into());
@@ -985,6 +1002,8 @@ impl Workbench {
             .on_click(cx.listener(|this, _, _, cx| this.toggle_overview(cx)))
             .child(format!("⊞ Overview {overview_hint}"));
 
+        let left_toggle = self.dock_toggle_button(DockPosition::Left, window, cx);
+        let right_toggle = self.dock_toggle_button(DockPosition::Right, window, cx);
         div()
             .id("titlebar")
             .flex()
@@ -993,11 +1012,7 @@ impl Workbench {
             .gap(px(8.0))
             .h(px(TITLEBAR_HEIGHT))
             .w_full()
-            .pl(px(if left_visible {
-                12.0
-            } else {
-                TRAFFIC_LIGHT_INSET
-            }))
+            .pl(px((TRAFFIC_LIGHT_INSET - left_extent).max(12.0)))
             .pr(px(10.0))
             .bg(theme.sidebar)
             .on_mouse_down(MouseButton::Left, |event, window, _| {
@@ -1007,6 +1022,7 @@ impl Workbench {
                     window.start_window_move();
                 }
             })
+            .child(left_toggle)
             .child(
                 div()
                     .flex_1()
@@ -1020,6 +1036,7 @@ impl Workbench {
             )
             .child(preset_button)
             .child(overview_button)
+            .child(right_toggle)
             .child(probe(&self.regions, Region::Titlebar))
             .into_any_element()
     }
@@ -1033,8 +1050,15 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let dock = self.state.docks.get(pos).clone();
-        if !dock.visible {
-            return None;
+        match (pos, self.dock_mode(pos)) {
+            (_, DockMode::Hidden) => return None,
+            (DockPosition::Left, DockMode::Compact) => {
+                return Some(self.left_rail(window, cx));
+            }
+            (DockPosition::Right, DockMode::Compact) => {
+                return Some(self.right_rail(&dock, window, cx));
+            }
+            _ => {}
         }
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -1142,8 +1166,13 @@ impl Workbench {
                 .into_any_element(),
         };
 
+        let dock_index = DockPosition::ALL
+            .iter()
+            .position(|p| *p == pos)
+            .unwrap_or(0);
         let root = div()
             .id(id(format!("dock-{pos:?}")))
+            .track_focus(&self.dock_focus[dock_index])
             .relative()
             .flex()
             .flex_col()
@@ -1205,42 +1234,55 @@ impl Workbench {
         });
         let top: Vec<AnyElement> = match pos {
             DockPosition::Left => self.left_sidebar_top(&dock, window, cx),
-            DockPosition::Right => vec![self.right_strip(&dock, window, cx)],
+            DockPosition::Right => vec![self.right_header(&dock, cx)],
             DockPosition::Bottom => Vec::new(),
         };
         let toolbar = is_left.then(|| self.left_toolbar());
 
-        Some(
-            root.children(top)
-                .children(tab_header)
-                .child(
-                    div()
-                        .id(id(format!("dock-body-{pos:?}")))
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_hidden()
-                        .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.10)))
-                        .can_drop(|any, _, _| {
-                            any.downcast_ref::<DraggedItem>()
-                                .is_some_and(|d| d.item.as_panel().is_some())
-                        })
-                        .on_drop(cx.listener(move |this, d: &DraggedItem, window, cx| {
-                            this.drop_item(
-                                d,
-                                DropTarget::Dock {
-                                    pos,
-                                    index: append_index,
-                                },
-                                window,
-                                cx,
-                            );
-                        }))
-                        .child(body),
-                )
-                .children(toolbar)
-                .child(probe(&self.regions, Region::Dock(pos)))
-                .into_any_element(),
-        )
+        let dock_el = root
+            .children(top)
+            .children(tab_header)
+            .child(
+                div()
+                    .id(id(format!("dock-body-{pos:?}")))
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.10)))
+                    .can_drop(|any, _, _| {
+                        any.downcast_ref::<DraggedItem>()
+                            .is_some_and(|d| d.item.as_panel().is_some())
+                    })
+                    .on_drop(cx.listener(move |this, d: &DraggedItem, window, cx| {
+                        this.drop_item(
+                            d,
+                            DropTarget::Dock {
+                                pos,
+                                index: append_index,
+                            },
+                            window,
+                            cx,
+                        );
+                    }))
+                    .child(body),
+            )
+            .children(toolbar)
+            .child(probe(&self.regions, Region::Dock(pos)))
+            .into_any_element();
+        // The right panel stands beside its activity rail, which is outside the body and stays
+        // when the body collapses.
+        if pos == DockPosition::Right {
+            let rail = self.right_rail(&dock, window, cx);
+            return Some(
+                div()
+                    .flex()
+                    .flex_none()
+                    .child(dock_el)
+                    .child(rail)
+                    .into_any_element(),
+            );
+        }
+        Some(dock_el)
     }
 
     /// The drag handle of a dock's inner edge. It is a child of the workbench root, painted after
@@ -1251,11 +1293,10 @@ impl Workbench {
         pos: DockPosition,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let dock = self.state.docks.get(pos);
-        if !dock.visible {
+        if self.dock_mode(pos) != DockMode::Expanded {
             return None;
         }
-        let size = dock.size;
+        let size = self.state.docks.get(pos).size;
         let accent = self.theme.accent;
         let status_h = self.density.ui().status_bar;
         let base = div()
@@ -1270,18 +1311,8 @@ impl Workbench {
                     cx.stop_propagation();
                 }),
             );
-        let left = self
-            .state
-            .docks
-            .left
-            .visible
-            .then_some(self.state.docks.left.size);
-        let right = self
-            .state
-            .docks
-            .right
-            .visible
-            .then_some(self.state.docks.right.size);
+        let left = self.dock_extent(DockPosition::Left);
+        let right = self.dock_extent(DockPosition::Right);
         Some(
             match pos {
                 DockPosition::Left => base
@@ -1291,17 +1322,40 @@ impl Workbench {
                     .w(px(HANDLE_THICKNESS))
                     .cursor_col_resize(),
                 DockPosition::Right => base
-                    .right(px(size - HANDLE_THICKNESS))
+                    .right(px(right - HANDLE_THICKNESS))
                     .top_0()
                     .bottom(px(status_h))
                     .w(px(HANDLE_THICKNESS))
                     .cursor_col_resize(),
                 DockPosition::Bottom => base
-                    .left(px(left.unwrap_or(0.0)))
-                    .right(px(right.unwrap_or(0.0)))
+                    .left(px(left))
+                    .right(px(right))
                     .bottom(px(status_h + size - HANDLE_THICKNESS))
                     .h(px(HANDLE_THICKNESS))
                     .cursor_row_resize(),
+            }
+            .into_any_element(),
+        )
+    }
+
+    /// While a side dock's edge is dragged past its minimum far enough to collapse it, a preview
+    /// of the rail it will become on release (Escape cancels).
+    fn render_collapse_preview(&mut self) -> Option<AnyElement> {
+        let pos = self.armed_collapse()?;
+        let theme = self.theme;
+        let status_h = self.density.ui().status_bar;
+        let base = div()
+            .id(id(format!("collapse-preview-{pos:?}")))
+            .absolute()
+            .top_0()
+            .bottom(px(status_h))
+            .w(px(pos.rail_width()))
+            .bg(theme.accent.opacity(0.28))
+            .child(probe(&self.regions, Region::CollapsePreview(pos)));
+        Some(
+            match pos {
+                DockPosition::Right => base.right_0(),
+                _ => base.left_0(),
             }
             .into_any_element(),
         )
@@ -1317,7 +1371,7 @@ impl Workbench {
         let accent = theme.accent;
         DockPosition::ALL
             .into_iter()
-            .filter(|pos| !self.state.docks.get(*pos).visible)
+            .filter(|pos| self.dock_mode(*pos) == DockMode::Hidden)
             .map(|pos| {
                 let index = self.state.docks.get(pos).panels.len();
                 let base = div()
@@ -1921,7 +1975,8 @@ impl Workbench {
                     let state = |pos: DockPosition| {
                         let dock = self.state.docks.get(pos);
                         DockState {
-                            visible: dock.visible,
+                            // The body is what the button shows and hides.
+                            visible: self.dock_mode(pos) == DockMode::Expanded,
                             has_panels: !dock.panels.is_empty(),
                         }
                     };

@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::actions::{self, Command};
-use super::model::{DockPosition, FocusTarget, ItemRef, PaneTree};
+use super::model::{DockMode, DockPosition, FocusTarget, ItemRef, PaneTree};
 use super::settings_schema::{
     FieldKind, catalog, fields_of, json_to_toml, namespace_schema, number_range, refine_kind,
     value_at,
@@ -501,7 +501,7 @@ impl Workbench {
                 let dock = self.state.docks.get(position);
                 DockSummary {
                     position: enum_name(&position),
-                    visible: dock.visible,
+                    visible: self.dock_mode(position) == DockMode::Expanded,
                     panels: dock.panels.iter().map(ToString::to_string).collect(),
                     active: dock.active.as_ref().map(ToString::to_string),
                 }

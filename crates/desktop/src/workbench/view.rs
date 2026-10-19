@@ -9,8 +9,8 @@ use super::daemon::DaemonControl;
 use super::mac::MacControl;
 use super::modal::Modal;
 use super::model::{
-    DockPosition, DropTarget, Edge, FocusTarget, ItemRef, ItemSource, LayoutPreset, PaneId,
-    PanelDest, PanelId, WorkbenchState,
+    DockMode, DockPosition, DropTarget, Edge, FocusTarget, ItemRef, ItemSource, LayoutPreset,
+    PaneId, PanelDest, PanelId, Responsive, WorkbenchState,
 };
 use super::palette::PaletteState;
 use super::panels::{builtin_panels, builtin_status_items};
@@ -179,6 +179,13 @@ pub enum Region {
     DrawerCard(hutan_core::SessionId),
     /// The right strip's More menu button.
     StripMore,
+    /// The rail of a side dock (the left 44 pt icon rail, the right 40 pt activity rail).
+    Rail(DockPosition),
+    /// The titlebar button of a side dock (the sidebar toggle at the traffic lights, the right
+    /// dock's).
+    DockToggle(DockPosition),
+    /// The preview of a drag-to-collapse that will collapse the dock to its rail on release.
+    CollapsePreview(DockPosition),
     /// A container row (workspace, project or Home) of the sessions panel.
     WorkspaceRow(hutan_core::WorkspaceId),
     /// The "No workspace" label of the sessions panel: where a project is dropped to leave its
@@ -379,6 +386,8 @@ pub(crate) enum Resizing {
         pos: DockPosition,
         start_mouse: f32,
         start_size: f32,
+        /// A side dock was dragged 24 pt below its minimum: releasing collapses it to its rail.
+        armed: bool,
     },
     Split {
         path: Vec<usize>,
@@ -511,6 +520,16 @@ pub struct Workbench {
     pub(crate) modal_return: Option<gpui::WeakFocusHandle>,
     pub(crate) sheet: Option<SettingsSheet>,
     pub(crate) resizing: Option<Resizing>,
+    /// What the window itself does to the side docks: the transient auto-collapse
+    /// (`layout.auto_collapse`), never saved.
+    pub(crate) responsive: Responsive,
+    /// The mode every dock had after the last model change, to see which one the user opened.
+    pub(crate) dock_modes_seen: [DockMode; 3],
+    /// One handle per dock (left, right, bottom) around what it renders: tells whether the
+    /// keyboard is inside a dock whose body is no longer drawn.
+    pub(crate) dock_focus: [FocusHandle; 3],
+    /// The dock the model's focus was in after the last model change.
+    pub(crate) focus_dock_seen: Option<DockPosition>,
     pub(crate) panel_views: HashMap<PanelId, AnyView>,
     /// The Changes view of every checkout a tab shows (see `review.rs`), by directory.
     pub(crate) changes_views: HashMap<String, Entity<super::changes::ChangesView>>,
@@ -624,6 +643,12 @@ impl Workbench {
         let sheet_focus = cx.focus_handle();
         let daemon_focus = cx.focus_handle();
         let drawer_focus = cx.focus_handle();
+        let dock_focus = [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()];
+        let dock_modes_seen = [
+            state.docks.left.mode(),
+            state.docks.right.mode(),
+            state.docks.bottom.mode(),
+        ];
         let agent_focus = cx.focus_handle();
         let launcher_focus = cx.focus_handle();
         window.focus(&focus_handle, cx);
@@ -840,6 +865,10 @@ impl Workbench {
             modal_return: None,
             sheet: None,
             resizing: None,
+            responsive: Responsive::default(),
+            dock_modes_seen,
+            dock_focus,
+            focus_dock_seen: None,
             panel_views: HashMap::new(),
             changes_views: HashMap::new(),
             changes_subscriptions: Vec::new(),
@@ -1065,6 +1094,7 @@ impl Workbench {
 
     fn after_change(&mut self, cx: &mut Context<Self>) {
         self.notice = None;
+        self.note_dock_modes();
         self.attach_open_items(cx);
         self.sync_session_focus(cx);
         cx.notify();
@@ -1619,22 +1649,24 @@ impl Workbench {
                 pos,
                 start_mouse,
                 start_size,
+                ..
             } => {
                 let mouse = match pos {
                     DockPosition::Bottom => f32::from(event.position.y),
                     _ => f32::from(event.position.x),
                 };
                 let delta = mouse - start_mouse;
-                let size = match pos {
+                let raw = match pos {
                     DockPosition::Left => start_size + delta,
                     DockPosition::Right | DockPosition::Bottom => start_size - delta,
                 };
-                let viewport = window.viewport_size();
-                let max = match pos {
-                    DockPosition::Bottom => f32::from(viewport.height) * 0.8,
-                    _ => f32::from(viewport.width) * 0.6,
-                };
-                self.mutate(cx, |s| s.resize_dock(pos, size.min(max)));
+                // Below the minimum the dock stays at it; 24 pt further arms the collapse to the
+                // rail (previewed, committed on release).
+                let (size, armed) = self.drag_size(pos, raw, window);
+                if let Some(Resizing::Dock { armed: a, .. }) = &mut self.resizing {
+                    *a = armed;
+                }
+                self.mutate(cx, |s| s.resize_dock(pos, size));
             }
             Resizing::Split {
                 path,
@@ -1659,10 +1691,6 @@ impl Workbench {
         }
     }
 
-    pub(crate) fn on_mouse_up(&mut self) {
-        self.resizing = None;
-    }
-
     pub(crate) fn start_dock_resize(&mut self, pos: DockPosition, mouse: Point<Pixels>) {
         let start_mouse = match pos {
             DockPosition::Bottom => f32::from(mouse.y),
@@ -1672,6 +1700,7 @@ impl Workbench {
             pos,
             start_mouse,
             start_size: self.state.docks.get(pos).size,
+            armed: false,
         });
     }
 }

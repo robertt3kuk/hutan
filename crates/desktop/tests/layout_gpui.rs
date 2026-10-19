@@ -96,9 +96,9 @@ fn selected_nav(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<String>
 fn visible(view: &Entity<Workbench>, cx: &VisualTestContext) -> [bool; 3] {
     let s = state(view, cx);
     [
-        s.docks.left.visible,
-        s.docks.right.visible,
-        s.docks.bottom.visible,
+        s.docks.left.is_expanded(),
+        s.docks.right.is_expanded(),
+        s.docks.bottom.is_expanded(),
     ]
 }
 
@@ -154,21 +154,20 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     );
     assert!(painted(&view, cx, Region::Toolbar("new")));
     assert!(painted(&view, cx, Region::Toolbar("settings")));
-    // The right strip: five icons, in the strip's row.
+    // The right rail: five icons, 32 pt targets under the title bar row, outside the body.
+    let rail = bounds(&view, cx, Region::Rail(DockPosition::Right));
+    assert_size(rail.size.width, 40.0);
+    assert!(rail.left() >= right.right());
     for index in 0..5 {
         let icon = bounds(&view, cx, Region::DockTab(DockPosition::Right, index));
-        assert!(
-            icon.origin.y < right.origin.y + gpui::px(36.0),
-            "icon {index}"
-        );
+        assert!(rail.contains(&icon.center()), "icon {index}");
+        assert!(icon.origin.y >= titlebar.bottom(), "icon {index}");
+        assert_size(icon.size.height, 32.0);
     }
     assert!(
         !painted(&view, cx, Region::StripMore),
-        "five icons fit 350 px"
+        "five icons fit the rail"
     );
-    // The title bar is 36 px and so is the strip: the first icon sits inside that row.
-    let first = bounds(&view, cx, Region::DockTab(DockPosition::Right, 0));
-    assert_size(first.size.height, 28.0);
 }
 
 #[gpui::test]
@@ -456,10 +455,10 @@ fn the_right_strip_switches_tabs(cx: &mut TestAppContext) {
 #[gpui::test]
 fn icons_that_do_not_fit_move_into_the_more_menu(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
-    // 120 px: room for three slots, one of them More.
-    view.update(cx, |wb, cx| {
-        wb.edit_layout(cx, |s| s.resize_dock(DockPosition::Right, 130.0))
-    });
+    // A window 240 pt high leaves the rail room for three slots, one of them More.
+    cx.simulate_resize(gpui::size(gpui::px(1280.0), gpui::px(240.0)));
+    common::draw(cx);
+    common::draw(cx);
     let more = bounds(&view, cx, Region::StripMore);
     assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 0)));
     assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 1)));
@@ -595,12 +594,14 @@ fn version_1_file(dir: &std::path::Path) -> PathBuf {
             active: Some(PanelId::new("history")),
             size: 240.0,
             visible: true,
+            collapsed: false,
         },
         right: Dock {
             panels: ids(&["inspector", "agents", "tasks", "assistant"]),
             active: Some(PanelId::new("assistant")),
             size: 300.0,
             visible: true,
+            collapsed: false,
         },
         bottom: Dock::new(&["resources"], 200.0, false),
     };
@@ -640,7 +641,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
         ]
     );
 
-    // The next save is version 4, and loading that again changes nothing.
+    // The next save is version 5, and loading that again changes nothing.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| s.toggle_dock(DockPosition::Bottom))
     });
@@ -649,7 +650,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
     view.update(cx, |wb, _| wb.flush_save());
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 4);
+    assert_eq!(on_disk["version"], 5);
     let reloaded = load_state(&path);
     assert_eq!(reloaded.docks, state(&view, cx).docks);
     assert_eq!(reloaded.center, state(&view, cx).center);

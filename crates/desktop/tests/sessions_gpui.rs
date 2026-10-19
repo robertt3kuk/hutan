@@ -807,7 +807,7 @@ fn the_settings_sheet_writes_values_and_keeps_comments(cx: &mut TestAppContext) 
 fn save_layout_as_preset_writes_settings_and_hot_reloads_presets(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon);
-    cx.dispatch_action(actions::ToggleRightDock);
+    cx.dispatch_action(actions::HideRightRail);
     cx.dispatch_action(actions::SaveLayoutAsPreset);
     assert!(view.read_with(cx, |wb, _| wb.modal_open()));
     view.update(cx, |wb, cx| wb.set_modal_input("My Layout", cx));

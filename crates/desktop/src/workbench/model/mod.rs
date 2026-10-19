@@ -7,6 +7,7 @@
 mod ops;
 mod persist;
 mod preset;
+mod responsive;
 mod tree;
 mod types;
 mod workspace;
@@ -17,10 +18,14 @@ mod tests;
 pub use ops::{DropTarget, ItemSource, MAX_DOCK_SIZE, MIN_DOCK_SIZE, PanelDest};
 pub use persist::{LoadOutcome, STATE_VERSION};
 pub use preset::{CenterLayout, LayoutPreset};
+pub use responsive::{
+    AUTO_COLLAPSE_HYSTERESIS, AUTO_COLLAPSE_LEFT_BELOW, AUTO_COLLAPSE_RIGHT_BELOW, AutoState,
+    MIN_CENTER_WIDTH, Responsive,
+};
 pub use tree::MIN_RATIO;
 pub use types::{
-    Axis, Direction, Dock, DockPosition, Docks, Edge, FocusTarget, ItemRef, ModelError, Pane,
-    PaneId, PaneTree, PanelId, Rect,
+    Axis, Direction, Dock, DockMode, DockModes, DockPosition, Docks, Edge, FocusTarget, ItemRef,
+    ModelError, Pane, PaneId, PaneTree, PanelId, Rect, RememberedDocks,
 };
 pub use workspace::WorkspaceLayout;
 
@@ -55,6 +60,10 @@ pub struct WorkbenchState {
     /// The layouts of the workspaces that are not shown right now, by workspace id.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub parked: BTreeMap<String, WorkspaceLayout>,
+    /// What the user left the docks at in each preset they have left, by preset name: applying
+    /// that preset again brings the modes and expanded sizes back (DK-1).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dock_memory: BTreeMap<String, RememberedDocks>,
 }
 
 /// A [`WorkbenchState`] minus its own stash and pane-id counter.
@@ -68,6 +77,8 @@ pub struct SavedLayout {
     pub preset: String,
     #[serde(default)]
     pub previous_preset: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dock_memory: BTreeMap<String, RememberedDocks>,
 }
 
 impl SavedLayout {
@@ -79,6 +90,7 @@ impl SavedLayout {
             focus: state.focus,
             preset: state.preset.clone(),
             previous_preset: state.previous_preset.clone(),
+            dock_memory: state.dock_memory.clone(),
         }
     }
 
@@ -94,6 +106,7 @@ impl SavedLayout {
             next_pane,
             active_workspace: None,
             parked: BTreeMap::new(),
+            dock_memory: self.dock_memory,
         }
     }
 }
@@ -117,6 +130,7 @@ impl Default for WorkbenchState {
             next_pane: 2,
             active_workspace: None,
             parked: BTreeMap::new(),
+            dock_memory: BTreeMap::new(),
         };
         state.normalize();
         state
@@ -138,6 +152,7 @@ impl WorkbenchState {
             next_pane: 0,
             active_workspace: None,
             parked: BTreeMap::new(),
+            dock_memory: BTreeMap::new(),
         };
         state.normalize();
         if let Some(first) = state.center.first_pane() {
@@ -273,10 +288,14 @@ impl WorkbenchState {
         for pos in DockPosition::ALL {
             let dock = self.docks.get_mut(pos);
             dock.panels.retain(|p| placed.insert(p.clone()));
+            let (min, max) = pos.size_range();
             if !dock.size.is_finite() {
                 dock.size = 240.0;
             }
-            dock.size = dock.size.clamp(MIN_DOCK_SIZE, MAX_DOCK_SIZE);
+            dock.size = dock.size.clamp(min, max);
+            if pos == DockPosition::Bottom {
+                dock.collapsed = false;
+            }
             if dock
                 .active
                 .as_ref()

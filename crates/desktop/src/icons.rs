@@ -56,6 +56,9 @@ icons! {
     Ellipsis => "ellipsis",
     Plus => "plus",
     ArrowUpDown => "arrow-up-down",
+    PanelLeft => "panel-left",
+    PanelRight => "panel-right",
+    Folder => "folder",
 }
 
 impl Icon {

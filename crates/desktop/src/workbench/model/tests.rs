@@ -792,14 +792,17 @@ fn keyboard_resize_walks_up_to_matching_axis() {
 }
 
 #[test]
-fn dock_resize_clamps_and_keyboard_resize_grows_toward_center() {
+fn dock_resize_clamps_to_the_range_of_its_side_and_keyboard_resize_grows_toward_center() {
     let mut state = WorkbenchState::default();
+    let (min, max) = DockPosition::Left.size_range();
+    assert_eq!((min, max), (220.0, 500.0));
+    assert_eq!(DockPosition::Right.size_range(), (240.0, 480.0));
     state.resize_dock(DockPosition::Left, 10.0);
-    assert_eq!(state.docks.left.size, MIN_DOCK_SIZE);
+    assert_eq!(state.docks.left.size, min);
     state.resize_dock(DockPosition::Left, 99999.0);
-    assert_eq!(state.docks.left.size, MAX_DOCK_SIZE);
+    assert_eq!(state.docks.left.size, max);
     state.resize_dock(DockPosition::Left, f32::NAN);
-    assert_eq!(state.docks.left.size, MAX_DOCK_SIZE);
+    assert_eq!(state.docks.left.size, max);
     state.resize_dock(DockPosition::Left, 240.0);
     state.focus_dock(DockPosition::Left);
     assert!(state.resize_focused(Direction::Right, 20.0, 0.1));
@@ -810,6 +813,10 @@ fn dock_resize_clamps_and_keyboard_resize_grows_toward_center() {
     state.focus_dock(DockPosition::Right);
     assert!(state.resize_focused(Direction::Left, 20.0, 0.1));
     assert_eq!(state.docks.right.size, 370.0);
+    state.resize_dock(DockPosition::Right, 1000.0);
+    assert_eq!(state.docks.right.size, 480.0);
+    state.resize_dock(DockPosition::Bottom, 1.0);
+    assert_eq!(state.docks.bottom.size, MIN_DOCK_SIZE);
 }
 
 // ---- dock toggle -----------------------------------------------------------------------
@@ -818,17 +825,18 @@ fn dock_resize_clamps_and_keyboard_resize_grows_toward_center() {
 fn toggle_dock_and_focus_fallback() {
     let mut state = WorkbenchState::default();
     state.focus_dock(DockPosition::Left);
+    // ⌘B: Expanded to Compact, the keyboard goes to the center.
     state.toggle_dock(DockPosition::Left);
-    assert!(!state.docks.left.visible);
+    assert_eq!(state.docks.left.mode(), DockMode::Compact);
     assert!(matches!(state.focus, FocusTarget::Pane(_)));
     state.toggle_dock(DockPosition::Left);
-    assert!(state.docks.left.visible);
+    assert_eq!(state.docks.left.mode(), DockMode::Expanded);
 }
 
 #[test]
 fn close_all_docks_hides_every_dock_and_returns_focus_to_the_center() {
     let mut state = WorkbenchState::default();
-    state.set_dock_visible(DockPosition::Bottom, true);
+    state.set_dock_mode(DockPosition::Bottom, DockMode::Expanded);
     state.focus_dock(DockPosition::Bottom);
     state.close_all_docks();
     assert!(!state.docks.left.visible && !state.docks.right.visible && !state.docks.bottom.visible);
@@ -956,7 +964,7 @@ fn focus_neighbor_moves_between_center_and_docks() {
     assert!(state.focus_neighbor(Direction::Up));
     // Leaving the bottom dock upward lands on the bottom-left pane.
     assert_eq!(state.focus, FocusTarget::Pane(PaneId(1)));
-    state.set_dock_visible(DockPosition::Bottom, false);
+    state.set_dock_mode(DockPosition::Bottom, DockMode::Hidden);
     state.focus_pane(PaneId(3)).unwrap();
     assert!(!state.focus_neighbor(Direction::Down));
 }
@@ -1360,7 +1368,7 @@ fn json_roundtrip_preserves_state() {
         .unwrap();
     let json = state.to_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 4);
+    assert_eq!(value["version"], 5);
     let back = WorkbenchState::from_json(&json).unwrap();
     assert_eq!(back, state);
     check(&back);
@@ -1420,7 +1428,7 @@ fn loading_repairs_hand_edited_state() {
     value["zoomed"] = serde_json::json!(4321);
     let loaded = WorkbenchState::from_json(&value.to_string()).unwrap();
     check(&loaded);
-    assert_eq!(loaded.docks.left.size, MIN_DOCK_SIZE);
+    assert_eq!(loaded.docks.left.size, DockPosition::Left.size_range().0);
     assert_eq!(loaded.zoomed, None);
     assert_eq!(loaded.focus, FocusTarget::Pane(loaded.first_pane_id()));
     assert!(loaded.pane(PaneId(77)).is_none());
@@ -1710,12 +1718,14 @@ fn version_1() -> WorkbenchState {
             active: Some(PanelId::new("history")),
             size: 240.0,
             visible: true,
+            collapsed: false,
         },
         right: Dock {
             panels: ids(&["inspector", "agents", "tasks", "assistant"]),
             active: Some(PanelId::new("agents")),
             size: 300.0,
             visible: true,
+            collapsed: false,
         },
         bottom: Dock::new(&["resources"], 200.0, false),
     };
@@ -1729,11 +1739,11 @@ fn as_version_1_json(state: &WorkbenchState) -> String {
 }
 
 #[test]
-fn the_state_version_is_four() {
+fn the_state_version_is_five() {
     let value: serde_json::Value =
         serde_json::from_str(&WorkbenchState::default().to_json().unwrap()).unwrap();
-    assert_eq!(value["version"], 4);
-    assert_eq!(STATE_VERSION, 4);
+    assert_eq!(value["version"], 5);
+    assert_eq!(STATE_VERSION, 5);
 }
 
 fn as_version_3_json(state: &WorkbenchState) -> String {
@@ -1973,4 +1983,266 @@ fn migration_reaches_the_overview_stash_and_parked_workspaces() {
             "{name}"
         );
     }
+}
+
+// ---- dock modes (DK-1) -------------------------------------------------------------------
+
+fn mode(state: &WorkbenchState, pos: DockPosition) -> DockMode {
+    state.docks.get(pos).mode()
+}
+
+/// A state whose `pos` is in `from`, with the keyboard in that dock.
+fn docks_in(pos: DockPosition, from: DockMode) -> WorkbenchState {
+    let mut state = WorkbenchState::default();
+    state.set_dock_mode(pos, from);
+    state.focus_dock(pos);
+    state
+}
+
+/// The transition table of the working toggle (⌘B, ⌘L, ⌘⌥J, the status bar buttons), for every
+/// dock and every state it can be in.
+#[test]
+fn toggle_dock_transition_table() {
+    use DockMode::{Compact, Expanded, Hidden};
+    use DockPosition::{Bottom, Left, Right};
+    for (pos, from, to) in [
+        (Left, Expanded, Compact),
+        (Left, Compact, Expanded),
+        (Right, Expanded, Compact),
+        (Right, Compact, Expanded),
+        (Right, Hidden, Expanded),
+        (Bottom, Expanded, Hidden),
+        (Bottom, Hidden, Expanded),
+    ] {
+        let mut state = docks_in(pos, from);
+        state.toggle_dock(pos);
+        assert_eq!(mode(&state, pos), to, "{pos:?}: {from:?} then toggle");
+        check(&state);
+    }
+}
+
+#[test]
+fn a_hidden_left_sidebar_comes_back_in_the_mode_it_was_hidden_from() {
+    let mut state = WorkbenchState::default();
+    state.set_dock_mode(DockPosition::Left, DockMode::Hidden);
+    state.toggle_dock(DockPosition::Left);
+    assert_eq!(mode(&state, DockPosition::Left), DockMode::Expanded);
+    state.set_dock_mode(DockPosition::Left, DockMode::Compact);
+    state.set_dock_mode(DockPosition::Left, DockMode::Hidden);
+    assert_eq!(state.docks.left.last_shown(), DockMode::Compact);
+    state.toggle_dock(DockPosition::Left);
+    assert_eq!(mode(&state, DockPosition::Left), DockMode::Compact);
+    // The titlebar button: hides a shown sidebar, restores a hidden one the same way.
+    state.set_dock_mode(DockPosition::Left, DockMode::Expanded);
+    state.toggle_dock_hidden(DockPosition::Left);
+    assert_eq!(mode(&state, DockPosition::Left), DockMode::Hidden);
+    state.toggle_dock_hidden(DockPosition::Left);
+    assert_eq!(mode(&state, DockPosition::Left), DockMode::Expanded);
+    state.set_dock_mode(DockPosition::Left, DockMode::Compact);
+    state.toggle_dock_hidden(DockPosition::Left);
+    state.toggle_dock_hidden(DockPosition::Left);
+    assert_eq!(mode(&state, DockPosition::Left), DockMode::Compact);
+}
+
+#[test]
+fn set_dock_mode_for_every_state_keeps_size_panels_and_the_center() {
+    for pos in DockPosition::ALL {
+        for to in [DockMode::Expanded, DockMode::Compact, DockMode::Hidden] {
+            let mut state = WorkbenchState::default();
+            state.resize_dock(pos, 333.0);
+            let before = state.clone();
+            state.set_dock_mode(pos, to);
+            let want = if pos == DockPosition::Bottom && to == DockMode::Compact {
+                DockMode::Hidden
+            } else {
+                to
+            };
+            assert_eq!(mode(&state, pos), want, "{pos:?} to {to:?}");
+            assert_eq!(state.docks.get(pos).size, before.docks.get(pos).size);
+            assert_eq!(state.docks.get(pos).panels, before.docks.get(pos).panels);
+            assert_eq!(state.center, before.center);
+            assert_eq!(state.all_items(), before.all_items());
+        }
+    }
+}
+
+#[test]
+fn a_dock_that_collapses_gives_the_keyboard_back_to_the_center() {
+    for (pos, to) in [
+        (DockPosition::Left, DockMode::Compact),
+        (DockPosition::Left, DockMode::Hidden),
+        (DockPosition::Right, DockMode::Compact),
+        (DockPosition::Right, DockMode::Hidden),
+        (DockPosition::Bottom, DockMode::Hidden),
+    ] {
+        let mut state = docks_in(pos, DockMode::Expanded);
+        state.set_dock_mode(pos, to);
+        assert!(
+            matches!(state.focus, FocusTarget::Pane(_)),
+            "{pos:?} {to:?}"
+        );
+    }
+    // A keyboard outside the dock is left alone.
+    let mut state = WorkbenchState::default();
+    let focus = state.focus;
+    state.set_dock_mode(DockPosition::Right, DockMode::Compact);
+    assert_eq!(state.focus, focus);
+    // And a dock that is expanded again does not take it back by itself.
+    state.set_dock_mode(DockPosition::Right, DockMode::Expanded);
+    assert_eq!(state.focus, focus);
+}
+
+#[test]
+fn the_active_icon_of_an_open_right_panel_collapses_it_and_any_icon_of_a_collapsed_one_opens_it() {
+    let history = PanelId::new("history");
+    let changes = PanelId::new("changes");
+    let mut state = WorkbenchState::default();
+    state.focus_dock(DockPosition::Right);
+    // Open + active icon: collapse to the rail, the panel and the width are remembered.
+    state.resize_dock(DockPosition::Right, 400.0);
+    assert!(!state.click_rail_icon(DockPosition::Right, &history, DockMode::Expanded));
+    assert_eq!(mode(&state, DockPosition::Right), DockMode::Compact);
+    assert_eq!(state.docks.right.active, Some(history.clone()));
+    assert_eq!(state.docks.right.size, 400.0);
+    assert!(matches!(state.focus, FocusTarget::Pane(_)));
+    // Collapsed + the remembered (active) icon: opens that panel and focuses the dock.
+    assert!(state.click_rail_icon(DockPosition::Right, &history, DockMode::Compact));
+    assert_eq!(mode(&state, DockPosition::Right), DockMode::Expanded);
+    assert_eq!(state.focus, FocusTarget::Dock(DockPosition::Right));
+    // Open + another icon: switches, stays open.
+    assert!(state.click_rail_icon(DockPosition::Right, &changes, DockMode::Expanded));
+    assert_eq!(state.docks.right.active, Some(changes.clone()));
+    assert_eq!(mode(&state, DockPosition::Right), DockMode::Expanded);
+    // Collapsed + another icon: opens that one.
+    state.set_dock_mode(DockPosition::Right, DockMode::Compact);
+    assert!(state.click_rail_icon(DockPosition::Right, &history, DockMode::Compact));
+    assert_eq!(state.docks.right.active, Some(history.clone()));
+    // Hidden + an icon cannot happen on screen, but still opens.
+    state.set_dock_mode(DockPosition::Right, DockMode::Hidden);
+    assert!(state.click_rail_icon(DockPosition::Right, &changes, DockMode::Hidden));
+    // The window shows an auto-collapsed dock as Compact although the user's mode is Expanded:
+    // its active icon opens it instead of collapsing it for real.
+    assert!(state.click_rail_icon(DockPosition::Right, &changes, DockMode::Compact));
+    assert_eq!(mode(&state, DockPosition::Right), DockMode::Expanded);
+    // A panel the dock does not hold changes nothing.
+    state.set_dock_mode(DockPosition::Right, DockMode::Compact);
+    assert!(!state.click_rail_icon(
+        DockPosition::Right,
+        &PanelId::new("nope"),
+        DockMode::Compact
+    ));
+    assert_eq!(mode(&state, DockPosition::Right), DockMode::Compact);
+}
+
+#[test]
+fn collapsing_by_drag_keeps_the_width_for_reopening() {
+    let mut state = WorkbenchState::default();
+    state.resize_dock(DockPosition::Left, 333.0);
+    state.collapse_dock(DockPosition::Left);
+    assert_eq!(mode(&state, DockPosition::Left), DockMode::Compact);
+    assert_eq!(state.docks.left.size, 333.0);
+    state.toggle_dock(DockPosition::Left);
+    assert_eq!(state.docks.left.size, 333.0);
+    // The bottom dock has no rail to collapse to.
+    state.collapse_dock(DockPosition::Bottom);
+    assert_eq!(mode(&state, DockPosition::Bottom), DockMode::Hidden);
+}
+
+#[test]
+fn opening_a_panel_expands_a_collapsed_or_hidden_dock() {
+    let mut state = WorkbenchState::default();
+    for from in [DockMode::Compact, DockMode::Hidden] {
+        state.set_dock_mode(DockPosition::Right, from);
+        state.open_panel(&PanelId::new("changes"), DockPosition::Right);
+        assert_eq!(
+            mode(&state, DockPosition::Right),
+            DockMode::Expanded,
+            "{from:?}"
+        );
+        assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
+        assert_eq!(state.focus, FocusTarget::Dock(DockPosition::Right));
+    }
+}
+
+#[test]
+fn a_collapsed_dock_is_not_a_focus_neighbor() {
+    let mut state = grid();
+    state.set_dock_mode(DockPosition::Left, DockMode::Compact);
+    state.focus_pane(PaneId(1)).unwrap();
+    assert!(!state.focus_neighbor(Direction::Left));
+}
+
+#[test]
+fn a_preset_comes_back_with_the_dock_modes_and_widths_the_user_left_in_it() {
+    let mut state = grid();
+    state.set_dock_mode(DockPosition::Left, DockMode::Compact);
+    state.resize_dock(DockPosition::Right, 420.0);
+    state.apply_preset(&LayoutPreset::focus_preset());
+    assert!(!state.docks.left.visible && !state.docks.right.visible);
+    // The default preset's own arrangement is what came back: compact left, 420 right.
+    state.apply_preset(&LayoutPreset::default_preset());
+    assert_eq!(mode(&state, DockPosition::Left), DockMode::Compact);
+    assert_eq!(mode(&state, DockPosition::Right), DockMode::Expanded);
+    assert_eq!(state.docks.right.size, 420.0);
+    // Re-applying the current preset starts over from its own docks.
+    state.apply_preset(&LayoutPreset::default_preset());
+    assert_eq!(mode(&state, DockPosition::Left), DockMode::Expanded);
+    assert_eq!(state.docks.right.size, LayoutPreset::RIGHT_SIZE);
+    check(&state);
+}
+
+#[test]
+fn dock_modes_survive_a_save_and_a_workspace_switch() {
+    let mut state = WorkbenchState::default();
+    state.adopt_workspace("a");
+    state.set_dock_mode(DockPosition::Left, DockMode::Compact);
+    state.set_dock_mode(DockPosition::Right, DockMode::Hidden);
+    state.resize_dock(DockPosition::Left, 300.0);
+    let back = WorkbenchState::from_json(&state.to_json().unwrap()).unwrap();
+    assert_eq!(back, state);
+    assert_eq!(mode(&back, DockPosition::Left), DockMode::Compact);
+    assert_eq!(back.docks.left.size, 300.0);
+    // Another workspace brings its own layout; coming back restores this one's modes.
+    let mut state = back;
+    state.switch_workspace("b");
+    state.set_dock_mode(DockPosition::Left, DockMode::Expanded);
+    state.switch_workspace("a");
+    assert_eq!(mode(&state, DockPosition::Left), DockMode::Compact);
+    assert_eq!(mode(&state, DockPosition::Right), DockMode::Hidden);
+}
+
+#[test]
+fn a_version_4_layout_keeps_its_panels_widths_and_visible_or_hidden_choice() {
+    // Version 4 had only `visible`: true is Expanded, false is Hidden, whatever the size.
+    let mut old = WorkbenchState::default();
+    old.docks.left.visible = false;
+    old.docks.left.size = 333.0;
+    old.docks.right.size = 410.0;
+    old.docks.right.panels.push(PanelId::new("custom"));
+    let mut value: serde_json::Value = serde_json::from_str(&old.to_json().unwrap()).unwrap();
+    value["version"] = 4.into();
+    for dock in ["left", "right", "bottom"] {
+        value["docks"][dock]
+            .as_object_mut()
+            .unwrap()
+            .remove("collapsed");
+    }
+    value.as_object_mut().unwrap().remove("dock_memory");
+    let migrated = WorkbenchState::from_json(&value.to_string()).unwrap();
+    assert_eq!(mode(&migrated, DockPosition::Left), DockMode::Hidden);
+    assert_eq!(migrated.docks.left.size, 333.0);
+    assert_eq!(mode(&migrated, DockPosition::Right), DockMode::Expanded);
+    assert_eq!(migrated.docks.right.size, 410.0);
+    assert!(migrated.docks.right.contains(&PanelId::new("custom")));
+    assert_eq!(migrated.docks.left.last_shown(), DockMode::Expanded);
+    check(&migrated);
+    // Sizes outside what the sides allow now are clamped, like every loaded layout.
+    let mut wide = old.clone();
+    wide.docks.right.size = 700.0;
+    let mut value: serde_json::Value = serde_json::from_str(&wide.to_json().unwrap()).unwrap();
+    value["version"] = 4.into();
+    value["docks"]["left"]["size"] = 100.0.into();
+    let migrated = WorkbenchState::from_json(&value.to_string()).unwrap();
+    assert_eq!(migrated.docks.right.size, 480.0);
+    assert_eq!(migrated.docks.left.size, 220.0);
 }

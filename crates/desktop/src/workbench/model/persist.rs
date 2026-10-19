@@ -9,10 +9,15 @@ use super::{
 /// in the right sidebar's strip, no Assistant in any dock. 3 (OL-4) turns Agents from a left page
 /// into the dashboard drawer: the `overview` panel leaves the left dock. 4 (MW-1) turns the
 /// Assistant from a left page into Mawas Home, a tab of the center: the `assistant` panel leaves
-/// every dock. A version 1 file is migrated once when it is read (see [`migrate_v1`], then
-/// [`migrate_v2`], then [`migrate_v3`]), a version 2 file by [`migrate_v2`] and [`migrate_v3`], a
-/// version 3 file by [`migrate_v3`]; the next save writes version 4.
-pub const STATE_VERSION: u32 = 4;
+/// every dock. 5 (DK-1) gives the side docks a rail: a dock now has a `collapsed` flag next to
+/// `visible` (visible + collapsed is the 44 pt left icon rail or the right activity rail alone,
+/// hidden keeps the mode it comes back in), and the side sizes have 220–500 / 240–480 limits.
+/// A version 1 file is migrated once when it is read (see [`migrate_v1`], then [`migrate_v2`],
+/// then [`migrate_v3`]), a version 2 file by [`migrate_v2`] and [`migrate_v3`], a version 3 file
+/// by [`migrate_v3`]; a version 4 file needs no rewrite (`visible` already is Expanded/Hidden,
+/// `collapsed` defaults to off, the sizes are clamped like every loaded layout); the next save
+/// writes version 5.
+pub const STATE_VERSION: u32 = 5;
 
 /// Result of reading a saved state.
 #[derive(Debug)]
@@ -23,7 +28,7 @@ pub struct LoadOutcome {
 }
 
 impl WorkbenchState {
-    /// `{ "version": 4, "docks": …, "center": …, … }`, pretty-printed.
+    /// `{ "version": 5, "docks": …, "center": …, … }`, pretty-printed.
     pub fn to_json(&self) -> Result<String, ModelError> {
         let mut value =
             serde_json::to_value(self).map_err(|e| ModelError::Invalid(e.to_string()))?;
@@ -39,7 +44,7 @@ impl WorkbenchState {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| ModelError::Invalid(e.to_string()))?;
         let version = match value.get("version").and_then(serde_json::Value::as_u64) {
-            Some(v @ (1..=4)) => v,
+            Some(v @ (1..=5)) => v,
             Some(v) => return Err(ModelError::Invalid(format!("unsupported version {v}"))),
             None => return Err(ModelError::Invalid("missing version".to_owned())),
         };

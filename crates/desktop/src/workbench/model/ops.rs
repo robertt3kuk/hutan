@@ -1,8 +1,8 @@
 //! Layout operations on [`WorkbenchState`].
 
 use super::{
-    Axis, Direction, DockPosition, Edge, FocusTarget, ItemRef, ModelError, Pane, PaneId, PaneTree,
-    PanelId, Rect, WorkbenchState,
+    Axis, Direction, DockMode, DockPosition, Edge, FocusTarget, ItemRef, ModelError, Pane, PaneId,
+    PaneTree, PanelId, Rect, WorkbenchState,
 };
 
 pub const MIN_DOCK_SIZE: f32 = 120.0;
@@ -361,7 +361,7 @@ impl WorkbenchState {
                     let dock = self.docks.get_mut(pos);
                     dock.panels.insert(index, panel.clone());
                     dock.active = Some(panel);
-                    dock.visible = true;
+                    dock.set_mode(DockMode::Expanded);
                 }
                 self.focus = FocusTarget::Dock(pos);
                 None
@@ -424,7 +424,7 @@ impl WorkbenchState {
         match self.find_panel(panel) {
             Some(ItemSource::Dock { pos, .. }) => {
                 let dock = self.docks.get_mut(pos);
-                dock.visible = true;
+                dock.set_mode(DockMode::Expanded);
                 dock.active = Some(panel.clone());
                 self.focus = FocusTarget::Dock(pos);
             }
@@ -438,7 +438,7 @@ impl WorkbenchState {
                 let dock = self.docks.get_mut(default_dock);
                 dock.panels.push(panel.clone());
                 dock.active = Some(panel.clone());
-                dock.visible = true;
+                dock.set_mode(DockMode::Expanded);
                 self.focus = FocusTarget::Dock(default_dock);
             }
         }
@@ -541,28 +541,93 @@ impl WorkbenchState {
 
     // ---- docks -------------------------------------------------------------------------
 
-    pub fn set_dock_visible(&mut self, pos: DockPosition, visible: bool) {
-        self.docks.get_mut(pos).visible = visible;
-        if !visible && self.focus == FocusTarget::Dock(pos) {
+    /// Puts dock `pos` in `mode`. A mode that is not [`DockMode::Expanded`] takes keyboard focus
+    /// back from the dock to the active pane, so nothing hidden keeps it. The bottom dock has no
+    /// rail: its `Compact` is `Hidden`. Collapsing never touches the dock's panels, the center,
+    /// sessions or approvals.
+    pub fn set_dock_mode(&mut self, pos: DockPosition, mode: DockMode) {
+        let mode = match (pos, mode) {
+            (DockPosition::Bottom, DockMode::Compact) => DockMode::Hidden,
+            _ => mode,
+        };
+        self.docks.get_mut(pos).set_mode(mode);
+        if mode != DockMode::Expanded && self.focus == FocusTarget::Dock(pos) {
             self.focus = FocusTarget::Pane(self.active_pane_id());
         }
     }
 
+    /// The working toggle of a dock (⌘B, ⌘L, ⌘⌥J, the status bar buttons):
+    ///
+    /// | dock | Expanded | Compact | Hidden |
+    /// |---|---|---|---|
+    /// | left | → Compact | → Expanded | → the mode it was hidden from |
+    /// | right | → Compact | → Expanded | → Expanded |
+    /// | bottom | → Hidden | — | → Expanded |
     pub fn toggle_dock(&mut self, pos: DockPosition) {
-        let visible = !self.docks.get(pos).visible;
-        self.set_dock_visible(pos, visible);
+        let dock = self.docks.get(pos);
+        let next = match (pos, dock.mode()) {
+            (DockPosition::Bottom, DockMode::Expanded) => DockMode::Hidden,
+            (_, DockMode::Expanded) => DockMode::Compact,
+            (_, DockMode::Compact) => DockMode::Expanded,
+            (DockPosition::Left, DockMode::Hidden) => dock.last_shown(),
+            (_, DockMode::Hidden) => DockMode::Expanded,
+        };
+        self.set_dock_mode(pos, next);
     }
 
-    /// Hides every dock (⌘⌥Y); focus moves to the active pane.
-    pub fn close_all_docks(&mut self) {
-        for pos in DockPosition::ALL {
-            self.set_dock_visible(pos, false);
+    /// The titlebar's sidebar button: hides a shown dock, brings a hidden one back in the mode it
+    /// was hidden from.
+    pub fn toggle_dock_hidden(&mut self, pos: DockPosition) {
+        let dock = self.docks.get(pos);
+        let next = if dock.mode() == DockMode::Hidden {
+            dock.last_shown()
+        } else {
+            DockMode::Hidden
+        };
+        self.set_dock_mode(pos, next);
+    }
+
+    /// Release of a drag of a side dock's edge past its minimum: the dock collapses to its rail.
+    /// The expanded size stays what it was before the drag.
+    pub fn collapse_dock(&mut self, pos: DockPosition) {
+        if pos != DockPosition::Bottom {
+            self.set_dock_mode(pos, DockMode::Compact);
         }
     }
 
+    /// A click on the icon of `panel` in a dock's rail, `shown` being what the window draws of
+    /// the dock (the user's mode, unless a narrow window collapsed it). The icon of the panel an
+    /// expanded dock shows collapses the dock to its rail (focus goes to the center); any other
+    /// icon makes `panel` the active one and expands the dock, focusing it. Returns whether the
+    /// dock is expanded afterwards.
+    pub fn click_rail_icon(&mut self, pos: DockPosition, panel: &PanelId, shown: DockMode) -> bool {
+        let dock = self.docks.get(pos);
+        if !dock.contains(panel) {
+            return dock.is_expanded();
+        }
+        if shown == DockMode::Expanded && dock.active.as_ref() == Some(panel) {
+            self.set_dock_mode(pos, DockMode::Compact);
+            return false;
+        }
+        let dock = self.docks.get_mut(pos);
+        dock.active = Some(panel.clone());
+        self.set_dock_mode(pos, DockMode::Expanded);
+        self.focus = FocusTarget::Dock(pos);
+        true
+    }
+
+    /// Hides every dock (⌘⌥Y); focus moves to the active pane. Each keeps the mode it comes back in.
+    pub fn close_all_docks(&mut self) {
+        for pos in DockPosition::ALL {
+            self.set_dock_mode(pos, DockMode::Hidden);
+        }
+    }
+
+    /// Sets the expanded size of `pos`, clamped to [`DockPosition::size_range`].
     pub fn resize_dock(&mut self, pos: DockPosition, size: f32) {
         if size.is_finite() {
-            self.docks.get_mut(pos).size = size.clamp(MIN_DOCK_SIZE, MAX_DOCK_SIZE);
+            let (min, max) = pos.size_range();
+            self.docks.get_mut(pos).size = size.clamp(min, max);
         }
     }
 
@@ -686,7 +751,7 @@ impl WorkbenchState {
         let layout = self.center.layout(Rect::UNIT);
         let dock_ready = |state: &Self, pos: DockPosition| {
             let dock = state.docks.get(pos);
-            dock.visible && !dock.panels.is_empty()
+            dock.is_expanded() && !dock.panels.is_empty()
         };
         match self.focus {
             FocusTarget::Pane(_) => {

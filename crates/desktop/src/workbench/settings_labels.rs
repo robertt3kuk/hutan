@@ -253,6 +253,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "layout",
+        "auto_collapse",
+        "Collapse sidebars in a narrow window",
+        "Shrinks the right panel to its rail when the window is narrower than 1180 pt and the left sidebar to its icon rail below 900 pt, and brings them back when the window grows. This is temporary: it never changes the layout you chose, and a sidebar you hid yourself stays hidden.",
+    ),
+    field(
+        "layout",
         "presets",
         "Your layout presets",
         "Layouts you saved, by name. Save the layout you have on screen, rename a preset or delete one. A saved preset named like a built-in one replaces it until you delete it.",

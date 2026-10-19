@@ -291,17 +291,17 @@ fn the_panel_is_a_tab_of_the_right_sidebar_and_has_commands_and_a_key(cx: &mut T
     cx.simulate_keystrokes("enter");
     draw(cx);
     let state = view.read_with(cx, |wb, _| wb.state().clone());
-    assert!(state.docks.right.visible);
+    assert!(state.docks.right.is_expanded());
     assert_eq!(state.docks.right.active, Some("resources".into()));
 
     // ⌥⌘R hides it again (the sidebar it is the page of), and shows it once more.
     cx.simulate_keystrokes("cmd-alt-r");
     draw(cx);
-    assert!(!view.read_with(cx, |wb, _| wb.state().docks.right.visible));
+    assert!(!view.read_with(cx, |wb, _| wb.state().docks.right.is_expanded()));
     cx.simulate_keystrokes("cmd-alt-r");
     draw(cx);
     let state = view.read_with(cx, |wb, _| wb.state().clone());
-    assert!(state.docks.right.visible);
+    assert!(state.docks.right.is_expanded());
     assert_eq!(state.docks.right.active, Some("resources".into()));
 }
 
@@ -811,7 +811,7 @@ fn show_in_resources_reveals_the_session_from_its_context_menu(cx: &mut TestAppC
     run_entry(&view, cx, "Show in Resources");
     draw(cx);
     let state = view.read_with(cx, |wb, _| wb.state().clone());
-    assert!(state.docks.right.visible);
+    assert!(state.docks.right.is_expanded());
     assert_eq!(state.docks.right.active, Some("resources".into()));
     let panel = view
         .read_with(cx, |wb, _| wb.panel::<ResourcesPanel>("resources"))

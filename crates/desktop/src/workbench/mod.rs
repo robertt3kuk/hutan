@@ -9,6 +9,7 @@ pub mod chat;
 mod closing;
 mod daemon;
 mod daemon_popover;
+mod docks;
 mod harness_install;
 pub(crate) mod harnesses;
 mod history;
@@ -61,6 +62,7 @@ pub use changes::{
     SendTarget, SnippetLine, hunk_ranges,
 };
 pub use daemon::{DaemonBusy, log_file as daemon_log_file};
+pub use docks::{COLLAPSE_DRAG, RESIZE_CONTEXT};
 pub use harnesses::{Detection, HARNESSES, Harness, HarnessDirectory, Listing};
 pub use launcher::{
     HarnessChoice, LaunchAgent, LaunchWhere, Launcher, LauncherField, LauncherPreset, LauncherStop,

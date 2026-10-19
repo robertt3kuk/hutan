@@ -117,6 +117,10 @@ fn dock_edges_and_split_dividers_resize_in_a_steady_frame(cx: &mut TestAppContex
     daemon.sh("sleep 30");
     let (view, cx) = open(cx, &daemon);
     settle(cx);
+    // Wide enough that five drags of 20 pt stay inside every dock's range and the center keeps
+    // its 480 pt.
+    cx.simulate_resize(gpui::size(px(1600.0), px(800.0)));
+    settle(cx);
 
     for (pos, grow) in [(DockPosition::Left, 1.0), (DockPosition::Right, -1.0)] {
         for y in [106.0, 300.0, 450.0, 600.0, 759.0] {
@@ -127,11 +131,11 @@ fn dock_edges_and_split_dividers_resize_in_a_steady_frame(cx: &mut TestAppContex
                 _ => dock.left() + px(2.0),
             };
             let edge = point(edge_x, px(y));
-            drag(cx, edge, edge + point(px(40.0 * grow), px(0.0)));
+            drag(cx, edge, edge + point(px(20.0 * grow), px(0.0)));
             settle(cx);
             let after = size(&view, cx, pos);
             assert!(
-                (after - before - 40.0).abs() < 1.0,
+                (after - before - 20.0).abs() < 1.0,
                 "{pos:?} dock edge dragged at y={y}: {before} -> {after}"
             );
         }

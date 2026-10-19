@@ -6,16 +6,19 @@
 //!   toolbar (New session, Settings). The pages are the left dock's panels; the active one is
 //!   the dock's `active`, so presets, restore and `ui` see nothing new. Agents is no page: it
 //!   opens the Agent Dashboard drawer (`agents_drawer.rs`) over the center.
-//! - **Right**: a 36 px strip of panel icons with tooltips; icons that do not fit move into a
-//!   More menu. The active panel's body fills the rest.
+//!   While compact (`docks.rs`) the sidebar is a 44 pt icon rail of the same nav.
+//! - **Right**: the panel body (a header with the panel's name, then the panel) next to a 40 pt
+//!   activity rail of panel icons with tooltips, outside the body and always there unless hidden;
+//!   icons that do not fit move into a More menu. The titlebar's two dock buttons are here too.
 
 use gpui::{
-    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::*, px,
+    AnyElement, ClickEvent, Context, Div, Hsla, InteractiveElement, IntoElement, MouseButton,
+    MouseDownEvent, ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled,
+    Window, div, prelude::*, px,
 };
 
 use super::actions;
-use super::model::{Dock, DockPosition, DropTarget, ItemRef, ItemSource, PanelId};
+use super::model::{Dock, DockMode, DockPosition, DropTarget, ItemRef, ItemSource, PanelId};
 use super::render::{TITLEBAR_HEIGHT, probe};
 use super::style::TextTooltip;
 use super::view::{DragPreview, DraggedItem, Region, Workbench};
@@ -27,9 +30,6 @@ use crate::theme::DensityExt as _;
 pub const NAV_LABEL: f32 = 13.0;
 pub const NAV_ICON: f32 = 16.0;
 const NAV_LINE: f32 = 18.0;
-/// A strip icon button and the gap between two.
-const STRIP_BUTTON: f32 = 28.0;
-const STRIP_GAP: f32 = 4.0;
 
 /// What a nav row does.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,12 +60,12 @@ pub struct NavEntry {
     pub selected: bool,
 }
 
-/// Which icons of a right strip show for `panels` in a dock `width` px wide, the active one
-/// always among them, and which go into the More menu: `(shown, hidden)` as indices into
-/// `panels`.
-pub fn strip_split(panels: usize, active: Option<usize>, width: f32) -> (Vec<usize>, Vec<usize>) {
-    let slot = STRIP_BUTTON + STRIP_GAP;
-    let room = (width - 2.0 * STRIP_GAP).max(0.0);
+/// Which icons of a rail show for `panels` panels in `extent` pt of room (the width of the old
+/// strip, the height of the right rail), the active one always among them, and which go into
+/// the More menu: `(shown, hidden)` as indices into `panels`.
+pub fn strip_split(panels: usize, active: Option<usize>, extent: f32) -> (Vec<usize>, Vec<usize>) {
+    let slot = RAIL_BUTTON + RAIL_GAP;
+    let room = (extent - 2.0 * RAIL_GAP).max(0.0);
     let all = (room / slot).floor() as usize;
     if panels <= all {
         return ((0..panels).collect(), Vec::new());
@@ -164,8 +164,9 @@ impl Workbench {
     /// Shows `panel` as the left sidebar's page, or goes back to Projects when it is showing
     /// already (a nav row toggles its page).
     pub(crate) fn toggle_left_page(&mut self, panel: &PanelId, cx: &mut Context<Self>) {
-        let showing =
-            self.state.docks.left.visible && self.state.docks.left.active.as_ref() == Some(panel);
+        let left = &self.state.docks.left;
+        let showing = self.dock_mode(DockPosition::Left) == DockMode::Expanded
+            && left.active.as_ref() == Some(panel);
         if showing {
             self.open_panel("sessions", cx);
         } else {
@@ -223,23 +224,7 @@ impl Workbench {
                     .when(selected, |s| s.bg(theme.sidebar_accent))
                     .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        if target == NavTarget::Agents {
-                            // The drawer holds the keyboard itself (Escape closes it).
-                            this.toggle_agents_drawer(window, cx);
-                            return;
-                        }
-                        // Any other row is where the user goes next.
-                        this.agents_drawer = false;
-                        match &target {
-                            NavTarget::Search => {
-                                window.dispatch_action(Box::new(actions::OpenJump), cx);
-                            }
-                            NavTarget::Assistant => this.open_assistant(window, cx),
-                            NavTarget::Page(panel) => this.toggle_left_page(panel, cx),
-                            NavTarget::Agents => {}
-                        }
-                        this.focus_root(window, cx);
-                        cx.notify();
+                        this.nav_click(&target, window, cx);
                     }))
                     .child(match entry.icon {
                         Some(glyph) => icon(glyph, NAV_ICON, color).into_any_element(),
@@ -405,31 +390,232 @@ impl Workbench {
             .into_any_element()
     }
 
-    // ---- right -----------------------------------------------------------------------------
+    // ---- compact left rail ---------------------------------------------------------------------
 
-    /// The 36 px icon strip of the right sidebar.
-    pub(super) fn right_strip(
+    /// What a click on a nav row or rail icon does (the Agents row opens the dashboard drawer,
+    /// every other one is where the user goes next).
+    pub(crate) fn nav_click(
+        &mut self,
+        target: &NavTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if *target == NavTarget::Agents {
+            // The drawer holds the keyboard itself (Escape closes it).
+            self.toggle_agents_drawer(window, cx);
+            return;
+        }
+        self.agents_drawer = false;
+        match target {
+            NavTarget::Search => window.dispatch_action(Box::new(actions::OpenJump), cx),
+            NavTarget::Assistant => self.open_assistant(window, cx),
+            NavTarget::Page(panel) => self.toggle_left_page(panel, cx),
+            NavTarget::Agents => {}
+        }
+        self.focus_root(window, cx);
+        cx.notify();
+    }
+
+    /// The 44 pt icon rail the left sidebar is down to while compact: Search, Tasks, Agents,
+    /// Mawas (when enabled) and whatever other page the dock holds, then Projects; New session
+    /// and Settings at the bottom. Tooltips name every icon; the Agents badge keeps its count.
+    /// Search, Agents and Mawas open where they always do, without widening the sidebar; Tasks
+    /// and Projects are pages of the sidebar and expand it.
+    pub(super) fn left_rail(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme;
+        let hover = theme.fg.opacity(0.08);
+        let mut nav: Vec<AnyElement> = Vec::new();
+        for entry in self.nav_entries(cx) {
+            let target = entry.target.clone();
+            // A page the sidebar is not showing is not selected: only the drawer and Mawas Home
+            // are somewhere the rail leaves visible.
+            let selected =
+                entry.selected && matches!(target, NavTarget::Agents | NavTarget::Assistant);
+            let color = if selected { theme.fg } else { theme.muted };
+            let face = match entry.icon {
+                Some(set_icon) => icon(set_icon, NAV_ICON, color).into_any_element(),
+                None => div()
+                    .flex_none()
+                    .text_size(px(NAV_ICON - 2.0))
+                    .text_color(color)
+                    .child(entry.glyph.clone())
+                    .into_any_element(),
+            };
+            let button = rail_button(
+                self,
+                RailButton {
+                    id: SharedString::from(format!("rail-{}", entry.key)),
+                    face,
+                    label: entry.label.clone(),
+                    background: selected.then_some(theme.sidebar_accent),
+                    badge: entry.badge,
+                    region: Region::Nav(nav_region_key(&entry.key)),
+                },
+                hover,
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.nav_click(&target, window, cx);
+            }));
+            nav.push(button.into_any_element());
+        }
+        nav.push(
+            rail_button(
+                self,
+                RailButton {
+                    id: SharedString::from("rail-projects"),
+                    face: icon(Icon::Folder, NAV_ICON, theme.muted).into_any_element(),
+                    label: "Projects".into(),
+                    background: None,
+                    badge: None,
+                    region: Region::Nav("projects"),
+                },
+                hover,
+            )
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.nav_click(&NavTarget::Page(PanelId::new("sessions")), window, cx);
+            }))
+            .into_any_element(),
+        );
+        let new_session = rail_button(
+            self,
+            RailButton {
+                id: SharedString::from("rail-new"),
+                face: icon(Icon::Plus, NAV_ICON, theme.muted).into_any_element(),
+                label: "New session".into(),
+                background: None,
+                badge: None,
+                region: Region::Toolbar("new"),
+            },
+            hover,
+        )
+        .on_click(|_, window, cx| {
+            window.dispatch_action(Box::new(actions::NewTerminal), cx);
+        });
+        let settings = rail_button(
+            self,
+            RailButton {
+                id: SharedString::from("rail-settings"),
+                face: icon(Icon::Settings, NAV_ICON, theme.muted).into_any_element(),
+                label: "Settings".into(),
+                background: None,
+                badge: None,
+                region: Region::Toolbar("settings"),
+            },
+            hover,
+        )
+        .on_click(|_, window, cx| {
+            window.dispatch_action(Box::new(actions::OpenSettings), cx);
+        });
+
+        div()
+            .id("left-rail")
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .w(px(DockPosition::Left.rail_width()))
+            .bg(theme.sidebar)
+            .border_r_1()
+            .border_color(theme.border)
+            .child(window_drag_inset())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(RAIL_GAP))
+                    .p(px(RAIL_PAD))
+                    .children(nav),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(RAIL_GAP))
+                    .p(px(RAIL_PAD))
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .child(new_session)
+                    .child(settings),
+            )
+            .child(probe(&self.regions, Region::Rail(DockPosition::Left)))
+            .into_any_element()
+    }
+
+    // ---- right ---------------------------------------------------------------------------------
+
+    /// The row over the body of the right panel: the name of the panel it shows.
+    pub(super) fn right_header(&mut self, dock: &Dock, _cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let title = dock
+            .active
+            .as_ref()
+            .map(|panel| self.panels.title(panel))
+            .unwrap_or_default();
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(TITLEBAR_HEIGHT))
+            .w_full()
+            .px(px(12.0))
+            .border_b_1()
+            .border_color(theme.border)
+            .text_size(px(tokens.font_size))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(theme.fg)
+            .child(div().min_w_0().truncate().child(title))
+            .into_any_element()
+    }
+
+    /// The 40 pt activity rail of the right side, outside the body of the panel and always there
+    /// unless the user hid it: one icon per panel of the dock (History, Changes, Requests, Agents,
+    /// Resources; icons that do not fit move into More), the way back to the body at the bottom.
+    /// The icon of the panel the body shows collapses the body to the rail; any other icon opens
+    /// that panel (also while the body is collapsed). The Requests badge keeps its count.
+    pub(super) fn right_rail(
         &mut self,
         dock: &Dock,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = self.theme;
-        let tokens = self.density.ui();
         let pos = DockPosition::Right;
         let accent = theme.accent;
+        let status_h = self.density.ui().status_bar;
+        let open = self.dock_mode(pos) == DockMode::Expanded;
         let active_index = dock
             .active
             .as_ref()
             .and_then(|a| dock.panels.iter().position(|p| p == a));
-        let (shown, hidden) = strip_split(dock.panels.len(), active_index, dock.size);
+        // What is left of the window's height for icons: under the inset, over the bottom
+        // button and the status bar.
+        let room = f32::from(window.viewport_size().height)
+            - TITLEBAR_HEIGHT
+            - status_h
+            - RAIL_BUTTON
+            - 3.0 * RIGHT_RAIL_PAD;
+        let (shown, hidden) = strip_split(dock.panels.len(), active_index, room);
         let append_index = dock.panels.len();
+        let approvals = self.sessions.read(cx).approvals().len();
+        let hover = theme.right_sidebar_accent;
 
         let buttons: Vec<AnyElement> = shown
             .into_iter()
             .filter_map(|index| dock.panels.get(index).map(|panel| (index, panel.clone())))
             .map(|(index, panel)| {
                 let active = dock.active.as_ref() == Some(&panel);
+                let pressed = active && open;
+                let color = if pressed {
+                    accent
+                } else if active {
+                    theme.fg
+                } else {
+                    theme.muted
+                };
                 let (glyph, title) = self.item_icon_and_title(
                     &ItemRef::Panel {
                         panel: panel.clone(),
@@ -448,124 +634,139 @@ impl Workbench {
                 };
                 let click_panel = panel.clone();
                 let menu_panel = panel.clone();
-                let tip = title.clone();
-                let hover = theme.right_sidebar_accent;
-                div()
-                    .id(SharedString::from(format!("strip-{panel}")))
-                    .relative()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .size(px(STRIP_BUTTON))
-                    .rounded(px(tokens.radius))
-                    .cursor_pointer()
-                    .text_size(px(15.0))
-                    .text_color(if active { accent } else { theme.muted })
-                    .when(active, |s| s.bg(theme.right_sidebar_accent))
-                    .when(!active, move |s| {
-                        s.hover(move |s| s.bg(hover).text_color(theme.fg))
-                    })
-                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        let panel = click_panel.clone();
-                        this.mutate(cx, |s| {
-                            let _ = s.set_dock_active(pos, &panel);
-                            s.focus_dock(pos);
-                        });
-                        this.focus_root(window, cx);
-                    }))
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            let entries = this.panel_menu(&menu_panel);
-                            this.open_menu(event.position, entries, window, cx);
-                        }),
-                    )
-                    .on_drag(dragged, |dragged: &DraggedItem, _, _, cx| {
-                        let style = super::style::UiStyle::get(cx);
-                        let label = dragged.label.clone();
-                        cx.new(|_| DragPreview { label, style })
-                    })
-                    .drag_over::<DraggedItem>(move |s, _, _, _| s.border_l_2().border_color(accent))
-                    .can_drop(|any, _, _| {
-                        any.downcast_ref::<DraggedItem>()
-                            .is_some_and(|d| d.item.as_panel().is_some())
-                    })
-                    .on_drop(cx.listener(move |this, d: &DraggedItem, window, cx| {
-                        this.drop_item(d, DropTarget::Dock { pos, index }, window, cx);
-                    }))
-                    .child(match Icon::for_panel(panel.as_str()) {
-                        Some(set_icon) => {
-                            icon(set_icon, 16.0, if active { accent } else { theme.muted })
-                                .into_any_element()
-                        }
-                        None => glyph.into_any_element(),
-                    })
-                    .child(probe(&self.regions, Region::DockTab(pos, index)))
-                    .into_any_element()
+                let face = match Icon::for_panel(panel.as_str()) {
+                    Some(set_icon) => icon(set_icon, 16.0, color).into_any_element(),
+                    None => div()
+                        .text_size(px(15.0))
+                        .text_color(color)
+                        .child(glyph)
+                        .into_any_element(),
+                };
+                rail_button(
+                    self,
+                    RailButton {
+                        id: SharedString::from(format!("strip-{panel}")),
+                        face,
+                        label: title,
+                        background: pressed.then_some(theme.right_sidebar_accent),
+                        badge: (panel.as_str() == "inspector" && approvals > 0)
+                            .then_some(approvals),
+                        region: Region::DockTab(pos, index),
+                    },
+                    hover,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.click_rail_icon(pos, &click_panel, window, cx);
+                }))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        let entries = this.panel_menu(&menu_panel);
+                        this.open_menu(event.position, entries, window, cx);
+                    }),
+                )
+                .on_drag(dragged, |dragged: &DraggedItem, _, _, cx| {
+                    let style = super::style::UiStyle::get(cx);
+                    let label = dragged.label.clone();
+                    cx.new(|_| DragPreview { label, style })
+                })
+                .drag_over::<DraggedItem>(move |s, _, _, _| s.border_t_2().border_color(accent))
+                .can_drop(|any, _, _| {
+                    any.downcast_ref::<DraggedItem>()
+                        .is_some_and(|d| d.item.as_panel().is_some())
+                })
+                .on_drop(cx.listener(move |this, d: &DraggedItem, window, cx| {
+                    this.drop_item(d, DropTarget::Dock { pos, index }, window, cx);
+                }))
+                .into_any_element()
             })
             .collect();
 
         let more = (!hidden.is_empty()).then(|| {
-            let hover = theme.right_sidebar_accent;
             let overflow: Vec<PanelId> = hidden
                 .into_iter()
                 .filter_map(|i| dock.panels.get(i).cloned())
                 .collect();
-            div()
-                .id("strip-more")
-                .relative()
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .size(px(STRIP_BUTTON))
-                .rounded(px(tokens.radius))
-                .cursor_pointer()
-                .text_color(theme.muted)
-                .hover(move |s| s.bg(hover).text_color(theme.fg))
-                .tooltip(|_, cx| cx.new(|_| TextTooltip("More".into())).into())
-                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                    let entries = overflow
-                        .iter()
-                        .map(|panel| {
-                            let title = this.panels.title(panel);
-                            let target = panel.clone();
-                            Self::entry(title, move |this, _, cx| {
-                                let target = target.clone();
-                                this.mutate(cx, |s| {
-                                    let _ = s.set_dock_active(pos, &target);
-                                    s.focus_dock(pos);
-                                });
-                            })
+            rail_button(
+                self,
+                RailButton {
+                    id: SharedString::from("strip-more"),
+                    face: icon(Icon::Ellipsis, 16.0, theme.muted).into_any_element(),
+                    label: "More".into(),
+                    background: None,
+                    badge: None,
+                    region: Region::StripMore,
+                },
+                hover,
+            )
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                let entries = overflow
+                    .iter()
+                    .map(|panel| {
+                        let title = this.panels.title(panel);
+                        let target = panel.clone();
+                        Self::entry(title, move |this, window, cx| {
+                            this.click_rail_icon(pos, &target, window, cx);
                         })
-                        .collect();
-                    this.open_menu(event.position(), entries, window, cx);
-                }))
-                .child(icon(Icon::Ellipsis, 16.0, theme.muted))
-                .child(probe(&self.regions, Region::StripMore))
-                .into_any_element()
+                    })
+                    .collect();
+                this.open_menu(event.position(), entries, window, cx);
+            }))
+            .into_any_element()
         });
 
+        let collapse_hint = key_hint_of(window, &actions::ToggleRightDock);
+        let collapse = rail_button(
+            self,
+            RailButton {
+                id: SharedString::from("rail-collapse"),
+                face: icon(
+                    Icon::PanelRight,
+                    16.0,
+                    if open { accent } else { theme.muted },
+                )
+                .into_any_element(),
+                label: format!(
+                    "{} right panel{collapse_hint}",
+                    if open { "Collapse" } else { "Expand" }
+                )
+                .into(),
+                background: None,
+                badge: None,
+                region: Region::Toolbar("right-collapse"),
+            },
+            hover,
+        )
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.toggle_dock_cmd(DockPosition::Right, cx);
+        }));
+
         div()
-            .id("right-strip")
+            .id("right-rail")
+            .relative()
             .flex()
+            .flex_col()
             .flex_none()
-            .items_center()
-            .gap(px(STRIP_GAP))
-            .h(px(TITLEBAR_HEIGHT))
-            .w_full()
-            .px(px(STRIP_GAP))
-            .border_b_1()
+            .w(px(DockPosition::Right.rail_width()))
+            .bg(theme.right_sidebar)
+            .border_l_1()
             .border_color(theme.border)
-            .children(buttons)
-            .children(more)
+            .child(window_drag_inset())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(RAIL_GAP))
+                    .p(px(RIGHT_RAIL_PAD))
+                    .children(buttons)
+                    .children(more),
+            )
             .child(
                 div()
                     .id("strip-filler")
                     .flex_1()
-                    .h_full()
+                    .w_full()
                     .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.18)))
                     .can_drop(|any, _, _| {
                         any.downcast_ref::<DraggedItem>()
@@ -583,8 +784,207 @@ impl Workbench {
                         );
                     })),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .p(px(RIGHT_RAIL_PAD))
+                    .child(collapse),
+            )
+            .child(probe(&self.regions, Region::Rail(pos)))
             .into_any_element()
     }
+
+    // ---- titlebar buttons ----------------------------------------------------------------------
+
+    /// The titlebar button of a side dock, always there: with the left sidebar hidden it is the
+    /// way back, next to the traffic lights; with the right rail hidden it is the recovery
+    /// button. The left one hides the sidebar (or restores it); the right one does what ⌘L does.
+    /// A right click offers every state with the current one checked.
+    pub(super) fn dock_toggle_button(
+        &mut self,
+        pos: DockPosition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let mode = self.dock_mode(pos);
+        let hover = theme.surface_hover;
+        let (glyph, name, states): (Icon, &str, [(&str, DockMode); 3]) = match pos {
+            DockPosition::Left => (
+                Icon::PanelLeft,
+                "sidebar",
+                [
+                    ("Expanded", DockMode::Expanded),
+                    ("Compact (icons)", DockMode::Compact),
+                    ("Hidden", DockMode::Hidden),
+                ],
+            ),
+            _ => (
+                Icon::PanelRight,
+                "right panel",
+                [
+                    ("Panel open", DockMode::Expanded),
+                    ("Rail only", DockMode::Compact),
+                    ("Hidden", DockMode::Hidden),
+                ],
+            ),
+        };
+        let hint = match pos {
+            DockPosition::Left => key_hint_of(window, &actions::ToggleLeftDock),
+            _ => key_hint_of(window, &actions::ToggleRightDock),
+        };
+        let tip: SharedString = match (pos, mode) {
+            (DockPosition::Left, DockMode::Hidden) => format!("Show {name}{hint}"),
+            (DockPosition::Left, _) => format!("Hide {name}{hint}"),
+            (_, DockMode::Expanded) => format!("Collapse {name}{hint}"),
+            (_, DockMode::Compact) => format!("Expand {name}{hint}"),
+            (_, DockMode::Hidden) => format!("Show {name}{hint}"),
+        }
+        .into();
+        let color = if mode == DockMode::Expanded {
+            theme.accent
+        } else {
+            theme.muted
+        };
+        div()
+            .id(SharedString::from(format!("titlebar-dock-{pos:?}")))
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(tokens.control_height - 4.0))
+            .rounded(px(tokens.radius))
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| match pos {
+                DockPosition::Left => this.toggle_dock_hidden_cmd(pos, cx),
+                _ => this.toggle_dock_cmd(pos, cx),
+            }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    let entries = states
+                        .iter()
+                        .map(|(label, state)| {
+                            let state = *state;
+                            let mut entry = Self::entry(*label, move |this, _, cx| {
+                                this.set_dock_mode_cmd(pos, state, cx);
+                            });
+                            entry.checked = this.dock_mode(pos) == state;
+                            entry
+                        })
+                        .collect();
+                    this.open_menu(event.position, entries, window, cx);
+                    cx.stop_propagation();
+                }),
+            )
+            .child(icon(glyph, 16.0, color))
+            .child(probe(&self.regions, Region::DockToggle(pos)))
+            .into_any_element()
+    }
+}
+
+/// Side of a rail button, the gap between two and the padding of a rail around them: 32 pt
+/// targets in the 44 pt left rail (and, with 4 pt of padding, in the 40 pt right one).
+const RAIL_BUTTON: f32 = 32.0;
+const RAIL_GAP: f32 = 4.0;
+const RAIL_PAD: f32 = 6.0;
+/// The 40 pt right rail pads its 32 pt buttons by 4.
+const RIGHT_RAIL_PAD: f32 = 4.0;
+
+/// What one rail button shows.
+struct RailButton {
+    id: SharedString,
+    face: AnyElement,
+    /// Its tooltip, and what assistive technology calls it.
+    label: SharedString,
+    /// Set while the page, panel or drawer the button stands for is the one showing.
+    background: Option<Hsla>,
+    /// A count that stays visible next to the icon (never replaces it).
+    badge: Option<usize>,
+    region: Region,
+}
+
+/// A 32 pt icon button with a tooltip, as in both rails.
+fn rail_button(wb: &Workbench, spec: RailButton, hover: Hsla) -> Stateful<Div> {
+    let theme = wb.theme;
+    let tokens = wb.density.ui();
+    let tip = spec.label;
+    div()
+        .id(spec.id)
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(RAIL_BUTTON))
+        .rounded(px(tokens.radius + 2.0))
+        .cursor_pointer()
+        .when_some(spec.background, |s, background| s.bg(background))
+        .when(spec.background.is_none(), move |s| {
+            s.hover(move |s| s.bg(hover))
+        })
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .child(spec.face)
+        .children(spec.badge.map(|count| {
+            div()
+                .absolute()
+                .top(px(1.0))
+                .right(px(1.0))
+                .px(px(4.0))
+                .rounded(px(crate::theme::PILL_RADIUS))
+                .bg(theme.warning)
+                .text_color(theme.bg)
+                .text_size(px(10.0))
+                .line_height(px(13.0))
+                .child(SharedString::from(count.to_string()))
+        }))
+        .child(probe(&wb.regions, spec.region))
+}
+
+/// The inset under the traffic lights and over a rail's icons; also a window drag handle.
+fn window_drag_inset() -> AnyElement {
+    div()
+        .h(px(TITLEBAR_HEIGHT))
+        .flex_none()
+        .w_full()
+        .on_mouse_down(MouseButton::Left, |event, window, cx| {
+            if event.click_count == 2 {
+                window.titlebar_double_click();
+            } else {
+                window.start_window_move();
+            }
+            cx.stop_propagation();
+        })
+        .into_any_element()
+}
+
+/// The static name a nav entry's region carries (`Region::Nav` takes a `&'static str`).
+fn nav_region_key(key: &str) -> &'static str {
+    match key {
+        "search" => "search",
+        "tasks" => "tasks",
+        "agents" => "agents",
+        "assistant" => "assistant",
+        _ => "page",
+    }
+}
+
+/// " (⌘L)"-style suffix for a tooltip: the key of `action` in the active keymap, or nothing.
+fn key_hint_of(window: &Window, action: &dyn gpui::Action) -> String {
+    window
+        .highest_precedence_binding_for_action(action)
+        .map(|binding| {
+            let keys: Vec<String> = binding.keystrokes().iter().map(|k| k.to_string()).collect();
+            format!(" ({})", keys.join(" "))
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

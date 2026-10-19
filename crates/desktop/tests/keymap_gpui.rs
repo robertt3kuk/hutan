@@ -11,7 +11,9 @@ use common::{TestDaemon, offline_connection, open_with, wait_until};
 use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
 use hutan_desktop::settings::KeymapBase;
 use hutan_desktop::workbench::actions::{self, default_bindings};
-use hutan_desktop::workbench::model::{DockPosition, FocusTarget, PanelId, WorkbenchState};
+use hutan_desktop::workbench::model::{
+    DockMode, DockPosition, FocusTarget, PanelId, WorkbenchState,
+};
 use hutan_desktop::workbench::{PickerKind, Region, Workbench};
 use hutan_settings::{SettingsPaths, SettingsStore};
 
@@ -28,9 +30,9 @@ fn state(view: &Entity<Workbench>, cx: &VisualTestContext) -> WorkbenchState {
 fn visible(view: &Entity<Workbench>, cx: &VisualTestContext) -> [bool; 3] {
     let docks = state(view, cx).docks;
     [
-        docks.left.visible,
-        docks.right.visible,
-        docks.bottom.visible,
+        docks.left.is_expanded(),
+        docks.right.is_expanded(),
+        docks.bottom.is_expanded(),
     ]
 }
 
@@ -40,7 +42,7 @@ fn give_the_bottom_dock_a_panel(view: &Entity<Workbench>, cx: &mut VisualTestCon
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| {
             s.open_panel(&PanelId::new("notifications"), DockPosition::Bottom);
-            s.set_dock_visible(DockPosition::Bottom, false);
+            s.set_dock_mode(DockPosition::Bottom, DockMode::Hidden);
         });
     });
 }

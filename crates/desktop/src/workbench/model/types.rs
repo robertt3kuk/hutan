@@ -118,6 +118,42 @@ impl DockPosition {
             DockPosition::Bottom => "Bottom",
         }
     }
+
+    /// The smallest and largest size a dock of this side is resized to: the left sidebar's
+    /// 220–500 pt, the right panel body's 240–480 pt, the bottom dock's height. Dragging below
+    /// the minimum never persists an illegal size (it collapses the dock instead, see
+    /// `WorkbenchState::collapse_dock`).
+    pub const fn size_range(self) -> (f32, f32) {
+        match self {
+            DockPosition::Left => (220.0, 500.0),
+            DockPosition::Right => (240.0, 480.0),
+            DockPosition::Bottom => (super::ops::MIN_DOCK_SIZE, super::ops::MAX_DOCK_SIZE),
+        }
+    }
+
+    /// Width of the dock's rail while it is collapsed to it: the left sidebar's 44 pt icon rail,
+    /// the right side's 40 pt activity rail (which also stands next to an open body). The bottom
+    /// dock has none.
+    pub const fn rail_width(self) -> f32 {
+        match self {
+            DockPosition::Left => 44.0,
+            DockPosition::Right => 40.0,
+            DockPosition::Bottom => 0.0,
+        }
+    }
+}
+
+/// How much of a dock is on screen. Left: the sidebar, its 44 pt icon rail, nothing. Right: the
+/// activity rail with the panel body beside it, the rail alone, nothing. Bottom: open or hidden
+/// (it has no rail).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DockMode {
+    /// The body is shown (the left sidebar with its pages, the right panel next to its rail).
+    Expanded,
+    /// Only the rail is shown. Never the mode of the bottom dock.
+    Compact,
+    /// Nothing is shown and nothing can take focus; a titlebar button or a command brings it back.
+    Hidden,
 }
 
 /// A panel stack at a window edge.
@@ -125,9 +161,16 @@ impl DockPosition {
 pub struct Dock {
     pub panels: Vec<PanelId>,
     pub active: Option<PanelId>,
-    /// Width (left/right) or height (bottom) in logical pixels.
+    /// Width (left/right) or height (bottom) in logical pixels. For a side dock this is the
+    /// expanded width and is kept while the dock is collapsed or hidden.
     pub size: f32,
+    /// The dock is on screen at all (as its body or, with `collapsed`, as its rail). `false` is
+    /// [`DockMode::Hidden`].
     pub visible: bool,
+    /// The dock is down to its rail ([`DockMode::Compact`]) while `visible`. Kept while the dock
+    /// is hidden: it is the mode the dock comes back in. Never set on the bottom dock.
+    #[serde(default)]
+    pub collapsed: bool,
 }
 
 impl Dock {
@@ -138,11 +181,97 @@ impl Dock {
             panels,
             size,
             visible,
+            collapsed: false,
         }
     }
 
     pub fn contains(&self, panel: &PanelId) -> bool {
         self.panels.contains(panel)
+    }
+
+    /// What is on screen of this dock (the user's choice; the window may show less, see
+    /// `Responsive`).
+    pub fn mode(&self) -> DockMode {
+        match (self.visible, self.collapsed) {
+            (false, _) => DockMode::Hidden,
+            (true, true) => DockMode::Compact,
+            (true, false) => DockMode::Expanded,
+        }
+    }
+
+    /// The body is shown: the left sidebar, the right panel, the bottom dock.
+    pub fn is_expanded(&self) -> bool {
+        self.mode() == DockMode::Expanded
+    }
+
+    /// The mode a hidden dock comes back in: the one it had when it was hidden.
+    pub fn last_shown(&self) -> DockMode {
+        if self.collapsed {
+            DockMode::Compact
+        } else {
+            DockMode::Expanded
+        }
+    }
+
+    pub(super) fn set_mode(&mut self, mode: DockMode) {
+        match mode {
+            DockMode::Expanded => {
+                self.visible = true;
+                self.collapsed = false;
+            }
+            DockMode::Compact => {
+                self.visible = true;
+                self.collapsed = true;
+            }
+            DockMode::Hidden => self.visible = false,
+        }
+    }
+}
+
+/// The mode and expanded size of one dock, as remembered for a layout preset.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DockModes {
+    pub visible: bool,
+    #[serde(default)]
+    pub collapsed: bool,
+    pub size: f32,
+}
+
+/// What the user left each dock at in a layout preset (left, right, bottom), restored when the
+/// preset is applied again.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RememberedDocks {
+    pub left: DockModes,
+    pub right: DockModes,
+    pub bottom: DockModes,
+}
+
+impl Docks {
+    /// The modes and sizes of the three docks now.
+    pub fn modes(&self) -> RememberedDocks {
+        let of = |dock: &Dock| DockModes {
+            visible: dock.visible,
+            collapsed: dock.collapsed,
+            size: dock.size,
+        };
+        RememberedDocks {
+            left: of(&self.left),
+            right: of(&self.right),
+            bottom: of(&self.bottom),
+        }
+    }
+
+    /// Sets the modes and sizes of the three docks (their panels stay).
+    pub fn set_modes(&mut self, modes: &RememberedDocks) {
+        for (dock, saved) in [
+            (&mut self.left, modes.left),
+            (&mut self.right, modes.right),
+            (&mut self.bottom, modes.bottom),
+        ] {
+            dock.visible = saved.visible;
+            dock.collapsed = saved.collapsed;
+            dock.size = saved.size;
+        }
     }
 }
 

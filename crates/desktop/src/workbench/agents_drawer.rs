@@ -191,11 +191,7 @@ impl Workbench {
         }
         let theme = self.theme;
         let tokens = self.density.ui();
-        let left = if self.state.docks.left.visible {
-            self.state.docks.left.size
-        } else {
-            0.0
-        };
+        let left = self.dock_extent(super::model::DockPosition::Left);
         let remaining = (f32::from(window.viewport_size().width) - left).max(0.0);
         let width = remaining.min(DRAWER_MAX_WIDTH);
         let board = self.agents_dashboard(cx);

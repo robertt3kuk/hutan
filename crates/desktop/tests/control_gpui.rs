@@ -254,7 +254,7 @@ fn commands_split_apply_presets_open_panels_focus_sessions_and_write_settings(
         layout_of(&daemon).is_some_and(|l| pane_count(&l.panes) == 2)
     });
     run(&daemon, cx, "workbench::ToggleLeftDock", None).unwrap();
-    assert!(!state(&view, cx).docks.left.visible);
+    assert!(!state(&view, cx).docks.left.is_expanded());
 
     // A preset, and an unknown one.
     run(

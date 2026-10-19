@@ -93,7 +93,8 @@ fn the_window_title_follows_the_center_item_never_a_sidebar_page(cx: &mut TestAp
     assert_eq!(cx.window_title().as_deref(), Some("Welcome — Hutan"));
 
     // Every tab of the right sidebar: History, Changes, Requests, Agents, Resources.
-    for index in 0..5 {
+    // (History is open already: its icon collapses the body, so it goes last.)
+    for index in [1, 2, 3, 4, 0] {
         click(&view, cx, Region::DockTab(DockPosition::Right, index));
         common::draw(cx);
         assert_eq!(

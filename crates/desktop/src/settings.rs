@@ -223,6 +223,9 @@ pub struct DockSetting {
     /// Width (left/right) or height (bottom) in pixels.
     pub size: f64,
     pub visible: bool,
+    /// Shown as its rail only: the left sidebar's 44 pt icon rail, the right side's activity
+    /// rail without the panel body. Ignored on the bottom dock.
+    pub collapsed: bool,
 }
 
 impl Default for DockSetting {
@@ -231,6 +234,7 @@ impl Default for DockSetting {
             panels: Vec::new(),
             size: 240.0,
             visible: false,
+            collapsed: false,
         }
     }
 }
@@ -241,12 +245,15 @@ impl DockSetting {
             panels: dock.panels.iter().map(|p| p.to_string()).collect(),
             size: f64::from(dock.size),
             visible: dock.visible,
+            collapsed: dock.collapsed,
         }
     }
 
     fn to_dock(&self) -> Dock {
         let panels: Vec<&str> = self.panels.iter().map(String::as_str).collect();
-        Dock::new(&panels, self.size as f32, self.visible)
+        let mut dock = Dock::new(&panels, self.size as f32, self.visible);
+        dock.collapsed = self.collapsed;
+        dock
     }
 }
 
@@ -289,6 +296,10 @@ pub struct LayoutSettings {
     /// User presets by name; `default`, `focus` and `overview` always exist and can be
     /// overridden here. Edit `settings.toml` to change these.
     pub presets: BTreeMap<String, PresetSetting>,
+    /// Collapse the right panel (below 1180 pt of window width) and then the left sidebar (below
+    /// 900 pt) to their rails when the window is narrow, and bring them back when it grows. The
+    /// collapse is temporary and never changes what you chose.
+    pub auto_collapse: bool,
 }
 
 impl Default for LayoutSettings {
@@ -296,6 +307,7 @@ impl Default for LayoutSettings {
         Self {
             preset: LayoutPreset::DEFAULT.to_owned(),
             presets: BTreeMap::new(),
+            auto_collapse: true,
         }
     }
 }
@@ -1340,6 +1352,7 @@ mod tests {
                     panels: vec!["sessions".into()],
                     size: 300.0,
                     visible: true,
+                    collapsed: false,
                 },
                 ..PresetSetting::default()
             },
@@ -1351,6 +1364,7 @@ mod tests {
                     panels: vec!["inspector".into()],
                     size: 280.0,
                     visible: true,
+                    collapsed: false,
                 },
                 ..PresetSetting::default()
             },

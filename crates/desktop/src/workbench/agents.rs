@@ -747,8 +747,23 @@ impl Workbench {
         let settings = self
             .settings
             .get::<crate::settings::InspectorPanelSettings>();
-        if settings.reveal_on_approval {
-            self.open_panel("inspector", cx);
+        if !settings.reveal_on_approval {
+            return;
+        }
+        let inspector = super::model::PanelId::new("inspector");
+        match self.state.docks.find(&inspector) {
+            // A right panel the user (or a narrow window) collapsed to its rail stays collapsed:
+            // the request is announced and its badge stays on the rail, the user chooses.
+            Some(pos) if self.dock_mode(pos) != super::model::DockMode::Expanded => {
+                self.mutate(cx, |s| {
+                    let _ = s.set_dock_active(pos, &inspector);
+                });
+                self.set_notice(
+                    "A permission request is waiting: open Requests to answer it",
+                    cx,
+                );
+            }
+            _ => self.open_panel("inspector", cx),
         }
     }
 

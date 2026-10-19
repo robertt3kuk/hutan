@@ -26,6 +26,9 @@ actions!(
         ToggleLeftDock,
         ToggleRightDock,
         ToggleBottomDock,
+        HideLeftSidebar,
+        HideRightRail,
+        CancelDockResize,
         ToggleOverview,
         ToggleAgentsDrawer,
         CloseAgentsDrawer,
@@ -471,6 +474,8 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("View: Toggle Right Dock", ToggleRightDock),
         command("View: Toggle Bottom Dock", ToggleBottomDock),
         command("View: Close All Docks", CloseAllDocks),
+        command("View: Hide Left Sidebar", HideLeftSidebar),
+        command("View: Hide Right Rail", HideRightRail),
         command("View: Increase Terminal Font Size", IncreaseFontSize),
         command("View: Decrease Terminal Font Size", DecreaseFontSize),
         command("View: Reset Terminal Font Size", ResetFontSize),
@@ -791,6 +796,7 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<palette::Dismiss>("escape", Some("Picker")),
         bind::<setup::Continue>("enter", Some("Setup")),
         bind::<setup::Skip>("escape", Some("Setup")),
+        bind::<CancelDockResize>("escape", Some(super::docks::RESIZE_CONTEXT)),
     ]
 }
 
@@ -1121,6 +1127,7 @@ mod tests {
             "escape | palette::Dismiss | Picker",
             "enter | setup::Continue | Setup",
             "escape | setup::Skip | Setup",
+            "escape | workbench::CancelDockResize | DockResize",
         ]
         .map(str::to_owned)
         .to_vec();

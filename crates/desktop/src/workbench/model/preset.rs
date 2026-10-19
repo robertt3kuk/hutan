@@ -140,6 +140,14 @@ impl WorkbenchState {
                 return;
             }
         }
+        // What the layout showing now (the one a restored stash brought back, if any) had its docks
+        // at is what applying it again will bring back. The overview stashes and restores whole
+        // layouts, docks included, so it is not part of that memory.
+        let overrides_center = matches!(preset.center, CenterLayout::Items(_));
+        if !overrides_center {
+            self.remember_docks();
+        }
+        let switching = self.preset != preset.name;
         let placed = preset.placed_panels();
         let had_stash = self.stashed.is_some();
         // A center override (overview) remembers the layout it replaced; re-applying while one
@@ -154,6 +162,14 @@ impl WorkbenchState {
         };
         let prev_focus = self.active_pane_id();
         let old_docks = std::mem::replace(&mut self.docks, preset.docks.clone());
+        // Coming back to a preset the user already arranged restores their modes and sizes; a
+        // preset applied again while it is current starts over from its own.
+        if switching
+            && !overrides_center
+            && let Some(memory) = self.dock_memory.get(&preset.name).copied()
+        {
+            self.docks.set_modes(&memory);
+        }
         let leftover_panels: Vec<ItemRef> = DockPosition::ALL
             .into_iter()
             .flat_map(|pos| old_docks.get(pos).panels.iter().cloned())
@@ -239,6 +255,12 @@ impl WorkbenchState {
         restored.parked = std::mem::take(&mut self.parked);
         restored.normalize();
         *self = restored;
+    }
+
+    /// Records the modes and expanded sizes of the docks as the layout of the current preset's.
+    fn remember_docks(&mut self) {
+        self.dock_memory
+            .insert(self.preset.clone(), self.docks.modes());
     }
 
     /// Switch to the preset called `name` by any path (menu, palette, keys, settings, restore).

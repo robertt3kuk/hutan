@@ -87,11 +87,11 @@ fn split_actions_and_keys_change_the_pane_tree(cx: &mut TestAppContext) {
 fn dock_toggles_zoom_and_density(cx: &mut TestAppContext) {
     let (view, cx) = open(cx, None);
     cx.dispatch_action(actions::ToggleLeftDock);
-    assert!(!state(&view, cx).docks.left.visible);
+    assert!(!state(&view, cx).docks.left.is_expanded());
     cx.simulate_keystrokes("cmd-b");
-    assert!(state(&view, cx).docks.left.visible);
+    assert!(state(&view, cx).docks.left.is_expanded());
     cx.simulate_keystrokes("cmd-alt-b");
-    assert!(!state(&view, cx).docks.right.visible);
+    assert!(!state(&view, cx).docks.right.is_expanded());
     cx.simulate_keystrokes("cmd-j");
     assert!(state(&view, cx).docks.bottom.visible);
 
@@ -332,7 +332,7 @@ fn state_is_saved_debounced_and_restored(cx: &mut TestAppContext) {
 
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 4);
+    assert_eq!(on_disk["version"], 5);
 
     // A second window (a "restart") restores exactly that layout.
     let (view2, cx2) = open(cx, Some(path.clone()));
@@ -437,8 +437,10 @@ fn default_layout_geometry_matches_the_design_tokens(cx: &mut TestAppContext) {
     assert!(f(left.origin.x) <= 1.0);
     assert!((f(left.right()) - f(center.left())).abs() < 2.5);
     assert!((f(center.right()) - f(right.left())).abs() < 2.5);
-    let window_width = f(left.size.width) + f(center.size.width) + f(right.size.width);
-    assert!((window_width - f(status.size.width)).abs() < 3.0);
+    let rail = bounds(&view, cx, Region::Rail(DockPosition::Right));
+    let window_width =
+        f(left.size.width) + f(center.size.width) + f(right.size.width) + f(rail.size.width);
+    assert!((window_width - f(status.size.width)).abs() < 5.0);
     // Title bar sits above the center; the left dock spans the full height above the status bar.
     assert!(f(title.origin.y) <= 1.0);
     assert!(f(center.top()) >= f(title.bottom()) - 1.0);
@@ -494,7 +496,8 @@ fn dock_visibility_and_size_drive_the_layout(cx: &mut TestAppContext) {
     let before = bounds(&view, cx, Region::Center);
     cx.dispatch_action(actions::ToggleLeftDock);
     let after = bounds(&view, cx, Region::Center);
-    assert!((f(after.size.width) - f(before.size.width) - 280.0).abs() < 1.0);
+    // ⌘B leaves the 44 pt icon rail: the center gains the rest.
+    assert!((f(after.size.width) - f(before.size.width) - 236.0).abs() < 1.0);
     assert!(
         view.read_with(cx, |wb, _| wb
             .region_bounds(Region::Dock(DockPosition::Left)))
@@ -618,14 +621,16 @@ fn dragging_a_dock_edge_resizes_the_dock(cx: &mut TestAppContext) {
     drag(cx, edge, edge + point(px(0.0), px(-40.0)));
     assert_eq!(state(&view, cx).docks.bottom.size, 240.0);
 
-    // The minimum is enforced.
+    // The minimum is enforced: a few points below it the dock stays at 220 (a drag 24 pt below
+    // collapses it instead, see `dock_gpui.rs`).
     let left = bounds(&view, cx, Region::Dock(DockPosition::Left));
     let edge = point(left.right() - px(2.0), px(400.0));
-    drag(cx, edge, point(px(0.0), px(400.0)));
+    drag(cx, edge, point(px(215.0), px(400.0)));
     assert_eq!(
         state(&view, cx).docks.left.size,
-        hutan_desktop::workbench::model::MIN_DOCK_SIZE
+        DockPosition::Left.size_range().0
     );
+    assert!(state(&view, cx).docks.left.is_expanded());
 }
 
 #[gpui::test]
