@@ -1,5 +1,5 @@
 //! Hutan settings: layered TOML store with per-namespace schemas, hot reload, keymap parsing,
-//! appearance/density tokens and terminal themes. No GPUI (ADR 0010).
+//! appearance, color packs (`themes`) and their registry. No GPUI (ADR 0010).
 //!
 //! Layers, lowest to highest: built-in defaults (each [`Setting`]'s `Default`), user
 //! `settings.toml`, workspace `<root>/.hutan/settings.toml` and project
@@ -21,13 +21,13 @@ pub mod themes;
 mod value;
 mod watch;
 
-pub use appearance::{AppearanceMode, AppearanceSettings, Density, DensityTokens};
+pub use appearance::{AppearanceMode, AppearanceSettings, Density, ThemeOverrides};
 pub use error::{SettingsError, Severity};
 pub use keymap::{BindingSpec, Keystroke};
 pub use store::{
     ChangeSet, KEYMAP_NAMESPACE, LayerInfo, SettingsLayer, SettingsPaths, SettingsStore,
 };
-pub use themes::{Rgb, SystemAppearance, TerminalTheme};
+pub use themes::{Rgb, Rgba, SystemAppearance, TerminalTheme, ThemeRegistry};
 pub use watch::WatchGuard;
 
 /// A typed settings namespace owned by one component.

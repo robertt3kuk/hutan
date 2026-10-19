@@ -28,7 +28,7 @@ pub use hutan_protocol::blocks::BlockPart;
 pub use hutan_protocol::messages::TerminalSize;
 pub use hutan_protocol::render::{Row, TerminalRender};
 pub use settings::{
-    BlockSettings, CursorSettings, CursorStyle, OptionAsMeta, TerminalViewSettings,
+    BlockSettings, CursorSettings, CursorStyle, OptionAsMeta, TerminalViewSettings, Tint,
 };
 pub use shared::{SharedEvent, SharedTerminal};
 pub use theme::{DefaultColors, Rgb, TerminalPalette};

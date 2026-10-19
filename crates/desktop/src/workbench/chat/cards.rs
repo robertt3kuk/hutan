@@ -34,8 +34,6 @@ pub(super) const PART_DIFF: u32 = 100;
 const TAIL_LINES: usize = 8;
 /// Most lines of a command's output drawn even when expanded.
 const MAX_OUTPUT_LINES: usize = 2000;
-/// The widest the conversation column grows: the reading column of the visual system.
-const COLUMN_WIDTH: f32 = crate::theme::READING_WIDTH;
 
 fn status_color(look: &Look, tool: &Tool) -> gpui::Hsla {
     let theme = &look.theme;
@@ -157,7 +155,12 @@ impl ChatView {
             .py(px(tokens.spacing * 1.25))
             .flex()
             .justify_center()
-            .child(div().w_full().max_w(px(COLUMN_WIDTH)).child(card))
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(crate::theme::reading_width()))
+                    .child(card),
+            )
             .child(probe(&self.regions, Region::ChatEntry(index)))
             .into_any_element()
     }
@@ -915,12 +918,12 @@ pub(crate) fn counts_of(added: usize, removed: usize, look: &Look) -> AnyElement
         .text_size(px(tokens.secondary_font_size))
         .child(
             div()
-                .text_color(theme.success)
+                .text_color(theme.diff_added)
                 .child(SharedString::from(format!("+{added}"))),
         )
         .child(
             div()
-                .text_color(theme.danger)
+                .text_color(theme.diff_removed)
                 .child(SharedString::from(format!("−{removed}"))),
         )
         .into_any_element()
@@ -942,10 +945,10 @@ pub(crate) fn diff_row(line: &DiffLine, look: &Look) -> gpui::Div {
             ))
     };
     let (sign, tint, text_color) = match line.kind {
-        LineKind::Add => ("+", Some(theme.success.opacity(0.16)), theme.fg),
-        LineKind::Remove => ("−", Some(theme.danger.opacity(0.16)), theme.fg),
+        LineKind::Add => ("+", Some(theme.diff_added_bg), theme.fg),
+        LineKind::Remove => ("−", Some(theme.diff_removed_bg), theme.fg),
         LineKind::Context => (" ", None, theme.fg),
-        LineKind::Hunk => ("", Some(theme.accent.opacity(0.10)), theme.muted),
+        LineKind::Hunk => ("", Some(theme.diff_hunk_bg), theme.diff_hunk_fg),
         LineKind::Note => ("", None, theme.muted),
     };
     let shown = if matches!(line.kind, LineKind::Hunk) {

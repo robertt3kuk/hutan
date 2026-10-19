@@ -780,7 +780,7 @@ impl MemoryPanel {
             .flex_none()
             .px(px(tokens.spacing * 2.0))
             .py(px(tokens.spacing / 2.0))
-            .rounded(px(crate::theme::PILL_RADIUS))
+            .rounded(px(crate::theme::pill_radius()))
             .border_1()
             .border_color(if selected { theme.accent } else { theme.border })
             .bg(if selected {

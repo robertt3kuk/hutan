@@ -524,9 +524,8 @@ impl Workbench {
         };
         self.chrome = state.appearance;
         self.density = state.density;
-        self.theme = Theme::for_chrome(self.chrome, self.appearance);
+        self.refresh_theme(cx);
         self.publish_style(cx);
-        self.refresh_terminal_style(cx);
         cx.notify();
     }
 
@@ -538,9 +537,8 @@ impl Workbench {
         }
         self.chrome = look.appearance;
         self.density = look.density;
-        self.theme = Theme::for_chrome(self.chrome, self.appearance);
+        self.refresh_theme(cx);
         self.publish_style(cx);
-        self.refresh_terminal_style(cx);
         cx.notify();
     }
 

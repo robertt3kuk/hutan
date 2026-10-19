@@ -1385,7 +1385,7 @@ impl ChangesView {
                     .px(px(tokens.spacing * 2.0))
                     .rounded(px(tokens.radius))
                     .bg(theme.accent)
-                    .text_color(gpui::white())
+                    .text_color(theme.on_accent())
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_comment_box(window, cx);

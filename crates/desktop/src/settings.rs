@@ -11,11 +11,10 @@ use std::path::Path;
 
 use hutan_protocol::messages::TerminalSpec;
 pub use hutan_settings::AppearanceSettings;
-use hutan_settings::themes::{self, SystemAppearance};
+use hutan_settings::themes::{self, TerminalTheme};
 use hutan_settings::{Setting, SettingsStore};
 use hutan_terminal_view::{
-    BlockSettings, CursorSettings, CursorStyle, OptionAsMeta, Rgb, TerminalPalette,
-    TerminalViewSettings,
+    BlockSettings, CursorSettings, CursorStyle, OptionAsMeta, TerminalPalette, TerminalViewSettings,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -132,8 +131,53 @@ impl Setting for TerminalSettings {
     const WORKSPACE_OVERRIDABLE: bool = true;
 }
 
-fn rgb(c: themes::Rgb) -> Rgb {
-    Rgb(c.r, c.g, c.b)
+/// What the active color pack says about the terminal's font, used where the user has not set
+/// the key themselves (`terminal.font_family`, `.font_size`, `.line_height`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TerminalPackDefaults {
+    pub font_family: String,
+    pub font_size: f64,
+    pub line_height: f64,
+}
+
+impl TerminalPackDefaults {
+    /// The pack's terminal font size and line height, and `family` (the first installed of its
+    /// `[fonts] mono` list, which only the text system can tell).
+    pub fn of(theme: &themes::ResolvedTheme, family: String) -> Self {
+        Self {
+            font_family: family,
+            font_size: f64::from(theme.metric(themes::Metric::TerminalFontSize)),
+            line_height: f64::from(theme.metric(themes::Metric::TerminalLineHeight)),
+        }
+    }
+}
+
+/// Which font keys the user wrote in some settings layer. Only those override the pack: the
+/// serialized `TerminalSettings::default()` is not a user choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TerminalExplicit {
+    pub font_family: bool,
+    pub font_size: bool,
+    pub line_height: bool,
+}
+
+impl TerminalExplicit {
+    /// Reads the provenance of the three keys from the store.
+    pub fn of(store: &SettingsStore) -> Self {
+        let set = |key: &str| store.source_of(&format!("terminal.{key}")).is_some();
+        Self {
+            font_family: set("font_family"),
+            font_size: set("font_size"),
+            line_height: set("line_height"),
+        }
+    }
+
+    /// Every key is the user's own (tests, and callers without a pack).
+    pub const ALL: Self = Self {
+        font_family: true,
+        font_size: true,
+        line_height: true,
+    };
 }
 
 impl TerminalSettings {
@@ -163,29 +207,36 @@ impl TerminalSettings {
         }
     }
 
-    /// The view configuration for this namespace with the theme resolved against `system`.
-    pub fn view_settings(&self, system: SystemAppearance) -> TerminalViewSettings {
-        let theme = themes::resolve(&self.theme, system);
-        let mut ansi = [Rgb(0, 0, 0); 16];
-        for (slot, color) in ansi.iter_mut().zip(theme.ansi) {
-            *slot = rgb(color);
-        }
-        TerminalViewSettings {
-            font_family: self.font_family.clone(),
-            font_size: self
-                .font_size
-                .clamp(Self::MIN_FONT_SIZE, Self::MAX_FONT_SIZE) as f32,
-            line_height: self
-                .line_height
-                .clamp(Self::MIN_LINE_HEIGHT, Self::MAX_LINE_HEIGHT)
-                as f32,
-            palette: TerminalPalette {
-                ansi,
-                foreground: rgb(theme.foreground),
-                background: rgb(theme.background),
-                cursor: rgb(theme.cursor),
-                selection: rgb(theme.selection),
+    /// The view configuration for this namespace: the pack's terminal colors and block roles,
+    /// and its font defaults for the keys `explicit` says the user did not set.
+    pub fn view_settings(
+        &self,
+        theme: &TerminalTheme,
+        pack: &TerminalPackDefaults,
+        explicit: TerminalExplicit,
+    ) -> TerminalViewSettings {
+        let (family, size, line) = (
+            if explicit.font_family {
+                &self.font_family
+            } else {
+                &pack.font_family
             },
+            if explicit.font_size {
+                self.font_size
+            } else {
+                pack.font_size
+            },
+            if explicit.line_height {
+                self.line_height
+            } else {
+                pack.line_height
+            },
+        );
+        TerminalViewSettings {
+            font_family: family.clone(),
+            font_size: size.clamp(Self::MIN_FONT_SIZE, Self::MAX_FONT_SIZE) as f32,
+            line_height: line.clamp(Self::MIN_LINE_HEIGHT, Self::MAX_LINE_HEIGHT) as f32,
+            palette: TerminalPalette::from(theme),
             cursor: CursorSettings {
                 style: match self.cursor.style {
                     CursorStyleSetting::Block => CursorStyle::Block,
@@ -1385,25 +1436,115 @@ mod tests {
         assert_eq!(wide.layout.docks.left.size, 300.0);
     }
 
+    fn builtin_terminal(builtin: themes::Builtin) -> (TerminalTheme, TerminalPackDefaults) {
+        let theme = themes::builtin_theme(builtin);
+        let defaults = TerminalPackDefaults::of(&theme, "Menlo".into());
+        (theme.terminal(), defaults)
+    }
+
     #[test]
-    fn terminal_settings_resolve_the_theme_and_clamp_numbers() {
+    fn terminal_settings_use_the_pack_theme_and_clamp_numbers() {
         let settings = TerminalSettings {
             font_size: 500.0,
             theme: "auto".into(),
             ..TerminalSettings::default()
         };
-        let dark = settings.view_settings(SystemAppearance::Dark);
-        let light = settings.view_settings(SystemAppearance::Light);
-        assert_eq!(dark.palette.background, Rgb(0x26, 0x26, 0x24));
-        assert_eq!(light.palette.background, Rgb(0xfa, 0xf9, 0xf5));
+        let (dark, pack) = builtin_terminal(themes::Builtin::HutanDark);
+        let (light, _) = builtin_terminal(themes::Builtin::HutanLight);
+        let dark = settings.view_settings(&dark, &pack, TerminalExplicit::ALL);
+        let light = settings.view_settings(&light, &pack, TerminalExplicit::ALL);
+        assert_eq!(
+            dark.palette.background,
+            hutan_terminal_view::Rgb(0x26, 0x26, 0x24)
+        );
+        assert_eq!(
+            light.palette.background,
+            hutan_terminal_view::Rgb(0xfa, 0xf9, 0xf5)
+        );
         assert_eq!(dark.font_size, 72.0);
-        let pinned = TerminalSettings {
-            theme: "hutan-light".into(),
+        // Selection foreground and the cursor glyph are not set by the built-ins.
+        assert_eq!(
+            (
+                dark.palette.selection_foreground,
+                dark.palette.cursor_foreground
+            ),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn only_the_fonts_the_user_wrote_beat_the_pack_defaults() {
+        let (terminal, _) = builtin_terminal(themes::Builtin::HutanDark);
+        let pack = TerminalPackDefaults {
+            font_family: "Fira Code".into(),
+            font_size: 15.0,
+            line_height: 1.4,
+        };
+        // Serialized defaults are not a user choice: the pack's values apply.
+        let plain = TerminalSettings::default().view_settings(
+            &terminal,
+            &pack,
+            TerminalExplicit::default(),
+        );
+        assert_eq!(
+            (
+                plain.font_family.as_str(),
+                plain.font_size,
+                plain.line_height
+            ),
+            ("Fira Code", 15.0, 1.4)
+        );
+        // One key written by the user wins for that key only.
+        let user = TerminalSettings {
+            font_size: 20.0,
             ..TerminalSettings::default()
         };
+        let explicit = TerminalExplicit {
+            font_size: true,
+            ..TerminalExplicit::default()
+        };
+        let mixed = user.view_settings(&terminal, &pack, explicit);
         assert_eq!(
-            pinned.view_settings(SystemAppearance::Dark).palette,
-            light.palette
+            (
+                mixed.font_family.as_str(),
+                mixed.font_size,
+                mixed.line_height
+            ),
+            ("Fira Code", 20.0, 1.4)
+        );
+        // The user's value equal to the built-in default still counts as written.
+        let same =
+            TerminalSettings::default().view_settings(&terminal, &pack, TerminalExplicit::ALL);
+        assert_eq!(
+            (same.font_family.as_str(), same.font_size, same.line_height),
+            ("Menlo", 13.0, 1.2)
+        );
+        // The pack's numbers are clamped like the user's.
+        let wild = TerminalPackDefaults {
+            font_size: 500.0,
+            ..pack
+        };
+        assert_eq!(
+            TerminalSettings::default()
+                .view_settings(&terminal, &wild, TerminalExplicit::default())
+                .font_size,
+            72.0
+        );
+    }
+
+    #[test]
+    fn provenance_comes_from_the_settings_layers() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = hutan_settings::SettingsPaths::in_dir(dir.path());
+        std::fs::write(&paths.user, "[terminal]\nfont_size = 14.0\n").unwrap();
+        let store = SettingsStore::new(paths);
+        register_all(&store);
+        assert_eq!(
+            TerminalExplicit::of(&store),
+            TerminalExplicit {
+                font_size: true,
+                ..TerminalExplicit::default()
+            }
         );
     }
 

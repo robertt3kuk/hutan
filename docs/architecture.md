@@ -46,7 +46,7 @@ crates/
   security/       Keychain, permission policy evaluation, redaction
   notifications/  notification intents from domain events (daemon side)
   cli/            hutan binary
-  settings/       layered TOML settings store, schema registry, watcher, keymap (no GPUI; ADR 0010)
+  settings/       layered TOML settings store, schema registry, watcher, keymap, color packs and their registry (`themes/`, ADR 0018; no GPUI; ADR 0010)
   terminal_view/  GPUI terminal element/view over render DTOs, input encoding (UI crate)
   desktop/        Hutan GPUI app: workbench (docks, pane tree, panels, presets), wiring (UI crate)
 xtask/            bundle, sign, schema export, corpus recording
@@ -60,6 +60,7 @@ flowchart BT
   client --> desktop
   protocol --> terminal_view --> desktop
   settings --> desktop
+  settings --> terminal_view
   core --> terminal & runtime & storage & security & notifications
   index --> daemon
   runtime --> agents

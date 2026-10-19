@@ -1,6 +1,6 @@
 [package]
 name = "hutan-settings"
-description = "Hutan layered TOML settings: schemas, hot reload, keymap, appearance density, terminal themes (no GPUI)"
+description = "Hutan layered TOML settings: schemas, hot reload, keymap, appearance density, color packs (no GPUI)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+libc.workspace = true
 notify.workspace = true
 parking_lot.workspace = true
 schemars.workspace = true

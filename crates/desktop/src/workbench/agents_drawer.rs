@@ -17,7 +17,7 @@ use super::ui::StyledExt as _;
 use super::view::{Region, Workbench};
 use crate::icons::{Icon, icon};
 use crate::sessions::{Presentation, Tone};
-use crate::theme::{DensityExt as _, STATUS_BAR_HEIGHT};
+use crate::theme::DensityExt as _;
 
 /// The widest the drawer gets (Orca's dashboard drawer).
 pub const DRAWER_MAX_WIDTH: f32 = 1294.0;
@@ -235,7 +235,7 @@ impl Workbench {
                                 div()
                                     .flex_none()
                                     .px(px(6.0))
-                                    .rounded(px(crate::theme::PILL_RADIUS))
+                                    .rounded(px(crate::theme::pill_radius()))
                                     .bg(theme.sidebar_accent)
                                     .text_size(px(11.0))
                                     .text_color(theme.muted)
@@ -278,7 +278,7 @@ impl Workbench {
                 .track_focus(&self.drawer_focus)
                 .absolute()
                 .top(px(TITLEBAR_HEIGHT))
-                .bottom(px(STATUS_BAR_HEIGHT))
+                .bottom(px(tokens.status_bar))
                 .left(px(left))
                 .w(px(width))
                 .flex()

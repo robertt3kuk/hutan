@@ -27,20 +27,38 @@ use crate::sessions::TerminalSession;
 use crate::settings::{AppearanceSettings, KeymapSettings, LayoutSettings, TerminalSettings};
 use crate::theme::Theme;
 
-/// The view configuration of a terminal: the `terminal` namespace with its theme resolved, plus
-/// what follows the density (padding, block gutter) and the chrome theme (block colors).
+/// The view configuration of a terminal: the `terminal` namespace with the pack's palette and
+/// block roles, the pack's font defaults where the user set none, plus what follows the density
+/// (padding, block gutter).
 pub(crate) fn terminal_style(
     settings: &TerminalSettings,
-    system: hutan_settings::SystemAppearance,
-    theme: &Theme,
+    terminal: &hutan_settings::TerminalTheme,
+    pack: &hutan_settings::themes::ResolvedTheme,
+    mono_family: String,
+    explicit: crate::settings::TerminalExplicit,
     density: hutan_settings::Density,
 ) -> hutan_terminal_view::TerminalViewSettings {
-    let base = settings.view_settings(system);
+    let defaults = crate::settings::TerminalPackDefaults::of(pack, mono_family);
+    let base = settings.view_settings(terminal, &defaults, explicit);
     hutan_terminal_view::TerminalViewSettings {
         padding: density.ui().terminal_padding,
-        blocks: theme.block_settings(density, base.blocks.enabled, !crate::theme::reduce_motion()),
+        blocks: crate::theme::block_settings(
+            terminal,
+            density,
+            base.blocks.enabled,
+            !crate::theme::reduce_motion(),
+        ),
         ..base
     }
+}
+
+/// The pack's monospace family: the first of its `[fonts] mono` list that is installed.
+pub(crate) fn mono_family(cx: &gpui::App, pack: &hutan_settings::themes::ResolvedTheme) -> String {
+    ui::pick_family(
+        cx,
+        pack.fonts().role(hutan_settings::themes::FontRole::Mono),
+    )
+    .to_string()
 }
 
 /// A terminal tab's view; the attachment it draws from lives in [`Workbench::held`].
@@ -1042,9 +1060,16 @@ impl Workbench {
         self.save_font_size(size, cx);
     }
 
-    /// ⌘0: back to the default `terminal.font_size`.
+    /// ⌘0: back to the default `terminal.font_size`: the user's own value is removed, so the
+    /// active pack's default applies.
     pub(crate) fn reset_font_size(&mut self, cx: &mut Context<Self>) {
-        self.save_font_size(TerminalSettings::default().font_size, cx);
+        if let Err(err) =
+            self.settings
+                .remove(hutan_settings::SettingsLayer::User, "terminal", "font_size")
+        {
+            tracing::warn!("cannot reset terminal.font_size: {err}");
+            self.set_notice("Could not reset the font size", cx);
+        }
     }
 
     fn save_font_size(&mut self, size: f64, cx: &mut Context<Self>) {
@@ -1066,17 +1091,61 @@ impl Workbench {
             .unwrap_or_default()
     }
 
-    /// Recomputes the terminal view settings (theme resolved against the system appearance) and
-    /// pushes them to every view; the daemon learns the new default colors for every attached
-    /// terminal.
+    /// Re-resolves the theme settings against the catalog: the chrome pack of the current
+    /// polarity (with the user's overrides), the terminal palette `terminal.theme` selects, and
+    /// the problems with either. The style is published only when what the user sees changed:
+    /// an edit of a pack that is not in use changes the catalog (pickers, diagnostics) and
+    /// nothing else.
+    pub(crate) fn refresh_theme(&mut self, cx: &mut Context<Self>) {
+        let appearance = self.settings.get::<AppearanceSettings>();
+        let terminal = self.settings.get::<TerminalSettings>();
+        let snapshot = self.themes.snapshot();
+        let frame = crate::theme::resolve_frame(
+            &self.themes,
+            &snapshot,
+            &appearance,
+            &terminal.theme,
+            crate::theme::polarity(self.chrome, self.appearance),
+        );
+        if frame.diagnostics != self.theme_notes {
+            self.settings.set_notes("themes", frame.diagnostics.clone());
+            self.theme_notes = frame.diagnostics.clone();
+        }
+        if *frame.resolved != *self.resolved_theme {
+            crate::theme::install(&frame.resolved);
+            ui::apply_fonts(cx, frame.resolved.fonts());
+            self.resolved_theme = frame.resolved.clone();
+            self.theme = Theme::from_resolved(&frame.resolved);
+            self.publish_style(cx);
+        }
+        self.terminal_theme_name = frame.terminal.name.clone();
+        self.apply_terminal_style(&frame.terminal, terminal, cx);
+    }
+
+    /// Same as [`refresh_theme`](Self::refresh_theme): the terminal's colors and fonts come
+    /// from the pack, so there is nothing to refresh on its own.
     pub(crate) fn refresh_terminal_style(&mut self, cx: &mut Context<Self>) {
-        let settings = self.settings.get::<TerminalSettings>();
+        self.refresh_theme(cx);
+    }
+
+    /// Pushes the terminal view settings to every view when they changed; the daemon learns the
+    /// new default colors once per change, for every attached terminal.
+    fn apply_terminal_style(
+        &mut self,
+        theme: &hutan_settings::TerminalTheme,
+        settings: std::sync::Arc<TerminalSettings>,
+        cx: &mut Context<Self>,
+    ) {
+        let explicit = crate::settings::TerminalExplicit::of(&self.settings);
         let style = terminal_style(
             &settings,
-            self.theme.system_appearance(),
-            &self.theme,
+            theme,
+            &self.resolved_theme,
+            mono_family(cx, &self.resolved_theme),
+            explicit,
             self.density,
         );
+        self.terminal_explicit = explicit;
         self.terminal_settings = settings;
         if style == self.terminal_style {
             return;
@@ -1106,11 +1175,12 @@ impl Workbench {
             let appearance = self.settings.get::<AppearanceSettings>();
             self.chrome = appearance.appearance;
             self.density = appearance.density;
-            self.theme = Theme::for_chrome(self.chrome, self.appearance);
+            self.refresh_theme(cx);
             self.publish_style(cx);
-            self.refresh_terminal_style(cx);
         }
-        if changes.contains("terminal") {
+        if changes.contains("terminal")
+            || crate::settings::TerminalExplicit::of(&self.settings) != self.terminal_explicit
+        {
             self.refresh_terminal_style(cx);
         }
         if changes.contains("assistant") {

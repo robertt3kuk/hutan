@@ -292,7 +292,7 @@ impl AssistantPanel {
                 .children(count.filter(|n| *n > 0).map(|n| {
                     div()
                         .px(px(6.0))
-                        .rounded(px(crate::theme::PILL_RADIUS))
+                        .rounded(px(crate::theme::pill_radius()))
                         .bg(theme.warning.opacity(0.18))
                         .text_color(theme.warning)
                         .text_size(px(tokens.secondary_font_size))

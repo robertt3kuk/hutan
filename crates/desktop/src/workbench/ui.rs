@@ -3,61 +3,99 @@
 //! these instead of spelling out colors, radii and fonts, so the look stays in one place.
 
 use std::borrow::Cow;
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::cell::RefCell;
+use std::sync::{Arc, LazyLock};
 
 use gpui::{
     AnyElement, App, FontWeight, Hsla, Image, ImageFormat, InteractiveElement, MouseButton,
     ObjectFit, ParentElement, SharedString, Stateful, Styled, StyledImage, div, img,
     prelude::FluentBuilder as _, px, relative,
 };
+use hutan_settings::themes::Fonts;
 
-use crate::theme::{MASCOT_SIZE, PILL_RADIUS, Theme, Tokens};
+use crate::theme::{Theme, Tokens, mascot_size, pill_radius};
 
-/// The system serif "New York" and its fallback.
-const NEW_YORK: [&str; 2] = [".New York", "New York"];
-const GEORGIA: &str = "Georgia";
 /// The font files macOS ships New York in. GPUI cannot select the system serif by name (CoreText
 /// lists it as `.New York`, hidden from family lookups), so the files are registered with the
-/// text system and found under that family name.
+/// text system and found under that family name. A pack lists `.New York` (or `New York`) in its
+/// `[fonts] prose` like any other family; it is no file path a pack can name.
 const NEW_YORK_FILES: [&str; 2] = [
     "/System/Library/Fonts/NewYork.ttf",
     "/System/Library/Fonts/NewYorkItalic.ttf",
 ];
+/// The system UI family: always available, and what GPUI falls back to for an unknown name.
+const SYSTEM_UI: &str = ".SystemUIFont";
 
-static PROSE_FAMILY: OnceLock<SharedString> = OnceLock::new();
+/// The families the committed pack's `[fonts]` resolved to on this machine.
+#[derive(Clone)]
+struct Families {
+    ui: SharedString,
+    prose: SharedString,
+}
 
-/// Picks the prose family once: New York when its files load and resolve to a face of their own,
-/// else Georgia when installed, else the UI font. Call at startup, before the first window.
+thread_local! {
+    /// Read by views without a `cx`; written by [`apply_fonts`] on the UI thread. Before any
+    /// pack is applied: the system UI font, and Georgia for prose.
+    static FAMILIES: RefCell<Families> = RefCell::new(Families {
+        ui: SYSTEM_UI.into(),
+        prose: "Georgia".into(),
+    });
+}
+
+/// Registers the New York font files with the text system, then applies the built-in pack's
+/// fonts. Call at startup, before the first window.
 pub fn init_prose_font(cx: &App) {
-    let text_system = cx.text_system();
     let files: Vec<Cow<'static, [u8]>> = NEW_YORK_FILES
         .iter()
         .filter_map(|path| std::fs::read(path).ok())
         .map(Cow::Owned)
         .collect();
     if !files.is_empty()
-        && let Err(error) = text_system.add_fonts(files)
+        && let Err(error) = cx.text_system().add_fonts(files)
     {
         tracing::warn!("cannot load New York: {error}");
     }
-    let ui_face = text_system.resolve_font(&gpui::font(".SystemUIFont"));
-    let family = NEW_YORK
-        .into_iter()
-        .chain([GEORGIA])
-        .find(|name| text_system.resolve_font(&gpui::font(*name)) != ui_face)
-        .unwrap_or(".SystemUIFont");
-    if !NEW_YORK.contains(&family) {
-        tracing::info!("prose font: {family}");
-    }
-    let _ = PROSE_FAMILY.set(family.into());
+    let builtin = hutan_settings::themes::builtin_theme(hutan_settings::themes::Builtin::HutanDark);
+    apply_fonts(cx, builtin.fonts());
 }
 
-/// The prose family ([`init_prose_font`]); Georgia until it has run.
+/// The first of `candidates` that is installed (the system UI font always is); the last one when
+/// none is, so a pack that lists only missing families still names something. A family GPUI
+/// cannot find resolves to the UI face, which is how "missing" is detected.
+pub fn pick_family(cx: &App, candidates: &[String]) -> SharedString {
+    let text_system = cx.text_system();
+    let ui_face = text_system.resolve_font(&gpui::font(SYSTEM_UI));
+    candidates
+        .iter()
+        .find(|name| {
+            name.as_str() == SYSTEM_UI
+                || text_system.resolve_font(&gpui::font(name.as_str())) != ui_face
+        })
+        .or_else(|| candidates.last())
+        .map_or_else(|| SYSTEM_UI.into(), |name| SharedString::from(name.clone()))
+}
+
+/// Resolves the pack's UI and prose family lists against the installed fonts and makes them the
+/// ones [`ui_family`] and [`prose_family`] return.
+pub fn apply_fonts(cx: &App, fonts: &Fonts) {
+    let families = Families {
+        ui: pick_family(cx, &fonts.ui),
+        prose: pick_family(cx, &fonts.prose),
+    };
+    if families.prose.as_ref() != SYSTEM_UI && families.prose.as_ref() != ".New York" {
+        tracing::info!("prose font: {}", families.prose);
+    }
+    FAMILIES.with(|f| *f.borrow_mut() = families);
+}
+
+/// The chrome's text family.
+pub fn ui_family() -> SharedString {
+    FAMILIES.with(|f| f.borrow().ui.clone())
+}
+
+/// The prose family ([`apply_fonts`]); Georgia until it has run.
 pub fn prose_family() -> SharedString {
-    PROSE_FAMILY
-        .get()
-        .cloned()
-        .unwrap_or_else(|| GEORGIA.into())
+    FAMILIES.with(|f| f.borrow().prose.clone())
 }
 
 /// A GPUI `Font` for prose text.
@@ -188,7 +226,7 @@ pub fn round_button(
         .items_center()
         .justify_center()
         .size(px(size))
-        .rounded(px(PILL_RADIUS))
+        .rounded(px(pill_radius()))
         .medium()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(glyph.into());
@@ -217,7 +255,7 @@ pub fn pill(text: impl Into<SharedString>, color: Hsla, tokens: &Tokens) -> gpui
         .max_w(px(PILL_MAX_WIDTH))
         .truncate()
         .px(px(tokens.spacing * 2.0))
-        .rounded(px(PILL_RADIUS))
+        .rounded(px(pill_radius()))
         .bg(color.opacity(0.12))
         .text_color(color)
         .text_size(px(tokens.secondary_font_size))
@@ -229,7 +267,7 @@ pub fn counter(text: impl Into<SharedString>, theme: &Theme, tokens: &Tokens) ->
     div()
         .flex_none()
         .px(px(tokens.spacing + 2.0))
-        .rounded(px(PILL_RADIUS))
+        .rounded(px(pill_radius()))
         .bg(theme.surface_hover)
         .text_color(theme.muted)
         .text_size(px(tokens.secondary_font_size))
@@ -362,7 +400,7 @@ pub fn empty_state(
         .justify_center()
         .gap(px(tokens.spacing * 3.0))
         .p(px(tokens.spacing * 4.0))
-        .child(mascot(state, MASCOT_SIZE))
+        .child(mascot(state, mascot_size()))
         .child(
             div()
                 .w_full()
@@ -441,7 +479,7 @@ pub fn switch(
         .w(px(34.0))
         .h(px(20.0))
         .px(px(2.0))
-        .rounded(px(PILL_RADIUS))
+        .rounded(px(pill_radius()))
         .border_1()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .when(on, |s| {
@@ -452,7 +490,7 @@ pub fn switch(
                 .border_color(theme.border)
                 .justify_start()
         })
-        .child(div().size(px(14.0)).rounded(px(PILL_RADIUS)).bg(if on {
+        .child(div().size(px(14.0)).rounded(px(pill_radius())).bg(if on {
             theme.on_accent()
         } else {
             theme.surface
@@ -474,7 +512,7 @@ pub fn step_dots(current: usize, total: usize, theme: &Theme) -> gpui::Div {
         .children((0..total).map(|index| {
             div()
                 .size(px(if index == current { 8.0 } else { 6.0 }))
-                .rounded(px(PILL_RADIUS))
+                .rounded(px(pill_radius()))
                 .bg(if index == current {
                     theme.accent
                 } else {

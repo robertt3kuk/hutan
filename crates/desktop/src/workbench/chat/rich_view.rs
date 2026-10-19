@@ -238,7 +238,7 @@ impl ChatView {
                     } else {
                         tokens.sidebar_row - 4.0
                     }))
-                    .rounded(px(crate::theme::PILL_RADIUS))
+                    .rounded(px(crate::theme::pill_radius()))
                     .bg(if refused {
                         color.opacity(0.14)
                     } else {

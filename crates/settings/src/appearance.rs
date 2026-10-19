@@ -1,9 +1,13 @@
-//! `[appearance]`: density and the light/dark mode, plus the density token table from `docs/design.md`.
+//! `[appearance]`: density, the light/dark mode and which color pack each mode uses. The sizes
+//! that change with density live in the packs (`docs/themes.md`), not here.
+
+use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::Setting;
+use crate::themes::{DARK, LIGHT};
 
 /// UI density. Compact is the default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
@@ -24,8 +28,17 @@ pub enum AppearanceMode {
     Dark,
 }
 
-/// The `appearance` namespace.
+/// The user's overrides of one color pack: `[appearance.theme_overrides."<id>".colors]`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ThemeOverrides {
+    /// Color tokens (`"ui.accent" = "#d99a58"`) laid over the pack; see `docs/themes.md` for the
+    /// list. Unknown tokens are ignored with a warning; a bad value rejects the whole table.
+    pub colors: BTreeMap<String, String>,
+}
+
+/// The `appearance` namespace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AppearanceSettings {
     /// `compact` (default) or `comfortable`; see the density token table in `docs/design.md`.
@@ -34,47 +47,31 @@ pub struct AppearanceSettings {
     /// v2 call this key `chrome`.
     #[serde(alias = "chrome")]
     pub appearance: AppearanceMode,
+    /// Id of the color pack used while the window is light (`hutan-light`, or a light pack from
+    /// `<data dir>/themes`). An unknown or dark pack falls back to `hutan-light` and applies
+    /// again once installed.
+    pub light_theme: String,
+    /// Id of the color pack used while the window is dark (`hutan-dark`, or a dark pack from
+    /// `<data dir>/themes`).
+    pub dark_theme: String,
+    /// Color overrides per pack id, applied on top of the pack.
+    pub theme_overrides: BTreeMap<String, ThemeOverrides>,
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self {
+            density: Density::default(),
+            appearance: AppearanceMode::default(),
+            light_theme: LIGHT.to_owned(),
+            dark_theme: DARK.to_owned(),
+            theme_overrides: BTreeMap::new(),
+        }
+    }
 }
 
 impl Setting for AppearanceSettings {
     const NAMESPACE: &'static str = "appearance";
-}
-
-/// Sizes in logical pixels that change with [`Density`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DensityTokens {
-    pub sidebar_row: f32,
-    pub tab_height: f32,
-    pub pane_header: f32,
-    pub status_bar: f32,
-    /// Base spacing unit.
-    pub spacing: f32,
-    /// Corner radius.
-    pub radius: f32,
-}
-
-impl Density {
-    /// The design-system token table (`docs/design.md` § Visual system).
-    pub const fn tokens(self) -> DensityTokens {
-        match self {
-            Self::Compact => DensityTokens {
-                sidebar_row: 26.0,
-                tab_height: 30.0,
-                pane_header: 30.0,
-                status_bar: 22.0,
-                spacing: 4.0,
-                radius: 6.0,
-            },
-            Self::Comfortable => DensityTokens {
-                sidebar_row: 30.0,
-                tab_height: 34.0,
-                pane_header: 36.0,
-                status_bar: 26.0,
-                spacing: 6.0,
-                radius: 8.0,
-            },
-        }
-    }
 }
 
 #[cfg(test)]
@@ -86,33 +83,24 @@ mod tests {
         let a = AppearanceSettings::default();
         assert_eq!(a.density, Density::Compact);
         assert_eq!(a.appearance, AppearanceMode::System);
+        assert_eq!(
+            (a.light_theme.as_str(), a.dark_theme.as_str()),
+            ("hutan-light", "hutan-dark")
+        );
+        assert!(a.theme_overrides.is_empty());
     }
 
     #[test]
-    fn density_tokens_match_design_table() {
-        let c = Density::Compact.tokens();
+    fn the_theme_selectors_and_overrides_read_from_toml() {
+        let a: AppearanceSettings = toml::from_str(
+            "dark_theme = \"canopy-night\"\n[theme_overrides.\"canopy-night\".colors]\n\"ui.accent\" = \"#d99a58\"\n",
+        )
+        .unwrap();
+        assert_eq!(a.dark_theme, "canopy-night");
+        assert_eq!(a.light_theme, "hutan-light");
         assert_eq!(
-            (
-                c.sidebar_row,
-                c.tab_height,
-                c.pane_header,
-                c.status_bar,
-                c.spacing,
-                c.radius
-            ),
-            (26.0, 30.0, 30.0, 22.0, 4.0, 6.0)
-        );
-        let c = Density::Comfortable.tokens();
-        assert_eq!(
-            (
-                c.sidebar_row,
-                c.tab_height,
-                c.pane_header,
-                c.status_bar,
-                c.spacing,
-                c.radius
-            ),
-            (30.0, 34.0, 36.0, 26.0, 6.0, 8.0)
+            a.theme_overrides["canopy-night"].colors["ui.accent"],
+            "#d99a58"
         );
     }
 

@@ -184,7 +184,7 @@ impl Workbench {
         let theme = self.theme;
         let tokens = self.density.ui();
         let nav_entries = self.nav_entries(cx);
-        let hover = theme.fg.opacity(0.08);
+        let hover = theme.sidebar_hover;
 
         let rows: Vec<AnyElement> = nav_entries
             .into_iter()
@@ -250,7 +250,7 @@ impl Workbench {
                         div()
                             .flex_none()
                             .px(px(6.0))
-                            .rounded(px(crate::theme::PILL_RADIUS))
+                            .rounded(px(crate::theme::pill_radius()))
                             .bg(theme.warning.opacity(0.18))
                             .text_color(theme.warning)
                             .text_size(px(tokens.secondary_font_size))
@@ -343,7 +343,7 @@ impl Workbench {
     pub(super) fn left_toolbar(&mut self) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
-        let hover = theme.fg.opacity(0.08);
+        let hover = theme.sidebar_hover;
         let button = |id: &'static str, glyph: Icon, label: &'static str, region: &'static str| {
             div()
                 .id(id)
@@ -938,7 +938,7 @@ fn rail_button(wb: &Workbench, spec: RailButton, hover: Hsla) -> Stateful<Div> {
                 .top(px(1.0))
                 .right(px(1.0))
                 .px(px(4.0))
-                .rounded(px(crate::theme::PILL_RADIUS))
+                .rounded(px(crate::theme::pill_radius()))
                 .bg(theme.warning)
                 .text_color(theme.bg)
                 .text_size(px(10.0))

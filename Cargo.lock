@@ -2676,6 +2676,7 @@ dependencies = [
 name = "hutan-settings"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "notify",
  "parking_lot",
  "schemars",
@@ -2733,6 +2734,7 @@ dependencies = [
  "hutan-core",
  "hutan-daemon",
  "hutan-protocol",
+ "hutan-settings",
  "serde_json",
  "tempfile",
  "tokio",

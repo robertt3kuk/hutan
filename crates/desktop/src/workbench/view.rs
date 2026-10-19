@@ -28,7 +28,7 @@ use crate::sessions::{
     RecoverySummaryDue, SessionsStore, StoreChanged, TerminalSession, UiOpenRequested,
 };
 use crate::settings::{AppearanceSettings, LayoutSettings, PresetDef, TerminalSettings};
-use crate::theme::{Density, DensityExt as _, Theme};
+use crate::theme::{Density, DensityExt as _, Theme, resolve_frame};
 use gpui::Window;
 use gpui::{
     AnyView, App, Bounds, Context, Entity, FocusHandle, Focusable, IntoElement, Pixels, Point,
@@ -36,7 +36,7 @@ use gpui::{
 };
 use hutan_client::Connection;
 use hutan_core::{ApprovalId, SessionId};
-use hutan_settings::{AppearanceMode, SettingsStore, WatchGuard};
+use hutan_settings::{AppearanceMode, SettingsStore, ThemeRegistry, WatchGuard};
 use hutan_terminal_view::DefaultColors;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -429,6 +429,17 @@ pub struct Workbench {
     pub(crate) layout_seen: Arc<LayoutSettings>,
     pub(crate) terminal_settings: Arc<TerminalSettings>,
     pub(crate) terminal_style: hutan_terminal_view::TerminalViewSettings,
+    /// The catalog of color packs, one per application.
+    pub(crate) themes: ThemeRegistry,
+    /// The chrome pack in effect; the style is only republished when this changes.
+    pub(crate) resolved_theme: Arc<hutan_settings::themes::ResolvedTheme>,
+    /// Id of the pack the terminal's palette comes from (the status bar shows it).
+    pub(crate) terminal_theme_name: String,
+    /// Which `terminal` font keys the user has written; a key appearing or disappearing changes
+    /// what the pack's defaults do even when the effective value stays the same.
+    pub(crate) terminal_explicit: crate::settings::TerminalExplicit,
+    /// What the theme settings and packs last raised as Problems.
+    pub(crate) theme_notes: Vec<hutan_settings::SettingsError>,
     pub(crate) sessions: Entity<SessionsStore>,
     pub(crate) env: PanelEnv,
     pub(crate) terminals: HashMap<(PaneId, SessionId), TerminalItem>,
@@ -548,6 +559,7 @@ pub struct Workbench {
     last_saved: Option<String>,
     save_task: Option<Task<()>>,
     _watch: Option<WatchGuard>,
+    _theme_watch: Option<hutan_settings::themes::ThemeWatchGuard>,
     /// What publishes this window to the daemon's control surface and executes its commands
     /// (`remote.rs`).
     pub(crate) remote: super::remote::RemoteControl,
@@ -604,11 +616,30 @@ impl Workbench {
         }
 
         let window_appearance = window.appearance();
-        let theme = Theme::for_chrome(appearance_settings.appearance, window_appearance);
+        let themes = match settings.paths().as_ref().and_then(|p| p.user.parent()) {
+            Some(data_dir) => ThemeRegistry::new(data_dir),
+            None => ThemeRegistry::builtin_only(),
+        };
+        let frame = resolve_frame(
+            &themes,
+            &themes.snapshot(),
+            &appearance_settings,
+            &terminal_settings.theme,
+            crate::theme::polarity(appearance_settings.appearance, window_appearance),
+        );
+        if !frame.diagnostics.is_empty() {
+            settings.set_notes("themes", frame.diagnostics.clone());
+        }
+        crate::theme::install(&frame.resolved);
+        super::ui::apply_fonts(cx, frame.resolved.fonts());
+        let theme = Theme::from_resolved(&frame.resolved);
+        let terminal_explicit = crate::settings::TerminalExplicit::of(&settings);
         let terminal_style = super::terminals::terminal_style(
             &terminal_settings,
-            theme.system_appearance(),
-            &theme,
+            &frame.terminal,
+            &frame.resolved,
+            super::terminals::mono_family(cx, &frame.resolved),
+            crate::settings::TerminalExplicit::of(&settings),
             appearance_settings.density,
         );
         cx.set_global(UiStyle {
@@ -660,6 +691,22 @@ impl Workbench {
                 .unwrap_or(true)
         });
 
+        let theme_watch = match themes.start_watching() {
+            Ok(guard) => Some(guard),
+            Err(err) => {
+                tracing::warn!("theme hot reload is off: {err}");
+                None
+            }
+        };
+        let mut theme_changes = themes.changes();
+        let theme_task = cx.spawn_in(window, async move |this, cx| {
+            while theme_changes.changed().await.is_ok() {
+                let alive = this.update_in(cx, |this, _window, cx| this.refresh_theme(cx));
+                if alive.is_err() {
+                    break;
+                }
+            }
+        });
         let watch = match settings.start_watching() {
             Ok(guard) => Some(guard),
             Err(err) => {
@@ -791,6 +838,11 @@ impl Workbench {
             layout_seen: layout_settings,
             terminal_settings,
             terminal_style,
+            themes,
+            resolved_theme: frame.resolved,
+            terminal_theme_name: frame.terminal.name,
+            terminal_explicit,
+            theme_notes: frame.diagnostics,
             sessions,
             env,
             terminals: HashMap::new(),
@@ -882,8 +934,9 @@ impl Workbench {
             state_path: options.state_path,
             save_task: None,
             _watch: watch,
+            _theme_watch: theme_watch,
             remote,
-            _tasks: vec![settings_task],
+            _tasks: vec![settings_task, theme_task],
             _subscriptions: subscriptions,
         };
         this.mac.events_task = events_task;
@@ -983,6 +1036,22 @@ impl Workbench {
     /// The terminal view settings currently in effect.
     pub fn terminal_view_settings(&self) -> &hutan_terminal_view::TerminalViewSettings {
         &self.terminal_style
+    }
+
+    /// The chrome colors in effect.
+    pub fn theme(&self) -> Theme {
+        self.theme
+    }
+
+    /// The color pack in effect for the chrome (the slot of the current polarity, the user's
+    /// overrides applied).
+    pub fn resolved_theme(&self) -> &Arc<hutan_settings::themes::ResolvedTheme> {
+        &self.resolved_theme
+    }
+
+    /// The theme registry: the catalog of built-in and user packs.
+    pub fn theme_registry(&self) -> &hutan_settings::ThemeRegistry {
+        &self.themes
     }
 
     /// Edits the layout model directly (then re-renders and saves). For embedding code and
@@ -1146,10 +1215,8 @@ impl Workbench {
         let appearance = window.appearance();
         if appearance != self.appearance {
             self.appearance = appearance;
-            self.theme = Theme::for_chrome(self.chrome, appearance);
-            self.publish_style(cx);
-            // `terminal.theme = "auto"` follows the system appearance.
-            self.refresh_terminal_style(cx);
+            // The slot of the new polarity, and `terminal.theme = "auto"`, follow it.
+            self.refresh_theme(cx);
         }
     }
 

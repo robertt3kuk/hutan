@@ -154,18 +154,18 @@ fn runs(spans: &[Span], look: &Look, heading: bool) -> Vec<TextRun> {
                 face,
                 span.range.len(),
                 if style.link.is_some() {
-                    theme.accent
+                    theme.link
                 } else {
                     theme.fg
                 },
             );
             if style.code {
-                text_run.background_color = Some(theme.surface_hover);
+                text_run.background_color = Some(theme.code_bg);
             }
             if style.link.is_some() {
                 text_run.underline = Some(UnderlineStyle {
                     thickness: px(1.0),
-                    color: Some(theme.accent),
+                    color: Some(theme.link),
                     wavy: false,
                 });
             }

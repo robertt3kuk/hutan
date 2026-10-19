@@ -1448,7 +1448,7 @@ impl AssistantPanel {
             .justify_center()
             .gap(px(tokens.spacing * 2.0))
             .p(px(tokens.spacing * 4.0))
-            .child(ui::mascot(mascot, crate::theme::MASCOT_SIZE))
+            .child(ui::mascot(mascot, crate::theme::mascot_size()))
             .child(
                 div()
                     .prose(tokens)

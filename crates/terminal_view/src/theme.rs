@@ -30,7 +30,8 @@ impl Rgb {
     }
 }
 
-/// Fully resolved terminal colors.
+/// Fully resolved terminal colors. The values come from the active color pack
+/// (`hutan_settings::themes`); this crate has no palette of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TerminalPalette {
     /// ANSI colors 0–7 then the bright ones 8–15.
@@ -38,67 +39,40 @@ pub struct TerminalPalette {
     pub foreground: Rgb,
     pub background: Rgb,
     pub cursor: Rgb,
+    /// The glyph under a block cursor; `None` draws it in the terminal background in effect.
+    pub cursor_foreground: Option<Rgb>,
     /// Background of selected cells.
     pub selection: Rgb,
+    /// Text of selected cells; `None` keeps each cell's own foreground.
+    pub selection_foreground: Option<Rgb>,
 }
 
-impl TerminalPalette {
-    /// Built-in `hutan-dark` (design.md § Visual system): bg `#262624` (the chrome `bg` token), fg `#eae8e1`, ANSI colors WCAG AA on the background.
-    pub const HUTAN_DARK: Self = Self {
-        ansi: [
-            Rgb::from_hex(0x4a4944),
-            Rgb::from_hex(0xe87562),
-            Rgb::from_hex(0x6bbf85),
-            Rgb::from_hex(0xe2ae45),
-            Rgb::from_hex(0x72a5ec),
-            Rgb::from_hex(0xc996d8),
-            Rgb::from_hex(0x5fc2c6),
-            Rgb::from_hex(0xd6d4cc),
-            Rgb::from_hex(0x7a7870),
-            Rgb::from_hex(0xf08c7a),
-            Rgb::from_hex(0x86d19c),
-            Rgb::from_hex(0xeec261),
-            Rgb::from_hex(0x8fb9f2),
-            Rgb::from_hex(0xdaaee6),
-            Rgb::from_hex(0x7dd3d6),
-            Rgb::from_hex(0xf5f4ef),
-        ],
-        foreground: Rgb::from_hex(0xeae8e1),
-        background: Rgb::from_hex(0x262624),
-        cursor: Rgb::from_hex(0xea7a43),
-        selection: Rgb::from_hex(0x4b3b30),
-    };
+impl From<hutan_settings::Rgb> for Rgb {
+    fn from(c: hutan_settings::Rgb) -> Self {
+        Self(c.r, c.g, c.b)
+    }
+}
 
-    /// Built-in `hutan-light`: bg `#faf9f5`, fg `#1f1e1d`.
-    pub const HUTAN_LIGHT: Self = Self {
-        ansi: [
-            Rgb::from_hex(0x1f1e1d),
-            Rgb::from_hex(0xb93a26),
-            Rgb::from_hex(0x2f7a48),
-            Rgb::from_hex(0x8a6300),
-            Rgb::from_hex(0x2b62b8),
-            Rgb::from_hex(0x8e4ea8),
-            Rgb::from_hex(0x167780),
-            Rgb::from_hex(0x6f6d66),
-            Rgb::from_hex(0x57554f),
-            Rgb::from_hex(0xc8452f),
-            Rgb::from_hex(0x3f8f5a),
-            Rgb::from_hex(0x9a6f00),
-            Rgb::from_hex(0x3d77d1),
-            Rgb::from_hex(0xa35fbf),
-            Rgb::from_hex(0x23909a),
-            Rgb::from_hex(0x8c8a82),
-        ],
-        foreground: Rgb::from_hex(0x1f1e1d),
-        background: Rgb::from_hex(0xfaf9f5),
-        cursor: Rgb::from_hex(0xe0692e),
-        selection: Rgb::from_hex(0xf3d5c3),
-    };
+impl From<&hutan_settings::TerminalTheme> for TerminalPalette {
+    fn from(theme: &hutan_settings::TerminalTheme) -> Self {
+        Self {
+            ansi: theme.ansi.map(Rgb::from),
+            foreground: theme.foreground.into(),
+            background: theme.background.into(),
+            cursor: theme.cursor.into(),
+            cursor_foreground: theme.cursor_foreground.map(Rgb::from),
+            selection: theme.selection.into(),
+            selection_foreground: theme.selection_foreground.map(Rgb::from),
+        }
+    }
 }
 
 impl Default for TerminalPalette {
+    /// The built-in `hutan-dark` pack's terminal section: what a view shows before its owner
+    /// applies the active theme.
     fn default() -> Self {
-        Self::HUTAN_DARK
+        use hutan_settings::themes::{Builtin, builtin_theme};
+        Self::from(&builtin_theme(Builtin::HutanDark).terminal())
     }
 }
 
@@ -196,6 +170,19 @@ impl Theme {
         self.base.selection
     }
 
+    /// Text color of selected cells; `None` keeps each cell's own.
+    pub fn selection_foreground(&self) -> Option<Rgb> {
+        self.base.selection_foreground
+    }
+
+    /// The glyph under a block cursor: the pack's color, else the background in effect (the
+    /// application's OSC 11 included).
+    pub fn cursor_foreground(&self) -> Rgb {
+        self.base
+            .cursor_foreground
+            .unwrap_or_else(|| self.background())
+    }
+
     pub fn indexed(&self, index: u8) -> Rgb {
         if let Some((_, rgb)) = self.indexed.iter().rev().find(|(i, _)| *i == index) {
             return *rgb;
@@ -250,56 +237,50 @@ impl Theme {
 mod tests {
     use super::*;
 
+    fn palette_of(builtin: hutan_settings::themes::Builtin) -> TerminalPalette {
+        TerminalPalette::from(&hutan_settings::themes::builtin_theme(builtin).terminal())
+    }
+
     #[test]
-    fn default_palette_is_hutan_dark() {
-        let p = TerminalPalette::default();
-        assert_eq!(p.background, Rgb(0x26, 0x26, 0x24));
-        assert_eq!(p.foreground, Rgb(0xea, 0xe8, 0xe1));
-        assert_eq!(p.cursor, Rgb(0xea, 0x7a, 0x43));
+    fn the_palette_comes_from_the_packs_and_the_default_is_hutan_dark() {
+        use hutan_settings::themes::Builtin;
+        let dark = palette_of(Builtin::HutanDark);
+        assert_eq!(TerminalPalette::default(), dark);
+        assert_eq!(dark.background, Rgb(0x26, 0x26, 0x24));
+        assert_eq!(dark.foreground, Rgb(0xea, 0xe8, 0xe1));
+        assert_eq!(dark.cursor, Rgb(0xea, 0x7a, 0x43));
+        assert_eq!(dark.ansi[1], Rgb(0xe8, 0x75, 0x62));
         assert_eq!(
-            TerminalPalette::HUTAN_LIGHT.background,
+            palette_of(Builtin::HutanLight).background,
             Rgb(0xfa, 0xf9, 0xf5)
+        );
+        // Neither a selection foreground nor a cursor glyph color is declared by the built-ins.
+        assert_eq!(
+            (dark.selection_foreground, dark.cursor_foreground),
+            (None, None)
         );
     }
 
-    fn luminance(c: Rgb) -> f64 {
-        let lin = |v: u8| {
-            let v = f64::from(v) / 255.0;
-            if v <= 0.03928 {
-                v / 12.92
-            } else {
-                ((v + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * lin(c.0) + 0.7152 * lin(c.1) + 0.0722 * lin(c.2)
-    }
-
-    fn contrast(a: Rgb, b: Rgb) -> f64 {
-        let (la, lb) = (luminance(a), luminance(b));
-        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
-    }
-
     #[test]
-    fn builtin_palettes_meet_wcag_aa_on_their_background() {
-        for (name, p, text_neutral) in [
-            ("dark", TerminalPalette::HUTAN_DARK, 7),
-            ("light", TerminalPalette::HUTAN_LIGHT, 0),
-        ] {
-            assert!(contrast(p.foreground, p.background) >= 7.0, "{name} fg");
-            // The six hues and the neutral that is text on this polarity: AA for normal text.
-            for index in (1..=6).chain([text_neutral]) {
-                let ratio = contrast(p.ansi[index], p.background);
-                assert!(ratio >= 4.5, "{name} ansi {index}: {ratio:.2}");
-            }
-            for index in 8..16 {
-                let ratio = contrast(p.ansi[index], p.background);
-                assert!(ratio >= 3.0, "{name} bright ansi {index}: {ratio:.2}");
-            }
-            assert!(
-                contrast(p.foreground, p.selection) >= 7.0,
-                "{name} selection"
-            );
-        }
+    fn selection_and_cursor_glyph_colors_default_to_the_old_behavior() {
+        let mut theme = Theme::new(TerminalPalette::default());
+        assert_eq!(theme.selection_foreground(), None);
+        assert_eq!(theme.cursor_foreground(), theme.background());
+        // The default glyph color follows an application's OSC 11 override.
+        theme.set_overrides(&Palette {
+            background: Some((1, 2, 3)),
+            ..Palette::default()
+        });
+        assert_eq!(theme.cursor_foreground(), Rgb(1, 2, 3));
+        let declared = TerminalPalette {
+            cursor_foreground: Some(Rgb(9, 9, 9)),
+            selection_foreground: Some(Rgb(7, 7, 7)),
+            ..TerminalPalette::default()
+        };
+        let theme = Theme::new(declared);
+        assert_eq!(theme.cursor_foreground(), Rgb(9, 9, 9));
+        assert_eq!(theme.selection_foreground(), Some(Rgb(7, 7, 7)));
+        assert_ne!(declared, TerminalPalette::default());
     }
 
     #[test]
@@ -311,7 +292,7 @@ mod tests {
         assert_eq!(theme.indexed(231), Rgb(255, 255, 255));
         assert_eq!(theme.indexed(232), Rgb(8, 8, 8));
         assert_eq!(theme.indexed(255), Rgb(238, 238, 238));
-        assert_eq!(theme.indexed(1), TerminalPalette::HUTAN_DARK.ansi[1]);
+        assert_eq!(theme.indexed(1), TerminalPalette::default().ansi[1]);
     }
 
     #[test]

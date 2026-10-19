@@ -216,7 +216,7 @@ pub fn refine_kind(namespace: &str, key: &str, kind: &FieldKind) -> FieldKind {
     match (namespace, key, kind) {
         ("terminal", "theme", FieldKind::String) => {
             let mut values = own(&[themes::AUTO]);
-            values.extend(themes::builtin().iter().map(|t| t.name.to_owned()));
+            values.extend(themes::builtin_ids().iter().map(|id| (*id).to_owned()));
             FieldKind::Enum(values)
         }
         ("panels.sessions", "row", FieldKind::StringList) => {

@@ -835,7 +835,12 @@ fn settings_changes_report_new_default_colors(cx: &mut TestAppContext) {
     view.update(cx, |v, cx| {
         v.update_settings(
             TerminalViewSettings {
-                palette: hutan_terminal_view::TerminalPalette::HUTAN_LIGHT,
+                palette: hutan_terminal_view::TerminalPalette::from(
+                    &hutan_settings::themes::builtin_theme(
+                        hutan_settings::themes::Builtin::HutanLight,
+                    )
+                    .terminal(),
+                ),
                 ..TerminalViewSettings::default()
             },
             cx,

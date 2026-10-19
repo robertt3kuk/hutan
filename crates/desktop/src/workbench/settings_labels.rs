@@ -94,6 +94,24 @@ const FIELDS: &[FieldText] = &[
         "Light or dark windows. System follows macOS and switches with it.",
         &[("system", "System"), ("light", "Light"), ("dark", "Dark")],
     ),
+    field(
+        "appearance",
+        "light_theme",
+        "Light theme",
+        "The color theme of light windows: hutan-light, or the id of a light theme you put in the themes folder of Hutan's data folder. A theme that is missing or dark is replaced by hutan-light until it is fixed or installed.",
+    ),
+    field(
+        "appearance",
+        "dark_theme",
+        "Dark theme",
+        "The color theme of dark windows: hutan-dark, or the id of a dark theme you put in the themes folder of Hutan's data folder. A theme that is missing or light is replaced by hutan-dark until it is fixed or installed.",
+    ),
+    field(
+        "appearance",
+        "theme_overrides",
+        "Theme color overrides",
+        "Colors you change on top of a theme, by theme id. Edit the settings file to change these; the themes guide lists every color.",
+    ),
     // ---- general ----
     field(
         "app",

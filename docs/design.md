@@ -172,7 +172,7 @@ Rollups: session → workspace header → sidebar "Needs you" → status bar `at
   - Prose (assistant/agent messages, markdown in chat, notification and empty-state copy): system serif **New York** (fallback Georgia), 15 px, line height 1.6; headings in prose use the sans at medium weight.
   - Code and terminals: monospace (`terminal.font_family`, default Menlo; JetBrains Mono / SF Mono when installed), 13 px.
   - Numbers in counters and durations use tabular figures.
-- **Palette** (tokens in `Theme`, light / dark):
+- **Palette** (the built-in packs `hutan-light` / `hutan-dark`; the first column is the field of `Theme`, each is a token of `docs/themes.md`, `bg` is `ui.background`, `fg` is `ui.foreground`, `danger` is `state.error`, and so on):
 
 | Token | Light | Dark | Use |
 |---|---|---|---|
@@ -191,7 +191,7 @@ Rollups: session → workspace header → sidebar "Needs you" → status bar `at
 | `accent_soft` | `#FBE9DF` | `#3E2C23` | selected row, chips, user message bubble |
 | `success` / `warning` / `danger` | `#3F8F5A` / `#C98A12` / `#C8452F` | `#6BBF85` / `#E2AE45` / `#E87562` | states |
 
-  The terminal keeps its own palette (themes `hutan-dark` / `hutan-light`); its background matches `bg` so panes do not look like holes.
+  The terminal section of a pack has its own palette (`terminal.*` tokens); in the built-ins its background matches `bg` so panes do not look like holes. Nothing in the desktop or the terminal view holds a color literal: every value above lives in `assets/themes/<id>/theme.toml` and reaches the views as a resolved token (`docs/themes.md`). The dark hairline is `#ffffff12` (alpha 18/255 = 0.0706) and the dark and light shadow and scrim are 8-bit alphas of black (0.40, 0.12 and 0.50, 0.28 become 0.40, 0.1216 and 0.5020, 0.2784): the only places where the packs are not bit-for-bit the old literals.
 - **Shape and depth**: radius 8 px (controls), 12 px (cards, composer, popovers, palette), 999 px (pills, badges); no drop shadows inside the window except popovers/palette (one soft shadow, 0 8 24 rgba(0,0,0,.12) light / .4 dark); separators are 1 px `border` hairlines, used sparingly.
 - **Components**
   - *Sidebar rows* (the Projects tree; the left nav uses Orca's 8 × 6 px rows, 13 px medium): 30 px (comfortable), 8 px horizontal padding, rounded 8 px hover/selected (`surface_hover` / `accent_soft`), icon 16 px `muted`, title `fg`, second line or right side `muted`; counters as small pills.
@@ -207,7 +207,7 @@ Rollups: session → workspace header → sidebar "Needs you" → status bar `at
 | sidebar row | 26 px | 30 px |
 | tab height | 30 px | 34 px |
 | pane header | 30 px | 36 px |
-| status bar | 24 px | 24 px |
+| status bar | 24 px | 24 px (the old 22 / 26 table in `hutan-settings` was never drawn and is gone) |
 | base spacing | 4 px | 6 px |
 | control radius | 6 px | 8 px |
 | card radius | 10 px | 12 px |
@@ -215,7 +215,7 @@ Rollups: session → workspace header → sidebar "Needs you" → status bar `at
 | block gutter bar | 3 px | 4 px |
 
 - **Chrome**: transparent titlebar with inset traffic lights over the `sidebar` color; light/dark follows macOS unless pinned (`appearance = "system" | "light" | "dark"`). The accent is the brand orange, not the system accent.
-- **Themes**: one theme definition drives chrome tokens, terminal palette and (M11) syntax scopes; built-in `hutan-light` and `hutan-dark` per the table. The desktop reports the active terminal colors to the daemon so OSC 10/11 replies match what the user sees.
+- **Themes** (ADR 0018, `docs/themes.md`): a color pack is a data-only TOML file (`theme.toml`) that drives chrome tokens, the terminal palette, state and diff roles, fonts, density and effects, and (M11) syntax scopes; the built-in `hutan-light` and `hutan-dark` are packs parsed by the same loader as the user's own in `<data dir>/themes/`. `appearance.appearance` keeps choosing light or dark; `appearance.light_theme` / `appearance.dark_theme` choose the pack of each. The desktop reports the active terminal colors to the daemon so OSC 10/11 replies match what the user sees, once per committed theme change.
 - **Motion**: ≤ 150 ms ease-out for hover, popovers and expanding cards; no motion on terminal content; respects Reduce Motion.
 
 ## Settings
@@ -249,11 +249,13 @@ base = "zed"                  # zed | hutan: the default key table (keymap.toml 
 [appearance]
 density = "compact"            # compact | comfortable
 appearance = "system"          # system | light | dark (pre-v2 files call this key `chrome`; still read)
+light_theme = "hutan-light"    # color pack of light windows (docs/themes.md)
+dark_theme = "hutan-dark"      # color pack of dark windows
 
 [terminal]
 font_family = "Menlo"
 font_size = 13
-theme = "auto"                 # auto | hutan-dark | hutan-light | <name>
+theme = "auto"                 # auto (the active pack's terminal colors) | hutan-dark | hutan-light | <pack id>
 cursor = { style = "block", blink = true }
 option_as_meta = "left"        # none | left | right | both
 copy_on_select = false

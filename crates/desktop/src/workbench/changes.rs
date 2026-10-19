@@ -698,10 +698,10 @@ fn split_conflicts(error: &str) -> (String, Vec<String>) {
 
 fn status_mark(status: DiffStatus, theme: &Theme) -> (&'static str, gpui::Hsla) {
     match status {
-        DiffStatus::Added => ("A", theme.success),
-        DiffStatus::Modified => ("M", theme.accent),
-        DiffStatus::Deleted => ("D", theme.danger),
-        DiffStatus::Renamed => ("R", theme.warning),
+        DiffStatus::Added => ("A", theme.diff_added),
+        DiffStatus::Modified => ("M", theme.diff_modified),
+        DiffStatus::Deleted => ("D", theme.diff_removed),
+        DiffStatus::Renamed => ("R", theme.diff_renamed),
     }
 }
 

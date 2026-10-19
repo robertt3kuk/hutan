@@ -1,0 +1,114 @@
+# hutan-dark: the built-in dark color pack. A root pack: it declares every required token, both
+# density tables and the shared metrics, and is parsed by the same loader as a user's pack
+# (docs/themes.md). Optional roles (diff, state, block overlay, ...) fall back per token.
+schema_version = 1
+id = "hutan-dark"
+name = "Hutan Dark"
+authors = ["Hutan"]
+license = "MIT OR Apache-2.0"
+version = "1.0.0"
+description = "The built-in dark theme."
+appearance = "dark"
+root = true
+
+[colors]
+"ui.background" = "#262624"
+"ui.sidebar.background" = "#1f1e1d"
+"ui.sidebar.selected" = "#2e2d2b"
+"ui.sidebar-right.background" = "#1a1918"
+"ui.sidebar-right.selected" = "#2a2927"
+"ui.surface" = "#30302e"
+"ui.surface.hover" = "#3a3936"
+# White at 7 %: 18/255 is the nearest 8-bit alpha (0.0706).
+"ui.border" = "#ffffff12"
+"ui.foreground" = "#f5f4ef"
+"ui.text.muted" = "#a6a49c"
+"ui.text.faint" = "#6f6d66"
+"ui.accent" = "#ea7a43"
+"ui.accent.soft" = "#3e2c23"
+"ui.on-accent" = "#ffffff"
+"state.success" = "#6bbf85"
+"state.warning" = "#e2ae45"
+"state.error" = "#e87562"
+# Black at 40 % (102/255) and 50 % (128/255 = 0.502).
+"ui.shadow" = "#00000066"
+"ui.scrim" = "#00000080"
+"terminal.foreground" = "#eae8e1"
+"terminal.background" = "#262624"
+"terminal.cursor" = "#ea7a43"
+"terminal.selection.background" = "#4b3b30"
+"terminal.ansi.black" = "#4a4944"
+"terminal.ansi.red" = "#e87562"
+"terminal.ansi.green" = "#6bbf85"
+"terminal.ansi.yellow" = "#e2ae45"
+"terminal.ansi.blue" = "#72a5ec"
+"terminal.ansi.magenta" = "#c996d8"
+"terminal.ansi.cyan" = "#5fc2c6"
+"terminal.ansi.white" = "#d6d4cc"
+"terminal.ansi.bright-black" = "#7a7870"
+"terminal.ansi.bright-red" = "#f08c7a"
+"terminal.ansi.bright-green" = "#86d19c"
+"terminal.ansi.bright-yellow" = "#eec261"
+"terminal.ansi.bright-blue" = "#8fb9f2"
+"terminal.ansi.bright-magenta" = "#daaee6"
+"terminal.ansi.bright-cyan" = "#7dd3d6"
+"terminal.ansi.bright-white" = "#f5f4ef"
+
+[fonts]
+ui = [".SystemUIFont"]
+prose = [".New York", "New York", "Georgia", ".SystemUIFont"]
+mono = ["Menlo"]
+
+[density.compact]
+"sidebar.row-height" = 26
+"tab.height" = 30
+"pane.header-height" = 30
+"status-bar.height" = 24
+spacing = 4
+"radius.control" = 6
+"radius.card" = 10
+"text.body.size" = 12
+"text.secondary.size" = 11
+"text.section.size" = 11
+"text.prose.size" = 15
+"text.prose.line-height" = 1.6
+"control.height" = 28
+"terminal.padding" = 8
+"terminal.block-gutter" = 3
+
+[density.comfortable]
+"sidebar.row-height" = 30
+"tab.height" = 34
+"pane.header-height" = 36
+"status-bar.height" = 24
+spacing = 6
+"radius.control" = 8
+"radius.card" = 12
+"text.body.size" = 13
+"text.secondary.size" = 12
+"text.section.size" = 11
+"text.prose.size" = 15
+"text.prose.line-height" = 1.6
+"control.height" = 28
+"terminal.padding" = 12
+"terminal.block-gutter" = 4
+
+[metrics]
+"titlebar.height" = 36
+"radius.pill" = 999
+"reading.width" = 720
+"mascot.size" = 96
+"nav.text.size" = 13
+"nav.icon.size" = 16
+"nav.line-height" = 18
+"nav.padding-x" = 8
+"nav.padding-y" = 6
+"nav.gap" = 2
+"strip.button.size" = 28
+"strip.gap" = 4
+"terminal.font-size" = 13
+"terminal.line-height" = 1.2
+"shadow.offset-x" = 0
+"shadow.offset-y" = 8
+"shadow.blur" = 24
+"shadow.spread" = 0

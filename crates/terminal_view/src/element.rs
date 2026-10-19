@@ -9,15 +9,17 @@ use gpui::{
     ScrollWheelEvent, ShapedLine, Size, Style, TextAlign, Window, WindowTextSystem, fill, outline,
     point, px, relative, size,
 };
-use hutan_protocol::render::{CellFlags, Color, CursorShape};
+use hutan_protocol::render::{CellFlags, Color, CursorShape, Row, Run};
+use hutan_settings::themes::derive_block_fills;
 
 use crate::blocks::{self, DisplayRow, OverlayReport, Tone};
 use crate::model::{row_cells, row_width};
+use crate::settings::Tint;
 use crate::shape::{
     Decoration, FontSpec, RowCache, ShapedRow, UnderlineKind, hsla, row_key, shape_row, styled_row,
     text_columns,
 };
-use crate::theme::Theme;
+use crate::theme::{Rgb, Theme};
 use crate::view::{ANIMATION_PHASES, Layout, TerminalView, ViewMode};
 
 pub(crate) struct TerminalElement {
@@ -42,8 +44,105 @@ struct RowPaint {
     shaped: Option<Rc<ShapedRow>>,
     /// Selected columns, end exclusive.
     selected: Option<(u16, u16)>,
+    /// The selected cells' text in the pack's selection foreground, painted over the row's own.
+    selected_text: Option<SelectionText>,
     /// Fill of the whole row (the summary row of a folded block).
     fill: Option<Hsla>,
+}
+
+/// The text of the selected cells of one row, recolored.
+struct SelectionText {
+    /// First column, and one past the last column, of the cells it covers.
+    from: u16,
+    to: u16,
+    shaped: ShapedRow,
+}
+
+/// The block overlay's tints for the colors a terminal is showing now.
+struct Fills {
+    separator: Hsla,
+    highlight: Hsla,
+    hover: Hsla,
+    folded: Hsla,
+}
+
+fn tint_hsla(tint: Tint) -> Hsla {
+    hsla(tint.rgb).opacity(tint.alpha)
+}
+
+/// The pack's declared fills, else the registry fallbacks evaluated on the live colors, so an
+/// application that sets its own background (OSC 11) keeps tints that match it.
+fn block_fills(view: &TerminalView) -> Fills {
+    let cfg = view.settings.blocks;
+    let rgb = |c: Rgb| hutan_settings::Rgb::new(c.0, c.1, c.2);
+    let derived = derive_block_fills(
+        rgb(view.theme.background()),
+        rgb(view.theme.foreground()),
+        rgb(cfg.accent),
+        rgb(cfg.neutral),
+    );
+    let pick = |declared: Option<Tint>, derived: hutan_settings::Rgba| {
+        tint_hsla(declared.unwrap_or_else(|| Tint::from(derived)))
+    };
+    Fills {
+        separator: pick(cfg.separator, derived.separator),
+        highlight: pick(cfg.highlight, derived.highlight),
+        hover: pick(cfg.hover, derived.hover),
+        folded: pick(cfg.folded, derived.folded),
+    }
+}
+
+/// The cells of `row` that intersect columns `from..to`, as one row in `color`, with the
+/// columns it covers. Bold, italic and underline stay; inverse, dim and hidden are replaced by
+/// the one color.
+fn selection_row(row: &Row, from: u16, to: u16, color: Rgb) -> Option<(u16, u16, Row)> {
+    let keep = CellFlags::all() - CellFlags::INVERSE - CellFlags::DIM - CellFlags::HIDDEN;
+    let mut runs: Vec<Run> = Vec::new();
+    let (mut first, mut last) = (None, 0);
+    for cell in row_cells(row)
+        .into_iter()
+        .filter(|c| c.end() > from && c.col < to)
+    {
+        first.get_or_insert(cell.col);
+        last = cell.end();
+        let flags = cell.run.flags & keep;
+        match runs.last_mut() {
+            Some(prev) if prev.flags == flags => prev.text.push_str(cell.text),
+            _ => runs.push(Run {
+                text: cell.text.to_owned(),
+                fg: Color::Rgb(color.0, color.1, color.2),
+                bg: Color::Default,
+                flags,
+                underline_color: None,
+                link: None,
+            }),
+        }
+    }
+    Some((
+        first?,
+        last,
+        Row {
+            runs,
+            wrapped: false,
+        },
+    ))
+}
+
+fn selection_text(
+    row: &Row,
+    from: u16,
+    to: u16,
+    color: Rgb,
+    theme: &Theme,
+    font: &FontSpec,
+    text_system: &WindowTextSystem,
+) -> Option<SelectionText> {
+    let (from, to, recolored) = selection_row(row, from, to, color)?;
+    Some(SelectionText {
+        from,
+        to,
+        shaped: shape_row(&recolored, theme, font, None, text_system),
+    })
 }
 
 /// A run of rows drawn with one color: a block's gutter bar, or a highlight tint.
@@ -80,7 +179,7 @@ struct CursorPaint {
     cols: u16,
     shape: CursorShape,
     color: Hsla,
-    /// The character under a block cursor, drawn in the background color.
+    /// The character under a block cursor, drawn in the cursor foreground (default: the terminal background).
     glyph: Option<ShapedLine>,
 }
 
@@ -238,6 +337,7 @@ fn prepare(
             rows.push(RowPaint {
                 shaped: None,
                 selected: None,
+                selected_text: None,
                 fill: None,
             });
             continue;
@@ -265,28 +365,37 @@ fn prepare(
                     text_system,
                 ))),
                 selected,
-                fill: Some(hsla(background.mix(foreground, 0.07))),
+                selected_text: None,
+                fill: Some(block_fills(view).folded),
             });
             continue;
         }
-        let shaped = model
-            .row_at(line)
-            .filter(|row| !row.runs.is_empty())
-            .map(|row| {
-                let key = row_key(row, fingerprint, &font, hover_link);
-                shape_cached(
-                    &mut view.rows,
-                    key,
-                    row,
-                    &view.theme,
-                    &font,
-                    hover_link,
-                    text_system,
-                )
+        let row = model.row_at(line);
+        let shaped = row.filter(|row| !row.runs.is_empty()).map(|row| {
+            let key = row_key(row, fingerprint, &font, hover_link);
+            shape_cached(
+                &mut view.rows,
+                key,
+                row,
+                &view.theme,
+                &font,
+                hover_link,
+                text_system,
+            )
+        });
+        // A pack's `terminal.selection.foreground` recolors the selected text; without one
+        // each cell keeps its own color.
+        let selected_text = view
+            .theme
+            .selection_foreground()
+            .zip(row.zip(selected))
+            .and_then(|(color, (row, (from, to)))| {
+                selection_text(row, from, to, color, &view.theme, &font, text_system)
             });
         rows.push(RowPaint {
             shaped,
             selected,
+            selected_text,
             fill: None,
         });
     }
@@ -368,7 +477,7 @@ fn prepare_overlay(
         .iter()
         .map(|shown| blocks::block_at(&spans, shown.line()))
         .collect();
-    let (background, foreground) = (view.theme.background(), view.theme.foreground());
+    let fills = block_fills(view);
     let tone_color = |tone: Tone| match tone {
         Tone::Success => cfg.success,
         Tone::Error => cfg.error,
@@ -394,7 +503,7 @@ fn prepare_overlay(
     };
     let mut overlay = OverlayPaint {
         gutter_width: px(cfg.gutter_width.max(0.0)),
-        separator: hsla(background.mix(foreground, 0.16)),
+        separator: fills.separator,
         ..OverlayPaint::default()
     };
     for (id, from, to) in &runs {
@@ -424,13 +533,13 @@ fn prepare_overlay(
             overlay.tints.push(RowRun {
                 from: *from,
                 to: *to,
-                color: hsla(cfg.accent).opacity(0.13),
+                color: fills.highlight,
             });
         } else if hovered == Some(*id) {
             overlay.tints.push(RowRun {
                 from: *from,
                 to: *to,
-                color: hsla(cfg.neutral).opacity(0.07),
+                color: fills.hover,
             });
         }
     }
@@ -539,10 +648,10 @@ fn prepare_cursor(
             if !cell.text.trim().is_empty() && !cell.text.chars().all(char::is_control) =>
         {
             let flags = cell.run.flags & (CellFlags::BOLD | CellFlags::ITALIC | CellFlags::WIDE);
-            let bg = view.theme.background();
+            let glyph = view.theme.cursor_foreground();
             let styled = styled_row(
                 cell.text,
-                Color::Rgb(bg.0, bg.1, bg.2),
+                Color::Rgb(glyph.0, glyph.1, glyph.2),
                 flags - CellFlags::WIDE,
             );
             // `styled_row` re-derives the WIDE flag from the character itself.
@@ -690,6 +799,29 @@ fn paint_grid(bounds: Bounds<Pixels>, state: &mut Prepaint, window: &mut Window,
         }
         for decoration in &shaped.decorations {
             paint_decoration(decoration, origin, &font, r, window);
+        }
+        // The selection's own text color: cover the cells' original glyphs with the selection
+        // fill, then draw the same cells in the pack's selection foreground.
+        if let Some(text) = &row.selected_text {
+            let span = cell_bounds(origin, &font, r, text.from, text.to - text.from);
+            window.paint_quad(fill(span, state.selection));
+            if let Some(line) = &text.shaped.line {
+                let _ = line.paint(
+                    span.origin,
+                    font.cell_height,
+                    TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
+            }
+            for decoration in &text.shaped.decorations {
+                let shifted = Decoration {
+                    col: decoration.col + text.from,
+                    ..*decoration
+                };
+                paint_decoration(&shifted, origin, &font, r, window);
+            }
         }
     }
 
@@ -880,5 +1012,57 @@ fn paint_decoration(
                 dx += one * 5.;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::fixtures::{run, wide_run};
+
+    fn row_of(runs: Vec<Run>) -> Row {
+        Row {
+            runs,
+            wrapped: false,
+        }
+    }
+
+    #[test]
+    fn the_selection_text_covers_only_the_selected_cells_in_one_color() {
+        let bold = Run {
+            flags: CellFlags::BOLD | CellFlags::INVERSE | CellFlags::DIM,
+            fg: Color::Indexed(1),
+            ..run("cd")
+        };
+        let row = row_of(vec![run("ab"), bold, run("ef")]);
+        let (from, to, selected) = selection_row(&row, 1, 5, Rgb(1, 2, 3)).unwrap();
+        // Columns 1..5 touch cells b, c, d, e: one column more at each end is not taken.
+        assert_eq!((from, to), (1, 5));
+        let text: Vec<_> = selected.runs.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(text, ["b", "cd", "e"]);
+        for r in &selected.runs {
+            assert_eq!(r.fg, Color::Rgb(1, 2, 3));
+            assert_eq!(r.bg, Color::Default);
+            assert!(
+                !r.flags
+                    .intersects(CellFlags::INVERSE | CellFlags::DIM | CellFlags::HIDDEN)
+            );
+        }
+        // Bold stays; the neighbours that were plain stay plain.
+        assert_eq!(selected.runs[1].flags, CellFlags::BOLD);
+        assert_eq!(selected.runs[0].flags, CellFlags::empty());
+    }
+
+    #[test]
+    fn a_wide_character_on_the_edge_is_taken_whole_and_the_span_is_exact() {
+        let row = row_of(vec![run("a"), wide_run("日"), run("z")]);
+        // Column 2 is the right half of 日 (columns 1-2): the whole cell is recolored.
+        let (from, to, selected) = selection_row(&row, 2, 3, Rgb(9, 9, 9)).unwrap();
+        assert_eq!((from, to), (1, 3));
+        assert_eq!(selected.runs.len(), 1);
+        assert!(selected.runs[0].flags.contains(CellFlags::WIDE));
+        // Nothing selected on this row's cells (past the end of the text): no recolor.
+        assert!(selection_row(&row, 10, 12, Rgb(9, 9, 9)).is_none());
+        assert!(selection_row(&row_of(vec![]), 0, 5, Rgb(9, 9, 9)).is_none());
     }
 }

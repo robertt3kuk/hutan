@@ -16,6 +16,7 @@ gpui.workspace = true
 gpui_platform.workspace = true
 hutan-protocol.workspace = true
 hutan-client.workspace = true
+hutan-settings.workspace = true
 unicode-width.workspace = true
 
 [dev-dependencies]

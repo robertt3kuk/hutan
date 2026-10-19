@@ -27,7 +27,10 @@ use super::regions::Regions;
 
 /// Height of the title bar region (and of the inset above the left dock's panel stack, and of
 /// the right sidebar's icon strip).
-pub const TITLEBAR_HEIGHT: f32 = crate::theme::TITLEBAR_HEIGHT;
+///
+/// The built-in packs' `titlebar.height`; a unit test in `theme.rs` keeps the two equal. The
+/// layout code that uses it (this file, `sidebars.rs`) still reads the constant, not the pack.
+pub const TITLEBAR_HEIGHT: f32 = 36.0;
 /// Space reserved for the traffic lights when the left dock does not cover them.
 const TRAFFIC_LIGHT_INSET: f32 = 80.0;
 const HANDLE_THICKNESS: f32 = 6.0;
@@ -140,6 +143,7 @@ impl Render for Workbench {
             .flex()
             .flex_col()
             .bg(theme.bg)
+            .font_family(super::ui::ui_family())
             .text_size(px(tokens.font_size))
             .text_color(theme.fg)
             .on_mouse_move(cx.listener(|this, event, window, cx| {
@@ -1965,12 +1969,7 @@ impl Workbench {
                 workspace: store.active_workspace().map(|w| w.name.clone()),
                 needs_you: store.needs_you().len(),
                 approvals: store.approvals().len(),
-                terminal_theme: hutan_settings::themes::resolve(
-                    &self.terminal_settings.theme,
-                    self.theme.system_appearance(),
-                )
-                .name
-                .clone(),
+                terminal_theme: self.terminal_theme_name.clone(),
                 docks: {
                     let state = |pos: DockPosition| {
                         let dock = self.state.docks.get(pos);
@@ -2228,5 +2227,16 @@ impl Workbench {
             .priority(10)
             .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod titlebar_tests {
+    #[test]
+    fn the_titlebar_constant_equals_the_built_in_packs_metric() {
+        assert_eq!(
+            super::TITLEBAR_HEIGHT,
+            crate::theme::metrics().titlebar_height
+        );
     }
 }

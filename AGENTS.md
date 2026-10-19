@@ -11,6 +11,7 @@ macOS-first Rust agentic development environment: `hutand` (Tokio daemon, source
 ## Document map
 - `docs/vision.md` — target scope, principles, non-goals, performance budgets
 - `docs/perf.md` — how budgets are measured (`just bench`), latest numbers, misses and fixes
+- `docs/themes.md` — color packs: where they live, the `theme.toml` format and every token, selection (`appearance.light_theme` / `dark_theme`, `terminal.theme`), overrides, hot reload, limits, diagnostics
 - `docs/architecture.md` — components, crates, data flows, state ownership
 - `docs/protocol.md` — IPC framing, handshake, sequencing, message catalog
 - `docs/roadmap.md` — milestones, slices (checkboxes), risk register

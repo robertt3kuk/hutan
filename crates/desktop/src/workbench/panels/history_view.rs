@@ -48,7 +48,7 @@ pub(crate) fn pill(
         .h(px(tokens.font_size + 6.0))
         .flex()
         .items_center()
-        .rounded(px(crate::theme::PILL_RADIUS))
+        .rounded(px(crate::theme::pill_radius()))
         .border_1()
         .border_color(if active {
             accent.opacity(0.45)

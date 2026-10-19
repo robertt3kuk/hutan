@@ -45,6 +45,23 @@ impl Default for CursorSettings {
     }
 }
 
+/// A fill with an alpha: a block tint, the separator line, a folded block's summary row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tint {
+    pub rgb: Rgb,
+    /// Straight alpha, `0.0..=1.0`.
+    pub alpha: f32,
+}
+
+impl From<hutan_settings::Rgba> for Tint {
+    fn from(c: hutan_settings::Rgba) -> Self {
+        Self {
+            rgb: Rgb(c.r, c.g, c.b),
+            alpha: c.a,
+        }
+    }
+}
+
 /// The block overlay (gutter, separators, chips, folds, actions bar).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BlockSettings {
@@ -61,21 +78,54 @@ pub struct BlockSettings {
     pub neutral: Rgb,
     /// Accent for the highlighted block.
     pub accent: Rgb,
+    /// Line between two blocks. `None`: derived from the terminal colors in effect, with the
+    /// fallback of `terminal.block.separator`.
+    pub separator: Option<Tint>,
+    /// Tint of the highlighted block (`terminal.block.highlight`); `None`: derived.
+    pub highlight: Option<Tint>,
+    /// Tint of the hovered block (`terminal.block.hover`); `None`: derived.
+    pub hover: Option<Tint>,
+    /// Fill of a folded block's summary row (`terminal.block.folded`); `None`: derived.
+    pub folded: Option<Tint>,
     /// Animate the activity indicator of a running block (false under Reduce Motion).
     pub animate: bool,
 }
 
+impl BlockSettings {
+    /// `self` with the colors of `blocks` (a pack's `terminal.block.*` roles).
+    pub fn with_colors(self, blocks: &hutan_settings::themes::BlockColors) -> Self {
+        Self {
+            success: blocks.success.into(),
+            error: blocks.error.into(),
+            neutral: blocks.neutral.into(),
+            accent: blocks.accent.into(),
+            separator: blocks.separator.map(Tint::from),
+            highlight: blocks.highlight.map(Tint::from),
+            hover: blocks.hover.map(Tint::from),
+            folded: blocks.folded.map(Tint::from),
+            ..self
+        }
+    }
+}
+
 impl Default for BlockSettings {
+    /// Gutter and motion defaults with the colors of the built-in `hutan-dark` pack.
     fn default() -> Self {
+        use hutan_settings::themes::{Builtin, builtin_theme};
         Self {
             enabled: true,
             gutter_width: 3.0,
-            success: Rgb(0x30, 0xd1, 0x58),
-            error: Rgb(0xff, 0x45, 0x3a),
-            neutral: Rgb(0xaa, 0xaa, 0xaf),
-            accent: Rgb(0x0a, 0x84, 0xff),
+            success: Rgb(0, 0, 0),
+            error: Rgb(0, 0, 0),
+            neutral: Rgb(0, 0, 0),
+            accent: Rgb(0, 0, 0),
+            separator: None,
+            highlight: None,
+            hover: None,
+            folded: None,
             animate: true,
         }
+        .with_colors(&builtin_theme(Builtin::HutanDark).terminal().blocks)
     }
 }
 

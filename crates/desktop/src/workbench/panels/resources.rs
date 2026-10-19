@@ -1018,7 +1018,7 @@ impl ResourcesPanel {
                     .max_w(px(130.0))
                     .truncate()
                     .px(px(tokens.spacing * 2.0))
-                    .rounded(px(crate::theme::PILL_RADIUS))
+                    .rounded(px(crate::theme::pill_radius()))
                     .bg(color.opacity(if badge.shared { 0.14 } else { 0.0 }))
                     .text_size(px(tokens.secondary_font_size))
                     .text_color(color)
