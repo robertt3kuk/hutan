@@ -198,6 +198,8 @@ Settings and onboarding explicitly explain:
 
 > To receive native notifications while the window is closed, use “Keep sessions, hide to tray.” “Quit UI” has no Hutan tray or native notifications.
 
+
+[Showing lines 1-200 of 652. Use :201 to continue]
 Existing notification intents are bounded, pending until acknowledged/acted/expired, and approval intents follow approval lifetime. They are not currently a durable notification inbox. `crates/protocol/src/notify.rs:78-119`; `crates/daemon/src/notify.rs:440-495`.
 
 Desktop behavior:
@@ -298,9 +300,359 @@ Windows Startup is login launch, not crash supervision. Microsoft identifies per
 
 The desktop-signal behavior deliberately differs from an explicit Quit action. This protects execution during supervisor replacement and automation; it must be documented rather than hidden.
 
-…
+A per-user macOS LaunchAgent is not a service that survives logout. Apple documents SIGTERM delivery to user agents at logout: [Creating Launch Daemons and Agents](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html).
 
-…
+On Linux, lingering keeps the user manager alive after logout and starts it at boot. That is a separate administrator/user choice, not an app login-toggle side effect: [loginctl enable-linger](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html). A server operator can deliberately configure it.
+
+On Windows, return promptly from `WM_QUERYENDSESSION` and perform bounded cleanup on committed `WM_ENDSESSION`; a canceled logout must not stop the daemon. Microsoft recommends respecting the shutdown request and avoiding shutdown prompts: [WM_QUERYENDSESSION](https://learn.microsoft.com/en-us/windows/win32/shutdown/wm-queryendsession).
+
+**No mode promises survival through reboot, power loss or forced OS termination.** Remote jobs survive laptop shutdown only because they execute on a different host.
+
+---
+
+## 5. Concrete implementation design
+
+### 5.1 Crates and modules
+
+```text
+crates/daemon/src/
+  main.rs                  ordinary runtime + platform shutdown signals
+  daemon.rs                execution/service teardown; no native UI fields
+  notify.rs                intent generation, policy, expiry, actions
+  menu_bar*                REMOVE
+  notify_native*           REMOVE after moving reusable delivery logic
+
+crates/desktop/src/
+  lifecycle.rs             close/quit/update/session-end state machine
+  notifications.rs         protocol consumer, reconciliation, action routing
+  app.rs                   one application controller + one main-window handle
+  workbench/daemon.rs      host controls; invokes shared lifecycle controller
+  workbench/mac.rs         reduce to platform-facing presentation integration
+
+crates/platform/src/       proposed hutan-platform, shared with platform direction
+  lib.rs
+  capabilities.rs
+  autostart.rs
+  process.rs               launch/supervisor/exit observation
+  macos/...
+  linux/...
+  windows/...
+
+crates/desktop/src/platform/
+  tray.rs
+  presence.rs
+  notifications.rs
+  termination.rs
+```
+
+Native UI hosts stay desktop-facing and main-thread-bound; they must not be pulled into headless daemon dependency resolution. Existing fakeable traits are worth preserving rather than replacing with a monolithic OS interface. The current `MacServices` facade already separates login item, notification permission, status item, Dock, hotkey and presence. `crates/desktop/src/macos/mod.rs:75-149`.
+
+Move—not duplicate—the pure notification mapping/delivery state machine from daemon code. Rewrite its transport-dependent action routing to use `Connection`; desktop must never depend on the daemon crate. Current mapping and bounded queues are in `crates/daemon/src/notify_native.rs:7-27,92-106,140-158`.
+
+Keep native resources at application scope so a hidden/recreated window cannot destroy tray ownership or notification callbacks. Remove the unconditional “no windows means quit” assumption from `app::init`; the lifecycle controller decides.
+
+### 5.2 Lifecycle state machine
+
+```text
+Visible
+  close/hide ───────────────► Hidden
+  close/quit_ui ────────────► SavingUI → Disconnecting → Exited
+  close/quit ───────────────► Confirming → StoppingLocal → Exited
+
+Hidden
+  open/activation ──────────► Visible
+  explicit quit ───────────► Confirming → StoppingLocal → Exited
+  tray unavailable ────────► Visible + diagnostic
+
+Any running state
+  update ──────────────────► SavingUI → Disconnecting → RestartingUI
+  committed OS end-session ► bounded noninteractive teardown
+```
+
+Use one reentrancy latch and one pending transition. Repeated Close, Dock Quit or tray clicks must not create multiple shutdown tasks.
+
+A failed clean local stop must not quietly become success. Keep the UI open with the error and offer **Retry** or **Quit UI — Keep Sessions Running**. Forced OS termination remains best-effort.
+
+### 5.3 Wire messages
+
+Reuse existing lifecycle request semantics:
+
+```json
+{"id":17,"method":"daemon.shutdown",
+ "params":{"stop_sessions":true,"forget":false}}
+```
+
+`forget=false` preserves restart eligibility. Do not redefine `session.stop` as “restore later.”
+
+Existing notification requests remain:
+
+```json
+{"id":20,"method":"notify.list","params":{}}
+{"id":21,"method":"notify.act",
+ "params":{"id":"intent-id","action_id":"allow-once"}}
+{"id":22,"method":"notify.ack","params":{"id":"intent-id"}}
+```
+
+For complete desktop reconciliation, add a capability-gated notification extension, for example `notify.desktop_delivery`:
+
+```json
+{"id":23,"method":"notify.snapshot","params":{}}
+```
+
+```json
+
+[Showing lines 201-400 of 652. Use :401 to continue]
+{"id":23,"result":{
+  "seq":1042,
+  "native_allowed":true,
+  "intents":[]
+}}
+```
+
+```json
+{"event":"notify.withdrawn","epoch":"boot-uuid","seq":1043,
+ "data":{"id":"intent-id"}}
+```
+
+```json
+{"event":"notify.policy_changed","epoch":"boot-uuid","seq":1044,
+ "data":{"native_allowed":false}}
+```
+
+The existing `notify.intent` remains unchanged. Withdrawal is emitted for acknowledgement, action, resolution, expiry and bounded-queue eviction. State mutation and snapshot watermark must share the ordering barrier required by ADR 0002.
+
+`notify.native` remains a host delivery-policy setting, now honored by desktop consumers; `notify.enabled` still controls intent generation. This preserves the existing daemon settings key and its meaning without retaining a native daemon poster. Make native policy updates live rather than daemon-restart-only; the current setting is marked restart-required at `crates/daemon/src/daemon_settings.rs:379-382`.
+
+Do not add a shutdown-complete event and mistake delivery for process exit. For a local managed daemon, wait for supervisor/process exit and lock release; for an independently launched local daemon, observe lock ownership with identity safeguards. The current socket-path disappearance loop is local-specific and only warns on timeout. `crates/desktop/src/workbench/daemon.rs:120-157`.
+
+### 5.4 Storage
+
+**No new authoritative SQLite table is required for this lifecycle cutover.**
+
+Reuse:
+
+- `sessions` for persisted session specs, cwd, state and resume references;
+- `workspaces` for grouping;
+- `app_meta` for existing daemon-epoch recovery metadata.
+
+Initial schema: `crates/storage/migrations/0001_init.sql:3-28`. Existing shutdown records the clean epoch and drains writes before releasing ownership: `crates/daemon/src/daemon.rs:612-631`.
+
+Store desktop-only values in existing desktop state/settings:
+
+- settings migration version;
+- bounded notification presentation receipts keyed by host/epoch/intent;
+- last window/layout state.
+
+Do not write “daemon was stopped” based on desktop disappearance. Do not introduce an auto-replayed startup queue that reexecutes old shell commands.
+
+Durable notification history would require a separate inbox design and retention policy; it is not necessary to move notification rendering out of the daemon.
+
+---
+
+## 6. Settings migration
+
+Run a single, comment-preserving, atomic settings migration **before** namespace decoding and native registration.
+
+### 6.1 Close behavior mapping
+
+First apply the historical rule logically: a file with `keep_running=true` and no `start_at_login` previously implied login startup. Current migration documents that interpretation. `crates/desktop/src/settings.rs:967-1003`.
+
+Then:
+
+| Legacy effective configuration | New `app.on_close` |
+|---|---|
+| `on_last_window_close="menu_bar"` and `menu_bar=true` | `hide_to_tray` |
+| Otherwise `keep_running=true` | `quit_ui` |
+| Otherwise `start_at_login=true` | `quit_ui` |
+| Otherwise | `quit` |
+
+Use the *effective* old close mode. Old `menu_bar` with `menu_bar=false` fell back to Quit; do not migrate it into a hidden, unrecoverable window.
+
+Mappings:
+
+- `app.menu_bar` → `app.tray`
+- `app.start_at_login=false` → `"off"`
+- `app.start_at_login=true` → `"daemon"`
+- `dock_badge` and `setup_done` unchanged
+- remove `keep_running` and `on_last_window_close` after successful conversion
+
+If new `on_close`/`tray` values already exist, they win. Boolean login values are converted once; valid new enum values are left alone. Unsupported or malformed settings are reported, never guessed.
+
+For a migrated `hide_to_tray` user who previously also enabled `keep_running`, explain that explicit **Quit Hutan** now means stop-and-quit; the separate **Quit UI — Keep Sessions Running** command preserves the old one-shot detach action. Live-session confirmation prevents silent destruction.
+
+### 6.2 Registration migration
+
+- Existing approved daemon login registration maps to `"daemon"` and remains registered.
+- Do not unregister/re-register merely to change setting syntax.
+- OS-denied startup remains denied; retain a visible status instead of repeatedly asking.
+- Disabling registration must not be conflated with immediately stopping active sessions.
+- Changing the startup target is transactional: if native registration fails, restore the previous desired setting and report the actual OS state.
+- If unregistering the old daemon job would terminate it, warn and defer the ownership change until a safe restart. Never treat unregister as a harmless metadata operation.
+- Do not automatically choose `"tray"` for a previous daemon-only login user; that would add a desktop process they did not request.
+
+Keep a bounded backup for rollback. Downgrading after enum migration is not automatically supported: older Hutan expects a boolean login value. Document restoring the settings backup together with a compatible binary/database backup, rather than retaining permanent dual-key aliases.
+
+---
+
+## 7. Protocol and update compatibility
+
+Current protocol is **0.29**; compatibility is same-major with capabilities gating minor additions. `crates/protocol/src/lib.rs:68-84`; `docs/adr/0002-ipc-transport-and-framing.md:29-39`.
+
+### Minor-compatible work
+
+- Removing daemon GUI code.
+- Moving native notification rendering.
+- Desktop setting migration and single-window policy.
+- Reusing `daemon.shutdown`.
+- Adding `notify.snapshot` and new events **only for clients advertising the new capability**.
+
+Allocate the next available minor when implemented; direction’s workspace proposal already mentions 0.30, so this report does not reserve a conflicting number.
+
+### Major-breaking work to avoid
+
+- Reinterpreting `daemon.shutdown` into a different lifecycle operation.
+- Changing existing notification action/ack semantics.
+- Removing existing request methods relied on by older clients.
+- Sending unknown event variants unconditionally to older typed clients.
+- Changing framing, terminal flow control or handshake compatibility rules.
+
+### Mixed-version cutover
+
+A new desktop must not post native notifications while connected to an old daemon that may still post them itself.
+
+The new headless daemon advertises `notify.desktop_delivery`. Only then does the desktop activate its native consumer. Against an older daemon, it uses legacy notification ownership and displays an update-needed explanation for the new ownership model.
+
+The first upgrade from native-host daemon to headless daemon needs an intentional daemon restart. Preserve live work until the user accepts stop-and-restore; compatible UI installation alone must not force it.
+
+For later compatible UI-only updates, preserve daemon PID, epoch and session processes. Daemon-feature updates can wait for an explicit restart.
+
+Packaging must also preserve the running daemon’s executable/resources:
+
+- do not let an installer kill every Hutan-named process;
+- keep Windows running binaries outside an overwrite/kill zone, or delay replacement;
+- retain versioned daemon resources until their owner exits;
+- maintain one daemon lock/data-directory owner;
+- never launch a parallel incompatible daemon into the same database.
+
+Orca’s source explicitly handles relocated Windows daemon executables and extracted AppImage generations, illustrating that disconnect alone is not the whole updater design. `src/main/daemon/daemon-launched-child-spawn.ts:116-141`.
+
+---
+
+## 8. Risks and mitigations
+
+1. **Loss of active commands under default Quit.**  
+   Clear labels, live-work confirmation and truthful recovery outcomes; preserve existing opt-in background preferences.
+
+2. **An inaccessible hidden window on Linux.**  
+   Require an actual tray capability; reveal the window on failure/loss. Do not assume every GNOME environment exposes a tray.
+
+3. **Native Quit bypasses close hooks.**  
+   Route termination through the platform/GPUI integration; test Dock Quit separately from Close.
+
+4. **Service registration unexpectedly kills the running daemon.**  
+   Treat registration ownership changes as lifecycle operations; defer or ask when active.
+
+5. **Systemd kills supposedly detached sessions.**  
+   Separate daemon cgroup from desktop/supervisor unit; test real unit restart, not only parent-process exit.
+
+6. **Stale approval banners.**  
+   Capability-gated withdrawals, epoch-aware identifiers and daemon-side revalidation.
+
+7. **Native notification behavior changes after UI exit.**  
+   State the limitation; do not introduce an automatic helper or pretend headless operation still has a renderer.
+
+8. **Code-signing/credential access regression.**  
+   Removing native UI does not require changing daemon signing identity in the same cutover. Keep identity stable initially; credential migration is separate from notification ownership.
+
+9. **Update claims exceed actual compatibility.**  
+   Same-major negotiation is necessary but packaging/resource and required-capability compatibility must also hold.
+
+---
+
+## 9. Slices and acceptance tests
+
+These are proposed acceptance checks, **not checks executed during this research**.
+
+### LC-1 — Headless daemon
+
+- Remove `menu_bar*`, `notify_native*`, native fields in `DaemonConfig`, Cocoa host thread and daemon reopen launcher.
+- Keep intent generation/action routing and orderly shutdown.
+- Update ADR 0001/0007, packaging/process descriptions and affected milestone contracts.
+
+**Acceptance**
+
+- Headless daemon starts without a graphical session on each supported OS.
+- Daemon dependency inspection contains no GPUI/AppKit UI host.
+- No tray, Dock application, notification permission prompt or desktop-launch side effect occurs.
+- CLI and desktop can attach to the same daemon.
+- Clean shutdown preserves restore set and drains storage.
+
+### LC-2 — Shared lifecycle controller and migration
+
+- Implement the three close modes and explicit quit commands.
+- Introduce atomic legacy migration.
+- Own main-window activation at application scope.
+
+**Acceptance**
+
+- Table-driven tests cover every mode × connected/disconnected × idle/live × local/remote case.
+- Repeated Close/Quit produces one transition and no duplicate shutdown.
+- Stop failure keeps an actionable UI; it does not claim full exit.
+- “Keep this time” leaves settings unchanged.
+- Migration covers missing keys, historical `keep_running`, explicit false values, invalid tray combinations, partial new configuration and write failure.
+- A second launch, tray Open and reopen all reveal the same window.
+
+
+[Showing lines 401-600 of 652. Use :601 to continue]
+### LC-3 — Desktop tray and native notifications
+
+- Reuse existing native traits/fakes.
+- Add capability-gated snapshot/withdrawal/policy extension.
+- Move notification delivery logic to desktop.
+
+**Acceptance**
+
+- Exactly one tray exists while desktop is running; none exists after `quit_ui`.
+- No desktop means intents remain queryable but no native poster runs.
+- Replay/reconnect does not duplicate native banners.
+- Act/ack/expiry/resolution removes banners.
+- Stale actions fail safely; notification posting alone never acknowledges intent.
+- Tray failure reveals/retains the main window.
+- Old-daemon/new-desktop pairing never double-posts.
+- Hidden UI does not continue terminal redraw/blink work.
+
+### LC-4 — Login and native session termination
+
+- Implement login target enum through launchd, systemd user/XDG startup and Windows Startup.
+- Integrate native Quit and committed OS end-session paths.
+
+**Acceptance**
+
+- Registration tests use fakes; no automated test changes the developer’s login items.
+- Approved, denied, unavailable and externally disabled states are visible and stable.
+- Clean stop does not immediately restart a login daemon.
+- Changing login target during active work never silently kills sessions.
+- Dock Quit follows the selected lifetime.
+- Canceled Windows end-session does not stop execution.
+- Logout/shutdown needs no interaction and has bounded teardown.
+- On systemd, stopping/restarting the desktop unit preserves daemon and PTYs; stopping the daemon unit stops them.
+- No automatic linger enablement.
+
+### LC-5 — Update preservation and recovery
+
+- Add updater restart reason distinct from Close.
+- Coordinate binary/resource lifetime and daemon compatibility.
+- Keep existing recovery facts visible after intentional daemon restart.
+
+**Acceptance**
+
+- Compatible UI replacement preserves daemon PID, epoch, terminal PID and running command.
+- Required daemon restart asks first and reports shell respawn/agent resume/interrupted turn honestly.
+- Major mismatch neither deletes a live endpoint nor starts another database owner.
+- A failed update can reopen a compatible UI without stopping execution.
+- Windows/AppImage/macOS packaging exercises executable/resource retention, not just mock disconnect.
+- Forced termination produces crash recovery rather than a false clean-stop record.
+
+## Research boundary
+
 This was source/documentation research only. No repository files, user application state, login registration, credentials or Keychain contents were changed. No Hutan binaries, builds, tests, model calls or lifecycle experiments were run.
-
-[Showing lines 1-300 of 652. Use :301 to continue]
