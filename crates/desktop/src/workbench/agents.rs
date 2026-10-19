@@ -790,7 +790,7 @@ impl Workbench {
             (None, [only]) => Some(only.id),
             (None, []) => {
                 self.set_notice(
-                    "No agent chat is running: start one with ⌘⇧T, or open the Assistant from the command palette",
+                    "No agent chat is running: start one with ⌘⇧T, or open Mawas from the command palette",
                     cx,
                 );
                 return;
@@ -817,7 +817,7 @@ impl Workbench {
                     .any(|c| c.chat.as_ref().is_some_and(|chat| chat.is_assistant()));
                 if self.sessions.read(cx).connection().supports_assistant() && !has_assistant {
                     entries.push(Self::entry(
-                        "Send to Assistant".to_owned(),
+                        "Send to Mawas".to_owned(),
                         move |this, window, cx| {
                             this.send_block_to_assistant(session, block, window, cx);
                         },

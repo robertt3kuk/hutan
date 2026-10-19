@@ -45,6 +45,8 @@
 //! model = "meta-llama/llama-3.3-70b-instruct"
 //! context_budget_chars = 60000   # attached context per message, split over the attachments
 //! idle_stop_secs = 600           # a harness assistant idle this long stops its agent process and wakes on the next message; 0 = never, else at least 60
+//! mode = "ask"                   # Mawas: "ask" (ask before acting, the default) or "advisor" (read and propose only)
+//! max_actions_per_turn = 10      # Mawas: changes it may make in one turn before every further one asks
 //!
 //! [assistant.context]            # what assistants of project workspaces may read
 //! shell = true
@@ -268,8 +270,33 @@ impl Default for HistorySettings {
 pub const DEFAULT_CONTEXT_BUDGET_CHARS: usize = 60_000;
 /// `assistant.idle_stop_secs` when the setting is absent.
 pub const DEFAULT_ASSISTANT_IDLE_STOP_SECS: u64 = 600;
+/// `assistant.max_actions_per_turn` when the setting is absent.
+pub const DEFAULT_ASSISTANT_MAX_ACTIONS: u32 = 10;
 /// The shortest `assistant.idle_stop_secs` that is not `0` (never).
 pub const MIN_ASSISTANT_IDLE_STOP_SECS: u64 = 60;
+
+/// What Mawas may do (`assistant.mode`, ADR 0017 decision 4, `docs/assistant.md` § Modes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssistantMode {
+    /// **Ask before acting** (the default): Mawas reads freely, and every change (Hutan's tools
+    /// and its harness's own) waits for the user's approval, grants permitting.
+    #[default]
+    Ask,
+    /// **Advisor**: read and propose only; the harness runs with its read-only tools and every
+    /// mutating Hutan request is refused.
+    Advisor,
+}
+
+impl AssistantMode {
+    /// The name in `daemon.toml` and in the settings catalog.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Advisor => "advisor",
+        }
+    }
+}
 
 /// What an assistant may read when a message attaches it (`docs/assistant.md`). Nothing is read
 /// that is not attached; these only decide whether an attachment is accepted.
@@ -361,6 +388,10 @@ pub struct AssistantSettings {
     /// again and resumes the conversation. `0` never stops it; otherwise at least
     /// [`MIN_ASSISTANT_IDLE_STOP_SECS`].
     pub idle_stop_secs: u64,
+    /// What Mawas may do: ask before acting, or advise only (`docs/assistant.md` § Modes).
+    pub mode: AssistantMode,
+    /// Mutating requests Mawas may make in one turn before every further one asks.
+    pub max_actions_per_turn: u32,
     /// What assistants of project workspaces may read.
     pub context: ContextPermissions,
     /// What the global assistant (Home) may read.
@@ -377,6 +408,8 @@ impl Default for AssistantSettings {
             model: None,
             context_budget_chars: DEFAULT_CONTEXT_BUDGET_CHARS,
             idle_stop_secs: DEFAULT_ASSISTANT_IDLE_STOP_SECS,
+            mode: AssistantMode::default(),
+            max_actions_per_turn: DEFAULT_ASSISTANT_MAX_ACTIONS,
             context: ContextPermissions::default(),
             global_context: ContextPermissions::global_default(),
             workspaces: std::collections::BTreeMap::new(),
@@ -582,6 +615,11 @@ impl DaemonSettings {
             return Err(toml::de::Error::custom(format!(
                 "assistant.idle_stop_secs must be 0 (never) or at least {MIN_ASSISTANT_IDLE_STOP_SECS}, not {idle}"
             )));
+        }
+        if file.assistant.max_actions_per_turn == 0 {
+            return Err(toml::de::Error::custom(
+                "assistant.max_actions_per_turn must be at least 1",
+            ));
         }
         if file.notify.expire_secs == 0 {
             return Err(toml::de::Error::custom(

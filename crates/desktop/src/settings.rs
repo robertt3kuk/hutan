@@ -1065,14 +1065,13 @@ const MIGRATION_NOTE: &str = "app.migration";
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AssistantSettings {
-    /// Whether Hutan has an assistant at all. Off (the default for a new settings file) hides the
-    /// Assistant page of the left sidebar, removes its commands from the palette and
-    /// unregisters the system-wide shortcut; the daemon keeps its assistant conversations. On
-    /// adds *Assistant* to the left sidebar's nav; the page opens inside the left sidebar and
-    /// never in the right dock or the center. A settings file written before the default
-    /// changed keeps the assistant on (see [`migrate_assistant_default`]).
+    /// Whether Hutan has Mawas, the assistant, at all. Off (the default for a new settings file)
+    /// hides Mawas from the left sidebar, removes its commands from the palette and unregisters
+    /// the system-wide shortcut; the daemon keeps its conversations. On adds *Mawas* to the left
+    /// sidebar's nav; Mawas Home opens as a page in the center. A settings file written before
+    /// the default changed keeps it on (see [`migrate_assistant_default`]).
     pub enabled: bool,
-    /// System-wide shortcut that brings Hutan forward and opens the Assistant, for example
+    /// System-wide shortcut that brings Hutan forward and opens Mawas, for example
     /// `alt-space` or `cmd-shift-space` (modifiers `cmd`, `ctrl`, `alt`, `shift`, at least one
     /// of the first three). Empty (the default) turns it off. If another app already owns the shortcut,
     /// Hutan says so once and leaves the setting alone; the in-app keybinding is separate.

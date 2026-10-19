@@ -147,6 +147,11 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
         ],
         "assistant" => &[
             Section {
+                title: words::SEC_ASSISTANT_ACT,
+                help: words::SEC_ASSISTANT_ACT_HELP,
+                keys: &["assistant.mode", "assistant.max_actions_per_turn"],
+            },
+            Section {
                 title: words::SEC_ASSISTANT_DEFAULT,
                 help: "",
                 keys: &["assistant.backend", "assistant.provider", "assistant.model"],

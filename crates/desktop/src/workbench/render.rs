@@ -531,6 +531,9 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::OpenAssistant, window, cx| {
             this.open_assistant(window, cx);
         }))
+        .on_action(cx.listener(|this, _: &actions::NewMawasChat, window, cx| {
+            this.new_mawas_chat(window, cx);
+        }))
         .on_action(
             cx.listener(|this, a: &actions::ResumeHistoryHit, window, cx| {
                 this.resume_history_hit(a.0.clone(), window, cx);
@@ -849,6 +852,11 @@ impl Workbench {
         .on_action(
             cx.listener(|this, a: &actions::ShowAssistantModelMenu, window, cx| {
                 this.show_assistant_model_menu(a.0, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::ShowAssistantModeMenu, window, cx| {
+                this.show_assistant_mode_menu(a.0, window, cx);
             }),
         )
         .on_action(cx.listener(|this, a: &actions::ShowPlusMenu, window, cx| {

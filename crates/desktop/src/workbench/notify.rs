@@ -9,8 +9,8 @@ use super::view::Workbench;
 use crate::sessions::UiOpenRequested;
 
 impl Workbench {
-    /// Whether the Assistant panel is on screen: the active panel of a visible dock, or the
-    /// active tab of a pane (it can be moved there) outside the overview.
+    /// Whether Mawas Home is on screen: the active tab of a pane outside the overview (or, when
+    /// the user moved it there, the active panel of a visible dock).
     fn assistant_visible(&self) -> bool {
         let id = PanelId::new("assistant");
         let docked = [
@@ -37,7 +37,12 @@ impl Workbench {
     /// closing it, changing its scope, and the window losing or gaining activation are all seen
     /// without a hook of their own; the store only acts on a change.
     pub(crate) fn sync_assistant_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let session = (window.is_window_active() && self.assistant_visible())
+        let visible = self.assistant_visible();
+        // A page that is not on screen does no work: it hears of the store only when shown.
+        if let Some(panel) = self.panel::<AssistantPanel>("assistant") {
+            panel.update(cx, |panel, cx| panel.set_visible(visible, cx));
+        }
+        let session = (window.is_window_active() && visible)
             .then(|| self.panel::<AssistantPanel>("assistant"))
             .flatten()
             .and_then(|panel| {
@@ -69,7 +74,7 @@ impl Workbench {
         match live {
             Some(true) => {
                 self.bring_forward(window, cx);
-                // An assistant conversation lives in the Assistant panel, in its own scope; every
+                // A Mawas conversation lives on Mawas Home, in its own scope; every
                 // other session in a tab.
                 if !self.show_assistant_session(event.session_id, window, cx) {
                     self.open_session(event.session_id, window, cx);

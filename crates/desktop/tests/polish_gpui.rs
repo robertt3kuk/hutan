@@ -79,7 +79,16 @@ fn the_window_title_follows_the_center_item_never_a_sidebar_page(cx: &mut TestAp
     );
     assert_eq!(view.read_with(cx, |wb, cx| wb.active_title(cx)), "Welcome");
     assert_eq!(cx.window_title().as_deref(), Some("Welcome — Hutan"));
+    // Mawas Home is a center tab: it is the title while it shows.
     click(&view, cx, Region::Nav("assistant"));
+    common::draw(cx);
+    assert_eq!(cx.window_title().as_deref(), Some("Mawas — Hutan"));
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            s.close_panel(&hutan_desktop::workbench::model::PanelId::new("assistant"))
+                .unwrap();
+        })
+    });
     common::draw(cx);
     assert_eq!(cx.window_title().as_deref(), Some("Welcome — Hutan"));
 
@@ -422,38 +431,29 @@ fn opening_another_nav_row_closes_the_drawer(cx: &mut TestAppContext) {
 // ---- the Assistant page at narrow widths ---------------------------------------------------------
 
 #[gpui::test]
-fn the_assistant_header_is_one_compact_row_that_fits_the_sidebar_from_220_to_500(
-    cx: &mut TestAppContext,
-) {
+fn mawas_homes_header_is_one_row_whose_controls_stay_inside_it(cx: &mut TestAppContext) {
     let (view, cx) = open_offline(cx, true);
     click(&view, cx, Region::Nav("assistant"));
-    for width in [220.0_f32, 280.0, 350.0, 500.0] {
+    for width in [220.0_f32, 280.0] {
         view.update(cx, |wb, cx| {
             wb.edit_layout(cx, |s| s.resize_dock(DockPosition::Left, width));
         });
         common::draw(cx);
-        let dock = bounds(&view, cx, Region::Dock(DockPosition::Left));
         let header = bounds(&view, cx, Region::Assistant("header"));
         assert!(
             f32::from(header.size.height) <= 40.0,
             "one row at {width}: {} px",
             header.size.height
         );
-        for region in ["scope", "backend"] {
+        // The mode chip, New chat, Stop and Today are there once connected; offline the page
+        // shows its header with the controls that need no daemon.
+        for region in ["scope", "backend", "mode", "new", "stop", "rail"] {
             let element = bounds(&view, cx, Region::Assistant(region));
             assert!(
-                element.size.width < dock.size.width,
-                "{region} is {} wide in a {width} px sidebar",
-                element.size.width
+                element.origin.x >= header.origin.x - gpui::px(1.0)
+                    && element.right() <= header.right() + gpui::px(1.0),
+                "{region} sticks out of the header at {width}: {element:?} in {header:?}"
             );
-            assert!(
-                element.origin.x >= dock.origin.x - gpui::px(1.0)
-                    && element.right() <= dock.right() + gpui::px(1.0),
-                "{region} sticks out of a {width} px sidebar: {:?} in {:?}",
-                element,
-                dock
-            );
-            // One row: the controls share the header's line.
             assert!(
                 element.origin.y >= header.origin.y - gpui::px(1.0)
                     && element.bottom() <= header.bottom() + gpui::px(1.0),

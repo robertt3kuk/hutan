@@ -1776,3 +1776,34 @@ fn the_delivery_of_a_task_is_stored_and_old_tasks_keep_todays_behaviour() {
     storage.close();
     integrity_ok(&db(&dir));
 }
+
+#[test]
+fn control_grants_are_stored_listed_newest_first_and_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let grant = |id, tool: &str, workspace: bool| crate::GrantRow {
+        id,
+        tool: tool.to_owned(),
+        workspace_id: workspace.then(WorkspaceId::new),
+        chat_session_id: (!workspace).then(SessionId::new),
+        created_ms: 10 + id,
+        created_by: "desktop".to_owned(),
+    };
+    let (one, two) = (
+        grant(1, "session.rename", true),
+        grant(2, "task.create", false),
+    );
+    storage.control_grants().insert(one.clone()).unwrap();
+    storage.control_grants().insert(two.clone()).unwrap();
+    assert_eq!(storage.control_grants().list().unwrap(), [two, one.clone()]);
+    storage.control_grants().delete(2).unwrap();
+    assert_eq!(storage.control_grants().list().unwrap(), [one]);
+    // A grant needs exactly one of workspace and chat.
+    let both = crate::GrantRow {
+        workspace_id: Some(WorkspaceId::new()),
+        chat_session_id: Some(SessionId::new()),
+        ..grant(3, "x", true)
+    };
+    assert!(storage.control_grants().insert(both).is_err());
+    storage.close();
+}

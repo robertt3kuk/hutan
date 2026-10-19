@@ -47,7 +47,8 @@ use tracing::{debug, error, info, warn};
 use crate::agent;
 use crate::bus::{EventBus, PublishError};
 use crate::chat::{
-    AGENT_ASSISTANT, AGENT_CODEX, AGENT_DIRECT, ChatManager, ChatSpec, is_gateway_agent,
+    AGENT_ASSISTANT, AGENT_CODEX, AGENT_DIRECT, AssistantPolicy, ChatManager, ChatSpec,
+    is_gateway_agent,
 };
 use crate::config::RestoreMode;
 use crate::direct::MAX_SYSTEM_PROMPT_BYTES;
@@ -784,6 +785,8 @@ pub struct RegistryConfig {
     pub max_context_chars: usize,
     /// How long an idle harness assistant keeps its agent process (`Duration::ZERO`: forever).
     pub idle_stop: Duration,
+    /// `assistant.mode` and `assistant.max_actions_per_turn` at start.
+    pub assistant_policy: AssistantPolicy,
     /// `<home>/tmp`: scratch files of chat deliveries (clipboard images for Codex).
     pub tmp_dir: PathBuf,
 }
@@ -809,6 +812,7 @@ pub fn spawn(
         config.providers,
         config.max_context_chars,
         config.idle_stop,
+        config.assistant_policy,
         config.tmp_dir,
     );
     let (workspaces, home, next_position) =
@@ -3514,6 +3518,29 @@ impl SessionRegistry {
                 format!("chat session {id} is not asleep"),
             )));
             return;
+        }
+        // The agent starts in the mode `assistant.mode` says now: what the session shows (a
+        // Codex assistant's sandbox and approval policy) follows.
+        let launched = self.sessions[index]
+            .chat
+            .as_ref()
+            .map(|chat| self.chats.launch_spec(chat));
+        if let Some(launched) = launched {
+            let session = &mut self.sessions[index];
+            let changed = session.chat.as_ref().is_some_and(|chat| {
+                chat.approval_policy != launched.approval_policy
+                    || chat.sandbox != launched.sandbox
+                    || chat.mode != launched.mode
+            });
+            if changed {
+                if let Some(info) = &mut session.info.chat {
+                    info.approval_policy = launched.approval_policy;
+                    info.sandbox = launched.sandbox;
+                }
+                session.chat = Some(launched);
+                self.emit_session(index);
+                self.persist_session(index);
+            }
         }
         self.spawn_chat_start(index, Some(reply), true);
     }

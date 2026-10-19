@@ -33,6 +33,7 @@ unicode-width.workspace = true
 hutan-agents.workspace = true
 hutan-daemon.workspace = true
 hutan-gateway = { workspace = true, features = ["test-support"] }
+hutan-storage.workspace = true
 parking_lot.workspace = true
 portable-pty.workspace = true
 tempfile.workspace = true

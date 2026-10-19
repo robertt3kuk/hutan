@@ -31,8 +31,8 @@ pub use error::{Result, StorageError};
 pub use migrate::{BACKUPS_KEPT, MIGRATIONS, Migration};
 pub use rows::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
-    CreatedBy, EpochEnd, EpochRecord, ProviderRow, QuestionOutcome, QuestionRow, RecentProject,
-    SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
+    CreatedBy, EpochEnd, EpochRecord, GrantRow, ProviderRow, QuestionOutcome, QuestionRow,
+    RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
 };
 pub use sql::{EPOCH_HISTORY_KEPT, RECENT_PROJECTS_KEPT, Write};
 
@@ -175,6 +175,10 @@ impl Storage {
 
     pub fn app_meta(&self) -> AppMeta<'_> {
         AppMeta(self)
+    }
+
+    pub fn control_grants(&self) -> ControlGrants<'_> {
+        ControlGrants(self)
     }
 
     /// Queues one write. Returns once it is queued, not once it is durable.
@@ -512,6 +516,27 @@ impl Approvals<'_> {
     /// Requests never resolved (what a crashed daemon left behind).
     pub fn unresolved(&self) -> Result<Vec<ApprovalRow>> {
         self.0.read(|conn| sql::approvals(conn, None, true))
+    }
+}
+
+/// Grants of the control gate: what the user allowed Mawas to change without asking again.
+#[derive(Debug, Clone, Copy)]
+pub struct ControlGrants<'a>(&'a Storage);
+
+impl ControlGrants<'_> {
+    /// Stores a grant, applied before it returns (a failing database is the error).
+    pub fn insert(&self, row: GrantRow) -> Result<()> {
+        self.0.write_checked(Write::InsertGrant(Box::new(row)))
+    }
+
+    /// Removes a grant, applied before it returns.
+    pub fn delete(&self, id: u64) -> Result<()> {
+        self.0.write_checked(Write::DeleteGrant { id })
+    }
+
+    /// Newest first.
+    pub fn list(&self) -> Result<Vec<GrantRow>> {
+        self.0.read(sql::control_grants)
     }
 }
 

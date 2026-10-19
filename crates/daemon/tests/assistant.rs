@@ -477,7 +477,7 @@ async fn each_scope_has_one_default_assistant_that_survives_stops_and_restarts()
         global.workspace_id, home.id,
         "the global assistant lives in Home"
     );
-    assert_eq!(global.title, "Assistant");
+    assert_eq!(global.title, "Mawas");
     assert_eq!(global.state, SessionState::Idle);
     assert_eq!(
         env.open(AssistantScope::Global, None, false).await.id,
@@ -490,7 +490,7 @@ async fn each_scope_has_one_default_assistant_that_survives_stops_and_restarts()
         .await;
     assert_ne!(local.id, global.id);
     assert_eq!(local.workspace_id, project.id);
-    assert_eq!(local.title, "Assistant · proj");
+    assert_eq!(local.title, "Mawas · proj");
     assert_eq!(
         env.open(AssistantScope::Workspace, Some(project.id), false)
             .await
@@ -502,7 +502,7 @@ async fn each_scope_has_one_default_assistant_that_survives_stops_and_restarts()
         .open(AssistantScope::Workspace, Some(project.id), true)
         .await;
     assert_ne!(more.id, local.id);
-    assert_eq!(more.title, "Assistant · proj 2");
+    assert_eq!(more.title, "Mawas · proj 2");
     assert_eq!(
         env.open(AssistantScope::Workspace, Some(project.id), false)
             .await
@@ -660,7 +660,7 @@ async fn attachments_are_resolved_journaled_and_sent_and_nothing_else_is() {
     for header in [
         "[shell: cargo test -p daemon · exit 0 · 2 lines]\nflibbertigibbet test output\nsecond line key=",
         &format!("[shell: terminal {terminal_id} · last "),
-        "[agent: Assistant · proj 2 · hutan chat · 1 turns]\nuser: earlier question about pangolins\n\nassistant: earlier answer about pangolins",
+        "[agent: Mawas · proj 2 · hutan chat · 1 turns]\nuser: earlier question about pangolins\n\nassistant: earlier answer about pangolins",
         "[file: src/lib.rs · lines 1-2 · 2 lines]\npub fn alpha() {}\nconst KEY: &str =",
         "[search: \"flibbertigibbet\" · 1 hits]\n1. [hutan ",
     ] {
@@ -726,7 +726,7 @@ async fn attachments_are_resolved_journaled_and_sent_and_nothing_else_is() {
     assert_eq!(hit.source, HistorySource::Hutan);
     assert_eq!(hit.role, HistoryRole::Assistant);
     assert_eq!(hit.session_key, assistant.id.to_string());
-    assert_eq!(hit.title.as_deref(), Some("Assistant · proj"));
+    assert_eq!(hit.title.as_deref(), Some("Mawas · proj"));
     assert_eq!(hit.resume_argv, None);
     let question = env.wait_hits("pangolins").await;
     assert!(question.iter().any(|h| h.session_id == Some(earlier.id)));

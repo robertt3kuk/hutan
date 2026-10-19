@@ -667,6 +667,29 @@ impl Connection {
         client.daemon_setting_set(key, value).await
     }
 
+    /// True while connected to a daemon that advertised capability `control.grants`
+    /// ([`Client::supports_control_grants`]); false when disconnected.
+    pub fn supports_control_grants(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_control_grants())
+    }
+
+    /// `control.grants.list` ([`Client::control_grants`]): what Mawas may do without asking.
+    pub async fn control_grants(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+    ) -> Result<Vec<hutan_protocol::grants::ControlGrant>, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.control_grants(workspace_id).await
+    }
+
+    /// `control.grants.revoke` ([`Client::control_grant_revoke`]).
+    pub async fn control_grant_revoke(&self, id: u64) -> Result<(), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.control_grant_revoke(id).await
+    }
+
     /// `assistant.reset` ([`Client::assistant_reset`]): the scope inherits its backend again.
     pub async fn assistant_reset(
         &self,

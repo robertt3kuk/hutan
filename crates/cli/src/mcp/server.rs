@@ -390,6 +390,16 @@ fn approval_note(control: &Value) -> Option<String> {
         "allow_session" => format!(
             "[The user approved this request{waited}, and allowed this kind of request for this session.]"
         ),
+        "allow_chat" => format!(
+            "[The user approved this request{waited}, and allowed this tool for this chat.]"
+        ),
+        "allow_workspace" => format!(
+            "[The user approved this request{waited}, and allowed this tool in this workspace.]"
+        ),
+        "allow_grant" => {
+            "[Allowed by a grant the user gave earlier (Settings → Mawas lists and revokes them).]"
+                .to_owned()
+        }
         other => format!("[Approval: {other}{waited}.]"),
     })
 }
@@ -433,6 +443,10 @@ fn describe_remote(body: &ErrorBody) -> String {
             body.message
         ),
         (ErrorCode::Forbidden, Some("user_only")) => format!("REFUSED: {}", body.message),
+        (ErrorCode::Forbidden, Some("advisor")) => format!(
+            "REFUSED: {} Describe what you would change and let the user do it, or ask them to switch you to “Ask before acting”.",
+            body.message
+        ),
         _ => format!("{code}: {}", body.message),
     }
 }

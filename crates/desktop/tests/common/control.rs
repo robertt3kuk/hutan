@@ -39,6 +39,23 @@ impl TestDaemon {
         Pending { rx }
     }
 
+    /// Sends `request` from a connection that says it runs inside `origin` (an agent's session,
+    /// `HUTAN_SESSION_ID`), without waiting for the answer.
+    pub fn call_from_in_background<T: DeserializeOwned + Send + 'static>(
+        &self,
+        origin: hutan_core::SessionId,
+        request: Request,
+    ) -> Pending<T> {
+        let mut options = self.options();
+        options.client.origin = Some(hutan_protocol::messages::Origin { session_id: origin });
+        let (tx, rx) = mpsc::channel();
+        self.rt().spawn(async move {
+            let client = Client::connect(options).await.unwrap();
+            let _ = tx.send(client.call(request).await);
+        });
+        Pending { rx }
+    }
+
     /// Like [`TestDaemon::call`], keeping the error.
     pub fn try_call<T: DeserializeOwned + Send + 'static>(
         &self,

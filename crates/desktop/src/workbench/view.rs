@@ -213,9 +213,12 @@ pub enum Region {
     Attach(&'static str),
     /// Row `index` of the attach form's list (terminals, blocks, transcripts), top to bottom.
     AttachRow(usize),
-    /// A control of the assistant panel, by name (`global`, `workspace`, `new`, `models`,
-    /// `retry`).
+    /// A control of Mawas Home, by name (`scope`, `backend`, `mode`, `new`, `stop`, `rail`,
+    /// `retry`, …).
     Assistant(&'static str),
+    /// A repeated control of Mawas Home's Today rail: its name (`today-row`, `today-option`,
+    /// `today-open`, `today-working`) and index (the row; for an option `row * 8 + option`).
+    AssistantItem(&'static str, usize),
     /// The control that opens or closes part `part` of entry `index` (a command's output, a
     /// file's diff, reasoning).
     ChatPart(usize, u32),
@@ -437,6 +440,8 @@ pub struct Workbench {
     pub(crate) daemon_settings: super::settings_daemon::DaemonSettingsState,
     /// What the Assistant page knows about the backends of the assistants (`settings_assistant.rs`).
     pub(crate) assistant_defaults: super::settings_assistant::AssistantDefaults,
+    /// What Mawas may do without asking (`control.grants.list`), for Settings → Mawas.
+    pub(crate) mawas_grants: super::settings_assistant::MawasGrants,
     pub(crate) agent_focus: FocusHandle,
     pub(crate) held: HashMap<SessionId, Entity<TerminalSession>>,
     /// Folded blocks per terminal, saved with the layout (see [`persistence::CollapsedBlocks`]).
@@ -771,6 +776,7 @@ impl Workbench {
             history_index: super::settings_pages::HistoryIndex::default(),
             daemon_settings: super::settings_daemon::DaemonSettingsState::default(),
             assistant_defaults: super::settings_assistant::AssistantDefaults::default(),
+            mawas_grants: super::settings_assistant::MawasGrants::default(),
             agent_focus,
             held: HashMap::new(),
             collapsed_blocks: options
@@ -1267,6 +1273,11 @@ impl Workbench {
             return;
         }
         let id = PanelId::new(id);
+        // Mawas Home is a page of the center: a tab of the active pane, not a dock's panel.
+        if id.as_str() == "assistant" {
+            self.mutate(cx, |s| s.open_panel_in_center(&id));
+            return;
+        }
         let dock = self
             .panels
             .get(&id)
@@ -1480,12 +1491,7 @@ impl Workbench {
     pub(crate) fn panel_menu(&self, panel: &PanelId) -> Vec<MenuEntry> {
         let mut entries = Vec::new();
         let here = self.state.find_panel(panel);
-        // A left-only panel (the Assistant) is a page of the left sidebar: no other place.
-        let left_only = panel.is_left_only();
         for pos in DockPosition::ALL {
-            if left_only && pos != DockPosition::Left {
-                continue;
-            }
             let panel = panel.clone();
             let already = matches!(&here, Some(ItemSource::Dock { pos: p, .. }) if *p == pos);
             let mut e = Self::entry(
@@ -1497,12 +1503,10 @@ impl Workbench {
             e.checked = already;
             entries.push(e);
         }
-        if !left_only {
-            let p = panel.clone();
-            entries.push(Self::entry("Open as Tab", move |this, _, cx| {
-                this.try_mutate(cx, |s| s.move_panel(&p, PanelDest::Center));
-            }));
-        }
+        let p = panel.clone();
+        entries.push(Self::entry("Open as Tab", move |this, _, cx| {
+            this.try_mutate(cx, |s| s.move_panel(&p, PanelDest::Center));
+        }));
         let p = panel.clone();
         entries.push(Self::entry("Close", move |this, _, cx| {
             this.try_mutate(cx, |s| s.close_panel(&p));

@@ -89,6 +89,11 @@ const FIXTURE_SONNET: &str = "gitlab-duo/duo-chat-sonnet-4-6";
 /// harness's session is the one the transcripts script (no model switch).
 const OMP_ASSISTANT: &str = "backend = \"omp\"\nmodel = \"gitlab-duo/duo-chat-opus-4-6\"";
 const CLAUDE_ASSISTANT: &str = "backend = \"claude\"\nmodel = \"gitlab-duo/duo-chat-opus-4-6\"";
+/// The same, in Advisor mode (read-only launch).
+const OMP_ADVISOR: &str =
+    "backend = \"omp\"\nmodel = \"gitlab-duo/duo-chat-opus-4-6\"\nmode = \"advisor\"";
+const CLAUDE_ADVISOR: &str =
+    "backend = \"claude\"\nmodel = \"gitlab-duo/duo-chat-opus-4-6\"\nmode = \"advisor\"";
 
 /// A wrapper standing in for `omp` / the Claude Code adapter: it records the arguments it was
 /// started with in `$ARGV_LOG` and becomes the fake agent (`$FIXTURE`). One file of fixed
@@ -559,9 +564,9 @@ async fn a_stored_model_is_used_as_it_is_and_a_backend_without_one_gets_the_pick
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn daemon_toml_backend_omp_creates_a_read_only_omp_assistant() {
+async fn daemon_toml_backend_omp_creates_a_read_only_omp_assistant_in_advisor_mode() {
     let mut t = B::start(Setup {
-        assistant: OMP_ASSISTANT,
+        assistant: OMP_ADVISOR,
         ..Setup::default()
     })
     .await;
@@ -570,7 +575,7 @@ async fn daemon_toml_backend_omp_creates_a_read_only_omp_assistant() {
     let chat = session.chat.clone().unwrap();
     assert_eq!(chat.agent, "omp");
     assert!(chat.assistant && chat.is_assistant());
-    assert_eq!(session.title, "Assistant");
+    assert_eq!(session.title, "Mawas");
     // OMP started with its tools limited to reading and the assistant prompt appended.
     let argv = t.argv("omp");
     let tools = argv.iter().position(|a| a == "--tools").expect("--tools");
@@ -601,9 +606,35 @@ async fn daemon_toml_backend_omp_creates_a_read_only_omp_assistant() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_claude_assistant_runs_in_plan_mode() {
+async fn an_ask_before_acting_omp_assistant_has_every_tool_and_routes_its_approvals_to_hutan() {
     let t = B::start(Setup {
-        assistant: CLAUDE_ASSISTANT,
+        assistant: OMP_ASSISTANT,
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    assert!(session.chat.unwrap().assistant);
+    // OMP started with no tool restriction, asking the client (Hutan's approval cards) for
+    // everything above reading, and the prompt that says it can act.
+    let argv = t.argv("omp");
+    assert!(!argv.iter().any(|a| a == "--tools"), "{argv:?}");
+    let mode = argv
+        .iter()
+        .position(|a| a == "--approval-mode")
+        .expect("--approval-mode");
+    assert_eq!(argv[mode + 1], "always-ask");
+    let prompt = argv
+        .iter()
+        .position(|a| a == "--append-system-prompt")
+        .expect("--append-system-prompt");
+    assert!(argv[prompt + 1].contains("can act"), "{argv:?}");
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_advisor_claude_assistant_runs_in_plan_mode() {
+    let t = B::start(Setup {
+        assistant: CLAUDE_ADVISOR,
         ..Setup::default()
     })
     .await;
@@ -618,9 +649,27 @@ async fn a_claude_assistant_runs_in_plan_mode() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_codex_assistant_has_a_read_only_sandbox_and_never_asks() {
+async fn an_ask_before_acting_claude_assistant_runs_in_its_default_permission_mode() {
     let t = B::start(Setup {
-        assistant: "backend = \"codex\"",
+        assistant: CLAUDE_ASSISTANT,
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    assert!(session.chat.unwrap().assistant);
+    // The fixture's session starts in `default` already, and nothing asks for `plan`.
+    let modes = t.received_of("claude", "session/set_mode");
+    assert!(
+        modes.iter().all(|m| m["params"]["modeId"] != "plan"),
+        "{modes:?}"
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_advisor_codex_assistant_has_a_read_only_sandbox_and_never_asks() {
+    let t = B::start(Setup {
+        assistant: "backend = \"codex\"\nmode = \"advisor\"",
         ..Setup::default()
     })
     .await;
@@ -637,6 +686,25 @@ async fn a_codex_assistant_has_a_read_only_sandbox_and_never_asks() {
         t.list().await.assistants[0].backend,
         AssistantBackend::Codex
     );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_ask_before_acting_codex_assistant_writes_in_the_workspace_and_asks_on_request() {
+    let t = B::start(Setup {
+        assistant: "backend = \"codex\"",
+        ..Setup::default()
+    })
+    .await;
+    let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    let chat = session.chat.clone().unwrap();
+    assert_eq!(chat.agent, "codex");
+    assert!(chat.assistant);
+    assert_eq!(chat.sandbox, SandboxMode::WorkspaceWrite);
+    assert_eq!(chat.approval_policy, ApprovalPolicy::OnRequest);
+    let start = t.received_of("codex", "thread/start");
+    assert_eq!(start[0]["params"]["sandbox"], "workspace-write");
+    assert_eq!(start[0]["params"]["approvalPolicy"], "on-request");
     t.stop().await;
 }
 
@@ -844,7 +912,7 @@ async fn a_workspace_without_its_own_choice_follows_the_global_one() {
         .await
         .unwrap();
     assert_eq!(session.chat.as_ref().unwrap().agent, "claude");
-    assert_eq!(session.title, "Assistant · proj");
+    assert_eq!(session.title, "Mawas · proj");
     t.stop().await;
 }
 
@@ -884,7 +952,7 @@ async fn switching_the_backend_keeps_each_conversation_and_opens_the_one_for_the
         [(omp.id, false), (direct.id, true)],
         "the default is the oldest session of the configured backend"
     );
-    assert_eq!(direct.title, "Assistant 2");
+    assert_eq!(direct.title, "Mawas 2");
 
     // Back to OMP: the first conversation is the default again, not a third assistant.
     t.configure(

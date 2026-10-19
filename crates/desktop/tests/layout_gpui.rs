@@ -1,6 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)] // test helpers
 //! The Orca-style shell (OL-2): the default regions and their sizes, the left sidebar's nav pages,
-//! the right sidebar's icon strip, the Assistant that is off by default and only ever a left page,
+//! the right sidebar's icon strip, Mawas that is off by default and opens as a tab of the center,
 //! ⌘B / ⌘L, the presets, and the one-time migration of a saved layout. No daemon: layout only.
 
 mod common;
@@ -137,7 +137,7 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     // The right sidebar is a column of its own: its strip is the title bar row of that side.
     assert!((f32::from(right.origin.y) - f32::from(titlebar.origin.y)).abs() <= 1.0);
 
-    // The left nav: Search, Tasks, Agents; no Assistant while it is off.
+    // The left nav: Search, Tasks, Agents; no Mawas while it is off.
     assert_eq!(nav_keys(&view, cx), ["search", "tasks", "agents"]);
     assert_eq!(
         selected_nav(&view, cx),
@@ -263,7 +263,7 @@ fn a_panel_left_in_the_left_dock_gets_its_own_nav_row(cx: &mut TestAppContext) {
 // ---- assistant ---------------------------------------------------------------------------------
 
 #[gpui::test]
-fn the_assistant_is_off_by_default_and_has_no_place_in_any_dock(cx: &mut TestAppContext) {
+fn mawas_is_off_by_default_and_has_no_place_anywhere(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     assert!(!view.read_with(cx, |wb, _| wb.assistant_enabled()));
     assert!(!nav_keys(&view, cx).contains(&"assistant".to_owned()));
@@ -271,7 +271,7 @@ fn the_assistant_is_off_by_default_and_has_no_place_in_any_dock(cx: &mut TestApp
     assert!(s.find_panel(&PanelId::new("assistant")).is_none());
     // The commands are gone and opening it does nothing.
     assert!(!view.read_with(cx, |wb, _| {
-        wb.commands().iter().any(|c| c.title.contains("Assistant"))
+        wb.commands().iter().any(|c| c.title.contains("Mawas"))
     }));
     cx.dispatch_action(OpenAssistant);
     cx.dispatch_action(OpenPanel("assistant".into()));
@@ -291,13 +291,13 @@ fn the_assistant_is_off_by_default_and_has_no_place_in_any_dock(cx: &mut TestApp
             .unwrap();
         for pos in DockPosition::ALL {
             assert!(
-                !layout
+                layout
                     .docks
                     .get(pos)
                     .panels
                     .iter()
-                    .any(PanelId::is_left_only),
-                "{} lists a left-only panel in {pos:?}",
+                    .all(|p| p.as_str() != "assistant"),
+                "{} lists Mawas in {pos:?}",
                 layout.name
             );
         }
@@ -321,64 +321,78 @@ impl LayoutPresetName {
 }
 
 #[gpui::test]
-fn the_enabled_assistant_is_a_left_nav_page_and_never_anywhere_else(cx: &mut TestAppContext) {
+fn the_enabled_mawas_is_one_center_tab_opened_from_the_nav_and_closable(cx: &mut TestAppContext) {
     let (view, _settings, cx) = open_in(cx, true, None);
     assert!(view.read_with(cx, |wb, _| wb.assistant_enabled()));
     assert_eq!(
         nav_keys(&view, cx),
         ["search", "tasks", "agents", "assistant"]
     );
+    let labels: Vec<String> = view.read_with(cx, |wb, cx| {
+        wb.nav_entries(cx)
+            .into_iter()
+            .map(|e| e.label.to_string())
+            .collect()
+    });
+    assert_eq!(labels.last().map(String::as_str), Some("Mawas"));
     // Enabled is not open: no preset places it, nothing opened it.
     assert!(
         state(&view, cx)
             .find_panel(&PanelId::new("assistant"))
             .is_none()
     );
+    assert!(selected_nav(&view, cx).is_empty());
 
-    // The nav row shows it as the left page.
+    // The nav row opens Home as a tab of the center, the active one, and is selected while it is.
+    let home = ItemRef::panel("assistant");
     click(&view, cx, Region::Nav("assistant"));
     let s = state(&view, cx);
-    assert_eq!(s.docks.left.active, Some(PanelId::new("assistant")));
-    assert!(s.docks.left.panels.contains(&PanelId::new("assistant")));
+    assert_eq!(s.active_center_item(), Some(home.clone()));
     assert!(
-        s.docks
-            .right
-            .panels
-            .iter()
-            .all(|p| p.as_str() != "assistant")
+        s.docks.find(&PanelId::new("assistant")).is_none(),
+        "not in a dock"
     );
+    assert_eq!(s.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(selected_nav(&view, cx), ["assistant"]);
-    assert!(painted(&view, cx, Region::Nav("projects")));
+    let tabs = |cx: &VisualTestContext| {
+        state(&view, cx)
+            .all_items()
+            .into_iter()
+            .filter(|i| *i == home)
+            .count()
+    };
+    assert_eq!(tabs(cx), 1);
 
-    // Every other way in lands on the same page.
-    click(&view, cx, Region::Nav("projects"));
+    // Every other way in lands on the same tab: there is never a second one.
     cx.dispatch_action(OpenPanel("assistant".into()));
-    assert_eq!(
-        state(&view, cx).docks.left.active,
-        Some(PanelId::new("assistant"))
-    );
-    click(&view, cx, Region::Nav("projects"));
     cx.dispatch_action(OpenAssistant);
-    assert_eq!(
-        state(&view, cx).docks.left.active,
-        Some(PanelId::new("assistant"))
+    click(&view, cx, Region::Nav("assistant"));
+    assert_eq!(tabs(cx), 1, "one Home");
+    assert_eq!(state(&view, cx).active_center_item(), Some(home.clone()));
+
+    // Closing the tab closes Home; the nav row opens it again.
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            s.close_panel(&PanelId::new("assistant")).unwrap();
+        })
+    });
+    assert_eq!(tabs(cx), 0);
+    assert!(selected_nav(&view, cx).is_empty());
+    click(&view, cx, Region::Nav("assistant"));
+    assert_eq!(tabs(cx), 1);
+
+    // The palette's titles.
+    let titles: Vec<String> = view.read_with(cx, |wb, _| {
+        wb.commands().iter().map(|c| c.title.to_string()).collect()
+    });
+    assert!(titles.iter().any(|t| t == "Mawas: Open"), "{titles:?}");
+    assert!(titles.iter().any(|t| t == "Mawas: New chat"), "{titles:?}");
+    assert!(
+        !titles.iter().any(|t| t.contains("Assistant")),
+        "no command still says Assistant: {titles:?}"
     );
 
-    // It cannot be moved out: not by the palette's move commands, not as a tab.
-    let before = state(&view, cx);
-    for dest in [
-        PanelDest::Dock(DockPosition::Right),
-        PanelDest::Dock(DockPosition::Bottom),
-        PanelDest::Center,
-    ] {
-        cx.dispatch_action(actions::MoveActivePanel(dest));
-        assert_eq!(state(&view, cx).docks, before.docks, "{dest:?}");
-        assert_eq!(state(&view, cx).center, before.center, "{dest:?}");
-    }
-    cx.dispatch_action(actions::OpenActivePanelAsTab);
-    assert_eq!(state(&view, cx).docks, before.docks);
-
-    // The panel's own menu offers only the left dock and Close.
+    // Other tabs next to it keep working; the right-click menu of the row is the panel's.
     let right_click = |cx: &mut VisualTestContext| {
         let at = bounds(&view, cx, Region::Nav("assistant")).center();
         cx.simulate_mouse_down(at, gpui::MouseButton::Right, Modifiers::none());
@@ -391,56 +405,12 @@ fn the_enabled_assistant_is_a_left_nav_page_and_never_anywhere_else(cx: &mut Tes
         .into_iter()
         .map(|(label, _)| label.to_string())
         .collect();
-    assert_eq!(labels, ["Move to Left Dock", "Close"]);
+    assert!(labels.iter().any(|l| l == "Close"), "{labels:?}");
     cx.simulate_keystrokes("escape");
-
-    // Presets keep it where it is: in the left dock, never in the preset's docks. The overview
-    // stashes the layout it replaces (the open page with it) and gives it back.
-    for preset in ["focus", "default"] {
-        cx.dispatch_action(actions::ApplyPreset(preset.into()));
-        let s = state(&view, cx);
-        assert!(
-            s.docks.left.panels.contains(&PanelId::new("assistant")),
-            "{preset}: {:?}",
-            s.docks
-        );
-        assert!(
-            [DockPosition::Right, DockPosition::Bottom]
-                .into_iter()
-                .all(|p| s
-                    .docks
-                    .get(p)
-                    .panels
-                    .iter()
-                    .all(|x| x.as_str() != "assistant")),
-            "{preset}"
-        );
-        assert!(
-            s.panes()
-                .iter()
-                .all(|p| !p.items.contains(&ItemRef::panel("assistant"))),
-            "{preset}"
-        );
-    }
-    cx.dispatch_action(actions::ApplyPreset("overview".into()));
-    let s = state(&view, cx);
-    assert!(
-        s.find_panel(&PanelId::new("assistant")).is_none(),
-        "stashed, not shown"
-    );
-    assert!(s.all_items().contains(&ItemRef::panel("assistant")));
-    cx.dispatch_action(actions::ApplyPreset("default".into()));
-    assert!(
-        state(&view, cx)
-            .docks
-            .left
-            .panels
-            .contains(&PanelId::new("assistant"))
-    );
 }
 
 #[gpui::test]
-fn turning_the_assistant_off_closes_its_page_and_its_nav_row(cx: &mut TestAppContext) {
+fn turning_mawas_off_closes_its_tab_and_its_nav_row(cx: &mut TestAppContext) {
     let (view, settings, cx) = open_in(cx, true, None);
     click(&view, cx, Region::Nav("assistant"));
     assert!(view.read_with(cx, |wb, _| wb.panel_open("assistant")));
@@ -456,7 +426,7 @@ fn turning_the_assistant_off_closes_its_page_and_its_nav_row(cx: &mut TestAppCon
     assert_eq!(
         state(&view, cx).docks.left.active.unwrap().as_str(),
         "sessions",
-        "back on Projects"
+        "Projects stays the left page"
     );
 }
 
@@ -670,7 +640,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
         ]
     );
 
-    // The next save is version 3, and loading that again changes nothing.
+    // The next save is version 4, and loading that again changes nothing.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| s.toggle_dock(DockPosition::Bottom))
     });
@@ -679,7 +649,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
     view.update(cx, |wb, _| wb.flush_save());
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 3);
+    assert_eq!(on_disk["version"], 4);
     let reloaded = load_state(&path);
     assert_eq!(reloaded.docks, state(&view, cx).docks);
     assert_eq!(reloaded.center, state(&view, cx).center);

@@ -2500,6 +2500,7 @@ dependencies = [
  "hutan-daemon",
  "hutan-gateway",
  "hutan-protocol",
+ "hutan-storage",
  "parking_lot",
  "portable-pty",
  "serde",

@@ -69,7 +69,7 @@ pub use modal::{Modal, ModalCheckbox, ModalChoice};
 pub use panels::{HistoryConfirm, HistoryPanel, StatusTone, connection_label};
 pub use registry::{PanelEnv, StatusBarLayout, StatusData};
 pub use review::ReviewHandoff;
-pub use settings_assistant::{AssistantDefaults, Running as AssistantRunning};
+pub use settings_assistant::{AssistantDefaults, MawasGrants, Running as AssistantRunning};
 pub use settings_daemon::DaemonSettingsState;
 pub use settings_keys::SheetFocus;
 pub use settings_layers::FieldSource;

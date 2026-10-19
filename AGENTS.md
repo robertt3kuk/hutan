@@ -17,11 +17,11 @@ macOS-first Rust agentic development environment: `hutand` (Tokio daemon, source
 - `docs/shell-integration.md` — automatic OSC 133/OSC 7 injection for zsh, bash, fish
 - `docs/history-index.md` — opt-in session history index and search, and the session catalog behind `hutan history sessions` (sources, formats, ranking, titles, scopes, privacy, performance)
 - `docs/gateway.md` — direct model chat: providers (OpenAI-compatible, Anthropic, Ollama), Keychain credentials, direct chat sessions, `hutan provider` / `hutan chat` commands, tests
-- `docs/assistant.md` — assistant chat: scopes, context attachments (shell, agent transcripts, files, search), redaction and budgets, permissions, `hutan ask`
+- `docs/assistant.md` — Mawas, the assistant: Home page, scopes, modes (Ask before acting / Advisor) and safeguards, context attachments (shell, agent transcripts, files, search), redaction and budgets, permissions, `hutan ask`
 - `docs/agents.md` — agent chat sessions: the Codex adapter, ACP harnesses (OMP, Claude Code) and accounts, `AgentEvent`, approvals, journal, how to re-record the test transcripts
 - `docs/orchestration.md` — automatic projects and user workspaces (`hutan project`, `hutan ws`), worktrees and session placement (`hutan wt`, `hutan new --worktree`, placement badges, shared-checkout warning) tasks with dependencies (`hutan task`), review and merge of worktrees (`hutan wt diff|merge`) and the Tasks panel / Changes view
 - `docs/resources.md` — the resource manager: process trees per session with CPU/RSS, `hutan ps|top|kill|agent interrupt`, `session.kill`, `process.signal`, `agent.interrupt`, redaction, audit
-- `docs/control.md` — the agent control surface: `hutan ui`, `hutan mcp`, who counts as an agent, the `[control]` policy and its approvals (protocol 0.21)
+- `docs/control.md` — the agent control surface: `hutan ui`, `hutan mcp`, who counts as an agent, the `[control]` policy and its approvals (protocol 0.21), Mawas's gate: grants, always-ask, turn limit, audit (protocol 0.31)
 - `docs/integrations.md` — agent reporting (state + resume command), `hutan agent`, `hutan integration` for Codex, Claude Code, OMP
 - `docs/packaging.md` — the signed app bundle (`just bundle`): layout, ad-hoc signing, how the executables find each other, native notifications, start at login, the daemon's own menu bar item (shown while no desktop is connected)
 - `docs/process.md` — how we work, gates, testing strategy

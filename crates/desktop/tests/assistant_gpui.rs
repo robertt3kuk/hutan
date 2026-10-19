@@ -21,7 +21,7 @@ use hutan_chat_view::Body;
 use hutan_core::TerminalId;
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::chat::{ChatModel, ChatView, ContextChip, MentionKind};
-use hutan_desktop::workbench::model::{DockPosition, PanelDest, PanelId};
+use hutan_desktop::workbench::model::PanelId;
 use hutan_desktop::workbench::panels::{AssistantChoice, Failure, HistoryPanel, Opened, ScopeKey};
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_protocol::assistant::{AssistantList, AssistantListRequest, Attachment, AttachmentKind};
@@ -178,19 +178,19 @@ fn the_global_assistant_streams_without_a_terminal_and_each_scope_keeps_its_conv
             .is_some()
     }));
     cx.simulate_keystrokes("cmd-shift-p");
-    cx.simulate_input("Assistant: Open");
+    cx.simulate_input("Mawas: Open");
     assert!(view.read_with(cx, |wb, _| {
         wb.palette_titles()
             .iter()
-            .any(|t| t.as_ref() == "Assistant: Open / Focus")
+            .any(|t| t.as_ref() == "Mawas: Open")
     }));
     cx.simulate_keystrokes("escape");
     cx.dispatch_action(hutan_desktop::workbench::actions::OpenAssistant);
     let panel = open_assistant(&view, cx);
     assert_eq!(
-        view.read_with(cx, |wb, _| wb.state().docks.left.active.clone()),
-        Some(PanelId::new("assistant")),
-        "the Assistant is a page of the left sidebar"
+        view.read_with(cx, |wb, _| wb.state().active_center_item()),
+        Some(hutan_desktop::workbench::model::ItemRef::panel("assistant")),
+        "Mawas Home is a tab of the center"
     );
 
     // Home is active: the global assistant, a direct chat of the configured provider — and no
@@ -311,45 +311,43 @@ fn the_global_assistant_streams_without_a_terminal_and_each_scope_keeps_its_conv
 }
 
 #[gpui::test]
-fn the_panel_is_a_left_sidebar_page_that_keeps_its_conversation(cx: &mut TestAppContext) {
+fn home_is_a_center_tab_that_keeps_its_conversation(cx: &mut TestAppContext) {
     let env = AssistantEnv::start(Options {
         configured: true,
         ..Options::default()
     });
     let (view, cx) = open(cx, &env.daemon);
     let panel = open_assistant(&view, cx);
-    let left_page =
-        |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.state().docks.left.active.clone());
-    assert_eq!(left_page(cx), Some(PanelId::new("assistant")));
+    let active =
+        |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.state().active_center_item());
+    assert_eq!(
+        active(cx),
+        Some(hutan_desktop::workbench::model::ItemRef::panel("assistant"))
+    );
     let before = panel.read_with(cx, |p, cx| p.session(cx));
     assert!(before.is_some());
 
-    // It cannot leave the left sidebar: not for a dock, not as a tab.
+    // Another tab replaces it, and the nav brings it back with the same conversation.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| {
-            for dest in [
-                PanelDest::Dock(DockPosition::Bottom),
-                PanelDest::Dock(DockPosition::Right),
-                PanelDest::Center,
-            ] {
-                assert!(s.move_panel(&PanelId::new("assistant"), dest).is_err());
-            }
+            let pane = s.active_pane_id();
+            s.add_item(
+                pane,
+                hutan_desktop::workbench::model::ItemRef::placeholder("Elsewhere"),
+            )
+            .unwrap();
         });
     });
-    assert!(view.read_with(cx, |wb, _| {
-        wb.state()
-            .docks
-            .left
-            .panels
-            .contains(&PanelId::new("assistant"))
-    }));
-
-    // Another page replaces it, and the nav brings it back with the same conversation.
-    cx.dispatch_action(hutan_desktop::workbench::actions::OpenPanel("tasks".into()));
-    assert_eq!(left_page(cx), Some(PanelId::new("tasks")));
+    assert_ne!(
+        active(cx),
+        Some(hutan_desktop::workbench::model::ItemRef::panel("assistant"))
+    );
     view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
     draw(cx);
-    assert_eq!(left_page(cx), Some(PanelId::new("assistant")));
+    assert_eq!(
+        active(cx),
+        Some(hutan_desktop::workbench::model::ItemRef::panel("assistant"))
+    );
     assert_eq!(panel.read_with(cx, |p, cx| p.session(cx)), before);
 }
 
@@ -1098,11 +1096,7 @@ fn the_send_menu_offers_the_assistant_when_no_chat_running_is_one(cx: &mut TestA
         .collect();
     assert_eq!(
         entries,
-        [
-            "Send to first chat",
-            "Send to second chat",
-            "Send to Assistant"
-        ]
+        ["Send to first chat", "Send to second chat", "Send to Mawas"]
     );
     // The assistant of the terminal's workspace is opened on demand and gets a block reference.
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(2, window, cx));

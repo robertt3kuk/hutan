@@ -22,7 +22,9 @@ use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_terminal::EnvInherit;
 use serde_json::{Value, json};
 
-use crate::config::{HarnessSettings, McpSettings};
+use hutan_core::{ApprovalPolicy, SandboxMode};
+
+use crate::config::{AssistantMode, HarnessSettings, McpSettings};
 
 /// OMP, over `omp acp`.
 pub const AGENT_OMP: &str = "omp";
@@ -34,22 +36,87 @@ pub fn is_harness_agent(agent: &str) -> bool {
     agent == AGENT_OMP || agent == AGENT_CLAUDE
 }
 
-/// The tools an OMP assistant keeps (`omp acp --tools`): read-only file and search tools, by OMP's
-/// own names (an unknown name fails `session/new` with "Built-in tool unavailable"). No
-/// `bash`, `edit`, `write`, `task` or network tools.
+/// The tools an OMP assistant keeps in **Advisor** mode (`omp acp --tools`): read-only file and
+/// search tools, by OMP's own names (an unknown name fails `session/new` with "Built-in tool
+/// unavailable"). No `bash`, `edit`, `write`, `task` or network tools.
 pub const OMP_ASSISTANT_TOOLS: &str = "read,grep,glob";
 
-/// The session mode a Claude Code assistant runs in: its read-only planning mode.
-pub const CLAUDE_ASSISTANT_MODE: &str = "plan";
+/// OMP's approval mode in **Ask before acting** (`omp acp --approval-mode`): everything above
+/// the read tier (edits, commands, MCP tools) asks the client through ACP
+/// `session/request_permission`, even when the user's own OMP configuration says `yolo`.
+pub const OMP_ASK_APPROVAL_MODE: &str = "always-ask";
 
-/// Appended to the system prompt of an OMP assistant (`--append-system-prompt`).
-pub const HARNESS_ASSISTANT_PROMPT: &str = "You are Hutan's assistant, built into a developer's \
+/// The session mode a Claude Code assistant runs in in **Advisor** mode: its read-only planning
+/// mode.
+pub const CLAUDE_ADVISOR_MODE: &str = "plan";
+
+/// The session mode a Claude Code assistant runs in **Ask before acting**: Claude Code's own
+/// default permission mode, which asks (`session/request_permission`) before it edits or runs.
+pub const CLAUDE_ASK_MODE: &str = "default";
+
+/// What an assistant of one harness starts with in a mode (`docs/assistant.md` § Modes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssistantProfile {
+    /// The ACP session mode asked for (Claude Code); `None` leaves the harness's own.
+    pub session_mode: Option<&'static str>,
+    /// Codex's approval policy (ignored by the ACP harnesses).
+    pub approval_policy: ApprovalPolicy,
+    /// Codex's sandbox (ignored by the ACP harnesses).
+    pub sandbox: SandboxMode,
+}
+
+/// How an assistant of `agent` (`omp`, `claude`, `codex`) is launched in `mode`:
+///
+/// | | Advisor | Ask before acting |
+/// |---|---|---|
+/// | OMP | `--tools read,grep,glob` (see [`Harnesses::acp_config`]) | all tools, `--approval-mode always-ask` |
+/// | Claude Code | session mode `plan` | session mode `default` |
+/// | Codex | `read-only` sandbox, approvals `never` | `workspace-write` sandbox, approvals `on-request` |
+pub fn assistant_profile(agent: &str, mode: AssistantMode) -> AssistantProfile {
+    let (session_mode, approval_policy, sandbox) = match (agent, mode) {
+        (AGENT_CLAUDE, AssistantMode::Advisor) => (
+            Some(CLAUDE_ADVISOR_MODE),
+            ApprovalPolicy::default(),
+            SandboxMode::default(),
+        ),
+        (AGENT_CLAUDE, AssistantMode::Ask) => (
+            Some(CLAUDE_ASK_MODE),
+            ApprovalPolicy::default(),
+            SandboxMode::default(),
+        ),
+        ("codex", AssistantMode::Advisor) => (None, ApprovalPolicy::Never, SandboxMode::ReadOnly),
+        ("codex", AssistantMode::Ask) => {
+            (None, ApprovalPolicy::OnRequest, SandboxMode::WorkspaceWrite)
+        }
+        _ => (None, ApprovalPolicy::default(), SandboxMode::default()),
+    };
+    AssistantProfile {
+        session_mode,
+        approval_policy,
+        sandbox,
+    }
+}
+
+/// Appended to the system prompt of an OMP assistant in **Advisor** mode
+/// (`--append-system-prompt`).
+pub const HARNESS_ASSISTANT_PROMPT: &str = "You are Mawas, Hutan's assistant, built into a developer's \
 terminal workspace. Answer concisely and concretely. A message may carry attached context: \
 read-only excerpts the user chose to share (terminal output, files, conversations with \
 coding agents, search results), each introduced by a bracketed header that says what it is \
 and whether it was cut. Rely on that context and on the conversation; if the answer needs \
 something that was not attached, say what to attach instead of guessing. You can read files \
 and search the workspace, but you cannot run commands or change anything.";
+
+/// Appended to the system prompt of an OMP assistant in **Ask before acting** mode.
+pub const HARNESS_ASK_PROMPT: &str = "You are Mawas, the assistant built into Hutan, a \
+developer's terminal workspace. Answer concisely and concretely. A message may carry attached \
+context: excerpts the user chose to share (terminal output, files, conversations with coding \
+agents, search results), each introduced by a bracketed header that says what it is and \
+whether it was cut. You can act: read and search freely, and use your tools and Hutan's own \
+(the `hutan` MCP server) to change things. Every change asks the user for approval first; \
+say what you are about to do and why, make one change at a time, and never try to get around \
+a refusal. If a request is refused or denied, stop and tell the user. You can never change \
+Hutan's settings, approvals or grants yourself.";
 
 /// What is fixed about a harness.
 struct Def {
@@ -204,11 +271,18 @@ impl Harnesses {
 
     /// How to start `agent`'s ACP process. Blocks (see [`environment`](Self::environment)).
     ///
-    /// With `assistant` the process starts with its tools restricted to reading (protocol 0.20,
-    /// `docs/assistant.md` § Backends): OMP gets `--tools` and the assistant prompt appended to
-    /// its system prompt. Claude Code is restricted by its session mode (`plan`), which the
-    /// assistant service requests when it creates the session.
-    pub fn acp_config(&self, agent: &str, assistant: bool) -> Result<AcpConfig, ErrorBody> {
+    /// With `assistant` the process starts the way Mawas runs in that mode (protocol 0.20,
+    /// `docs/assistant.md` § Modes): OMP in **Advisor** mode gets `--tools` limited to reading
+    /// and the Advisor prompt appended to its system prompt; in **Ask before acting** mode it
+    /// keeps all its tools, runs with `--approval-mode always-ask` (so what it would change
+    /// asks Hutan through ACP `session/request_permission`) and gets the Ask prompt. Claude
+    /// Code is steered by its session mode ([`assistant_profile`]), which the chat manager
+    /// requests when it starts the session.
+    pub fn acp_config(
+        &self,
+        agent: &str,
+        assistant: Option<AssistantMode>,
+    ) -> Result<AcpConfig, ErrorBody> {
         let def = def(agent)
             .filter(|_| is_harness_agent(agent))
             .ok_or_else(|| {
@@ -225,13 +299,22 @@ impl Harnesses {
         } else {
             settings.args.clone()
         };
-        if assistant && agent == AGENT_OMP {
-            args.extend([
-                "--tools".to_owned(),
-                OMP_ASSISTANT_TOOLS.to_owned(),
-                "--append-system-prompt".to_owned(),
-                HARNESS_ASSISTANT_PROMPT.to_owned(),
-            ]);
+        if agent == AGENT_OMP {
+            match assistant {
+                Some(AssistantMode::Advisor) => args.extend([
+                    "--tools".to_owned(),
+                    OMP_ASSISTANT_TOOLS.to_owned(),
+                    "--append-system-prompt".to_owned(),
+                    HARNESS_ASSISTANT_PROMPT.to_owned(),
+                ]),
+                Some(AssistantMode::Ask) => args.extend([
+                    "--approval-mode".to_owned(),
+                    OMP_ASK_APPROVAL_MODE.to_owned(),
+                    "--append-system-prompt".to_owned(),
+                    HARNESS_ASK_PROMPT.to_owned(),
+                ]),
+                None => {}
+            }
         }
         env.extend(settings.env);
         with_program_dir(&mut env, &program);
@@ -523,7 +606,7 @@ mod tests {
                 ..HarnessSettings::default()
             },
         )]);
-        let error = h.acp_config("claude", false).unwrap_err();
+        let error = h.acp_config("claude", None).unwrap_err();
         assert_eq!(error.code, ErrorCode::ProviderError);
         assert!(error.message.contains("nope"), "{}", error.message);
         assert!(
@@ -589,7 +672,7 @@ mod tests {
                 cli: None,
             },
         )]);
-        let config = h.acp_config("omp", false).unwrap();
+        let config = h.acp_config("omp", None).unwrap();
         assert_eq!(config.program, bin);
         assert_eq!(config.args, ["acp", "--profile", "work"]);
         assert!(
@@ -602,8 +685,7 @@ mod tests {
         assert_eq!(h.cli("omp", Path::new("codex")).unwrap().0, bin);
     }
 
-    #[test]
-    fn an_omp_assistant_keeps_only_read_tools_and_gets_its_prompt() {
+    fn omp_harnesses() -> (tempfile::TempDir, Harnesses) {
         let dir = tempfile::tempdir().unwrap();
         let bin = executable(dir.path(), "my-omp");
         let h = harnesses(&[(
@@ -614,28 +696,79 @@ mod tests {
                 ..HarnessSettings::default()
             },
         )]);
-        let plain = h.acp_config("omp", false).unwrap();
+        (dir, h)
+    }
+
+    fn value_of<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+        let at = args.iter().position(|a| a == flag)?;
+        args.get(at + 1).map(String::as_str)
+    }
+
+    #[test]
+    fn an_advisor_omp_assistant_keeps_only_read_tools_and_gets_its_prompt() {
+        let (_dir, h) = omp_harnesses();
+        let plain = h.acp_config("omp", None).unwrap();
         assert!(!plain.args.iter().any(|a| a == "--tools"));
-        let assistant = h.acp_config("omp", true).unwrap();
+        assert!(!plain.args.iter().any(|a| a == "--approval-mode"));
+        let assistant = h.acp_config("omp", Some(AssistantMode::Advisor)).unwrap();
         assert_eq!(
             assistant.args[..3],
             ["acp", "--profile", "work"],
             "the configured arguments stay"
         );
-        let tools = assistant.args.iter().position(|a| a == "--tools").unwrap();
-        assert_eq!(assistant.args[tools + 1], OMP_ASSISTANT_TOOLS);
+        assert_eq!(
+            value_of(&assistant.args, "--tools"),
+            Some(OMP_ASSISTANT_TOOLS)
+        );
         for forbidden in ["bash", "edit", "write", "task"] {
             assert!(
                 !OMP_ASSISTANT_TOOLS.split(',').any(|t| t == forbidden),
                 "{forbidden} is not a read tool"
             );
         }
-        let prompt = assistant
-            .args
-            .iter()
-            .position(|a| a == "--append-system-prompt")
-            .unwrap();
-        assert_eq!(assistant.args[prompt + 1], HARNESS_ASSISTANT_PROMPT);
+        assert_eq!(
+            value_of(&assistant.args, "--append-system-prompt"),
+            Some(HARNESS_ASSISTANT_PROMPT)
+        );
+        assert!(!assistant.args.iter().any(|a| a == "--approval-mode"));
+    }
+
+    #[test]
+    fn an_ask_before_acting_omp_assistant_has_all_tools_and_asks_for_every_change() {
+        let (_dir, h) = omp_harnesses();
+        let assistant = h.acp_config("omp", Some(AssistantMode::Ask)).unwrap();
+        assert_eq!(assistant.args[..3], ["acp", "--profile", "work"]);
+        assert!(
+            !assistant.args.iter().any(|a| a == "--tools"),
+            "no restriction on the tools: {:?}",
+            assistant.args
+        );
+        assert_eq!(
+            value_of(&assistant.args, "--approval-mode"),
+            Some(OMP_ASK_APPROVAL_MODE),
+            "approvals go to the client even when the user's own OMP says yolo"
+        );
+        let prompt = value_of(&assistant.args, "--append-system-prompt").unwrap();
+        assert_eq!(prompt, HARNESS_ASK_PROMPT);
+        assert!(prompt.contains("asks the user for approval"), "{prompt}");
+    }
+
+    #[test]
+    fn every_harness_has_a_profile_per_mode() {
+        use AssistantMode::{Advisor, Ask};
+        let advisor = |agent| assistant_profile(agent, Advisor);
+        let ask = |agent| assistant_profile(agent, Ask);
+        // Claude Code: plan mode to read, its default permission mode to act.
+        assert_eq!(advisor(AGENT_CLAUDE).session_mode, Some("plan"));
+        assert_eq!(ask(AGENT_CLAUDE).session_mode, Some("default"));
+        // Codex: read-only and never asks, or workspace-write and asks on request.
+        assert_eq!(advisor("codex").sandbox, SandboxMode::ReadOnly);
+        assert_eq!(advisor("codex").approval_policy, ApprovalPolicy::Never);
+        assert_eq!(ask("codex").sandbox, SandboxMode::WorkspaceWrite);
+        assert_eq!(ask("codex").approval_policy, ApprovalPolicy::OnRequest);
+        // OMP is steered by its command line, not by a session mode.
+        assert_eq!(advisor(AGENT_OMP).session_mode, None);
+        assert_eq!(ask(AGENT_OMP).session_mode, None);
     }
 
     #[test]
@@ -674,7 +807,7 @@ mod tests {
         assert!(!is_harness_agent("codex") && !is_harness_agent("direct"));
         let h = harnesses(&[]);
         assert_eq!(
-            h.acp_config("codex", false).unwrap_err().code,
+            h.acp_config("codex", None).unwrap_err().code,
             ErrorCode::BadRequest
         );
     }

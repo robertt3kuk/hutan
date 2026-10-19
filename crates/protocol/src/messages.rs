@@ -23,6 +23,7 @@ use crate::chat::{
 use crate::control::{ErrorBody, ErrorCode};
 use crate::daemon_settings::DaemonSettingSet;
 use crate::error::ProtocolError;
+use crate::grants::{ControlGrantRevoke, ControlGrantsList};
 use crate::history::{HistorySearch, HistorySetEnabled};
 use crate::notify::{ClientFocus, NotificationIntent, NotifyAck, NotifyAct};
 use crate::project::{ProjectInfo, WorkspaceAssign, WorkspaceDelete};
@@ -257,6 +258,15 @@ pub enum Request {
     /// with `DaemonSettings`. Never allowed to an agent-originated connection.
     #[serde(rename = "daemon.settings.set")]
     DaemonSettingsSet(DaemonSettingSet),
+    /// Capability `control.grants` (protocol 0.31): the grants Mawas's `control` approvals
+    /// stored ("allow for this chat", "always allow here"); answered with `ControlGrants`.
+    /// Never allowed to an agent-originated connection.
+    #[serde(rename = "control.grants.list")]
+    ControlGrantsList(ControlGrantsList),
+    /// Capability `control.grants`: remove one grant; answered with `Empty`. Never allowed to
+    /// an agent-originated connection.
+    #[serde(rename = "control.grants.revoke")]
+    ControlGrantRevoke(ControlGrantRevoke),
     /// Capability `notify.intents` (protocol 0.13): the pending notification intents; answered
     /// with `NotifyList`.
     #[serde(rename = "notify.list")]

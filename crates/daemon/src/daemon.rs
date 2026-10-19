@@ -292,6 +292,10 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             idle_stop: config
                 .assistant_idle_stop
                 .unwrap_or(Duration::from_secs(settings.assistant.idle_stop_secs)),
+            assistant_policy: crate::chat::AssistantPolicy {
+                mode: settings.assistant.mode,
+                max_actions: settings.assistant.max_actions_per_turn,
+            },
             tmp_dir: paths.base.join("tmp"),
         },
         stored,

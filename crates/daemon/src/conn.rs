@@ -61,6 +61,7 @@ pub const CAPABILITIES: &[&str] = &[
     "daemon.settings",
     "history.sessions",
     "session.close",
+    "control.grants",
 ];
 
 /// How long a closing connection may take to flush already queued messages.

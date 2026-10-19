@@ -217,7 +217,6 @@ fn looked_at_assistant(
 #[gpui::test]
 fn the_assistant_page_counts_as_looked_at_only_while_it_is_on_screen(cx: &mut TestAppContext) {
     use common::assistant::{AssistantEnv, Options, PATH, open, open_assistant, reply, shown};
-    use hutan_desktop::workbench::model::{DockPosition, PanelDest, PanelId};
     use hutan_desktop::workbench::panels::AssistantChoice;
     use hutan_protocol::assistant::{AssistantOpen, AssistantScope};
     use hutan_protocol::messages::SessionResult;
@@ -271,27 +270,15 @@ fn the_assistant_page_counts_as_looked_at_only_while_it_is_on_screen(cx: &mut Te
     assert_eq!(pending.len(), 1, "{pending:?}");
     assert_eq!(pending[0].session_id, other.id);
 
-    // The page is the Assistant's only place (the left sidebar); it cannot be moved out.
+    // Another tab takes the pane: Mawas Home is not on screen, not looked at.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| {
-            assert!(
-                s.move_panel(&PanelId::new("assistant"), PanelDest::Center)
-                    .is_err()
-            );
-            assert!(
-                s.move_panel(
-                    &PanelId::new("assistant"),
-                    PanelDest::Dock(DockPosition::Right)
-                )
-                .is_err()
-            );
-        });
-    });
-
-    // Another page of the left sidebar: the Assistant is not on screen, not looked at.
-    view.update(cx, |wb, cx| {
-        wb.edit_layout(cx, |s| {
-            s.open_panel(&PanelId::new("tasks"), DockPosition::Left)
+            let pane = s.active_pane_id();
+            s.add_item(
+                pane,
+                hutan_desktop::workbench::model::ItemRef::placeholder("Elsewhere"),
+            )
+            .unwrap();
         });
     });
     wait_until(cx, "the hidden page to stop counting", |cx| {
@@ -300,21 +287,6 @@ fn the_assistant_page_counts_as_looked_at_only_while_it_is_on_screen(cx: &mut Te
     view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
     panel.update(cx, |p, cx| p.focus_composer(cx));
     wait_until(cx, "the shown page to count again", |cx| {
-        looked_at_assistant(&view, cx, global)
-    });
-
-    // The sidebar hidden: not on screen, not looked at; shown again, looked at.
-    view.update(cx, |wb, cx| {
-        wb.edit_layout(cx, |s| s.docks.left.visible = false);
-    });
-    wait_until(cx, "the hidden sidebar to stop counting", |cx| {
-        reported(&view, cx) != Some(Some(global))
-    });
-    view.update(cx, |wb, cx| {
-        wb.edit_layout(cx, |s| s.docks.left.visible = true);
-    });
-    panel.update(cx, |p, cx| p.focus_composer(cx));
-    wait_until(cx, "the shown sidebar to count again", |cx| {
         looked_at_assistant(&view, cx, global)
     });
 

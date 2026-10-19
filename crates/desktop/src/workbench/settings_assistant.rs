@@ -22,6 +22,7 @@ use hutan_core::{ModelInfo, WorkspaceId};
 use hutan_protocol::assistant::{
     AssistantBackend, AssistantConfig, AssistantConfigure, AssistantListRequest, AssistantScope,
 };
+use hutan_protocol::grants::ControlGrant;
 use hutan_protocol::messages::{WorkspaceInfo, WorkspaceKind};
 
 use super::agents::Models;
@@ -38,6 +39,17 @@ pub struct Running {
     pub backend: AssistantBackend,
     pub provider: Option<String>,
     pub model: String,
+}
+
+/// What Mawas may do without asking: the grants its approvals stored (`control.grants.list`).
+#[derive(Debug, Default)]
+pub struct MawasGrants {
+    pub grants: Vec<ControlGrant>,
+    /// The daemon answered at least once.
+    pub loaded: bool,
+    /// The daemon has no grants (older than protocol 0.31).
+    pub unsupported: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -137,6 +149,78 @@ impl Workbench {
             scopes.push(ScopeKey::Workspace(workspace.id));
         }
         scopes
+    }
+
+    // ---- grants --------------------------------------------------------------------------
+
+    /// What Mawas may do without asking, as the daemon last said.
+    pub fn mawas_grants(&self) -> &MawasGrants {
+        &self.mawas_grants
+    }
+
+    /// Reads the grants (`control.grants.list`).
+    pub fn refresh_mawas_grants(&mut self, cx: &mut Context<Self>) {
+        if !self.daemon_connected(cx) {
+            return;
+        }
+        let connection = self.connection(cx);
+        if !connection.supports_control_grants() {
+            self.mawas_grants.unsupported = true;
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let result = connection.control_grants(None).await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(grants) => {
+                        this.mawas_grants.grants = grants;
+                        this.mawas_grants.loaded = true;
+                        this.mawas_grants.error = None;
+                    }
+                    Err(error) => this.mawas_grants.error = Some(error.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Revokes one grant: the next request it covered asks again.
+    pub fn revoke_mawas_grant(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.revoke_mawas_grants(vec![id], cx);
+    }
+
+    /// Revokes every grant.
+    pub fn revoke_all_mawas_grants(&mut self, cx: &mut Context<Self>) {
+        let ids = self.mawas_grants.grants.iter().map(|g| g.id).collect();
+        self.revoke_mawas_grants(ids, cx);
+    }
+
+    fn revoke_mawas_grants(&mut self, ids: Vec<u64>, cx: &mut Context<Self>) {
+        if ids.is_empty() || !self.daemon_connected(cx) {
+            return;
+        }
+        let connection = self.connection(cx);
+        cx.spawn(async move |this, cx| {
+            let mut failure = None;
+            for id in ids {
+                if let Err(error) = connection.control_grant_revoke(id).await {
+                    failure = Some(error.to_string());
+                }
+            }
+            let grants = connection.control_grants(None).await;
+            this.update(cx, |this, cx| {
+                if let Ok(grants) = grants {
+                    this.mawas_grants.grants = grants;
+                    this.mawas_grants.loaded = true;
+                }
+                this.mawas_grants.error = failure;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     // ---- asking the daemon ---------------------------------------------------------------
@@ -596,10 +680,13 @@ impl Workbench {
             );
         }
         let all = sections("assistant");
-        // When nothing is chosen: the file's own backend, provider and model.
+        // What Mawas may do, and what it may do without asking.
         out.extend(self.render_daemon_section(&all[0], cx));
+        out.extend(self.render_mawas_grants(cx));
+        // When nothing is chosen: the file's own backend, provider and model.
         out.extend(self.render_daemon_section(&all[1], cx));
         out.extend(self.render_daemon_section(&all[2], cx));
+        out.extend(self.render_daemon_section(&all[3], cx));
         if let Some(workspace) = self.assistant_workspace(cx) {
             out.push(
                 self.section_heading(words::SEC_ASSISTANT_THIS, words::SEC_ASSISTANT_THIS_HELP),
@@ -608,7 +695,102 @@ impl Workbench {
                 out.push(self.render_workspace_permission(&workspace, permission, cx));
             }
         }
-        out.extend(self.render_daemon_section(&all[3], cx));
+        out.extend(self.render_daemon_section(&all[4], cx));
+        out
+    }
+
+    /// The grants Mawas holds, each with Revoke, and Revoke all.
+    fn render_mawas_grants(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let mut out = vec![self.section_heading(
+            words::SEC_ASSISTANT_GRANTS,
+            words::SEC_ASSISTANT_GRANTS_HELP,
+        )];
+        if self.mawas_grants.unsupported {
+            out.push(
+                note(words::GRANTS_UNSUPPORTED, &theme, &tokens)
+                    .py(px(tokens.spacing * 2.0))
+                    .into_any_element(),
+            );
+            return out;
+        }
+        if let Some(error) = self.mawas_grants.error.clone() {
+            out.push(
+                div()
+                    .py(px(tokens.spacing))
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.danger)
+                    .child(SharedString::from(error))
+                    .into_any_element(),
+            );
+        }
+        if self.mawas_grants.grants.is_empty() {
+            out.push(
+                note(words::GRANTS_NONE, &theme, &tokens)
+                    .id("mawas-grants-none")
+                    .py(px(tokens.spacing * 2.0))
+                    .into_any_element(),
+            );
+            return out;
+        }
+        let grants = self.mawas_grants.grants.clone();
+        for grant in &grants {
+            let id = grant.id;
+            let place = match (grant.workspace_id, grant.chat_session_id) {
+                (Some(workspace), _) => {
+                    let name = self
+                        .sessions
+                        .read(cx)
+                        .workspace(workspace)
+                        .map_or_else(|| workspace.to_string(), |w| w.name.clone());
+                    format!("Always, in {name}")
+                }
+                (None, Some(chat)) => {
+                    let title = self
+                        .sessions
+                        .read(cx)
+                        .session(chat)
+                        .map_or_else(|| chat.to_string(), |s| s.title.clone());
+                    format!("For the chat “{title}”")
+                }
+                (None, None) => String::new(),
+            };
+            let revoke = small_button(
+                SharedString::from(format!("grant-revoke-{id}")),
+                words::GRANT_REVOKE,
+                false,
+                &theme,
+                &tokens,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.revoke_mawas_grant(id, cx)));
+            out.push(sheet_row(
+                SharedString::from(format!("grant-{id}")),
+                grant.tool.clone(),
+                place,
+                Vec::new(),
+                revoke.into_any_element(),
+                &theme,
+                &tokens,
+            ));
+        }
+        out.push(
+            div()
+                .flex()
+                .justify_end()
+                .py(px(tokens.spacing * 2.0))
+                .child(
+                    small_button(
+                        "grant-revoke-all",
+                        words::GRANT_REVOKE_ALL,
+                        false,
+                        &theme,
+                        &tokens,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.revoke_all_mawas_grants(cx))),
+                )
+                .into_any_element(),
+        );
         out
     }
 

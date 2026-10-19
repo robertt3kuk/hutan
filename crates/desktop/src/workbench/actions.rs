@@ -104,6 +104,7 @@ actions!(
         ManageAccounts,
         SwitchChatModel,
         OpenAssistant,
+        NewMawasChat,
         NewTerminalInWorktree,
         RemoveWorktree,
         NewTask,
@@ -307,6 +308,8 @@ data_actions! {
     /// Show the menu of the Assistant page's backend and model chip (Switch model…) at this
     /// position.
     ShowAssistantModelMenu(gpui::Point<gpui::Pixels>);
+    /// Show the menu of Mawas Home's mode chip (Ask before acting / Advisor) at this position.
+    ShowAssistantModeMenu(gpui::Point<gpui::Pixels>);
 }
 
 /// Where to open the context menu of a workspace.
@@ -559,7 +562,8 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Chat: Switch Model…", SwitchChatModel),
     ]);
     if assistant {
-        out.push(command("Assistant: Open / Focus", OpenAssistant));
+        out.push(command("Mawas: Open", OpenAssistant));
+        out.push(command("Mawas: New chat", NewMawasChat));
     }
     out.extend([
         command("Worktree: New Terminal in Worktree…", NewTerminalInWorktree),

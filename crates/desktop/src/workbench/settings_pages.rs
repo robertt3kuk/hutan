@@ -146,6 +146,7 @@ impl Workbench {
             "assistant" => {
                 self.refresh_daemon_settings(cx);
                 self.refresh_assistant_defaults(cx);
+                self.refresh_mawas_grants(cx);
                 self.refresh_providers(cx);
             }
             "notifications" | "sessions_restore" | "control" | "agents_tools" => {

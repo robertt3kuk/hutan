@@ -3,6 +3,7 @@
 
 mod agents;
 mod assistant;
+mod assistant_rail;
 mod changes;
 mod common;
 mod history;
@@ -29,8 +30,9 @@ use std::rc::Rc;
 
 pub use agents::{AgentsPanel, RowView, SectionView, TICK as AGENTS_TICK};
 pub use assistant::{
-    AssistantPanel, Choice as AssistantChoice, Failure, Opened, ScopeEntry, ScopeKey,
+    AssistantPanel, Choice as AssistantChoice, Failure, MawasMode, Opened, ScopeEntry, ScopeKey,
 };
+pub use assistant_rail::{NeedsKind, NeedsRow, RailOption, Today, WorkingRow, today};
 pub use changes::{ChangesPanel, Checkouts as ChangesCheckouts, REFRESH_AFTER as CHANGES_REFRESH};
 pub use common::{
     age_label, agent_badge, kind_icon, placement_badge, recovery_chip, state_dot, time_tooltip,
@@ -109,9 +111,9 @@ impl Render for PlaceholderPanel {
 }
 
 /// `sessions`, `history`, `changes`, `inspector` (titled Requests), `overview`, `agents`,
-/// `resources`, `tasks`, `assistant`, `notifications`. `sessions` (Projects), `tasks`, `overview`
-/// and `assistant` open as pages of the left sidebar, `history`, `changes`, `inspector`, `agents`
-/// and `resources` as tabs of the right sidebar's strip.
+/// `resources`, `tasks`, `assistant` (Mawas Home), `notifications`. `sessions` (Projects), `tasks`
+/// and `overview` open as pages of the left sidebar, `history`, `changes`, `inspector`, `agents`
+/// and `resources` as tabs of the right sidebar's strip, `assistant` as a tab of the center.
 pub fn builtin_panels() -> PanelRegistry {
     let mut registry = PanelRegistry::new();
     registry.register(PanelSpec {
@@ -196,7 +198,7 @@ pub fn builtin_panels() -> PanelRegistry {
     });
     registry.register(PanelSpec {
         id: "assistant".into(),
-        title: "Assistant".into(),
+        title: "Mawas".into(),
         icon: "✦".into(),
         default_dock: DockPosition::Left,
         factory: Rc::new(|env, _window, cx| {

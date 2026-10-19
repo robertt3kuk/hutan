@@ -345,6 +345,22 @@ fn build_specs() -> Vec<Spec> {
             Group::Assistant,
             |c| int_value(c.assistant.idle_stop_secs),
         ),
+        live(
+            "assistant.mode",
+            Kind::Enum(&["ask", "advisor"]),
+            Group::Assistant,
+            |c| json!(c.assistant.mode.as_str()),
+        ),
+        live(
+            "assistant.max_actions_per_turn",
+            Kind::Int {
+                min: Some(1),
+                max: Some(1000),
+                only: &[],
+            },
+            Group::Assistant,
+            |c| int_value(u64::from(c.assistant.max_actions_per_turn)),
+        ),
     ]);
     permission_specs!(specs, context);
     permission_specs!(specs, global_context);
@@ -1246,6 +1262,10 @@ impl SettingsService {
                 self.registry
                     .chats()
                     .set_assistant_idle_stop(Duration::from_secs(fresh.assistant.idle_stop_secs));
+                self.registry.chats().set_assistant_policy(
+                    fresh.assistant.mode,
+                    fresh.assistant.max_actions_per_turn,
+                );
                 self.assistant.apply_settings(fresh.assistant.clone());
             }
             Group::Control => {
@@ -1391,6 +1411,8 @@ mod tests {
             model: _,
             context_budget_chars: _,
             idle_stop_secs: _,
+            mode: _,
+            max_actions_per_turn: _,
             context:
                 ContextPermissions {
                     shell: _,
@@ -1446,6 +1468,8 @@ mod tests {
             "assistant.model",
             "assistant.context_budget_chars",
             "assistant.idle_stop_secs",
+            "assistant.mode",
+            "assistant.max_actions_per_turn",
             "notify.enabled",
             "notify.min_turn_secs",
             "notify.kinds",

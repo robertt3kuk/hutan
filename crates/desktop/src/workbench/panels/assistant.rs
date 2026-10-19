@@ -1,5 +1,9 @@
-//! The Assistant panel (M16-B): the Global (Home) or the active workspace's assistant chat,
-//! docked like any other panel.
+//! **Mawas Home** (M16-B, MW-1): the Global (Home) or the active workspace's Mawas chat, as one
+//! tab of the center with the **Today** rail beside it (`assistant_rail.rs`).
+//!
+//! The header carries the scope, the backend·model chip, the **mode chip** (Ask before acting /
+//! Advisor: `assistant.mode` of the daemon, applied from the next turn), **New chat** and
+//! **Stop**, the kill switch: it denies what the chat has pending and interrupts its turn.
 //!
 //! The panel asks the daemon for the default assistant of a scope (`assistant.open`) and shows
 //! the returned session with the ordinary chat model and view (`workbench::chat`): the
@@ -27,10 +31,13 @@ use hutan_protocol::assistant::{
 use hutan_protocol::messages::{Empty, Request};
 use hutan_protocol::messages::{WorkspaceInfo, WorkspaceKind};
 use hutan_protocol::provider::{ProviderInfo, ProviderList, ProviderModels, ProviderRef};
+use serde_json::json;
 
 use super::common::state_dot;
 use crate::icons::{Icon, icon};
-use crate::workbench::actions::{ManageProviders, ShowAssistantModelMenu, ShowAssistantScopeMenu};
+use crate::workbench::actions::{
+    ManageProviders, ShowAssistantModeMenu, ShowAssistantModelMenu, ShowAssistantScopeMenu,
+};
 use crate::workbench::agents::Models;
 use crate::workbench::chat::{ButtonKind, ChatModel, ChatView, ContextChip, Look, button};
 use crate::workbench::harnesses::{self, Detection, HARNESSES, Listing};
@@ -124,13 +131,67 @@ pub struct Switcher {
     pub models: Models,
 }
 
+/// What Mawas may do (`assistant.mode` of the daemon).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MawasMode {
+    /// Reads freely; every change asks first, grants permitting.
+    Ask,
+    /// Reads and advises; changes nothing.
+    Advisor,
+}
+
+impl MawasMode {
+    pub const ALL: [Self; 2] = [Self::Ask, Self::Advisor];
+
+    /// The value of `assistant.mode`.
+    pub fn setting(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Advisor => "advisor",
+        }
+    }
+
+    pub fn from_setting(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.setting() == value)
+    }
+
+    /// The chip's words.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ask => "Ask before acting",
+            Self::Advisor => "Advisor",
+        }
+    }
+
+    /// What the mode means, for the menu and the tooltip.
+    pub fn help(self) -> &'static str {
+        match self {
+            Self::Ask => {
+                "Mawas can act. Every change asks you first; your grants answer for what you allowed."
+            }
+            Self::Advisor => "Mawas reads and advises. It cannot change anything.",
+        }
+    }
+
+    /// The note under the header after a switch: it applies from the next message.
+    pub fn next_turn_note(self) -> String {
+        format!(
+            "{} applies from your next message: Mawas restarts its agent for it.",
+            self.label()
+        )
+    }
+}
+
+/// The widest the conversation gets (46 rem).
+const CONVERSATION_WIDTH: f32 = 736.0;
+
 struct Chat {
     model: Entity<ChatModel>,
     view: Entity<ChatView>,
 }
 
 pub struct AssistantPanel {
-    env: PanelEnv,
+    pub(super) env: PanelEnv,
     choice: Choice,
     scopes: HashMap<ScopeKey, Opened>,
     chats: HashMap<SessionId, Chat>,
@@ -142,6 +203,22 @@ pub struct AssistantPanel {
     switcher: Option<Switcher>,
     providers: Vec<ProviderInfo>,
     was_connected: bool,
+    /// `assistant.mode` as the daemon says; `None` until it has been read.
+    mode: Option<MawasMode>,
+    /// The daemon's settings were asked for (once per connection).
+    policy_asked: bool,
+    /// Under the header: a mode switch applies from the next message.
+    mode_note: Option<String>,
+    /// A failure of the controls of this page (a refused mode switch, an answer the daemon
+    /// refused).
+    error: Option<String>,
+    /// The Today rail is showing.
+    pub(super) rail_open: bool,
+    /// The page is on screen (the active tab of a pane). A hidden page does no work: the store
+    /// changes no longer wake it.
+    visible: bool,
+    /// How many times the page was drawn (tests).
+    renders: usize,
     _subscription: Subscription,
 }
 
@@ -168,6 +245,13 @@ impl AssistantPanel {
             switcher: None,
             providers: Vec::new(),
             was_connected: connected,
+            mode: None,
+            policy_asked: false,
+            mode_note: None,
+            error: None,
+            rail_open: true,
+            visible: false,
+            renders: 0,
             _subscription: subscription,
         }
     }
@@ -255,8 +339,225 @@ impl AssistantPanel {
                 _ => true,
             });
         }
+        if !connected {
+            self.policy_asked = false;
+        }
         self.was_connected = connected;
+        // A hidden page does no work: it draws again when it is shown.
+        if self.visible {
+            cx.notify();
+        }
+    }
+
+    // ---- visibility ------------------------------------------------------------------------
+
+    /// The workbench tells the page whether it is on screen. A page that was hidden draws again
+    /// when it is shown; one that is hidden is not woken by changes of the store.
+    pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.visible == visible {
+            return;
+        }
+        self.visible = visible;
+        if visible {
+            // What the daemon says about the mode may have changed (Settings) since it was shown.
+            self.policy_asked = false;
+            cx.notify();
+        }
+    }
+
+    /// Whether the page is on screen.
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    /// How many times the page was drawn.
+    pub fn render_count(&self) -> usize {
+        self.renders
+    }
+
+    // ---- mode, new chat, stop --------------------------------------------------------------
+
+    /// What Mawas may do, as the daemon says; `None` until it answered.
+    pub fn mode(&self) -> Option<MawasMode> {
+        self.mode
+    }
+
+    /// The note under the header ("Advisor applies from your next message …").
+    pub fn mode_note(&self) -> Option<&str> {
+        self.mode_note.as_deref()
+    }
+
+    /// The failure of the last control, if any.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    pub(super) fn set_error(&mut self, error: String, cx: &mut Context<Self>) {
+        self.error = Some(error);
         cx.notify();
+    }
+
+    /// Reads `assistant.mode` from the daemon (once per connection).
+    fn ensure_policy(&mut self, cx: &mut Context<Self>) {
+        if self.policy_asked || !self.connected(cx) {
+            return;
+        }
+        let connection = self.env.sessions.read(cx).connection().clone();
+        if !connection.supports_daemon_settings() {
+            // An older daemon has one mode: the read-only one it always had.
+            self.policy_asked = true;
+            self.mode = Some(MawasMode::Advisor);
+            return;
+        }
+        self.policy_asked = true;
+        cx.spawn(async move |this, cx| {
+            let settings = connection.daemon_settings().await;
+            this.update(cx, |this, cx| {
+                match settings {
+                    Ok(settings) => {
+                        this.mode = settings
+                            .entries
+                            .iter()
+                            .find(|e| e.key == "assistant.mode")
+                            .and_then(|e| e.value.as_str())
+                            .and_then(MawasMode::from_setting);
+                    }
+                    Err(_) => this.policy_asked = false,
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Switches Mawas to `mode` (`assistant.mode`): the daemon applies it from the next turn,
+    /// restarting the harness session as it needs, and the page says so.
+    pub fn set_mode(&mut self, mode: MawasMode, cx: &mut Context<Self>) {
+        if self.mode == Some(mode) || !self.connected(cx) {
+            return;
+        }
+        let connection = self.env.sessions.read(cx).connection().clone();
+        self.error = None;
+        cx.spawn(async move |this, cx| {
+            let stored = connection
+                .daemon_setting_set("assistant.mode", Some(json!(mode.setting())))
+                .await;
+            this.update(cx, |this, cx| {
+                match stored {
+                    Ok(_) => {
+                        this.mode = Some(mode);
+                        this.mode_note = Some(mode.next_turn_note());
+                    }
+                    Err(error) => this.error = Some(format!("Could not switch the mode: {error}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Starts a new conversation in the shown scope and shows it.
+    pub fn new_chat(&mut self, cx: &mut Context<Self>) {
+        if !self.connected(cx) {
+            return;
+        }
+        let key = self.key(cx);
+        let connection = self.env.sessions.read(cx).connection().clone();
+        let request = match key {
+            ScopeKey::Global => AssistantOpen {
+                scope: AssistantScope::Global,
+                workspace_id: None,
+                new: true,
+            },
+            ScopeKey::Workspace(id) => AssistantOpen {
+                scope: AssistantScope::Workspace,
+                workspace_id: Some(id),
+                new: true,
+            },
+        };
+        self.error = None;
+        cx.spawn(async move |this, cx| {
+            let result = connection.assistant_open(request).await;
+            this.update(cx, |this, cx| {
+                this.opened(key, result, cx);
+                this.focus_composer(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Whether Stop has something to stop: a turn runs, or a request of the shown chat waits.
+    pub fn can_stop(&self, cx: &App) -> bool {
+        let Some(session) = self.session(cx) else {
+            return false;
+        };
+        let store = self.env.sessions.read(cx);
+        store
+            .session(session)
+            .and_then(|info| info.chat.as_ref())
+            .is_some_and(|chat| chat.turn_active || chat.pending_approvals > 0)
+            || store.approvals().iter().any(|a| a.session_id == session)
+    }
+
+    /// **Stop Mawas**, the kill switch: denies every request the shown chat has pending (its
+    /// own Hutan tools and its harness's native ones), then interrupts its turn.
+    pub fn stop(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.session(cx) else {
+            return;
+        };
+        let denials: Vec<(hutan_core::ApprovalId, String)> = self
+            .env
+            .sessions
+            .read(cx)
+            .approvals()
+            .iter()
+            .filter(|a| a.session_id == session)
+            .filter_map(|a| {
+                let refuse = a.options.iter().find(|o| {
+                    matches!(
+                        o.kind,
+                        hutan_core::agent::PermissionOptionKind::RejectOnce
+                            | hutan_core::agent::PermissionOptionKind::RejectAlways
+                    )
+                })?;
+                Some((a.id, refuse.id.clone()))
+            })
+            .collect();
+        let tasks: Vec<_> = denials
+            .into_iter()
+            .map(|(approval, option)| {
+                self.env
+                    .sessions
+                    .update(cx, |store, cx| store.respond_approval(approval, option, cx))
+            })
+            .collect();
+        let connection = self.env.sessions.read(cx).connection().clone();
+        self.error = None;
+        cx.spawn(async move |this, cx| {
+            let mut failed = None;
+            for task in tasks {
+                if let Err(error) = task.await {
+                    failed = Some(error);
+                }
+            }
+            // The turn may have ended with its last request: nothing to interrupt then.
+            let interrupted = connection.chat_interrupt(session).await;
+            this.update(cx, |this, cx| {
+                if let Some(error) = failed {
+                    this.error = Some(format!("Could not deny a request: {error}"));
+                } else if let Err(error) = interrupted
+                    && !matches!(&error, ClientError::Remote(body) if body.code == ErrorCode::InvalidState)
+                {
+                    this.error = Some(format!("Could not stop Mawas: {error}"));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     // ---- opening -------------------------------------------------------------------------
@@ -763,7 +1064,135 @@ impl AssistantPanel {
                     .child(state_dot(theme, &presentation))
             }))
             .child(self.backend_chip(look, cx))
+            .child(self.mode_chip(look, cx))
+            .child(self.header_button(
+                "assistant-new",
+                "New chat",
+                "new",
+                self.connected(cx),
+                look,
+                cx.listener(|this, _, _, cx| this.new_chat(cx)),
+            ))
+            .child(self.stop_button(look, cx))
+            .child(self.header_button(
+                "assistant-rail",
+                if self.rail_open {
+                    "Hide Today"
+                } else {
+                    "Today"
+                },
+                "rail",
+                true,
+                look,
+                cx.listener(|this, _, _, cx| this.toggle_rail(cx)),
+            ))
             .child(probe(&self.env.regions, Region::Assistant("header")))
+            .into_any_element()
+    }
+
+    /// A small text button of the header.
+    fn header_button(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        region: &'static str,
+        enabled: bool,
+        look: &Look,
+        on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> AnyElement {
+        let (theme, tokens) = (look.theme, look.tokens);
+        let hover = theme.surface_hover;
+        div()
+            .id(id)
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(24.0))
+            .px(px(8.0))
+            .rounded(px(tokens.radius))
+            .border_1()
+            .border_color(theme.border)
+            .text_size(px(tokens.secondary_font_size))
+            .when(enabled, move |s| {
+                s.cursor_pointer()
+                    .hover(move |s| s.bg(hover))
+                    .on_click(on_click)
+            })
+            .when(!enabled, |s| s.opacity(0.5))
+            .child(label)
+            .child(probe(&self.env.regions, Region::Assistant(region)))
+            .into_any_element()
+    }
+
+    /// **Stop**: the kill switch. It looks like a danger button while there is something to stop.
+    fn stop_button(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+        let (theme, tokens) = (look.theme, look.tokens);
+        let enabled = self.can_stop(cx);
+        let danger = theme.danger;
+        div()
+            .id("assistant-stop")
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(24.0))
+            .px(px(8.0))
+            .rounded(px(tokens.radius))
+            .border_1()
+            .border_color(if enabled { danger } else { theme.border })
+            .text_color(if enabled { danger } else { theme.muted })
+            .text_size(px(tokens.secondary_font_size))
+            .when(enabled, move |s| {
+                s.cursor_pointer()
+                    .hover(move |s| s.bg(danger.opacity(0.12)))
+                    .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
+            })
+            .when(!enabled, |s| s.opacity(0.5))
+            .tooltip(|_, cx| {
+                cx.new(|_| {
+                    TextTooltip("Stop Mawas: deny what it asks and interrupt its turn".into())
+                })
+                .into()
+            })
+            .child("Stop")
+            .child(probe(&self.env.regions, Region::Assistant("stop")))
+            .into_any_element()
+    }
+
+    /// The mode chip: what Mawas may do, opening the menu that switches it.
+    fn mode_chip(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+        let (theme, tokens) = (look.theme, look.tokens);
+        let label = self.mode.map_or("Mode…", MawasMode::label);
+        let help = self.mode.map_or("", MawasMode::help);
+        let enabled = self.connected(cx) && self.mode.is_some();
+        let hover = theme.surface_hover;
+        div()
+            .id("assistant-mode")
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(4.0))
+            .h(px(24.0))
+            .px(px(8.0))
+            .rounded(px(tokens.radius))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.surface)
+            .text_size(px(tokens.secondary_font_size))
+            .when(enabled, move |s| {
+                s.cursor_pointer()
+                    .hover(move |s| s.bg(hover))
+                    .on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
+                        window.dispatch_action(Box::new(ShowAssistantModeMenu(e.position())), cx);
+                    }))
+            })
+            .when(!enabled, |s| s.opacity(0.5))
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip(help.into())).into())
+            .child(label)
+            .child(icon(Icon::ChevronDown, 12.0, theme.muted))
+            .child(probe(&self.env.regions, Region::Assistant("mode")))
             .into_any_element()
     }
 
@@ -1202,8 +1631,10 @@ impl AssistantPanel {
 
 impl Render for AssistantPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.renders += 1;
         self.env.regions.rendered(cx.entity_id());
         self.ensure_open(cx);
+        self.ensure_policy(cx);
         if self.focus_wanted
             && let Some(chat) = self.session(cx).and_then(|s| self.chats.get(&s))
         {
@@ -1215,6 +1646,33 @@ impl Render for AssistantPanel {
         let header = self.render_header(&look, cx);
         let body = self.render_body(&look, cx);
         let (theme, tokens) = (look.theme, look.tokens);
+        let notes: Vec<AnyElement> = [
+            self.mode_note
+                .as_ref()
+                .map(|note| (note, theme.muted, "mode-note")),
+            self.error
+                .as_ref()
+                .map(|error| (error, theme.danger, "error")),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|(text, color, region)| {
+            div()
+                .relative()
+                .flex_none()
+                .px(px(tokens.spacing * 3.0))
+                .py(px(tokens.spacing))
+                .border_b_1()
+                .border_color(theme.border)
+                .text_color(color)
+                .text_size(px(tokens.secondary_font_size))
+                .child(SharedString::from(text.clone()))
+                .child(probe(&self.env.regions, Region::Assistant(region)))
+                .into_any_element()
+        })
+        .collect();
+        let rail = (self.rail_open && self.connected(cx)).then(|| self.render_rail(&look, cx));
+        let asks = self.render_chat_asks(&look, cx);
         div()
             .id("assistant-panel")
             .size_full()
@@ -1224,6 +1682,33 @@ impl Render for AssistantPanel {
             .text_color(theme.fg)
             .text_size(px(tokens.font_size))
             .child(header)
-            .child(div().relative().flex_1().min_h_0().child(body))
+            .children(notes)
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .relative()
+                                    .flex()
+                                    .flex_col()
+                                    .w_full()
+                                    .max_w(px(CONVERSATION_WIDTH))
+                                    .h_full()
+                                    .children(asks)
+                                    .child(div().relative().flex_1().min_h_0().child(body)),
+                            ),
+                    )
+                    .children(rail),
+            )
     }
 }

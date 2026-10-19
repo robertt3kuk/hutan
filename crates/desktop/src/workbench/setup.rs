@@ -457,10 +457,7 @@ impl Workbench {
                 .await;
             if let Err(error) = stored {
                 this.update(cx, |this, cx| {
-                    this.set_notice(
-                        format!("Cannot choose the assistant's backend: {error}"),
-                        cx,
-                    );
+                    this.set_notice(format!("Cannot choose Mawas's backend: {error}"), cx);
                 })
                 .ok();
             }
@@ -1153,8 +1150,8 @@ impl Workbench {
                 auto.into_any_element(),
             ))
             .child(self.setup_row(
-                "Assistant",
-                "Off unless you turn it on. Answers questions about your work through one of your logged-in agents, in a page of the left sidebar.",
+                "Mawas",
+                "Off unless you turn it on. Your assistant: answers questions about your work through one of your logged-in agents, and acts on your behalf only after you approve each change.",
                 assistant.into_any_element(),
             ))
             .when(state.assistant_enabled, |s| {
@@ -1489,8 +1486,8 @@ impl Workbench {
                 notifications,
             ))
             .child(self.setup_row(
-                "Global shortcut for the Assistant",
-                "Opens the Assistant from any app. Off unless you choose one.",
+                "Global shortcut for Mawas",
+                "Opens Mawas from any app. Off unless you choose one.",
                 shortcuts,
             ))
             .into_any_element();

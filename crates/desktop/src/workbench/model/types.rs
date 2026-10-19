@@ -17,17 +17,6 @@ impl PanelId {
     }
 }
 
-/// Panels that only ever live in the left dock, as a page of the left sidebar: the Assistant is
-/// a left-nav page, never a right-dock or center item (`docs/design.md` § Layout).
-pub const LEFT_ONLY_PANELS: [&str; 1] = ["assistant"];
-
-impl PanelId {
-    /// Whether this panel may only be placed in the left dock.
-    pub fn is_left_only(&self) -> bool {
-        LEFT_ONLY_PANELS.contains(&self.as_str())
-    }
-}
-
 impl From<&str> for PanelId {
     fn from(value: &str) -> Self {
         Self(value.to_owned())
@@ -306,8 +295,6 @@ pub enum ModelError {
     NotAPanel,
     #[error("panel `{0}` is not open")]
     NoSuchPanel(PanelId),
-    #[error("panel `{0}` lives in the left sidebar only")]
-    LeftOnly(PanelId),
     #[error("unknown preset `{0}`")]
     UnknownPreset(String),
     #[error("no split at path {0:?}")]

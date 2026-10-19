@@ -1,6 +1,6 @@
 //! The chrome of the two sidebars (Orca's layout, `docs/design.md` § Layout):
 //!
-//! - **Left**: a nav list (Search, Tasks, Agents, Assistant when `assistant.enabled`, then any
+//! - **Left**: a nav list (Search, Tasks, Agents, Mawas when `assistant.enabled`, then any
 //!   other panel the user put in the left dock), the active page below it (Projects by default;
 //!   a nav item replaces the project list with its page and shows a back row), and a bottom
 //!   toolbar (New session, Settings). The pages are the left dock's panels; the active one is
@@ -36,7 +36,7 @@ const STRIP_GAP: f32 = 4.0;
 pub enum NavTarget {
     /// Open the jump palette (⌘P / ⌘J): workspaces, sessions, history.
     Search,
-    /// Show the Assistant page (and put the keyboard in its composer).
+    /// Show Mawas Home, a tab of the center (and put the keyboard in its composer).
     Assistant,
     /// Open or close the Agent Dashboard drawer.
     Agents,
@@ -121,14 +121,16 @@ impl Workbench {
             },
         ];
         if self.assistant_enabled() {
+            // Home is a tab of the center: the row is selected while that tab is the one shown.
+            let home = ItemRef::panel("assistant");
             entries.push(NavEntry {
                 key: "assistant".to_owned(),
-                label: "Assistant".into(),
+                label: "Mawas".into(),
                 icon: Some(Icon::Sparkles),
                 glyph: "✦".into(),
                 badge: None,
                 target: NavTarget::Assistant,
-                selected: selected("assistant"),
+                selected: self.state.active_center_item().as_ref() == Some(&home),
             });
         }
         // Whatever else the user keeps in the left dock stays reachable.
@@ -196,10 +198,7 @@ impl Workbench {
                 let target = entry.target.clone();
                 let dock_index = match &entry.target {
                     NavTarget::Page(panel) => dock.panels.iter().position(|p| p == panel),
-                    NavTarget::Assistant => {
-                        dock.panels.iter().position(|p| p.as_str() == "assistant")
-                    }
-                    NavTarget::Search | NavTarget::Agents => None,
+                    NavTarget::Search | NavTarget::Agents | NavTarget::Assistant => None,
                 };
                 let menu_panel = match &entry.target {
                     NavTarget::Page(panel) => Some(panel.clone()),
@@ -235,16 +234,7 @@ impl Workbench {
                             NavTarget::Search => {
                                 window.dispatch_action(Box::new(actions::OpenJump), cx);
                             }
-                            NavTarget::Assistant => {
-                                if this.state.docks.left.visible
-                                    && this.state.docks.left.active.as_ref().map(PanelId::as_str)
-                                        == Some("assistant")
-                                {
-                                    this.open_panel("sessions", cx);
-                                } else {
-                                    this.open_assistant(window, cx);
-                                }
-                            }
+                            NavTarget::Assistant => this.open_assistant(window, cx),
                             NavTarget::Page(panel) => this.toggle_left_page(panel, cx),
                             NavTarget::Agents => {}
                         }

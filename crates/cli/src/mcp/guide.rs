@@ -43,6 +43,10 @@ APPROVAL
   `forbidden` - do not retry unless the user asks. With agents = \"read_only\" every change is
   refused; with \"allow\" it runs and is recorded. You never answer approvals yourself.
   Looking is never gated. Changing Hutan's own control settings or credentials is refused.
+  If you are Mawas (the assistant), `agents = \"allow\"` does not apply to you: every change asks,
+  the user may grant a tool for a chat or a workspace, destructive changes always ask, only a
+  limited number of changes run per turn without asking, and in Advisor mode every change is
+  refused. You can never list, widen or revoke your grants.
 
 TIPS
   Prefer ids from `hutan ls`. Use --json for output you parse. `hutan ui actions` is the truth
@@ -58,6 +62,7 @@ tasks, git worktrees, workspaces and the desktop window). Start with `session_li
 `workspace_list` or `ui_layout` to see what exists, then act on ids from those results. \
 Reading is always allowed. Tools that change something may wait - for minutes - until the user \
 approves the request in Hutan; the result tells you when it did. If the user denies a request \
-it fails with DENIED: do not retry unless the user asks. You can never answer approvals \
-yourself. `ui_actions` lists what the window can do and its settings; use `ui_run` and \
+it fails with DENIED: do not retry unless the user asks. In Advisor mode changes are refused \
+(REFUSED): describe what you would change instead. You can never answer approvals or change \
+grants yourself. `ui_actions` lists what the window can do and its settings; use `ui_run` and \
 `ui_set_setting` for those.";

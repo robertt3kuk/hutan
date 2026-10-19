@@ -219,3 +219,17 @@ pub struct WorktreeRow {
     pub base: String,
     pub created_at_ms: u64,
 }
+
+/// One grant of the control gate (`control_grants`, protocol 0.31): `tool` may run without an
+/// approval for Mawas chats of `workspace_id`, or for the chat `chat_session_id` alone (exactly
+/// one of the two is set).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantRow {
+    pub id: u64,
+    pub tool: String,
+    pub workspace_id: Option<WorkspaceId>,
+    pub chat_session_id: Option<SessionId>,
+    pub created_ms: u64,
+    /// The client that answered the approval (`desktop`, `cli`, ...).
+    pub created_by: String,
+}

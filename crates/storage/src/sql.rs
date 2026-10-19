@@ -14,8 +14,8 @@ use serde::de::DeserializeOwned;
 use crate::error::{Result, StorageError};
 use crate::rows::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
-    CreatedBy, EpochEnd, EpochRecord, ProviderRow, QuestionOutcome, QuestionRow, RecentProject,
-    SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
+    CreatedBy, EpochEnd, EpochRecord, GrantRow, ProviderRow, QuestionOutcome, QuestionRow,
+    RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
 };
 
 pub const EPOCH_HISTORY_KEY: &str = "epoch_history";
@@ -92,6 +92,12 @@ pub enum Write {
     /// Removes a key (nothing happens for a missing one).
     DeleteMeta {
         key: String,
+    },
+    /// Stores a grant of the control gate (`control_grants`); an existing id is left alone.
+    InsertGrant(Box<GrantRow>),
+    /// Removes a grant (nothing happens for a missing one).
+    DeleteGrant {
+        id: u64,
     },
     /// Appends to the epoch history, keeping the newest [`EPOCH_HISTORY_KEPT`].
     RecordEpoch(EpochRecord),
@@ -271,6 +277,26 @@ pub fn apply(conn: &Connection, write: &Write) -> Result<()> {
         Write::DeleteMeta { key } => {
             conn.execute("DELETE FROM app_meta WHERE key = ?1", [key])
                 .map_err(StorageError::sqlite("deleting from app_meta"))?;
+        }
+        Write::InsertGrant(row) => {
+            conn.execute(
+                "INSERT INTO control_grants \
+                     (id, tool, workspace_id, chat_session_id, created_ms, created_by) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (id) DO NOTHING",
+                params![
+                    ms(row.id),
+                    row.tool,
+                    row.workspace_id.map(|w| w.to_string()),
+                    row.chat_session_id.map(|s| s.to_string()),
+                    ms(row.created_ms),
+                    row.created_by,
+                ],
+            )
+            .map_err(StorageError::sqlite("writing a control grant"))?;
+        }
+        Write::DeleteGrant { id } => {
+            conn.execute("DELETE FROM control_grants WHERE id = ?1", [ms(*id)])
+                .map_err(StorageError::sqlite("deleting a control grant"))?;
         }
         Write::RecordEpoch(record) => record_epoch(conn, *record)?,
         Write::RecordEpochStop {
@@ -907,6 +933,45 @@ pub fn approvals(
         })
         .map_err(StorageError::sqlite(context))?;
     collect(rows, context)
+}
+
+/// The grants of the control gate, newest first.
+pub fn control_grants(conn: &Connection) -> Result<Vec<GrantRow>> {
+    let context = "reading control grants";
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, tool, workspace_id, chat_session_id, created_ms, created_by \
+             FROM control_grants ORDER BY id DESC",
+        )
+        .map_err(StorageError::sqlite(context))?;
+    let rows = stmt
+        .query_map([], |row| Ok(grant_from(row)))
+        .map_err(StorageError::sqlite(context))?;
+    collect(rows, context)
+}
+
+fn grant_from(row: &Row<'_>) -> Result<GrantRow> {
+    let id: i64 = row.get(0).map_err(read_err)?;
+    let workspace: Option<String> = row.get(2).map_err(read_err)?;
+    let chat: Option<String> = row.get(3).map_err(read_err)?;
+    Ok(GrantRow {
+        id: unms(id),
+        tool: row.get(1).map_err(read_err)?,
+        workspace_id: workspace
+            .map(|text| {
+                text.parse()
+                    .map_err(|e| StorageError::corrupt("control_grants.workspace_id", e))
+            })
+            .transpose()?,
+        chat_session_id: chat
+            .map(|text| {
+                text.parse()
+                    .map_err(|e| StorageError::corrupt("control_grants.chat_session_id", e))
+            })
+            .transpose()?,
+        created_ms: unms(row.get(4).map_err(read_err)?),
+        created_by: row.get(5).map_err(read_err)?,
+    })
 }
 
 pub fn approvals_resolved_since(conn: &Connection, since_ms: u64) -> Result<Vec<ApprovalRow>> {

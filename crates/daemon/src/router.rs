@@ -9,6 +9,7 @@ use bytes::Bytes;
 use hutan_core::{DeliveryActor, TerminalId};
 use hutan_protocol::chat::ChatSent;
 use hutan_protocol::control::{ErrorBody, ErrorCode};
+use hutan_protocol::grants::ControlGrants;
 use hutan_protocol::messages::{
     ClientKind, DaemonStatusInfo, Empty, Request, SessionResult, Subscribed,
 };
@@ -355,6 +356,13 @@ impl Router {
             }
             Request::DaemonSettingsGet(_) => ok(&self.settings.get().await?),
             Request::DaemonSettingsSet(req) => ok(&self.settings.set(req).await?),
+            Request::ControlGrantsList(req) => ok(&ControlGrants {
+                grants: self.control.grants_list(req.workspace_id).await,
+            }),
+            Request::ControlGrantRevoke(req) => {
+                self.control.grant_revoke(req.id)?;
+                ok(&Empty {})
+            }
             Request::NotifyList(_) => ok(&NotifyList {
                 intents: self.notify.list(),
             }),
@@ -513,7 +521,7 @@ impl Router {
         // `session.send_text`) lets it.
         let agent = self.agent_origin(conn).await;
         if let Some(origin) = agent
-            && !self.control.input_allowed(origin)
+            && !self.control.input_allowed(origin).await
         {
             tracing::debug!(
                 conn = %conn.id(),
@@ -663,6 +671,10 @@ fn classification(request: &Request) -> (&'static str, Access) {
         // `[control] agents` says: an agent must not widen its own permissions (ADR 0016).
         Request::DaemonSettingsGet(_) => ("daemon.settings.get", Read),
         Request::DaemonSettingsSet(_) => ("daemon.settings.set", UserOnly),
+        // The grants of Mawas's approvals are the user's: an agent must not read, widen or
+        // take away what the user allowed it (ADR 0017).
+        Request::ControlGrantsList(_) => ("control.grants.list", UserOnly),
+        Request::ControlGrantRevoke(_) => ("control.grants.revoke", UserOnly),
         Request::AssistantList(_) => ("assistant.list", Read),
         Request::NotifyList(_) => ("notify.list", Read),
         Request::NotifyAck(_) => ("notify.ack", Mutate),

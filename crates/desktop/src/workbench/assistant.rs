@@ -1,11 +1,11 @@
-//! Workbench behavior around the Assistant panel (M16-B): ⌘K (or a bound key) opens and focuses it, a
-//! history hit that is an assistant conversation shows it there, and "Send to agent" of a
-//! terminal block becomes a structured block attachment when the target is an assistant.
+//! Workbench behavior around Mawas Home (M16-B, MW-1): ⌘K (or a bound key, or the nav row) opens
+//! and focuses it, a history hit that is a Mawas conversation shows it there, and "Send to
+//! agent" of a terminal block becomes a structured block attachment when the target is Mawas.
 //!
-//! The panel is a registered panel like the others (`panels::assistant`); the workbench only
-//! reveals it, hands it a session or a chip, and puts the keyboard in its composer. Nothing
-//! here reads a terminal or a file: chips describe a source and the daemon resolves them when
-//! the message is sent.
+//! Home is a registered panel like the others (`panels::assistant`), shown as one tab of the
+//! center; the workbench only reveals it, tells it whether it is on screen, hands it a session
+//! or a chip, and puts the keyboard in its composer. Nothing here reads a terminal or a file:
+//! chips describe a source and the daemon resolves them when the message is sent.
 
 use gpui::{Context, Entity, Window};
 use hutan_core::SessionId;
@@ -13,11 +13,11 @@ use hutan_core::SessionId;
 use super::actions;
 use super::chat::ContextChip;
 use super::model::PanelId;
-use super::panels::{AssistantPanel, ScopeKey};
+use super::panels::{AssistantPanel, MawasMode, ScopeKey};
 use super::view::Workbench;
 
 impl Workbench {
-    /// `assistant.enabled`: off hides the panel and its commands and shortcuts.
+    /// `assistant.enabled`: off hides Mawas (its nav row, commands and shortcuts).
     pub fn assistant_enabled(&self) -> bool {
         self.settings
             .get::<crate::settings::AssistantSettings>()
@@ -41,7 +41,7 @@ impl Workbench {
         self.sync_hotkey(cx);
     }
 
-    /// Reveals the Assistant panel (in its default dock when it is closed) and returns it.
+    /// Reveals Mawas Home (as a tab of the center when it is closed) and returns it.
     pub(crate) fn assistant_panel(
         &mut self,
         window: &mut Window,
@@ -55,16 +55,16 @@ impl Workbench {
         view.downcast::<AssistantPanel>().ok()
     }
 
-    /// ⌘K "Assistant: Open / Focus" (and any key bound to it): shows the panel with the assistant of its scope
-    /// (the first use asks the daemon to open it) and puts the keyboard in its composer. No
-    /// terminal is started and no vendor agent is run.
+    /// ⌘K "Mawas: Open" (and any key bound to it, and the nav row): shows Home with the chat of
+    /// its scope (the first use asks the daemon to open it) and puts the keyboard in its
+    /// composer. No terminal is started.
     pub fn open_assistant(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.assistant_enabled() {
-            self.set_notice("The assistant is off (assistant.enabled)", cx);
+            self.set_notice("Mawas is off (assistant.enabled)", cx);
             return;
         }
         let Some(panel) = self.assistant_panel(window, cx) else {
-            self.set_notice("The Assistant panel is not available", cx);
+            self.set_notice("Mawas Home is not available", cx);
             return;
         };
         self.assistant_last = true;
@@ -74,8 +74,23 @@ impl Workbench {
         });
     }
 
-    /// Opens the menu of the Assistant page's scope dropdown at `position`: Global and the
-    /// workspace, the shown one checked.
+    /// ⌘K "Mawas: New chat": Home, with a fresh conversation in its scope.
+    pub fn new_mawas_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.assistant_enabled() {
+            self.set_notice("Mawas is off (assistant.enabled)", cx);
+            return;
+        }
+        let Some(panel) = self.assistant_panel(window, cx) else {
+            return;
+        };
+        self.assistant_last = true;
+        panel.update(cx, |panel, cx| {
+            panel.new_chat(cx);
+        });
+    }
+
+    /// Opens the menu of Home's scope dropdown at `position`: Global and the workspace, the
+    /// shown one checked.
     pub fn show_assistant_scope_menu(
         &mut self,
         position: gpui::Point<gpui::Pixels>,
@@ -106,7 +121,34 @@ impl Workbench {
         self.open_menu(position, entries, window, cx);
     }
 
-    /// Opens the menu of the Assistant page's backend·model chip at `position`: Switch model…
+    /// Opens the menu of Home's mode chip at `position`: Ask before acting and Advisor, the
+    /// current one checked. Choosing one switches `assistant.mode`; it applies from the next
+    /// message.
+    pub fn show_assistant_mode_menu(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(panel) = self.panel::<AssistantPanel>("assistant") else {
+            return;
+        };
+        let current = panel.read(cx).mode();
+        let entries = MawasMode::ALL
+            .into_iter()
+            .map(|mode| {
+                let panel = panel.clone();
+                let mut entry = Self::entry(mode.label(), move |_, _, cx| {
+                    panel.update(cx, |panel, cx| panel.set_mode(mode, cx));
+                });
+                entry.checked = current == Some(mode);
+                entry
+            })
+            .collect();
+        self.open_menu(position, entries, window, cx);
+    }
+
+    /// Opens the menu of Home's backend·model chip at `position`: Switch model…
     /// (the model of the running assistant) and the chooser of backends and models.
     pub fn show_assistant_model_menu(
         &mut self,
@@ -136,7 +178,7 @@ impl Workbench {
         self.open_menu(position, vec![switch, chooser], window, cx);
     }
 
-    /// Whether `session` is an assistant conversation.
+    /// Whether `session` is a Mawas conversation.
     pub(crate) fn is_assistant(&self, session: SessionId, cx: &gpui::App) -> bool {
         self.sessions
             .read(cx)
@@ -145,7 +187,7 @@ impl Workbench {
             .is_some_and(|chat| chat.is_assistant())
     }
 
-    /// Shows the assistant conversation `session` in the Assistant panel, in its own scope, with
+    /// Shows the Mawas conversation `session` on Home, in its own scope, with
     /// the keyboard in its composer. `false` (and nothing shown) when it is not one.
     pub fn show_assistant_session(
         &mut self,

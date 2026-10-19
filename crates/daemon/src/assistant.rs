@@ -19,9 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hutan_core::agent::MessageRole;
-use hutan_core::{
-    AgentEvent, AgentEventKind, ApprovalPolicy, SandboxMode, SessionId, TerminalId, WorkspaceId,
-};
+use hutan_core::{AgentEvent, AgentEventKind, SessionId, TerminalId, WorkspaceId};
 use hutan_index::{Role, SessionTextQuery, Source};
 use hutan_protocol::account::{HARNESS_CLAUDE, HARNESS_OMP};
 use hutan_protocol::assistant::{
@@ -47,7 +45,7 @@ use crate::context::{
     merge_chunks, one_line, redact_and_bound, sniff_image,
 };
 use crate::context_file::{FileContext, read_file, read_picked_bytes, read_picked_file};
-use crate::harness::CLAUDE_ASSISTANT_MODE;
+use crate::harness::assistant_profile;
 use crate::history::HistoryService;
 use crate::registry::RegistryHandle;
 use crate::terminals::TerminalHub;
@@ -63,7 +61,7 @@ const SNIPPET_CHARS: usize = 300;
 const CATALOG_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The system prompt of an assistant created by `assistant.open`.
-pub const SYSTEM_PROMPT: &str = "You are Hutan's assistant, built into a developer's terminal \
+pub const SYSTEM_PROMPT: &str = "You are Mawas, Hutan's assistant, built into a developer's terminal \
 workspace. Answer concisely and concretely. A message may end with attached context between \
 `--- attached context` markers: read-only excerpts the user chose to share (terminal output, \
 files, conversations with coding agents, search results), each introduced by a bracketed \
@@ -572,8 +570,8 @@ impl AssistantService {
             .cloned()
             .ok_or_else(|| internal(format!("workspace {} has no folder", workspace.name)))?;
         let mut title = match Self::scope_of(workspace) {
-            AssistantScope::Global => "Assistant".to_owned(),
-            AssistantScope::Workspace => format!("Assistant · {}", workspace.name),
+            AssistantScope::Global => "Mawas".to_owned(),
+            AssistantScope::Workspace => format!("Mawas · {}", workspace.name),
         };
         if existing > 0 {
             title.push_str(&format!(" {}", existing + 1));
@@ -605,18 +603,24 @@ impl AssistantService {
             }
             harness => {
                 request.agent = harness.harness().unwrap_or(AGENT_CODEX).to_owned();
+                // What the agent starts with follows `assistant.mode` (`assistant_profile`): Ask
+                // before acting is Claude Code's default permission mode and a Codex
+                // `workspace-write` sandbox that asks on request; Advisor is Claude Code's
+                // `plan` mode and a read-only Codex sandbox that never asks (a refused write
+                // fails inside the sandbox instead of waiting for an answer nobody gave). OMP
+                // is steered by its command line (`Harnesses::acp_config`).
+                let profile = assistant_profile(
+                    harness.harness().unwrap_or(AGENT_CODEX),
+                    self.registry.chats().assistant_policy().mode,
+                );
                 match harness {
-                    // Claude Code's read-only mode.
                     AssistantBackend::Claude => {
-                        request.mode = Some(CLAUDE_ASSISTANT_MODE.to_owned());
+                        request.mode = profile.session_mode.map(str::to_owned);
                     }
-                    // A read-only sandbox, and nothing asks (a refused write fails inside the
-                    // sandbox instead of waiting for an answer nobody gave).
                     AssistantBackend::Codex => {
-                        request.approval_policy = Some(ApprovalPolicy::Never);
-                        request.sandbox = Some(SandboxMode::ReadOnly);
+                        request.approval_policy = Some(profile.approval_policy);
+                        request.sandbox = Some(profile.sandbox);
                     }
-                    // OMP: its tools are limited on the command line (`Harnesses::acp_config`).
                     AssistantBackend::Omp | AssistantBackend::Provider => {}
                 }
                 self.registry.create_assistant_chat(request).await

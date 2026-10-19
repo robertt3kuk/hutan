@@ -19,8 +19,8 @@ pub use persist::{LoadOutcome, STATE_VERSION};
 pub use preset::{CenterLayout, LayoutPreset};
 pub use tree::MIN_RATIO;
 pub use types::{
-    Axis, Direction, Dock, DockPosition, Docks, Edge, FocusTarget, ItemRef, LEFT_ONLY_PANELS,
-    ModelError, Pane, PaneId, PaneTree, PanelId, Rect,
+    Axis, Direction, Dock, DockPosition, Docks, Edge, FocusTarget, ItemRef, ModelError, Pane,
+    PaneId, PaneTree, PanelId, Rect,
 };
 pub use workspace::WorkspaceLayout;
 
@@ -251,38 +251,6 @@ impl WorkbenchState {
             .unwrap_or(0)
     }
 
-    /// Left-only panels (the Assistant) found in the right or bottom dock or in the center (a
-    /// saved layout, a preset, a hand-edited file) go to the end of the left dock, and the left
-    /// dock keeps its active page.
-    fn gather_left_only(&mut self) {
-        let mut strays: Vec<PanelId> = Vec::new();
-        for pos in [DockPosition::Right, DockPosition::Bottom] {
-            self.docks.get_mut(pos).panels.retain(|p| {
-                let stray = p.is_left_only();
-                if stray {
-                    strays.push(p.clone());
-                }
-                !stray
-            });
-        }
-        for pane in self.center.panes_mut() {
-            pane.items.retain(|item| match item.as_panel() {
-                Some(panel) if panel.is_left_only() => {
-                    strays.push(panel.clone());
-                    false
-                }
-                _ => true,
-            });
-            pane.active = pane.active.min(pane.items.len().saturating_sub(1));
-        }
-        let left = &mut self.docks.left;
-        for panel in strays {
-            if !left.panels.contains(&panel) {
-                left.panels.push(panel);
-            }
-        }
-    }
-
     /// Restore every invariant. Cheap and idempotent; mutators call it, and it sanitizes states
     /// loaded from disk.
     pub fn normalize(&mut self) {
@@ -299,8 +267,6 @@ impl WorkbenchState {
             }
         }
         self.next_pane = next;
-
-        self.gather_left_only();
 
         // Each panel is placed at most once; docks win over the center.
         let mut placed: HashSet<PanelId> = HashSet::new();

@@ -177,7 +177,7 @@ impl AccountService {
     async fn claude_ready(&self) -> Result<(), String> {
         logged_in(self.claude_accounts().await)?;
         let harnesses = self.harnesses.clone();
-        tokio::task::spawn_blocking(move || harnesses.acp_config(HARNESS_CLAUDE, true))
+        tokio::task::spawn_blocking(move || harnesses.acp_config(HARNESS_CLAUDE, None))
             .await
             .map_err(|e| format!("locating the adapter: {e}"))?
             .map(drop)

@@ -27,6 +27,7 @@ use hutan_protocol::chat::{
     QuestionAnswer, QuestionInfo, QuestionList, QuestionListRequest,
 };
 use hutan_protocol::daemon_settings::{DaemonSettingSet, DaemonSettings};
+use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
 use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, ClientInfo, Empty, Event, Hello,
     Request, ResumePoint, SessionInfo, SessionRef, SessionResult, Welcome, WorkspaceCreate,
@@ -136,6 +137,8 @@ pub(crate) const HISTORY_SESSIONS_CAPABILITY: &str = "history.sessions";
 /// Capability for `session.close` / `session.reopen`, the `session.closed` event and
 /// `HistorySessionRow.closed` (protocol 0.30).
 pub(crate) const SESSION_CLOSE_CAPABILITY: &str = "session.close";
+/// Capability for `control.grants.list` / `.revoke` (protocol 0.31).
+pub(crate) const CONTROL_GRANTS_CAPABILITY: &str = "control.grants";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -166,6 +169,7 @@ const CAPABILITIES: &[&str] = &[
     DAEMON_SETTINGS_CAPABILITY,
     HISTORY_SESSIONS_CAPABILITY,
     SESSION_CLOSE_CAPABILITY,
+    CONTROL_GRANTS_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -804,6 +808,37 @@ impl Client {
             value,
         }))
         .await
+    }
+
+    /// True when the daemon advertised capability `control.grants` (protocol 0.31): the grants
+    /// Mawas's approvals store can be listed and revoked.
+    pub fn supports_control_grants(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == CONTROL_GRANTS_CAPABILITY)
+    }
+
+    /// `control.grants.list`: the grants of the control gate, newest first; with `workspace_id`
+    /// only those that apply to that workspace's chats. Refused with `forbidden` for a client
+    /// that runs inside an agent's session.
+    pub async fn control_grants(
+        &self,
+        workspace_id: Option<WorkspaceId>,
+    ) -> Result<Vec<ControlGrant>, ClientError> {
+        let list: ControlGrants = self
+            .call(Request::ControlGrantsList(ControlGrantsList {
+                workspace_id,
+            }))
+            .await?;
+        Ok(list.grants)
+    }
+
+    /// `control.grants.revoke`: removes one grant (`not_found` when it is gone already).
+    pub async fn control_grant_revoke(&self, id: u64) -> Result<(), ClientError> {
+        self.call::<Empty>(Request::ControlGrantRevoke(ControlGrantRevoke { id }))
+            .await
+            .map(|_| ())
     }
 
     /// `assistant.reset`: the scope inherits its backend again.

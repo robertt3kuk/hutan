@@ -332,7 +332,7 @@ fn state_is_saved_debounced_and_restored(cx: &mut TestAppContext) {
 
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 3);
+    assert_eq!(on_disk["version"], 4);
 
     // A second window (a "restart") restores exactly that layout.
     let (view2, cx2) = open(cx, Some(path.clone()));

@@ -47,9 +47,10 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::bus::EventBus;
+use crate::config::AssistantMode;
 use crate::context::Attached;
 use crate::direct::{DirectSession, Target};
-use crate::harness::{Harnesses, is_harness_agent};
+use crate::harness::{Harnesses, assistant_profile, is_harness_agent};
 use crate::mcp_wiring::{McpServerSpec, McpWiring};
 use crate::partial::{Flush, PARTIAL_INTERVAL, Partials};
 use crate::providers::ProviderService;
@@ -87,6 +88,15 @@ const SLEEP_WAIT: Duration = Duration::from_secs(30);
 /// restart recovery's chip for a chat that started a new conversation (`hutan-client`).
 const NEW_CONVERSATION_NOTICE: &str =
     "The agent started a new conversation; the transcript is kept.";
+
+/// What Mawas may do right now: `assistant.mode` and `assistant.max_actions_per_turn`, both live
+/// settings of the daemon (`daemon.settings.set`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssistantPolicy {
+    pub mode: AssistantMode,
+    /// Mutating requests Mawas may make in one turn before every further one asks.
+    pub max_actions: u32,
+}
 
 /// What a chat session is, as stored in the session row's `spec_json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,6 +217,9 @@ struct Live {
     delivery: Mutex<Delivery>,
     /// An assistant: the idle sleeper may stop its agent.
     assistant: bool,
+    /// The mode an assistant's agent was started in. A change of `assistant.mode` restarts the
+    /// agent before the next turn (`ChatManager::awake`).
+    mode: AssistantMode,
     /// The idle sleeper stops the agent; its exit puts the session to sleep, it does not end
     /// it.
     sleeping: AtomicBool,
@@ -216,7 +229,13 @@ struct Live {
 }
 
 impl Live {
-    fn new(id: SessionId, backend: Backend, last_seq: u64, assistant: bool) -> Arc<Self> {
+    fn new(
+        id: SessionId,
+        backend: Backend,
+        last_seq: u64,
+        assistant: bool,
+        mode: AssistantMode,
+    ) -> Arc<Self> {
         Arc::new(Self {
             id,
             backend,
@@ -228,6 +247,7 @@ impl Live {
             partials: Mutex::new(Partials::default()),
             delivery: Mutex::new(Delivery::default()),
             assistant,
+            mode,
             sleeping: AtomicBool::new(false),
             active_at: Mutex::new(Instant::now()),
         })
@@ -278,6 +298,8 @@ pub struct ChatManager {
     max_context_chars: Arc<AtomicUsize>,
     /// `assistant.idle_stop_secs` in milliseconds; `0` never puts an assistant to sleep.
     idle_stop_ms: AtomicU64,
+    /// `assistant.mode` and `assistant.max_actions_per_turn`, now.
+    policy: Mutex<AssistantPolicy>,
     live: Mutex<HashMap<SessionId, Arc<Live>>>,
     /// Assistants whose agent was stopped for being idle (or that a daemon restart brought
     /// back without starting it): sessions that are idle for their clients and have no
@@ -338,6 +360,21 @@ fn harness_error(error: &AgentError, agent: &str, program: &std::path::Path) -> 
     }
 }
 
+/// The journal's words when Mawas's mode changed: the agent restarts so the change applies to
+/// the turn that is about to start.
+fn mode_notice(mode: AssistantMode) -> &'static str {
+    match mode {
+        AssistantMode::Ask => {
+            "Mawas is now in “Ask before acting” mode: it can act, and every change asks you first. \
+             Its agent restarted so the change applies to this turn."
+        }
+        AssistantMode::Advisor => {
+            "Mawas is now in “Advisor” mode: it reads and advises, and cannot change anything. \
+             Its agent restarted so the change applies to this turn."
+        }
+    }
+}
+
 fn client_name(kind: Option<ClientKind>) -> &'static str {
     match kind {
         Some(ClientKind::Desktop) => "desktop",
@@ -366,6 +403,7 @@ impl ChatManager {
         providers: Arc<ProviderService>,
         max_context_chars: usize,
         idle_stop: Duration,
+        policy: AssistantPolicy,
         tmp_dir: PathBuf,
     ) -> Arc<Self> {
         // A daemon that was killed mid-turn left its images behind: nothing is in flight yet.
@@ -393,6 +431,7 @@ impl ChatManager {
             providers,
             max_context_chars: Arc::new(AtomicUsize::new(max_context_chars)),
             idle_stop_ms: AtomicU64::new(millis(idle_stop)),
+            policy: Mutex::new(policy),
             live: Mutex::new(HashMap::new()),
             asleep: Mutex::new(HashSet::new()),
             wakes: Mutex::new(HashMap::new()),
@@ -493,6 +532,43 @@ impl ChatManager {
     /// `assistant.idle_stop_secs` from now on (`Duration::ZERO`: never).
     pub(crate) fn set_assistant_idle_stop(&self, idle: Duration) {
         self.idle_stop_ms.store(millis(idle), Ordering::Relaxed);
+    }
+
+    /// `assistant.mode` and `assistant.max_actions_per_turn` from now on. The agent of an
+    /// assistant that runs in another mode restarts before its next turn ([`Self::awake`]);
+    /// the control gate reads the mode for each request.
+    pub(crate) fn set_assistant_policy(&self, mode: AssistantMode, max_actions: u32) {
+        *lock(&self.policy) = AssistantPolicy { mode, max_actions };
+    }
+
+    /// What Mawas may do, now.
+    pub(crate) fn assistant_policy(&self) -> AssistantPolicy {
+        *lock(&self.policy)
+    }
+
+    /// The turn the session's journal shows as open, if any: the control gate counts Mawas's
+    /// changes per turn.
+    pub(crate) fn current_turn(&self, id: SessionId) -> Option<TurnId> {
+        let live = lock(&self.live).get(&id).cloned()?;
+        *lock(&live.open_turn)
+    }
+
+    /// `spec` as it is started now: an assistant's session mode, approval policy and sandbox
+    /// follow `assistant.mode` (`assistant_profile`), whatever was stored when it was created,
+    /// so a mode change applies at the next start, wake or restore.
+    pub(crate) fn launch_spec(&self, spec: &ChatSpec) -> ChatSpec {
+        if !spec.assistant {
+            return spec.clone();
+        }
+        let profile = assistant_profile(&spec.agent, self.assistant_policy().mode);
+        let mut launch = spec.clone();
+        if is_harness_agent(&spec.agent) {
+            launch.mode = profile.session_mode.map(str::to_owned);
+        } else {
+            launch.approval_policy = profile.approval_policy;
+            launch.sandbox = profile.sandbox;
+        }
+        launch
     }
 
     /// Whether the session is an assistant whose agent is stopped: idle for its clients, with
@@ -599,7 +675,18 @@ impl ChatManager {
         loop {
             let live = lock(&self.live).get(&id).cloned();
             match live {
-                Some(live) if !live.sleeping.load(Ordering::Acquire) => return Ok(live),
+                Some(live) if !live.sleeping.load(Ordering::Acquire) => {
+                    // `assistant.mode` changed since this agent started: it starts again, in
+                    // the new mode, before it takes the message.
+                    if live.assistant
+                        && matches!(live.backend, Backend::Agent(_))
+                        && live.mode != self.assistant_policy().mode
+                        && self.restart_for_mode(&live).await
+                    {
+                        continue;
+                    }
+                    return Ok(live);
+                }
                 Some(_) => {
                     if Instant::now() >= deadline {
                         return Err(ErrorBody::new(
@@ -613,6 +700,48 @@ impl ChatManager {
                 None => return self.live(id),
             }
         }
+    }
+
+    /// Stops the agent of an assistant that runs in another mode than `assistant.mode` says,
+    /// the way the idle sleeper does: the session stays what it is for its clients, and the
+    /// caller wakes it, which starts the agent in the current mode and continues the stored
+    /// conversation. The journal says so. Not while a turn runs or anything waits for the
+    /// user (the change applies to the next turn): `false` then.
+    async fn restart_for_mode(&self, live: &Arc<Live>) -> bool {
+        let waiting = || {
+            !self.approval_list(Some(live.id)).approvals.is_empty()
+                || !self.question_list(Some(live.id)).questions.is_empty()
+        };
+        if waiting() {
+            return false;
+        }
+        live.sleeping.store(true, Ordering::Release);
+        let claimed = live
+            .busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
+        if !claimed || waiting() {
+            if claimed {
+                live.busy.store(false, Ordering::Release);
+            }
+            live.sleeping.store(false, Ordering::Release);
+            return false;
+        }
+        lock(&self.asleep).insert(live.id);
+        let mode = self.assistant_policy().mode;
+        info!(session = %live.id, from = live.mode.as_str(), to = mode.as_str(), "assistant mode changed; restarting its agent");
+        let notice = AgentEventDraft::new(AgentEventKind::Notice {
+            level: NoticeLevel::Info,
+            message: mode_notice(mode).to_owned(),
+        });
+        self.handle(live, notice).await;
+        let live = live.clone();
+        tokio::spawn(async move {
+            if let Backend::Agent(adapter) = &live.backend {
+                adapter.shutdown().await;
+            }
+        });
+        true
     }
 
     /// Starts the agent of a sleeping assistant (the registry knows how); returns once it runs.
@@ -692,6 +821,8 @@ impl ChatManager {
         cwd: PathBuf,
         spec: &ChatSpec,
     ) -> Result<Started, StartFailure> {
+        let launch = self.launch_spec(spec);
+        let spec = &launch;
         if is_harness_agent(&spec.agent) {
             return self.start_harness(id, cwd, spec).await;
         }
@@ -721,7 +852,13 @@ impl ChatManager {
         } = CodexAppServerAdapter::start(&codex, &start)
             .await
             .map_err(|e| StartFailure::agent(&e, provider_error(&e, &codex.program)))?;
-        let live = Live::new(id, Backend::Agent(adapter), last, spec.assistant);
+        let live = Live::new(
+            id,
+            Backend::Agent(adapter),
+            last,
+            spec.assistant,
+            self.assistant_policy().mode,
+        );
         self.adopt(&live);
         info!(session = %id, model = %started.model, resumed = started.resumed, "chat agent started");
         tokio::spawn(self.clone().pump(live, events));
@@ -738,8 +875,8 @@ impl ChatManager {
     ) -> Result<Started, StartFailure> {
         let harnesses = self.harnesses.clone();
         let agent = spec.agent.clone();
-        let assistant = spec.assistant;
-        let config = tokio::task::spawn_blocking(move || harnesses.acp_config(&agent, assistant))
+        let mode = spec.assistant.then(|| self.assistant_policy().mode);
+        let config = tokio::task::spawn_blocking(move || harnesses.acp_config(&agent, mode))
             .await
             .map_err(|e| {
                 ErrorBody::new(ErrorCode::Internal, format!("locating the agent: {e}"))
@@ -769,7 +906,13 @@ impl ChatManager {
         if !models.is_empty() {
             lock(&self.models).insert(spec.agent.clone(), (Instant::now(), models));
         }
-        let live = Live::new(id, Backend::Agent(adapter), last, spec.assistant);
+        let live = Live::new(
+            id,
+            Backend::Agent(adapter),
+            last,
+            spec.assistant,
+            self.assistant_policy().mode,
+        );
         self.adopt(&live);
         info!(session = %id, agent = %spec.agent, model = %started.model, resumed = started.resumed, "chat harness started");
         tokio::spawn(self.clone().pump(live, events));
@@ -829,7 +972,13 @@ impl ChatManager {
             },
             usage,
         );
-        let live = Live::new(id, Backend::Direct(session), last, false);
+        let live = Live::new(
+            id,
+            Backend::Direct(session),
+            last,
+            false,
+            AssistantMode::default(),
+        );
         self.adopt(&live);
         info!(session = %id, provider = %provider_id, %model, "direct chat started");
         tokio::spawn(self.clone().pump(live, events));
@@ -1378,7 +1527,7 @@ impl ChatManager {
     async fn harness_models(&self, agent: &str) -> Result<Vec<ModelInfo>, ErrorBody> {
         let harnesses = self.harnesses.clone();
         let name = agent.to_owned();
-        let located = tokio::task::spawn_blocking(move || harnesses.acp_config(&name, false))
+        let located = tokio::task::spawn_blocking(move || harnesses.acp_config(&name, None))
             .await
             .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("locating the agent: {e}")))?;
         let session_error = match located {

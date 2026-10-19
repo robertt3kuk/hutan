@@ -103,12 +103,16 @@ pub enum Command {
     /// (`hutan config ls|get|set|reset`)
     #[command(subcommand)]
     Config(ConfigCommand),
-    /// Ask the assistant a question, with context attached (shell output, files, agent
+    /// Ask Mawas, the assistant, a question, with context attached (shell output, files, agent
     /// transcripts, search results); streams the answer
     Ask(AskArgs),
-    /// Assistant sessions: direct chats with a scope (global, or one workspace)
+    /// Mawas, the assistant: its chats, with a scope (global, or one workspace)
     #[command(subcommand)]
     Assistant(AssistantCommand),
+    /// What Mawas may do without asking: the grants its approvals stored (`hutan grants
+    /// ls|revoke`)
+    #[command(subcommand)]
+    Grants(GrantsCommand),
     /// List the permission requests of agent chats that wait for an answer
     Approvals,
     /// Answer a permission request with one of the options it offers (see `hutan approvals`)
@@ -676,7 +680,7 @@ pub struct ChatSendArgs {
     #[arg(long)]
     pub wait: bool,
     /// Attach to the message, repeatable: file:<path>[:<first>-<last>], image:<path>, and for
-    /// an assistant chat block:<terminal>:<block>, recent:<terminal>:<lines>,
+    /// a Mawas chat block:<terminal>:<block>, recent:<terminal>:<lines>,
     /// agent:<session>[:<turns>], search:<query>
     #[arg(
         long = "attach",
@@ -690,8 +694,8 @@ pub struct ChatSendArgs {
 pub struct AskArgs {
     /// The question
     pub question: String,
-    /// Ask the assistant of this workspace: id, unique id prefix, or exact name (default:
-    /// $HUTAN_WORKSPACE, else the global assistant of Home)
+    /// Ask Mawas of this workspace: id, unique id prefix, or exact name (default:
+    /// $HUTAN_WORKSPACE, else the global Mawas of Home)
     #[arg(long = "ws", value_name = "ID|NAME")]
     pub workspace: Option<String>,
     /// Context to attach, repeatable: block:<terminal>:<block>, recent:<terminal>:<lines>,
@@ -706,11 +710,11 @@ pub struct AskArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AssistantCommand {
-    /// List the assistant sessions, with their scope and which is the default
+    /// List the Mawas chats, with their scope and which is the default
     Ls(AssistantLsArgs),
-    /// Print the default assistant session of a scope, creating it on first use
+    /// Print the default Mawas chat of a scope, creating it on first use
     Open(AssistantOpenArgs),
-    /// Forget the backend chosen for a scope (the Assistant panel, setup): it uses the parent
+    /// Forget the backend chosen for a scope (Mawas Home, setup): it uses the parent
     /// workspace's, the global choice, `[assistant]` of daemon.toml, or the automatic backend
     /// again
     Reset(AssistantResetArgs),
@@ -718,7 +722,7 @@ pub enum AssistantCommand {
 
 #[derive(Debug, Args)]
 pub struct AssistantLsArgs {
-    /// Only the assistants of this workspace (id, unique id prefix, or exact name)
+    /// Only the Mawas chats of this workspace (id, unique id prefix, or exact name)
     #[arg(long = "ws", value_name = "ID|NAME")]
     pub workspace: Option<String>,
 }
@@ -726,10 +730,10 @@ pub struct AssistantLsArgs {
 #[derive(Debug, Args)]
 pub struct AssistantOpenArgs {
     /// The workspace: id, unique id prefix, or exact name (default: $HUTAN_WORKSPACE, else the
-    /// global assistant of Home)
+    /// global Mawas of Home)
     #[arg(long = "ws", value_name = "ID|NAME")]
     pub workspace: Option<String>,
-    /// Create one more assistant instead of returning the default
+    /// Create one more Mawas chat instead of returning the default
     #[arg(long)]
     pub new: bool,
 }
@@ -737,9 +741,39 @@ pub struct AssistantOpenArgs {
 #[derive(Debug, Args)]
 pub struct AssistantResetArgs {
     /// The workspace whose own choice is removed (id, unique id prefix, or exact name; default:
-    /// $HUTAN_WORKSPACE, else the global assistant of Home)
+    /// $HUTAN_WORKSPACE, else the global Mawas of Home)
     #[arg(long = "ws", visible_alias = "workspace", value_name = "ID|NAME")]
     pub workspace: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GrantsCommand {
+    /// List the grants: the tool, where it applies (a chat, or every chat of a workspace) and
+    /// when it was granted
+    Ls(GrantsLsArgs),
+    /// Remove one grant (the next request it covered asks again), or all of them
+    Revoke(GrantsRevokeArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct GrantsLsArgs {
+    /// Only the grants that apply to this workspace's chats (id, unique id prefix, or exact name)
+    #[arg(long = "ws", value_name = "ID|NAME")]
+    pub workspace: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct GrantsRevokeArgs {
+    /// The grant to remove (see `hutan grants ls`)
+    #[arg(
+        value_name = "ID",
+        required_unless_present = "all",
+        conflicts_with = "all"
+    )]
+    pub id: Option<u64>,
+    /// Remove every grant
+    #[arg(long)]
+    pub all: bool,
 }
 
 /// The daemon's own settings: `daemon.toml`, edited by the daemon with its comments kept.

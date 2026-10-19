@@ -1360,7 +1360,7 @@ fn json_roundtrip_preserves_state() {
         .unwrap();
     let json = state.to_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 3);
+    assert_eq!(value["version"], 4);
     let back = WorkbenchState::from_json(&json).unwrap();
     assert_eq!(back, state);
     check(&back);
@@ -1614,8 +1614,8 @@ fn builtin_presets_place_the_pages_and_the_strip_and_never_the_assistant() {
                     .get(pos)
                     .panels
                     .iter()
-                    .all(|p| !p.is_left_only()),
-                "{} places a left-only panel in {pos:?}",
+                    .all(|p| p.as_str() != "assistant"),
+                "{} places Mawas Home in {pos:?}",
                 preset.name
             );
         }
@@ -1627,176 +1627,74 @@ fn builtin_presets_place_the_pages_and_the_strip_and_never_the_assistant() {
 }
 
 #[test]
-fn a_left_only_panel_opens_in_the_left_dock_whatever_the_caller_says() {
-    let assistant = PanelId::new("assistant");
-    for asked in DockPosition::ALL {
-        let mut state = WorkbenchState::default();
-        state.open_panel(&assistant, asked);
-        check(&state);
-        assert_eq!(
-            state.docks.find(&assistant),
-            Some(DockPosition::Left),
-            "{asked:?}"
-        );
-        assert_eq!(state.docks.left.active, Some(assistant.clone()));
-        assert_eq!(state.focus, FocusTarget::Dock(DockPosition::Left));
-    }
-}
-
-#[test]
-fn a_left_only_panel_cannot_be_moved_dropped_or_added_anywhere_else() {
-    let assistant = PanelId::new("assistant");
+fn mawas_home_opens_as_a_center_tab_once_and_reopens_after_it_is_closed() {
+    let home = PanelId::new("assistant");
     let mut state = WorkbenchState::default();
-    state.open_panel(&assistant, DockPosition::Left);
-    let first = state.first_pane_id();
-    let before = state.clone();
-    let left_only = ModelError::LeftOnly(assistant.clone());
-
-    for dest in [
-        PanelDest::Dock(DockPosition::Right),
-        PanelDest::Dock(DockPosition::Bottom),
-        PanelDest::Center,
-    ] {
-        assert_eq!(state.move_panel(&assistant, dest).unwrap_err(), left_only);
-    }
-    let source = ItemSource::Dock {
-        pos: DockPosition::Left,
-        panel: assistant.clone(),
+    let pane = state.first_pane_id();
+    let before = state.panes().iter().map(|p| p.items.len()).sum::<usize>();
+    state.open_panel_in_center(&home);
+    check(&state);
+    let item = ItemRef::Panel {
+        panel: home.clone(),
     };
-    for target in [
-        DropTarget::Dock {
-            pos: DockPosition::Right,
-            index: 0,
-        },
-        DropTarget::Pane {
-            pane: first,
-            index: 0,
-        },
-        DropTarget::Split {
-            pane: first,
-            edge: Edge::Right,
-        },
-    ] {
-        assert_eq!(
-            state.move_item(source.clone(), target).unwrap_err(),
-            left_only
-        );
-    }
-    assert_eq!(state, before, "a refused move changes nothing");
+    let (found, index) = state.find_item(&item).expect("Home is a tab");
+    assert_eq!(found, pane);
+    assert_eq!(
+        state.pane(pane).unwrap().active,
+        index,
+        "and the active one"
+    );
+    assert_eq!(state.focus, FocusTarget::Pane(pane));
+    assert!(state.docks.find(&home).is_none(), "not in a dock");
+    assert_eq!(
+        state.panes().iter().map(|p| p.items.len()).sum::<usize>(),
+        before + 1
+    );
 
-    // Reordering inside the left dock is fine, and so is closing it.
+    // Opening it again focuses the one there is, wherever it is.
     state
-        .move_panel(&assistant, PanelDest::Dock(DockPosition::Left))
+        .add_item(pane, ItemRef::placeholder("Elsewhere"))
         .unwrap();
-    state
-        .move_item(
-            source,
-            DropTarget::Dock {
-                pos: DockPosition::Left,
-                index: 0,
-            },
-        )
-        .unwrap();
-    assert_eq!(state.docks.left.panels[0], assistant);
-    state.close_panel(&assistant).unwrap();
-    assert!(state.find_panel(&assistant).is_none());
-    // Not as a new tab or split either.
+    state.open_panel_in_center(&home);
+    check(&state);
     assert_eq!(
-        state
-            .add_item(
-                first,
-                ItemRef::Panel {
-                    panel: assistant.clone()
-                }
-            )
-            .unwrap_err(),
-        left_only
+        state.panes().iter().map(|p| p.items.len()).sum::<usize>(),
+        before + 2,
+        "one Home"
     );
     assert_eq!(
-        state
-            .split_pane(first, Edge::Right, ItemRef::Panel { panel: assistant })
-            .unwrap_err(),
-        left_only
+        state.active_pane().unwrap().active_item(),
+        Some(&item),
+        "focused again"
     );
+
+    // Closing it removes the tab; opening it brings one back.
+    state.close_panel(&home).unwrap();
+    assert!(state.find_panel(&home).is_none());
+    state.open_panel_in_center(&home);
+    check(&state);
+    assert!(state.find_item(&item).is_some());
+
+    // It is an ordinary panel otherwise: a dock takes it and moves it back.
+    state
+        .move_panel(&home, PanelDest::Dock(DockPosition::Right))
+        .unwrap();
+    assert_eq!(state.docks.find(&home), Some(DockPosition::Right));
+    state.move_panel(&home, PanelDest::Center).unwrap();
+    assert!(state.find_item(&item).is_some());
     check(&state);
 }
 
 #[test]
-fn normalizing_gathers_a_stray_left_only_panel_into_the_left_dock() {
-    // A hand-edited or older file with the Assistant in the right dock, the bottom dock or a tab.
-    let assistant = PanelId::new("assistant");
-    let base = WorkbenchState::default();
-    for place in 0..3 {
-        let mut state = base.clone();
-        match place {
-            0 => state.docks.right.panels.push(assistant.clone()),
-            1 => state.docks.bottom.panels.push(assistant.clone()),
-            _ => {
-                let pane = state.first_pane_id();
-                state
-                    .center
-                    .pane_mut(pane)
-                    .unwrap()
-                    .items
-                    .push(ItemRef::Panel {
-                        panel: assistant.clone(),
-                    });
-            }
-        }
-        state.normalize();
-        check(&state);
-        assert_eq!(
-            state.docks.find(&assistant),
-            Some(DockPosition::Left),
-            "case {place}"
-        );
-        assert!(
-            state
-                .panes()
-                .iter()
-                .all(|p| !p.items.contains(&ItemRef::Panel {
-                    panel: assistant.clone()
-                }))
-        );
-        assert_eq!(
-            state.docks.left.active,
-            Some(PanelId::new("sessions")),
-            "gathering it does not change the page"
-        );
-    }
-}
-
-#[test]
-fn a_preset_keeps_an_open_assistant_in_the_left_dock() {
-    let assistant = PanelId::new("assistant");
+fn a_preset_switch_keeps_the_layout_valid_with_home_open() {
+    let home = PanelId::new("assistant");
     let presets = default_presets();
-    for name in ["focus", "default"] {
+    for name in ["focus", "overview", "default"] {
         let mut state = WorkbenchState::default();
-        state.open_panel(&assistant, DockPosition::Left);
+        state.open_panel_in_center(&home);
         state.switch_preset(name, &presets).unwrap();
         check(&state);
-        assert_eq!(
-            state.docks.find(&assistant),
-            Some(DockPosition::Left),
-            "{name}"
-        );
     }
-    // The overview stashes the layout it replaces, the open Assistant page with it; leaving the
-    // overview brings the page back to the left dock, and it was never anywhere else.
-    let mut state = WorkbenchState::default();
-    state.open_panel(&assistant, DockPosition::Left);
-    state.switch_preset("overview", &presets).unwrap();
-    check(&state);
-    assert!(state.all_items().contains(&ItemRef::Panel {
-        panel: assistant.clone()
-    }));
-    assert!(
-        state.find_panel(&assistant).is_none(),
-        "not shown while the board is"
-    );
-    state.switch_preset("default", &presets).unwrap();
-    check(&state);
-    assert_eq!(state.docks.find(&assistant), Some(DockPosition::Left));
 }
 
 /// A layout as the version before the Orca-style relayout saved it.
@@ -1831,11 +1729,76 @@ fn as_version_1_json(state: &WorkbenchState) -> String {
 }
 
 #[test]
-fn the_state_version_is_three() {
+fn the_state_version_is_four() {
     let value: serde_json::Value =
         serde_json::from_str(&WorkbenchState::default().to_json().unwrap()).unwrap();
-    assert_eq!(value["version"], 3);
-    assert_eq!(STATE_VERSION, 3);
+    assert_eq!(value["version"], 4);
+    assert_eq!(STATE_VERSION, 4);
+}
+
+fn as_version_3_json(state: &WorkbenchState) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
+    value["version"] = 3.into();
+    serde_json::to_string(&value).unwrap()
+}
+
+#[test]
+fn a_version_3_layout_loses_the_assistant_page_once_and_keeps_a_center_tab() {
+    // Version 3 listed the Assistant as a page of the left sidebar.
+    let home = PanelId::new("assistant");
+    let mut old = WorkbenchState::default();
+    old.docks.left.panels.push(home.clone());
+    old.docks.left.active = Some(home.clone());
+    old.resize_dock(DockPosition::Left, 311.0);
+    let migrated = WorkbenchState::from_json(&as_version_3_json(&old)).unwrap();
+    check(&migrated);
+    assert!(migrated.find_panel(&home).is_none(), "the page is gone");
+    assert_eq!(
+        migrated.docks.left.active,
+        migrated.docks.left.panels.first().cloned()
+    );
+    assert_eq!(migrated.docks.left.size, 311.0);
+    assert_eq!(migrated.center, old.center);
+
+    // The stash and a parked workspace are migrated too.
+    let mut with_stash = old.clone();
+    with_stash.adopt_workspace("a");
+    with_stash.switch_workspace("b");
+    with_stash.docks.left.panels.push(home.clone());
+    with_stash
+        .switch_preset("overview", &default_presets())
+        .unwrap();
+    let migrated = WorkbenchState::from_json(&as_version_3_json(&with_stash)).unwrap();
+    check(&migrated);
+    assert!(
+        !migrated
+            .stashed
+            .as_ref()
+            .unwrap()
+            .docks
+            .left
+            .panels
+            .contains(&home)
+    );
+    assert!(
+        !migrated.parked["a"]
+            .layout
+            .docks
+            .left
+            .panels
+            .contains(&home)
+    );
+
+    // A version 4 file is read as it is: Home as a center tab stays, and so does a dock the
+    // user put it in.
+    let mut kept = WorkbenchState::default();
+    kept.open_panel_in_center(&home);
+    let again = WorkbenchState::from_json(&kept.to_json().unwrap()).unwrap();
+    assert_eq!(again, kept);
+    let mut docked = WorkbenchState::default();
+    docked.open_panel(&home, DockPosition::Right);
+    let again = WorkbenchState::from_json(&docked.to_json().unwrap()).unwrap();
+    assert_eq!(again, docked);
 }
 
 fn as_version_2_json(state: &WorkbenchState) -> String {
@@ -1880,7 +1843,7 @@ fn a_version_2_layout_loses_the_agents_page_once_and_keeps_everything_else() {
             .contains(&PanelId::new("overview"))
     );
 
-    // A version 3 file is read as it is: an overview the user put in a dock stays.
+    // A version 4 file is read as it is: an overview the user put in a dock stays.
     let mut kept = migrated.clone();
     kept.open_panel(&PanelId::new("overview"), DockPosition::Right);
     let again = WorkbenchState::from_json(&kept.to_json().unwrap()).unwrap();

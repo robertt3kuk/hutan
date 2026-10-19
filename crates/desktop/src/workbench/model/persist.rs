@@ -7,10 +7,12 @@ use super::{
 /// The saved layout's version. 2 is the Orca-style relayout (OL-2): Projects, Tasks and the
 /// Agents page as pages of the left sidebar, History / Changes / Requests / Agents / Resources
 /// in the right sidebar's strip, no Assistant in any dock. 3 (OL-4) turns Agents from a left page
-/// into the dashboard drawer: the `overview` panel leaves the left dock. A version 1 file is
-/// migrated once when it is read (see [`migrate_v1`], then [`migrate_v2`]), a version 2 file by
-/// [`migrate_v2`]; the next save writes version 3.
-pub const STATE_VERSION: u32 = 3;
+/// into the dashboard drawer: the `overview` panel leaves the left dock. 4 (MW-1) turns the
+/// Assistant from a left page into Mawas Home, a tab of the center: the `assistant` panel leaves
+/// every dock. A version 1 file is migrated once when it is read (see [`migrate_v1`], then
+/// [`migrate_v2`], then [`migrate_v3`]), a version 2 file by [`migrate_v2`] and [`migrate_v3`], a
+/// version 3 file by [`migrate_v3`]; the next save writes version 4.
+pub const STATE_VERSION: u32 = 4;
 
 /// Result of reading a saved state.
 #[derive(Debug)]
@@ -21,7 +23,7 @@ pub struct LoadOutcome {
 }
 
 impl WorkbenchState {
-    /// `{ "version": 3, "docks": …, "center": …, … }`, pretty-printed.
+    /// `{ "version": 4, "docks": …, "center": …, … }`, pretty-printed.
     pub fn to_json(&self) -> Result<String, ModelError> {
         let mut value =
             serde_json::to_value(self).map_err(|e| ModelError::Invalid(e.to_string()))?;
@@ -37,7 +39,7 @@ impl WorkbenchState {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| ModelError::Invalid(e.to_string()))?;
         let version = match value.get("version").and_then(serde_json::Value::as_u64) {
-            Some(v @ (1..=3)) => v,
+            Some(v @ (1..=4)) => v,
             Some(v) => return Err(ModelError::Invalid(format!("unsupported version {v}"))),
             None => return Err(ModelError::Invalid("missing version".to_owned())),
         };
@@ -48,6 +50,9 @@ impl WorkbenchState {
         }
         if version <= 2 {
             migrate_v2(&mut state);
+        }
+        if version <= 3 {
+            migrate_v3(&mut state);
         }
         state.normalize();
         Ok(state)
@@ -64,6 +69,37 @@ impl WorkbenchState {
                 state: WorkbenchState::default(),
                 warning: Some(format!("saved layout ignored: {err}")),
             },
+        }
+    }
+}
+
+/// The one-time move of a version 3 layout to Mawas Home: the `assistant` panel, which was a page
+/// of the left sidebar, is dropped from every dock (the live layout, the overview stash and every
+/// parked workspace layout). Home is a tab of the center now and opens from the nav; a tab
+/// already in the center stays.
+pub fn migrate_v3(state: &mut WorkbenchState) {
+    drop_assistant_page(&mut state.docks);
+    if let Some(saved) = state.stashed.as_deref_mut() {
+        drop_assistant_page(&mut saved.docks);
+    }
+    for parked in state.parked.values_mut() {
+        drop_assistant_page(&mut parked.layout.docks);
+        if let Some(saved) = parked.stashed.as_deref_mut() {
+            drop_assistant_page(&mut saved.docks);
+        }
+    }
+}
+
+fn drop_assistant_page(docks: &mut Docks) {
+    for pos in DockPosition::ALL {
+        let dock = docks.get_mut(pos);
+        dock.panels.retain(|p| p.as_str() != "assistant");
+        if dock
+            .active
+            .as_ref()
+            .is_some_and(|a| a.as_str() == "assistant")
+        {
+            dock.active = dock.panels.first().cloned();
         }
     }
 }
@@ -103,7 +139,8 @@ fn drop_agents_page(docks: &mut Docks) {
 ///
 /// - History moves to the front of the right dock and becomes its active tab (a History tab in
 ///   the center or the bottom dock stays where the user put it).
-/// - The Assistant leaves every dock and the center (it is a left page that opens on demand).
+/// - The Assistant leaves every dock and the center (it was a left page that opens on demand;
+///   [`migrate_v3`] later makes it a tab of the center).
 /// - Tasks moves from the right dock to the left sidebar, behind Projects.
 /// - Changes joins the right dock after History; Resources moves there from a hidden bottom dock.
 /// - Projects is the left dock's active page.

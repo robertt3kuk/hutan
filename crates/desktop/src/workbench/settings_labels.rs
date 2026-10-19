@@ -67,7 +67,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("agents", "Agents"),
     ("resources", "Resources"),
     ("tasks", "Tasks"),
-    ("assistant", "Assistant"),
+    ("assistant", "Mawas"),
     ("integrations", "Agent Integrations"),
     ("launcher", "Start Sheet"),
     ("accounts", "Accounts"),
@@ -505,14 +505,14 @@ const FIELDS: &[FieldText] = &[
     field(
         "assistant",
         "enabled",
-        "Use the assistant",
-        "Off (the default for a new setup) hides the Assistant page of the left sidebar, removes its commands and shortcuts, and releases the system-wide shortcut. On adds Assistant to the left sidebar's list; it only ever opens there, never in the right sidebar or as a tab. Your earlier assistant conversations are kept.",
+        "Use Mawas",
+        "Off (the default for a new setup) hides Mawas from the left sidebar, removes its commands and shortcuts, and releases the system-wide shortcut. On adds Mawas to the left sidebar's list; it opens as a page in the center. Your earlier Mawas conversations are kept.",
     ),
     field(
         "assistant",
         "global_shortcut",
         "System-wide shortcut",
-        "A shortcut that brings Hutan forward and opens the Assistant from any app, for example alt-space or cmd-shift-space. It needs at least one of cmd, ctrl or alt. Leave it empty to turn it off. If another app already uses it, Hutan tells you once and leaves the setting alone.",
+        "A shortcut that brings Hutan forward and opens Mawas from any app, for example alt-space or cmd-shift-space. It needs at least one of cmd, ctrl or alt. Leave it empty to turn it off. If another app already uses it, Hutan tells you once and leaves the setting alone.",
     ),
     // ---- agent integrations ----
     field(
@@ -599,7 +599,7 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "daemon",
         "workspaces.home_folder",
         "Home folder",
-        "The folder of the Home workspace, where the global assistant works. Default: the Hutan folder in your home folder.",
+        "The folder of the Home workspace, where Mawas works for the Home scope. Default: the Hutan folder in your home folder.",
     ),
     choice(
         "daemon",
@@ -641,6 +641,19 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "assistant.model",
         "Model when nothing is chosen",
         "The model used when nothing above names one. Empty: Hutan picks a model that suits a read-only helper.",
+    ),
+    choice(
+        "daemon",
+        "assistant.mode",
+        "Mode",
+        "What Mawas may do. Ask before acting: it can change things, and every change asks you first. Advisor: it reads and advises, and changes nothing. A change applies from the next message; Mawas restarts its agent for it.",
+        &[("ask", "Ask before acting"), ("advisor", "Advisor")],
+    ),
+    field(
+        "daemon",
+        "assistant.max_actions_per_turn",
+        "Changes per turn before every one asks",
+        "How many changes Mawas may make in one turn (your grants cover them without asking). The next one always asks, whatever is granted: \"Mawas has made 10 changes this turn\".",
     ),
     field(
         "daemon",
@@ -916,7 +929,7 @@ pub fn daemon_field_help(key: &str) -> String {
     }
     if let Some((_, does)) = workspace_permission(key).and_then(permission_text) {
         return format!(
-            "Whether the assistant of this workspace may {does}. Inherit follows the setting for projects."
+            "Whether Mawas in this workspace may {does}. Inherit follows the setting for projects."
         );
     }
     if key.starts_with("mcp.") {
@@ -1053,8 +1066,8 @@ pub fn page_keywords(page: &str) -> &'static str {
              tasks parallel"
         }
         "assistant" => {
-            "Backend model default inherit global workspace permissions files terminal output \
-             agent transcripts search budget"
+            "Mawas backend model default inherit global workspace permissions files terminal output \
+             agent transcripts search budget mode ask before acting advisor actions grants revoke"
         }
         "integrations" => "Hooks install repair uninstall status Claude Code Codex OMP agent hooks",
         "launcher" => "Remembered choices Don't ask again revoke exemptions",
@@ -1195,13 +1208,21 @@ pub mod words {
         SEC_CODEX = "Codex";
         SEC_MCP = "MCP servers";
         SEC_LIMITS = "Limits";
-        SEC_ASSISTANT_PANEL = "The assistant panel";
+        SEC_ASSISTANT_PANEL = "Mawas";
+        SEC_ASSISTANT_ACT = "What Mawas may do";
+        SEC_ASSISTANT_ACT_HELP = "Ask before acting: Mawas can change things, and every change asks you first (grants answer for what you allowed). Advisor: Mawas reads and advises, and cannot change anything. A change of mode applies from the next message.";
+        SEC_ASSISTANT_GRANTS = "What you allowed Mawas to do without asking";
+        SEC_ASSISTANT_GRANTS_HELP = "Granted from an approval card: for one chat, or always in a workspace. Destructive changes always ask, whatever is granted.";
+        GRANTS_NONE = "Nothing is granted: Mawas asks before every change.";
+        GRANT_REVOKE = "Revoke";
+        GRANT_REVOKE_ALL = "Revoke all";
+        GRANTS_UNSUPPORTED = "This hutand is older than the app and has no grants: restart it (Daemon → Restart).";
         SEC_ASSISTANT_BACKEND = "Backend and model";
-        SEC_ASSISTANT_BACKEND_HELP = "What answers the assistant of each place. Inherit follows the place above it: a workspace follows its parent workspace, then Global, then daemon.toml, then Automatic, the first backend that is ready.";
+        SEC_ASSISTANT_BACKEND_HELP = "What answers Mawas in each place. Inherit follows the place above it: a workspace follows its parent workspace, then Global, then daemon.toml, then Automatic, the first backend that is ready.";
         SEC_ASSISTANT_DEFAULT = "When nothing is chosen";
-        SEC_ASSISTANT_PROJECTS = "What assistants of projects may read";
-        SEC_ASSISTANT_HOME = "What the Home assistant may read";
-        SEC_ASSISTANT_THIS = "What this workspace's assistant may read";
+        SEC_ASSISTANT_PROJECTS = "What Mawas may read in projects";
+        SEC_ASSISTANT_HOME = "What Mawas may read at Home";
+        SEC_ASSISTANT_THIS = "What Mawas may read in this workspace";
         SEC_ASSISTANT_THIS_HELP = "Overrides for this workspace only. Inherit follows the setting for projects.";
         SEC_ASSISTANT_LIMITS = "Attachments";
         SCOPE_GLOBAL = "Global (Home)";
@@ -1217,7 +1238,7 @@ pub mod words {
         MODEL_LOADING = "Loading the models…";
         MODEL_NONE = "No models were listed.";
         PROVIDERS_NONE = "No model provider is set up: add one on the Models page.";
-        NOT_OPENED = "Not opened yet: the assistant starts on its backend the first time you use it.";
+        NOT_OPENED = "Not opened yet: Mawas starts on its backend the first time you use it.";
         NO_PROJECT_NOTE = "Open a project to set its own backend and permissions here.";
         NO_MATCH_HINT = "Clear the search to see every page, or try another word.";
         NO_MATCH_FOOTER = "No matches";

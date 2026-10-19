@@ -32,6 +32,7 @@ use hutan_protocol::blocks::{
 };
 use hutan_protocol::chat::*;
 use hutan_protocol::control::ControlMessage;
+use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
 use hutan_protocol::history::*;
 use hutan_protocol::messages::*;
 use hutan_protocol::notify::{
@@ -1029,6 +1030,40 @@ fn control_approval() -> ApprovalInfo {
                 kind: PermissionOptionKind::RejectOnce,
                 provider: None,
             },
+        ],
+        requested_at_ms: 1_791_894_180_000,
+    }
+}
+
+fn control_grants_approval() -> ApprovalInfo {
+    let option = |id: &str, label: &str, kind| PermissionOption {
+        id: id.into(),
+        label: label.into(),
+        kind,
+        provider: None,
+    };
+    ApprovalInfo {
+        id: approval(),
+        session_id: sid(),
+        turn_id: None,
+        kind: PermissionKind::Control,
+        title: "Mawas asks Hutan to rename session “build” to “release”".into(),
+        detail: Some(
+            "{\"session_id\":\"01K7F3B5N2Q9W8E4R6T1Y0V3KM\",\"title\":\"release\"}".into(),
+        ),
+        options: vec![
+            option("allow_once", "Allow once", PermissionOptionKind::AllowOnce),
+            option(
+                "allow_chat",
+                "Allow for this chat",
+                PermissionOptionKind::AllowAlways,
+            ),
+            option(
+                "allow_workspace",
+                "Always allow this tool in this workspace",
+                PermissionOptionKind::AllowAlways,
+            ),
+            option("deny", "Deny", PermissionOptionKind::RejectOnce),
         ],
         requested_at_ms: 1_791_894_180_000,
     }
@@ -2262,6 +2297,20 @@ fn requests() -> Vec<(&'static str, Request)> {
             "session_reopen",
             Request::SessionReopen(SessionRef { session_id: sid() }),
         ),
+        (
+            "control_grants_list",
+            Request::ControlGrantsList(ControlGrantsList { workspace_id: None }),
+        ),
+        (
+            "control_grants_list_workspace",
+            Request::ControlGrantsList(ControlGrantsList {
+                workspace_id: Some(ws()),
+            }),
+        ),
+        (
+            "control_grant_revoke",
+            Request::ControlGrantRevoke(ControlGrantRevoke { id: 7 }),
+        ),
     ]
 }
 
@@ -3025,6 +3074,12 @@ fn events() -> Vec<(&'static str, Event)> {
             },
         ),
         ("session_closed", Event::SessionClosed { session_id: sid() }),
+        (
+            "approval_required_control_grants",
+            Event::ApprovalRequired {
+                approval: Box::new(control_grants_approval()),
+            },
+        ),
     ]
 }
 
@@ -4394,6 +4449,31 @@ fn responses_match_fixtures() {
                         finished_ms: None,
                         per_source: vec![],
                     },
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "control_grants",
+            ControlMessage::ok(
+                19,
+                &ControlGrants {
+                    grants: vec![
+                        ControlGrant {
+                            id: 7,
+                            tool: "session.rename".into(),
+                            workspace_id: Some(ws()),
+                            chat_session_id: None,
+                            created_ms: 1_791_894_190_000,
+                        },
+                        ControlGrant {
+                            id: 6,
+                            tool: "ui.run:workbench::SplitRight".into(),
+                            workspace_id: None,
+                            chat_session_id: Some(sid()),
+                            created_ms: 1_791_894_185_000,
+                        },
+                    ],
                 },
             )
             .unwrap(),

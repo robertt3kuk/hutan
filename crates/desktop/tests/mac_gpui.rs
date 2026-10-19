@@ -23,7 +23,7 @@ use hutan_desktop::macos::{
 };
 use hutan_desktop::sessions::AttentionKind;
 use hutan_desktop::workbench::actions::{self, daemon as daemon_actions};
-use hutan_desktop::workbench::model::PanelId;
+use hutan_desktop::workbench::model::ItemRef;
 use hutan_desktop::workbench::{Workbench, WorkbenchOptions};
 use hutan_protocol::chat::{ChatSend, ChatSent};
 use hutan_protocol::messages::{
@@ -959,13 +959,13 @@ fn nothing_is_registered_by_default_and_a_configured_shortcut_opens_the_assistan
 
     // Pressed while another app is in front: the window comes forward with the Assistant.
     assert_ne!(
-        view.read_with(cx, |wb, _| wb.state().docks.left.active.clone()),
-        Some(PanelId::new("assistant"))
+        view.read_with(cx, |wb, _| wb.state().active_center_item()),
+        Some(ItemRef::panel("assistant"))
     );
     tx.try_send(MacEvent::Hotkey).unwrap();
     wait_until(cx, "the Assistant to open", |cx| {
         view.read_with(cx, |wb, _| {
-            wb.state().docks.left.active == Some(PanelId::new("assistant"))
+            wb.state().active_center_item() == Some(ItemRef::panel("assistant"))
         })
     });
 }

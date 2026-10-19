@@ -315,7 +315,7 @@ fn the_assistant_can_be_turned_off(cx: &mut TestAppContext) {
     let daemon = daemon(scripts.path(), "plain-turn", "");
     let (view, cx) = open(cx, &daemon);
     assert!(view.read_with(cx, |wb, _| {
-        wb.commands().iter().any(|c| c.title.contains("Assistant"))
+        wb.commands().iter().any(|c| c.title.contains("Mawas"))
     }));
     view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
     assert!(view.read_with(cx, |wb, _| wb.panel_open("assistant")));
@@ -329,7 +329,7 @@ fn the_assistant_can_be_turned_off(cx: &mut TestAppContext) {
     });
     assert!(!view.read_with(cx, |wb, _| wb.panel_open("assistant")));
     assert!(!view.read_with(cx, |wb, _| {
-        wb.commands().iter().any(|c| c.title.contains("Assistant"))
+        wb.commands().iter().any(|c| c.title.contains("Mawas"))
     }));
     // Opening it does nothing now.
     cx.dispatch_action(hutan_desktop::workbench::actions::OpenAssistant);

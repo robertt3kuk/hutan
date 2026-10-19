@@ -1,6 +1,6 @@
 # Agent control surface: UI commands, origin, policy, `hutan mcp`
 
-ADR 0016, slice M8-C, protocol 0.21, capability `control`. Anything in Hutan an agent (or the assistant) could ask for is a daemon request; there are three doors to the same set — the CLI (`hutan …`), the MCP server (`hutan mcp`) and the desktop, which also *executes* the UI requests the daemon routes to it. The daemon decides, per request, whether the caller is the user or an agent, and what an agent may change.
+ADR 0016, slice M8-C, protocol 0.21, capability `control`; Mawas's safeguards: ADR 0017, slice MW-1, protocol 0.31, capability `control.grants` (§ Mawas). Anything in Hutan an agent (or Mawas, the assistant) could ask for is a daemon request; there are three doors to the same set — the CLI (`hutan …`), the MCP server (`hutan mcp`) and the desktop, which also *executes* the UI requests the daemon routes to it. The daemon decides, per request, whether the caller is the user or an agent, and what an agent may change.
 
 Wire details: `docs/protocol.md` § Control. Code: `crates/protocol/src/ui.rs` (DTOs), `crates/daemon/src/{control,uihub,mcp_wiring}.rs` and the classification table in `router.rs`, `crates/cli/src/{commands/ui.rs,mcp/,integration/mcp.rs}`, `crates/desktop/src/workbench/remote.rs`.
 
@@ -61,7 +61,7 @@ Every request kind is classified once, in one table in `crates/daemon/src/router
 
 - **Read** — always allowed: lists, snapshots, history, `ui.actions`, `ui.layout`, `approval.list`, `account.list`, terminal attach/detach/ack, `agent.report`/`release` (what hooks do), `client.focus`, …
 - **Mutate** — follows `agents`: creating, stopping, renaming, sending, tasks, worktrees, workspaces, history index changes, `ui.run`, `ui.set_setting`, `session.send_text`, `daemon.shutdown`, … `workspace.assign` and `workspace.delete` (projects, protocol 0.19) are Mutate; `workspace.list|recent` Read. The resource manager (`docs/resources.md`): `session.kill`, `process.signal` and `agent.interrupt` are Mutate; `resources.list|subscribe|unsubscribe` are Read.
-- **UserOnly** — refused to agents under every policy: `approval.respond`, `notify.act` (it can answer an approval), provider configuration and credentials (`provider.add|update|remove|set_credential|clear_credential`, `account.login|logout`), the desktop's own `ui.publish` and `ui.command_result`, and the daemon's own settings: `daemon.settings.set` and `assistant.reset` (protocol 0.28). `[control]` itself lives in `daemon.toml`, which only `daemon.settings.set` writes, so an agent can never widen its own permissions, whatever `agents` says; `daemon.settings.get` is Read. Neither is a tool of `hutan mcp`.
+- **UserOnly** — refused to agents under every policy: `approval.respond`, `notify.act` (it can answer an approval), provider configuration and credentials (`provider.add|update|remove|set_credential|clear_credential`, `account.login|logout`), the desktop's own `ui.publish` and `ui.command_result`, the daemon's own settings: `daemon.settings.set` and `assistant.reset` (protocol 0.28), and Mawas's grants: `control.grants.list` and `control.grants.revoke` (protocol 0.31). `[control]` itself lives in `daemon.toml`, which only `daemon.settings.set` writes, so an agent can never widen its own permissions, whatever `agents` says; `daemon.settings.get` is Read. Neither is a tool of `hutan mcp`.
 
 For a Mutate request from an agent:
 
@@ -76,6 +76,40 @@ The `control` approval is the existing approval machinery: it shows in `hutan ap
 Terminal input frames carry no response and cannot wait for an approval: an agent-originated connection may send them under `allow`, never under `read_only`, and under `ask` only after the user chose “allow for this session” for `session.send_text` (agents should use `hutan send` / `session_send_text`, which ask).
 
 **Audit.** Every decision about an agent's mutation is a row of kind `control` in the `approvals` table of the daemon's database, with the title, the origin session, the option (`allow_once`, `allow_session`, `deny`, or for decisions nobody was asked about `allow_policy`, `allow_grant`, `deny_policy`, `deny_user_only`), the client that answered (`desktop`, `cli`, … or `policy`) and the time.
+
+## Mawas
+
+ADR 0017 decision 4, slice MW-1, protocol 0.31 (capability `control.grants`). **Mawas** is the assistant (`docs/assistant.md`): it makes tool calls — its harness's own and Hutan's, through the `hutan mcp` server every Hutan-started chat gets — and the daemon, not only the harness's flags, decides what they may change. A request whose origin is a Mawas chat (`ChatInfo.assistant`, or a provider assistant: `agent: "assistant"`) is gated by **`assistant.mode`**, whatever `[control] agents` says:
+
+| Mode | A mutating request (the **Mutate** class above) |
+|---|---|
+| **Ask before acting** (default) | raises a `control` approval, even under `agents = "allow"`; a stored grant may answer it instead; `agents = "read_only"` still refuses it |
+| **Advisor** | `forbidden`, `error.data.control.decision = "advisor"`: "Mawas is in Advisor mode: it can read and advise, not change anything, so `session.rename` was refused" |
+
+Reads always run. **UserOnly** requests stay refused (`user_only`) — answering approvals and questions, `daemon.settings.set`, `assistant.reset`, provider credentials, account logins, and `control.grants.list|revoke` — so Mawas can never widen its own permissions, read or revoke its grants, or answer an approval, its own included. The mode itself is `assistant.mode` of `daemon.toml`, a user-only setting.
+
+**The approval.** Its title says what is asked ("Mawas asks Hutan to rename session “build” (…) to “release”"), its detail carries the request's parameters, and its options are **Allow once** (`allow_once`), **Allow for this chat** (`allow_chat`), **Always allow this tool in this workspace** (`allow_workspace`) and **Deny** (`deny`). It shows in the chat, in the *Today* rail of Mawas Home, in `hutan approvals` and as a native notification, and is answered from any of them (`hutan approve <id> allow_chat`).
+
+**Grants.** *Allow for this chat* and *Always allow this tool in this workspace* store a grant — `control_grants(id, tool, workspace_id NULL, chat_session_id NULL, created_ms, created_by)`, schema 12 — which the daemon consults before it asks. `tool` is the grant key of the request: the method, narrowed for `ui.run` (per action) and `ui.set_setting` (per namespace). A chat grant covers that chat only; a workspace grant every Mawas chat of that workspace, and never another workspace. Grants survive a daemon restart. `hutan grants ls [--ws ID]` and `hutan grants revoke <id>|--all` (and Settings → Mawas) list and remove them; both are user-only requests (`control.grants.list`, `control.grants.revoke`).
+
+**What always asks.** A grant never covers a destructive or irreversible request: `session.kill`, `session.stop`, `session.close` with `stop_running`, `process.signal`, `workspace.delete|close|remove_root`, `worktree.remove|merge`, `task.delete`, `session.send_text` (anything a shell can do), `daemon.shutdown`, `history.clear`, `assistant.configure`, `ui.run workbench::Quit` and `ui.set_setting` of the `assistant` namespace. Their approval offers only *Allow once* and *Deny* (the detail says "This kind of change always asks: no grant covers it"); a grant row the database holds for one of them is ignored. Choosing an option that was not offered is `option_not_offered`.
+
+**The turn limit.** At most `assistant.max_actions_per_turn` (default **10**, 1–1000, a live daemon setting) changes per turn run without asking: the ones a grant answered and the ones the user allowed once count. The next one always asks, whatever is granted, with the title "Mawas has made 10 changes this turn. Mawas asks Hutan to …" and the options *Allow once* / *Deny*; the count starts again with the next turn.
+
+**Audit.** Every decision about a Mawas request is a row of kind `control` in the `approvals` table (`option_id`: `allow_once`, `allow_chat`, `allow_workspace`, `deny`, `allow_grant`, `deny_advisor`, `deny_policy`, `deny_user_only`, or an expiry; `decided_by`: `desktop`, `cli`, … or `grant:<id>` / `policy`) and a line of the daemon log with target `hutan::audit` (`actor=mawas session=… workspace=… action=session.rename decision=allow_grant by=grant grant_id=7`); creating a grant is part of its approval's row, revoking one is a line of its own. In the chat the tool call is the harness's own tool card, and its result begins with the outcome the `hutan mcp` server adds: `[The user approved this request after waiting 4.2 s, and allowed this tool for this chat.]`, `[Allowed by a grant the user gave earlier …]`, `DENIED by the user: …`, `REFUSED: Mawas is in Advisor mode …`.
+
+**Harness launch per mode.** The daemon starts Mawas's harness the way the mode says (`crates/daemon/src/harness.rs`, `assistant_profile`), and every permission request of the harness itself reaches the same approval cards (`session/request_permission` of ACP, Codex approvals):
+
+| | Advisor | Ask before acting |
+|---|---|---|
+| OMP | `omp acp --tools read,grep,glob --append-system-prompt <read-only prompt>` | all tools, `--approval-mode always-ask` (everything above reading asks the client, even when the user's own OMP says `yolo`), `--append-system-prompt <Mawas prompt>` |
+| Claude Code | session mode `plan` | session mode `default` (its own default permission mode) |
+| Codex | `sandbox: read-only`, `approval_policy: never` | `sandbox: workspace-write`, `approval_policy: on-request` |
+| Provider (direct chat) | no tools | no tools: *Chat only* until the gateway has a tool loop |
+
+A change of `assistant.mode` applies from the **next turn**: when a Mawas message arrives, an agent that runs in the other mode is stopped and started again in the current one (the stored conversation continues: `session/load`, `thread/resume`), the journal says so ("Mawas is now in “Advisor” mode … Its agent restarted so the change applies to this turn."), and a turn in progress or a pending approval finishes first. The daemon-side gate follows the new mode at once.
+
+**Limits of origin attribution.** As above: the origin is an environment variable and a marker for well-behaved agents, not a security boundary. A Mawas whose harness ran a shell command could unset `HUTAN_SESSION_ID` and talk to the daemon as the user; that is why a native harness tool (a command, a file edit) asks too, and why Ask before acting runs OMP with `always-ask` rather than trusting its configuration. A stronger restricted endpoint with a sandbox comes with unattended schedules (ADR 0017: MW-9, MW-10).
 
 ## `hutan mcp`
 
@@ -99,7 +133,7 @@ A stdio MCP server (hand-rolled JSON-RPC, one message per line; protocol version
 | `chat_create` | `chat.create` | yes | start a chat with an agent (Codex) or a model directly |
 | `chat_send` | `chat.send` | yes | send a message to a chat |
 | `chat_log` | `chat.history` | no | the journal of a chat |
-| `approval_list` | `approval.list` | no | what waits for the user (agents cannot answer: there is no respond tool) |
+| `approval_list` | `approval.list` | no | what waits for the user (agents cannot answer: there is no respond tool; Mawas's grants are not a tool either) |
 | `task_add` | `task.create` | yes | add a task with dependencies |
 | `task_list` | `task.list` | no | tasks and their state |
 | `task_start` | `task.start` | yes | start a ready task |
@@ -134,4 +168,4 @@ A stdio MCP server (hand-rolled JSON-RPC, one message per line; protocol version
 
 ## Tests
 
-`crates/daemon/tests/control.rs` (routing with a fake desktop, timeout, no window, which sessions count as agents, policy modes, approvals, `allow_session` memory, audit), `crates/daemon/src/{control,router}.rs` unit tests (classification table, descriptions, grants), `crates/desktop/tests/control_gpui.rs` (the window publishes its catalog and layout, publishes again after a reconnect, executes split / toggle / preset / panel / focus session / setting and answers ok or error), `crates/cli/tests/{control,mcp,integration_mcp}.rs` (`hutan ui …` against a fake desktop, the approval flow of an agent-reported session next to a plain shell's ungated one, MCP over stdio against a test daemon, `--mcp` on temporary agent configurations).
+`crates/daemon/tests/mawas.rs` (Mawas's gate: an approval even under `agents = "allow"`, Allow for this chat and Always allow here with their limits, a destructive request that asks despite a grant, an agent that cannot list, revoke or answer, Advisor's refusal, the turn limit, the audit log and table, grants across a restart and their revocation, the mode change restarting the agent), `crates/cli/tests/grants.rs` (`hutan grants ls|revoke`, refused inside an agent's session), `crates/daemon/tests/control.rs` (routing with a fake desktop, timeout, no window, which sessions count as agents, policy modes, approvals, `allow_session` memory, audit), `crates/daemon/src/{control,router}.rs` unit tests (classification table, descriptions, grants), `crates/desktop/tests/control_gpui.rs` (the window publishes its catalog and layout, publishes again after a reconnect, executes split / toggle / preset / panel / focus session / setting and answers ok or error), `crates/cli/tests/{control,mcp,integration_mcp}.rs` (`hutan ui …` against a fake desktop, the approval flow of an agent-reported session next to a plain shell's ungated one, MCP over stdio against a test daemon, `--mcp` on temporary agent configurations).
