@@ -175,7 +175,7 @@ Ordered; each line is one slice with a brief in `docs/briefs/` (written ones mar
 - [ ] TH-2 Icon packs: semantic icon ids, safe SVG pipeline, Phosphor default; Agents ≠ Changes ≠ branch icons (brief `TH-2.md`; ADR 0018; `chrome-v3.md` §5, `theme-packs.md`).
 
 **Next (no user decision needed):**
-- [ ] TH-3 Theme/icon pickers with live preview, diagnostics, `hutan theme ls|validate|new|export` (`theme-packs.md` §6).
+- [ ] TH-3 Theme/icon pickers with live preview, diagnostics, `hutan theme ls|validate|new|export` (brief `TH-3.md`; `theme-packs.md` §5.1–5.2, §6).
 - [ ] TH-4 Importers: Ghostty, iTerm2, Alacritty, VS Code, Zed, WezTerm, Warp (`theme-packs.md` §5.3) — good candidate for a cheaper model.
 - [ ] DB-3 Optional agent activity fields (`turn_started_at_ms`, `last_state_report_at_ms`, `observation_reason`; additive minor + capability `agent.activity-summary`) (`chrome-v3.md` §6).
 - [ ] ST-4 Truthful Mawas configuration read API (`assistant.settings` capability), then ST-5 13-page Settings IA with explicit scope/provenance/reset-to-inherit, ST-6 unified search, ST-7 keyboard-shortcut editor, ST-8 validation/preset editor, ST-9 data/storage + preference export/import, ST-10 recently changed (`spikes/2026-10-20-settings-v2.md` §7–8).
