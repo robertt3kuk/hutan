@@ -171,7 +171,7 @@ Exit demo: run OMP with task subagents, Codex (app-server) with subagents, and C
 Ordered; each line is one slice with a brief in `docs/briefs/` (written ones marked). Research behind each: the spike named.
 
 **In flight** (worktrees `../hutan-wt/<slice>`, branches `slice/<slice>` pushed to origin):
-- [ ] AG-1 Agents page v2: one agent truth, attention-first center page; right Agents and Mawas Today become lenses; drawer and old Overview removed (brief `AG-1.md`; `spikes/2026-10-20-chrome-v3.md` §2–3, option A).
+- [x] AG-1 Agents page v2 (merged; real-window check pending): one agent truth, attention-first center page; right Agents and Mawas Today become lenses; drawer and old Overview removed (brief `AG-1.md`; `spikes/2026-10-20-chrome-v3.md` §2–3, option A).
 - [ ] TH-2 Icon packs: semantic icon ids, safe SVG pipeline, Phosphor default; Agents ≠ Changes ≠ branch icons (brief `TH-2.md`; ADR 0018; `chrome-v3.md` §5, `theme-packs.md`).
 
 **Next (no user decision needed):**
