@@ -105,7 +105,7 @@ Paths (`license_file` and icon assets) are normalized relative UTF-8 paths with 
 
 ## Problems and contrast
 
-Pack and selection problems appear in the Settings Problems list (the same list as settings errors) with the file, the key (`colors.ui.border`, `appearance.dark_theme`) and the reason. Contrast is advice only (key `contrast`, WCAG 2.2 ratios, translucent colors composed over what they are drawn on): a user pack is reported for the pairs it makes worse than its base. The built-ins' own known shortfalls (for example white on the orange accent) are a reviewed baseline in `crates/settings/tests/themes.rs`; they are reported nowhere else and nothing is repaired.
+Pack and selection problems appear in the Settings Problems list (the same list as settings errors) with the file, the key (`colors.ui.border`, `appearance.dark_theme`) and the reason. Contrast is advice only (key `contrast`, WCAG 2.2 ratios, translucent colors composed over what they are drawn on): a user pack is reported for the pairs it makes worse than its base. The built-ins' own known shortfalls (for example white on the orange accent) are a reviewed baseline in `crates/settings/tests/it/themes.rs`; they are reported nowhere else and nothing is repaired.
 
 ## Differences from the hard-coded look
 
@@ -115,7 +115,7 @@ Titlebar height, nav row and strip sizes (`titlebar.height`, `nav.*`, `strip.*`)
 
 ## Token reference
 
-Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `UPDATE_GOLDEN=1 cargo nextest run -p hutan-settings --test themes`; a test fails if this section drifts.
+Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `UPDATE_GOLDEN=1 cargo nextest run -p hutan-settings --test it -E 'test(/^themes::/)'`; a test fails if this section drifts.
 
 <!-- tokens:begin -->
 

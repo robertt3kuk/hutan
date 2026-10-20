@@ -3,7 +3,7 @@
 Raw PTY output of real programs (`NAME.raw`, exact bytes the program wrote with
 `TERM=xterm-256color`, at 80×24 unless `NAME.size` (`COLSxROWS`) says otherwise) and the final
 screen as text (`NAME.grid`, produced by replaying the raw bytes through a fresh `Emulator`).
-`tests/corpus.rs` replays every `.raw` (whole, in 4096-byte chunks and byte by byte) and
+`tests/it/corpus.rs` replays every `.raw` (whole, in 4096-byte chunks and byte by byte) and
 compares the grid text with `.grid`.
 
 The recorder answers the program's terminal queries (DA, DSR, kitty, …) through a live engine

@@ -73,7 +73,7 @@ Additive: minor bump to 0.28, capability `daemon.settings` in `conn.rs`, golden 
 ## Tests
 
 - Unit: table validation (each kind; ranges; choices; path checks), toml_edit round-trip keeps comments/unknown keys, atomic write, every-config-field-covered test.
-- Daemon integration (`crates/daemon/tests/daemon_settings.rs`): get on empty home lists defaults; set a live key (notify.enabled=false) → effective immediately (e.g. an intent is no longer raised / `notify` reports disabled) and persisted; set a restart key (daemon.restore_sessions) → `pending_restart` true, after daemon restart false and the value in effect; reset removes the key; invalid values refused with a clear message; agent-originated connection refused (`forbidden`); hand-broken daemon.toml → error with line; assistant.reset makes a workspace inherit the global choice.
+- Daemon integration (`crates/daemon/tests/it/daemon_settings.rs`): get on empty home lists defaults; set a live key (notify.enabled=false) → effective immediately (e.g. an intent is no longer raised / `notify` reports disabled) and persisted; set a restart key (daemon.restore_sessions) → `pending_restart` true, after daemon restart false and the value in effect; reset removes the key; invalid values refused with a clear message; agent-originated connection refused (`forbidden`); hand-broken daemon.toml → error with line; assistant.reset makes a workspace inherit the global choice.
 - CLI test for `hutan config set/get/reset`.
 - Golden fixtures updated.
 

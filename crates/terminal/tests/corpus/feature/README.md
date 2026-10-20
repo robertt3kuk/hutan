@@ -1,7 +1,7 @@
 # Feature corpus
 
 Hand-written VT streams (`NAME.vt`) with their expected outcomes (`NAME.expect.json`).
-Replayed by `tests/corpus.rs` through a fresh `Emulator` whole, one byte at a time and in
+Replayed by `tests/it/corpus.rs` through a fresh `Emulator` whole, one byte at a time and in
 7-byte chunks; all three must give the identical outcome.
 
 ## `.vt` format

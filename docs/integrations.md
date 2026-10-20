@@ -114,4 +114,4 @@ Not yet: reconstructing trees from OMP directories, Claude `subagents/` files or
 
 Nothing here runs with more rights than the agent has. The hook script is a few lines of `sh` that checks `HUTAN_ENV`, finds `HUTAN_BIN`, and calls `hutan agent hook`; the daemon validates every resume command before it stores it. No credentials pass through any of it.
 
-Tests: `crates/daemon/tests/agent.rs` (protocol semantics, restart resumes a fake agent through its reported argv), `crates/cli/tests/{agent,integration,integration_mcp,omp_extension}.rs` (CLI against a real daemon; installs on temporary copies of real-shaped configuration; the OMP extension under Bun, skipped when Bun is missing).
+Tests: `crates/daemon/tests/it/agent.rs` (protocol semantics, restart resumes a fake agent through its reported argv), `crates/cli/tests/it/{agent,integration,integration_mcp,omp_extension}.rs` (CLI against a real daemon; installs on temporary copies of real-shaped configuration; the OMP extension under Bun, skipped when Bun is missing).

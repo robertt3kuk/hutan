@@ -39,7 +39,7 @@ Owner: implementer. Crates: `daemon` (main), `desktop` (setup default, panel lab
 ## Tests (deterministic, no real harness or network)
 
 - Unit tests for `pick_assistant_model` over realistic catalogs: an OMP catalog (several providers, `anthropic/claude-opus-4-1` default → `anthropic/claude-sonnet-4-5`; versions and dates ordering; never cross provider), a Claude Code ACP catalog (`default` described as Opus → `sonnet`), a Codex catalog (`gpt-5-codex` default kept; a `-pro` default → non-pro), a catalog with no lower tier (keeps default), an empty catalog (`None`), hidden models skipped.
-- Daemon integration test (existing mock harness / fake omp in `crates/daemon/tests/assistant_backend.rs`): nothing configured + a ready fake OMP whose catalog defaults to an opus model → `assistant.open` succeeds, `backend == omp`, `chat.model` is the sonnet id; nothing ready → the error names the checked candidates; a stored model is used as-is (no pick).
+- Daemon integration test (existing mock harness / fake omp in `crates/daemon/tests/it/assistant_backend.rs`): nothing configured + a ready fake OMP whose catalog defaults to an opus model → `assistant.open` succeeds, `backend == omp`, `chat.model` is the sonnet id; nothing ready → the error names the checked candidates; a stored model is used as-is (no pick).
 - Desktop: `setup_gpui` — with OMP missing and Codex logged in the Agents step preselects Codex.
 
 ## Acceptance

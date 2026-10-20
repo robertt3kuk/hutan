@@ -100,7 +100,7 @@ Real Codex never runs in the default gate. Tests run against **`hutan-codex-fixt
 
 A transcript entry `{"dir": "hold", "file": PATH}` pauses the replay until `PATH` exists (at most a minute): the tests that need a stream to stand still half way (a window opened mid-stream) put one between two deltas and create the file when they are ready.
 
-Fixtures: `plain-turn`, `approval-touch` (command approval), `approval-decline`, `approval-interrupt` (approval pending when the turn is interrupted), `file-change` (patch approval with default options), `interrupt`, `turn-failed`, `resume-turn`. Tests: adapter mapping per notification kind (`crates/agents/tests/mapper.rs`), the adapter against the fake server (`tests/codex.rs`: approvals, non-offered options, expiry, resume, version refusal, unknown messages, process death), the daemon end to end (`crates/daemon/tests/chat.rs`: lifecycle, approvals across clients, journal, restart), the CLI (`crates/cli/tests/chat.rs`), storage, and golden fixtures for protocol 0.9.
+Fixtures: `plain-turn`, `approval-touch` (command approval), `approval-decline`, `approval-interrupt` (approval pending when the turn is interrupted), `file-change` (patch approval with default options), `interrupt`, `turn-failed`, `resume-turn`. Tests: adapter mapping per notification kind (`crates/agents/tests/it/mapper.rs`), the adapter against the fake server (`tests/codex.rs`: approvals, non-offered options, expiry, resume, version refusal, unknown messages, process death), the daemon end to end (`crates/daemon/tests/it/chat.rs`: lifecycle, approvals across clients, journal, restart), the CLI (`crates/cli/tests/it/chat.rs`), storage, and golden fixtures for protocol 0.9.
 
 ### Re-recording (new Codex version, new scenario)
 
@@ -218,7 +218,7 @@ Entries carry provider, a label (`ChatGPT`, `API key`, `Claude subscription`, th
 
 `crates/agents/tests/fixtures/acp-omp-18.11/`: `handshake.jsonl` was **recorded from `omp acp` 18.11.1** (initialize, session/new, session/close; run with a throwaway `HOME`, so no login was involved and no model was called: the 17 models are OMP's built-in catalog). The others are built by hand from the ACP v1 spec and what OMP's ACP server sends (message shapes read from its source: tool kinds, permission option ids, `usage_update`, config options), reusing the recorded handshake: `plain-turn`, `tool-diff`, `permission-allow|deny|cancel|expires`, `cancel`, `unknown-update`, `subagents`, `model-switch`, `mode-plan`, `auth-required|terminal-only|rejected`, `old-protocol`, `load`, `resume-only`, `no-resume`, `load-fails`, `exit-mid-turn`, `turn-error`, `refusal`, `max-tokens`, `two-turns`. A real prompt turn was not recorded: it needs a login and paid tokens, which the default gate and this slice do not use.
 
-Tests: the adapter against the fake agent (`crates/agents/tests/acp.rs`), mapping units (`acp/{udiff,nodes}.rs`), the daemon end to end with fake harness CLIs as shell scripts (`crates/daemon/tests/harness.rs`: create/send/approve/interrupt/restore, models, attachments, tasks, accounts list/login/logout/`account.changed`), the CLI (`crates/cli/tests/harness.rs`), golden fixtures for protocol 0.17.
+Tests: the adapter against the fake agent (`crates/agents/tests/it/acp.rs`), mapping units (`acp/{udiff,nodes}.rs`), the daemon end to end with fake harness CLIs as shell scripts (`crates/daemon/tests/it/harness.rs`: create/send/approve/interrupt/restore, models, attachments, tasks, accounts list/login/logout/`account.changed`), the CLI (`crates/cli/tests/it/harness.rs`), golden fixtures for protocol 0.17.
 
 ### Re-recording (new OMP version, new scenario)
 
@@ -247,7 +247,7 @@ Protocol 0.23, capability `chat.rich_input`. Files, images and pasted text can b
 - **Send to agent**: the hover bar's button and the *Block: Send to Agent* command attach the block's command and output (cut at `chat.attach_max_bytes`, default 64 KiB) as a chip in the composer of the chat that was focused last (a menu asks when none was); the chip is quoted in a fenced block in front of the message when it is sent.
 - Settings namespace `chat`: `send_key` (`cmd-enter` or `enter`; the earlier boolean `send_on_enter = true` still reads as `enter`, and writes go to `send_key`), `ask_send_key`, `attach_max_bytes`. `panels.inspector.reveal_on_approval` opens the inspector when a new request arrives.
 
-Tests: `crates/chat_view` (unit), `crates/desktop/tests/chat_gpui.rs` (an in-process daemon over `hutan-codex-fixture replay`).
+Tests: `crates/chat_view` (unit), `crates/desktop/tests/it/chat_gpui.rs` (an in-process daemon over `hutan-codex-fixture replay`).
 
 ## Questions (protocol 0.24, capability `chat.questions`)
 

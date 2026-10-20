@@ -104,6 +104,8 @@ Resources (dev machine: M1 Pro, 10 cores, 16 GB RAM, shared with the user's othe
 - Before dispatching, check `df -h ~` and `just sweep`; after merging, `git worktree remove` the slice (its `target/` goes with it). A running desktop/daemon from a UI check is stopped when the check ends.
 - Every test run uses a temporary `HUTAN_HOME`; after a run, `pgrep -x hutand` must find no test daemon.
 
+Integration-test layout: every crate with integration tests has exactly one test binary, `it` (`crates/<crate>/tests/it/main.rs`, one `mod <file>;` per test file, shared helpers in `tests/it/common/`), because each test binary links the crate's whole dependency graph; fixtures stay in `tests/fixtures`, `tests/corpus`, `tests/golden`. A new test file is a new `mod` line in `main.rs`. A test's full name is `<file>::<test>`: run one file with `cargo nextest run -p hutan-desktop -E 'test(/^harness_gpui::/)'`, one test with `cargo nextest run -p hutan-daemon -E 'test(=chat::some_test)'` (or `cargo test -p hutan-daemon --test it chat::some_test`). The one exception is `crates/daemon/tests/main_thread_loop.rs` (`harness = false`, its own binary).
+
 ## Branching and commits
 
 - Trunk-based on `master`; short-lived `slice/<id>` branches; rebase before merge; `master` always passes the gate. Remote: `origin` = <https://github.com/robertt3kuk/hutan> (public). Push `master` after each merge + status update; slice branches stay local.

@@ -81,7 +81,7 @@ report as `*_key_total_*`.
    the store notified, the filter, the folds or the settings changed (`LayoutKey`); the rows
    are a `gpui::list` so only the ones in view are built, and `sync_list` splices only the rows
    that changed so the reader keeps their place. Frame work in the drag: p50 18.2 → 3.0 ms;
-   filter key p50 32.5 → 7.3 ms. Tests (`tests/perf_gpui.rs`):
+   filter key p50 32.5 → 7.3 ms. Tests (`tests/it/perf_gpui.rs`):
    `the_sidebar_builds_only_the_rows_in_view` (a frame builds ≤ 40 rows of 150 sessions),
    `a_frame_does_not_lay_the_sidebar_out_again` (no layout without a change, one per filter key).
    The after numbers were taken before the last two touch-ups of the list (a full-width wrapper
