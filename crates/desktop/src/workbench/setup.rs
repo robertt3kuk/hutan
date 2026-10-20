@@ -1518,7 +1518,7 @@ impl Workbench {
                                     .child(*place),
                             ),
                     )
-                    .child(probe(&self.regions, Region::SetupHarness(*id, "history")))
+                    .child(probe(&self.regions, Region::SetupHarness(id, "history")))
                     .into_any_element(),
             );
         }
