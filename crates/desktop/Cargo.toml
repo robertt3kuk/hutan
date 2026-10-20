@@ -26,6 +26,7 @@ hutan-core.workspace = true
 hutan-protocol.workspace = true
 hutan-settings.workspace = true
 hutan-terminal-view.workspace = true
+hutan-vim.workspace = true
 libc.workspace = true
 schemars.workspace = true
 serde.workspace = true

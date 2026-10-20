@@ -559,6 +559,7 @@ Every Hutan text field (composer, palette and pickers, prompt dialogs, settings 
 - **The composer.** Return and ⌘Return follow the send key (`chat.send_key`, § Send key) in Insert; in Normal mode Return is never a newline and sends only when the send key is `enter`; ⌘Return sends from any mode. A sent composer is back in Insert.
 - **Undo** is a step per typed run and per Normal command (a `cw` with its typing is one step). ⌘Z / ⌘⇧Z work in the composer and the forms with or without Vim; the Vim-less path is unchanged otherwise.
 - Not in scope: counts on `i`, marks, named registers, macros, `/` search, blockwise and linewise Visual.
+- **Code.** The state machine is the `hutan-vim` crate (E-7a: GPUI-free, generic over a `VimHost`, so the editor's rope can be a host too); `workbench/chat/vim.rs` is the adapter that lets it edit a `TextInput`, and `workbench/vim_ui.rs` the GPUI side.
 
 ## Send key (SK-1)
 

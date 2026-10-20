@@ -1,1615 +1,135 @@
-//! Vim's modal editing over a [`TextInput`]: Insert, Normal and Visual (charwise) with counts,
-//! operators and motions, one unnamed register, undo and `.` repeat. Pure data: no GPUI, no
-//! clock; the views translate keystrokes into [`Key`]s and feed them to [`Vim::key`].
+//! Vim's modal editing over a [`TextInput`]: the state machine lives in `hutan-vim`
+//! ([`hutan_vim::Vim`], GPUI-free, generic over [`VimHost`]); this is the adapter that lets it edit
+//! the application's text input, and the paths the views import it by.
 //!
-//! The behaviour follows Vim's documented model (`:help motion.txt`, `:help change.txt`), not
-//! any editor's code. Words are runs of letters, digits and `_` (or of other non-blank
-//! characters), classified by [`char::is_alphanumeric`], so Cyrillic and other scripts are
-//! words like Latin ones.
+//! The adapter keeps the `TextInput`'s own behaviour: its undo steps and groups, its caret and
+//! selection rules, its Insert-mode editing keys. Every one-line field of the application goes
+//! through it, so the `String` the input holds answers the host's reads directly.
+
+use std::borrow::Cow;
+use std::ops::Range;
+
+pub use hutan_vim::{Clipboard, Key, Mode, Options, Outcome};
+use hutan_vim::{Transaction, VimHost};
 
 use super::input::TextInput;
 
-/// Vim's modes (Visual is charwise only).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Mode {
-    /// Typing inserts text.
-    #[default]
-    Insert,
-    /// Keys are commands.
-    Normal,
-    /// Motions extend a selection; operators act on it.
-    Visual,
-}
+/// The modal state of one field; the text stays in the [`TextInput`] the keys are applied to.
+pub type Vim = hutan_vim::Vim<TextInput>;
 
-impl Mode {
-    /// The word of the mode pill.
-    pub fn label(self) -> &'static str {
-        match self {
-            Mode::Insert => "INSERT",
-            Mode::Normal => "NORMAL",
-            Mode::Visual => "VISUAL",
-        }
-    }
-
-    /// Whether the caret is a block (Normal, Visual) rather than a bar (Insert).
-    pub fn block_caret(self) -> bool {
-        self != Mode::Insert
-    }
-}
-
-/// A key press, reduced to what the modal layer answers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Key {
-    /// A typed character (shift already applied: `W`, `$`).
-    Char(char),
-    /// ⌃ and a letter.
-    Ctrl(char),
-    Escape,
-    Enter,
-    Tab,
-    Backspace,
-    Delete,
-    Left,
-    Right,
-    Up,
-    Down,
-    Home,
-    End,
-}
-
-/// What [`Vim::key`] did with a key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Outcome {
-    /// The key was used (possibly as a no-op: Normal mode swallows keys it does not know).
-    Handled,
-    /// Not the modal layer's: the field's own key handling applies (Enter, Tab, Escape in Normal
-    /// mode, and in Insert mode every key when the field types for itself).
-    Ignored,
-}
-
-/// How the field the keys go to behaves.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Options {
-    /// A single-line field: `j`/`k` do nothing, lines are the whole text (`dd` clears it).
-    pub single_line: bool,
-    /// The field types for itself in Insert mode: only Escape is the modal layer's there.
-    pub insert_passthrough: bool,
-    /// Yanks and deletes also go to the system clipboard, and `p` pastes from it.
-    pub use_system_clipboard: bool,
-}
-
-/// The system clipboard, as far as the register needs it.
-pub trait Clipboard {
-    fn read(&mut self) -> Option<String>;
-    fn write(&mut self, text: &str);
-}
-
-/// No clipboard (the register is private to the field).
-impl Clipboard for () {
-    fn read(&mut self) -> Option<String> {
-        None
-    }
-    fn write(&mut self, _: &str) {}
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Op {
-    Delete,
-    Change,
-    Yank,
-}
-
-/// `f`, `t`, `F`, `T`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Find {
-    forward: bool,
-    till: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum Prefix {
-    #[default]
-    None,
-    /// `g` was typed (`gg`).
-    G,
-    /// `r` was typed: the next character replaces.
-    Replace,
-    /// `f`, `t`, `F` or `T` was typed: the next character is the target.
-    Find(Find),
-    /// `i` or `a` after an operator (or in Visual): the next key names the object.
-    Object { around: bool },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Motion {
-    Left,
-    Right,
-    Up,
-    Down,
-    Word {
-        big: bool,
-    },
-    Back {
-        big: bool,
-    },
-    End {
-        big: bool,
-    },
-    LineStart,
-    FirstNonBlank,
-    LineEnd,
-    FileStart,
-    FileEnd,
-    Find(Find, char),
-    RepeatFind {
-        reverse: bool,
-    },
-    /// The caret's line and the ones below it (`dd`, `yy`, `cc` with a count).
-    Lines,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Exclusive,
-    Inclusive,
-    Linewise,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Target {
-    to: usize,
-    kind: Kind,
-}
-
-/// The text an operator acts on: character indices, `end` exclusive.
-#[derive(Debug, Clone, Copy)]
-struct Span {
-    start: usize,
-    end: usize,
-    linewise: bool,
-}
-
-/// What a command in progress has collected.
-#[derive(Debug, Clone, Default)]
-struct Pending {
-    count: Option<usize>,
-    op: Option<Op>,
-    op_count: Option<usize>,
-    prefix: Prefix,
-}
-
-impl Pending {
-    fn is_idle(&self) -> bool {
-        self.count.is_none()
-            && self.op.is_none()
-            && self.op_count.is_none()
-            && self.prefix == Prefix::None
-    }
-
-    /// The count before and after the operator, multiplied; `None` when there was none.
-    fn total(&self) -> Option<usize> {
-        match (self.count, self.op_count) {
-            (None, None) => None,
-            (a, b) => Some(a.unwrap_or(1).saturating_mul(b.unwrap_or(1))),
-        }
-    }
-}
-
-/// The unnamed register.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct Register {
-    text: String,
-    linewise: bool,
-}
-
-impl Register {
-    /// What the system clipboard gets: a line goes with its newline.
-    fn clipboard_form(&self) -> String {
-        if self.linewise {
-            format!("{}\n", self.text)
-        } else {
-            self.text.clone()
-        }
-    }
-}
-
-/// The last change, for `.`: the keys of its command and the text typed in the Insert mode it
-/// ended in.
-#[derive(Debug, Clone, Default)]
-struct Change {
-    keys: Vec<Key>,
-    inserted: Option<String>,
-}
-
-/// The modal state of one field. The text stays in the [`TextInput`] the keys are applied to.
-#[derive(Debug, Clone, Default)]
-pub struct Vim {
-    mode: Mode,
-    pending: Pending,
-    /// Where Visual started (byte offset).
-    anchor: usize,
-    /// The column `j`/`k` aim for (`usize::MAX` after `$`).
-    want_col: Option<usize>,
-    register: Register,
-    last_find: Option<(Find, char)>,
-    /// Keys of the Normal-mode command in progress.
-    rec: Vec<Key>,
-    /// The command in progress changed the text.
-    changed: bool,
-    last_change: Option<Change>,
-    replaying: bool,
-    /// Where the current Insert session started (byte offset) and how much text followed the
-    /// caret then: what was typed is between the start and the caret when it ends.
-    insert_origin: Option<(usize, usize)>,
-}
-
-impl Vim {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn mode(&self) -> Mode {
-        self.mode
-    }
-
-    /// Back to Insert with nothing pending (a field that opens for typing). The register and
-    /// the last change survive.
-    pub fn reset(&mut self) {
-        self.mode = Mode::Insert;
-        self.pending = Pending::default();
-        self.rec.clear();
-        self.changed = false;
-        self.want_col = None;
-        self.insert_origin = None;
-    }
-
-    /// The keys typed so far of a command in progress (`2d`), for display.
-    pub fn pending_keys(&self) -> String {
-        let mut out = String::new();
-        if let Some(count) = self.pending.count {
-            out.push_str(&count.to_string());
-        }
-        match self.pending.op {
-            Some(Op::Delete) => out.push('d'),
-            Some(Op::Change) => out.push('c'),
-            Some(Op::Yank) => out.push('y'),
-            None => {}
-        }
-        if let Some(count) = self.pending.op_count {
-            out.push_str(&count.to_string());
-        }
-        match self.pending.prefix {
-            Prefix::None => {}
-            Prefix::G => out.push('g'),
-            Prefix::Replace => out.push('r'),
-            Prefix::Find(f) => out.push(match (f.forward, f.till) {
-                (true, false) => 'f',
-                (true, true) => 't',
-                (false, false) => 'F',
-                (false, true) => 'T',
-            }),
-            Prefix::Object { around } => out.push(if around { 'a' } else { 'i' }),
-        }
-        out
-    }
-
-    /// What the unnamed register holds, and whether it is whole lines.
-    pub fn register(&self) -> (&str, bool) {
-        (&self.register.text, self.register.linewise)
-    }
-
-    /// The selected bytes in Visual mode, the character under the caret included.
-    pub fn selection(&self, input: &TextInput) -> Option<std::ops::Range<usize>> {
-        if self.mode != Mode::Visual {
-            return None;
-        }
-        let text = input.text();
-        let (lo, hi) = (
-            self.anchor.min(input.cursor()),
-            self.anchor.max(input.cursor()),
-        );
-        let hi = text[hi.min(text.len())..]
-            .chars()
-            .next()
-            .map_or(text.len(), |c| hi + c.len_utf8());
-        Some(lo.min(text.len())..hi.min(text.len()))
-    }
-
-    /// Applies a key to `input`.
-    pub fn key(
-        &mut self,
-        input: &mut TextInput,
-        key: Key,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) -> Outcome {
-        match self.mode {
-            Mode::Insert => self.insert_key(input, key, opts),
-            Mode::Normal | Mode::Visual => self.command_key(input, key, opts, clip),
-        }
-    }
-
-    // ---- Insert ----------------------------------------------------------------------------
-
-    fn insert_key(&mut self, input: &mut TextInput, key: Key, opts: Options) -> Outcome {
-        if key == Key::Escape {
-            self.leave_insert(input);
-            return Outcome::Handled;
-        }
-        if opts.insert_passthrough {
-            return Outcome::Ignored;
-        }
-        match key {
-            Key::Char(c) => input.insert(c.encode_utf8(&mut [0; 4])),
-            Key::Backspace => input.backspace(),
-            Key::Delete => input.delete(),
-            Key::Left => input.left(),
-            Key::Right => input.right(),
-            Key::Home => input.home(),
-            Key::End => input.end(),
-            Key::Up if !opts.single_line => {
-                input.up();
-            }
-            Key::Down if !opts.single_line => {
-                input.down();
-            }
-            _ => return Outcome::Ignored,
-        }
-        Outcome::Handled
-    }
-
-    fn enter_insert(&mut self, input: &mut TextInput) {
-        input.begin_group();
-        self.mode = Mode::Insert;
-        let cursor = input.cursor();
-        self.insert_origin = Some((cursor, input.text().len() - cursor));
-        self.pending = Pending::default();
-    }
-
-    fn leave_insert(&mut self, input: &mut TextInput) {
-        if !self.rec.is_empty() && !self.replaying {
-            let inserted = self.insert_origin.and_then(|(start, tail)| {
-                let cursor = input.cursor();
-                let text = input.text();
-                (start <= cursor
-                    && text.len() - cursor == tail
-                    && text.is_char_boundary(start)
-                    && start < cursor)
-                    .then(|| text[start..cursor].to_owned())
-            });
-            self.last_change = Some(Change {
-                keys: std::mem::take(&mut self.rec),
-                inserted,
-            });
-        }
-        self.rec.clear();
-        self.changed = false;
-        self.insert_origin = None;
-        input.end_group();
-        self.mode = Mode::Normal;
-        self.want_col = None;
-        // Like Vim, the caret steps back onto the last character typed.
-        let buf = Buf::new(input.text());
-        let at = buf.idx(input.cursor());
-        if at > buf.line_start(at) {
-            input.set_cursor(buf.byte(at - 1));
-        }
-    }
-
-    // ---- Normal and Visual -----------------------------------------------------------------
-
-    fn command_key(
-        &mut self,
-        input: &mut TextInput,
-        key: Key,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) -> Outcome {
-        let outcome = self.dispatch(input, key, opts, clip);
-        if self.mode == Mode::Normal && self.pending.is_idle() {
-            // The command is complete.
-            if self.changed && !self.replaying {
-                self.last_change = Some(Change {
-                    keys: std::mem::take(&mut self.rec),
-                    inserted: None,
-                });
-            }
-            self.rec.clear();
-            self.changed = false;
-            input.end_group();
-            self.clamp_normal(input);
-        } else if self.mode == Mode::Visual {
-            self.rec.clear();
-            self.changed = false;
-        }
-        outcome
-    }
-
-    fn dispatch(
-        &mut self,
-        input: &mut TextInput,
-        key: Key,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) -> Outcome {
-        let visual = self.mode == Mode::Visual;
-        // `.` replays; it is not itself a change to replay.
-        if !visual && self.pending.is_idle() && key == Key::Char('.') {
-            self.repeat(input, opts, clip);
-            return Outcome::Handled;
-        }
-        if !visual && !self.replaying {
-            self.rec.push(key);
-        }
-
-        match self.pending.prefix {
-            Prefix::None => {}
-            prefix => return self.dispatch_prefixed(input, prefix, key, opts, clip),
-        }
-
-        match key {
-            Key::Escape => {
-                if !self.pending.is_idle() {
-                    self.pending = Pending::default();
-                    Outcome::Handled
-                } else if visual {
-                    self.leave_visual(input);
-                    Outcome::Handled
-                } else {
-                    self.rec.clear();
-                    Outcome::Ignored
-                }
-            }
-            Key::Enter | Key::Tab => {
-                self.pending = Pending::default();
-                Outcome::Ignored
-            }
-            Key::Ctrl('r') if !visual => {
-                self.pending = Pending::default();
-                input.redo();
-                self.want_col = None;
-                Outcome::Handled
-            }
-            Key::Ctrl(_) => {
-                self.pending = Pending::default();
-                Outcome::Ignored
-            }
-            Key::Left => self.motion_key(input, Motion::Left, opts, clip),
-            Key::Right => self.motion_key(input, Motion::Right, opts, clip),
-            Key::Up => self.motion_key(input, Motion::Up, opts, clip),
-            Key::Down => self.motion_key(input, Motion::Down, opts, clip),
-            Key::Home => self.motion_key(input, Motion::LineStart, opts, clip),
-            Key::End => self.motion_key(input, Motion::LineEnd, opts, clip),
-            Key::Backspace => self.motion_key(input, Motion::Left, opts, clip),
-            Key::Delete => self.char_command(input, 'x', opts, clip),
-            Key::Char(c) => self.char_command(input, c, opts, clip),
-        }
-    }
-
-    fn dispatch_prefixed(
-        &mut self,
-        input: &mut TextInput,
-        prefix: Prefix,
-        key: Key,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) -> Outcome {
-        self.pending.prefix = Prefix::None;
-        let Key::Char(c) = key else {
-            self.pending = Pending::default();
-            return Outcome::Handled;
-        };
-        match prefix {
-            Prefix::None => {}
-            Prefix::G => {
-                if c == 'g' {
-                    self.motion_key(input, Motion::FileStart, opts, clip);
-                } else {
-                    self.pending = Pending::default();
-                }
-            }
-            Prefix::Replace => {
-                let count = self.pending.total().unwrap_or(1);
-                self.pending = Pending::default();
-                self.replace_chars(input, count, c);
-            }
-            Prefix::Find(find) => {
-                self.last_find = Some((find, c));
-                self.motion_key(input, Motion::Find(find, c), opts, clip);
-            }
-            Prefix::Object { around } => {
-                let big = match c {
-                    'w' => false,
-                    'W' => true,
-                    _ => {
-                        self.pending = Pending::default();
-                        return Outcome::Handled;
-                    }
-                };
-                self.object(input, around, big, opts, clip);
-            }
-        }
-        Outcome::Handled
-    }
-
-    /// A character key in Normal or Visual mode.
-    fn char_command(
-        &mut self,
-        input: &mut TextInput,
-        c: char,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) -> Outcome {
-        let visual = self.mode == Mode::Visual;
-        // Counts: `0` is a motion unless a count has started.
-        if let Some(digit) = c.to_digit(10)
-            && (digit != 0 || self.count_slot().is_some())
-        {
-            let slot = self.count_slot_mut();
-            *slot = Some(
-                slot.unwrap_or(0)
-                    .saturating_mul(10)
-                    .saturating_add(digit as usize)
-                    .min(99_999),
-            );
-            return Outcome::Handled;
-        }
-        let motion = match c {
-            'h' => Some(Motion::Left),
-            'l' | ' ' => Some(Motion::Right),
-            'j' => Some(Motion::Down),
-            'k' => Some(Motion::Up),
-            'w' => Some(Motion::Word { big: false }),
-            'W' => Some(Motion::Word { big: true }),
-            'b' => Some(Motion::Back { big: false }),
-            'B' => Some(Motion::Back { big: true }),
-            'e' => Some(Motion::End { big: false }),
-            'E' => Some(Motion::End { big: true }),
-            '0' => Some(Motion::LineStart),
-            '^' => Some(Motion::FirstNonBlank),
-            '$' => Some(Motion::LineEnd),
-            'G' => Some(Motion::FileEnd),
-            ';' => Some(Motion::RepeatFind { reverse: false }),
-            ',' => Some(Motion::RepeatFind { reverse: true }),
-            _ => None,
-        };
-        if let Some(motion) = motion {
-            return self.motion_key(input, motion, opts, clip);
-        }
-        match c {
-            'g' => self.pending.prefix = Prefix::G,
-            'f' | 't' | 'F' | 'T' => {
-                self.pending.prefix = Prefix::Find(Find {
-                    forward: c == 'f' || c == 't',
-                    till: c == 't' || c == 'T',
-                });
-            }
-            'i' | 'a' if visual || self.pending.op.is_some() => {
-                self.pending.prefix = Prefix::Object { around: c == 'a' };
-            }
-            'd' | 'c' | 'y' => {
-                let op = match c {
-                    'd' => Op::Delete,
-                    'c' => Op::Change,
-                    _ => Op::Yank,
-                };
-                if visual {
-                    self.visual_op(input, op, opts, clip);
-                } else if self.pending.op == Some(op) {
-                    // `dd`, `cc`, `yy`: the line.
-                    self.run(input, Motion::Lines, opts, clip);
-                } else if self.pending.op.is_none() {
-                    self.pending.op = Some(op);
-                } else {
-                    self.pending = Pending::default();
-                }
-            }
-            _ if visual => self.visual_command(input, c, opts, clip),
-            _ if self.pending.op.is_some() => {
-                // Not a motion or an object: the operator is cancelled.
-                self.pending = Pending::default();
-            }
-            _ => self.normal_command(input, c, opts, clip),
-        }
-        Outcome::Handled
-    }
-
-    fn count_slot(&self) -> Option<usize> {
-        if self.pending.op.is_some() {
-            self.pending.op_count
-        } else {
-            self.pending.count
-        }
-    }
-
-    fn count_slot_mut(&mut self) -> &mut Option<usize> {
-        if self.pending.op.is_some() {
-            &mut self.pending.op_count
-        } else {
-            &mut self.pending.count
-        }
-    }
-
-    fn motion_key(
-        &mut self,
-        input: &mut TextInput,
-        motion: Motion,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) -> Outcome {
-        self.run(input, motion, opts, clip);
-        Outcome::Handled
-    }
-
-    /// Normal-mode commands that are not operators or motions.
-    fn normal_command(
-        &mut self,
-        input: &mut TextInput,
-        c: char,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) {
-        let count = self.pending.total();
-        let n = count.unwrap_or(1).max(1);
-        match c {
-            'x' => self.run_op(input, Op::Delete, Motion::Right, opts, clip),
-            'X' => self.run_op(input, Op::Delete, Motion::Left, opts, clip),
-            'D' => self.run_op(input, Op::Delete, Motion::LineEnd, opts, clip),
-            'C' => self.run_op(input, Op::Change, Motion::LineEnd, opts, clip),
-            's' => self.run_op(input, Op::Change, Motion::Right, opts, clip),
-            'S' => self.run_op(input, Op::Change, Motion::Lines, opts, clip),
-            'Y' => self.run_op(input, Op::Yank, Motion::Lines, opts, clip),
-            'i' => {
-                self.changed = true;
-                self.pending = Pending::default();
-                self.enter_insert(input);
-            }
-            'a' => {
-                self.changed = true;
-                self.pending = Pending::default();
-                let buf = Buf::new(input.text());
-                let at = buf.idx(input.cursor());
-                if at < buf.line_end(at) {
-                    input.set_cursor(buf.byte(at + 1));
-                }
-                self.enter_insert(input);
-            }
-            'I' => {
-                self.changed = true;
-                self.pending = Pending::default();
-                let buf = Buf::new(input.text());
-                let at = buf.idx(input.cursor());
-                let to = buf.first_nonblank(buf.line_start(at));
-                input.set_cursor(buf.byte(to));
-                self.enter_insert(input);
-            }
-            'A' => {
-                self.changed = true;
-                self.pending = Pending::default();
-                let buf = Buf::new(input.text());
-                let at = buf.idx(input.cursor());
-                input.set_cursor(buf.byte(buf.line_end(at)));
-                self.enter_insert(input);
-            }
-            'o' | 'O' => {
-                self.changed = true;
-                self.pending = Pending::default();
-                let buf = Buf::new(input.text());
-                let at = buf.idx(input.cursor());
-                if opts.single_line {
-                    let to = if c == 'o' { buf.len() } else { 0 };
-                    input.set_cursor(buf.byte(to));
-                    self.enter_insert(input);
-                } else {
-                    input.begin_group();
-                    if c == 'o' {
-                        input.set_cursor(buf.byte(buf.line_end(at)));
-                        input.insert("\n");
-                    } else {
-                        let ls = buf.byte(buf.line_start(at));
-                        input.set_cursor(ls);
-                        input.insert("\n");
-                        input.set_cursor(ls);
-                    }
-                    self.enter_insert(input);
-                }
-            }
-            'p' | 'P' => {
-                self.pending = Pending::default();
-                self.paste(input, c == 'P', n, opts, clip);
-            }
-            'u' => {
-                self.pending = Pending::default();
-                for _ in 0..n {
-                    if !input.undo() {
-                        break;
-                    }
-                }
-                self.want_col = None;
-            }
-            'r' => self.pending.prefix = Prefix::Replace,
-            '~' => {
-                self.pending = Pending::default();
-                self.toggle_case(input, n);
-            }
-            'v' => {
-                self.pending = Pending::default();
-                self.anchor = input.cursor();
-                self.mode = Mode::Visual;
-                self.want_col = None;
-            }
-            _ => self.pending = Pending::default(),
-        }
-    }
-
-    // ---- motions and operators -------------------------------------------------------------
-
-    /// A motion key: moves the caret, or acts as the target of a pending operator.
-    fn run(
-        &mut self,
-        input: &mut TextInput,
-        motion: Motion,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) {
-        if let Some(op) = self.pending.op {
-            self.run_op(input, op, motion, opts, clip);
-            return;
-        }
-        let count = self.pending.total();
-        self.pending = Pending::default();
-        let buf = Buf::new(input.text());
-        let from = buf.idx(input.cursor());
-        if !matches!(motion, Motion::Up | Motion::Down) {
-            self.want_col = None;
-        }
-        let Some(target) = self.target(&buf, from, motion, count, false, opts) else {
-            return;
-        };
-        if motion == Motion::LineEnd {
-            self.want_col = Some(usize::MAX);
-        }
-        let to = buf.normal_clamp(target.to);
-        input.set_cursor(buf.byte(to));
-    }
-
-    /// An operator and its motion (or the keys that stand for them: `x`, `D`, `cc`).
-    fn run_op(
-        &mut self,
-        input: &mut TextInput,
-        op: Op,
-        motion: Motion,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) {
-        let count = self.pending.total();
-        self.pending = Pending::default();
-        let buf = Buf::new(input.text());
-        let from = buf.idx(input.cursor());
-        if !matches!(motion, Motion::Up | Motion::Down) {
-            self.want_col = None;
-        }
-        // `cw` on a word changes up to its end, like `ce` (but stays on a one-letter word).
-        let on_word = buf.at(from).is_some_and(|c| class(c, false) != 0);
-        let target = match (op, motion) {
-            (Op::Change, Motion::Word { big }) if on_word && buf.at(from).is_some() => {
-                let mut to = buf.run_end(from, big);
-                for _ in 1..count.unwrap_or(1) {
-                    to = buf.word_end(to, big);
-                }
-                Some(Target {
-                    to,
-                    kind: Kind::Inclusive,
-                })
-            }
-            _ => self.target(&buf, from, motion, count, true, opts),
-        };
-        let Some(target) = target else {
-            return;
-        };
-        let span = buf.span(from, target, opts.single_line);
-        self.apply(input, op, span, from, opts, clip);
-    }
-
-    /// Operator on `iw`, `aw`, `iW`, `aW`.
-    fn object(
-        &mut self,
-        input: &mut TextInput,
-        around: bool,
-        big: bool,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) {
-        let buf = Buf::new(input.text());
-        let from = buf.idx(input.cursor());
-        let Some((start, end)) = buf.word_object(from, around, big) else {
-            self.pending = Pending::default();
-            return;
-        };
-        if self.mode == Mode::Visual {
-            self.pending = Pending::default();
-            if end > start {
-                self.anchor = buf.byte(start);
-                input.set_cursor(buf.byte(end - 1));
-            }
-            return;
-        }
-        let Some(op) = self.pending.op else {
-            self.pending = Pending::default();
-            return;
-        };
-        self.pending = Pending::default();
-        let span = Span {
-            start,
-            end,
-            linewise: false,
-        };
-        self.apply(input, op, span, from, opts, clip);
-    }
-
-    /// Applies `op` to `span`; `from` is where the caret was.
-    fn apply(
-        &mut self,
-        input: &mut TextInput,
-        op: Op,
-        span: Span,
-        from: usize,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) {
-        let buf = Buf::new(input.text());
-        let text: String = buf.chars[span.start..span.end].iter().collect();
-        let empty = span.start == span.end && !span.linewise;
-        if !empty {
-            self.register = Register {
-                text,
-                linewise: span.linewise,
-            };
-            if !self.register.text.is_empty() {
-                self.write_clipboard(opts, clip);
-            }
-        }
-        match op {
-            Op::Yank => {
-                let at = if span.linewise {
-                    let col = from - buf.line_start(from);
-                    let ls = buf.line_start(span.start);
-                    let le = buf.line_end(span.start);
-                    ls + col.min((le - ls).saturating_sub(1))
-                } else {
-                    span.start
-                };
-                input.set_cursor(buf.byte(at));
-            }
-            Op::Delete => {
-                if empty {
-                    return;
-                }
-                self.changed = true;
-                input.begin_group();
-                self.delete_span(input, &buf, span, false);
-            }
-            Op::Change => {
-                self.changed = true;
-                input.begin_group();
-                if !empty {
-                    self.delete_span(input, &buf, span, true);
-                }
-                self.enter_insert(input);
-            }
-        }
-    }
-
-    /// Removes `span`. A deleted line takes its newline with it, unless `keep_line` (a changed
-    /// line stays, empty).
-    fn delete_span(&mut self, input: &mut TextInput, buf: &Buf, span: Span, keep_line: bool) {
-        if !span.linewise {
-            input.remove_range(buf.byte(span.start)..buf.byte(span.end));
-            return;
-        }
-        if keep_line {
-            input.remove_range(buf.byte(span.start)..buf.byte(span.end));
-            return;
-        }
-        let (start, end) = if span.end < buf.len() {
-            (span.start, span.end + 1)
-        } else if span.start > 0 {
-            (span.start - 1, span.end)
-        } else {
-            (span.start, span.end)
-        };
-        input.remove_range(buf.byte(start)..buf.byte(end));
-        let after = Buf::new(input.text());
-        let line = buf.line_of(span.start).min(after.line_count() - 1);
-        let at = after.first_nonblank(after.line_start_of(line));
-        input.set_cursor(after.byte(at));
-    }
-
-    fn write_clipboard(&self, opts: Options, clip: &mut dyn Clipboard) {
-        if opts.use_system_clipboard {
-            clip.write(&self.register.clipboard_form());
-        }
-    }
-
-    /// Where `motion` leads from `from`; `None` when it cannot move (the command does nothing).
-    /// `op` is whether an operator waits for it (a few motions differ then).
-    fn target(
-        &mut self,
-        buf: &Buf,
-        from: usize,
-        motion: Motion,
-        count: Option<usize>,
-        op: bool,
-        opts: Options,
-    ) -> Option<Target> {
-        let n = count.unwrap_or(1).max(1);
-        let exclusive = |to| {
-            Some(Target {
-                to,
-                kind: Kind::Exclusive,
-            })
-        };
-        let inclusive = |to| {
-            Some(Target {
-                to,
-                kind: Kind::Inclusive,
-            })
-        };
-        let linewise = |to| {
-            Some(Target {
-                to,
-                kind: Kind::Linewise,
-            })
-        };
-        match motion {
-            Motion::Left => {
-                let ls = buf.line_start(from);
-                exclusive(from.saturating_sub(n).max(ls))
-            }
-            Motion::Right => {
-                let le = buf.line_end(from);
-                let limit = if op {
-                    le
-                } else {
-                    buf.last_in_line(from).max(from)
-                };
-                exclusive((from + n).min(limit))
-            }
-            Motion::Up | Motion::Down => {
-                if opts.single_line {
-                    return None;
-                }
-                let current = buf.line_of(from);
-                let total = buf.line_count();
-                let line = if motion == Motion::Up {
-                    if current == 0 {
-                        return None;
-                    }
-                    current.saturating_sub(n)
-                } else {
-                    if current + 1 >= total {
-                        return None;
-                    }
-                    (current + n).min(total - 1)
-                };
-                let col = *self.want_col.get_or_insert(from - buf.line_start(from));
-                let start = buf.line_start_of(line);
-                let len = buf.line_end(start) - start;
-                linewise(start + col.min(len.saturating_sub(1)))
-            }
-            Motion::Word { big } => {
-                let mut to = from;
-                let mut last_start = from;
-                for _ in 0..n {
-                    last_start = to;
-                    to = buf.word_forward(to, big);
-                }
-                if op && to > from && buf.line_of(to) > buf.line_of(last_start) {
-                    // The last word of a line: the operator stops at the line's end.
-                    to = buf.line_end(last_start);
-                }
-                exclusive(to)
-            }
-            Motion::Back { big } => {
-                let mut to = from;
-                for _ in 0..n {
-                    to = buf.word_back(to, big);
-                }
-                exclusive(to)
-            }
-            Motion::End { big } => {
-                let mut to = from;
-                for _ in 0..n {
-                    to = buf.word_end(to, big);
-                }
-                inclusive(to)
-            }
-            Motion::LineStart => exclusive(buf.line_start(from)),
-            Motion::FirstNonBlank => exclusive(buf.first_nonblank(buf.line_start(from))),
-            Motion::LineEnd => {
-                let line = (buf.line_of(from) + n - 1).min(buf.line_count() - 1);
-                inclusive(buf.last_in_line(buf.line_start_of(line)))
-            }
-            Motion::FileStart | Motion::FileEnd => {
-                let last = buf.line_count() - 1;
-                let line = match (count, motion) {
-                    (Some(n), _) => (n - 1).min(last),
-                    (None, Motion::FileStart) => 0,
-                    (None, _) => last,
-                };
-                let start = buf.line_start_of(line);
-                linewise(buf.first_nonblank(start))
-            }
-            Motion::Find(find, ch) => buf.find(from, find, ch, n).map(|to| Target {
-                to,
-                kind: if find.forward {
-                    Kind::Inclusive
-                } else {
-                    Kind::Exclusive
-                },
-            }),
-            Motion::RepeatFind { reverse } => {
-                let (find, ch) = self.last_find?;
-                let find = Find {
-                    forward: find.forward != reverse,
-                    till: find.till,
-                };
-                // A repeated `t` would stay in place before the same character: step over it.
-                let start = match (find.till, find.forward) {
-                    (true, true) if buf.at(from + 1) == Some(ch) => from + 1,
-                    (true, false) if from > 0 && buf.at(from - 1) == Some(ch) => from - 1,
-                    _ => from,
-                };
-                buf.find(start, find, ch, n).map(|to| Target {
-                    to,
-                    kind: if find.forward {
-                        Kind::Inclusive
-                    } else {
-                        Kind::Exclusive
-                    },
-                })
-            }
-            Motion::Lines => {
-                let line = (buf.line_of(from) + n - 1).min(buf.line_count() - 1);
-                linewise(buf.line_start_of(line))
-            }
-        }
-    }
-
-    // ---- other commands --------------------------------------------------------------------
-
-    fn replace_chars(&mut self, input: &mut TextInput, count: usize, c: char) {
-        let buf = Buf::new(input.text());
-        let from = buf.idx(input.cursor());
-        if c == '\n' || from + count > buf.line_end(from) {
-            return;
-        }
-        self.changed = true;
-        let with: String = std::iter::repeat_n(c, count).collect();
-        input.begin_group();
-        input.replace_range(buf.byte(from)..buf.byte(from + count), &with);
-        input.set_cursor(buf.byte(from) + with.len() - c.len_utf8());
-    }
-
-    fn toggle_case(&mut self, input: &mut TextInput, count: usize) {
-        let buf = Buf::new(input.text());
-        let from = buf.idx(input.cursor());
-        let end = (from + count).min(buf.line_end(from));
-        if end == from {
-            return;
-        }
-        self.changed = true;
-        input.begin_group();
-        let toggled = toggle_case_of(&buf.chars[from..end]);
-        input.replace_range(buf.byte(from)..buf.byte(end), &toggled);
-        let after = Buf::new(input.text());
-        let to = (from + (end - from)).min(after.last_in_line(from).max(from));
-        input.set_cursor(after.byte(to));
-    }
-
-    fn paste(
-        &mut self,
-        input: &mut TextInput,
-        before: bool,
-        count: usize,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) {
-        let Some(mut register) = self.paste_source(opts, clip) else {
-            return;
-        };
-        if opts.single_line {
-            register.linewise = false;
-            register.text = register.text.replace(['\r', '\n'], " ");
-        }
-        if register.text.is_empty() && !register.linewise {
-            return;
-        }
-        self.changed = true;
-        input.begin_group();
-        let buf = Buf::new(input.text());
-        let from = buf.idx(input.cursor());
-        if register.linewise {
-            let block = vec![register.text.as_str(); count].join("\n");
-            if before {
-                let ls = buf.byte(buf.line_start(from));
-                input.set_cursor(ls);
-                input.insert(&format!("{block}\n"));
-                input.set_cursor(ls);
-            } else {
-                let le = buf.byte(buf.line_end(from));
-                input.set_cursor(le);
-                input.insert(&format!("\n{block}"));
-                input.set_cursor(le + 1);
-            }
-            let after = Buf::new(input.text());
-            let at = after.idx(input.cursor());
-            input.set_cursor(after.byte(after.first_nonblank(at)));
-        } else {
-            let block = register.text.repeat(count);
-            let at = if before || buf.at(from).is_none_or(|c| c == '\n') {
-                from
-            } else {
-                from + 1
-            };
-            let start = buf.byte(at);
-            input.set_cursor(start);
-            input.insert(&block);
-            if block.contains('\n') {
-                input.set_cursor(start);
-            } else if let Some(last) = block.chars().next_back() {
-                input.set_cursor(start + block.len() - last.len_utf8());
-            }
-        }
-    }
-
-    /// The register, or the system clipboard when it holds something else.
-    fn paste_source(&mut self, opts: Options, clip: &mut dyn Clipboard) -> Option<Register> {
-        if opts.use_system_clipboard
-            && let Some(text) = clip.read().filter(|t| !t.is_empty())
-        {
-            if self.register.clipboard_form() == text {
-                return Some(self.register.clone());
-            }
-            return Some(match text.strip_suffix('\n') {
-                Some(line) => Register {
-                    text: line.to_owned(),
-                    linewise: true,
-                },
-                None => Register {
-                    text,
-                    linewise: false,
-                },
-            });
-        }
-        (!self.register.text.is_empty() || self.register.linewise).then(|| self.register.clone())
-    }
-
-    fn repeat(&mut self, input: &mut TextInput, opts: Options, clip: &mut dyn Clipboard) {
-        let Some(change) = self.last_change.clone() else {
-            return;
-        };
-        self.replaying = true;
-        for key in change.keys {
-            self.key(input, key, opts, clip);
-        }
-        if self.mode == Mode::Insert {
-            if let Some(text) = &change.inserted {
-                input.insert(text);
-            }
-            self.leave_insert(input);
-        }
-        self.replaying = false;
-        self.rec.clear();
-        self.changed = false;
-    }
-
-    // ---- Visual ----------------------------------------------------------------------------
-
-    fn leave_visual(&mut self, input: &mut TextInput) {
-        self.mode = Mode::Normal;
-        self.pending = Pending::default();
-        self.want_col = None;
-        self.clamp_normal(input);
-    }
-
-    fn visual_span(&self, input: &TextInput) -> Span {
-        let buf = Buf::new(input.text());
-        let a = buf.idx(self.anchor.min(input.text().len()));
-        let b = buf.idx(input.cursor());
-        Span {
-            start: a.min(b),
-            end: (a.max(b) + 1).min(buf.len()),
-            linewise: false,
-        }
-    }
-
-    fn visual_op(
-        &mut self,
-        input: &mut TextInput,
-        op: Op,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) {
-        let span = self.visual_span(input);
-        let from = Buf::new(input.text()).idx(input.cursor());
-        self.mode = Mode::Normal;
-        self.pending = Pending::default();
-        self.apply(input, op, span, from, opts, clip);
-        // Changes made in Visual are not repeated (Vim repeats them on a same-sized region).
-        self.changed = false;
-        self.rec.clear();
-    }
-
-    fn visual_command(
-        &mut self,
-        input: &mut TextInput,
-        c: char,
-        opts: Options,
-        clip: &mut dyn Clipboard,
-    ) {
-        match c {
-            'v' => self.leave_visual(input),
-            'o' => {
-                let cursor = input.cursor();
-                input.set_cursor(self.anchor);
-                self.anchor = cursor;
-            }
-            'x' => self.visual_op(input, Op::Delete, opts, clip),
-            's' => self.visual_op(input, Op::Change, opts, clip),
-            '~' => {
-                let span = self.visual_span(input);
-                let buf = Buf::new(input.text());
-                self.mode = Mode::Normal;
-                if span.end > span.start {
-                    input.begin_group();
-                    let toggled = toggle_case_of(&buf.chars[span.start..span.end]);
-                    input.replace_range(buf.byte(span.start)..buf.byte(span.end), &toggled);
-                    input.set_cursor(buf.byte(span.start));
-                }
-                self.changed = false;
-                self.rec.clear();
-            }
-            _ => {}
-        }
-        if self.mode == Mode::Visual {
-            self.pending = Pending::default();
-        }
-    }
-
-    /// Normal mode never rests past the last character of a line.
-    fn clamp_normal(&mut self, input: &mut TextInput) {
-        if self.mode != Mode::Normal {
-            return;
-        }
-        let buf = Buf::new(input.text());
-        let at = buf.idx(input.cursor());
-        let to = buf.normal_clamp(at);
-        if to != at {
-            input.set_cursor(buf.byte(to));
-        }
-    }
-}
-
-fn toggle_case_of(chars: &[char]) -> String {
-    chars
-        .iter()
-        .flat_map(|c| {
-            if c.is_lowercase() {
-                c.to_uppercase().collect::<Vec<_>>()
-            } else if c.is_uppercase() {
-                c.to_lowercase().collect::<Vec<_>>()
-            } else {
-                vec![*c]
-            }
-        })
-        .collect()
-}
-
-/// 0 blank, 1 punctuation, 2 word (everything non-blank with `big`).
-fn class(c: char, big: bool) -> u8 {
-    if c.is_whitespace() {
-        0
-    } else if big || c.is_alphanumeric() || c == '_' {
-        2
-    } else {
-        1
-    }
-}
-
-/// The text as characters with their byte offsets, for motions in character indices.
-struct Buf {
-    chars: Vec<char>,
-    /// `offs[i]` is the byte offset of character `i`; one more entry for the end.
-    offs: Vec<usize>,
-}
-
-impl Buf {
-    fn new(text: &str) -> Self {
-        let mut chars = Vec::with_capacity(text.len());
-        let mut offs = Vec::with_capacity(text.len() + 1);
-        for (at, c) in text.char_indices() {
-            chars.push(c);
-            offs.push(at);
-        }
-        offs.push(text.len());
-        Self { chars, offs }
-    }
-
+impl VimHost for TextInput {
     fn len(&self) -> usize {
-        self.chars.len()
+        self.text().len()
     }
 
-    fn at(&self, i: usize) -> Option<char> {
-        self.chars.get(i).copied()
+    fn char_at(&self, at: usize) -> Option<char> {
+        self.text().get(at..)?.chars().next()
     }
 
-    /// The character index of byte offset `byte`.
-    fn idx(&self, byte: usize) -> usize {
-        self.offs.binary_search(&byte).unwrap_or_else(|i| i)
+    fn char_before(&self, at: usize) -> Option<char> {
+        self.text().get(..at)?.chars().next_back()
     }
 
-    fn byte(&self, i: usize) -> usize {
-        self.offs[i.min(self.chars.len())]
-    }
-
-    fn line_start(&self, i: usize) -> usize {
-        let mut i = i.min(self.len());
-        while i > 0 && self.chars[i - 1] != '\n' {
-            i -= 1;
-        }
-        i
-    }
-
-    /// The index of the `\n` ending the line (or the text's end).
-    fn line_end(&self, i: usize) -> usize {
-        let mut i = i.min(self.len());
-        while i < self.len() && self.chars[i] != '\n' {
-            i += 1;
-        }
-        i
-    }
-
-    fn line_of(&self, i: usize) -> usize {
-        self.chars[..i.min(self.len())]
-            .iter()
-            .filter(|c| **c == '\n')
-            .count()
+    fn slice(&self, range: Range<usize>) -> Cow<'_, str> {
+        Cow::Borrowed(&self.text()[range])
     }
 
     fn line_count(&self) -> usize {
-        self.chars.iter().filter(|c| **c == '\n').count() + 1
+        self.text().bytes().filter(|b| *b == b'\n').count() + 1
     }
 
-    fn line_start_of(&self, line: usize) -> usize {
-        let mut seen = 0;
-        for (i, c) in self.chars.iter().enumerate() {
-            if seen == line {
-                return self.line_start(i);
-            }
-            if *c == '\n' {
-                seen += 1;
-            }
-        }
-        if seen == line {
-            self.len()
-        } else {
-            self.line_start(self.len())
-        }
+    fn line_of(&self, at: usize) -> usize {
+        self.text()[..at].bytes().filter(|b| *b == b'\n').count()
     }
 
-    /// The last character of the line holding `i` (its start when the line is empty).
-    fn last_in_line(&self, i: usize) -> usize {
-        let (ls, le) = (self.line_start(i), self.line_end(i));
-        if le > ls { le - 1 } else { ls }
-    }
-
-    /// The first character of the line starting at `ls` that is not a space or tab, or its last
-    /// character when it is all blank.
-    fn first_nonblank(&self, ls: usize) -> usize {
-        let le = self.line_end(ls);
-        let mut i = ls;
-        while i < le && matches!(self.chars[i], ' ' | '\t') {
-            i += 1;
-        }
-        if i == le && le > ls { le - 1 } else { i }
-    }
-
-    /// Normal mode's caret cannot rest on the line's end, except on an empty line.
-    fn normal_clamp(&self, i: usize) -> usize {
-        let i = i.min(self.len());
-        let (ls, le) = (self.line_start(i), self.line_end(i));
-        if i >= le && le > ls { le - 1 } else { i }
-    }
-
-    /// `w`: the start of the next word.
-    fn word_forward(&self, from: usize, big: bool) -> usize {
-        let len = self.len();
-        let mut i = from;
-        if let Some(c) = self.at(i) {
-            let cls = class(c, big);
-            if cls != 0 {
-                while i < len && class(self.chars[i], big) == cls {
-                    i += 1;
-                }
-            }
-        }
-        while i < len {
-            let c = self.chars[i];
-            if c == '\n' {
-                // An empty line is a word of its own.
-                if i > from && (i == 0 || self.chars[i - 1] == '\n') {
-                    break;
-                }
-                i += 1;
-            } else if class(c, big) == 0 {
-                i += 1;
-            } else {
-                break;
-            }
-        }
-        i
-    }
-
-    /// `b`: the start of the word before `from`.
-    fn word_back(&self, from: usize, big: bool) -> usize {
-        if from == 0 {
-            return 0;
-        }
-        let mut i = from - 1;
-        while i > 0 && class(self.chars[i], big) == 0 {
-            if self.chars[i] == '\n' && self.chars[i - 1] == '\n' {
-                return i;
-            }
-            i -= 1;
-        }
-        let cls = class(self.chars[i], big);
-        if cls == 0 {
-            return i;
-        }
-        while i > 0 && class(self.chars[i - 1], big) == cls {
-            i -= 1;
-        }
-        i
-    }
-
-    /// `e`: the end of the word after `from`.
-    fn word_end(&self, from: usize, big: bool) -> usize {
-        let len = self.len();
-        if len == 0 {
-            return 0;
-        }
-        let mut i = from + 1;
-        while i < len && class(self.chars[i], big) == 0 {
-            i += 1;
-        }
-        if i >= len {
-            return len - 1;
-        }
-        self.run_end(i, big)
-    }
-
-    /// The last character of the run (of the same class) that holds `from`.
-    fn run_end(&self, from: usize, big: bool) -> usize {
-        let Some(c) = self.at(from) else {
-            return from;
-        };
-        let cls = class(c, big);
-        let mut i = from;
-        while i + 1 < self.len()
-            && class(self.chars[i + 1], big) == cls
-            && self.chars[i + 1] != '\n'
-        {
-            i += 1;
-        }
-        i
-    }
-
-    /// `iw` / `aw` around `from`: `(start, end)`, end exclusive.
-    fn word_object(&self, from: usize, around: bool, big: bool) -> Option<(usize, usize)> {
-        let c = self.at(from)?;
-        if c == '\n' {
-            return None;
-        }
-        let cls = class(c, big);
-        let same = |i: usize| {
-            self.at(i)
-                .is_some_and(|c| c != '\n' && class(c, big) == cls)
-        };
-        let mut start = from;
-        while start > 0 && same(start - 1) {
-            start -= 1;
-        }
-        let mut end = from + 1;
-        while same(end) {
-            end += 1;
-        }
-        if !around {
-            return Some((start, end));
-        }
-        let blank = |i: usize| self.at(i).is_some_and(|c| c != '\n' && class(c, big) == 0);
-        if cls == 0 {
-            // Blanks, and the word after them.
-            if let Some(next) = self.at(end).filter(|c| *c != '\n') {
-                let next_cls = class(next, big);
-                while self
-                    .at(end)
-                    .is_some_and(|c| c != '\n' && class(c, big) == next_cls)
-                {
-                    end += 1;
-                }
-            }
-        } else if blank(end) {
-            while blank(end) {
-                end += 1;
-            }
-        } else {
-            while start > 0 && blank(start - 1) {
-                start -= 1;
-            }
-        }
-        Some((start, end))
-    }
-
-    /// `f`, `t`, `F`, `T`: the `n`-th `ch` after (before) `from` on its line.
-    fn find(&self, from: usize, find: Find, ch: char, n: usize) -> Option<usize> {
-        let (ls, le) = (self.line_start(from), self.line_end(from));
-        let mut found = None;
-        let mut left = n;
-        if find.forward {
-            for i in from + 1..le {
-                if self.chars[i] == ch {
-                    left -= 1;
-                    if left == 0 {
-                        found = Some(i);
-                        break;
-                    }
-                }
-            }
-            found.map(|i| if find.till { i - 1 } else { i })
-        } else {
-            for i in (ls..from).rev() {
-                if self.chars[i] == ch {
-                    left -= 1;
-                    if left == 0 {
-                        found = Some(i);
-                        break;
-                    }
-                }
-            }
-            found.map(|i| if find.till { i + 1 } else { i })
+    fn line_start(&self, line: usize) -> usize {
+        match line.checked_sub(1) {
+            None => 0,
+            Some(n) => self
+                .text()
+                .match_indices('\n')
+                .nth(n)
+                .map_or(self.text().len(), |(at, _)| at + 1),
         }
     }
 
-    /// The text an operator takes for a motion from `from` to `target`.
-    fn span(&self, from: usize, target: Target, single_line: bool) -> Span {
-        let (lo, hi) = (from.min(target.to), from.max(target.to));
-        match target.kind {
-            Kind::Exclusive => Span {
-                start: lo,
-                end: hi,
-                linewise: false,
-            },
-            Kind::Inclusive => Span {
-                start: lo,
-                end: if hi < self.len() && self.chars[hi] != '\n' {
-                    hi + 1
-                } else {
-                    hi
-                },
-                linewise: false,
-            },
-            Kind::Linewise if single_line => Span {
-                start: 0,
-                end: self.len(),
-                linewise: false,
-            },
-            Kind::Linewise => Span {
-                start: self.line_start(lo),
-                end: self.line_end(hi),
-                linewise: true,
-            },
+    fn line_start_at(&self, at: usize) -> usize {
+        self.text()[..at].rfind('\n').map_or(0, |i| i + 1)
+    }
+
+    fn line_end_at(&self, at: usize) -> usize {
+        self.text()[at..]
+            .find('\n')
+            .map_or(self.text().len(), |i| at + i)
+    }
+
+    fn cursor(&self) -> usize {
+        TextInput::cursor(self)
+    }
+
+    fn set_cursor(&mut self, at: usize) {
+        TextInput::set_cursor(self, at);
+    }
+
+    fn apply(&mut self, tx: Transaction) {
+        // The edits are sorted and apply to the text before them: back to front keeps the
+        // offsets of the ones not yet applied valid.
+        for edit in tx.edits.iter().rev() {
+            self.replace_range(edit.range.clone(), &edit.text);
         }
+        TextInput::set_cursor(self, tx.cursor);
+    }
+
+    fn type_text(&mut self, text: &str) {
+        self.insert(text);
+    }
+
+    fn backspace(&mut self) {
+        TextInput::backspace(self);
+    }
+
+    fn delete_forward(&mut self) {
+        self.delete();
+    }
+
+    fn move_left(&mut self) {
+        self.left();
+    }
+
+    fn move_right(&mut self) {
+        self.right();
+    }
+
+    fn move_line_start(&mut self) {
+        self.home();
+    }
+
+    fn move_line_end(&mut self) {
+        self.end();
+    }
+
+    fn move_up(&mut self) -> bool {
+        self.up()
+    }
+
+    fn move_down(&mut self) -> bool {
+        self.down()
+    }
+
+    fn begin_group(&mut self) {
+        TextInput::begin_group(self);
+    }
+
+    fn end_group(&mut self) {
+        TextInput::end_group(self);
+    }
+
+    fn undo(&mut self) -> bool {
+        TextInput::undo(self)
+    }
+
+    fn redo(&mut self) -> bool {
+        TextInput::redo(self)
     }
 }
 
@@ -1642,14 +162,15 @@ mod tests {
         /// Normal mode with the caret at `|` in `text` (at the end when there is none).
         fn new(text: &str) -> Self {
             let mut input = TextInput::new();
+            // A fresh `Vim` types; Escape is how it gets to Normal mode.
+            let mut vim = Vim::new();
+            vim.key(&mut input, Key::Escape, Options::default(), &mut ());
             let (plain, cursor) = match text.find('|') {
                 Some(at) => (text.replacen('|', "", 1), at),
                 None => (text.to_owned(), text.len()),
             };
             input.reset_to(&plain);
             input.set_cursor(cursor);
-            let mut vim = Vim::new();
-            vim.mode = Mode::Normal;
             Self {
                 input,
                 vim,
@@ -2226,7 +747,7 @@ mod tests {
     #[test]
     fn insert_mode_types_and_escape_leaves() {
         let mut r = Rig::new("|");
-        r.vim.mode = Mode::Insert;
+        r.keys("i");
         r.keys("ab<BS>c<Left>X");
         assert_eq!(r.shown(), "aX|c");
         assert_eq!(r.key(Key::Escape), Outcome::Handled);
@@ -2237,7 +758,7 @@ mod tests {
     #[test]
     fn insert_passthrough_only_takes_escape() {
         let mut r = Rig::new("ab|");
-        r.vim.mode = Mode::Insert;
+        r.keys("i");
         r.opts.insert_passthrough = true;
         assert_eq!(r.key(Key::Char('x')), Outcome::Ignored);
         assert_eq!(r.text(), "ab");
@@ -2307,9 +828,14 @@ mod tests {
         for keys in ["$", "x$x", "dw", "d$", "wwwx", "ddk", "Gdd"] {
             let mut r = Rig::new("|foo\nbar baz");
             r.keys(keys);
-            let buf = Buf::new(r.text());
-            let at = buf.idx(r.input.cursor());
-            assert_eq!(buf.normal_clamp(at), at, "after {keys}: {}", r.shown());
+            let (text, at) = (r.text(), r.input.cursor());
+            let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+            let line_end = text[at..].find('\n').map_or(text.len(), |i| at + i);
+            assert!(
+                at < line_end || line_end == line_start,
+                "after {keys}: {}",
+                r.shown()
+            );
         }
     }
 

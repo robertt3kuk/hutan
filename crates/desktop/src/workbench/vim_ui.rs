@@ -1,6 +1,6 @@
 //! The GPUI side of Vim mode (`editor.vim_mode`, `docs/design.md` § Vim mode): keystrokes into
-//! the modal layer of `chat::vim`, the state of text kept as a plain `String`, the mode pill and
-//! the caret.
+//! the modal layer (`hutan-vim`, adapted to `TextInput` in `chat::vim`), the state of text kept as
+//! a plain `String`, the mode pill and the caret.
 //!
 //! Fields that own a [`TextInput`] (the composer, the Tasks form, the attach form) keep a
 //! [`Vim`] beside it and call [`apply`]. Fields that keep a `String` (the palette, prompts, the

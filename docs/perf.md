@@ -538,3 +538,36 @@ and `hutan-buffer`). A change to a query file rebuilds only `hutan-syntax` (1.2 
   `ERROR` nodes, because tree-sitter does not promise the same error recovery for an incremental
   and a fresh parse. The gate therefore compares strictly on error-free results (an edit that
   leaves errors is reverted by the next step) and only checks well-formedness on the others.
+
+## Editor: the Vim layer (slice E-7a, `hutan-vim`)
+
+E-7a moves the V-1 modal layer out of `desktop` into a GPUI-free crate and changes no behaviour, so
+no budget moves; the Vim budget (B15, a Normal command on a 1 MB buffer ≤ 2 ms) is measured with the
+rope host in E-8. What E-7a measures is what the crate costs to build and to link.
+
+| | |
+|---|---|
+| Machine | Apple M1 Pro (10 cores, 16 GB), macOS 27.0.1, `rustc 1.98.0`; load average 3–5 |
+| Dependencies | none (`proptest` in dev only); no dependency on `hutan-buffer` either: the host trait speaks byte offsets and transactions that a `hutan_buffer::Buffer` host maps one to one |
+
+| Measure | Value |
+|---|---|
+| Clean release build of `hutan-vim` (`RUSTC_WRAPPER= cargo build --release -p hutan-vim --lib`, empty target dir) | **0.6 s** wall (no dependencies to build) |
+| Size of `examples/size_probe` (a complete `String` host, the driver and `Vim`), release, thin LTO, `strip = "symbols"` | **0.41 MB** |
+| The same driver without `hutan-vim` and the host (arguments in, string out) | 0.34 MB |
+| So the Vim layer and a small host cost | **≈ 0.07 MB** |
+| `cargo nextest run -p hutan-vim` (27 tests, two property tests of 256 cases each), warm | 0.1 s |
+
+The desktop's release binary is not rebuilt for this: the code moved (the 2 364-line `vim.rs` became
+the crate plus a 130-line adapter), and the state machine is instantiated once, for `TextInput`, so
+the linked code is the same functions as before. The adapter's reads are `O(1)` for a character and
+`O(line)` for a line lookup on the `String` an input holds; the `Vec<char>` copy of the whole text
+that V-1 made for every key is gone (it was `O(n)` per key, spike § 4.6 item 1), which matters for
+the 1 MB buffer of the editor host and not for a one-line field.
+
+Equivalence with V-1 was checked differentially while extracting: the old and the new machine fed
+the same random keys (159 000 with one seed, 4.7 million with another) over random
+multi-byte texts and options agree on outcome, text, caret, selection, mode, register, pending keys
+and clipboard after every key. The scaffold is not kept; the V-1 suite (40 tests) runs against the adapter with its
+assertions untouched (only the rig changed: it reaches Normal mode by Escape, since the mode is no
+longer a field the test can set).

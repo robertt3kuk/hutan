@@ -2639,6 +2639,7 @@ dependencies = [
  "hutan-settings",
  "hutan-storage",
  "hutan-terminal-view",
+ "hutan-vim",
  "libc",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -2804,6 +2805,13 @@ dependencies = [
  "tempfile",
  "tokio",
  "unicode-width",
+]
+
+[[package]]
+name = "hutan-vim"
+version = "0.1.0"
+dependencies = [
+ "proptest 1.12.0",
 ]
 
 [[package]]

@@ -25,6 +25,7 @@ hutan-storage = { path = "crates/storage" }
 hutan-syntax = { path = "crates/syntax" }
 hutan-terminal = { path = "crates/terminal" }
 hutan-terminal-view = { path = "crates/terminal_view" }
+hutan-vim = { path = "crates/vim" }
 
 anyhow = "1.0.104"
 # Inline image data of attachments (protocol 0.23) and the images providers take.
