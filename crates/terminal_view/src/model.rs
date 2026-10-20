@@ -104,6 +104,10 @@ pub struct Applied {
     pub modes_changed: bool,
     /// Viewport rows whose content was replaced (after `scrolled` was applied).
     pub dirty: Vec<u16>,
+    /// The daemon's absolute line number of viewport row 0 *before* this render (the daemon's
+    /// numbering survives a resize, the model's `history_total` does not): a view that was
+    /// scrolled back finds its reading place again with it, see `TerminalView::after_apply`.
+    pub prev_viewport_top: u64,
 }
 
 #[derive(Debug)]
@@ -349,6 +353,7 @@ impl TerminalModel {
             title_changed,
             modes_changed,
             dirty: (0..self.screen_rows()).collect(),
+            prev_viewport_top: old_top,
         }
     }
 
@@ -418,6 +423,7 @@ impl TerminalModel {
             title_changed,
             modes_changed,
             dirty,
+            prev_viewport_top: old_top,
         })
     }
 

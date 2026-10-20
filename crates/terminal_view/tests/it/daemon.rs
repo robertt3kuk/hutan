@@ -13,8 +13,8 @@ use hutan_core::TerminalId;
 use hutan_daemon::{DaemonConfig, Paths};
 use hutan_protocol::messages::{
     ClientInfo, ClientKind, Request, SessionCreate, SessionResult, SessionSpec, TerminalAck,
-    TerminalAttach, TerminalAttached, TerminalHistory, TerminalHistoryRows, TerminalSize,
-    TerminalSpec,
+    TerminalAttach, TerminalAttached, TerminalHistory, TerminalHistoryRows, TerminalResize,
+    TerminalSize, TerminalSpec,
 };
 use hutan_protocol::render::{MouseMode, TerminalRender};
 use hutan_terminal_view::keys::{Key, KeyInput, KeyOptions, Mods, encode_key};
@@ -353,6 +353,41 @@ async fn history_pages_merge_into_the_scrollback_cache() {
     let numbers: Vec<u32> = text.lines().map(|l| l.parse().unwrap()).collect();
     assert_eq!(numbers[0], 1);
     assert!(numbers.windows(2).all(|w| w[1] == w[0] + 1), "{numbers:?}");
+
+    stop(running).await;
+}
+
+/// What the view's reading-place anchor (`TerminalView::after_apply`) relies on: a width change
+/// reflows rows that wrap and renumbers nothing else, so a line that does not wrap keeps its
+/// absolute number and the lines above the viewport keep theirs.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_width_change_keeps_the_line_numbers_of_lines_that_do_not_wrap() {
+    let (_dir, running, paths) = daemon().await;
+    let mut t = Attached::start(&paths, "seq 1 150; sleep 30").await;
+    t.until("output", |m| has_line(m, "150") && m.history_len() >= 130)
+        .await;
+    let (top, len) = (t.model.viewport_top(), t.model.history_len());
+    let first = TerminalModel::row_text(&t.model.viewport()[0]);
+
+    let size = TerminalSize {
+        cols: 35,
+        rows: 12,
+        pixel_width: 0,
+        pixel_height: 0,
+    };
+    let _: Value = t
+        .client
+        .call(Request::TerminalResize(TerminalResize {
+            terminal_id: t.terminal,
+            size,
+        }))
+        .await
+        .unwrap();
+    t.until("the new width", |m| m.cols() == 35).await;
+
+    assert_eq!(t.model.viewport_top(), top);
+    assert_eq!(t.model.history_len(), len);
+    assert_eq!(TerminalModel::row_text(&t.model.viewport()[0]), first);
 
     stop(running).await;
 }

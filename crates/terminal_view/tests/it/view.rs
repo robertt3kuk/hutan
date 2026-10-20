@@ -751,6 +751,151 @@ fn scrolled_view_stays_on_the_same_lines_as_output_arrives(cx: &mut TestAppConte
     assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 9);
 }
 
+/// The line at the top of the view, in the model's numbering.
+fn top_line(view: &Entity<TerminalView>, cx: &mut VisualTestContext) -> i64 {
+    view.read_with(cx, |v, _| {
+        v.model().viewport_line(0) - i64::from(v.scroll_offset())
+    })
+}
+
+fn snapshot_at(
+    frame: u64,
+    cols: u16,
+    lines: &[&str],
+    history_len: u32,
+    viewport_top: u64,
+) -> TerminalRender {
+    let TerminalRender::Snapshot(mut s) = snapshot(frame, lines, Modes::default(), history_len)
+    else {
+        unreachable!()
+    };
+    s.cols = cols;
+    s.viewport_top = viewport_top;
+    TerminalRender::Snapshot(s)
+}
+
+#[gpui::test]
+fn the_pill_counts_output_that_arrives_while_scrolled_back(cx: &mut TestAppContext) {
+    let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
+    apply(&view, cx, snapshot(1, &["live"; 30], Modes::default(), 100));
+    draw(cx);
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 0);
+    wheel(cx, 5.0);
+    let before = top_line(&view, cx);
+    // Scrolled back but nothing arrived: no pill.
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 0);
+
+    // 20 lines scroll into history: the rows on screen stay, the pill reads 20.
+    apply(&view, cx, frame(2, &[(29, "new")], 120));
+    assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 25);
+    assert_eq!(top_line(&view, cx), before);
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 20);
+
+    // More output adds up.
+    apply(&view, cx, frame(3, &[(29, "newer")], 123));
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 23);
+
+    // Scrolling towards the live screen counts the lines passed as seen, and scrolling back
+    // does not bring them back.
+    wheel(cx, -10.0);
+    assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 18);
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 18);
+    wheel(cx, 30.0);
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 18);
+
+    // ⇧End returns to the live screen and clears the pill.
+    cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+    cx.simulate_keystrokes("shift-end");
+    assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 0);
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 0);
+
+    // Output at the live screen never shows the pill, and a new reading place starts at zero.
+    apply(&view, cx, frame(4, &[(29, "x")], 124));
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 0);
+    wheel(cx, 3.0);
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 0);
+}
+
+#[gpui::test]
+fn clicking_the_pill_returns_to_the_live_screen(cx: &mut TestAppContext) {
+    let (view, cx, recorder) = setup(cx, TerminalViewSettings::default());
+    apply(&view, cx, snapshot(1, &["live"; 30], Modes::default(), 100));
+    draw(cx);
+    wheel(cx, 5.0);
+    apply(&view, cx, frame(2, &[(29, "new")], 112));
+    draw(cx);
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 12);
+    recorder.take();
+
+    // The pill sits centered above the bottom edge of the 800 × 600 window.
+    cx.simulate_click(
+        point(px(400.0), px(600.0 - 8.0 - 12.0)),
+        Modifiers::default(),
+    );
+    assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 0);
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 0);
+    assert!(
+        recorder.inputs().is_empty(),
+        "the click is the view's, not the application's"
+    );
+}
+
+#[gpui::test]
+fn typing_clears_the_pill(cx: &mut TestAppContext) {
+    let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
+    apply(&view, cx, snapshot(1, &["live"; 30], Modes::default(), 100));
+    draw(cx);
+    cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+    wheel(cx, 5.0);
+    apply(&view, cx, frame(2, &[(29, "new")], 110));
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 10);
+    cx.simulate_keystrokes("enter");
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 0);
+}
+
+#[gpui::test]
+fn a_width_change_keeps_the_reading_place(cx: &mut TestAppContext) {
+    let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
+    apply(&view, cx, snapshot_at(1, 100, &["live"; 30], 1000, 1000));
+    draw(cx);
+    wheel(cx, 40.0);
+    // The daemon's line at the top of the view.
+    let anchor = 1000 - 40;
+    apply(&view, cx, snapshot_at(3, 60, &["live"; 30], 1000, 1000));
+    // No line wrapped: the numbers did not move, the same line is still at the top.
+    assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 40);
+    assert_eq!(
+        view.read_with(cx, |v, _| v.model().viewport_top()
+            - u64::from(v.scroll_offset())),
+        anchor
+    );
+
+    // Narrower still, lines wrapped: the daemon has more lines now (the viewport starts at
+    // 1250) and the anchor keeps its number, so it is further back.
+    apply(&view, cx, snapshot_at(4, 40, &["live"; 30], 1250, 1250));
+    assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 290);
+
+    // A reading place the daemon no longer retains goes to the oldest line it has.
+    apply(&view, cx, snapshot_at(5, 30, &["live"; 30], 100, 2000));
+    assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 100);
+
+    // Widening so far that the place is on the live screen again returns to it.
+    apply(&view, cx, snapshot_at(6, 200, &["live"; 30], 100, 1999));
+    assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 99);
+    apply(&view, cx, snapshot_at(7, 300, &["live"; 30], 50, 1900));
+    assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 0);
+}
+
+#[gpui::test]
+fn a_width_change_at_the_live_screen_stays_there(cx: &mut TestAppContext) {
+    let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
+    apply(&view, cx, snapshot_at(1, 100, &["live"; 30], 1000, 1000));
+    draw(cx);
+    apply(&view, cx, snapshot_at(2, 60, &["live"; 30], 1100, 1100));
+    assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 0);
+    assert_eq!(view.read_with(cx, |v, _| v.new_lines_below()), 0);
+}
+
 #[gpui::test]
 fn wheel_on_the_alternate_screen_sends_arrow_keys(cx: &mut TestAppContext) {
     let (view, cx, recorder) = setup(cx, TerminalViewSettings::default());

@@ -88,6 +88,8 @@ const BLINK_TICKS: u32 = 10;
 const ANIMATION_TICK: Duration = Duration::from_millis(140);
 /// Phases of one cycle of the running-block indicator.
 pub(crate) const ANIMATION_PHASES: u8 = 8;
+/// Height of the "N new lines ↓" pill.
+pub(crate) const JUMP_PILL_HEIGHT: f32 = 24.0;
 /// Lines one wheel event may scroll.
 const MAX_WHEEL_LINES: f32 = 64.0;
 /// Hyperlink schemes ⌘-click opens; anything else in an OSC 8 target is untrusted.
@@ -163,6 +165,10 @@ pub struct TerminalView {
 
     /// Lines the viewport is scrolled back into history; 0 follows the live screen.
     pub(crate) scroll_offset: u32,
+    /// Lines that arrived below the viewport while it was scrolled back (the "N new lines ↓"
+    /// pill). Only ever lowered by scrolling towards the live screen: the lines the reader has
+    /// scrolled past are seen. See [`Self::set_scroll_offset`].
+    unseen_lines: u32,
     scroll_accum: f32,
     history_in_flight: HashSet<u32>,
     /// History lines from this one on do not exist (an empty page came back).
@@ -289,6 +295,7 @@ impl TerminalView {
             status,
             focus_handle,
             scroll_offset: 0,
+            unseen_lines: 0,
             scroll_accum: 0.0,
             history_in_flight: HashSet::new(),
             history_end: None,
@@ -441,13 +448,37 @@ impl TerminalView {
 
     fn after_apply(&mut self, applied: &Applied) {
         if applied.history_reset {
+            let anchor = (applied.snapshot && applied.resized && self.scroll_offset > 0)
+                .then(|| {
+                    applied
+                        .prev_viewport_top
+                        .checked_sub(u64::from(self.scroll_offset))
+                })
+                .flatten();
+            let unseen = self.unseen_lines;
             self.reset_history_view();
+            if let Some(anchor) = anchor {
+                // A resize reflows the daemon's hot margin but keeps its line numbers: the
+                // line that was at the top of the view keeps its number (exactly so for lines
+                // that do not wrap and for scrollback older than the margin, nearby otherwise)
+                // and the view returns to it instead of the live screen. A line the daemon no
+                // longer retains lands on the oldest one.
+                let (top, max) = {
+                    let model = self.model.get();
+                    (model.viewport_top(), model.history_len())
+                };
+                let offset = top.saturating_sub(anchor).min(u64::from(max));
+                self.scroll_offset = u32::try_from(offset).unwrap_or(max);
+                self.unseen_lines = unseen;
+            }
         } else if applied.history_grew > 0 && self.scroll_offset > 0 {
             // Stay on the same lines while output scrolls into history.
             self.scroll_offset =
                 (self.scroll_offset + applied.history_grew).min(self.model.get().history_len());
+            self.unseen_lines = self.unseen_lines.saturating_add(applied.history_grew);
         }
-        self.scroll_offset = self.scroll_offset.min(self.model.get().history_len());
+        let limit = self.model.get().history_len();
+        self.set_scroll_offset(self.scroll_offset.min(limit));
         if applied.snapshot && applied.resized {
             self.selection = None;
             self.selecting = false;
@@ -474,6 +505,7 @@ impl TerminalView {
 
     fn reset_history_view(&mut self) {
         self.scroll_offset = 0;
+        self.unseen_lines = 0;
         self.scroll_accum = 0.0;
         self.history_in_flight.clear();
         self.history_end = None;
@@ -513,6 +545,19 @@ impl TerminalView {
     /// Lines scrolled back from the live screen.
     pub fn scroll_offset(&self) -> u32 {
         self.scroll_offset
+    }
+
+    /// Lines of output that arrived below the viewport since the reader scrolled back from the
+    /// live screen and that they have not scrolled to yet; 0 at the live screen. The pill reads
+    /// this.
+    pub fn new_lines_below(&self) -> u32 {
+        self.unseen_lines.min(self.scroll_offset)
+    }
+
+    /// Moves the viewport to `offset` lines back; lines scrolled past stop counting as new.
+    fn set_scroll_offset(&mut self, offset: u32) {
+        self.scroll_offset = offset;
+        self.unseen_lines = self.unseen_lines.min(offset);
     }
 
     /// Whether the cursor is in the visible phase of its blink cycle.
@@ -860,7 +905,7 @@ impl TerminalView {
             return;
         }
         if self.settings.scroll_to_bottom_on_input && self.scroll_offset != 0 {
-            self.scroll_offset = 0;
+            self.set_scroll_offset(0);
             self.scroll_accum = 0.0;
         }
         self.selection = None;
@@ -977,7 +1022,7 @@ impl TerminalView {
         let new = (i64::from(self.scroll_offset) + i64::from(lines)).clamp(0, max);
         let new = u32::try_from(new).unwrap_or(0);
         if new != self.scroll_offset {
-            self.scroll_offset = new;
+            self.set_scroll_offset(new);
             self.ensure_history();
             cx.notify();
         }
@@ -985,7 +1030,7 @@ impl TerminalView {
 
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
         if self.scroll_offset != 0 {
-            self.scroll_offset = 0;
+            self.set_scroll_offset(0);
             self.scroll_accum = 0.0;
             cx.notify();
         }
@@ -1370,7 +1415,7 @@ impl TerminalView {
             (model.viewport_line(0), model.history_len())
         };
         let offset = (top - line).clamp(0, i64::from(max));
-        self.scroll_offset = u32::try_from(offset).unwrap_or(0);
+        self.set_scroll_offset(u32::try_from(offset).unwrap_or(0));
         self.scroll_accum = 0.0;
         self.ensure_history();
     }
@@ -1886,6 +1931,52 @@ impl TerminalView {
     }
 }
 
+impl TerminalView {
+    /// The "N new lines ↓" pill at the bottom edge, in the theme's cursor colors, while the
+    /// view is scrolled back and output arrived below it. A click returns to the live screen.
+    fn jump_pill(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let new = self.new_lines_below();
+        if new == 0 {
+            return None;
+        }
+        let text = match new {
+            1 => "1 new line ↓".to_owned(),
+            n => format!("{n} new lines ↓"),
+        };
+        let fill = hsla(self.theme.cursor());
+        let size = (self.settings.font_size * 0.9).max(9.0);
+        Some(
+            div()
+                .absolute()
+                .bottom(px(self.settings.padding + 8.0))
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .id("hutan-terminal-jump-latest")
+                        .flex()
+                        .items_center()
+                        .h(px(JUMP_PILL_HEIGHT))
+                        .px(px(12.))
+                        .rounded(px(JUMP_PILL_HEIGHT / 2.0))
+                        .bg(fill)
+                        .text_color(hsla(self.theme.cursor_foreground()))
+                        .text_size(px(size))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .whitespace_nowrap()
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(fill.opacity(0.88)))
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(|this, _, _, cx| this.scroll_to_bottom(cx)))
+                        .child(SharedString::from(text)),
+                )
+                .into_any_element(),
+        )
+    }
+}
+
 impl Render for TerminalView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let background = hsla(self.theme.background());
@@ -1905,6 +1996,7 @@ impl Render for TerminalView {
             ViewStatus::Ended(message) => Some(message.clone()),
         };
         let bar = self.actions_bar(cx);
+        let pill = self.jump_pill(cx);
         let root = div()
             .id("hutan-terminal")
             .key_context(KEY_CONTEXT)
@@ -1966,7 +2058,8 @@ impl Render for TerminalView {
             .overflow_hidden()
             .bg(background)
             .child(TerminalElement::new(cx.entity()))
-            .children(bar);
+            .children(bar)
+            .children(pill);
         match banner {
             None => root.into_any_element(),
             Some(text) => root
