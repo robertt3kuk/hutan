@@ -9,7 +9,7 @@
 //! **Terminals of a parked workspace are detached**, not kept attached: only what the live
 //! layout shows is attached (`attach_open_items`), so nothing outside the window renders or is
 //! acked. Coming back re-attaches, and the daemon answers with a snapshot of the screen
-//! (measured in `tests/workspaces_gpui.rs`).
+//! (measured in `tests/it/workspaces_gpui.rs`).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

@@ -47,7 +47,7 @@ fn the_line_bound_is_exact_and_the_newest_rows_are_kept() {
     assert_eq!(em.history_len(), 100);
     assert_eq!(em.cold_len(), 100 - MARGIN);
     // Viewport shows line4999 and two blank rows, so history ends at line4998... as the plain
-    // engine does (see the bound test in tests/emulator.rs).
+    // engine does (see the bound test in tests/it/emulator.rs).
     let rows = texts(&mut em, 0, 100);
     let newest = 4_997;
     for (index, row) in rows.iter().enumerate() {
