@@ -2,8 +2,13 @@
 
 default: check
 
-# Full gate: format, lint, tests, licenses/advisories.
-check: fmt-check clippy test deny
+# Concurrent `just check` runs from other checkouts/worktrees wait on a machine-wide lock.
+# Full gate (fmt, clippy, nextest, cargo-deny), one at a time per machine.
+check:
+    mkdir -p "$HOME/.cache"
+    lockf -k "$HOME/.cache/hutan-gate.lock" just _gate
+
+_gate: fmt-check clippy test deny
 
 fmt:
     cargo fmt --all
