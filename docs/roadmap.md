@@ -170,12 +170,16 @@ Exit demo: run OMP with task subagents, Codex (app-server) with subagents, and C
 
 Ordered; each line is one slice with a brief in `docs/briefs/` (written ones marked). Research behind each: the spike named.
 
-**In flight** (worktrees `../hutan-wt/<slice>`, branches `slice/<slice>` pushed to origin):
-- [x] AG-1 Agents page v2 (merged; real-window check pending): one agent truth, attention-first center page; right Agents and Mawas Today become lenses; drawer and old Overview removed (brief `AG-1.md`; `spikes/2026-10-20-chrome-v3.md` §2–3, option A).
-- [ ] TH-2 Icon packs: semantic icon ids, safe SVG pipeline, Phosphor default; Agents ≠ Changes ≠ branch icons (brief `TH-2.md`; ADR 0018; `chrome-v3.md` §5, `theme-packs.md`).
+**Done 2026-10-20/21:** AG-1 (real-window check pending), TH-2 (icon packs, merged `7c29634`).
 
-**Next (no user decision needed):**
-- [ ] TH-3 Theme/icon pickers with live preview, diagnostics, `hutan theme ls|validate|new|export` (brief `TH-3.md`; `theme-packs.md` §5.1–5.2, §6).
+**In flight:**
+- [ ] BLD-1 One integration-test binary per crate (brief `BLD-1.md`).
+
+**Next — wave 1 (2026-10-21 plan; at most two coding agents at once, one gate at a time):**
+- [ ] TH-3 Theme/icon pickers with live preview, diagnostics, `hutan theme ls|validate|new|export` (brief `TH-3.md`; `theme-packs.md` §5.1–5.2, §6). Covers the audit's UX-PACK-PICKER.
+- [ ] UX wave 1 from `spikes/2026-10-21-ux-plan.md` §waves (no protocol change): UX-PARITY-RULE, UX-REPAINT-DOC, UX-APPROVAL-CARD, UX-CONTEXT-METER, UX-DRAFTS, UX-JUMP-LATEST, UX-TERM-RESIZE (phase A), UX-SESSION-NAMES, UX-HISTORY-CONSENT, UX-MAWAS-LAZY. Evidence: `spikes/2026-10-21-ux-audit.md` (hands-on, Cua Driver) and `spikes/2026-10-21-competitor-ux/` (12 products' issues).
+- [ ] Editor M11 per `spikes/2026-10-21-editor.md` (option B′, own core; ADR 0012 amendment pending the user's confirmation): first E-1 `buffer` (crop rope, transactions, undo, selections), E-2 `syntax` (tree-sitter), E-7a extract `chat/vim.rs` into a `vim` crate; then E-3 daemon `fs.*` protocol, E-4… (§4.7).
+- [ ] UC-0/UC-1 gated UI check for agents through Cua Driver (`spikes/2026-10-21-developer-tools.md` §ranking; needs ADR + capability `uicheck`; user decision D1 trust model).
 - [ ] TH-4 Importers: Ghostty, iTerm2, Alacritty, VS Code, Zed, WezTerm, Warp (`theme-packs.md` §5.3) — good candidate for a cheaper model.
 - [ ] DB-3 Optional agent activity fields (`turn_started_at_ms`, `last_state_report_at_ms`, `observation_reason`; additive minor + capability `agent.activity-summary`) (`chrome-v3.md` §6).
 - [ ] ST-4 Truthful Mawas configuration read API (`assistant.settings` capability), then ST-5 13-page Settings IA with explicit scope/provenance/reset-to-inherit, ST-6 unified search, ST-7 keyboard-shortcut editor, ST-8 validation/preset editor, ST-9 data/storage + preference export/import, ST-10 recently changed (`spikes/2026-10-20-settings-v2.md` §7–8).
