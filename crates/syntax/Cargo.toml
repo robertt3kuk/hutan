@@ -1,0 +1,76 @@
+[package]
+name = "hutan-syntax"
+description = "Hutan editor syntax: tree-sitter incremental parsing, highlights, folds, structure (GPUI-free)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+autotests = false
+autobenches = false
+autoexamples = false
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+tree-sitter.workspace = true
+tree-sitter-bash = { workspace = true, optional = true }
+tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-cpp = { workspace = true, optional = true }
+tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-html = { workspace = true, optional = true }
+tree-sitter-javascript = { workspace = true, optional = true }
+tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-md = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-toml-ng = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-yaml = { workspace = true, optional = true }
+hutan-buffer = { workspace = true, optional = true }
+
+[features]
+default = ["all-languages", "buffer"]
+all-languages = [
+  "bash", "c", "cpp", "css", "go", "html", "javascript", "json", "markdown", "python", "rust",
+  "toml", "typescript", "yaml",
+]
+bash = ["dep:tree-sitter-bash"]
+c = ["dep:tree-sitter-c"]
+cpp = ["dep:tree-sitter-cpp"]
+css = ["dep:tree-sitter-css"]
+go = ["dep:tree-sitter-go"]
+html = ["dep:tree-sitter-html"]
+javascript = ["dep:tree-sitter-javascript"]
+json = ["dep:tree-sitter-json"]
+markdown = ["dep:tree-sitter-md"]
+python = ["dep:tree-sitter-python"]
+rust = ["dep:tree-sitter-rust"]
+toml = ["dep:tree-sitter-toml-ng"]
+# TypeScript and TSX share one grammar crate.
+typescript = ["dep:tree-sitter-typescript"]
+yaml = ["dep:tree-sitter-yaml"]
+# `TextProvider` for `hutan_buffer::Text` and `TextEdit::from_buffer_edit`.
+buffer = ["dep:hutan-buffer"]
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+
+[[bench]]
+name = "syntax"
+path = "benches/syntax.rs"
+harness = false
+
+[[example]]
+name = "size_probe"
+path = "examples/size_probe.rs"
+
+[lints]
+workspace = true
+
+[[example]]
+name = "sexp"
+path = "examples/sexp.rs"

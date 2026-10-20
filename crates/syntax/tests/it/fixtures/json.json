@@ -1,0 +1,6 @@
+{
+  "name": "hutan",
+  "version": 1.5e2,
+  "tags": ["a", "b\n", null, true],
+  "nested": { "ok": false, "n": -3 }
+}

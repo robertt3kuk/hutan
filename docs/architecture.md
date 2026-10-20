@@ -28,7 +28,7 @@ flowchart LR
 
 ## Crates
 
-Crates are created when their first milestone starts (no empty placeholders); package names are `hutan-<dir>`. Present now: `core`, `protocol`, `daemon` (`hutand` + lib), `client`, `terminal`, `agents` (Codex chat, `docs/agents.md`), `gateway` (direct model chat, `docs/gateway.md`), `buffer` (the editor's text model, ADR 0012).
+Crates are created when their first milestone starts (no empty placeholders); package names are `hutan-<dir>`. Present now: `core`, `protocol`, `daemon` (`hutand` + lib), `client`, `terminal`, `agents` (Codex chat, `docs/agents.md`), `gateway` (direct model chat, `docs/gateway.md`), `buffer` (the editor's text model, ADR 0012), `syntax` (the editor's tree-sitter layer).
 
 ```text
 crates/
@@ -47,6 +47,7 @@ crates/
   notifications/  notification intents from domain events (daemon side)
   cli/            hutan binary
   buffer/         editor text model (E-1, ADR 0012): `crop` rope with byte offsets, atomic transactions, undo tree with groups, multi-cursor selections, anchors, UTF-16/LSP coordinates, `apply_external` (minimal diff), search; no GPUI, no I/O, no Hutan dependencies
+  syntax/         editor syntax (E-2, ADR 0012): tree-sitter parsing that follows edits on a worker thread (a newer version cancels the parse in flight; reads never wait), highlights reduced to the `syntax.*` token table, node/expand/shrink selection, folds, bracket match, indent levels; up to 15 grammars behind cargo features, vendored query data with attribution (`crates/syntax/queries/NOTICE.md`); optional `buffer` feature for `hutan_buffer::Text`; no GPUI, no I/O
   settings/       layered TOML settings store, schema registry, watcher, keymap, color packs and their registry (`themes/`, ADR 0018; no GPUI; ADR 0010)
   terminal_view/  GPUI terminal element/view over render DTOs, input encoding (UI crate)
   desktop/        Hutan GPUI app: workbench (docks, pane tree, panels, presets), wiring (UI crate)
@@ -64,6 +65,7 @@ flowchart BT
   settings --> terminal_view
   core --> terminal & runtime & storage & security & notifications
   buffer
+  buffer -.-> syntax
   index --> daemon
   runtime --> agents
   core --> gateway

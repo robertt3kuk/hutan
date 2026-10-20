@@ -1,0 +1,16 @@
+/* Theme */
+:root {
+  --accent: #ff8800;
+}
+
+.card > a:hover,
+#main::before {
+  color: var(--accent);
+  margin: 0 auto;
+  width: calc(100% - 2px);
+  font-family: "Inter", sans-serif;
+}
+
+@media (min-width: 600px) {
+  .card { display: grid !important; }
+}

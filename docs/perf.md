@@ -430,3 +430,111 @@ Observations:
   Without the prefilter a pure literal still runs at multiple GB/s (table above).
 - The undo history is bounded (10 000 groups, 32 MiB, 24 h by default; `HistoryLimits`), pruning is
   `O(1)` per edit.
+
+## Editor: syntax (slice E-2, `hutan-syntax`)
+
+The budgets are B11c/d and B14 in `docs/spikes/2026-10-21-editor.md` § 4.8. E-2 measures the syntax
+share (tree-sitter parse, queries, no GPUI, no file I/O); the end-to-end numbers come with the
+viewer (E-5). Nothing here changes a budget.
+
+| | |
+|---|---|
+| Machine | Apple M1 Pro (10 cores, 16 GB), macOS 27.0.1, `rustc 1.98.0`; other agents were building on the machine (load average 9–10), so absolute numbers are pessimistic |
+| Build | `cargo bench` profile (release: thin LTO, `codegen-units = 1`); `tree-sitter` 0.27.1 and the grammars in the pinned versions of the root `Cargo.toml` |
+| Method | `crates/syntax/benches/syntax.rs` (no harness crate): `Instant`, one untimed warm-up, median of 5–51 runs. Text: 1 MB of synthetic but realistic Rust (structs, impls, `match`, closures, doc comments, strings, attributes; every item distinct), and for the language table each language's test fixture repeated to ~1 MB. Run `cargo bench -p hutan-syntax --bench syntax [-- rust\|cancel\|languages]` |
+
+### 1 MB Rust file
+
+| Scenario | Time | Budget |
+|---|---|---|
+| language load, first use in the process (grammar check + compile of the highlight, fold and indent queries) | 22.5 ms | off the calling thread: `Syntax` loads on its worker |
+| **full parse**, 1 000 434 bytes (≈ 25 000 lines), background thread | **99–101 ms** | B14b ≤ 300 ms ✓ |
+| incremental reparse, one character typed in the middle (worker, includes `Tree::edit`) | 2.0 ms | B14a ≤ 50 ms for edit → highlights ✓ |
+| `Syntax::edit` + `Syntax::reparse` (what the caller's thread pays per key; the text snapshot is an `Arc`/rope clone) | 2.0 µs | B12a ≤ 2 ms whole key path ✓ |
+| edit → new tree published (worker wake-up + parse + publish) | 2.4 ms | B14a ✓ |
+| **highlights, 60 lines** (≈ 2 KB, ≈ 450 spans), start / middle / end of the file | **150 / 164 / 146 µs** | B11c, B12a ✓ |
+| highlights, 200 lines in the middle | 0.51 ms | |
+| highlights, 60 lines, tree one edit behind (old tree queried, spans mapped across the edit) | 177 µs | the "no flash" path while typing |
+| highlights, whole file (all 25 000 lines) | 84 ms | not on a hot path |
+| folds, 60 lines / whole file | 92 µs / 45 ms | |
+| `node_at`, `expand_selection`, `bracket_match` | 0.3 µs, 0.4 µs, 0.6 µs | |
+| `indent_level_after` (a query over the cursor's neighbourhood) | 6 µs | |
+| cancellation: a newer version submitted 60 ms into the parse of a 20 MB file; time to the new tree | 5.5–8.6 ms (the 20 MB parse is abandoned, not finished) | "cancellable" in B14b ✓ |
+| memory: one tree of the 1 MB file, retained | **≈ 37 MB** (RSS grew +37.0, +37.1, +37.1 MB for the 2nd–4th tree held at once, so it is the tree, not allocator slack) | B11d ≤ 40 MB with syntax: **passes with ≈ 2 MB left** (rope ≈ 1 MB + tree ≈ 37 MB) |
+
+### Languages (the test fixture repeated to ~1 MB)
+
+| Language | bytes | full parse | highlights, 60 lines (middle) | first-use load |
+|---|---|---|---|---|
+| rust | 1 000 050 | 97 ms | 108 µs | 21.5 ms |
+| typescript | 1 000 350 | 98 ms | 102 µs | 24.6 ms |
+| tsx | 1 000 332 | 93 ms | 125 µs | 26.7 ms |
+| javascript | 1 000 076 | 99 ms | 115 µs | 9.7 ms |
+| python | 1 000 206 | 125 ms | 109 µs | 6.9 ms |
+| go | 1 000 150 | 130 ms | 65 µs | 2.5 ms |
+| json | 1 000 036 | 80 ms | 92 µs | 0.1 ms |
+| toml | 1 000 230 | 85 ms | 69 µs | 0.3 ms |
+| yaml | 1 000 065 | 64 ms | 259 µs | 4.3 ms |
+| markdown | 1 000 110 | 236 ms | 413 µs | 4.2 ms |
+| bash | 1 000 224 | 127 ms | 64 µs | 7.2 ms |
+| html | 1 000 140 | 87 ms | 56 µs | 0.2 ms |
+| css | 1 000 109 | 93 ms | 57 µs | 0.6 ms |
+| c | 1 000 181 | 123 ms | 77 µs | 5.6 ms |
+| cpp | 1 000 377 | 124 ms | 92 µs | 40.2 ms |
+
+Every language is under B14b's 300 ms; markdown is the slowest (the block grammar is heavy and the
+inline layer is parsed per highlight request on the visible paragraphs, not for the document: that
+is the 413 µs). `yaml`'s repeated fixture ends up with one recovered syntax error at the 1 MB mark
+(a `tree-sitter-yaml` quirk with 2 400 documents in one stream; the single fixture parses cleanly).
+The first-use load is dominated by compiling the queries (TypeScript, TSX and C++ combine the
+JavaScript/C queries with their own); it happens once per language per process, on the parse
+worker.
+
+### Binary size and build time
+
+Size of `examples/size_probe` (links every enabled grammar, parses a snippet, runs highlights and
+folds), release profile (thin LTO, `strip = "symbols"`), one grammar feature at a time with
+`--no-default-features`:
+
+| Features | Binary |
+|---|---|
+| none (nothing reachable: the linker drops the runtime, so this is not a floor) | 0.34 MB |
+| `json` (the runtime, the query machinery and the smallest grammar: **the practical floor**) | 1.72 MB |
+| `html` / `toml` / `css` / `yaml` / `go` | 1.74 / 1.74 / 1.86 / 1.90 / 1.94 MB |
+| `javascript` / `python` / `c` / `markdown` | 2.14 / 2.19 / 2.35 / 2.50 MB |
+| `rust` / `bash` | 2.85 / 3.09 MB |
+| `typescript` (TypeScript and TSX) | 4.60 MB |
+| `cpp` | 5.19 MB |
+| **all 14 grammar features** (15 languages) | **13.45 MB**, i.e. **+13.1 MB** over "none" and +11.7 MB over the floor |
+
+The grammars are compiled in; there is no dynamic loading. If the bundle size matters, the
+optional ones to drop first are `cpp` (+3.5 MB over the floor), `typescript` (+2.9), `bash`
+(+1.4) and `rust` (+1.1); each is a cargo feature of `hutan-syntax`.
+
+Build time, clean release build of `hutan-syntax` and everything below it (`cargo build --release
+-p hutan-syntax --lib`, empty target dir, 4 jobs, load average 9): **19.6 s wall**, 63 s of CPU
+summed over units, of which the 14 grammars' C compilation is 13.5 s and the tree-sitter runtime
+3.8 s (the rest is `regex` and its dependencies, which the runtime pulls in for query predicates,
+and `hutan-buffer`). A change to a query file rebuilds only `hutan-syntax` (1.2 s).
+
+### Observations
+
+- **B11d is met with little room**: ≈ 37 bytes of tree per source byte for token-dense Rust. A
+  viewer that keeps trees of background tabs would exceed it quickly; E-5 should drop the tree of
+  a file that is not visible (the rope stays) and re-parse on show (≈ 100 ms per MB), or lower
+  `large_file_bytes` for syntax.
+- Reads never wait for the parser: `Syntax::view` takes the state lock for a pointer copy and a
+  copy of the edits since the last tree, and the worker holds the lock only to take a request and
+  to publish. The test `reading_never_waits_for_a_parse_in_flight` holds a parse inside its text
+  read while reading 200 times.
+- A cancelled parse stops at its next read of the text or its next progress check (every 100
+  parser operations), whichever comes first. The cancellation row measures the whole round trip:
+  abandoning the 20 MB parse, parsing the replacement text and publishing it.
+- Incremental parsing equals a fresh parse (same tree, same highlights) after every random edit
+  whose result has no syntax errors: 200 chained edits per language in the gate, 3 000 per
+  language with `SYNTAX_FUZZ_SEEDS=15`, plus batched edits and 4 × 150 unawaited edits through
+  `Syntax`. Where the edited text has syntax errors the two can differ: the first version of the
+  test (200 chained garbage edits, no repair) diverged in a C++ file whose tree was mostly
+  `ERROR` nodes, because tree-sitter does not promise the same error recovery for an incremental
+  and a fresh parse. The gate therefore compares strictly on error-free results (an edit that
+  leaves errors is reverted by the next step) and only checks well-formedness on the others.

@@ -1,0 +1,18 @@
+# Workflow
+name: ci
+on:
+  push:
+    branches: [main, "release/*"]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run
+        run: |
+          cargo test
+        env: &env
+          RUST_LOG: debug
+          COUNT: 3
+          ENABLED: true
+          EMPTY: null

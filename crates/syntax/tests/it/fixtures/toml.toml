@@ -1,0 +1,14 @@
+# Package manifest
+[package]
+name = "hutan"
+version = "0.1.0"
+edition = 2024
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+paths = ["a", "b"]
+
+[[bin]]
+name = "tool"
+created = 1979-05-27T07:32:00Z

@@ -22,6 +22,7 @@ hutan-index = { path = "crates/index" }
 hutan-protocol = { path = "crates/protocol" }
 hutan-settings = { path = "crates/settings" }
 hutan-storage = { path = "crates/storage" }
+hutan-syntax = { path = "crates/syntax" }
 hutan-terminal = { path = "crates/terminal" }
 hutan-terminal-view = { path = "crates/terminal_view" }
 
@@ -89,6 +90,23 @@ toml = "1.1.8"
 toml_edit = "0.25.17"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+# Editor syntax (hutan-syntax, E-2): tree-sitter and the grammars compiled in behind its cargo
+# features. Exact pins: a grammar's node kinds are the contract of the vendored queries.
+tree-sitter = "=0.27.1"
+tree-sitter-bash = "=0.25.1"
+tree-sitter-c = "=0.24.2"
+tree-sitter-cpp = "=0.23.4"
+tree-sitter-css = "=0.25.0"
+tree-sitter-go = "=0.25.0"
+tree-sitter-html = "=0.23.2"
+tree-sitter-javascript = "=0.25.0"
+tree-sitter-json = "=0.24.8"
+tree-sitter-md = "=0.5.3"
+tree-sitter-python = "=0.25.0"
+tree-sitter-rust = "=0.24.2"
+tree-sitter-toml-ng = "=0.7.0"
+tree-sitter-typescript = "=0.23.2"
+tree-sitter-yaml = "=0.7.2"
 ulid = { version = "3.0.0", features = ["serde"] }
 unicode-width = "0.2.2"
 vt100 = "0.16.2"
