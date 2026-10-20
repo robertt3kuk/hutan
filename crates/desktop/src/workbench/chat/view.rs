@@ -21,7 +21,7 @@ use super::context::{is_gateway_chat, is_harness_chat};
 use super::input::TextInput;
 use super::markdown_view::Look;
 use super::model::{ChatModel, LoadStatus};
-use super::widgets::{ButtonKind, button, round_button};
+use super::widgets::{ButtonKind, button, context_text, context_tooltip, round_button};
 use crate::sessions::SessionsStore;
 use crate::settings::{ChatSettings, SendKey};
 use crate::workbench::actions::{self, RestartSessionById};
@@ -313,6 +313,16 @@ impl ChatView {
             && self.refused_attachment(cx).is_none()
     }
 
+    /// The text of the header's context chip (`context 61 % · 122k / 200k`); `None` while the
+    /// agent has reported no context use, when the header shows no chip.
+    pub fn context_meter(&self, cx: &App) -> Option<String> {
+        self.model
+            .read(cx)
+            .transcript()
+            .context_use()
+            .map(|context| context_text(&context))
+    }
+
     // ---- commands --------------------------------------------------------------------------
 
     pub fn send(&mut self, cx: &mut Context<Self>) -> bool {
@@ -586,6 +596,7 @@ impl ChatView {
         });
         let pending = self.pending.len();
         let session = self.session;
+        let context = self.model.read(cx).transcript().context_use();
         div()
             .relative()
             .flex()
@@ -603,6 +614,7 @@ impl ChatView {
             )
             .child(
                 div()
+                    .flex_none()
                     .font_weight(gpui::FontWeight::MEDIUM)
                     .child(SharedString::from(info.title.clone())),
             )
@@ -620,6 +632,35 @@ impl ChatView {
                     .text_color(theme.muted)
                     .text_size(px(tokens.secondary_font_size))
                     .child(SharedString::from(text))
+            }))
+            .children(context.map(|context| {
+                // Muted, and fainter still when the agent reports no window to measure against.
+                let color = if context.window.is_some() {
+                    theme.muted
+                } else {
+                    theme.faint
+                };
+                let tip = SharedString::from(context_tooltip(&context));
+                div()
+                    .id("chat-context")
+                    .relative()
+                    .flex_none()
+                    .child(
+                        // Not a capped `ui::pill`: the percentage and the figures read whole.
+                        div()
+                            .px(px(tokens.spacing * 2.0))
+                            .rounded(px(crate::theme::pill_radius()))
+                            .bg(color.opacity(0.12))
+                            .text_color(color)
+                            .text_size(px(tokens.secondary_font_size))
+                            .whitespace_nowrap()
+                            .child(SharedString::from(context_text(&context))),
+                    )
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
+                            .into()
+                    })
+                    .child(probe(&self.regions, Region::Chat("context")))
             }))
             .when(
                 chat.is_some_and(|chat| {
@@ -649,16 +690,19 @@ impl ChatView {
             .when(pending > 0, |s| {
                 s.child(
                     div()
-                        .flex_none()
+                        .min_w_0()
+                        .truncate()
                         .text_color(theme.warning)
                         .flex()
                         .items_center()
                         .gap(px(4.0))
                         .child(crate::icons::glyph(crate::icons::Icon::StateApproval))
-                        .child(SharedString::from(format!(
-                            "{pending} approval{} waiting",
+                        // "waiting" is the state label's and the card's to say: with the context
+                        // chip the row has no room for it. What still does not fit ends in "…".
+                        .child(div().min_w_0().truncate().child(SharedString::from(format!(
+                            "{pending} approval{}",
                             if pending == 1 { "" } else { "s" }
-                        ))),
+                        )))),
                 )
             })
             .child(probe(&self.regions, Region::Chat("header")))

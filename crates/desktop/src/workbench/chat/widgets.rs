@@ -1,6 +1,7 @@
 //! Small pieces the chat view shares: buttons, chips and number formatting.
 
 use gpui::{Hsla, SharedString};
+use hutan_chat_view::ContextUse;
 
 use super::markdown_view::Look;
 
@@ -54,6 +55,79 @@ pub fn tokens(count: u64) -> String {
     }
 }
 
+/// `842`, `1.2k`, `122k`, `1M`: token counts as the context meter shows them.
+pub fn compact_tokens(count: u64) -> String {
+    let trimmed = |value: f64, unit: &str| {
+        let text = format!("{value:.1}");
+        format!("{}{unit}", text.strip_suffix(".0").unwrap_or(&text))
+    };
+    match count {
+        0..=999 => count.to_string(),
+        1_000..=9_999 => trimmed(count as f64 / 1000.0, "k"),
+        10_000..=999_499 => format!("{}k", (count + 500) / 1000),
+        _ => trimmed(count as f64 / 1_000_000.0, "M"),
+    }
+}
+
+/// The context chip's text: `context 61 % · 122k / 200k`; without a window size only what was
+/// used (`context 122k`), since a percentage of nothing is not known.
+pub fn context_text(context: &ContextUse) -> String {
+    match (context.window, context.percent()) {
+        (Some(window), Some(percent)) => format!(
+            "context {} · {} / {}",
+            if percent == 0 && context.used > 0 {
+                "<1 %".to_owned()
+            } else {
+                format!("{percent} %")
+            },
+            compact_tokens(context.used),
+            compact_tokens(window)
+        ),
+        _ => format!("context {}", compact_tokens(context.used)),
+    }
+}
+
+/// The context chip's tooltip: the exact figures, and the cumulative counts the harness
+/// reported (nothing it did not; prices are never computed here).
+pub fn context_tooltip(context: &ContextUse) -> String {
+    let mut parts = vec![match context.window {
+        Some(window) => format!(
+            "{} of {} tokens in the context",
+            thousands(context.used),
+            thousands(window)
+        ),
+        None => format!(
+            "{} tokens in the context; this agent reports no window size",
+            thousands(context.used)
+        ),
+    }];
+    let counts = &context.counts;
+    for (label, value) in [
+        ("input", counts.input_tokens),
+        ("cached", counts.cached_input_tokens),
+        ("output", counts.output_tokens),
+        ("reasoning", counts.reasoning_output_tokens),
+    ] {
+        if let Some(value) = value {
+            parts.push(format!("{label} {}", thousands(value)));
+        }
+    }
+    parts.join(" · ")
+}
+
+/// `1,234,567`.
+fn thousands(count: u64) -> String {
+    let digits = count.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 /// The last `max` lines of `text` and how many came before them.
 pub fn tail_lines(text: &str, max: usize) -> (&str, usize) {
     let total = text.lines().count();
@@ -80,6 +154,50 @@ mod tests {
         assert_eq!(tokens(842), "842");
         assert_eq!(tokens(22_178), "22.2k");
         assert_eq!(tokens(1_400_000), "1.4M");
+    }
+
+    #[test]
+    fn the_context_chip_reads_naturally() {
+        use hutan_core::agent::TokenCounts;
+        let used = |used: u64, window: Option<u64>| ContextUse {
+            used,
+            window,
+            counts: TokenCounts::default(),
+        };
+        assert_eq!(
+            context_text(&used(122_000, Some(200_000))),
+            "context 61 % · 122k / 200k"
+        );
+        assert_eq!(
+            context_text(&used(1_234, Some(200_000))),
+            "context <1 % · 1.2k / 200k"
+        );
+        assert_eq!(
+            context_text(&used(0, Some(200_000))),
+            "context 0 % · 0 / 200k"
+        );
+        assert_eq!(
+            context_text(&used(1_900_000, Some(2_000_000))),
+            "context 95 % · 1.9M / 2M"
+        );
+        assert_eq!(context_text(&used(122_000, None)), "context 122k");
+        assert_eq!(compact_tokens(999_600), "1M");
+        assert_eq!(thousands(1_234_567), "1,234,567");
+        assert_eq!(thousands(12), "12");
+        let counts = TokenCounts {
+            input_tokens: Some(1_200),
+            output_tokens: Some(34),
+            ..TokenCounts::default()
+        };
+        assert_eq!(
+            context_tooltip(&ContextUse {
+                used: 1_234,
+                window: Some(200_000),
+                counts,
+            }),
+            "1,234 of 200,000 tokens in the context · input 1,200 · output 34"
+        );
+        assert!(context_tooltip(&used(5, None)).contains("reports no window size"));
     }
 
     #[test]

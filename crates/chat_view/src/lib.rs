@@ -10,6 +10,6 @@ pub mod markdown;
 pub mod model;
 
 pub use model::{
-    Approval, ApprovalState, Body, Entry, Footer, Message, Plan, Question, QuestionState,
-    Reasoning, Tool, Transcript, TurnDiff, TurnOutcome, TurnUsage,
+    Approval, ApprovalState, Body, ContextUse, Entry, Footer, Message, Plan, Question,
+    QuestionState, Reasoning, Tool, Transcript, TurnDiff, TurnOutcome, TurnUsage,
 };

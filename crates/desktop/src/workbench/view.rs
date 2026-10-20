@@ -206,7 +206,7 @@ pub enum Region {
     /// counting from 0).
     HistoryItem(&'static str, usize),
     /// A control of the chat view, by name (`composer`, `send`, `interrupt`, `restart`,
-    /// `header`, `banner`).
+    /// `header`, `banner`, `context`, `jump-latest`).
     Chat(&'static str),
     /// Entry `index` of a chat's transcript.
     ChatEntry(usize),

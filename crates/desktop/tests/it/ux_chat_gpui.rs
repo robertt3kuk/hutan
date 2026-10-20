@@ -13,8 +13,8 @@ use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_chat_view::{ApprovalState, Body};
 use hutan_core::{ApprovalId, SessionId};
-use hutan_desktop::workbench::Workbench;
 use hutan_desktop::workbench::chat::{ChatModel, ChatView, LoadStatus};
+use hutan_desktop::workbench::{Region, Workbench};
 use hutan_protocol::chat::ChatCreate;
 use hutan_protocol::messages::{Request, SessionResult};
 use hutan_settings::{SettingsPaths, SettingsStore};
@@ -274,4 +274,90 @@ fn an_approval_card_does_not_make_the_harnesss_first_option_the_easy_click(
             .iter()
             .any(|e| matches!(e.body, Body::Tool(_) | Body::Approval(_)))
     }));
+}
+
+// ---- UX-CONTEXT-METER -----------------------------------------------------------------------
+
+/// `plain-turn` after `edit` changed its `usage_update` entry (the agent's report of how full its
+/// context is: 1 234 of 200 000 tokens); `None` removes it.
+fn plain_turn_with_usage(dir: &Path, edit: impl Fn(&mut Value) -> bool) -> PathBuf {
+    edited(dir, "plain-turn", |entries| {
+        entries.retain_mut(|entry| {
+            let update = &mut entry["msg"]["params"]["update"];
+            update["sessionUpdate"] != "usage_update" || edit(update)
+        });
+    })
+}
+
+/// Sends one message on a fresh chat of a daemon replaying `transcript`; returns once the turn
+/// ended.
+fn chat_after_one_turn<'a>(
+    cx: &'a mut TestAppContext,
+    scripts: &Path,
+    transcript: &Path,
+) -> (
+    TestDaemon,
+    Entity<Workbench>,
+    Entity<ChatView>,
+    &'a mut VisualTestContext,
+) {
+    let daemon = daemon(scripts, transcript);
+    let id = create_chat(&daemon, &scripts.canonicalize().unwrap());
+    let (view, cx) = open(cx, &daemon);
+    let (chat, model) = open_chat(&view, cx, id);
+    say(cx, "Reply with the single word pong and nothing else.");
+    pump(cx, "the footer", |cx| {
+        model.read_with(cx, |m, _| {
+            m.transcript()
+                .entries()
+                .iter()
+                .any(|e| matches!(e.body, Body::Footer(_)))
+        })
+    });
+    (daemon, view, chat, cx)
+}
+
+#[gpui::test]
+fn the_header_shows_how_full_the_context_is(cx: &mut TestAppContext) {
+    let scripts = tempfile::tempdir().unwrap();
+    let transcript = plain_turn_with_usage(scripts.path(), |_| true);
+    let (_daemon, view, chat, cx) = chat_after_one_turn(cx, scripts.path(), &transcript);
+    assert_eq!(
+        chat.read_with(cx, |c, cx| c.context_meter(cx)).as_deref(),
+        Some("context <1 % · 1.2k / 200k")
+    );
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("context")))
+            .is_some_and(|b| b.size.width > gpui::px(10.0)),
+        "the chip is drawn in the header"
+    );
+}
+
+#[gpui::test]
+fn without_a_window_size_the_chip_shows_only_what_was_used(cx: &mut TestAppContext) {
+    let scripts = tempfile::tempdir().unwrap();
+    let transcript = plain_turn_with_usage(scripts.path(), |update| {
+        update.as_object_mut().unwrap().remove("size");
+        true
+    });
+    let (_daemon, _view, chat, cx) = chat_after_one_turn(cx, scripts.path(), &transcript);
+    assert_eq!(
+        chat.read_with(cx, |c, cx| c.context_meter(cx)).as_deref(),
+        Some("context 1.2k")
+    );
+}
+
+#[gpui::test]
+fn a_chat_whose_agent_reports_no_usage_has_no_chip(cx: &mut TestAppContext) {
+    let scripts = tempfile::tempdir().unwrap();
+    let transcript = plain_turn_with_usage(scripts.path(), |_| false);
+    let (_daemon, view, chat, cx) = chat_after_one_turn(cx, scripts.path(), &transcript);
+    assert_eq!(chat.read_with(cx, |c, cx| c.context_meter(cx)), None);
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("context")))
+            .is_none(),
+        "hidden, not zero"
+    );
 }

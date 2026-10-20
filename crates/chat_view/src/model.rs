@@ -342,6 +342,27 @@ pub struct TurnUsage {
     pub context_window: Option<u64>,
 }
 
+/// How much of the model's context the conversation fills, from the latest usage event that
+/// reported a total (what the turn footers' `context X / Y` read too).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContextUse {
+    /// Tokens the conversation has used so far.
+    pub used: u64,
+    /// The model's context window, when the harness reported one.
+    pub window: Option<u64>,
+    /// The cumulative counts the harness reported next to the total; a field it did not report
+    /// is `None`.
+    pub counts: TokenCounts,
+}
+
+impl ContextUse {
+    /// Percent of the window used, rounded down; `None` without a window.
+    pub fn percent(&self) -> Option<u64> {
+        let window = self.window?;
+        Some(self.used.saturating_mul(100) / window)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Footer {
     pub outcome: TurnOutcome,
@@ -453,6 +474,17 @@ impl Transcript {
     /// The highest `seq` applied.
     pub fn max_seq(&self) -> u64 {
         self.max_seq
+    }
+
+    /// The context use the latest usage event reported; `None` while no event reported a total
+    /// (a harness that reports none never gets a meter, a zero would be a lie).
+    pub fn context_use(&self) -> Option<ContextUse> {
+        let (counts, window) = self.usage?;
+        Some(ContextUse {
+            used: counts.total_tokens?,
+            window: window.filter(|window| *window > 0),
+            counts,
+        })
     }
 
     /// A turn is in progress, as far as the events say.
@@ -1699,6 +1731,37 @@ mod tests {
         assert_eq!(second.conversation_tokens, Some(250));
         assert_eq!(second.context_window, Some(128_000));
         assert_eq!(footers[1].duration_ms, Some(1500));
+    }
+
+    #[test]
+    fn the_context_use_is_the_latest_reported_total_and_absent_without_one() {
+        let mut s = Script::new();
+        let mut t = Transcript::new();
+        assert_eq!(t.context_use(), None, "nothing reported, no meter");
+        let usage = |total: Option<u64>, window: Option<u64>| AgentEventKind::Usage {
+            total: total.map(|total| TokenCounts {
+                total_tokens: Some(total),
+                ..TokenCounts::default()
+            }),
+            last: None,
+            context_window: window,
+        };
+        // A per-turn report alone is no context total.
+        t.apply(&s.event(None, usage(None, Some(200_000))));
+        assert_eq!(t.context_use(), None);
+        t.apply(&s.event(None, usage(Some(122_000), Some(200_000))));
+        let seen = t.context_use().unwrap();
+        assert_eq!(
+            (seen.used, seen.window, seen.percent()),
+            (122_000, Some(200_000), Some(61))
+        );
+        // The newest total wins; a harness that reports no window leaves none (never zero).
+        t.apply(&s.event(None, usage(Some(130_000), Some(0))));
+        let seen = t.context_use().unwrap();
+        assert_eq!(
+            (seen.used, seen.window, seen.percent()),
+            (130_000, None, None)
+        );
     }
 
     #[test]
