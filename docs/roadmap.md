@@ -166,6 +166,29 @@ Exit demo: run OMP with task subagents, Codex (app-server) with subagents, and C
 ## D — Design
 - [x] D-1 Visual system v2: Claude-Desktop-like style, terminal-first layout (`docs/design.md` § Visual system)
 
+## Plan after 2026-10-20 (resume here)
+
+Ordered; each line is one slice with a brief in `docs/briefs/` (written ones marked). Research behind each: the spike named.
+
+**In flight** (worktrees `../hutan-wt/<slice>`, branches `slice/<slice>` pushed to origin):
+- [ ] AG-1 Agents page v2: one agent truth, attention-first center page; right Agents and Mawas Today become lenses; drawer and old Overview removed (brief `AG-1.md`; `spikes/2026-10-20-chrome-v3.md` §2–3, option A).
+- [ ] TH-2 Icon packs: semantic icon ids, safe SVG pipeline, Phosphor default; Agents ≠ Changes ≠ branch icons (brief `TH-2.md`; ADR 0018; `chrome-v3.md` §5, `theme-packs.md`).
+
+**Next (no user decision needed):**
+- [ ] TH-3 Theme/icon pickers with live preview, diagnostics, `hutan theme ls|validate|new|export` (`theme-packs.md` §6).
+- [ ] TH-4 Importers: Ghostty, iTerm2, Alacritty, VS Code, Zed, WezTerm, Warp (`theme-packs.md` §5.3) — good candidate for a cheaper model.
+- [ ] DB-3 Optional agent activity fields (`turn_started_at_ms`, `last_state_report_at_ms`, `observation_reason`; additive minor + capability `agent.activity-summary`) (`chrome-v3.md` §6).
+- [ ] ST-4 Truthful Mawas configuration read API (`assistant.settings` capability), then ST-5 13-page Settings IA with explicit scope/provenance/reset-to-inherit, ST-6 unified search, ST-7 keyboard-shortcut editor, ST-8 validation/preset editor, ST-9 data/storage + preference export/import, ST-10 recently changed (`spikes/2026-10-20-settings-v2.md` §7–8).
+- [ ] MW-3 Mawas explicit learning ("remember this", "learn from this session") on top of MW-2 memory (ADR 0017).
+- [ ] P-3 benches B3/B5/B7/B9 in a real unlocked window, one at a time; record in `docs/perf.md`.
+
+**Waiting for the user's decisions:**
+- Direction D-1…D-6 (`spikes/2026-10-18-direction.md` §11): task workspaces + unassigned sessions (protocol major), `app.on_close=quit` + restore, remote `hutand` (SSH→TLS→relay), Linux headless → desktop → Windows, icons (now decided: Phosphor, ADR 0018), secrets vault mode.
+- Traces (MW-7) via Laminar research (`spikes/2026-10-20-laminar.md` §10): recommended TR-1 local trace store + bounded OTLP receiver, TR-2 Traces page, TR-3 optional export to Laminar/OTel, TR-4 harness-native telemetry, TR-5 evals later; 5 decisions in §10.
+- Settings v2 decisions (`settings-v2.md` §9), chrome decisions (`chrome-v3.md` §6), theme decisions (`theme-packs.md` §7) — recommendations taken as defaults unless the user objects.
+- GF-1 GPUI fork spike (on-demand CVDisplayLink first) — proposed, awaiting "go".
+- Model routing: Opus orchestrates; implementers `implementer` (Sonnet 5.5), `implementer-gemini` (Gemini 4 Argon, OpenCode Go, public code only); `implementer-sol` paused by the user (its profile fell back to Opus in the first run — check model resolution before reuse). DeepSeek V4.1 Flash / GLM-5.3-Flash for mechanical slices: pilot not started.
+
 ## Backlog (agreed, not yet scheduled)
 
 - **B-1 Session environment like a real terminal emulator.** New sessions get a fresh login environment instead of inheriting `hutand`'s environment (which depends on whoever started the daemon: CLI, desktop, launchd): start from the user's launchd environment (`HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`/`LC_*`, `PATH` via `path_helper`), then the login shell builds the rest (`-l`). Configurable in settings and applied at session start: `terminal.shell` (override the account login shell), `terminal.env` (extra variables), `terminal.env_inherit = "login" | "daemon"`, with workspace overrides (`<repo>/.hutan/settings.toml`). Clients pass the resolved shell/env in `session.create` (`TerminalSpec.command`/`env` already exist); daemon-managed `HUTAN_*` still win. Already done: the default shell is the account's login shell (`getpwuid`), not the daemon's `$SHELL`.
