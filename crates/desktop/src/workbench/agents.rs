@@ -24,6 +24,7 @@ use super::harnesses::{self, HARNESSES};
 use super::launcher::LauncherPreset;
 use super::model::{FocusTarget, ItemRef, PaneId};
 use super::panels::AssistantPanel;
+use super::persistence;
 use super::render::probe;
 use super::terminals::session_of_item;
 use super::ui::{self, StyledExt as _};
@@ -132,6 +133,9 @@ impl Workbench {
         }
         self.chat_models
             .retain(|session, _| wanted.contains(session));
+        self.chat_draft_watch
+            .retain(|session, _| wanted.contains(session));
+        self.prune_chat_drafts(cx);
         let keep: HashSet<(PaneId, SessionId)> = items.into_iter().collect();
         let gone: Vec<(PaneId, SessionId)> = self
             .chats
@@ -160,8 +164,58 @@ impl Workbench {
         }
         let connection = self.sessions.read(cx).connection().clone();
         let model = cx.new(|cx| ChatModel::new(session, connection, cx));
+        // The composer comes back as it was left (closing the tab or the window keeps it)...
+        if let Some(draft) = self.chat_drafts.get(&session.to_string()) {
+            model.update(cx, |model, cx| model.restore_draft(draft, cx));
+        }
+        // ... and every change to it is kept from now on.
+        let watch = cx.observe(&model, move |this, model, cx| {
+            this.note_chat_draft(session, &model, cx);
+        });
+        self.chat_draft_watch.insert(session, watch);
         self.chat_models.insert(session, model.clone());
         model
+    }
+
+    /// Keeps what the composer of `session` holds in the state file's drafts: an empty one
+    /// (sent, cleared) is removed, a long one is cut at [`persistence::MAX_DRAFT_BYTES`].
+    fn note_chat_draft(
+        &mut self,
+        session: SessionId,
+        model: &Entity<ChatModel>,
+        cx: &mut Context<Self>,
+    ) {
+        let key = session.to_string();
+        let text = model.read(cx).input().text();
+        let text = persistence::bounded_draft(text);
+        let changed = if text.is_empty() {
+            self.chat_drafts.remove(&key).is_some()
+        } else if self.chat_drafts.get(&key).map(String::as_str) == Some(text) {
+            false
+        } else {
+            self.chat_drafts.insert(key, text.to_owned());
+            true
+        };
+        if changed {
+            self.schedule_save(cx);
+        }
+    }
+
+    /// Drops the drafts of chats that no longer exist, once the daemon has said which do.
+    fn prune_chat_drafts(&mut self, cx: &mut Context<Self>) {
+        let store = self.sessions.read(cx);
+        if !store.synced() {
+            return;
+        }
+        let before = self.chat_drafts.len();
+        self.chat_drafts.retain(|session, _| {
+            session
+                .parse()
+                .is_ok_and(|session: SessionId| store.session(session).is_some())
+        });
+        if self.chat_drafts.len() != before {
+            self.schedule_save(cx);
+        }
     }
 
     /// The view of `session` in `pane`, created on first use.

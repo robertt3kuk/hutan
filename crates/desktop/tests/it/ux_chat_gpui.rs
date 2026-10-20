@@ -9,6 +9,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use common::chat::ChatEnv;
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_chat_view::{ApprovalState, Body};
@@ -359,5 +360,201 @@ fn a_chat_whose_agent_reports_no_usage_has_no_chip(cx: &mut TestAppContext) {
         view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("context")))
             .is_none(),
         "hidden, not zero"
+    );
+}
+
+// ---- UX-DRAFTS ------------------------------------------------------------------------------
+
+fn settings_for(daemon: &TestDaemon) -> SettingsStore {
+    SettingsStore::new(SettingsPaths::in_dir(daemon.home()))
+}
+
+fn open_saving<'a>(
+    cx: &'a mut TestAppContext,
+    daemon: &TestDaemon,
+    state_path: &Path,
+) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+    let (view, cx) = open_with(
+        cx,
+        settings_for(daemon),
+        daemon.connection(),
+        Some(state_path.to_path_buf()),
+    );
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    (view, cx)
+}
+
+fn composer_text(model: &Entity<ChatModel>, cx: &VisualTestContext) -> String {
+    model.read_with(cx, |m, _| m.input().text().to_owned())
+}
+
+#[gpui::test]
+fn a_composer_draft_survives_closing_the_tab_and_reopening_the_window(cx: &mut TestAppContext) {
+    let scripts = tempfile::tempdir().unwrap();
+    let daemon = daemon(scripts.path(), &recorded("plain-turn"));
+    let id = create_chat(&daemon, &scripts.path().canonicalize().unwrap());
+    let state_path = daemon.home().join("desktop-state.json");
+    {
+        let (view, cx) = open_saving(cx, &daemon, &state_path);
+        let (_chat, model) = open_chat(&view, cx, id);
+        cx.simulate_input("half of a thought");
+        cx.simulate_keystrokes("shift-enter");
+        cx.simulate_input("and the other half");
+        assert_eq!(
+            composer_text(&model, cx),
+            "half of a thought\nand the other half"
+        );
+        // Closing the tab drops the chat's model; the draft is kept anyway.
+        cx.simulate_keystrokes("cmd-w");
+        wait_until(cx, "the chat to leave the workbench", |cx| {
+            view.read_with(cx, |wb, _| wb.chat_model_of(id).is_none())
+        });
+        view.update(cx, |wb, _| wb.flush_save());
+        let saved: Value =
+            serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+        assert_eq!(
+            saved["chat_drafts"][id.to_string()],
+            "half of a thought\nand the other half",
+            "plaintext in the state file, keyed by session"
+        );
+    }
+    // A new window (a restarted desktop) reads the file: the draft is back in the composer.
+    let (view, cx) = open_saving(cx, &daemon, &state_path);
+    let (_chat, model) = open_chat(&view, cx, id);
+    assert_eq!(
+        composer_text(&model, cx),
+        "half of a thought\nand the other half"
+    );
+
+    // Sending clears it: the file no longer holds it.
+    cx.simulate_keystrokes("cmd-enter");
+    pump(cx, "the composer to empty", |cx| {
+        composer_text(&model, cx).is_empty()
+    });
+    view.update(cx, |wb, _| wb.flush_save());
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+    assert!(saved.get("chat_drafts").is_none(), "{saved}");
+}
+
+#[gpui::test]
+fn the_draft_of_a_chat_that_no_longer_exists_is_dropped(cx: &mut TestAppContext) {
+    let scripts = tempfile::tempdir().unwrap();
+    let daemon = daemon(scripts.path(), &recorded("plain-turn"));
+    let id = create_chat(&daemon, &scripts.path().canonicalize().unwrap());
+    let state_path = daemon.home().join("desktop-state.json");
+    let ghost = SessionId::new();
+    std::fs::write(
+        &state_path,
+        json!({"chat_drafts": {ghost.to_string(): "for nobody"}}).to_string(),
+    )
+    .unwrap();
+    let (view, cx) = open_saving(cx, &daemon, &state_path);
+    open_chat(&view, cx, id);
+    view.update(cx, |wb, _| wb.flush_save());
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+    assert!(saved.get("chat_drafts").is_none(), "{saved}");
+}
+
+#[gpui::test]
+fn a_question_that_ends_keeps_what_was_typed_and_never_a_secret(cx: &mut TestAppContext) {
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("question-interrupt"));
+    let info = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    let (chat, model) = open_chat(&view, cx, info.id);
+    say(cx, "ask me");
+    pump(cx, "the question to be pending", |cx| {
+        !model.read_with(cx, |m, _| m.transcript().pending_questions().is_empty())
+    });
+    let id = model.read_with(cx, |m, _| m.transcript().pending_questions()[0].id);
+    pump(cx, "the card", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::ChatQuestion(0)))
+            .is_some()
+    });
+    let click = |cx: &mut VisualTestContext, region: Region| {
+        let bounds = view
+            .read_with(cx, |wb, _| wb.region_bounds(region))
+            .unwrap_or_else(|| panic!("{region:?} is not drawn"));
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+    };
+    // Choose an option, write the note, Tab into the secret field and type the token.
+    click(cx, Region::ChatQuestion(100));
+    click(cx, Region::ChatQuestion(8 + 1));
+    cx.simulate_input("the reviewer should know this");
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("hunter2");
+    assert_eq!(
+        chat.read_with(cx, |c, cx| c.ended_answers(id, cx)),
+        None,
+        "it still waits"
+    );
+
+    // The turn is interrupted: the question ends unanswered.
+    cx.simulate_keystrokes("escape");
+    click(cx, Region::Chat("interrupt"));
+    pump(cx, "the question to end", |cx| {
+        model.read_with(cx, |m, _| {
+            m.transcript().question(id).unwrap().state == hutan_chat_view::QuestionState::Expired
+        })
+    });
+    draw(cx);
+    let kept = chat
+        .read_with(cx, |c, cx| c.ended_answers(id, cx))
+        .expect("the typed answers stay");
+    assert!(kept.contains(": Only the CLI"), "{kept}");
+    assert!(kept.contains(": the reviewer should know this"), "{kept}");
+    assert!(!kept.contains("hunter2"), "a secret is never kept: {kept}");
+    assert_eq!(kept.lines().count(), 2, "{kept}");
+    pump(cx, "the Copy button", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::ChatQuestion(3)))
+            .is_some()
+    });
+    click(cx, Region::ChatQuestion(3));
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(kept)
+    );
+}
+
+#[gpui::test]
+fn an_ended_question_nobody_typed_into_leaves_no_form_behind(cx: &mut TestAppContext) {
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("question-interrupt"));
+    let info = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    let (chat, model) = open_chat(&view, cx, info.id);
+    say(cx, "ask me");
+    pump(cx, "the question to be pending", |cx| {
+        !model.read_with(cx, |m, _| m.transcript().pending_questions().is_empty())
+    });
+    let id = model.read_with(cx, |m, _| m.transcript().pending_questions()[0].id);
+    pump(cx, "the card", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("interrupt")))
+            .is_some()
+    });
+    let bounds = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Chat("interrupt")))
+        .unwrap();
+    cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+    pump(cx, "the question to end", |cx| {
+        model.read_with(cx, |m, _| {
+            m.transcript().question(id).unwrap().state == hutan_chat_view::QuestionState::Expired
+        })
+    });
+    draw(cx);
+    assert_eq!(chat.read_with(cx, |c, cx| c.ended_answers(id, cx)), None);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::ChatQuestion(3)))
+            .is_none(),
+        "no Copy without answers"
     );
 }

@@ -43,17 +43,48 @@ impl ChatView {
                 .entry(question.id)
                 .or_insert_with(|| QuestionForm::new(&question.spec));
         }
-        self.forms.retain(|id, _| {
+        // A form lives while its question waits. One whose question ended unanswered (the turn
+        // ended, the agent went away) stays as long as it holds something the user typed, so
+        // that it can be copied; secret fields are emptied the moment it ends.
+        self.forms
+            .retain(|id, form| match transcript.question(*id) {
+                Some(question) => match question.state {
+                    QuestionState::Pending => true,
+                    QuestionState::Expired => {
+                        form.scrub_secrets(&question.spec);
+                        form.sending = false;
+                        form.focus = None;
+                        !form.typed(&question.spec).is_empty()
+                    }
+                    _ => false,
+                },
+                None => false,
+            });
+        if self.question_focus.is_some_and(|id| {
             transcript
-                .question(*id)
-                .is_some_and(|q| q.state == QuestionState::Pending)
-        });
-        if self
-            .question_focus
-            .is_some_and(|id| !self.forms.contains_key(&id))
-        {
+                .question(id)
+                .is_none_or(|q| q.state != QuestionState::Pending)
+        }) {
             self.question_focus = None;
         }
+    }
+
+    /// What the user had typed into the form of question `id` when it ended unanswered, one
+    /// `label: text` line per field — what the card's *Copy* puts on the clipboard. `None` while
+    /// the question waits, was answered, or had nothing typed.
+    pub fn ended_answers(&self, id: QuestionId, cx: &gpui::App) -> Option<String> {
+        let question = self.model.read(cx).transcript().question(id)?;
+        if question.state != QuestionState::Expired {
+            return None;
+        }
+        let typed = self.forms.get(&id)?.typed(&question.spec);
+        (!typed.is_empty()).then(|| {
+            typed
+                .into_iter()
+                .map(|(label, text)| format!("{label}: {text}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
     }
 
     /// Why the last submit of `id` did not go through, as the card shows it.
@@ -387,6 +418,8 @@ impl ChatView {
                         serde_json::to_string_pretty(schema).unwrap_or_default(),
                     ))
             });
+        // The answers the user had typed when the question ended before they sent them.
+        let ended = self.ended_answers(id, cx);
         let sending = form.as_ref().is_some_and(|f| f.sending);
         let error = form.as_ref().and_then(|f| f.error.clone());
         div()
@@ -488,6 +521,42 @@ impl ChatView {
             .children(
                 status.map(|(text, color)| div().text_color(color).child(SharedString::from(text))),
             )
+            .children(ended.map(|answers| {
+                let copied = answers.clone();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(tokens.spacing * 1.5))
+                    .child(
+                        div()
+                            .text_color(theme.warning)
+                            .child("This question ended — copy your answers"),
+                    )
+                    .child(
+                        div()
+                            .font_family(look.mono.clone())
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(theme.muted)
+                            .child(SharedString::from(answers)),
+                    )
+                    .child(
+                        div().flex().child(
+                            button(
+                                SharedString::from(format!("question-copy-{id}")),
+                                "Copy",
+                                ButtonKind::Secondary,
+                                true,
+                                look,
+                            )
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                    copied.clone(),
+                                ));
+                            })
+                            .child(probe(&self.regions, Region::ChatQuestion(3))),
+                        ),
+                    )
+            }))
             .into_any_element()
     }
 

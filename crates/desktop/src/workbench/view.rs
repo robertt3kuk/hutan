@@ -214,7 +214,7 @@ pub enum Region {
     /// requests counted oldest first.
     ChatOption(usize),
     /// A control of a question card that waits for an answer (protocol 0.24): `0` Submit, `1`
-    /// Decline, `2` Cancel, `8 + n` field `n`, `100 + n * 20 + k` option `k` of field `n`.
+    /// Decline, `2` Cancel, `3` Copy (a question that ended with typed answers), `8 + n` field `n`, `100 + n * 20 + k` option `k` of field `n`.
     ChatQuestion(usize),
     /// Context chip `index` of the composer.
     ChatChip(usize),
@@ -486,6 +486,11 @@ pub struct Workbench {
     /// What the Start… sheet remembers, saved with the layout (see
     /// [`persistence::LauncherMemory`]).
     pub(crate) launcher_memory: persistence::LauncherMemory,
+    /// What each chat's composer holds, saved with the layout (see
+    /// [`persistence::ChatDrafts`]).
+    pub(crate) chat_drafts: persistence::ChatDrafts,
+    /// What tells the workbench a chat's composer changed, per chat model.
+    pub(crate) chat_draft_watch: HashMap<SessionId, Subscription>,
     /// What tells the workbench a terminal's folds changed, per held session.
     pub(crate) collapse_watch: HashMap<SessionId, Subscription>,
     pub(crate) window_active: bool,
@@ -889,6 +894,12 @@ impl Workbench {
                 .as_deref()
                 .map(persistence::load_launcher)
                 .unwrap_or_default(),
+            chat_drafts: options
+                .state_path
+                .as_deref()
+                .map(persistence::load_chat_drafts)
+                .unwrap_or_default(),
+            chat_draft_watch: HashMap::new(),
             collapse_watch: HashMap::new(),
             window_active: window.is_window_active(),
             rendered_terminals: std::collections::HashSet::new(),
@@ -1205,6 +1216,7 @@ impl Workbench {
             &self.collapsed_blocks,
             &self.review_comments,
             &self.launcher_memory,
+            &self.chat_drafts,
         ) {
             Ok(json) => json,
             Err(err) => {

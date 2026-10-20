@@ -148,6 +148,68 @@ impl QuestionForm {
         self.error = None;
     }
 
+    /// What the user typed or chose and did not send, as `(label, text)` lines: the fields that
+    /// differ from their default and are not empty. A secret field is never listed (and
+    /// [`scrub_secrets`](Self::scrub_secrets) empties it).
+    pub fn typed(&self, spec: &QuestionSpec) -> Vec<(String, String)> {
+        let fresh = Self::new(spec);
+        let mut lines = Vec::new();
+        for ((field, input), start) in spec.fields.iter().zip(&self.inputs).zip(&fresh.inputs) {
+            if matches!(field.kind, FieldKind::Secret) {
+                continue;
+            }
+            let text = match (input, start) {
+                (Input::Text(now), Input::Text(was)) if now.text() != was.text() => {
+                    now.text().to_owned()
+                }
+                (Input::Boolean(now), Input::Boolean(was)) if now != was => {
+                    if *now { "Yes" } else { "No" }.to_owned()
+                }
+                (
+                    Input::Choice { chosen, other },
+                    Input::Choice {
+                        chosen: start_chosen,
+                        other: start_other,
+                    },
+                ) if chosen != start_chosen || other.text() != start_other.text() => {
+                    let labels = match &field.kind {
+                        FieldKind::Choice { options, .. } => chosen
+                            .iter()
+                            .map(|value| {
+                                options
+                                    .iter()
+                                    .find(|o| o.value == *value)
+                                    .map_or(value.clone(), |o| o.label.clone())
+                            })
+                            .collect::<Vec<_>>(),
+                        _ => Vec::new(),
+                    };
+                    let mut parts = labels;
+                    if !other.text().trim().is_empty() {
+                        parts.push(other.text().trim().to_owned());
+                    }
+                    parts.join(", ")
+                }
+                _ => continue,
+            };
+            if !text.trim().is_empty() {
+                lines.push((field.label.clone(), text));
+            }
+        }
+        lines
+    }
+
+    /// Empties every secret field: nothing typed into one outlives the question it was for.
+    pub fn scrub_secrets(&mut self, spec: &QuestionSpec) {
+        for (field, input) in spec.fields.iter().zip(&mut self.inputs) {
+            if matches!(field.kind, FieldKind::Secret)
+                && let Input::Text(text) = input
+            {
+                text.clear();
+            }
+        }
+    }
+
     /// The values the form holds, checked against the question's fields. An empty optional
     /// field is left out.
     pub fn values(&self, spec: &QuestionSpec) -> Result<Values, String> {
@@ -328,6 +390,52 @@ mod tests {
         assert_eq!(form.values(&spec).unwrap()["n"], 7);
         form.focused_text().unwrap().insert("x");
         assert_eq!(form.values(&spec), Err("N must be a number".to_owned()));
+    }
+
+    #[test]
+    fn what_was_typed_is_listed_without_secrets_defaults_or_empty_fields() {
+        let mut named = field("name", FieldKind::Text, false);
+        named.default = Some(json!("anon"));
+        let pick = field(
+            "pick",
+            FieldKind::Choice {
+                options: options(&["a", "b"]),
+                multi: true,
+                allow_other: true,
+            },
+            false,
+        );
+        let spec = spec(vec![
+            named,
+            field("why", FieldKind::Text, false),
+            field("flag", FieldKind::Boolean, false),
+            field("key", FieldKind::Secret, false),
+            pick,
+        ]);
+        let mut form = QuestionForm::new(&spec);
+        assert!(
+            form.typed(&spec).is_empty(),
+            "nothing touched, nothing to keep"
+        );
+        form.focus = Some(1);
+        form.focused_text().unwrap().insert("because");
+        form.toggle(2);
+        form.focus = Some(3);
+        form.focused_text().unwrap().insert("hunter2");
+        form.choose(&spec.fields, 4, "b");
+        form.focus = Some(4);
+        form.focused_text().unwrap().insert("or this");
+        assert_eq!(
+            form.typed(&spec),
+            [
+                ("WHY".to_owned(), "because".to_owned()),
+                ("FLAG".to_owned(), "Yes".to_owned()),
+                ("PICK".to_owned(), "b, or this".to_owned()),
+            ]
+        );
+        form.scrub_secrets(&spec);
+        form.focus = Some(3);
+        assert!(form.focused_text().unwrap().is_empty());
     }
 
     #[test]

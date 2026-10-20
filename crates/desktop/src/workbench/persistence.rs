@@ -101,6 +101,40 @@ pub fn load_launcher(path: &Path) -> LauncherMemory {
     load_key(path, "launcher")
 }
 
+/// What each chat's composer holds, by session id (`chat_drafts` in the state file): unsent text
+/// survives closing the tab and restarting the desktop. View state like the layout, saved beside
+/// it in **plaintext** (this file is not a place for secrets: nothing typed into a key field is
+/// ever put here, only composer text) and never sent to the daemon. Empty drafts are not kept,
+/// each is cut at [`MAX_DRAFT_BYTES`], and drafts of sessions that no longer exist are dropped
+/// once the session list is known, so the map stays as small as the user's chats.
+pub type ChatDrafts = BTreeMap<String, String>;
+
+/// Longest composer text kept in the state file.
+pub const MAX_DRAFT_BYTES: usize = 32 * 1024;
+
+/// `text` cut to [`MAX_DRAFT_BYTES`] at a character boundary.
+pub fn bounded_draft(text: &str) -> &str {
+    if text.len() <= MAX_DRAFT_BYTES {
+        return text;
+    }
+    let mut end = MAX_DRAFT_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// The chat drafts saved in `path`; none when the file is missing or has none.
+pub fn load_chat_drafts(path: &Path) -> ChatDrafts {
+    let mut drafts: ChatDrafts = load_key(path, "chat_drafts");
+    drafts.retain(|_, text| !text.is_empty());
+    for text in drafts.values_mut() {
+        let keep = bounded_draft(text).len();
+        text.truncate(keep);
+    }
+    drafts
+}
+
 /// What the state file holds besides the layout, read from top-level key `key`.
 fn load_key<T: serde::de::DeserializeOwned + Default>(path: &Path, key: &str) -> T {
     std::fs::read_to_string(path)
@@ -111,16 +145,17 @@ fn load_key<T: serde::de::DeserializeOwned + Default>(path: &Path, key: &str) ->
         .unwrap_or_default()
 }
 
-/// The state file's JSON: the layout plus, when there are any, the folded blocks and the
-/// review comments.
+/// The state file's JSON: the layout plus, when there are any, the folded blocks, the review
+/// comments, the launcher memory and the chat drafts.
 pub fn state_json(
     state: &WorkbenchState,
     collapsed: &CollapsedBlocks,
     comments: &ReviewComments,
     launcher: &LauncherMemory,
+    drafts: &ChatDrafts,
 ) -> Result<String, ModelError> {
     let json = state.to_json()?;
-    if collapsed.is_empty() && comments.is_empty() && launcher.is_empty() {
+    if collapsed.is_empty() && comments.is_empty() && launcher.is_empty() && drafts.is_empty() {
         return Ok(json);
     }
     let invalid = |err: serde_json::Error| ModelError::Invalid(err.to_string());
@@ -142,6 +177,12 @@ pub fn state_json(
             map.insert(
                 "launcher".to_owned(),
                 serde_json::to_value(launcher).map_err(invalid)?,
+            );
+        }
+        if !drafts.is_empty() {
+            map.insert(
+                "chat_drafts".to_owned(),
+                serde_json::to_value(drafts).map_err(invalid)?,
             );
         }
     }
@@ -196,7 +237,8 @@ mod tests {
                 &state,
                 &CollapsedBlocks::new(),
                 &ReviewComments::new(),
-                &none
+                &none,
+                &ChatDrafts::new()
             )
             .unwrap(),
             state.to_json().unwrap()
@@ -205,7 +247,14 @@ mod tests {
         collapsed.insert("01TERMINAL".to_owned(), vec![3, 7]);
         save_json(
             &path,
-            &state_json(&state, &collapsed, &ReviewComments::new(), &none).unwrap(),
+            &state_json(
+                &state,
+                &collapsed,
+                &ReviewComments::new(),
+                &none,
+                &ChatDrafts::new(),
+            )
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(load_collapsed(&path), collapsed);
@@ -236,6 +285,7 @@ mod tests {
                 &CollapsedBlocks::new(),
                 &ReviewComments::new(),
                 &memory,
+                &ChatDrafts::new(),
             )
             .unwrap(),
         )
@@ -247,6 +297,53 @@ mod tests {
             "the layout loads from the same file"
         );
         assert!(load_launcher(&dir.path().join("none.json")).is_empty());
+    }
+
+    #[test]
+    fn chat_drafts_travel_beside_the_layout_bounded_and_without_empty_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STATE_FILE);
+        let state = WorkbenchState::default();
+        let mut drafts = ChatDrafts::new();
+        drafts.insert(
+            "01CHAT".to_owned(),
+            "half a thought\nsecond line".to_owned(),
+        );
+        save_json(
+            &path,
+            &state_json(
+                &state,
+                &CollapsedBlocks::new(),
+                &ReviewComments::new(),
+                &LauncherMemory::default(),
+                &drafts,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(load_chat_drafts(&path), drafts);
+        assert_eq!(
+            load_state(&path),
+            state,
+            "the layout loads from the same file"
+        );
+        assert!(load_chat_drafts(&dir.path().join("none.json")).is_empty());
+
+        // A file edited by hand or written by a buggy build is held to the same bounds.
+        let long = "é".repeat(MAX_DRAFT_BYTES);
+        std::fs::write(
+            &path,
+            serde_json::json!({"chat_drafts": {"01A": long, "01B": ""}}).to_string(),
+        )
+        .unwrap();
+        let loaded = load_chat_drafts(&path);
+        assert_eq!(loaded.keys().collect::<Vec<_>>(), ["01A"]);
+        assert_eq!(
+            loaded["01A"].len(),
+            MAX_DRAFT_BYTES,
+            "cut at a character boundary"
+        );
+        assert_eq!(bounded_draft("short"), "short");
     }
 
     #[test]

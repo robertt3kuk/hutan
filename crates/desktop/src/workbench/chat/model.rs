@@ -353,6 +353,15 @@ impl ChatModel {
 
     // ---- composer --------------------------------------------------------------------------
 
+    /// Puts back the draft a previous window or tab left, unless something has been typed here
+    /// already.
+    pub fn restore_draft(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.input.is_empty() && !text.is_empty() {
+            self.input.reset_to(text);
+            cx.notify();
+        }
+    }
+
     /// Edits the draft.
     pub fn edit(&mut self, change: impl FnOnce(&mut TextInput), cx: &mut Context<Self>) {
         change(&mut self.input);
