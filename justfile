@@ -11,12 +11,13 @@ fmt:
 fmt-check:
     cargo fmt --all --check
 
+# The gate runs at nice 10 so the editor, terminal and agents stay responsive while it builds.
 clippy:
-    cargo clippy --workspace --all-targets --locked -- -D warnings
+    nice -n 10 cargo clippy --workspace --all-targets --locked -- -D warnings
 
 test:
-    cargo build --workspace --bins --locked
-    cargo nextest run --workspace --locked --no-tests=pass
+    nice -n 10 cargo build --workspace --bins --locked
+    nice -n 10 cargo nextest run --workspace --locked --no-tests=pass
 
 deny:
     cargo deny --locked check

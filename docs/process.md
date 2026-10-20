@@ -98,7 +98,11 @@ Loop per slice:
 
 Rules: implementers never edit `status.md`/`roadmap.md`; a needed contract change comes back as a report item, not an edit. Dependent slices start after their dependency merges. Changing the implementer model = edit `.omp/agents/implementer.md` (one place).
 
-Resources (dev machine: M1 Pro, 10 cores, 16 GB RAM): builds use 4 jobs (`.cargo/config.toml`), tests 4 threads (`.config/nextest.toml`); debug builds carry line tables only (`Cargo.toml` `[profile.dev]`). At most **one implementer worktree** builds at a time besides the main checkout. Before dispatching, check `df -h ~` and `just sweep`; after merging, `git worktree remove` the slice (its `target/` goes with it). Every test run uses a temporary `HUTAN_HOME`; after a run, `pgrep -x hutand` must find no test daemon.
+Resources (dev machine: M1 Pro, 10 cores, 16 GB RAM, shared with the user's other projects and agents): builds use 4 jobs (`.cargo/config.toml`), tests 4 threads (`.config/nextest.toml`); debug builds carry line tables only (`Cargo.toml` `[profile.dev]`); `just check` runs at `nice 10`, and on this machine every rustc goes through a nice-10 sccache wrapper (`~/.cargo/config.toml`, machine-local). Scheduling:
+- **One heavy job at a time** (a cargo build/clippy/nextest run, by the orchestrator or one implementer); research, review and UI-check agents are light and may run beside it. Before starting a heavy job, `uptime`: if the 1-minute load is above 20 (2× cores), wait or queue it.
+- Light agents: at most ~8 concurrent research subagents; cheap web/GitHub research goes to `researcher-haiku`.
+- Before dispatching, check `df -h ~` and `just sweep`; after merging, `git worktree remove` the slice (its `target/` goes with it). A running desktop/daemon from a UI check is stopped when the check ends.
+- Every test run uses a temporary `HUTAN_HOME`; after a run, `pgrep -x hutand` must find no test daemon.
 
 ## Branching and commits
 
