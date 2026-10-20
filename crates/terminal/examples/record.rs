@@ -2,15 +2,22 @@
 //! terminal's queries through a live engine (so programs such as vim see a real terminal), and
 //! stores `tests/corpus/recorded/<name>.raw` (the exact bytes the program wrote) plus
 //! `<name>.grid` (the final screen as text, from a fresh replay of the raw bytes). A size other
-//! than 80×24 is stored as `<name>.size` (`COLSxROWS`) so the replay uses it.
+//! than 80×24 is stored as `<name>.size` (`COLSxROWS`) so the replay uses it. `--resize` steps
+//! resize the PTY and the live engine during the run; where in the byte stream each happened is
+//! stored as `<name>.resizes` (one `OFFSET COLSxROWS` line per resize) and the replay repeats
+//! them at the same offsets.
 //!
 //! ```text
 //! cargo run -p hutan-terminal --example record -- <name> [options] -- <argv…>
 //!   --send <delay_ms>:<bytes>   after <delay_ms>, type <bytes> (escapes: \e \a \r \n \t \\ \xHH);
 //!                               repeatable, executed in order
+//!   --resize <delay_ms>:<COLSxROWS>
+//!                               after <delay_ms>, resize the terminal; shares the order of
+//!                               `--send`
 //!   --timeout-ms <ms>           kill the program if it runs longer (default 10000)
 //!   --env KEY=VALUE             extra environment, repeatable
 //!   --size COLSxROWS            terminal size (default 80x24)
+//!   --cwd DIR                   working directory of the program
 //! ```
 
 use std::io::{Read, Write};
@@ -28,13 +35,24 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 /// A boxed error is enough for a dev tool.
 type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
+enum Step {
+    Send(Vec<u8>),
+    Resize(u16, u16),
+}
+
+fn parse_size(spec: &str) -> Result<(u16, u16)> {
+    let (cols, rows) = spec.split_once('x').ok_or("a size is COLSxROWS")?;
+    Ok((cols.parse()?, rows.parse()?))
+}
+
 struct Args {
     name: String,
-    sends: Vec<(u64, Vec<u8>)>,
+    steps: Vec<(u64, Step)>,
     timeout: Duration,
     env: Vec<(String, String)>,
     cols: u16,
     rows: u16,
+    cwd: Option<String>,
     argv: Vec<String>,
 }
 
@@ -77,11 +95,12 @@ fn parse_args() -> Result<Args> {
         .ok_or("usage: record <name> [options] -- <argv…>")?;
     let mut parsed = Args {
         name,
-        sends: Vec::new(),
+        steps: Vec::new(),
         timeout: Duration::from_secs(10),
         env: Vec::new(),
         cols: 80,
         rows: 24,
+        cwd: None,
         argv: Vec::new(),
     };
     while let Some(arg) = args.next() {
@@ -95,7 +114,19 @@ fn parse_args() -> Result<Args> {
                 let (delay, bytes) = spec
                     .split_once(':')
                     .ok_or("--send needs <delay_ms>:<bytes>")?;
-                parsed.sends.push((delay.parse()?, unescape(bytes)));
+                parsed
+                    .steps
+                    .push((delay.parse()?, Step::Send(unescape(bytes))));
+            }
+            "--resize" => {
+                let spec = args.next().ok_or("--resize needs <delay_ms>:<COLSxROWS>")?;
+                let (delay, size) = spec
+                    .split_once(':')
+                    .ok_or("--resize needs <delay_ms>:<COLSxROWS>")?;
+                let (cols, rows) = parse_size(size)?;
+                parsed
+                    .steps
+                    .push((delay.parse()?, Step::Resize(cols, rows)));
             }
             "--timeout-ms" => {
                 parsed.timeout =
@@ -106,11 +137,10 @@ fn parse_args() -> Result<Args> {
                 let (key, value) = pair.split_once('=').ok_or("--env needs KEY=VALUE")?;
                 parsed.env.push((key.to_owned(), value.to_owned()));
             }
+            "--cwd" => parsed.cwd = Some(args.next().ok_or("--cwd needs DIR")?),
             "--size" => {
                 let spec = args.next().ok_or("--size needs COLSxROWS")?;
-                let (cols, rows) = spec.split_once('x').ok_or("--size needs COLSxROWS")?;
-                parsed.cols = cols.parse()?;
-                parsed.rows = rows.parse()?;
+                (parsed.cols, parsed.rows) = parse_size(&spec)?;
             }
             other => return Err(format!("unknown option {other}").into()),
         }
@@ -143,29 +173,37 @@ fn main() -> Result<()> {
     for (key, value) in &args.env {
         cmd.env(key, value);
     }
+    if let Some(cwd) = &args.cwd {
+        cmd.cwd(cwd);
+    }
     let mut child = pair.slave.spawn_command(cmd)?;
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader()?;
     let writer = Arc::new(Mutex::new(pair.master.take_writer()?));
+    let live = Arc::new(Mutex::new(Emulator::new(size, 1000)?));
 
     // Reader: capture raw bytes and keep a live engine to answer queries.
     let raw = Arc::new(Mutex::new(Vec::<u8>::new()));
     let done = Arc::new(AtomicBool::new(false));
     let reader_thread = {
-        let (raw, writer, done) = (Arc::clone(&raw), Arc::clone(&writer), Arc::clone(&done));
+        let (raw, writer, done, live) = (
+            Arc::clone(&raw),
+            Arc::clone(&writer),
+            Arc::clone(&done),
+            Arc::clone(&live),
+        );
         thread::spawn(move || {
-            let mut live = match Emulator::new(size, 1000) {
-                Ok(live) => live,
-                Err(_) => return,
-            };
             let mut buf = [0u8; 16 * 1024];
             while let Ok(n) = reader.read(&mut buf) {
                 if n == 0 {
                     break;
                 }
                 raw.lock().extend_from_slice(&buf[..n]);
-                live.feed(&buf[..n]);
-                let replies = live.drain_replies();
+                let replies = {
+                    let mut live = live.lock();
+                    live.feed(&buf[..n]);
+                    live.drain_replies()
+                };
                 if !replies.is_empty() {
                     let _ = writer.lock().write_all(&replies);
                 }
@@ -175,8 +213,9 @@ fn main() -> Result<()> {
     };
 
     let started = Instant::now();
+    let mut resizes: Vec<(usize, u16, u16)> = Vec::new();
     'script: {
-        for (delay, bytes) in &args.sends {
+        for (delay, step) in &args.steps {
             let wake = Instant::now() + Duration::from_millis(*delay);
             while Instant::now() < wake {
                 if child.try_wait()?.is_some() {
@@ -184,7 +223,25 @@ fn main() -> Result<()> {
                 }
                 thread::sleep(Duration::from_millis(10));
             }
-            writer.lock().write_all(bytes)?;
+            match step {
+                Step::Send(bytes) => writer.lock().write_all(bytes)?,
+                Step::Resize(cols, rows) => {
+                    resizes.push((raw.lock().len(), *cols, *rows));
+                    let size = TerminalSize {
+                        cols: *cols,
+                        rows: *rows,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    };
+                    live.lock().resize(size)?;
+                    pair.master.resize(PtySize {
+                        rows: *rows,
+                        cols: *cols,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    })?;
+                }
+            }
         }
     }
     // On timeout the capture is frozen first: whatever the program prints while being hung
@@ -212,8 +269,20 @@ fn main() -> Result<()> {
     if let Some(len) = frozen_at {
         raw.truncate(len);
     }
+    resizes.retain(|(offset, ..)| *offset <= raw.len());
     let mut replay = Emulator::new(size, 10_000)?;
-    replay.feed(&raw);
+    let mut fed = 0;
+    for (offset, cols, rows) in &resizes {
+        replay.feed(&raw[fed..*offset]);
+        fed = *offset;
+        replay.resize(TerminalSize {
+            cols: *cols,
+            rows: *rows,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
+    }
+    replay.feed(&raw[fed..]);
     let grid = replay.grid_text();
 
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/recorded");
@@ -223,6 +292,16 @@ fn main() -> Result<()> {
         dir.join(format!("{}.grid", args.name)),
         format!("{}\n", grid.trim_end()),
     )?;
+    let resizes_file = dir.join(format!("{}.resizes", args.name));
+    if resizes.is_empty() {
+        let _ = std::fs::remove_file(&resizes_file);
+    } else {
+        let lines: String = resizes
+            .iter()
+            .map(|(offset, cols, rows)| format!("{offset} {cols}x{rows}\n"))
+            .collect();
+        std::fs::write(&resizes_file, lines)?;
+    }
     let size_file = dir.join(format!("{}.size", args.name));
     if (args.cols, args.rows) == (80, 24) {
         let _ = std::fs::remove_file(&size_file);

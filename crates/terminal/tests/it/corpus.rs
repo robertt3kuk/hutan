@@ -65,26 +65,69 @@ struct Outcome {
 }
 
 fn replay(stream: &[u8], size: TerminalSize, chunk: usize) -> Outcome {
+    replay_resizing(stream, size, &[], chunk)
+}
+
+/// [`replay`] that resizes the emulator to `resizes` (`(offset in the stream, size)`, in order)
+/// when the replay reaches the offset.
+fn replay_resizing(
+    stream: &[u8],
+    size: TerminalSize,
+    resizes: &[(usize, TerminalSize)],
+    chunk: usize,
+) -> Outcome {
     let mut emulator = Emulator::new(size, 10_000).expect("emulator");
     let mut replies = Vec::new();
     let mut meta = Vec::new();
-    for piece in stream.chunks(chunk.max(1)) {
-        emulator.feed(piece);
-        replies.extend(emulator.drain_replies());
-        // The block index derives its events from the marks; the corpus pins the marks.
-        meta.extend(
-            emulator
-                .drain_meta()
-                .into_iter()
-                .filter(|m| !matches!(m, TerminalMeta::Block(_)))
-                .map(|m| format!("{m:?}")),
-        );
+    let mut feed = |emulator: &mut Emulator, bytes: &[u8]| {
+        for piece in bytes.chunks(chunk.max(1)) {
+            emulator.feed(piece);
+            replies.extend(emulator.drain_replies());
+            // The block index derives its events from the marks; the corpus pins the marks.
+            meta.extend(
+                emulator
+                    .drain_meta()
+                    .into_iter()
+                    .filter(|m| !matches!(m, TerminalMeta::Block(_)))
+                    .map(|m| format!("{m:?}")),
+            );
+        }
+    };
+    let mut fed = 0;
+    for (offset, size) in resizes {
+        feed(&mut emulator, &stream[fed..*offset]);
+        fed = *offset;
+        emulator.resize(*size).expect("resize");
     }
+    feed(&mut emulator, &stream[fed..]);
     Outcome {
         emulator,
         replies,
         meta,
     }
+}
+
+/// Resizes a recording made with `--resize`: `NAME.resizes` next to the `.raw`, one
+/// `OFFSET COLSxROWS` line per resize.
+fn recorded_resizes(raw: &Path) -> Vec<(usize, TerminalSize)> {
+    let Ok(text) = fs::read_to_string(raw.with_extension("resizes")) else {
+        return Vec::new();
+    };
+    text.lines()
+        .map(|line| {
+            let (offset, size) = line.split_once(' ').expect("OFFSET COLSxROWS");
+            let (cols, rows) = size.split_once('x').expect("COLSxROWS");
+            (
+                offset.parse().expect("offset"),
+                TerminalSize {
+                    cols: cols.parse().expect("cols"),
+                    rows: rows.parse().expect("rows"),
+                    pixel_width: 0,
+                    pixel_height: 0,
+                },
+            )
+        })
+        .collect()
 }
 
 /// `[cols, rows]` or `[cols, rows, pixel_width, pixel_height]`; default 80×24, no pixel size.
@@ -338,8 +381,9 @@ fn recorded_streams_replay_to_their_recorded_grid() {
         let raw = fs::read(&path).expect("read .raw");
         let want = fs::read_to_string(path.with_extension("grid")).expect("read .grid");
         let size = recorded_size(&path);
+        let resizes = recorded_resizes(&path);
         for chunk in [usize::MAX, 4096, 1] {
-            let mut outcome = replay(&raw, size, chunk);
+            let mut outcome = replay_resizing(&raw, size, &resizes, chunk);
             let have = outcome.emulator.grid_text();
             assert_eq!(
                 have.trim_end(),

@@ -231,6 +231,11 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::DecreaseFontSize, _, cx| {
             this.change_font_size(-1.0, cx);
         }))
+        .on_action(cx.listener(|this, _: &actions::RedrawTerminal, _, cx| {
+            if let Some(view) = this.focused_terminal_view() {
+                view.update(cx, |view, cx| view.redraw(cx));
+            }
+        }))
         .on_action(cx.listener(|this, _: &actions::ResetFontSize, _, cx| {
             this.reset_font_size(cx);
         }))

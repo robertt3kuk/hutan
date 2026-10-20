@@ -78,6 +78,9 @@ pub fn bind_default_keys(cx: &mut App) {
 }
 
 const RESIZE_DEBOUNCE: Duration = Duration::from_millis(50);
+/// How long *Terminal: Redraw* keeps the application at the nudged size before the real one is
+/// sent back: long enough for a shell to see the change and repaint.
+const REDRAW_NUDGE: Duration = Duration::from_millis(150);
 const BLINK_INTERVAL: Duration = Duration::from_millis(530);
 /// Blink phases a focused cursor goes through after the last activity (typing, output, focus),
 /// about 5 s like Alacritty's `blinking_timeout`; then it stays solid. An unbounded blink would
@@ -188,6 +191,8 @@ pub struct TerminalView {
     reported_size: Option<TerminalSize>,
     wanted_size: Option<TerminalSize>,
     resize_task: Option<Task<()>>,
+    /// The second half of [`Self::redraw`].
+    redraw_task: Option<Task<()>>,
 
     pub(crate) blink_on: bool,
     /// The block the last prompt jump (or output selection) landed on.
@@ -310,6 +315,7 @@ impl TerminalView {
             reported_size: None,
             wanted_size: None,
             resize_task: None,
+            redraw_task: None,
             blink_on: true,
             highlight: None,
             animation_phase: 0,
@@ -808,6 +814,36 @@ impl TerminalView {
                 .ok();
             }));
         }
+    }
+
+    /// *Terminal: Redraw*: asks the application to repaint at the current size. The PTY only
+    /// signals SIGWINCH when its size changes, so the size is sent with one row less (never one
+    /// column less: that would reflow) and, after [`REDRAW_NUDGE`], as it is. Does nothing
+    /// before the first layout or for a view that does not take input.
+    pub fn redraw(&mut self, cx: &mut Context<Self>) {
+        let Some(size) = self.wanted_size else {
+            return;
+        };
+        if !self.accepts_input() {
+            return;
+        }
+        let nudged = TerminalSize {
+            rows: if size.rows > 1 { size.rows - 1 } else { 2 },
+            ..size
+        };
+        self.backend.resize(nudged);
+        self.redraw_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(REDRAW_NUDGE).await;
+            this.update(cx, |view, _| {
+                view.redraw_task = None;
+                // The layout may have changed meanwhile: its size is the one to restore.
+                if let Some(size) = view.wanted_size {
+                    view.reported_size = Some(size);
+                    view.backend.resize(size);
+                }
+            })
+            .ok();
+        }));
     }
 
     fn report_size(&mut self, size: TerminalSize) {

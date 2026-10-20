@@ -436,6 +436,9 @@ impl Emulator {
         let first_hot = self.abs_top.saturating_sub(self.acct_hot as u64);
         let reflowed = size.cols != self.size.cols;
         let on_alt = self.on_alt_screen();
+        if reflowed && !on_alt {
+            self.clear_open_prompt();
+        }
         let wraps_before =
             (reflowed && !on_alt && self.blocks.reaches(first_hot)).then(|| self.region_wraps());
         // Only the hot margin reflows (it already is the only history in the engine).
@@ -471,6 +474,30 @@ impl Emulator {
         }
         self.flush_blocks();
         Ok(())
+    }
+
+    /// A width change while the shell sits at a prompt (`OSC 133;A` seen, no command started):
+    /// the rows from the prompt's first row down are erased instead of reflowed, and the cursor
+    /// keeps its distance from the prompt's first row. The shell repaints the prompt after
+    /// SIGWINCH by moving up the rows it believes its prompt took and cannot know how a reflow
+    /// broke the old one into rows.
+    fn clear_open_prompt(&mut self) {
+        let Some(line) = self.blocks.open_prompt_line() else {
+            return;
+        };
+        // A prompt that starts above the screen (or, stale, below it) is left to the reflow.
+        let Some(row) = line.checked_sub(self.viewport_top()) else {
+            return;
+        };
+        let (cursor_line, _) = self.cursor_abs();
+        let offset = cursor_line.saturating_sub(line);
+        let rows = u64::from(self.size.rows);
+        if row >= rows {
+            return;
+        }
+        let cursor_row = (row + offset).min(rows - 1);
+        let erase = format!("\x1b[{};1H\x1b[J\x1b[{};1H", row + 1, cursor_row + 1);
+        self.parser.advance(&mut self.term, erase.as_bytes());
     }
 
     pub fn title(&self) -> Option<&str> {

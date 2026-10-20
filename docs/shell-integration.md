@@ -16,6 +16,8 @@ Code: `crates/terminal/src/shell_integration.rs` (install + injection), scripts 
 
 Sequences from the scripts end with BEL. An empty Enter produces `A B` with no `D` (no command ran). Programs started inside the shell are unaffected: the marks are printed by the shell, never by children.
 
+The marks also decide how the daemon treats a width change: between `A` and `C` (the shell is at its prompt) the prompt is erased instead of reflowed so the shell's own repaint after SIGWINCH starts from clean rows (`Emulator::resize`, `docs/design.md` § Resize and reflow). A shell that sends no marks keeps the plain reflow.
+
 ## Where it applies
 
 The environment the shell starts with (a fresh login environment by default) is described in `docs/architecture.md` § Session environment; the integration variables are set after it and win over the client's.

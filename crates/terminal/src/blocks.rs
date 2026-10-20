@@ -204,6 +204,20 @@ impl BlockIndex {
         }
     }
 
+    /// The line the prompt that is open now (between `A` and `C`) starts at.
+    pub(crate) fn open_prompt_line(&self) -> Option<u64> {
+        match self.current {
+            Some(Current {
+                id,
+                phase: Phase::Prompt,
+                ..
+            }) => self
+                .position(id)
+                .map(|index| self.blocks[index].prompt_line),
+            _ => None,
+        }
+    }
+
     /// Where the open prompt's command input starts, if `B` was seen.
     pub(crate) fn input_at(&self) -> Option<(u64, u16)> {
         match self.current {

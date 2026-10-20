@@ -273,6 +273,55 @@ fn resizes_are_debounced(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn redraw_nudges_the_size_and_sends_it_back(cx: &mut TestAppContext) {
+    let (view, cx, recorder) = setup(cx, TerminalViewSettings::default());
+    cx.executor().advance_clock(Duration::from_millis(60));
+    cx.run_until_parked();
+    recorder.take();
+
+    view.update(cx, |v, cx| v.redraw(cx));
+    let sizes = |recorder: &Recorder| -> Vec<(u16, u16)> {
+        recorder
+            .take()
+            .into_iter()
+            .filter_map(|c| match c {
+                Call::Resize(size) => Some((size.cols, size.rows)),
+                _ => None,
+            })
+            .collect()
+    };
+    // One row less at once (a column would reflow), the real size after a moment.
+    assert_eq!(sizes(&recorder), [(102, 37)]);
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    assert_eq!(sizes(&recorder), [(102, 38)]);
+
+    // A layout change during the nudge wins: the size sent back is the new one.
+    view.update(cx, |v, cx| v.redraw(cx));
+    recorder.take();
+    resize(cx, 400.0, 300.0);
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    assert_eq!(sizes(&recorder).last(), Some(&(51, 19)));
+}
+
+#[gpui::test]
+fn redraw_does_nothing_for_an_ended_session(cx: &mut TestAppContext) {
+    let (view, cx, recorder) = setup(cx, TerminalViewSettings::default());
+    cx.executor().advance_clock(Duration::from_millis(60));
+    cx.run_until_parked();
+    apply(&view, cx, snapshot(1, &["$"], Modes::default(), 0));
+    view.update(cx, |v, cx| {
+        v.set_status(ViewStatus::Ended("exited".into()), cx)
+    });
+    recorder.take();
+    view.update(cx, |v, cx| v.redraw(cx));
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    assert!(recorder.take().is_empty());
+}
+
+#[gpui::test]
 fn frames_are_acked_when_they_are_painted(cx: &mut TestAppContext) {
     let (view, cx, recorder) = setup(cx, TerminalViewSettings::default());
     recorder.take();
