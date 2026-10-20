@@ -1,0 +1,38 @@
+[package]
+name = "hutan-buffer"
+description = "Hutan editor text model: rope, transactions, undo tree, selections, anchors, UTF-16 coordinates, search (GPUI-free)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+autotests = false
+autobenches = false
+
+[dependencies]
+crop.workspace = true
+regex-cursor.workspace = true
+similar.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+ropey.workspace = true
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+
+[[bench]]
+name = "rope"
+path = "benches/rope.rs"
+harness = false
+
+[[bench]]
+name = "buffer"
+path = "benches/buffer.rs"
+harness = false
+
+[lints]
+workspace = true

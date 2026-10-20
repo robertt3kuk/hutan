@@ -28,7 +28,7 @@ flowchart LR
 
 ## Crates
 
-Crates are created when their first milestone starts (no empty placeholders); package names are `hutan-<dir>`. Present now: `core`, `protocol`, `daemon` (`hutand` + lib), `client`, `terminal`, `agents` (Codex chat, `docs/agents.md`), `gateway` (direct model chat, `docs/gateway.md`).
+Crates are created when their first milestone starts (no empty placeholders); package names are `hutan-<dir>`. Present now: `core`, `protocol`, `daemon` (`hutand` + lib), `client`, `terminal`, `agents` (Codex chat, `docs/agents.md`), `gateway` (direct model chat, `docs/gateway.md`), `buffer` (the editor's text model, ADR 0012).
 
 ```text
 crates/
@@ -46,6 +46,7 @@ crates/
   security/       Keychain, permission policy evaluation, redaction
   notifications/  notification intents from domain events (daemon side)
   cli/            hutan binary
+  buffer/         editor text model (E-1, ADR 0012): `crop` rope with byte offsets, atomic transactions, undo tree with groups, multi-cursor selections, anchors, UTF-16/LSP coordinates, `apply_external` (minimal diff), search; no GPUI, no I/O, no Hutan dependencies
   settings/       layered TOML settings store, schema registry, watcher, keymap, color packs and their registry (`themes/`, ADR 0018; no GPUI; ADR 0010)
   terminal_view/  GPUI terminal element/view over render DTOs, input encoding (UI crate)
   desktop/        Hutan GPUI app: workbench (docks, pane tree, panels, presets), wiring (UI crate)
@@ -62,6 +63,7 @@ flowchart BT
   settings --> desktop
   settings --> terminal_view
   core --> terminal & runtime & storage & security & notifications
+  buffer
   index --> daemon
   runtime --> agents
   core --> gateway

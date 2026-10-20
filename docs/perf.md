@@ -362,3 +362,71 @@ with exactly that panic message when the dispatch is moved back inside the updat
 `hutan-desktop` now also installs a panic hook that appends the message, location and backtrace to
 `$HUTAN_HOME/logs/desktop.log` (`~/Library/Logs/Hutan/desktop.log` by default, next to
 `hutand.log`; one path function, `crash::log_dir`) before the process dies.
+
+## Editor: rope choice and the text model (slice E-1, `hutan-buffer`)
+
+The editor budgets are B11–B15 in `docs/spikes/2026-10-21-editor.md` § 4.8. E-1 measures only the
+text-model share of them (no GPUI, no file I/O); the first end-to-end numbers come with the
+viewer (E-5). Nothing here is a budget change.
+
+| | |
+|---|---|
+| Machine | Apple M1 Pro (10 cores, 16 GB), macOS 27.0.1, `rustc 1.98.0`; other agents were building on the machine (load average 6–12), so absolute numbers are pessimistic |
+| Build | `cargo bench` profile (release: thin LTO, `codegen-units = 1`) |
+| Method | `crates/buffer/benches/rope.rs` and `buffer.rs` (no harness crate): `Instant`, median of 5–9 runs per cell, medians of 3 invocations below. Text: source-like lines of ~40 bytes, every 7th with 2-, 3- and 4-byte characters (so UTF-16 surrogate pairs occur). Run `cargo bench -p hutan-buffer --bench rope` / `--bench buffer` |
+
+### Rope: `crop` 0.4.3 vs `ropey` 1.6.1 (decision: `crop`)
+
+`ropey` 2.0 is still `2.0.0-beta.1` (not released), so 1.6.1 is the comparison. `crop` indexes by
+byte and has a UTF-16 metric; `ropey` 1.x indexes by `char`, so its rows include the
+`byte_to_char` / `char_to_byte` conversion every byte-based caller (tree-sitter, the buffer API)
+pays. Every row is per operation except "open".
+
+| Scenario | crop 1 MB | ropey 1 MB | crop 10 MB | ropey 10 MB |
+|---|---|---|---|---|
+| open (build from `&str`) | **0.134 ms** | 0.321 ms | **1.32 ms** | 3.43 ms |
+| snapshot (clone) | 10 ns | 10 ns | 10 ns | 10 ns |
+| random insert (line start) | 352 ns | 359 ns | **675 ns** | 775 ns |
+| random delete (≤ 8 chars) | 658 ns | 628 ns | 851 ns | 892 ns |
+| typing at a cursor (1 char) | **35 ns** | 96 ns | **46 ns** | 96 ns |
+| line → byte | 128 ns | 129 ns | **202 ns** | 235 ns |
+| byte → line | **97 ns** | 114 ns | **154 ns** | 207 ns |
+| byte → UTF-16 | **97 ns** | 179 ns | **141 ns** | 293 ns |
+| UTF-16 → byte | **117 ns** | 239 ns | **189 ns** | 365 ns |
+
+`crop` ties or wins in every row except random delete, where `ropey` is ~5 % faster (628 vs 658 ns
+at 1 MB; `crop` is ahead at 10 MB, 851 vs 892 ns). It opens 2.4× faster, does the UTF-16 conversions that
+GPUI's `EntityInputHandler` and LSP need about 2× faster, types at a cursor 2.7× faster, and needs
+no conversion layer for byte offsets. Its costs: no `char` metric (`Text::byte_to_char` is `O(n)`,
+documented; nothing on the editor's hot paths uses it) and a smaller community than `ropey`. Pinned
+`=0.4.3` because `Text::utf16_to_byte` relies on how it treats a UTF-16 offset inside a surrogate
+pair (rounds down; a test guards it).
+
+### `hutan-buffer` text-model costs
+
+| Scenario | 1 MB | 10 MB | Related budget |
+|---|---|---|---|
+| open: `Buffer::from_bytes` (NUL scan, UTF-8 validation, line-ending scan, rope) | 1.22 ms | 12.1 ms | B11a ≤ 100 ms, B11b ≤ 500 ms (whole open; this is the model's share) |
+| open a CRLF file (extra normalization pass) | 1.86 ms | 18.0 ms | same |
+| save: `to_bytes` (LF) | 0.035 ms | 0.42 ms | — |
+| keystroke: `Buffer::insert` of 1 char (validate, invert, undo history, rope, 100 tracked anchors) | 0.97 µs | 1.08 µs | B12a ≤ 2 ms (whole key → frame) |
+| 1 000 typed characters in one group: undo + redo | 0.001 ms | 0.001 ms | B15 ≤ 2 ms |
+| snapshot for a background parse (`Text` clone) | ~10 ns | ~10 ns | B11c, B14 |
+| `apply_external`, one line changed (diff included) | 1.51 ms | 15.0 ms | — |
+| `apply_external`, 100 lines changed | 7.5 ms | 81 ms | — |
+| search, literal absent (scans everything) | 0.048 ms | 0.29 ms | B15 (first match ≤ 50 ms) |
+| search, literal, first 1 000 matches | 0.11 ms | 0.15 ms | same |
+| search, regex `value_\d+7\b`, first 1 000 matches | 10.6 ms | 10.7 ms | same |
+| search, `HÉLLO` ignoring case, first 1 000 matches | 0.13 ms | 0.22 ms | same |
+
+Observations:
+- The model's share of every editor budget is orders of magnitude below it; no miss, nothing to fix.
+- `apply_external` is dominated by flattening the old text and the line diff (`similar`, Myers, 500 ms
+  deadline after which it returns a correct but less minimal diff); common leading and trailing
+  lines are skipped before the diff runs, so a one-line change costs a copy and a pass over the lines.
+- The regex search runs with `regex-cursor`'s literal prefilter off: version 0.1.5 loses matches
+  that straddle a rope chunk boundary inside a multi-byte character (reproduced with a 3-byte
+  literal cut after its first byte; regression test `multibyte_literals_straddling_chunks_are_found`).
+  Without the prefilter a pure literal still runs at multiple GB/s (table above).
+- The undo history is bounded (10 000 groups, 32 MiB, 24 h by default; `HistoryLimits`), pruning is
+  `O(1)` per edit.
