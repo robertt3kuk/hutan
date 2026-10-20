@@ -2,6 +2,7 @@
 //! namespace `panels.<id>`; the layout decides where it lives.
 
 mod agents;
+mod agents_page;
 mod assistant;
 mod assistant_rail;
 mod changes;
@@ -12,7 +13,6 @@ mod history_model;
 mod history_view;
 mod inspector;
 mod memory;
-mod overview;
 mod resources;
 mod resources_model;
 mod sessions;
@@ -30,6 +30,7 @@ use gpui::{
 use std::rc::Rc;
 
 pub use agents::{AgentsPanel, RowView, SectionView, TICK as AGENTS_TICK};
+pub use agents_page::{AgentsPage, AgentsRequest, TICK as AGENTS_PAGE_TICK};
 pub use assistant::{
     AssistantPanel, Choice as AssistantChoice, Failure, MawasMode, Opened, ScopeEntry, ScopeKey,
 };
@@ -56,7 +57,6 @@ pub use inspector::{BlockRow, InspectorPanel};
 pub use memory::{
     EditorTarget as MemoryEditorTarget, MemoryPanel, ScopeChoice as MemoryScopeChoice,
 };
-pub use overview::OverviewPanel;
 pub use resources::{
     Link as ResourcesLink, MAX_INTERVAL_MS, REFRESH_AFTER as RESOURCES_REFRESH, ResourcesPanel,
     WATCH as RESOURCES_WATCH,
@@ -114,10 +114,11 @@ impl Render for PlaceholderPanel {
     }
 }
 
-/// `sessions`, `history`, `changes`, `inspector` (titled Requests), `overview`, `agents`,
-/// `resources`, `tasks`, `assistant` (Mawas Home), `notifications`. `sessions` (Projects), `tasks`
-/// and `overview` open as pages of the left sidebar, `history`, `changes`, `inspector`, `agents`
-/// and `resources` as tabs of the right sidebar's strip, `assistant` as a tab of the center.
+/// `sessions`, `history`, `changes`, `inspector` (titled Requests), `agents` (the compact
+/// projection of the Agents page), `agents-dashboard` (the Agents page), `resources`, `tasks`,
+/// `assistant` (Mawas Home), `notifications`. `sessions` (Projects) and `tasks` open as pages of
+/// the left sidebar, `history`, `changes`, `inspector`, `agents` and `resources` as tabs of the
+/// right sidebar's strip, `assistant` and `agents-dashboard` as tabs of the center.
 pub fn builtin_panels() -> PanelRegistry {
     let mut registry = PanelRegistry::new();
     registry.register(PanelSpec {
@@ -161,13 +162,13 @@ pub fn builtin_panels() -> PanelRegistry {
         }),
     });
     registry.register(PanelSpec {
-        id: "overview".into(),
-        title: "Overview".into(),
-        icon: "⊞".into(),
+        id: super::model::AGENTS_PAGE.into(),
+        title: "Agents".into(),
+        icon: "▤".into(),
         default_dock: DockPosition::Left,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
-            AnyView::from(cx.new(|cx| OverviewPanel::new(env, cx)))
+            AnyView::from(cx.new(|cx| AgentsPage::new(env, cx)))
         }),
     });
     registry.register(PanelSpec {

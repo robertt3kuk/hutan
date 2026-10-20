@@ -198,13 +198,13 @@ fn nav_items_switch_the_left_page_and_the_back_row_returns_to_projects(cx: &mut 
         ids(&["sessions", "tasks"])
     );
 
-    // Agents is no page: it opens the dashboard drawer and leaves the page as it is.
+    // Agents is no page of the sidebar: it opens the Agents page in the center and leaves the
+    // sidebar's page as it is; a second click focuses the same tab.
     click(&view, cx, Region::Nav("agents"));
     assert_eq!(page(cx).as_str(), "tasks");
     assert_eq!(selected_nav(&view, cx), ["tasks", "agents"]);
-    assert!(view.read_with(cx, |wb, _| wb.agents_drawer_open()));
     click(&view, cx, Region::Nav("agents"));
-    assert!(!view.read_with(cx, |wb, _| wb.agents_drawer_open()));
+    assert_eq!(selected_nav(&view, cx), ["tasks", "agents"]);
 
     // The back row, and a second click on the selected row, both return to Projects.
     click(&view, cx, Region::Nav("projects"));
@@ -522,7 +522,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
     cx.dispatch_action(actions::ApplyPreset("default".into()));
     assert_eq!(visible(&view, cx), [true, true, false]);
 
-    // The overview preset shows the board in the center.
+    // The Agents overview shows the Agents page in the center.
     cx.dispatch_action(actions::ToggleOverview);
     let s = state(&view, cx);
     assert_eq!(s.preset, "overview");
@@ -531,7 +531,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
         s.active_pane()
             .unwrap()
             .items
-            .contains(&ItemRef::panel("overview"))
+            .contains(&ItemRef::panel("agents-dashboard"))
     );
     cx.dispatch_action(actions::ToggleOverview);
     let s = state(&view, cx);
@@ -641,7 +641,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
         ]
     );
 
-    // The next save is version 5, and loading that again changes nothing.
+    // The next save is version 6, and loading that again changes nothing.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| s.toggle_dock(DockPosition::Bottom))
     });
@@ -650,7 +650,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
     view.update(cx, |wb, _| wb.flush_save());
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 5);
+    assert_eq!(on_disk["version"], 6);
     let reloaded = load_state(&path);
     assert_eq!(reloaded.docks, state(&view, cx).docks);
     assert_eq!(reloaded.center, state(&view, cx).center);

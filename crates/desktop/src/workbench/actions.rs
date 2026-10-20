@@ -30,8 +30,7 @@ actions!(
         HideRightRail,
         CancelDockResize,
         ToggleOverview,
-        ToggleAgentsDrawer,
-        CloseAgentsDrawer,
+        ShowAgentsPage,
         ClosePaneItem,
         ToggleZoom,
         TogglePalette,
@@ -248,6 +247,24 @@ data_actions! {
     ShowResourceMenu(ResourceMenuAt);
     /// Reveal the resources panel with this session's processes in view.
     ShowInResources(String);
+    /// Open the Agents page, with a session selected (and its request expanded), a state
+    /// filter or a scope when the request says so.
+    OpenAgentsPageWith(super::panels::AgentsRequest);
+    /// Show the menu of a row of the Agents page or panel (Reveal session, Open worktree, Show
+    /// changes, Copy session ID, Open transcript, Interrupt turn, Stop session…).
+    ShowAgentMenu(SessionMenuAt);
+    /// Show the menu of the Agents page's scope button at this position.
+    ShowAgentsScopeMenu(gpui::Point<gpui::Pixels>);
+    /// Interrupt the turn in progress of this session (an agent chat the daemon runs).
+    InterruptSessionById(String);
+    /// Show this session in the Projects sidebar (its workspace and row).
+    RevealSessionById(String);
+    /// Reveal the checkout folder of this session in Finder.
+    OpenWorktreeOf(String);
+    /// Reveal the transcript file of this session's main agent in Finder.
+    OpenTranscriptOf(String);
+    /// Open the Changes view of this session's checkout.
+    ShowAgentChanges(String);
     StopSessionById(String);
     /// Close the session (asks first when something runs in it); History's Reopen is
     /// `ReopenSessionById`.
@@ -258,7 +275,7 @@ data_actions! {
     CopySessionIdOf(String);
     /// Show the session's context menu (Open in split, Rename, Restart, Stop, Copy id).
     ShowSessionMenu(SessionMenuAt);
-    /// Leave the overview (restoring the layout it replaced) and focus this session.
+    /// Leave the Agents overview (restoring the layout it replaced) and focus this session.
     OpenSessionFromOverview(String);
     /// Open the settings sheet at a namespace (`terminal`, `panels.sessions`, …).
     OpenSettingsFor(String);
@@ -479,8 +496,8 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("View: Increase Terminal Font Size", IncreaseFontSize),
         command("View: Decrease Terminal Font Size", DecreaseFontSize),
         command("View: Reset Terminal Font Size", ResetFontSize),
-        command("View: Toggle Overview", ToggleOverview),
-        command("View: Toggle Agent Dashboard", ToggleAgentsDrawer),
+        command("View: Agents Overview", ToggleOverview),
+        command("Agents: Open Page", ShowAgentsPage),
         command("View: Density Compact", SetDensityCompact),
         command("View: Density Comfortable", SetDensityComfortable),
         command("View: Toggle Density", ToggleDensity),
@@ -663,6 +680,8 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
     for spec in panels
         .iter()
         .filter(|s| assistant || !is_mawas_page(s.id.as_str()))
+        // The Agents page has its own commands.
+        .filter(|s| s.id.as_str() != super::model::AGENTS_PAGE)
     {
         out.push(command(
             format!("Panel: Open {}", spec.title),
@@ -779,7 +798,6 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<modal::Cancel>("escape", Some("Modal")),
         bind::<sheet::Dismiss>("escape", Some("SettingsSheet")),
         bind::<palette::Dismiss>("escape", Some("DaemonPopover")),
-        bind::<CloseAgentsDrawer>("escape", Some("AgentsDrawer")),
         bind::<chat::SendMessage>("cmd-enter", Some(super::chat::KEY_CONTEXT)),
         bind::<chat::InterruptTurn>("cmd-.", Some(super::chat::KEY_CONTEXT)),
         bind::<palette::SelectNext>("down", Some("AgentPicker")),
@@ -1110,7 +1128,6 @@ mod tests {
             "escape | modal::Cancel | Modal",
             "escape | settings_sheet::Dismiss | SettingsSheet",
             "escape | palette::Dismiss | DaemonPopover",
-            "escape | workbench::CloseAgentsDrawer | AgentsDrawer",
             "cmd-enter | chat::SendMessage | HutanChat",
             "cmd-. | chat::InterruptTurn | HutanChat",
             "down | palette::SelectNext | AgentPicker",

@@ -104,7 +104,7 @@ Every session has a tree of agents: the main agent and the subagents it spawned,
 - **Claude Code**: subagents are nodes keyed by the hooks' `agent_id` (the main agent is the node `root`); Claude reports no parent, so subagents hang off the main agent.
 - **OMP**: the extension runs once per session and per subagent; `ctx.agent` gives `kind`, `id`, `parentId`, `name`.
 - **Codex (chats Hutan runs)**: the adapter feeds the tree from `thread/status/changed` (`active` with `waitingOnApproval` / `waitingOnUserInput` is blocked), `thread/started` (`parentThreadId`, `agentNickname`, `agentRole`), `collabAgentToolCall.agentsStates`, `subAgentActivity`, a subagent's `turn/completed`, and `thread/tokenUsage/updated` (usage kind `codex.total`). A finished tool call is not a finished child: only the child's own status ends it. Codex sessions started outside Hutan are not observed.
-- **Desktop**: the `agents` panel, the badges on rows, tabs and overview cards, and the attention rollup draw these trees (`docs/design.md` § Agent monitor).
+- **Desktop**: the Agents page and the `agents` panel, the badges on rows and tabs, and the attention rollup draw these trees (`docs/design.md` § Agent monitor).
 - **Attention**: a session needs attention when any node is blocked; `SessionInfo.agent` rolls that up for older clients (`blocked_sub`).
 - **Lifecycle**: the tree is stored (schema v4) without what the agents are doing right now. After a daemon restart the main agent is `unknown` until it reports; subagents are `disconnected`. When the session's process ends, every unfinished node is `disconnected`.
 

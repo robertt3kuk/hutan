@@ -1,10 +1,14 @@
-//! Live sessions: the connection bridge, attention, shared terminal attachments, and the
-//! workspace ordering, filtering and tree the sidebar uses.
+//! Live sessions: the connection bridge, attention, shared terminal attachments, the one agent
+//! presentation every Agents surface reads, and the workspace ordering, filtering and tree the
+//! sidebar uses.
 
 pub mod agents;
+pub mod agents_list;
+pub mod agents_text;
 pub mod attention;
 pub mod launch;
 mod placement;
+pub mod presentation;
 mod store;
 pub mod tasks;
 mod terminal;
@@ -17,6 +21,9 @@ pub use attention::{
     ended_text, present,
 };
 pub use placement::{PlacementBadge, placement_badge};
+pub use presentation::{
+    AgentPresentation, AgentRecord, Counts, Group, Link, Reason, ReasonKind, Role, Scope, State,
+};
 pub use store::{
     AccountsChanged, CloseFailure, MemoryChanged, REPLAY_WINDOW, RecoverySummaryDue, SessionClosed,
     SessionsStore, StoreChanged, UI_OPEN_MAX_AGE_MS, UiOpenRequested,

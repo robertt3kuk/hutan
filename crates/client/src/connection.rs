@@ -405,6 +405,14 @@ impl Connection {
             .is_some_and(|client| client.supports_chat())
     }
 
+    /// True while connected to a daemon that advertised capability `agent.tree`
+    /// ([`Client::supports_agent_tree`]): it reports subagents. False when disconnected.
+    pub fn supports_agent_tree(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_agent_tree())
+    }
+
     /// True while connected to a daemon that advertised capability `resources`
     /// ([`Client::supports_resources`]); false when disconnected.
     pub fn supports_resources(&self) -> bool {

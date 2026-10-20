@@ -1,7 +1,7 @@
 //! [`TerminalSession`]: one attachment to one daemon terminal, shared by every view of it.
 //!
 //! The session owns the [`TerminalHandle`] (one attachment per terminal per connection), pumps
-//! its updates into the [`SharedTerminal`] model that pane tabs and overview previews draw, and
+//! its updates into the [`SharedTerminal`] model that pane tabs draw, and
 //! turns what happens to the terminal (reconnect, restart, the session ending) into the
 //! [`ViewStatus`] all views show. Dropping the session detaches.
 

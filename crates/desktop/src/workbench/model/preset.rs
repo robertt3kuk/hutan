@@ -1,8 +1,8 @@
 //! Layout presets and applying them without losing open items.
 
 use super::{
-    Dock, DockPosition, Docks, FocusTarget, ItemRef, ModelError, Pane, PaneTree, PanelId,
-    SavedLayout, WorkbenchState,
+    AGENTS_PAGE, Dock, DockPosition, Docks, FocusTarget, ItemRef, ModelError, Pane, PaneTree,
+    PanelId, SavedLayout, WorkbenchState,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -60,9 +60,9 @@ impl LayoutPreset {
         }
     }
 
-    /// `sessions` (Projects) and `tasks` as pages of the left sidebar (Agents is the dashboard
-    /// drawer, not a page); `history`, `changes`, `inspector`, `agents` and `resources` in the right
-    /// sidebar's strip; the bottom dock hidden and empty; center untouched.
+    /// `sessions` (Projects) and `tasks` as pages of the left sidebar (Agents is a page of the
+    /// center, not of the sidebar); `history`, `changes`, `inspector`, `agents` and `resources` in
+    /// the right sidebar's strip; the bottom dock hidden and empty; center untouched.
     pub fn default_preset() -> Self {
         Self {
             name: Self::DEFAULT.to_owned(),
@@ -85,12 +85,13 @@ impl LayoutPreset {
         }
     }
 
-    /// `overview` panel as the first center item, side docks visible.
+    /// The Agents overview: the Agents page as the only center item, side docks visible. The
+    /// preset keeps the name `overview` (the setting, the key and saved layouts name it).
     pub fn overview_preset() -> Self {
         Self {
             name: Self::OVERVIEW.to_owned(),
             docks: Self::docks(Self::left(true, &["sessions", "tasks"]), Self::right(true)),
-            center: CenterLayout::Items(vec![ItemRef::panel("overview")]),
+            center: CenterLayout::Items(vec![ItemRef::panel(AGENTS_PAGE)]),
             zoom_active: false,
         }
     }

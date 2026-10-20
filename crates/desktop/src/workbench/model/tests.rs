@@ -1045,7 +1045,7 @@ fn builtin_presets_match_design_table() {
     let overview = &presets[2];
     assert_eq!(
         overview.center,
-        CenterLayout::Items(vec![ItemRef::panel("overview")])
+        CenterLayout::Items(vec![ItemRef::panel(AGENTS_PAGE)])
     );
     assert!(overview.docks.left.visible && overview.docks.right.visible);
 }
@@ -1131,7 +1131,7 @@ fn overview_preset_shows_only_the_board_and_stashes_the_tabs() {
     let pane = state.active_pane().unwrap();
     assert_eq!(
         pane.items,
-        vec![ItemRef::panel("overview")],
+        vec![ItemRef::panel(AGENTS_PAGE)],
         "only the board is shown"
     );
     assert_eq!(pane.active, 0);
@@ -1185,9 +1185,9 @@ fn toggle_overview_round_trips() {
     state.toggle_preset("overview", &presets).unwrap();
     check(&state);
     assert_eq!(state.preset, "focus");
-    // The board only lives in the center while its preset is selected; no dock lists it (Agents
-    // is the dashboard drawer, not a page).
-    assert_eq!(state.find_panel(&PanelId::new("overview")), None);
+    // The page only lives in the center while its preset is selected; no dock lists it (Agents
+    // is a page of the center, not of a sidebar).
+    assert_eq!(state.find_panel(&PanelId::new(AGENTS_PAGE)), None);
     assert_eq!(
         state.panes().iter().map(|p| p.items.len()).sum::<usize>(),
         4
@@ -1256,7 +1256,7 @@ fn items_opened_during_overview_land_in_the_restored_first_pane() {
         state
             .panes()
             .iter()
-            .all(|p| !p.items.contains(&ItemRef::panel("overview"))),
+            .all(|p| !p.items.contains(&ItemRef::panel(AGENTS_PAGE))),
         "the board left the center"
     );
     // Everything else is as before: same tree shape and other panes untouched.
@@ -1332,7 +1332,7 @@ fn toggle_overview_without_history_returns_to_default() {
         state
             .panes()
             .iter()
-            .all(|p| !p.items.contains(&ItemRef::panel("overview"))),
+            .all(|p| !p.items.contains(&ItemRef::panel(AGENTS_PAGE))),
         "the board left the center"
     );
     assert_eq!(state.docks, LayoutPreset::default_preset().docks);
@@ -1368,7 +1368,7 @@ fn json_roundtrip_preserves_state() {
         .unwrap();
     let json = state.to_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 5);
+    assert_eq!(value["version"], 6);
     let back = WorkbenchState::from_json(&json).unwrap();
     assert_eq!(back, state);
     check(&back);
@@ -1535,7 +1535,7 @@ fn random_operations_preserve_invariants_and_conserve_items() {
                     let _ = state.close_item(pane, rng.next(len + 1));
                 }
                 4 => {
-                    let names = ["sessions", "inspector", "overview", "notifications"];
+                    let names = ["sessions", "inspector", AGENTS_PAGE, "notifications"];
                     let panel = PanelId::new(names[rng.next(4)]);
                     let dest = match rng.next(4) {
                         0 => PanelDest::Center,
@@ -1569,7 +1569,7 @@ fn random_operations_preserve_invariants_and_conserve_items() {
                 let after = sorted_items(&state);
                 for it in &before {
                     // The board only lives while its preset is current.
-                    if *it == format!("{:?}", ItemRef::panel("overview")) {
+                    if *it == format!("{:?}", ItemRef::panel(AGENTS_PAGE)) {
                         continue;
                     }
                     assert!(after.contains(it), "seed {seed}: {it} lost");
@@ -1611,7 +1611,7 @@ fn builtin_presets_place_the_pages_and_the_strip_and_never_the_assistant() {
     assert_eq!(overview.docks.right.panels, strip);
     assert_eq!(
         overview.center,
-        CenterLayout::Items(vec![ItemRef::panel("overview")])
+        CenterLayout::Items(vec![ItemRef::panel(AGENTS_PAGE)])
     );
 
     for preset in &presets {
@@ -1739,11 +1739,11 @@ fn as_version_1_json(state: &WorkbenchState) -> String {
 }
 
 #[test]
-fn the_state_version_is_five() {
+fn the_state_version_is_six() {
     let value: serde_json::Value =
         serde_json::from_str(&WorkbenchState::default().to_json().unwrap()).unwrap();
-    assert_eq!(value["version"], 5);
-    assert_eq!(STATE_VERSION, 5);
+    assert_eq!(value["version"], 6);
+    assert_eq!(STATE_VERSION, 6);
 }
 
 fn as_version_3_json(state: &WorkbenchState) -> String {
@@ -1853,11 +1853,55 @@ fn a_version_2_layout_loses_the_agents_page_once_and_keeps_everything_else() {
             .contains(&PanelId::new("overview"))
     );
 
-    // A version 4 file is read as it is: an overview the user put in a dock stays.
+    // A current file is read as it is: the Agents page a user put in a dock stays.
     let mut kept = migrated.clone();
-    kept.open_panel(&PanelId::new("overview"), DockPosition::Right);
+    kept.open_panel(&PanelId::new(AGENTS_PAGE), DockPosition::Right);
     let again = WorkbenchState::from_json(&kept.to_json().unwrap()).unwrap();
     assert_eq!(again, kept);
+}
+
+fn as_version_5_json(state: &WorkbenchState) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
+    value["version"] = 5.into();
+    // Version 5 called the page `overview`.
+    serde_json::to_string(&value)
+        .unwrap()
+        .replace(&format!("\"{AGENTS_PAGE}\""), "\"overview\"")
+}
+
+#[test]
+fn a_version_5_layout_calls_the_overview_panel_the_agents_page_everywhere() {
+    // Version 5 had the board of terminal previews as the panel `overview`: a center tab, the
+    // Agents overview preset with the stash it keeps, and a parked workspace.
+    let presets = default_presets();
+    let mut live = grid();
+    live.open_panel_in_center(&PanelId::new(AGENTS_PAGE));
+    live.adopt_workspace("a");
+    live.switch_workspace("b");
+    live.toggle_preset("overview", &presets).unwrap();
+    check(&live);
+    let json = as_version_5_json(&live);
+    assert!(
+        json.contains("\"overview\""),
+        "the old file names the board"
+    );
+
+    let migrated = WorkbenchState::from_json(&json).unwrap();
+    check(&migrated);
+    assert_eq!(
+        migrated, live,
+        "every place that named the board names the page now"
+    );
+    assert!(
+        migrated
+            .all_items()
+            .iter()
+            .all(|i| i.as_panel().is_none_or(|p| p.as_str() != "overview"))
+    );
+
+    // A file of the current version is read as it is.
+    let again = WorkbenchState::from_json(&migrated.to_json().unwrap()).unwrap();
+    assert_eq!(again, migrated);
 }
 
 #[test]

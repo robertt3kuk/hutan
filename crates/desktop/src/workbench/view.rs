@@ -146,8 +146,6 @@ pub enum BadgeSite {
     Row,
     /// A tab of a center pane.
     Tab,
-    /// A card of the overview.
-    Card,
 }
 
 /// A laid-out area of the workbench whose painted bounds are recorded every frame.
@@ -171,12 +169,19 @@ pub enum Region {
     Nav(&'static str),
     /// A control of the left sidebar's bottom toolbar (`new`, `settings`).
     Toolbar(&'static str),
-    /// The Agent Dashboard drawer.
-    AgentsDrawer,
-    /// The header of a column of the drawer's board.
-    DrawerColumn(super::agents_drawer::DashboardColumn),
-    /// The card of a session in the drawer's board.
-    DrawerCard(hutan_core::SessionId),
+    /// A control of the Agents page, by name (`search`, `scope`, `group`, `finished`, `start`,
+    /// `integrations`, `clear`, `clear-group`, `daemon`, `offline`, `list`, `details`).
+    AgentsPage(&'static str),
+    /// The row of a session on the Agents page.
+    AgentRow(hutan_core::SessionId),
+    /// A control of a session's row on the Agents page: `primary`, `more`, `interrupt`.
+    AgentAction(hutan_core::SessionId, &'static str),
+    /// Option `index` of the expanded request of a session's row: the only way to answer it.
+    AgentOption(hutan_core::SessionId, usize),
+    /// The heading of a group of the Agents page.
+    AgentGroup(crate::sessions::Group),
+    /// The row of subagent `index` of a session on the Agents page.
+    AgentChild(hutan_core::SessionId, usize),
     /// The right strip's More menu button.
     StripMore,
     /// The rail of a side dock (the left 44 pt icon rail, the right 40 pt activity rail).
@@ -513,10 +518,6 @@ pub struct Workbench {
     pub(crate) modal_focus: FocusHandle,
     pub(crate) sheet_focus: FocusHandle,
     pub(crate) daemon_focus: FocusHandle,
-    /// Holds the keyboard while the Agent Dashboard drawer is open, so Escape closes it.
-    pub(crate) drawer_focus: FocusHandle,
-    /// The Agent Dashboard drawer (the Agents nav row) is open.
-    pub(crate) agents_drawer: bool,
     pub(crate) daemon: DaemonControl,
     pub(crate) mac: MacControl,
     pub(crate) setup: super::setup::SetupControl,
@@ -673,7 +674,6 @@ impl Workbench {
         let modal_focus = cx.focus_handle();
         let sheet_focus = cx.focus_handle();
         let daemon_focus = cx.focus_handle();
-        let drawer_focus = cx.focus_handle();
         let dock_focus = [cx.focus_handle(), cx.focus_handle(), cx.focus_handle()];
         let dock_modes_seen = [
             state.docks.left.mode(),
@@ -898,8 +898,6 @@ impl Workbench {
             modal_focus,
             sheet_focus,
             daemon_focus,
-            drawer_focus,
-            agents_drawer: false,
             daemon: DaemonControl::new(),
             mac,
             setup: super::setup::SetupControl::new(cx.focus_handle(), options.cli_link),
@@ -1368,18 +1366,13 @@ impl Workbench {
     }
 
     pub(crate) fn open_panel(&mut self, id: &str, cx: &mut Context<Self>) {
-        // The board is the center of the overview preset, no longer a page of the left sidebar.
-        if id == "overview" && self.state.find_panel(&PanelId::new("overview")).is_none() {
-            self.toggle_overview(cx);
-            return;
-        }
         if actions::is_mawas_page(id) && !self.assistant_enabled() {
             return;
         }
         let id = PanelId::new(id);
-        // Mawas Home and its Memory are pages of the center: a tab of the active pane, not a
-        // dock's panel.
-        if actions::is_mawas_page(id.as_str()) {
+        // Mawas Home, its Memory and the Agents page are pages of the center: a tab of the
+        // active pane (one instance, shown where it is when it is open), not a dock's panel.
+        if actions::is_mawas_page(id.as_str()) || id.as_str() == super::model::AGENTS_PAGE {
             self.mutate(cx, |s| s.open_panel_in_center(&id));
             return;
         }

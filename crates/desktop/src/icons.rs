@@ -59,6 +59,7 @@ icons! {
     PanelLeft => "panel-left",
     PanelRight => "panel-right",
     Folder => "folder",
+    Bot => "bot",
 }
 
 impl Icon {
@@ -69,10 +70,9 @@ impl Icon {
             "history" => Icon::History,
             "changes" => Icon::GitCompare,
             "inspector" => Icon::Info,
-            "agents" => Icon::GitBranch,
+            "agents" | "agents-dashboard" => Icon::Bot,
             "resources" => Icon::Gauge,
             "tasks" => Icon::ListChecks,
-            "overview" => Icon::LayoutDashboard,
             "assistant" => Icon::Sparkles,
             _ => return None,
         })

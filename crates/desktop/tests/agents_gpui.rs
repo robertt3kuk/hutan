@@ -336,7 +336,7 @@ fn a_release_finishes_a_node_and_a_restart_leaves_the_main_agent_unknown(cx: &mu
     wait_until(cx, "the restored tree", move |cx| {
         glyphs(&p, cx)
             == [
-                ("omp".to_owned(), "?"),
+                ("omp".to_owned(), "◌"),
                 ("alpha".to_owned(), "⏹"),
                 ("beta".to_owned(), "✗"),
             ]
@@ -470,6 +470,11 @@ fn the_chips_filter_the_tree_and_write_the_settings(cx: &mut TestAppContext) {
     );
     assert!(settings(&view, cx).get::<AgentsSettings>().only_blocked);
     // The other session has nothing blocked, so even with every workspace it has no section.
+    // This workspace → the focused session → every workspace.
+    click(&view, cx, Region::MonitorChip("scope"));
+    wait_until(cx, "the focused session", |cx| {
+        settings(&view, cx).get::<AgentsSettings>().scope == AgentsScope::Session
+    });
     click(&view, cx, Region::MonitorChip("scope"));
     wait_until(cx, "all workspaces", |cx| {
         settings(&view, cx).get::<AgentsSettings>().scope == AgentsScope::All
@@ -479,11 +484,14 @@ fn the_chips_filter_the_tree_and_write_the_settings(cx: &mut TestAppContext) {
     let p = panel.clone();
     wait_until(cx, "both sections", move |cx| sections(&p, cx).len() == 2);
     let all = sections(&panel, cx);
-    assert_eq!(all[0].title, "here");
-    assert_eq!(all[1].workspace, "elsewhere");
+    assert!(all.iter().any(|s| s.title == "here"));
+    assert!(all.iter().any(|s| s.workspace == "elsewhere"));
 
     // Back to this workspace.
     click(&view, cx, Region::MonitorChip("scope"));
+    wait_until(cx, "this workspace", |cx| {
+        settings(&view, cx).get::<AgentsSettings>().scope == AgentsScope::ActiveWorkspace
+    });
     let p = panel.clone();
     wait_until(cx, "this workspace again", move |cx| {
         sections(&p, cx).len() == 1
@@ -675,16 +683,12 @@ fn a_blocked_agent_badges_the_row_the_tab_and_the_card_and_clears_on_resolution(
     assert_eq!(b.blocked_text(), Some("▲"));
     assert_eq!(b.tooltip(), "2 subagents running\nBlocked: reviewer");
 
-    // Row, tab, and (after switching to the overview) card.
+    // Row and tab.
     for site in [BadgeSite::Row, BadgeSite::Tab] {
         wait_until(cx, &format!("the {site:?} badge"), |cx| {
             region(&view, cx, Region::AgentBadge(site, id)).is_some()
         });
     }
-    cx.dispatch_action(actions::ToggleOverview);
-    wait_until(cx, "the card badge", |cx| {
-        region(&view, cx, Region::AgentBadge(BadgeSite::Card, id)).is_some()
-    });
 
     // The status bar counts the session as needing the user, and the event fired once.
     sessions.read_with(cx, |s, _| {
@@ -731,7 +735,7 @@ fn a_blocked_agent_badges_the_row_the_tab_and_the_card_and_clears_on_resolution(
     rep.release(&daemon, Some("n2"), None);
     rep.release(&daemon, Some("n1"), None);
     wait_until(cx, "the badge to go", |cx| badge(cx).is_empty());
-    for site in [BadgeSite::Row, BadgeSite::Tab, BadgeSite::Card] {
+    for site in [BadgeSite::Row, BadgeSite::Tab] {
         wait_until(cx, &format!("the {site:?} badge to clear"), |cx| {
             region(&view, cx, Region::AgentBadge(site, id)).is_none()
         });

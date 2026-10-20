@@ -1,7 +1,8 @@
 //! Versioned JSON (de)serialization of [`WorkbenchState`].
 
 use super::{
-    DockPosition, Docks, ItemRef, LayoutPreset, ModelError, PaneTree, PanelId, WorkbenchState,
+    AGENTS_PAGE, DockPosition, Docks, ItemRef, LayoutPreset, ModelError, PaneTree, PanelId,
+    WorkbenchState,
 };
 
 /// The saved layout's version. 2 is the Orca-style relayout (OL-2): Projects, Tasks and the
@@ -11,13 +12,17 @@ use super::{
 /// Assistant from a left page into Mawas Home, a tab of the center: the `assistant` panel leaves
 /// every dock. 5 (DK-1) gives the side docks a rail: a dock now has a `collapsed` flag next to
 /// `visible` (visible + collapsed is the 44 pt left icon rail or the right activity rail alone,
-/// hidden keeps the mode it comes back in), and the side sizes have 220–500 / 240–480 limits.
-/// A version 1 file is migrated once when it is read (see [`migrate_v1`], then [`migrate_v2`],
-/// then [`migrate_v3`]), a version 2 file by [`migrate_v2`] and [`migrate_v3`], a version 3 file
-/// by [`migrate_v3`]; a version 4 file needs no rewrite (`visible` already is Expanded/Hidden,
-/// `collapsed` defaults to off, the sizes are clamped like every loaded layout); the next save
-/// writes version 5.
-pub const STATE_VERSION: u32 = 5;
+/// hidden keeps the mode it comes back in), and the side sizes have 220–500 / 240–480 limits. 6
+/// (AG-1) replaces the `overview` panel (the old board of terminal
+/// previews) with the Agents page, `agents-dashboard`: every reference to `overview` in a layout
+/// (a center tab, a dock's panel, the Agents overview stash, a parked workspace) now names the
+/// page, and the `overview` preset keeps its name. A version 1 file is migrated once when it is
+/// read (see [`migrate_v1`], then [`migrate_v2`], then [`migrate_v3`]), a version 2 file by
+/// [`migrate_v2`] and [`migrate_v3`], a version 3 file by [`migrate_v3`]; a version 4 file needs
+/// no rewrite (`visible` already is Expanded/Hidden, `collapsed` defaults to off, the sizes are
+/// clamped like every loaded layout); every file older than 6 goes through [`migrate_v5`]; the
+/// next save writes version 6.
+pub const STATE_VERSION: u32 = 6;
 
 /// Result of reading a saved state.
 #[derive(Debug)]
@@ -28,7 +33,7 @@ pub struct LoadOutcome {
 }
 
 impl WorkbenchState {
-    /// `{ "version": 5, "docks": …, "center": …, … }`, pretty-printed.
+    /// `{ "version": 6, "docks": …, "center": …, … }`, pretty-printed.
     pub fn to_json(&self) -> Result<String, ModelError> {
         let mut value =
             serde_json::to_value(self).map_err(|e| ModelError::Invalid(e.to_string()))?;
@@ -44,7 +49,7 @@ impl WorkbenchState {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| ModelError::Invalid(e.to_string()))?;
         let version = match value.get("version").and_then(serde_json::Value::as_u64) {
-            Some(v @ (1..=5)) => v,
+            Some(v @ (1..=6)) => v,
             Some(v) => return Err(ModelError::Invalid(format!("unsupported version {v}"))),
             None => return Err(ModelError::Invalid("missing version".to_owned())),
         };
@@ -58,6 +63,9 @@ impl WorkbenchState {
         }
         if version <= 3 {
             migrate_v3(&mut state);
+        }
+        if version <= 5 {
+            migrate_v5(&mut state);
         }
         state.normalize();
         Ok(state)
@@ -74,6 +82,45 @@ impl WorkbenchState {
                 state: WorkbenchState::default(),
                 warning: Some(format!("saved layout ignored: {err}")),
             },
+        }
+    }
+}
+
+/// The one-time move of a layout older than version 6 to the Agents page: the `overview` panel
+/// (the board of terminal previews) is the `agents-dashboard` page now, wherever the layout had
+/// it — a center tab, a dock's panel, the Agents overview stash, a parked workspace layout —
+/// so no tab and no dock entry is lost. A layout that ends up with the page twice keeps the
+/// first (`normalize` places a panel once).
+pub fn migrate_v5(state: &mut WorkbenchState) {
+    rename_overview(&mut state.docks, &mut state.center);
+    if let Some(saved) = state.stashed.as_deref_mut() {
+        rename_overview(&mut saved.docks, &mut saved.center);
+    }
+    for parked in state.parked.values_mut() {
+        rename_overview(&mut parked.layout.docks, &mut parked.layout.center);
+        if let Some(saved) = parked.stashed.as_deref_mut() {
+            rename_overview(&mut saved.docks, &mut saved.center);
+        }
+    }
+}
+
+fn rename_overview(docks: &mut Docks, center: &mut PaneTree) {
+    let old = PanelId::new("overview");
+    let new = PanelId::new(AGENTS_PAGE);
+    for pos in DockPosition::ALL {
+        let dock = docks.get_mut(pos);
+        for panel in dock.panels.iter_mut().filter(|p| **p == old) {
+            *panel = new.clone();
+        }
+        if dock.active.as_ref() == Some(&old) {
+            dock.active = Some(new.clone());
+        }
+    }
+    for pane in center.panes_mut() {
+        for item in &mut pane.items {
+            if item.as_panel() == Some(&old) {
+                *item = ItemRef::panel(AGENTS_PAGE);
+            }
         }
     }
 }

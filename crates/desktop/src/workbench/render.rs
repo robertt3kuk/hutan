@@ -5,6 +5,7 @@ use super::model::{
     Axis, Direction, DockMode, DockPosition, DropTarget, Edge, FocusTarget, ItemRef, ItemSource,
     LayoutPreset, Pane, PaneId, PaneTree, PanelDest,
 };
+use super::panels::AgentsRequest;
 use super::registry::{DockState, PerDock, StatusContext, StatusData};
 use super::terminals::session_of_item;
 use super::ui::{self, Mascot, StyledExt as _};
@@ -106,6 +107,7 @@ impl Render for Workbench {
         let status = self.render_status_bar(window, cx);
         self.rescue_orphaned_focus(window, cx);
         self.sync_assistant_focus(window, cx);
+        self.sync_agents_page(cx);
         let edge_targets = self.render_hidden_dock_targets(cx);
         let collapse_preview = self.render_collapse_preview();
         let handles: Vec<AnyElement> = DockPosition::ALL
@@ -119,7 +121,6 @@ impl Render for Workbench {
         let menu = self.render_context_menu(cx);
         let modal = self.render_modal(cx);
         let close_toast = self.render_close_toast(cx);
-        let agents_drawer = self.render_agents_drawer(window, cx);
         let daemon_popover = self.render_daemon_popover(cx);
         let recovery = self.render_recovery_summary(cx);
         let sheet = self.render_settings_sheet(cx);
@@ -186,7 +187,6 @@ impl Render for Workbench {
         )
         .child(status)
         .children(collapse_preview)
-        .children(agents_drawer)
         .children(daemon_popover)
         .children(recovery)
         .children(edge_targets)
@@ -254,13 +254,54 @@ impl Workbench {
         }))
         .on_action(cx.listener(|this, _: &actions::ToggleOverview, _, cx| this.toggle_overview(cx)))
         .on_action(
-            cx.listener(|this, _: &actions::ToggleAgentsDrawer, window, cx| {
-                this.toggle_agents_drawer(window, cx);
+            cx.listener(|this, _: &actions::ShowAgentsPage, window, cx| {
+                this.open_agents_page(AgentsRequest::default(), window, cx);
             }),
         )
         .on_action(
-            cx.listener(|this, _: &actions::CloseAgentsDrawer, window, cx| {
-                this.close_agents_drawer(window, cx);
+            cx.listener(|this, a: &actions::OpenAgentsPageWith, window, cx| {
+                this.open_agents_page(a.0.clone(), window, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, a: &actions::ShowAgentMenu, window, cx| {
+            if let Ok(id) = a.0.session.parse() {
+                this.show_agent_menu(id, a.0.position, window, cx);
+            }
+        }))
+        .on_action(
+            cx.listener(|this, a: &actions::ShowAgentsScopeMenu, window, cx| {
+                this.show_agents_scope_menu(a.0, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::InterruptSessionById, window, cx| {
+                if let Ok(id) = a.0.parse() {
+                    this.interrupt_agent(id, window, cx);
+                }
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::RevealSessionById, window, cx| {
+                if let Ok(id) = a.0.parse() {
+                    this.reveal_session(id, window, cx);
+                }
+            }),
+        )
+        .on_action(cx.listener(|this, a: &actions::OpenWorktreeOf, _, cx| {
+            if let Ok(id) = a.0.parse() {
+                this.open_worktree_of(id, cx);
+            }
+        }))
+        .on_action(cx.listener(|this, a: &actions::OpenTranscriptOf, _, cx| {
+            if let Ok(id) = a.0.parse() {
+                this.open_transcript_of(id, cx);
+            }
+        }))
+        .on_action(
+            cx.listener(|this, a: &actions::ShowAgentChanges, window, cx| {
+                if let Ok(id) = a.0.parse() {
+                    this.show_agent_changes(id, window, cx);
+                }
             }),
         )
         .on_action(cx.listener(|this, _: &actions::ClosePaneItem, _, cx| {
@@ -1004,7 +1045,7 @@ impl Workbench {
             .when(overview_active, move |s| s.bg(theme.accent_soft))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, _, cx| this.toggle_overview(cx)))
-            .child(format!("⊞ Overview {overview_hint}"));
+            .child(format!("▤ Agents overview {overview_hint}"));
 
         let left_toggle = self.dock_toggle_button(DockPosition::Left, window, cx);
         let right_toggle = self.dock_toggle_button(DockPosition::Right, window, cx);

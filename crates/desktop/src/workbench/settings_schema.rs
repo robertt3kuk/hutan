@@ -11,8 +11,8 @@ use serde_json::Value as Json;
 use crate::settings::{
     AgentsSettings, AppSettings, AssistantSettings, ChatSettings, EditorSettings, HistorySettings,
     InspectorPanelSettings, IntegrationsSettings, KeymapSettings, LauncherSettings, LayoutSettings,
-    OverviewPanelSettings, ResourcesSettings, SessionsPanelSettings, SidebarSettings,
-    TasksSettings, TerminalSettings, WorkspacesSettings,
+    ResourcesSettings, SessionsPanelSettings, SidebarSettings, TasksSettings, TerminalSettings,
+    WorkspacesSettings,
 };
 use crate::workbench::settings_labels::{field_search_text, namespace_title, page_keywords};
 
@@ -346,7 +346,6 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<SessionsPanelSettings>(),
         CatalogEntry::of::<SidebarSettings>().on_page(SessionsPanelSettings::NAMESPACE),
         CatalogEntry::of::<InspectorPanelSettings>(),
-        CatalogEntry::of::<OverviewPanelSettings>(),
         CatalogEntry::of::<WorkspacesSettings>(),
         CatalogEntry::custom("sessions_restore"),
         CatalogEntry::of::<HistorySettings>(),
@@ -546,7 +545,7 @@ mod tests {
                 .map(|e| e.namespace)
                 .collect()
         };
-        assert_eq!(names("panels.").len(), 3);
+        assert_eq!(names("panels.").len(), 2);
         assert_eq!(names("font"), ["terminal"]);
         assert_eq!(names("density"), ["appearance"]);
         assert_eq!(names("on_last_window_close"), ["app"]);

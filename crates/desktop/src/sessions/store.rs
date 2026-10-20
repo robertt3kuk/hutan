@@ -4,7 +4,8 @@
 //! work on any executor) onto GPUI's executor, tracks attention, hands out one
 //! [`TerminalSession`] per terminal, and runs the session lifecycle commands.
 
-use std::collections::{BTreeSet, HashMap};
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -43,6 +44,7 @@ use super::agents::{self, AgentAttentionChanged, AgentBadge};
 use super::attention::{
     AttentionEntry, AttentionKind, AttentionTracker, Presentation, Tone, Unread, classify, present,
 };
+use super::presentation::{self, AgentPresentation, Facts};
 use super::tasks::TaskBook;
 use super::terminal::TerminalSession;
 
@@ -91,6 +93,18 @@ impl StoreChanged {
             | Self::ATTENTION.0
             | Self::TASKS.0
             | Self::ACTIVE.0,
+    );
+    /// Everything the agent presentation is made of (the focus and the active workspace are
+    /// not): a surface that shows agents rebuilds on these and on nothing else.
+    pub const PRESENTED: Self = Self(
+        Self::CONNECTION.0
+            | Self::SESSIONS.0
+            | Self::SESSION_INFO.0
+            | Self::WORKSPACES.0
+            | Self::AGENTS.0
+            | Self::ATTENTION.0
+            | Self::TASKS.0
+            | Self::OTHER.0,
     );
 
     pub const fn is_empty(self) -> bool {
@@ -299,6 +313,14 @@ pub struct SessionsStore {
     assistant_pinned: std::collections::HashSet<Option<WorkspaceId>>,
     /// Whether `daemon.toml` names the assistants' backend or provider; `None` until asked.
     assistant_file_choice: Option<bool>,
+    /// Counts what the agent presentation is made of changing; the presentation is rebuilt
+    /// (once) the first time somebody reads it after a change.
+    revision: u64,
+    agent_cache: RefCell<Option<Arc<AgentPresentation>>>,
+    presentation_builds: Cell<usize>,
+    /// When the daemon's state was last seen confirmed (connected), for "Offline · last
+    /// confirmed …".
+    last_confirmed_ms: Option<u64>,
     _tasks: Vec<Task<()>>,
 }
 
@@ -389,6 +411,10 @@ impl SessionsStore {
             tasks_loading: None,
             assistant_pinned: std::collections::HashSet::new(),
             assistant_file_choice: None,
+            revision: 0,
+            agent_cache: RefCell::new(None),
+            presentation_builds: Cell::new(0),
+            last_confirmed_ms: None,
             _tasks: vec![state_task, notice_task],
         }
     }
@@ -411,6 +437,10 @@ impl SessionsStore {
             self.tasks_loading = None;
         }
         let before = std::mem::replace(&mut self.state, latest);
+        self.revision += 1;
+        if connected {
+            self.last_confirmed_ms = Some(unix_ms());
+        }
         // A daemon of a new epoch is up: whoever started it (the CLI, autostart, another
         // client), the stop the user asked for is over.
         if connected && self.daemon_stopped && self.state.epoch != self.stopped_epoch {
@@ -482,6 +512,9 @@ impl SessionsStore {
 
     /// Wakes the observers and tells the subscribers what changed; nothing when nothing did.
     fn changed(&mut self, what: StoreChanged, cx: &mut Context<Self>) {
+        if what.intersects(StoreChanged::PRESENTED) {
+            self.revision += 1;
+        }
         if what.is_empty() {
             return;
         }
@@ -823,6 +856,49 @@ impl SessionsStore {
             .get(&session)
             .map(agents::badge)
             .unwrap_or_default()
+    }
+
+    /// The one agent presentation (see [`presentation`]): every agent session, joined and
+    /// reduced. Built from the daemon's state when it is first asked for after a change and
+    /// shared until the next one; no polling, no rebuild per frame.
+    pub fn agent_presentation(&self) -> Arc<AgentPresentation> {
+        if let Some(cached) = &*self.agent_cache.borrow()
+            && cached.revision == self.revision
+        {
+            return cached.clone();
+        }
+        let unread = self.attention.unread_map();
+        let reviews: HashSet<SessionId> = self
+            .state
+            .sessions
+            .iter()
+            .map(|s| s.id)
+            .filter(|id| self.tasks.awaits_review(*id))
+            .collect();
+        let built = Arc::new(presentation::build(&Facts {
+            state: &self.state,
+            unread,
+            reviews: &reviews,
+            answered_approvals: &self.answered,
+            answered_questions: &self.answered_questions,
+            last_confirmed_ms: self.last_confirmed_ms,
+            revision: self.revision,
+        }));
+        self.presentation_builds
+            .set(self.presentation_builds.get() + 1);
+        *self.agent_cache.borrow_mut() = Some(built.clone());
+        built
+    }
+
+    /// How many times the agent presentation was built (tests: a store change nobody asked
+    /// about builds nothing).
+    pub fn presentation_builds(&self) -> usize {
+        self.presentation_builds.get()
+    }
+
+    /// Counts what the agent presentation is made of changing.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Sessions that need the user, in daemon order.

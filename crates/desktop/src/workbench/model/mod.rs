@@ -29,6 +29,11 @@ pub use types::{
 };
 pub use workspace::WorkspaceLayout;
 
+/// The id of the Agents page: one retained tab of the center, shown by the nav, the rail and the
+/// Agents overview preset. (Layouts saved before the page called it `overview`; they are
+/// migrated when read.)
+pub const AGENTS_PAGE: &str = "agents-dashboard";
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 

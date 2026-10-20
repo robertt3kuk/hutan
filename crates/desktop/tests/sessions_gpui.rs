@@ -13,7 +13,7 @@ use hutan_core::{SessionId, SessionState};
 use hutan_desktop::theme::Density;
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::model::{ItemRef, LayoutPreset};
-use hutan_desktop::workbench::panels::{InspectorPanel, OverviewPanel, SessionsPanel};
+use hutan_desktop::workbench::panels::{InspectorPanel, SessionsPanel};
 use hutan_desktop::workbench::{Workbench, connection_label};
 use hutan_protocol::messages::{Request, SessionInfo};
 use hutan_settings::{SettingsPaths, SettingsStore};
@@ -128,71 +128,6 @@ fn a_session_item_shows_the_daemons_snapshot_and_takes_focus(cx: &mut TestAppCon
     });
     cx.simulate_input("typed-by-test\n");
     wait_screen(&view, cx, echo.id, "typed-by-test");
-}
-
-#[gpui::test]
-fn a_pane_tab_and_an_overview_card_share_one_attachment(cx: &mut TestAppContext) {
-    let daemon = TestDaemon::start();
-    let info = daemon.sh("echo shared-model; sleep 600");
-    let (view, cx) = open(cx, &daemon);
-    wait_synced(&view, cx, 1);
-    open_session(&view, cx, info.id);
-    wait_screen(&view, cx, info.id, "shared-model");
-    assert_eq!(
-        view.read_with(cx, |wb, cx| wb.sessions().read(cx).attached_count()),
-        1
-    );
-
-    let tab = view.read_with(cx, |wb, _| wb.terminal_view_of(info.id).unwrap());
-    // Overview: the board draws the same model at a reduced size.
-    cx.simulate_keystrokes("cmd-shift-o");
-    let overview = loop {
-        draw(cx);
-        if let Some(panel) = view.read_with(cx, |wb, _| wb.panel::<OverviewPanel>("overview")) {
-            break panel;
-        }
-    };
-    wait_until(cx, "the preview", |cx| {
-        overview.read_with(cx, |p, _| p.preview_view(info.id).is_some())
-    });
-    let preview = overview.read_with(cx, |p, _| p.preview_view(info.id).cloned().unwrap());
-    assert_eq!(
-        preview.read_with(cx, |v, _| v.shared().clone()),
-        tab.read_with(cx, |v, _| v.shared().clone()),
-        "one model, two views"
-    );
-    assert_eq!(
-        view.read_with(cx, |wb, cx| wb.sessions().read(cx).attached_count()),
-        1,
-        "still one attachment"
-    );
-    assert!(
-        preview
-            .read_with(cx, |v, _| screen_text(&v.model()))
-            .contains("shared-model"),
-        "the preview shows the live screen"
-    );
-    // The preview never takes over the terminal's size.
-    assert_eq!(
-        preview.read_with(cx, |v, _| v.mode()),
-        hutan_terminal_view::ViewMode::Preview
-    );
-
-    // Clicking a card leaves the overview (restoring the layout) and focuses the session.
-    cx.dispatch_action(actions::OpenSessionFromOverview(info.id.to_string()));
-    let state = state_of(&view, cx);
-    assert_eq!(state.preset, LayoutPreset::DEFAULT);
-    assert!(
-        state
-            .panes()
-            .iter()
-            .all(|p| !p.items.contains(&ItemRef::panel("overview"))),
-        "the board left the center"
-    );
-    assert_eq!(
-        view.read_with(cx, |wb, _| wb.focused_session()),
-        Some(info.id)
-    );
 }
 
 #[gpui::test]
@@ -1528,7 +1463,7 @@ fn the_overview_preset_shows_the_board_from_every_path(cx: &mut TestAppContext) 
         let s = state_of(&view, cx);
         s.preset == LayoutPreset::OVERVIEW
             && s.panes().len() == 1
-            && s.active_pane().unwrap().active_item() == Some(&ItemRef::panel("overview"))
+            && s.active_pane().unwrap().active_item() == Some(&ItemRef::panel("agents-dashboard"))
             && matches!(
                 s.focus,
                 hutan_desktop::workbench::model::FocusTarget::Pane(_)
@@ -1544,8 +1479,11 @@ fn the_overview_preset_shows_the_board_from_every_path(cx: &mut TestAppContext) 
     wait_until(cx, "the overview from settings.toml", |cx| board_shown(cx));
     draw(cx);
     assert!(
-        view.read_with(cx, |wb, _| wb.panel::<OverviewPanel>("overview"))
-            .is_some()
+        view.read_with(cx, |wb, _| wb
+            .panel::<hutan_desktop::workbench::panels::AgentsPage>(
+                "agents-dashboard"
+            ))
+        .is_some()
     );
     // Leaving through the settings file restores the stashed layout exactly.
     write(
@@ -1561,7 +1499,7 @@ fn the_overview_preset_shows_the_board_from_every_path(cx: &mut TestAppContext) 
     assert!(
         s.panes()
             .iter()
-            .all(|p| !p.items.contains(&ItemRef::panel("overview"))),
+            .all(|p| !p.items.contains(&ItemRef::panel("agents-dashboard"))),
         "the board left the center"
     );
 
@@ -1605,7 +1543,7 @@ fn the_overview_preset_applies_at_startup_from_settings(cx: &mut TestAppContext)
     assert_eq!(s.preset, LayoutPreset::OVERVIEW);
     assert_eq!(
         s.active_pane().unwrap().active_item(),
-        Some(&ItemRef::panel("overview"))
+        Some(&ItemRef::panel("agents-dashboard"))
     );
 }
 
@@ -1683,7 +1621,9 @@ fn splits_start_a_terminal_in_the_focused_sessions_directory(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-fn every_overview_card_shows_its_session_even_unfocused_or_ended(cx: &mut TestAppContext) {
+fn the_agents_overview_keeps_every_session_attached_and_brings_the_split_layout_back(
+    cx: &mut TestAppContext,
+) {
     let daemon = TestDaemon::start();
     let omp = daemon.sh_titled("omp", "echo omp-screen; sleep 600");
     let tests = daemon.sh_titled("tests", "echo tests-screen; sleep 600");
@@ -1716,7 +1656,7 @@ fn every_overview_card_shows_its_session_even_unfocused_or_ended(cx: &mut TestAp
     assert_eq!(s.panes().len(), 1);
     assert_eq!(
         s.active_pane().unwrap().items,
-        vec![ItemRef::panel("overview")],
+        vec![ItemRef::panel("agents-dashboard")],
         "only the board is visible; the tabs wait in the stash"
     );
     assert_eq!(
@@ -1725,34 +1665,6 @@ fn every_overview_card_shows_its_session_even_unfocused_or_ended(cx: &mut TestAp
         "hidden sessions stay attached"
     );
 
-    let overview = loop {
-        draw(cx);
-        if let Some(panel) = view.read_with(cx, |wb, _| wb.panel::<OverviewPanel>("overview")) {
-            break panel;
-        }
-    };
-    for (id, text) in [
-        (omp.id, "omp-screen"),
-        (tests.id, "tests-screen"),
-        (failing.id, "boom"),
-    ] {
-        wait_until(cx, &format!("the preview of {text}"), |cx| {
-            overview.read_with(cx, |p, _| p.preview_view(id).is_some())
-        });
-        let preview = overview.read_with(cx, |p, _| p.preview_view(id).cloned().unwrap());
-        wait_until(cx, &format!("`{text}` drawn in its card"), |cx| {
-            preview
-                .read_with(cx, |v, _| v.visible_text())
-                .iter()
-                .any(|row| row.contains(text))
-        });
-        assert!(
-            preview
-                .read_with(cx, |v, _| screen_text(&v.model()))
-                .contains(text),
-            "the shared model of {text} is intact"
-        );
-    }
     // Leaving the overview brings the split layout back with live terminals.
     cx.simulate_keystrokes("cmd-shift-o");
     assert_eq!(state_of(&view, cx).panes().len(), 3);

@@ -132,12 +132,12 @@ fn presets_and_overview_toggle(cx: &mut TestAppContext) {
     assert_eq!(s.preset, "overview");
     assert_eq!(
         s.active_pane().unwrap().items[0],
-        ItemRef::panel("overview")
+        ItemRef::panel("agents-dashboard")
     );
     assert_eq!(s.panes().len(), 1);
     assert_eq!(
         s.panes()[0].items,
-        vec![ItemRef::panel("overview")],
+        vec![ItemRef::panel("agents-dashboard")],
         "the board is the only visible center item"
     );
     assert_eq!(
@@ -155,7 +155,7 @@ fn presets_and_overview_toggle(cx: &mut TestAppContext) {
     assert!(
         s.panes()
             .iter()
-            .all(|p| !p.items.contains(&ItemRef::panel("overview"))),
+            .all(|p| !p.items.contains(&ItemRef::panel("agents-dashboard"))),
         "the board left the center (it is the left sidebar's Agents page again)"
     );
 }
@@ -332,7 +332,7 @@ fn state_is_saved_debounced_and_restored(cx: &mut TestAppContext) {
 
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 5);
+    assert_eq!(on_disk["version"], 6);
 
     // A second window (a "restart") restores exactly that layout.
     let (view2, cx2) = open(cx, Some(path.clone()));
@@ -919,7 +919,7 @@ fn a_saved_overview_layout_restores_with_its_stash(cx: &mut TestAppContext) {
     assert_eq!(s.preset, "overview");
     assert_eq!(
         s.active_pane().unwrap().active_item(),
-        Some(&ItemRef::panel("overview"))
+        Some(&ItemRef::panel("agents-dashboard"))
     );
     cx.dispatch_action(actions::ApplyPreset("default".into()));
     assert_eq!(

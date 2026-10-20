@@ -200,12 +200,14 @@ fn compact_rail_icons_open_their_pages(cx: &mut TestAppContext) {
     draw(cx);
     assert!(view.read_with(cx, |wb, _| wb.picker().is_none()));
 
-    // Agents opens the dashboard drawer over the center, Mawas its Home tab; neither widens it.
+    // Agents opens the Agents page as a tab of the center, Mawas its Home tab; neither widens it.
     click(&view, cx, Region::Nav("agents"));
-    assert!(view.read_with(cx, |wb, _| wb.agents_drawer_open()));
+    assert_eq!(
+        state(&view, cx).active_center_item(),
+        Some(ItemRef::panel("agents-dashboard"))
+    );
     assert_eq!(chosen(&view, cx, Left), Compact);
     click(&view, cx, Region::Nav("assistant"));
-    assert!(!view.read_with(cx, |wb, _| wb.agents_drawer_open()));
     assert_eq!(
         state(&view, cx).active_center_item(),
         Some(ItemRef::panel("assistant"))
@@ -752,7 +754,7 @@ fn the_dock_modes_are_saved_and_restored(cx: &mut TestAppContext) {
     view.update(cx, |wb, _| wb.flush_save());
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 5);
+    assert_eq!(on_disk["version"], 6);
     assert_eq!(on_disk["docks"]["left"]["collapsed"], true);
     assert_eq!(on_disk["docks"]["right"]["collapsed"], true);
     let loaded = load_state(&path);

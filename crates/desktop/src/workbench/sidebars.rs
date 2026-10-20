@@ -4,8 +4,8 @@
 //!   other panel the user put in the left dock), the active page below it (Projects by default;
 //!   a nav item replaces the project list with its page and shows a back row), and a bottom
 //!   toolbar (New session, Settings). The pages are the left dock's panels; the active one is
-//!   the dock's `active`, so presets, restore and `ui` see nothing new. Agents is no page: it
-//!   opens the Agent Dashboard drawer (`agents_drawer.rs`) over the center.
+//!   the dock's `active`, so presets, restore and `ui` see nothing new. Agents is no page of the
+//!   sidebar: it opens the Agents page (`agents_page.rs`), one tab of the center.
 //!   While compact (`docks.rs`) the sidebar is a 44 pt icon rail of the same nav.
 //! - **Right**: the panel body (a header with the panel's name, then the panel) next to a 40 pt
 //!   activity rail of panel icons with tooltips, outside the body and always there unless hidden;
@@ -38,7 +38,7 @@ pub enum NavTarget {
     Search,
     /// Show Mawas Home, a tab of the center (and put the keyboard in its composer).
     Assistant,
-    /// Open or close the Agent Dashboard drawer.
+    /// Open (or focus) the Agents page, a tab of the center.
     Agents,
     /// Show this panel as a page of the left sidebar.
     Page(PanelId),
@@ -56,7 +56,7 @@ pub struct NavEntry {
     /// A count shown as a pill (the agents that need you).
     pub badge: Option<usize>,
     pub target: NavTarget,
-    /// The page (or the drawer) the row stands for is the one showing.
+    /// The page the row stands for is the one showing.
     pub selected: bool,
 }
 
@@ -86,7 +86,7 @@ impl Workbench {
     // ---- left ------------------------------------------------------------------------------
 
     /// The rows of the left nav, top to bottom, with the page the dock shows marked (and, for
-    /// Agents, the drawer when it is open).
+    /// Agents, the page when it is the tab on screen).
     pub fn nav_entries(&self, cx: &gpui::App) -> Vec<NavEntry> {
         let dock = &self.state.docks.left;
         let page = dock.active.as_ref();
@@ -113,11 +113,14 @@ impl Workbench {
             NavEntry {
                 key: "agents".to_owned(),
                 label: "Agents".into(),
-                icon: Some(Icon::LayoutDashboard),
-                glyph: "⊞".into(),
-                badge: Some(self.sessions.read(cx).needs_you().len()).filter(|n| *n > 0),
+                icon: Some(Icon::Bot),
+                glyph: "▤".into(),
+                // Agent sessions that need you: the page's own count, not every session's.
+                badge: Some(self.sessions.read(cx).agent_presentation().needs_you())
+                    .filter(|n| *n > 0),
                 target: NavTarget::Agents,
-                selected: self.agents_drawer,
+                selected: self.state.active_center_item().as_ref()
+                    == Some(&ItemRef::panel(super::model::AGENTS_PAGE)),
             },
         ];
         if self.assistant_enabled() {
@@ -137,7 +140,7 @@ impl Workbench {
         for panel in &dock.panels {
             let named = matches!(
                 panel.as_str(),
-                "sessions" | "tasks" | "overview" | "assistant"
+                "sessions" | "tasks" | "assistant" | super::model::AGENTS_PAGE
             );
             if named {
                 continue;
@@ -392,8 +395,8 @@ impl Workbench {
 
     // ---- compact left rail ---------------------------------------------------------------------
 
-    /// What a click on a nav row or rail icon does (the Agents row opens the dashboard drawer,
-    /// every other one is where the user goes next).
+    /// What a click on a nav row or rail icon does (the Agents row opens the Agents page, every
+    /// other one is where the user goes next).
     pub(crate) fn nav_click(
         &mut self,
         target: &NavTarget,
@@ -401,11 +404,10 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         if *target == NavTarget::Agents {
-            // The drawer holds the keyboard itself (Escape closes it).
-            self.toggle_agents_drawer(window, cx);
+            // The page puts the keyboard in its own list.
+            self.open_agents_page(super::panels::AgentsRequest::default(), window, cx);
             return;
         }
-        self.agents_drawer = false;
         match target {
             NavTarget::Search => window.dispatch_action(Box::new(actions::OpenJump), cx),
             NavTarget::Assistant => self.open_assistant(window, cx),
@@ -427,8 +429,8 @@ impl Workbench {
         let mut nav: Vec<AnyElement> = Vec::new();
         for entry in self.nav_entries(cx) {
             let target = entry.target.clone();
-            // A page the sidebar is not showing is not selected: only the drawer and Mawas Home
-            // are somewhere the rail leaves visible.
+            // A page the sidebar is not showing is not selected: only the Agents page and Mawas
+            // Home are somewhere the rail leaves visible.
             let selected =
                 entry.selected && matches!(target, NavTarget::Agents | NavTarget::Assistant);
             let color = if selected { theme.fg } else { theme.muted };
@@ -904,7 +906,7 @@ struct RailButton {
     face: AnyElement,
     /// Its tooltip, and what assistive technology calls it.
     label: SharedString,
-    /// Set while the page, panel or drawer the button stands for is the one showing.
+    /// Set while the page or panel the button stands for is the one showing.
     background: Option<Hsla>,
     /// A count that stays visible next to the icon (never replaces it).
     badge: Option<usize>,

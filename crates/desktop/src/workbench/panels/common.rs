@@ -62,7 +62,6 @@ pub fn agent_badge(
     let site_name = match site {
         BadgeSite::Row => "row",
         BadgeSite::Tab => "tab",
-        BadgeSite::Card => "card",
     };
     Some(
         div()

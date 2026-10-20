@@ -64,7 +64,7 @@ pub fn glyph(node: &AgentNode) -> Glyph {
         (None, NodeState::Working) => g("●", Tone::Accent, true, "working"),
         (None, NodeState::Blocked) => g("▲", Tone::Warning, false, "blocked"),
         (None, NodeState::Idle) => g("○", Tone::Muted, false, "idle"),
-        (None, NodeState::Unknown) => g("?", Tone::Muted, false, "unknown"),
+        (None, NodeState::Unknown) => g("◌", Tone::Muted, false, "state unavailable"),
     }
 }
 
@@ -533,7 +533,7 @@ mod tests {
         assert_eq!((glyph(&n).text, glyph(&n).tone), ("✗", Tone::Error));
         n.outcome = None;
         n.state = NodeState::Unknown;
-        assert_eq!((glyph(&n).text, glyph(&n).tone), ("?", Tone::Muted));
+        assert_eq!((glyph(&n).text, glyph(&n).tone), ("◌", Tone::Muted));
         n.state = NodeState::Blocked;
         assert_eq!(glyph(&n).tone, Tone::Warning);
         n.state = NodeState::Working;

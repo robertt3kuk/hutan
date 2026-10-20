@@ -21,7 +21,7 @@
 |---|---|
 | Terminals | PTY sessions owned by the daemon, compact bounded scrollback, detach/reattach, several clients attached at once, restore after a daemon restart (respawned in the last cwd) |
 | Shell blocks | zsh/bash/fish integration injected automatically (OSC 133/7): commands become blocks with exit code and duration that you can jump to, copy, collapse or send to an agent |
-| Workbench | GPUI desktop with docks (toggle buttons in the status bar), split panes, zoom, presets (default/focus/overview), ⌘⇧P palette, settings in TOML with hot reload, Zed or Hutan default keys plus a keymap file |
+| Workbench | GPUI desktop with docks (toggle buttons in the status bar), split panes, zoom, presets (default/focus/overview = the Agents page), ⌘⇧P palette, settings in TOML with hot reload, Zed or Hutan default keys plus a keymap file |
 | Projects and workspaces | **Projects** appear by themselves from the folders you work in (a repository with all its worktrees, or a plain folder); your own **workspaces** group projects, and a permanent **Home** holds the rest. ⌘O to open, ⌘P to jump; sort modes, pins and a layout per workspace or project |
 | Agent chat | Codex through `codex app-server`, OMP and Claude Code through their ACP harnesses: streaming, tool cards, diffs, plans, questions, approvals enforced in the daemon; the same conversation is visible from the CLI |
 | Agent monitor | Live state (working/blocked/idle) of agents and subagents from Codex, Claude Code hooks and the OMP extension |
@@ -128,7 +128,7 @@ Default keys follow Zed's macOS keymap (`keymap.base = "zed"`); set `keymap.base
 | ⌘⇧P | ⌘K | Command palette |
 | ⌘D / ⌘⇧D, ⌘K ←→↑↓ | ⌘D / ⌘⇧D | Split right / down; split in a direction (Zed base: ⌘K ⌘←→↑↓ focuses the neighbor pane) |
 | ⌘O / ⌘P | ⌘O / ⌘J | Open project / jump to a workspace or session |
-| ⌘⇧O | same | Overview of all sessions |
+| ⌘⇧O | same | Agents overview: the Agents page as a focus layout (again restores the layout) |
 | ⌘B / ⌘L / ⌘J | ⌘B / ⌘L / ⌘⌥J | Toggle the left sidebar / the right sidebar / the bottom dock (also ⌘⌥B for the right; Zed base also ⌘R; Zed base: ⌘⌥Y closes all docks) |
 | ⌘= / ⌘- / ⌘0 | — | Terminal font size larger / smaller / reset |
 | ⌘⇧J | same | Jump to the next session that needs you |

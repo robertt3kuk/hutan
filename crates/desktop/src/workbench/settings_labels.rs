@@ -59,7 +59,6 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("panels.sessions", "Projects Sidebar"),
     ("sidebar", "Sidebar organization"),
     ("panels.inspector", "Requests"),
-    ("panels.overview", "Overview"),
     ("workspaces", "Workspaces"),
     ("history", "History"),
     ("chat", "Chat"),
@@ -266,7 +265,7 @@ const FIELDS: &[FieldText] = &[
         &[
             ("default", "Default"),
             ("focus", "Focus"),
-            ("overview", "Overview"),
+            ("overview", "Agents overview"),
         ],
     ),
     field(
@@ -340,32 +339,6 @@ const FIELDS: &[FieldText] = &[
         "reveal_on_approval",
         "Open when an approval arrives",
         "Shows the inspector as soon as an agent asks for an approval.",
-    ),
-    // ---- overview ----
-    choice(
-        "panels.overview",
-        "card_size",
-        "Card size",
-        "How large each session's card is on the overview board.",
-        &[("small", "Small"), ("medium", "Medium"), ("large", "Large")],
-    ),
-    choice(
-        "panels.overview",
-        "preview",
-        "Card preview",
-        "What a card shows of the terminal: a live view, a still picture, or nothing.",
-        &[("live", "Live"), ("static", "Still"), ("off", "Off")],
-    ),
-    choice(
-        "panels.overview",
-        "sort",
-        "Order cards by",
-        "How the cards are ordered.",
-        &[
-            ("attention", "Needs attention first"),
-            ("recent", "Most recent"),
-            ("name", "Name"),
-        ],
     ),
     // ---- workspaces ----
     choice(
@@ -485,24 +458,37 @@ const FIELDS: &[FieldText] = &[
     field(
         "agents",
         "show_finished",
-        "Show finished agents",
-        "Lists agents that have finished, dimmed, with their sub-agents folded into one row. Off, only agents still around are listed.",
+        "Show finished subagents",
+        "In the Agents panel, lists subagents that have finished, dimmed. Off, only the ones still around are listed.",
     ),
     field(
         "agents",
         "only_blocked",
-        "Only blocked agents",
-        "Lists only the agents that are blocked, plus the ones above them.",
+        "Only blocked subagents",
+        "In the Agents panel, lists only the subagents that are blocked, plus the ones above them.",
     ),
     choice(
         "agents",
         "scope",
-        "Show agents from",
-        "Whether the monitor lists agents of the current workspace or of every workspace.",
+        "Panel shows agents from",
+        "Which agent sessions the Agents panel lists: those of the current workspace, only the session you are looking at, or every workspace.",
         &[
             ("active_workspace", "The current workspace"),
+            ("session", "The focused session"),
             ("all", "All workspaces"),
         ],
+    ),
+    field(
+        "agents",
+        "page_group_by_workspace",
+        "Group the Agents page by workspace",
+        "On the Agents page, lists each workspace under its own heading, with the same state groups inside. Off, the groups are by state alone.",
+    ),
+    field(
+        "agents",
+        "page_show_finished",
+        "Show finished agents on the page",
+        "On the Agents page, lists the sessions that finished. Off, they are folded under a Finished heading.",
     ),
     // ---- resources ----
     field(

@@ -1,6 +1,10 @@
-//! The `agents` panel (M13-B): the monitor of every session's observation tree. One section per
-//! session that has agents (workspace › session title), the tree indented below it: state glyph,
-//! name, model, live duration, usage and the current activity of every node.
+//! The `agents` panel (M13-B, AG-1): the compact, scoped projection of the Agents page. It lists
+//! the same agent records (`sessions::presentation`) as the page, Today and the badges — one
+//! section per agent session (workspace › session title, its state word and its headline
+//! reason), the observation tree indented below it: state glyph, name, model, live duration,
+//! usage and the current activity of every node. A session the daemon reports no tree for (a
+//! chat, a report) is one row of its own. The scope is a workspace, the focused session or
+//! everything; "All agents" opens the page.
 //!
 //! The daemon owns the tree (`agent.tree` / `agent.tree_updated`, `StoreState.trees`); the panel
 //! only filters (`agents.*` settings, chips at the top) and draws it. Durations tick once a
@@ -12,16 +16,18 @@ use std::time::Duration;
 use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Task, Window, div,
-    prelude::*, px,
+    prelude::*, px, relative,
 };
 use hutan_core::{NodeState, SessionId};
 
 use super::common::{now_ms, panel_header, tone_color};
 use super::history::pill;
-use crate::sessions::Tone;
 use crate::sessions::agents::{
     self, Filters, NodeRow, activity_text, any_running, duration_ms, format_duration, glyph,
     usage_label, visible_rows,
+};
+use crate::sessions::{
+    AgentPresentation, AgentRecord, Counts, Group, Scope, SessionsStore, State, Tone,
 };
 use crate::settings::{AgentsScope, AgentsSettings};
 use crate::theme::{DensityExt as _, reduce_motion};
@@ -71,6 +77,10 @@ pub struct SectionView {
     pub session: SessionId,
     pub workspace: String,
     pub title: String,
+    /// The state word of the record (`Working`, `State unavailable`, …), the page's.
+    pub state: &'static str,
+    /// `Permission: run cargo test +1` when the session needs the user, the page's headline.
+    pub headline: Option<String>,
     pub rows: Vec<RowView>,
 }
 
@@ -112,6 +122,44 @@ fn row_view(row: &NodeRow<'_>, now_ms: u64) -> RowView {
             .filter(|a| !a.is_empty() && !node.is_finished()),
         has_transcript: node.transcript_path.is_some(),
     }
+}
+
+/// The one row of an agent session the daemon reports no node tree for.
+fn session_row(record: &AgentRecord) -> RowView {
+    RowView {
+        node_id: String::new(),
+        depth: 0,
+        label: record.title.clone(),
+        agent_type: None,
+        glyph: record.state.glyph(),
+        meaning: record.state.label(),
+        tone: record.state.tone(),
+        animated: record.state == State::Working,
+        finished: record.state.is_finished(),
+        blocked: record.state == State::Blocked,
+        foldable: false,
+        collapsed: false,
+        hidden: 0,
+        model: record.model.clone(),
+        duration: None,
+        usage: record.usage.clone(),
+        activity: record
+            .activity
+            .clone()
+            .or_else(|| Some(record.detail.clone()).filter(|d| !d.is_empty())),
+        has_transcript: record.transcript.is_some(),
+    }
+}
+
+/// `Permission: run cargo test +1`: the record's headline reason and how many more there are.
+fn headline_text(record: &AgentRecord) -> Option<String> {
+    let headline = record.headline()?;
+    let more = record.reasons.len().saturating_sub(1);
+    Some(if more == 0 {
+        headline.text.clone()
+    } else {
+        format!("{} +{more}", headline.text)
+    })
 }
 
 pub struct AgentsPanel {
@@ -156,8 +204,40 @@ impl AgentsPanel {
         self.ticks
     }
 
-    /// Sections in display order, as the settings filter them: workspaces in the sidebar's
-    /// manual order, sessions in creation order. Sections without a listed node are left out.
+    /// The records this panel lists: the settings' scope over the one presentation, in the page's
+    /// order. `Session` follows the focused session, never the panel's own focus.
+    fn scoped<'a>(
+        &self,
+        presentation: &'a AgentPresentation,
+        store: &SessionsStore,
+    ) -> Vec<&'a AgentRecord> {
+        let settings = self.env.settings.get::<AgentsSettings>();
+        match settings.scope {
+            AgentsScope::All => presentation.in_scope(Scope::All).collect(),
+            AgentsScope::ActiveWorkspace => presentation
+                .in_scope(
+                    store
+                        .active_workspace_id()
+                        .map_or(Scope::All, Scope::Workspace),
+                )
+                .collect(),
+            AgentsScope::Session => store
+                .focused()
+                .and_then(|focused| presentation.get(focused))
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    /// The totals of what the scope lists, in the page's words (`5 agent sessions · 3 subagents`).
+    pub fn counts(&self, cx: &gpui::App) -> Counts {
+        let store = self.env.sessions.read(cx);
+        let presentation = store.agent_presentation();
+        Counts::of(self.scoped(&presentation, store))
+    }
+
+    /// Sections in display order, as the settings filter them: the page's records of the scope,
+    /// in the page's order. Sections without a listed node are left out.
     pub fn sections(&self, now_ms: u64, cx: &gpui::App) -> Vec<SectionView> {
         let settings = self.env.settings.get::<AgentsSettings>();
         let filters = Filters {
@@ -165,40 +245,43 @@ impl AgentsPanel {
             only_blocked: settings.only_blocked,
         };
         let store = self.env.sessions.read(cx);
-        let active = store.active_workspace_id();
+        let presentation = store.agent_presentation();
         let mut out = Vec::new();
-        for workspace in store.workspaces() {
-            if settings.scope == AgentsScope::ActiveWorkspace
-                && active.is_some_and(|a| a != workspace.id)
-            {
-                continue;
-            }
-            for session in store
-                .sessions()
-                .iter()
-                .filter(|s| s.workspace_id == workspace.id)
-            {
-                let Some(tree) = store.agent_tree(session.id) else {
-                    continue;
-                };
-                let expanded: HashSet<String> = self
-                    .expanded
-                    .iter()
-                    .filter(|(id, _)| *id == session.id)
-                    .map(|(_, node)| node.clone())
-                    .collect();
-                let rows: Vec<RowView> = visible_rows(tree, filters, &expanded)
-                    .iter()
-                    .map(|row| row_view(row, now_ms))
-                    .collect();
-                if !rows.is_empty() {
-                    out.push(SectionView {
-                        session: session.id,
-                        workspace: workspace.name.clone(),
-                        title: session.title.clone(),
-                        rows,
-                    });
+        for record in self.scoped(&presentation, store) {
+            let rows: Vec<RowView> = match store.agent_tree(record.session) {
+                Some(tree) => {
+                    let expanded: HashSet<String> = self
+                        .expanded
+                        .iter()
+                        .filter(|(id, _)| *id == record.session)
+                        .map(|(_, node)| node.clone())
+                        .collect();
+                    visible_rows(tree, filters, &expanded)
+                        .iter()
+                        .map(|row| row_view(row, now_ms))
+                        .collect()
                 }
+                None => {
+                    let listed = (settings.show_finished || record.group != Group::Finished)
+                        && (!settings.only_blocked
+                            || record.state == State::Blocked
+                            || record.group == Group::NeedsYou);
+                    if listed {
+                        vec![session_row(record)]
+                    } else {
+                        Vec::new()
+                    }
+                }
+            };
+            if !rows.is_empty() {
+                out.push(SectionView {
+                    session: record.session,
+                    workspace: record.project.clone(),
+                    title: record.title.clone(),
+                    state: record.state.label(),
+                    headline: headline_text(record),
+                    rows,
+                });
             }
         }
         out
@@ -212,15 +295,12 @@ impl AgentsPanel {
             only_blocked: settings.only_blocked,
         };
         let store = self.env.sessions.read(cx);
-        let active = store.active_workspace_id();
-        store.agent_trees().any(|tree| {
-            let in_scope = settings.scope == AgentsScope::All
-                || active.is_none_or(|a| {
-                    store
-                        .session(tree.session_id)
-                        .is_some_and(|s| s.workspace_id == a)
-                });
-            in_scope && any_running(&visible_rows(tree, filters, &HashSet::new()))
+        let presentation = store.agent_presentation();
+        self.scoped(&presentation, store).into_iter().any(|record| {
+            match store.agent_tree(record.session) {
+                Some(tree) => any_running(&visible_rows(tree, filters, &HashSet::new())),
+                None => matches!(record.state, State::Working | State::Blocked),
+            }
         })
     }
 
@@ -273,6 +353,14 @@ impl Render for AgentsPanel {
         let settings = self.env.settings.get::<AgentsSettings>();
         let now = now_ms();
         let sections = self.sections(now, cx);
+        let counts = self.counts(cx);
+        let none_at_all = self
+            .env
+            .sessions
+            .read(cx)
+            .agent_presentation()
+            .records
+            .is_empty();
         let running = self.anything_running(cx);
         self.sync_ticker(running, cx);
         let pulse_dim = !reduce_motion() && (now / 1000) % 2 == 1;
@@ -326,6 +414,7 @@ impl Render for AgentsPanel {
                     "agents-chip-scope",
                     match settings.scope {
                         AgentsScope::ActiveWorkspace => "This workspace",
+                        AgentsScope::Session => "Focused session",
                         AgentsScope::All => "All workspaces",
                     },
                     settings.scope == AgentsScope::All,
@@ -335,7 +424,8 @@ impl Render for AgentsPanel {
                 .relative()
                 .on_click(cx.listener({
                     let next = match settings.scope {
-                        AgentsScope::ActiveWorkspace => AgentsScope::All,
+                        AgentsScope::ActiveWorkspace => AgentsScope::Session,
+                        AgentsScope::Session => AgentsScope::All,
                         AgentsScope::All => AgentsScope::ActiveWorkspace,
                     };
                     move |this, _, _, cx| {
@@ -347,6 +437,17 @@ impl Render for AgentsPanel {
                     }
                 }))
                 .child(probe(&self.env.regions, Region::MonitorChip("scope"))),
+            )
+            .child(
+                pill("agents-chip-all", "All agents", false, &theme, &tokens)
+                    .relative()
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(crate::workbench::actions::ShowAgentsPage),
+                            cx,
+                        );
+                    })
+                    .child(probe(&self.env.regions, Region::MonitorChip("all"))),
             );
 
         let mut list = div()
@@ -357,14 +458,13 @@ impl Render for AgentsPanel {
             .min_h_0()
             .overflow_y_scroll();
         if sections.is_empty() {
-            let hidden = self.env.sessions.read(cx).agent_trees().next().is_some();
             list = list.child(
                 ui::empty_state(
                     Mascot::Empty,
-                    if hidden {
-                        "Nothing matches the filters."
+                    if none_at_all {
+                        "Your agents will appear here."
                     } else {
-                        "No agents reported yet. Coding agents that report to Hutan appear here."
+                        "No agent sessions match this view."
                     },
                     None,
                     &theme,
@@ -394,8 +494,22 @@ impl Render for AgentsPanel {
                     })
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .truncate()
                             .child(SharedString::from(section.heading())),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .max_w(relative(0.6))
+                            .truncate()
+                            .pl(px(tokens.spacing))
+                            .text_size(px(tokens.secondary_font_size))
+                            .child(SharedString::from(match &section.headline {
+                                Some(reason) => format!("Needs you · {reason}"),
+                                None => section.state.to_owned(),
+                            })),
                     ),
             );
             for row in &section.rows {
@@ -412,6 +526,26 @@ impl Render for AgentsPanel {
             .text_size(px(tokens.font_size))
             .text_color(theme.fg)
             .child(panel_header("Agents", "agents", cx))
+            .child(
+                div()
+                    .id("agents-counts")
+                    .flex_none()
+                    .px(px(tokens.spacing * 2.0))
+                    .pb(px(tokens.spacing))
+                    .truncate()
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.muted)
+                    .child(SharedString::from(match settings.scope {
+                        AgentsScope::All => format!("All workspaces · {}", counts.summary()),
+                        AgentsScope::ActiveWorkspace => {
+                            format!("This workspace · {}", counts.summary())
+                        }
+                        AgentsScope::Session => {
+                            format!("Focused session · {}", counts.summary())
+                        }
+                    }))
+                    .child(probe(&self.env.regions, Region::MonitorChip("counts"))),
+            )
             .child(chip_row)
             .child(list)
     }
@@ -554,19 +688,21 @@ impl AgentsPanel {
             .on_click(move |_, window, cx| {
                 window.dispatch_action(Box::new(OpenSession(session.to_string())), cx);
             })
-            .on_mouse_down(
-                MouseButton::Right,
-                move |event: &MouseDownEvent, window, cx| {
-                    window.dispatch_action(
-                        Box::new(ShowAgentNodeMenu(AgentNodeAt {
-                            session: session.to_string(),
-                            node: menu_node.clone(),
-                            position: event.position,
-                        })),
-                        cx,
-                    );
-                },
-            )
+            .when(!row.node_id.is_empty(), |element| {
+                element.on_mouse_down(
+                    MouseButton::Right,
+                    move |event: &MouseDownEvent, window, cx| {
+                        window.dispatch_action(
+                            Box::new(ShowAgentNodeMenu(AgentNodeAt {
+                                session: session.to_string(),
+                                node: menu_node.clone(),
+                                position: event.position,
+                            })),
+                            cx,
+                        );
+                    },
+                )
+            })
             .child(
                 div()
                     .flex()

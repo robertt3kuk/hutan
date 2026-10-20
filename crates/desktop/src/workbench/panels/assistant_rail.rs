@@ -14,8 +14,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, div, px,
 };
 use hutan_core::agent::PermissionOptionKind;
-use hutan_core::{ApprovalId, QuestionId, SessionId, SessionKind};
-use hutan_protocol::messages::AgentState;
+use hutan_core::{ApprovalId, QuestionId, SessionId};
 
 use super::assistant::AssistantPanel;
 use crate::sessions::{AttentionKind, SessionsStore};
@@ -88,7 +87,10 @@ pub struct WorkingRow {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Today {
     pub needs_you: Vec<NeedsRow>,
+    /// Agent sessions confirmed working (the same predicate as the Agents page).
     pub working: Vec<WorkingRow>,
+    /// Agent sessions whose state is unavailable: never counted as working or idle.
+    pub unconfirmed: usize,
 }
 
 /// The rail's content as of now, from the sessions store alone.
@@ -171,33 +173,32 @@ pub fn today(store: &SessionsStore) -> Today {
         .chain(stuck)
         .collect();
 
-    let waiting: std::collections::HashSet<SessionId> =
-        needs_you.iter().map(|row| row.session).collect();
-    let working = store
-        .sessions()
+    // Working is what the Agents page calls Working: confirmed, and not waiting for the user.
+    let presentation = store.agent_presentation();
+    let working = presentation
+        .records
         .iter()
-        .filter(|info| info.state.is_live() && !waiting.contains(&info.id))
-        .filter(|info| match info.kind {
-            SessionKind::Terminal => info
-                .agent
-                .as_ref()
-                .is_some_and(|agent| agent.state == AgentState::Working),
-            SessionKind::Harness | SessionKind::Direct => {
-                info.chat.as_ref().is_some_and(|chat| chat.turn_active)
-            }
-        })
-        .map(|info| WorkingRow {
-            session: info.id,
-            title: info.title.clone(),
-            agent: match (&info.chat, &info.agent) {
-                (Some(chat), _) if chat.is_assistant() => "Mawas".to_owned(),
-                (Some(chat), _) => crate::workbench::harnesses::harness_name(&chat.agent),
-                (None, Some(agent)) => crate::workbench::harnesses::harness_name(&agent.agent),
-                (None, None) => String::new(),
+        .filter(|record| record.group == crate::sessions::Group::Working)
+        .map(|record| WorkingRow {
+            session: record.session,
+            title: record.title.clone(),
+            agent: if record.role == crate::sessions::Role::Assistant {
+                "Mawas".to_owned()
+            } else {
+                record.harness.clone()
             },
         })
         .collect();
-    Today { needs_you, working }
+    let unconfirmed = presentation
+        .records
+        .iter()
+        .filter(|record| record.group == crate::sessions::Group::Unconfirmed)
+        .count();
+    Today {
+        needs_you,
+        working,
+        unconfirmed,
+    }
 }
 
 impl AssistantPanel {
@@ -351,12 +352,47 @@ impl AssistantPanel {
                     .into_any_element(),
             );
         }
-        if working.is_empty() {
+        if working.is_empty() && today.unconfirmed == 0 {
             working.push(
                 div()
                     .text_color(theme.muted)
                     .text_size(px(tokens.secondary_font_size))
-                    .child("No agents are running.")
+                    .child("No agents are working.")
+                    .into_any_element(),
+            );
+        }
+        if today.unconfirmed > 0 {
+            // Not "No agents are running": their state is not known.
+            working.push(
+                div()
+                    .id("today-unconfirmed")
+                    .relative()
+                    .px(px(tokens.spacing * 2.0))
+                    .py(px(tokens.spacing))
+                    .rounded(px(tokens.radius))
+                    .cursor_pointer()
+                    .text_color(theme.muted)
+                    .text_size(px(tokens.secondary_font_size))
+                    .hover(move |s| s.bg(theme.surface_hover))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(crate::workbench::actions::OpenAgentsPageWith(
+                                super::AgentsRequest {
+                                    group: Some("unconfirmed".to_owned()),
+                                    ..super::AgentsRequest::default()
+                                },
+                            )),
+                            cx,
+                        );
+                    })
+                    .child(SharedString::from(format!(
+                        "State unavailable · {}",
+                        today.unconfirmed
+                    )))
+                    .child(probe(
+                        &self.env.regions,
+                        Region::Assistant("today-unconfirmed"),
+                    ))
                     .into_any_element(),
             );
         }

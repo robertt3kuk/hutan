@@ -1,6 +1,5 @@
 //! The desktop's settings namespaces (design.md § Settings): `app`, `terminal`, `layout`,
-//! `panels.sessions`, `panels.inspector`, `panels.overview`, `workspaces`, `history`, `chat`,
-//! `editor`, `agents`.
+//! `panels.sessions`, `panels.inspector`, `workspaces`, `history`, `chat`, `editor`, `agents`.
 //! `appearance` lives in `hutan-settings`.
 //!
 //! Numbers are `f64` so values read back from TOML and the schema defaults stay free of `f32`
@@ -301,7 +300,17 @@ impl DockSetting {
     }
 
     fn to_dock(&self) -> Dock {
-        let panels: Vec<&str> = self.panels.iter().map(String::as_str).collect();
+        // The old Overview board is the Agents page now (saved presets keep working).
+        let mut panels: Vec<&str> = Vec::new();
+        for panel in &self.panels {
+            let panel = match panel.as_str() {
+                "overview" => super::workbench::model::AGENTS_PAGE,
+                other => other,
+            };
+            if !panels.contains(&panel) {
+                panels.push(panel);
+            }
+        }
         let mut dock = Dock::new(&panels, self.size as f32, self.visible);
         dock.collapsed = self.collapsed;
         dock
@@ -530,64 +539,6 @@ impl Default for InspectorPanelSettings {
 
 impl Setting for InspectorPanelSettings {
     const NAMESPACE: &'static str = "panels.inspector";
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum CardSize {
-    Small,
-    #[default]
-    Medium,
-    Large,
-}
-
-impl CardSize {
-    /// Card width and terminal preview height in pixels.
-    pub fn dimensions(self) -> (f32, f32) {
-        match self {
-            CardSize::Small => (220.0, 110.0),
-            CardSize::Medium => (300.0, 160.0),
-            CardSize::Large => (420.0, 240.0),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum PreviewMode {
-    /// Attach every running session and draw its terminal live.
-    #[default]
-    Live,
-    /// Draw only terminals that are attached anyway (open in a pane); never attach for a card.
-    Static,
-    Off,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum SortOrder {
-    /// Sessions that need you first.
-    #[default]
-    Attention,
-    /// Newest first.
-    Recent,
-    Name,
-}
-
-/// The `panels.overview` namespace.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct OverviewPanelSettings {
-    /// `small`, `medium` or `large`.
-    pub card_size: CardSize,
-    /// `live`, `static` or `off`.
-    pub preview: PreviewMode,
-    /// `attention`, `recent` or `name`.
-    pub sort: SortOrder,
-}
-
-impl Setting for OverviewPanelSettings {
-    const NAMESPACE: &'static str = "panels.overview";
 }
 
 /// How the sidebar orders workspaces, and the projects inside each level (pinned ones always
@@ -916,14 +867,16 @@ impl Setting for EditorSettings {
     const NAMESPACE: &'static str = "editor";
 }
 
-/// Which sessions the agent monitor lists.
+/// Which agent sessions the contextual Agents panel lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentsScope {
-    /// Only sessions of the workspace the window shows.
+    /// The workspace the window shows (it follows the selected workspace).
     #[default]
     ActiveWorkspace,
-    /// Every session that has agents.
+    /// Only the session in the focused tab (never the panel's own focus).
+    Session,
+    /// Every agent session of this host, pinned.
     All,
 }
 
@@ -932,22 +885,28 @@ impl AgentsScope {
     pub fn key(self) -> &'static str {
         match self {
             AgentsScope::ActiveWorkspace => "active_workspace",
+            AgentsScope::Session => "session",
             AgentsScope::All => "all",
         }
     }
 }
 
-/// The `agents` namespace: what the agent monitor panel lists. Blocked nodes are always listed.
+/// The `agents` namespace: what the Agents panel and the Agents page list. Blocked agents are
+/// always listed.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AgentsSettings {
-    /// List agents that have finished (dimmed, their subtree folded into one row). Off, only
-    /// agents that are still around (and the ones above them) are listed.
+    /// Panel: list subagents that have finished (dimmed). Off, only the ones still around
+    /// (and the ones above them) are listed.
     pub show_finished: bool,
-    /// List only blocked agents (and the ones above them).
+    /// Panel: list only blocked subagents (and the ones above them).
     pub only_blocked: bool,
-    /// `active_workspace` or `all`.
+    /// Panel: `active_workspace`, `session` or `all`.
     pub scope: AgentsScope,
+    /// Page: group the list by workspace, with the state groups inside each.
+    pub page_group_by_workspace: bool,
+    /// Page: show the sessions that finished (they are folded under their heading otherwise).
+    pub page_show_finished: bool,
 }
 
 impl Setting for AgentsSettings {
@@ -1339,7 +1298,6 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<LayoutSettings>();
     store.register::<SessionsPanelSettings>();
     store.register::<InspectorPanelSettings>();
-    store.register::<OverviewPanelSettings>();
     store.register::<WorkspacesSettings>();
     store.register::<SidebarSettings>();
     store.register::<HistorySettings>();
@@ -1741,7 +1699,6 @@ mod tests {
             "layout",
             "panels.sessions",
             "panels.inspector",
-            "panels.overview",
             "workspaces",
             "history",
             "chat",

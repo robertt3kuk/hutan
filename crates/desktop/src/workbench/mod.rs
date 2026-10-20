@@ -2,7 +2,7 @@
 
 pub mod actions;
 pub(crate) mod agents;
-mod agents_drawer;
+mod agents_page;
 mod assistant;
 mod changes;
 pub mod chat;
@@ -56,7 +56,6 @@ mod workspaces;
 mod worktrees;
 
 pub use agents::{AgentPicker, CODEX, Models};
-pub use agents_drawer::{DRAWER_MAX_WIDTH, DashboardCard, DashboardColumn, column_of};
 pub use changes::{
     ChangesEvent, ChangesView, CleanupDefault, DeliveryForm, Mark, ReviewComment, Selection,
     SendTarget, SnippetLine, hunk_ranges,
