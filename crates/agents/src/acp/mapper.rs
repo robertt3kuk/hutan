@@ -129,6 +129,8 @@ pub struct Mapper {
     questions: HashMap<String, PendingQuestion>,
     model: Option<String>,
     mode: Option<String>,
+    /// The agent's working directory, named on every permission request.
+    cwd: Option<String>,
 }
 
 impl Mapper {
@@ -144,6 +146,7 @@ impl Mapper {
             questions: HashMap::new(),
             model: None,
             mode: None,
+            cwd: None,
         }
     }
 
@@ -151,6 +154,11 @@ impl Mapper {
     pub fn set_baseline(&mut self, model: Option<String>, mode: Option<String>) {
         self.model = model;
         self.mode = mode;
+    }
+
+    /// The directory the agent works in: permission requests say where they would act.
+    pub fn set_cwd(&mut self, cwd: String) {
+        self.cwd = Some(cwd);
     }
 
     fn draft(&self, item: Option<ItemId>, kind: AgentEventKind) -> AgentEventDraft {
@@ -830,17 +838,7 @@ impl Mapper {
             .filter(|t| !t.is_empty())
             .unwrap_or("permission requested")
             .to_owned();
-        let paths: Vec<&str> = tool_call
-            .get("locations")
-            .and_then(Value::as_array)
-            .map(|locations| {
-                locations
-                    .iter()
-                    .filter_map(|l| l.get("path").and_then(Value::as_str))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let detail = (!paths.is_empty()).then(|| paths.join("\n"));
+        let detail = permission_detail(self.cwd.as_deref(), &tool_call);
 
         let mut options = Vec::new();
         let mut results = Vec::new();
@@ -1209,6 +1207,37 @@ fn split_message(message: &str) -> (String, String) {
             rest.trim().to_owned(),
         ),
     }
+}
+
+/// What a permission request would act on: the working directory (`in <dir>`), then every file
+/// it names, from the call's locations and its diffs, each once and in the order given. Nothing
+/// is clamped: the user decides on all of it.
+fn permission_detail(cwd: Option<&str>, tool_call: &Value) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(cwd) = cwd.filter(|cwd| !cwd.is_empty()) {
+        lines.push(format!("in {cwd}"));
+    }
+    let located = tool_call
+        .get("locations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|location| location.get("path").and_then(Value::as_str));
+    let diffed = tool_call
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.get("type").and_then(Value::as_str) == Some("diff"))
+        .filter_map(|entry| entry.get("path").and_then(Value::as_str));
+    let mut files: Vec<&str> = Vec::new();
+    for path in located.chain(diffed) {
+        if !path.is_empty() && !files.contains(&path) {
+            files.push(path);
+        }
+    }
+    lines.extend(files.iter().map(|path| (*path).to_owned()));
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 /// The text of a content block; a stand-in line for what has none.

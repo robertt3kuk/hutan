@@ -7,8 +7,9 @@ use super::context::{meta_text, split_context};
 use super::markdown_view::{Ids, Look, blocks, code_block};
 use super::view::ChatView;
 use super::widgets::{ButtonKind, button, duration, pill, tail_lines, tokens};
+use crate::workbench::harnesses::harness_name;
 use crate::workbench::render::probe;
-use crate::workbench::ui::StyledExt as _;
+use crate::workbench::ui::{StyledExt as _, approval_button_kind};
 use crate::workbench::view::Region;
 use gpui::{
     AnyElement, App, Context, FontWeight, InteractiveElement, IntoElement, ParentElement,
@@ -808,6 +809,47 @@ impl ChatView {
         self.resolution_line(model.transcript().approval(id)?, cx)
     }
 
+    /// One line per standing ("Always") option of `approval`, naming the option and what it
+    /// does beyond this request; what the card shows under its buttons.
+    fn scope_lines(&self, approval: &Approval, cx: &App) -> Vec<String> {
+        let agent = self
+            .sessions
+            .read(cx)
+            .session(self.session)
+            .and_then(|info| info.chat.as_ref())
+            .map(|chat| harness_name(&chat.agent));
+        approval
+            .options
+            .iter()
+            .enumerate()
+            .filter_map(|(number, option)| {
+                scope_sentence(option, approval, agent.as_deref())
+                    .map(|sentence| format!("{} {}: {sentence}", number + 1, option.label))
+            })
+            .collect()
+    }
+
+    /// The scope lines of request `id` as its card draws them (`None` when it is not in this
+    /// transcript).
+    pub fn scope_text(&self, id: ApprovalId, cx: &App) -> Option<Vec<String>> {
+        let model = self.model.read(cx);
+        Some(self.scope_lines(model.transcript().approval(id)?, cx))
+    }
+
+    /// The ids of the options of request `id` that its card draws as primary buttons.
+    pub fn primary_options(&self, id: ApprovalId, cx: &App) -> Option<Vec<String>> {
+        let model = self.model.read(cx);
+        let approval = model.transcript().approval(id)?;
+        Some(
+            approval
+                .options
+                .iter()
+                .filter(|o| approval_button_kind(o.kind) == ButtonKind::Primary)
+                .map(|o| o.id.clone())
+                .collect(),
+        )
+    }
+
     pub(super) fn approval_card(
         &self,
         approval: &Approval,
@@ -839,6 +881,12 @@ impl ChatView {
             )),
         };
         let approval_id: ApprovalId = approval.id;
+        // What an "Always" option reaches is said before it can be clicked.
+        let scopes = if pending {
+            self.scope_lines(approval, cx)
+        } else {
+            Vec::new()
+        };
         let buttons: Vec<AnyElement> = if pending {
             approval
                 .options
@@ -850,12 +898,7 @@ impl ChatView {
                     button(
                         SharedString::from(format!("approve-{}-{number}", approval.id)),
                         format!("{} {}", number + 1, option.label),
-                        // The first offered option is the primary one.
-                        if number == 0 {
-                            ButtonKind::Primary
-                        } else {
-                            ButtonKind::Secondary
-                        },
+                        approval_button_kind(option.kind),
                         true,
                         look,
                     )
@@ -919,6 +962,12 @@ impl ChatView {
                         .children(buttons),
                 )
             })
+            .children(scopes.into_iter().map(|line| {
+                div()
+                    .text_color(theme.muted)
+                    .text_size(px(tokens.secondary_font_size))
+                    .child(SharedString::from(line))
+            }))
             .children(
                 status.map(|(text, color)| div().text_color(color).child(SharedString::from(text))),
             )
@@ -927,6 +976,33 @@ impl ChatView {
 }
 
 // ---- pieces without state -------------------------------------------------------------------
+
+/// The sentence that says what a standing ("Always") option does beyond this request, naming
+/// the tool the request is about (its title, first line, at most [`SCOPE_TITLE`] characters)
+/// and the harness whose rule it is. `None` for options that only answer this request.
+fn scope_sentence(
+    option: &hutan_core::agent::PermissionOption,
+    approval: &Approval,
+    agent: Option<&str>,
+) -> Option<String> {
+    let verb = match option.kind {
+        PermissionOptionKind::AllowAlways => "stops asking about",
+        PermissionOptionKind::RejectAlways => "refuses, without asking,",
+        _ => return None,
+    };
+    let agent = agent.unwrap_or("the agent");
+    let first = approval.title.lines().next().unwrap_or_default();
+    let mut tool: String = first.chars().take(SCOPE_TITLE).collect();
+    if first.chars().count() > SCOPE_TITLE {
+        tool.push('…');
+    }
+    Some(format!(
+        "beyond this one request, {agent} {verb} what its rule for “{tool}” covers. Hutan cannot show or revoke that rule."
+    ))
+}
+
+/// Longest tool name a scope sentence quotes.
+const SCOPE_TITLE: usize = 80;
 
 fn counts(diff: &FileDiff, look: &Look) -> AnyElement {
     counts_of(diff.added, diff.removed, look)
@@ -1185,4 +1261,76 @@ fn notice_card(level: NoticeLevel, message: &str, look: &Look) -> AnyElement {
                 .child(SharedString::from(message.to_owned())),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hutan_core::agent::PermissionOption;
+
+    fn option(kind: PermissionOptionKind, label: &str) -> PermissionOption {
+        PermissionOption {
+            id: label.to_owned(),
+            label: label.to_owned(),
+            kind,
+            provider: None,
+        }
+    }
+
+    fn approval(title: &str) -> Approval {
+        Approval {
+            id: ApprovalId::new(),
+            turn: None,
+            kind: PermissionKind::Command,
+            title: title.to_owned(),
+            detail: None,
+            options: Vec::new(),
+            state: ApprovalState::Pending,
+            decided_by: None,
+        }
+    }
+
+    #[test]
+    fn only_the_choices_about_this_request_are_primary() {
+        use PermissionOptionKind::*;
+        let primary: Vec<bool> = [
+            AllowOnce,
+            AllowAlways,
+            RejectOnce,
+            RejectAlways,
+            Cancel,
+            Other,
+        ]
+        .map(|kind| approval_button_kind(kind) == ButtonKind::Primary)
+        .to_vec();
+        assert_eq!(primary, [true, false, true, false, false, false]);
+    }
+
+    #[test]
+    fn standing_options_say_whose_rule_they_set_and_for_what() {
+        let request = approval("cargo test --workspace\nsecond line");
+        let always = option(PermissionOptionKind::AllowAlways, "Always allow `cargo`");
+        let sentence = scope_sentence(&always, &request, Some("Claude Code")).unwrap();
+        assert!(sentence.starts_with(
+            "beyond this one request, Claude Code stops asking about what its rule for “cargo test --workspace” covers."
+        ));
+        let never = option(PermissionOptionKind::RejectAlways, "Never");
+        assert!(
+            scope_sentence(&never, &request, None)
+                .unwrap()
+                .starts_with("beyond this one request, the agent refuses, without asking, what")
+        );
+        for kind in [
+            PermissionOptionKind::AllowOnce,
+            PermissionOptionKind::RejectOnce,
+            PermissionOptionKind::Cancel,
+            PermissionOptionKind::Other,
+        ] {
+            assert_eq!(scope_sentence(&option(kind, "x"), &request, None), None);
+        }
+        // A long tool name is cut, not left to flood the card.
+        let long = approval(&"x".repeat(200));
+        let sentence = scope_sentence(&always, &long, None).unwrap();
+        assert!(sentence.contains(&format!("“{}…”", "x".repeat(SCOPE_TITLE))));
+    }
 }

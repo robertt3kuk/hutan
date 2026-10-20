@@ -650,7 +650,6 @@ impl AgentsPage {
                         div()
                             .text_size(px(tokens.secondary_font_size))
                             .text_color(theme.muted)
-                            .line_clamp(6)
                             .child(SharedString::from(detail.clone()))
                     }))
                     .child(div().flex().flex_wrap().gap(px(8.0)).children(buttons))

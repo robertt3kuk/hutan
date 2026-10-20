@@ -210,7 +210,7 @@ Rollups: session → workspace header → sidebar "Needs you" → status bar `at
 - **Components**
   - *Sidebar rows* (the Projects tree; the left nav uses Orca's 8 × 6 px rows, 13 px medium): 30 px (comfortable), 8 px horizontal padding, rounded 8 px hover/selected (`surface_hover` / `accent_soft`), icon 16 px `muted`, title `fg`, second line or right side `muted`; counters as small pills.
   - *Buttons*: primary = `accent` fill, white text; secondary = `surface` with `border`; ghost = text only with hover fill; all 28 px high, 8 px radius.
-  - *Chat*: no bubbles for agent messages (prose in serif on `bg`, max width 720 px centered in the pane); user messages in an `accent_soft` rounded bubble aligned right; tool calls as quiet collapsible cards (`surface`, 12 px radius, mono summary line, status dot); approvals as a card with the offered options as buttons, the first option primary.
+  - *Chat*: no bubbles for agent messages (prose in serif on `bg`, max width 720 px centered in the pane); user messages in an `accent_soft` rounded bubble aligned right; tool calls as quiet collapsible cards (`surface`, 12 px radius, mono summary line, status dot); approvals as a card with the offered options as buttons in the agent's order; only *allow once* and *reject once* are primary, "Always" options are secondary and say what they set (`docs/agents.md` § The desktop chat view), and no key but a deliberate click or `1`–`4` answers.
   - *Composer*: a `surface` card with 12 px radius and hairline border at the bottom of the chat, multi-line field, a row below with attach (+), context chips, model/harness picker, and a round send button (`accent`) that turns into stop while streaming.
   - *Palette, popovers, menus*: `surface`, 12 px radius, soft shadow, 6 px inner padding, rows like sidebar rows.
   - *Empty states*: the mascot state image (`assets/brand/05-mascot`) at 96 px, one serif sentence, one action button.
@@ -602,7 +602,7 @@ The **Zed** base follows Zed's published macOS keymap (`default-macos.json`) whe
 | Agents page: move / open / details / menu / search / close the innermost | ↑↓ Home End PageUp PageDown / ↩ / Space / ⇧F10 / ⌘F (page focused) / ⎋ | same |
 | Previous / next prompt (highlights the block) | ⌘↑ / ⌘↓ | same |
 | Select / copy the current block's output | ⌘⇧A / ⌘⇧C | same |
-| Approve / deny focused approval | ⌘↩ / ⎋ (only when the approval card has focus) | same |
+| Answer the oldest approval | `1`–`4` = the nth option the agent offered (composer empty, chat focused); no key approves by default | same |
 | Send a message (chat, Start sheet prompt, review comment, question answer) | ⌘↩, or ↩ with `chat.send_key = "enter"` (⇧↩ / ⌥↩ then add a line) | same |
 
 The block keys apply while the primary screen shows (a program on the alternate screen — vim, htop — hides blocks and gets every key). Inside a focused terminal every other key goes to the PTY; Option-as-Meta follows `terminal.option_as_meta`. Global keys (docks, palette, splits) work while a terminal has focus.

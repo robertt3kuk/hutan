@@ -428,7 +428,13 @@ async fn an_allowed_permission_request_reaches_the_agent_with_the_chosen_option(
     };
     assert_eq!(*kind, PermissionKind::FileChange);
     assert_eq!(title, "edit: src/lib.rs");
-    assert!(detail.as_deref().unwrap().ends_with("src/lib.rs"));
+    // Where it would act, then every file it names.
+    let detail = detail.as_deref().unwrap();
+    assert_eq!(
+        detail.lines().next(),
+        Some(format!("in {}", h.dir.path().display()).as_str())
+    );
+    assert!(detail.ends_with("src/lib.rs"));
     // Exactly what the agent offered, in its order.
     let offered: Vec<_> = options.iter().map(|o| (o.id.as_str(), o.kind)).collect();
     assert_eq!(

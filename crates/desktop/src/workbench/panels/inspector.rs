@@ -254,11 +254,7 @@ impl InspectorPanel {
             ui::button(
                 SharedString::from(format!("inspector-approve-{id}-{number}")),
                 SharedString::from(format!("{} {}", number + 1, option.label)),
-                if number == 0 {
-                    ui::ButtonKind::Primary
-                } else {
-                    ui::ButtonKind::Secondary
-                },
+                ui::approval_button_kind(option.kind),
                 true,
                 theme,
                 tokens,

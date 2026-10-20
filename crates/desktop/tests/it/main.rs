@@ -38,6 +38,7 @@ mod setup_gpui;
 mod tasks_gpui;
 mod text_input_gpui;
 mod theme_gpui;
+mod ux_chat_gpui;
 mod vim_gpui;
 mod workbench_gpui;
 mod workspaces_gpui;

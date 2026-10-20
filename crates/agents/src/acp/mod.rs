@@ -513,6 +513,7 @@ impl AcpAdapter {
             }
         }
         Ok(Begun {
+            cwd: spec.cwd.to_string_lossy().into_owned(),
             opened,
             model,
             mode: mode_state,
@@ -527,6 +528,7 @@ impl AcpAdapter {
         begun: Begun,
     ) -> AcpSession {
         let Begun {
+            cwd,
             opened,
             model,
             mode,
@@ -536,6 +538,7 @@ impl AcpAdapter {
             .as_ref()
             .map_or_else(String::new, |m| m.current.clone());
         let mut mapper = Mapper::new(&config.agent, opened.session_id.clone());
+        mapper.set_cwd(cwd);
         mapper.set_baseline(
             model.as_ref().map(|m| m.current.clone()),
             mode.as_ref().map(|m| m.current.clone()),
@@ -590,6 +593,7 @@ impl AcpAdapter {
 }
 
 struct Begun {
+    cwd: String,
     opened: Opened,
     model: Option<ModelChoice>,
     mode: Option<ModeChoice>,

@@ -160,6 +160,21 @@ pub enum ButtonKind {
     Ghost,
 }
 
+/// How an approval option's button looks, wherever a request is answered (the chat card, the
+/// inspector's Requests): only the choices that touch this one request (allow once, reject once)
+/// are primary; "Always", cancel and the agent's own kinds are secondary. The harness's option
+/// order never makes a standing rule the easy click, and nothing is activated by Return or by
+/// a click beside the buttons.
+pub fn approval_button_kind(kind: hutan_core::agent::PermissionOptionKind) -> ButtonKind {
+    use hutan_core::agent::PermissionOptionKind as Kind;
+    match kind {
+        Kind::AllowOnce | Kind::RejectOnce => ButtonKind::Primary,
+        Kind::AllowAlways | Kind::RejectAlways | Kind::Cancel | Kind::Other => {
+            ButtonKind::Secondary
+        }
+    }
+}
+
 /// A 28 px text button with an 8 px radius. A disabled one is drawn dim and ignores the mouse
 /// (the caller adds the click handler only when enabled).
 pub fn button(
