@@ -16,7 +16,6 @@
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use hutan_core::agent::MessageRole;
 use hutan_core::{AgentEvent, AgentEventKind, SessionId, TerminalId, WorkspaceId};
@@ -37,7 +36,7 @@ use parking_lot::RwLock;
 use tokio::sync::Mutex;
 
 use crate::accounts::AccountService;
-use crate::assistant_pick::{is_loopback_url, pick_assistant_model};
+use crate::assistant_pick::{CATALOG_TIMEOUT, is_loopback_url, pick_assistant_model};
 use crate::chat::AGENT_CODEX;
 use crate::config::{AssistantSettings, ContextPermissions, gating_setting};
 use crate::context::{
@@ -56,9 +55,6 @@ const JOURNAL_ROWS: u32 = 4000;
 const INDEX_ROWS: usize = 4000;
 /// Longest snippet of a search hit in a `search` attachment, in characters.
 const SNIPPET_CHARS: usize = 300;
-/// How long the model catalog of a backend may take when the assistant picks its model: a
-/// slow catalog means no pick (the harness's own default runs), never a failed open.
-const CATALOG_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The system prompt of an assistant created by `assistant.open`.
 pub const SYSTEM_PROMPT: &str = "You are Mawas, Hutan's assistant, built into a developer's terminal \
@@ -375,49 +371,42 @@ impl AssistantService {
         ))
     }
 
-    /// The model for an assistant whose backend names none (AM-1): a provider's default model,
-    /// else [`pick_assistant_model`] over the backend's catalog. `None` (the harness's own
-    /// default runs) when the catalog is empty, unreadable or slow: the open never fails here.
-    async fn pick_model(&self, backend: &Backend) -> Option<String> {
-        let chats = self.registry.chats();
+    /// The model for a provider assistant whose backend names none (AM-1): the provider's
+    /// default model, else [`pick_assistant_model`] over its catalog. `None` when the catalog
+    /// is empty, unreadable or slow: the open never fails here. A harness assistant picks its
+    /// model when its agent first starts ([`crate::chat::ChatManager::start_waking`]): opening
+    /// one starts nothing.
+    async fn pick_provider_model(&self, provider: &str) -> Option<String> {
+        let providers = self.registry.chats().providers();
         let catalog = async {
-            match (backend.kind.harness(), backend.provider.as_deref()) {
-                (Some(agent), _) => {
-                    Ok::<_, ErrorBody>(pick_assistant_model(&chats.models(agent).await?.models))
-                }
-                (None, Some(provider)) => {
-                    let providers = chats.providers();
-                    let default = providers
-                        .list()
-                        .await?
-                        .providers
-                        .into_iter()
-                        .find(|p| p.id == provider)
-                        .and_then(|p| p.default_model);
-                    if default.is_some() {
-                        return Ok(default);
-                    }
-                    Ok(pick_assistant_model(
-                        &providers.models(provider).await?.models,
-                    ))
-                }
-                (None, None) => Ok(None),
+            let default = providers
+                .list()
+                .await?
+                .providers
+                .into_iter()
+                .find(|p| p.id == provider)
+                .and_then(|p| p.default_model);
+            if default.is_some() {
+                return Ok::<_, ErrorBody>(default);
             }
+            Ok(pick_assistant_model(
+                &providers.models(provider).await?.models,
+            ))
         };
         match tokio::time::timeout(CATALOG_TIMEOUT, catalog).await {
             Ok(Ok(model)) => model,
             Ok(Err(error)) => {
                 tracing::debug!(
-                    backend = backend.kind.as_str(),
+                    provider,
                     message = %error.message,
-                    "no model catalog for the assistant; the backend's default runs"
+                    "no model catalog for the assistant; the provider's default runs"
                 );
                 None
             }
             Err(_) => {
                 tracing::debug!(
-                    backend = backend.kind.as_str(),
-                    "the model catalog was too slow for the assistant; the backend's default runs"
+                    provider,
+                    "the model catalog was too slow for the assistant; the provider's default runs"
                 );
                 None
             }
@@ -559,10 +548,12 @@ impl AssistantService {
         existing: usize,
         backend: &Backend,
     ) -> Result<SessionInfo, ErrorBody> {
-        // A stored or configured model always wins; the pick only fills a gap.
-        let model = match &backend.model {
-            Some(model) => Some(model.clone()),
-            None => self.pick_model(backend).await,
+        // A stored or configured model always wins; the pick only fills a gap. A harness's
+        // gap is filled when its agent first starts, not now: opening starts nothing.
+        let model = match (&backend.model, &backend.provider) {
+            (Some(model), _) => Some(model.clone()),
+            (None, Some(provider)) => self.pick_provider_model(provider).await,
+            (None, None) => None,
         };
         let cwd = workspace
             .roots

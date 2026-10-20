@@ -48,6 +48,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
+use crate::assistant_pick::{CATALOG_TIMEOUT, pick_assistant_model};
 use crate::bus::EventBus;
 use crate::config::AssistantMode;
 use crate::context::Attached;
@@ -835,6 +836,22 @@ impl ChatManager {
         cwd: PathBuf,
         spec: &ChatSpec,
     ) -> Result<Started, ErrorBody> {
+        // An assistant that was opened but never started has neither a conversation nor a
+        // model yet: its model is picked now, the way `assistant.open` used to do it up front.
+        let picked;
+        let spec = if spec.assistant
+            && spec.model.is_none()
+            && spec.thread_id.is_none()
+            && !is_gateway_agent(&spec.agent)
+        {
+            picked = ChatSpec {
+                model: self.pick_first_model(&spec.agent).await,
+                ..spec.clone()
+            };
+            &picked
+        } else {
+            spec
+        };
         let first = self.start_agent(id, cwd.clone(), spec).await;
         let refused = match first {
             Ok(started) => return Ok(started),
@@ -858,6 +875,26 @@ impl ChatManager {
             self.handle(&live, notice).await;
         }
         Ok(started)
+    }
+
+    /// The model a harness assistant starts on when none was configured (AM-1): the backend's
+    /// catalog through [`pick_assistant_model`]. `None` when the catalog is empty, unreadable or
+    /// slow: the harness's own default then runs.
+    async fn pick_first_model(&self, agent: &str) -> Option<String> {
+        match tokio::time::timeout(CATALOG_TIMEOUT, self.models(agent)).await {
+            Ok(Ok(catalog)) => pick_assistant_model(&catalog.models),
+            Ok(Err(error)) => {
+                debug!(agent, message = %error.message, "no model catalog for the assistant; the backend's default runs");
+                None
+            }
+            Err(_) => {
+                debug!(
+                    agent,
+                    "the model catalog was too slow for the assistant; the backend's default runs"
+                );
+                None
+            }
+        }
     }
 
     /// The highest journaled `seq` of a session.

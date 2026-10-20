@@ -1144,7 +1144,7 @@ async fn pending_proposals_survive_a_daemon_restart() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_omp_assistant_gets_its_memory_in_a_private_prompt_file_never_in_argv() {
-    let w = W::start(
+    let mut w = W::start(
         "",
         Scripts {
             omp: &["plain-turn"; 2],
@@ -1197,13 +1197,16 @@ async fn an_omp_assistant_gets_its_memory_in_a_private_prompt_file_never_in_argv
     answer(&w.user, rejected.proposal_id, "reject").await;
 
     let mawas = w.mawas(ws.id, true).await;
+    // Opening starts no agent: the agent of a Mawas chat starts with its first message.
+    assert!(w.append_prompts("omp").is_empty());
+    w.send(mawas.id, "first").await;
     let prompts = w.append_prompts("omp");
     assert_eq!(
         prompts.len(),
-        2,
-        "one start for each Mawas chat: {prompts:?}"
+        1,
+        "one start, for the chat that was written to: {prompts:?}"
     );
-    let file = PathBuf::from(&prompts[1]);
+    let file = PathBuf::from(&prompts[0]);
     assert!(file.starts_with(w.prompt_dir()), "{file:?}");
     assert!(
         !w.argv("omp")
@@ -1263,7 +1266,7 @@ async fn an_omp_assistant_gets_its_memory_in_a_private_prompt_file_never_in_argv
 
 #[tokio::test(flavor = "multi_thread")]
 async fn snapshots_are_deterministic_and_bounded_with_an_explicit_cut() {
-    let w = W::start(
+    let mut w = W::start(
         "",
         Scripts {
             omp: &["plain-turn"; 2],
@@ -1283,6 +1286,10 @@ async fn snapshots_are_deterministic_and_bounded_with_an_explicit_cut() {
     }
     let first = w.mawas(ws.id, false).await;
     let second = w.mawas(ws.id, true).await;
+    // The snapshot is taken when each agent starts: with its first message.
+    assert!(w.snapshots(first.id).is_empty() && w.snapshots(second.id).is_empty());
+    w.send(first.id, "hello").await;
+    w.send(second.id, "hello").await;
     let (one, two) = (w.snapshots(first.id), w.snapshots(second.id));
     assert_eq!(one[0].rendered, two[0].rendered, "same memory, same bytes");
     assert!(
@@ -1430,8 +1437,8 @@ async fn a_resumed_omp_conversation_gets_its_recorded_snapshot_and_the_delta_sin
     )
     .await;
     let mawas = w.mawas(ws.id, false).await;
-    let initial = w.snapshots(mawas.id)[0].rendered.clone();
     w.send(mawas.id, "first").await;
+    let initial = w.snapshots(mawas.id)[0].rendered.clone();
     // Memory changes; the daemon restarts; the next message wakes the assistant.
     let fact = w.entries(false).await[0].clone();
     w.user
@@ -1491,6 +1498,8 @@ async fn a_codex_assistant_gets_developer_instructions_on_start_and_on_resume() 
     .await;
     let mawas = w.mawas(ws.id, false).await;
     assert_eq!(mawas.chat.as_ref().unwrap().agent, "codex");
+    assert!(w.received_of("codex", "thread/start").is_empty());
+    w.send(mawas.id, "hello").await;
     let start = &w.received_of("codex", "thread/start")[0]["params"];
     let instructions = start["developerInstructions"]
         .as_str()
@@ -1506,7 +1515,6 @@ async fn a_codex_assistant_gets_developer_instructions_on_start_and_on_resume() 
     );
     assert_eq!(w.snapshots(mawas.id)[0].rendered, instructions);
 
-    w.send(mawas.id, "hello").await;
     let turn = w.received_of("codex", "turn/start");
     let text = turn[0]["params"]["input"][0]["text"].as_str().unwrap();
     assert!(
@@ -1678,14 +1686,10 @@ async fn with_assistant_memory_off_nothing_is_injected_and_switching_it_on_catch
     )
     .await;
     let mawas = w.mawas(ws.id, false).await;
-    // The plain prompt, inline, and no file, no snapshot.
-    let prompts = w.append_prompts("omp");
-    assert_eq!(prompts.len(), 1);
-    assert!(prompts[0].contains("You are Mawas"), "{}", prompts[0]);
     assert!(
-        !w.prompt_dir().exists() || std::fs::read_dir(w.prompt_dir()).unwrap().next().is_none()
+        w.append_prompts("omp").is_empty(),
+        "opening starts no agent"
     );
-    assert!(w.snapshots(mawas.id).is_empty());
     w.remember(
         MemoryScope::Global,
         None,
@@ -1694,6 +1698,14 @@ async fn with_assistant_memory_off_nothing_is_injected_and_switching_it_on_catch
     )
     .await;
     w.send(mawas.id, "first").await;
+    // The plain prompt, inline, and no file, no snapshot.
+    let prompts = w.append_prompts("omp");
+    assert_eq!(prompts.len(), 1);
+    assert!(prompts[0].contains("You are Mawas"), "{}", prompts[0]);
+    assert!(
+        !w.prompt_dir().exists() || std::fs::read_dir(w.prompt_dir()).unwrap().next().is_none()
+    );
+    assert!(w.snapshots(mawas.id).is_empty());
     let first = prompt_text(&w.received_of("omp", "session/prompt")[0]);
     assert!(
         !first.contains("Hutan memory") && !first.contains("kite"),
@@ -1722,7 +1734,7 @@ async fn with_assistant_memory_off_nothing_is_injected_and_switching_it_on_catch
 
 #[tokio::test(flavor = "multi_thread")]
 async fn nothing_remembered_means_nothing_added_and_the_plain_prompt_stays_inline() {
-    let w = W::start(
+    let mut w = W::start(
         "",
         Scripts {
             omp: &["plain-turn"],
@@ -1732,6 +1744,7 @@ async fn nothing_remembered_means_nothing_added_and_the_plain_prompt_stays_inlin
     .await;
     let ws = w.workspace("alpha").await;
     let mawas = w.mawas(ws.id, false).await;
+    w.send(mawas.id, "hello").await;
     let prompts = w.append_prompts("omp");
     assert!(prompts[0].contains("You are Mawas"), "{}", prompts[0]);
     // The empty snapshot is still recorded: it is what later deltas are measured against.

@@ -974,12 +974,13 @@ async fn a_change_of_mode_restarts_the_agent_before_the_next_turn_and_says_so() 
     let mut m = M::start("", &["plain-turn", "load"]).await;
     let ws = m.workspace("alpha").await;
     let mawas = m.mawas(ws, false).await;
+    assert!(m.argv().is_empty(), "opening starts no agent");
+    m.user.chat_send(mawas.id, "Say hello.").await.unwrap();
+    wait_turn_end(&mut m.events).await;
     // Ask before acting: everything the agent can do, asking Hutan.
     let first = m.argv();
     assert!(first.iter().any(|a| a == "--approval-mode"), "{first:?}");
     assert!(!first.iter().any(|a| a == "--tools"), "{first:?}");
-    m.user.chat_send(mawas.id, "Say hello.").await.unwrap();
-    wait_turn_end(&mut m.events).await;
 
     // Switch to Advisor: the setting is live, the agent restarts when the next message comes.
     m.set_setting("assistant.mode", serde_json::json!("advisor"))

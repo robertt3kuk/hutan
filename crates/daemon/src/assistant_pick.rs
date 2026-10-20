@@ -11,8 +11,13 @@
 //! `provider.models`) and passes it in.
 
 use std::cmp::Ordering;
+use std::time::Duration;
 
 use hutan_core::ModelInfo;
+
+/// How long the model catalog of a backend may take when the assistant picks its model: a
+/// slow catalog means no pick (the backend's own default runs), never a failed start.
+pub(crate) const CATALOG_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The model the assistant should run on, from the catalog of its backend: the catalog default
 /// (else the first model that is not hidden), moved one tier down when it is a premium tier and

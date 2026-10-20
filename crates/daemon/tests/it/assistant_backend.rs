@@ -333,6 +333,28 @@ impl B {
             .map(|r| r.session)
     }
 
+    /// The first message of an assistant: opening one starts nothing, this starts its agent.
+    /// The turn itself is not the test's business (the fixture may not script it); the agent
+    /// having started is.
+    async fn start_agent(&self, id: SessionId) -> SessionInfo {
+        let _ = self.client.chat_send(id, "hello").await;
+        tokio::time::timeout(common::WAIT, async {
+            loop {
+                let session = self.session(id).await;
+                if session
+                    .chat
+                    .as_ref()
+                    .is_some_and(|c| c.agent_session_id.is_some())
+                {
+                    return session;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the first message starts the agent")
+    }
+
     async fn list(&self) -> AssistantList {
         self.client
             .call(Request::AssistantList(AssistantListRequest::default()))
@@ -490,10 +512,21 @@ async fn with_nothing_configured_a_ready_omp_runs_the_assistant_one_tier_below_i
             .collect::<Vec<_>>(),
         [FIXTURE_MODEL]
     );
+    let catalog_sessions = t.received_of("omp", "session/new").len();
     let session = t.open(AssistantScope::Global, None, false).await.unwrap();
     let chat = session.chat.clone().unwrap();
     assert_eq!(chat.agent, "omp");
     assert!(chat.is_assistant());
+    // Opening started nothing and picked nothing; the first message does both.
+    assert_eq!(chat.model, "");
+    assert_eq!(session.state, SessionState::Idle);
+    assert_eq!(
+        t.received_of("omp", "session/new").len(),
+        catalog_sessions,
+        "no session of the assistant's own yet"
+    );
+    let session = t.start_agent(session.id).await;
+    let chat = session.chat.clone().unwrap();
     assert_eq!(chat.model, FIXTURE_SONNET, "what the session runs");
     // The harness was asked for that model.
     let set = t.received_of("omp", "session/set_config_option");
@@ -505,6 +538,7 @@ async fn with_nothing_configured_a_ready_omp_runs_the_assistant_one_tier_below_i
     assert_eq!(entry.session.chat.unwrap().model, FIXTURE_SONNET);
     // A second open finds the same session and starts nothing.
     let sessions_before = t.received_of("omp", "session/new").len();
+    assert!(sessions_before >= 1, "the agent started");
     assert_eq!(
         t.open(AssistantScope::Global, None, false)
             .await
@@ -536,6 +570,12 @@ async fn a_stored_model_is_used_as_it_is_and_a_backend_without_one_gets_the_pick
     .unwrap();
     let session = t.open(AssistantScope::Global, None, false).await.unwrap();
     assert_eq!(session.chat.clone().unwrap().model, haiku);
+    assert!(
+        t.received_of("omp", "session/new").is_empty(),
+        "opening starts nothing"
+    );
+    let session = t.start_agent(session.id).await;
+    assert_eq!(session.chat.clone().unwrap().model, haiku);
     assert_eq!(
         t.received_of("omp", "session/new").len(),
         1,
@@ -559,6 +599,12 @@ async fn a_stored_model_is_used_as_it_is_and_a_backend_without_one_gets_the_pick
     .await
     .unwrap();
     let session = t.open(AssistantScope::Global, None, false).await.unwrap();
+    assert_eq!(
+        session.chat.clone().unwrap().model,
+        "",
+        "picked when the agent starts"
+    );
+    let session = t.start_agent(session.id).await;
     assert_eq!(session.chat.unwrap().model, FIXTURE_SONNET);
     t.stop().await;
 }
@@ -576,6 +622,10 @@ async fn daemon_toml_backend_omp_creates_a_read_only_omp_assistant_in_advisor_mo
     assert_eq!(chat.agent, "omp");
     assert!(chat.assistant && chat.is_assistant());
     assert_eq!(session.title, "Mawas");
+    assert!(t.argv("omp").is_empty(), "opening starts nothing");
+    // The first message starts the agent and is an ordinary harness turn: it streams.
+    t.client.chat_send(session.id, "Say hello.").await.unwrap();
+    t.wait_turn_end().await;
     // OMP started with its tools limited to reading and the assistant prompt appended.
     let argv = t.argv("omp");
     let tools = argv.iter().position(|a| a == "--tools").expect("--tools");
@@ -591,9 +641,6 @@ async fn daemon_toml_backend_omp_creates_a_read_only_omp_assistant_in_advisor_mo
     let entry = t.list().await.assistants.remove(0);
     assert!(entry.default);
     assert_eq!(entry.backend, AssistantBackend::Omp);
-    // It is an ordinary harness chat: a turn streams.
-    t.client.chat_send(session.id, "Say hello.").await.unwrap();
-    t.wait_turn_end().await;
     let history = t.history(session.id).await;
     assert!(history.events.iter().any(|e| matches!(
         &e.kind,
@@ -613,7 +660,8 @@ async fn an_ask_before_acting_omp_assistant_has_every_tool_and_routes_its_approv
     })
     .await;
     let session = t.open(AssistantScope::Global, None, false).await.unwrap();
-    assert!(session.chat.unwrap().assistant);
+    assert!(session.chat.clone().unwrap().assistant);
+    t.start_agent(session.id).await;
     // OMP started with no tool restriction, asking the client (Hutan's approval cards) for
     // everything above reading, and the prompt that says it can act.
     let argv = t.argv("omp");
@@ -642,6 +690,7 @@ async fn an_advisor_claude_assistant_runs_in_plan_mode() {
     let chat = session.chat.clone().unwrap();
     assert_eq!(chat.agent, "claude");
     assert!(chat.assistant);
+    t.start_agent(session.id).await;
     let modes = t.received_of("claude", "session/set_mode");
     assert_eq!(modes.len(), 1, "{:?}", t.received("claude"));
     assert_eq!(modes[0]["params"]["modeId"], "plan");
@@ -656,7 +705,8 @@ async fn an_ask_before_acting_claude_assistant_runs_in_its_default_permission_mo
     })
     .await;
     let session = t.open(AssistantScope::Global, None, false).await.unwrap();
-    assert!(session.chat.unwrap().assistant);
+    assert!(session.chat.clone().unwrap().assistant);
+    t.start_agent(session.id).await;
     // The fixture's session starts in `default` already, and nothing asks for `plan`.
     let modes = t.received_of("claude", "session/set_mode");
     assert!(
@@ -679,6 +729,7 @@ async fn an_advisor_codex_assistant_has_a_read_only_sandbox_and_never_asks() {
     assert!(chat.assistant);
     assert_eq!(chat.sandbox, SandboxMode::ReadOnly);
     assert_eq!(chat.approval_policy, ApprovalPolicy::Never);
+    t.start_agent(session.id).await;
     let start = t.received_of("codex", "thread/start");
     assert_eq!(start[0]["params"]["sandbox"], "read-only");
     assert_eq!(start[0]["params"]["approvalPolicy"], "never");
@@ -702,6 +753,7 @@ async fn an_ask_before_acting_codex_assistant_writes_in_the_workspace_and_asks_o
     assert!(chat.assistant);
     assert_eq!(chat.sandbox, SandboxMode::WorkspaceWrite);
     assert_eq!(chat.approval_policy, ApprovalPolicy::OnRequest);
+    t.start_agent(session.id).await;
     let start = t.received_of("codex", "thread/start");
     assert_eq!(start[0]["params"]["sandbox"], "workspace-write");
     assert_eq!(start[0]["params"]["approvalPolicy"], "on-request");
@@ -1182,19 +1234,22 @@ async fn a_project_in_a_workspace_follows_the_workspace_choice_unless_it_has_its
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_harness_that_cannot_start_fails_the_open_and_another_backend_still_works() {
+async fn a_harness_that_cannot_start_fails_its_first_message_and_another_backend_still_works() {
     let t = B::start(Setup {
         assistant: OMP_ASSISTANT,
         missing_omp: true,
         ..Setup::default()
     })
     .await;
-    let error = t
-        .open(AssistantScope::Global, None, false)
-        .await
-        .unwrap_err();
+    // Opening starts nothing, so it cannot fail on a harness that is not there…
+    let omp = t.open(AssistantScope::Global, None, false).await.unwrap();
+    assert_eq!(omp.state, SessionState::Idle);
+    assert_eq!(omp.chat.as_ref().unwrap().agent, "omp");
+    // …the first message does, with the harness's error, and the session stays as it was.
+    let error = t.client.chat_send(omp.id, "hello").await.unwrap_err();
     assert_eq!(remote_code(Err::<(), _>(error)), ErrorCode::ProviderError);
-    // The failed session stays listed; it is not the default of another backend.
+    assert_eq!(t.session(omp.id).await.state, SessionState::Idle);
+    // Another backend still works next to it; the one that could not start is not its default.
     t.configure(
         AssistantScope::Global,
         None,
@@ -1208,12 +1263,9 @@ async fn a_harness_that_cannot_start_fails_the_open_and_another_backend_still_wo
     assert_eq!(ok.chat.as_ref().unwrap().agent, "claude");
     let listed = t.list().await.assistants;
     assert_eq!(listed.len(), 2);
-    assert!(matches!(
-        listed[0].session.state,
-        SessionState::Failed { .. }
-    ));
+    assert_eq!(listed[0].session.id, omp.id);
     assert!(!listed[0].default && listed[1].default);
-    // Choosing OMP again tries it again, and fails the same way.
+    // Choosing OMP again makes that session the default again, and sending tries again.
     t.configure(
         AssistantScope::Global,
         None,
@@ -1223,20 +1275,10 @@ async fn a_harness_that_cannot_start_fails_the_open_and_another_backend_still_wo
     )
     .await
     .unwrap();
-    // The default is that failed session: it is started again, and fails the same way.
     let again = t.open(AssistantScope::Global, None, false).await.unwrap();
-    assert_eq!(again.id, listed[0].session.id);
-    let failed = tokio::time::timeout(common::WAIT, async {
-        loop {
-            let session = t.session(again.id).await;
-            if matches!(session.state, SessionState::Failed { .. }) {
-                return session;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the restart fails");
-    assert!(matches!(failed.state, SessionState::Failed { .. }));
+    assert_eq!(again.id, omp.id);
+    let error = t.client.chat_send(omp.id, "again").await.unwrap_err();
+    assert_eq!(remote_code(Err::<(), _>(error)), ErrorCode::ProviderError);
+    assert_eq!(t.session(omp.id).await.state, SessionState::Idle);
     t.stop().await;
 }

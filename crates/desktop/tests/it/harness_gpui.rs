@@ -347,15 +347,40 @@ fn an_unconfigured_assistant_opens_on_the_ready_omp_with_the_model_one_tier_down
     let daemon = daemon(scripts.path(), "model-switch", "");
     let (view, cx) = open(cx, &daemon);
     view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
-    wait_until(cx, "the OMP assistant", |cx| {
+    let omp_assistant = |cx: &mut VisualTestContext| {
         view.read_with(cx, |wb, cx| {
-            wb.sessions().read(cx).sessions().iter().any(|s| {
-                s.chat.as_ref().is_some_and(|c| {
-                    c.agent == "omp" && c.assistant && c.model == "gitlab-duo/duo-chat-sonnet-4-6"
+            wb.sessions()
+                .read(cx)
+                .sessions()
+                .iter()
+                .find(|s| {
+                    s.chat
+                        .as_ref()
+                        .is_some_and(|c| c.agent == "omp" && c.assistant)
                 })
-            })
+                .cloned()
         })
-    });
+    };
+    wait_until(cx, "the OMP assistant", |cx| omp_assistant(cx).is_some());
+    // Opening started nothing: the model is picked when the agent first starts, with the
+    // first message.
+    let session = omp_assistant(cx).unwrap();
+    assert_eq!(session.chat.as_ref().unwrap().model, "");
+    let _: hutan_protocol::chat::ChatSent = daemon.call(
+        hutan_protocol::messages::Request::ChatSend(hutan_protocol::chat::ChatSend {
+            session_id: session.id,
+            text: "hello".into(),
+            attachments: Vec::new(),
+        }),
+    );
+    wait_until(
+        cx,
+        "the first message to start the agent on the picked model",
+        |cx| {
+            omp_assistant(cx)
+                .is_some_and(|s| s.chat.as_ref().unwrap().model == "gitlab-duo/duo-chat-sonnet-4-6")
+        },
+    );
     common::draw(cx);
     assert!(
         view.read_with(cx, |wb, _| wb.region_bounds(Region::Assistant("use-omp")))
@@ -405,7 +430,7 @@ fn the_panel_header_switches_the_backend_and_model(cx: &mut TestAppContext) {
                 wb.sessions().read(cx).sessions().iter().any(|s| {
                     s.chat
                         .as_ref()
-                        .is_some_and(|c| c.agent == "omp" && c.assistant && !c.model.is_empty())
+                        .is_some_and(|c| c.agent == "omp" && c.assistant)
                 })
             })
         },
@@ -417,5 +442,59 @@ fn the_panel_header_switches_the_backend_and_model(cx: &mut TestAppContext) {
     assert_eq!(
         listed.assistants[0].backend,
         hutan_protocol::assistant::AssistantBackend::Omp
+    );
+}
+
+#[gpui::test]
+fn opening_mawas_starts_no_agent_and_resources_says_it_is_idle(cx: &mut TestAppContext) {
+    use hutan_desktop::workbench::actions;
+    use hutan_desktop::workbench::panels::{ResourceLine, ResourcesPanel};
+
+    let scripts = tempfile::tempdir().unwrap();
+    let daemon = daemon(
+        scripts.path(),
+        "model-switch",
+        "[assistant]\nbackend = \"omp\"\n",
+    );
+    let (view, cx) = open(cx, &daemon);
+    view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
+    wait_until(cx, "the OMP assistant", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).sessions().iter().any(|s| {
+                s.chat
+                    .as_ref()
+                    .is_some_and(|c| c.agent == "omp" && c.assistant)
+            })
+        })
+    });
+    let title = view.read_with(cx, |wb, cx| {
+        wb.sessions()
+            .read(cx)
+            .sessions()
+            .iter()
+            .find(|s| s.chat.as_ref().is_some_and(|c| c.assistant))
+            .map(|s| s.title.clone())
+            .unwrap()
+    });
+    // Nothing runs for it: no process rows, only the idle line.
+    common::draw(cx);
+    cx.dispatch_action(actions::ShowResources);
+    common::draw(cx);
+    let panel = view
+        .read_with(cx, |wb, _| wb.panel::<ResourcesPanel>("resources"))
+        .expect("the resources panel is shown");
+    wait_until(cx, "a resource sample and the idle line", |cx| {
+        panel.read_with(cx, |p, cx| {
+            p.lines(cx)
+                .iter()
+                .any(|l| matches!(l, ResourceLine::Note(t) if t == &format!("{title} · idle, no process")))
+        })
+    });
+    let lines = panel.read_with(cx, |p, cx| p.lines(cx));
+    assert!(
+        lines
+            .iter()
+            .all(|l| !matches!(l, ResourceLine::Session(_) | ResourceLine::Process { .. })),
+        "no row of an agent process: {lines:?}"
     );
 }

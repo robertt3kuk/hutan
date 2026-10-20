@@ -157,7 +157,15 @@ enum Command {
     ProcessTargets(Option<SessionId>, Reply<Vec<ProcessTarget>>),
     /// `chat.create` with a canonical `cwd` and, when it names no workspace, where the `cwd`
     /// goes; answered once the agent is up (or failed).
-    CreateChat(ChatCreate, Option<Assignment>, bool, Reply<SessionInfo>),
+    /// `bool`s: an assistant; one that is created asleep, its agent started by the first
+    /// message ([`RegistryHandle::create_assistant_chat`]).
+    CreateChat(
+        ChatCreate,
+        Option<Assignment>,
+        bool,
+        bool,
+        Reply<SessionInfo>,
+    ),
     /// From the task that started a chat agent (`wake`: the agent of a sleeping assistant,
     /// started to be used; the session was idle all along).
     ChatStarted {
@@ -538,27 +546,30 @@ impl RegistryHandle {
     /// Opens an agent conversation as a session; returns once the agent is ready (state
     /// `idle`) or fails with `provider_error` when it could not start.
     pub async fn create_chat(&self, req: ChatCreate) -> Result<SessionInfo, ErrorBody> {
-        self.create_chat_as(req, false).await
+        self.create_chat_as(req, false, false).await
     }
 
     /// [`create_chat`](Self::create_chat) for an assistant (protocol 0.20): a harness session
     /// that is marked as one, so that it starts with its tools restricted and
-    /// `assistant.list` finds it. Only the daemon's assistant service calls this.
+    /// `assistant.list` finds it. Only the daemon's assistant service calls this. The session
+    /// is created **asleep** (state `idle`, no process, nothing journaled): its agent starts
+    /// with the first message (`chat.send`), so that opening Mawas costs nothing.
     pub async fn create_assistant_chat(&self, req: ChatCreate) -> Result<SessionInfo, ErrorBody> {
-        self.create_chat_as(req, true).await
+        self.create_chat_as(req, true, true).await
     }
 
     async fn create_chat_as(
         &self,
         mut req: ChatCreate,
         assistant: bool,
+        asleep: bool,
     ) -> Result<SessionInfo, ErrorBody> {
         req.cwd = canonical_dir(req.cwd).await?;
         let assignment = match req.workspace_id {
             Some(_) => None,
             None => Some(self.assign(Some(req.cwd.clone())).await?),
         };
-        self.ask(|r| Command::CreateChat(req, assignment, assistant, r))
+        self.ask(|r| Command::CreateChat(req, assignment, assistant, asleep, r))
             .await
     }
 
@@ -1244,8 +1255,8 @@ impl SessionRegistry {
                 Command::ProcessTargets(session, reply) => {
                     let _ = reply.send(self.process_targets(session));
                 }
-                Command::CreateChat(req, assignment, assistant, reply) => {
-                    self.create_chat(req, assignment, assistant, reply);
+                Command::CreateChat(req, assignment, assistant, asleep, reply) => {
+                    self.create_chat(req, assignment, assistant, asleep, reply);
                 }
                 Command::ChatStarted {
                     session,
@@ -2930,9 +2941,22 @@ impl SessionRegistry {
         req: ChatCreate,
         assignment: Option<Assignment>,
         assistant: bool,
+        asleep: bool,
         reply: Reply<SessionInfo>,
     ) {
         match self.begin_chat(req, assignment, assistant) {
+            Ok(index) if asleep => {
+                let session = &mut self.sessions[index];
+                session.advance(SessionEvent::Ready);
+                let id = session.info.id;
+                self.sync_chat_state(index);
+                // Asleep before anyone can see it: the session is never neither running nor
+                // asleep, and the first message starts the agent.
+                self.chats.mark_asleep(id);
+                self.emit_session(index);
+                self.persist_session(index);
+                let _ = reply.send(Ok(self.sessions[index].info.clone()));
+            }
             Ok(index) => self.spawn_chat_start(index, Some(reply), false),
             Err(error) => {
                 let _ = reply.send(Err(error));

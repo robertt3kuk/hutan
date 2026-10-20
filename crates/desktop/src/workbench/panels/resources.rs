@@ -262,7 +262,7 @@ impl ResourcesPanel {
         };
         let settings = self.env.settings.get::<ResourcesSettings>();
         let store = self.env.sessions.read(cx);
-        model::lines(
+        let mut lines = model::lines(
             sample,
             &Self::meta(store),
             &Options {
@@ -271,7 +271,24 @@ impl ResourcesPanel {
                 filter: &self.filter,
                 folds: &self.folds,
             },
-        )
+        );
+        // A harness assistant that is open but has no agent running (it starts with the first
+        // message, or was put to sleep) has no process to list: one line says so, instead of
+        // leaving the user to wonder where Mawas is.
+        let filter = self.filter.trim().to_lowercase();
+        for info in store.sessions() {
+            let idle_assistant = info.state == hutan_core::SessionState::Idle
+                && info.chat.as_ref().is_some_and(|chat| chat.assistant);
+            if idle_assistant
+                && !sample.sessions.iter().any(|s| s.session_id == info.id)
+                && (filter.is_empty()
+                    || info.title.to_lowercase().contains(&filter)
+                    || "idle".contains(&filter))
+            {
+                lines.push(Line::Note(format!("{} · idle, no process", info.title)));
+            }
+        }
+        lines
     }
 
     /// The entries of the context menu of a row, from the lines on screen.

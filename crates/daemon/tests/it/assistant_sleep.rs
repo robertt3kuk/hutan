@@ -622,3 +622,68 @@ async fn a_sleeping_assistant_can_be_stopped_and_a_stopped_one_is_not_woken_by_o
     );
     t.stop().await;
 }
+
+/// Whether any process still has `needle` in its command line.
+fn any_process_with(needle: &str) -> bool {
+    Command::new("pgrep")
+        .args(["-f", needle])
+        .stdout(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn opening_an_assistant_starts_no_agent_until_the_first_message() {
+    let mut t = S::start(&["plain-turn"]).await;
+    // The agent would log into this file: its path is in the process's command line too.
+    let marker = t.work.path().join("received.jsonl");
+    let marker = marker.to_string_lossy().into_owned();
+
+    let assistant = t.open().await;
+    assert!(assistant.chat.as_ref().unwrap().assistant);
+    assert_eq!(assistant.state, SessionState::Idle, "{assistant:?}");
+    assert_eq!(
+        assistant.chat.as_ref().unwrap().model,
+        FIXTURE_MODEL,
+        "the configured model is on the record"
+    );
+    // A second look changes nothing, and nothing runs: no agent, nothing for `hutan ps`.
+    let again = t.open().await;
+    assert_eq!(again.id, assistant.id);
+    sleep(Duration::from_millis(300)).await;
+    assert_eq!(t.starts(), 0, "the agent was never initialized");
+    assert!(!any_process_with(&marker), "no agent process");
+    t.session_is_idle_and_empty(assistant.id).await;
+    assert!(t.history(assistant.id).await.events.is_empty());
+    assert_eq!(
+        t.client.resources_list(None).await.unwrap().sessions.len(),
+        0,
+        "the resource manager has no row for it"
+    );
+
+    // The first message starts it and the turn streams as ever.
+    t.turn(assistant.id, "Say hello.").await;
+    assert_eq!(t.starts(), 1);
+    assert!(any_process_with(&marker), "the agent runs now");
+    let history = t.history(assistant.id).await;
+    assert_eq!(answers(&history), ["Hello, world."]);
+    t.agent_pid(assistant.id).await;
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_assistant_that_was_never_started_comes_back_from_a_restart_still_without_an_agent() {
+    let t = S::start(&["plain-turn"]).await;
+    let assistant = t.open().await;
+    assert_eq!(assistant.state, SessionState::Idle);
+    let mut t = t.restarted().await;
+    let after = t.session(assistant.id).await;
+    assert_eq!(after.state, SessionState::Idle);
+    sleep(Duration::from_millis(300)).await;
+    assert_eq!(t.starts(), 0);
+    assert!(t.pids(assistant.id).await.is_empty());
+    // And it still starts with its first message.
+    t.turn(assistant.id, "Say hello.").await;
+    assert_eq!(t.starts(), 1);
+    t.stop().await;
+}
