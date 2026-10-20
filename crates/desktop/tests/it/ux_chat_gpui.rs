@@ -558,3 +558,124 @@ fn an_ended_question_nobody_typed_into_leaves_no_form_behind(cx: &mut TestAppCon
         "no Copy without answers"
     );
 }
+
+// ---- UX-JUMP-LATEST (chat half) -------------------------------------------------------------
+
+fn send_on_daemon(daemon: &TestDaemon, id: SessionId, text: &str) {
+    let _: hutan_protocol::chat::ChatSent =
+        daemon.call(Request::ChatSend(hutan_protocol::chat::ChatSend {
+            session_id: id,
+            text: text.to_owned(),
+            attachments: vec![],
+        }));
+}
+
+/// Scrolls the chat's list by `dy` pixels (positive reads further up) over an entry that is
+/// drawn.
+fn scroll(view: &Entity<Workbench>, cx: &mut VisualTestContext, dy: f32) {
+    let bounds = (0..64)
+        .find_map(|at| view.read_with(cx, |wb, _| wb.region_bounds(Region::ChatEntry(at))))
+        .expect("an entry is drawn");
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: bounds.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(dy))),
+        modifiers: gpui::Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    draw(cx);
+    draw(cx);
+}
+
+#[gpui::test]
+fn output_below_a_reader_who_scrolled_up_is_announced_and_one_click_returns(
+    cx: &mut TestAppContext,
+) {
+    const BEFORE: usize = 12;
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(crate::chat_gpui::many_turns(&env, BEFORE + 2));
+    let info = daemon.create_chat(&env.cwd());
+    for turn in 1..=BEFORE {
+        send_on_daemon(&daemon, info.id, &format!("message {turn}"));
+        std::thread::sleep(Duration::from_millis(5));
+        crate::chat_gpui::wait_idle(&daemon, info.id);
+    }
+    let (view, cx) = open(cx, &daemon);
+    let (chat, model) = open_chat(&view, cx, info.id);
+    draw(cx);
+    assert!(chat.read_with(cx, |c, _| c.following_tail()));
+    assert_eq!(chat.read_with(cx, |c, cx| c.new_below(cx)), None);
+
+    // The reader scrolls up; the next turn's output arrives below.
+    scroll(&view, cx, 100_000.0);
+    assert!(!chat.read_with(cx, |c, _| c.following_tail()));
+    assert_eq!(
+        chat.read_with(cx, |c, cx| c.new_below(cx)),
+        None,
+        "nothing new yet"
+    );
+    let anchor = chat.read_with(cx, |c, cx| c.scroll_anchor(cx));
+    send_on_daemon(&daemon, info.id, &format!("message {}", BEFORE + 1));
+    pump(cx, "the new turn", |cx| {
+        model.read_with(cx, |m, _| {
+            m.transcript()
+                .entries()
+                .iter()
+                .filter(|e| matches!(e.body, Body::Footer(_)))
+                .count()
+                > 0
+                && m.transcript().entries().len() > 3 * BEFORE
+        })
+    });
+    draw(cx);
+    // The place was kept, and the pill says what arrived.
+    assert_eq!(chat.read_with(cx, |c, cx| c.scroll_anchor(cx)), anchor);
+    let pill = chat.read_with(cx, |c, cx| c.new_below(cx)).expect("a pill");
+    assert!(
+        pill.ends_with(" new ↓") && !pill.starts_with("0 "),
+        "{pill}"
+    );
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("jump-latest")))
+            .is_some(),
+        "the pill is drawn"
+    );
+
+    // Reading back down to the end makes the pill go and the list follows again.
+    scroll(&view, cx, -1_000_000.0);
+    scroll(&view, cx, -1_000_000.0);
+    assert_eq!(chat.read_with(cx, |c, cx| c.new_below(cx)), None);
+    assert!(chat.read_with(cx, |c, _| c.following_tail()));
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("jump-latest")))
+            .is_none()
+    );
+
+    // Up again, another turn: the click on the pill is the way back.
+    scroll(&view, cx, 100_000.0);
+    pump(cx, "the pill to be quiet", |cx| {
+        chat.read_with(cx, |c, cx| c.new_below(cx)).is_none()
+    });
+    send_on_daemon(&daemon, info.id, &format!("message {}", BEFORE + 2));
+    pump(cx, "the pill", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("jump-latest")))
+            .is_some()
+    });
+    assert!(
+        !chat.read_with(cx, |c, _| c.following_tail()),
+        "streaming does not drag the reader"
+    );
+    let bounds = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Chat("jump-latest")))
+        .unwrap();
+    cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+    draw(cx);
+    draw(cx);
+    assert!(chat.read_with(cx, |c, _| c.following_tail()));
+    assert_eq!(chat.read_with(cx, |c, cx| c.new_below(cx)), None);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("jump-latest")))
+            .is_none(),
+        "the pill is gone at the bottom"
+    );
+}

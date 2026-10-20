@@ -57,6 +57,9 @@ pub struct ChatView {
     synced_front: u64,
     synced_len: usize,
     synced_rev: u64,
+    /// The end of the transcript as the reader last saw it (at the bottom): what "new below"
+    /// counts from.
+    seen_end: TailMark,
     /// Things the user opened or closed, against each card's default: `(entry id, part)`.
     pub(super) toggled: HashSet<(u64, u32)>,
     /// Parsed markdown by entry id, with the entry revision it was parsed at.
@@ -91,6 +94,23 @@ impl std::fmt::Debug for ChatView {
 impl Focusable for ChatView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+/// The end of a transcript at one moment: how many entries it had (those put in front by "Load
+/// earlier" do not count) and the revision of the last one, which grows while a reply streams.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct TailMark {
+    end: u64,
+    last_rev: u64,
+}
+
+impl TailMark {
+    fn of(transcript: &hutan_chat_view::Transcript) -> Self {
+        Self {
+            end: (transcript.len() as u64).saturating_sub(transcript.prepended()),
+            last_rev: transcript.entries().last().map_or(0, |entry| entry.rev),
+        }
     }
 }
 
@@ -142,6 +162,7 @@ impl ChatView {
             synced_front: 0,
             synced_len: 0,
             synced_rev: 0,
+            seen_end: TailMark::default(),
             toggled: HashSet::new(),
             parsed: HashMap::new(),
             entries_built: 0,
@@ -192,6 +213,43 @@ impl ChatView {
     /// Whether the list follows the end of the transcript (the reader has not scrolled away).
     pub fn following_tail(&self) -> bool {
         self.list.is_following_tail()
+    }
+
+    /// Whether the reader sees the end of the transcript: the list follows it, or is scrolled
+    /// all the way down (the list takes up following again on the layout after it got there;
+    /// this does not wait for it).
+    fn at_bottom(&self) -> bool {
+        if self.list.is_following_tail() {
+            return true;
+        }
+        let end = self.list.max_offset_for_scrollbar().y;
+        let at = -self.list.scroll_px_offset_for_scrollbar().y;
+        at + px(1.0) >= end
+    }
+
+    /// What arrived below the reader's place while they read further up, as the pill says it
+    /// (`3 new ↓`, `New output ↓` while the last entry only grew); `None` at the bottom and
+    /// while nothing changed.
+    pub fn new_below(&self, cx: &App) -> Option<String> {
+        if self.at_bottom() {
+            return None;
+        }
+        let now = TailMark::of(self.model.read(cx).transcript());
+        let added = now.end.saturating_sub(self.seen_end.end);
+        if added > 0 {
+            Some(format!("{added} new ↓"))
+        } else if now.end == self.seen_end.end && now.last_rev != self.seen_end.last_rev {
+            Some("New output ↓".to_owned())
+        } else {
+            None
+        }
+    }
+
+    /// The pill's click: back to the end of the conversation, following it again.
+    pub fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
+        self.list.set_follow_mode(FollowMode::Tail);
+        self.seen_end = TailMark::of(self.model.read(cx).transcript());
+        cx.notify();
     }
 
     /// Brings the list's item heights in line with the transcript: items whose entry changed are
@@ -976,6 +1034,41 @@ impl ChatView {
         )
     }
 
+    /// The pill over the bottom of the transcript while the reader is further up and output
+    /// arrived: one click goes to the end and follows it again.
+    fn render_jump(&self, text: String, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+        let (theme, tokens) = (&look.theme, &look.tokens);
+        let accent = theme.accent;
+        div()
+            .absolute()
+            .bottom(px(tokens.spacing * 3.0))
+            .left_0()
+            .right_0()
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .id("chat-jump-latest")
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .h(px(tokens.control_height))
+                    .px(px(tokens.spacing * 4.0))
+                    .rounded(px(crate::theme::pill_radius()))
+                    .bg(accent)
+                    .text_color(theme.on_accent())
+                    .text_size(px(tokens.secondary_font_size))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(accent.opacity(0.88)))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(|this, _, _, cx| this.jump_to_latest(cx)))
+                    .child(SharedString::from(text))
+                    .child(probe(&self.regions, Region::Chat("jump-latest"))),
+            )
+            .into_any_element()
+    }
+
     fn render_empty(&self, look: &Look, cx: &App) -> AnyElement {
         let mawas = self.supports_context(cx);
         let (mascot, text) = match self.model.read(cx).status() {
@@ -1336,6 +1429,15 @@ impl Render for ChatView {
             .map(|approval| approval.id)
             .collect();
         let look = Look::of(cx);
+        // What the reader has seen of the end is what was there while they were at the bottom;
+        // a transcript that started over (a daemon restart) starts the count again.
+        let now = TailMark::of(self.model.read(cx).transcript());
+        if self.at_bottom() || now.end < self.seen_end.end {
+            self.seen_end = now;
+        }
+        let jump = self
+            .new_below(cx)
+            .map(|text| self.render_jump(text, &look, cx));
         let info = self.info(cx);
         let gate = self.gate(info.as_ref(), cx);
         let header = self.render_header(info.as_ref(), &look, cx);
@@ -1403,7 +1505,14 @@ impl Render for ChatView {
             .children(recovery)
             .children(banner)
             .children(earlier)
-            .child(div().relative().flex_1().min_h_0().child(body))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(body)
+                    .children(jump),
+            )
             .children(attach)
             .child(composer)
             .child(drop_overlay)

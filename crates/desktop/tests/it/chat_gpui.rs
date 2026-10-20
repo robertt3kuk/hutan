@@ -1849,7 +1849,7 @@ fn an_answer_from_another_window_says_so_and_so_does_a_reopened_journal(cx: &mut
 }
 
 /// `plain-turn` with its turn repeated `turns` times, ids made unique.
-fn many_turns(env: &ChatEnv, turns: usize) -> hutan_agents::CodexConfig {
+pub(crate) fn many_turns(env: &ChatEnv, turns: usize) -> hutan_agents::CodexConfig {
     env.edited("plain-turn", |entries| {
         let turn: Vec<Value> = entries.split_off(9);
         for k in 1..=turns {
@@ -1870,7 +1870,7 @@ fn many_turns(env: &ChatEnv, turns: usize) -> hutan_agents::CodexConfig {
     })
 }
 
-fn wait_idle(daemon: &TestDaemon, id: SessionId) {
+pub(crate) fn wait_idle(daemon: &TestDaemon, id: SessionId) {
     let start = std::time::Instant::now();
     while session_state(daemon, id) != SessionState::Idle {
         assert!(
