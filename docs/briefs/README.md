@@ -21,6 +21,9 @@ Public API / behavior other slices rely on (signatures, invariants).
 ## Acceptance
 Observable checks: tests to add, commands that must pass (`just check`), demo steps.
 
+## Parity
+Affordances this slice removes or moves (button, panel, shortcut, menu item, setting, layout state), each with its replacement, or "none". UI slices name the screens to check in a real window (`docs/process.md` § UI checks).
+
 ## Out of scope
 What not to do.
 

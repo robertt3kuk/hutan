@@ -143,6 +143,16 @@ All gates wrap into one entry point (`just check`) created in M0.
 - Behavior works end-to-end through the real daemon/socket path it touches.
 - Gate green; new behavior covered by a test that would catch a regression.
 - Docs (architecture/protocol/ADR) updated; `status.md` and `roadmap.md` updated; committed.
+- **Parity**: every removed or moved affordance (button, panel, shortcut, menu item, setting, layout state) is listed with its replacement, or kept for one release. A change that moves user layout state shows a one-time note and keeps *Reset Layout*. Six comparable tools lost users this way (`docs/spikes/2026-10-21-ux-plan.md` § UX-PARITY-RULE).
+- **UI changes**: checked in a real window (see § UI checks), with screenshots referenced in the report.
+
+## UI checks (Cua Driver)
+
+Real-window checks use Cua Driver (`cua-driver call <tool> '<json>'`, profile `.omp/agents/usertester.md`) against a debug or bundled build on a scratch `HUTAN_HOME`, never the user's data. Rules learned the hard way (`docs/spikes/2026-10-21-ux-audit.md` §4, §6):
+- GPUI stops presenting frames while the window is **fully covered** and repaints when shown; this is not a bug. Keep the Hutan window frontmost (`bring_to_front`) for pixel checks, wait ≥ 0.7 s after a change, and avoid foreground-mode actions that restore another app on top of Hutan.
+- Clicks: prefer `delivery_mode: "foreground"` with Hutan already frontmost; background clicks are unreliable (GPUI hit-tests from the last hovered position). Background keys work.
+- GPUI content exposes no accessibility tree (only window chrome and menu bar): target pixels from the latest screenshot and confirm each action with a new screenshot. Hover and tooltips cannot be checked.
+- Disable the history index in the scratch home so the user's real transcripts never appear in screenshots; answer any macOS permission prompt the driver triggers with Deny and report it.
 
 ## Milestone cadence
 1. **Kickoff**: refresh risk register, list slices with IDs, confirm ADRs.

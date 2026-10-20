@@ -88,6 +88,7 @@ One watcher per application watches `themes/` (creation, removal, single-file pa
 
 - An invalid edit of a pack that was valid keeps the **last good** version and adds Problems (`kept the previous version of theme ...`). A pack that was never valid is listed disabled and cannot be selected. A removed pack disappears; one that reappears loads again.
 - If the watcher cannot start, hot reload is off (a warning in the log); everything else works.
+- A window that is fully covered by other windows shows its last frame: GPUI stops presenting frames while a window is occluded and repaints as soon as it is visible again (≈0.5 s, no input needed). Visible windows, including ones side by side with your editor, update in under a second (measured 0.16–0.89 s, `docs/spikes/2026-10-21-ux-audit.md` §4).
 
 ## Limits and safety
 
