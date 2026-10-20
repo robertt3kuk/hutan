@@ -97,19 +97,19 @@ const FIELDS: &[FieldText] = &[
         "appearance",
         "light_theme",
         "Light theme",
-        "The color theme of light windows: hutan-light, or the id of a light theme you put in the themes folder of Hutan's data folder. A theme that is missing or dark is replaced by hutan-light until it is fixed or installed.",
+        "The color theme of light windows. Moving through the list previews each theme without changing anything; Return applies it. A theme that is missing or invalid is replaced by Hutan Light until it works.",
     ),
     field(
         "appearance",
         "dark_theme",
         "Dark theme",
-        "The color theme of dark windows: hutan-dark, or the id of a dark theme you put in the themes folder of Hutan's data folder. A theme that is missing or light is replaced by hutan-dark until it is fixed or installed.",
+        "The color theme of dark windows. Moving through the list previews each theme without changing anything; Return applies it. A theme that is missing or invalid is replaced by Hutan Dark until it works.",
     ),
     field(
         "appearance",
         "icon_theme",
         "Icon theme",
-        "The independent monochrome icon pack from Hutan's icon-themes folder. The default is Phosphor; omitted icons fall back individually. Changes apply live without changing colors.",
+        "The icons, chosen independently of the colors. Icons a theme leaves out fall back to Phosphor one by one; the preview shows which ones. Return applies it.",
     ),
     field(
         "appearance",
@@ -186,7 +186,7 @@ const FIELDS: &[FieldText] = &[
         "terminal",
         "theme",
         "Color theme",
-        "The terminal's colors. Automatic follows the system light or dark mode; the others keep one theme whatever the system does.",
+        "The terminal's colors. Automatic uses the terminal colors of the color theme in effect (so it follows the light or dark mode); any installed color theme keeps its terminal colors whatever the window does.",
         &[
             ("auto", "Automatic"),
             ("hutan-dark", "Hutan Dark"),
@@ -1160,6 +1160,10 @@ pub mod words {
         REVEAL = "Reveal in Finder";
         OPEN = "Open";
         CANNOT_LOCATE = "Cannot tell where this is.";
+        PACK_OPEN_FOLDER = "Open pack folder";
+        PACK_RELOAD = "Validate / Reload";
+        PACK_DUPLICATE = "Duplicate as new pack";
+        PACK_RESET = "Reset to embedded default";
         SIZE_UNKNOWN = "not known";
         DAEMON_NOT_RUNNING = "The daemon is not running.";
         SIZES_TITLE = "Size on disk";

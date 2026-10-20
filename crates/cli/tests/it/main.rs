@@ -23,6 +23,7 @@ mod render;
 mod resources;
 mod sessions;
 mod tasks;
+mod theme;
 mod workspaces;
 mod worktree_review;
 mod worktrees;

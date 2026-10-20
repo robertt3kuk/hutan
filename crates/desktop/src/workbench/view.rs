@@ -449,6 +449,9 @@ pub struct Workbench {
     pub(crate) terminal_explicit: crate::settings::TerminalExplicit,
     /// What the theme settings and packs last raised as Problems.
     pub(crate) theme_notes: Vec<hutan_settings::SettingsError>,
+    /// Set when hot reload of packs could not start: a Problem that says so, so that
+    /// "Validate / Reload" is not a mystery.
+    pub(crate) theme_watch_note: Option<hutan_settings::SettingsError>,
     pub(crate) sessions: Entity<SessionsStore>,
     pub(crate) env: PanelEnv,
     pub(crate) terminals: HashMap<(PaneId, SessionId), TerminalItem>,
@@ -716,10 +719,24 @@ impl Workbench {
                 .unwrap_or(true)
         });
 
+        let mut theme_watch_note = None;
         let theme_watch = match themes.start_watching() {
             Ok(guard) => Some(guard),
             Err(err) => {
                 tracing::warn!("theme hot reload is off: {err}");
+                // Only a data folder has packs to watch; the built-ins alone need no reload.
+                if themes.data_dir().is_some() {
+                    let note = hutan_settings::SettingsError::warning(
+                        None,
+                        "themes",
+                        format!(
+                            "changes to theme and icon packs are not picked up automatically ({err}); use Validate / Reload in Settings > Appearance"
+                        ),
+                    );
+                    frame.diagnostics.push(note.clone());
+                    settings.set_notes("themes", frame.diagnostics.clone());
+                    theme_watch_note = Some(note);
+                }
                 None
             }
         };
@@ -868,6 +885,7 @@ impl Workbench {
             terminal_theme_name: frame.terminal.name,
             terminal_explicit,
             theme_notes: frame.diagnostics,
+            theme_watch_note,
             sessions,
             env,
             terminals: HashMap::new(),

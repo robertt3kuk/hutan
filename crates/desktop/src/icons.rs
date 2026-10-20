@@ -71,6 +71,18 @@ pub fn icon(id: Icon, size: f32, color: Hsla) -> gpui::Div {
 fn element(id: Icon, size: f32) -> gpui::Div {
     let active = ACTIVE.read().unwrap_or_else(|e| e.into_inner());
     let asset = Arc::clone(active.current.get(id));
+    drop(active);
+    element_of(asset, size)
+}
+
+/// The icon `id` of `pack`, a pack that is only being previewed (a Settings picker): it is not
+/// installed, so nothing else in the app changes. The artwork is the pack's validated bytes,
+/// painted through the same bounded raster cache as every icon.
+pub fn icon_in(pack: &ResolvedIcons, id: Icon, size: f32, color: Hsla) -> gpui::Div {
+    element_of(Arc::clone(pack.get(id)), size).text_color(color)
+}
+
+fn element_of(asset: Arc<icons::IconAsset>, size: f32) -> gpui::Div {
     div().flex_none().size(px(size.clamp(1.0, 128.0))).child(
         canvas(
             |_, _, _| (),

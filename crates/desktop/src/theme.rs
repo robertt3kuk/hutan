@@ -220,6 +220,11 @@ fn hsla(color: hutan_settings::Rgba) -> Hsla {
     })
 }
 
+/// An opaque pack color (a terminal palette entry) as a GPUI color.
+pub fn rgb_color(color: hutan_settings::Rgb) -> Hsla {
+    hsla(hutan_settings::Rgba::opaque(color))
+}
+
 /// Chrome colors: the pack's tokens as GPUI colors (docs/themes.md has the full list). These
 /// are the only color values in the desktop: every view reads them from here.
 #[derive(Clone, Copy, Debug)]

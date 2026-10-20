@@ -123,6 +123,11 @@ impl ThemeRegistry {
             .then_some(self.shared.themes_dir.as_path())
     }
 
+    /// The data folder packs live in; `None` without one.
+    pub fn data_dir(&self) -> Option<&Path> {
+        self.shared.folder.then_some(self.shared.data_dir.as_path())
+    }
+
     /// The current catalog. Cheap; hold it for as long as a frame or a style pass needs.
     pub fn snapshot(&self) -> Arc<ThemeCatalogSnapshot> {
         Arc::clone(&self.shared.snapshot.read())

@@ -115,6 +115,25 @@ impl Workbench {
         }
     }
 
+    /// Scrolls the page so that the row the keyboard is on shows. Pages whose app-drawn rows
+    /// come before the fields (General, History, Mawas) keep their scroll.
+    fn scroll_focus_row_into_view(&self) {
+        let Some(sheet) = &self.sheet else { return };
+        if matches!(sheet.namespace, "app" | "history" | "assistant") {
+            return;
+        }
+        let Some(field) = sheet
+            .focus_row
+            .as_deref()
+            .and_then(|row| row.strip_prefix(ROW_FIELD))
+        else {
+            return;
+        };
+        if let Some(at) = sheet.fields().iter().position(|f| f.dotted() == field) {
+            sheet.scroll.scroll_to_item(at);
+        }
+    }
+
     /// `el` with a mark when the keyboard is on the row `row`.
     pub(super) fn focus_ring(&self, row: &str, el: AnyElement) -> AnyElement {
         let theme = self.theme;
@@ -202,6 +221,7 @@ impl Workbench {
                 if let Some(sheet) = &mut self.sheet {
                     sheet.focus_row = rows.get(next).cloned();
                 }
+                self.scroll_focus_row_into_view();
                 cx.notify();
             }
         }
@@ -233,7 +253,19 @@ impl Workbench {
             };
             match kind {
                 FieldKind::Bool => self.sheet_toggle_in(field, window, cx),
-                FieldKind::Enum(_) => self.open_dropdown(field.to_owned(), cx),
+                FieldKind::Enum(_) => {
+                    let pack = self
+                        .sheet
+                        .as_ref()
+                        .and_then(|s| s.field(field))
+                        .and_then(|f| {
+                            super::settings_themes::PackField::of(f.namespace, &f.dotted())
+                        });
+                    match pack {
+                        Some(pack) => self.toggle_pack_picker(pack, cx),
+                        None => self.open_dropdown(field.to_owned(), cx),
+                    }
+                }
                 FieldKind::ChoiceList(_) => self.open_dropdown(format!("add:{field}"), cx),
                 FieldKind::Integer
                 | FieldKind::Number
@@ -276,6 +308,8 @@ impl Workbench {
         if let Some(sheet) = &mut self.sheet {
             sheet.dropdown = Some(tag);
             sheet.cursor = None;
+            sheet.pack_filter.clear();
+            sheet.pack_preview = None;
             cx.notify();
         }
     }
@@ -335,7 +369,11 @@ impl Workbench {
         let FieldKind::Enum(values) = self.sheet_kind(tag)? else {
             return None;
         };
-        let (namespace, _, value) = self.sheet_field(tag)?;
+        let (namespace, f, value) = self.sheet_field(tag)?;
+        if let Some(pack) = super::settings_themes::PackField::of(namespace, &f.dotted()) {
+            // The packs that fit the search; what the arrow keys move through.
+            return Some((self.pack_options(pack), value.as_str().map(str::to_owned)));
+        }
         let options = values
             .iter()
             .map(|v| (v.clone(), value_label(namespace, tag, v)))
@@ -374,6 +412,8 @@ impl Workbench {
         if let Some(sheet) = &mut self.sheet {
             sheet.cursor = Some((tag, options[next].0.clone()));
         }
+        // A picker previews the pack the cursor moved to.
+        self.sync_pack_preview();
         cx.notify();
     }
 
@@ -397,6 +437,8 @@ impl Workbench {
         if let Some(sheet) = &mut self.sheet {
             sheet.dropdown = None;
             sheet.cursor = None;
+            sheet.pack_filter.clear();
+            sheet.pack_preview = None;
         }
         let Some(value) = value else {
             cx.notify();
@@ -438,6 +480,10 @@ impl Workbench {
             return key == "tab";
         }
         if sheet.dropdown.is_some() {
+            // A theme picker's search box takes the typed characters.
+            if self.pack_picker_key(event, cx) {
+                return true;
+            }
             match key {
                 "down" => self.sheet_dropdown_move(1, cx),
                 "up" => self.sheet_dropdown_move(-1, cx),

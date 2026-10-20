@@ -67,6 +67,12 @@ pub struct SettingsSheet {
     pub(super) focus_row: Option<String>,
     /// The option of the open dropdown the arrow keys are on: the dropdown and the value.
     pub(super) cursor: Option<(String, String)>,
+    /// What is typed into the search box of the open theme or icon picker.
+    pub(super) pack_filter: String,
+    /// The open picker's preview: the pack its cursor is on, drawn in the picker only.
+    pub(super) pack_preview: Option<super::settings_themes::PackPreview>,
+    /// The scroll of the page's rows: an opened picker scrolls its row into view.
+    pub(super) scroll: gpui::ScrollHandle,
 }
 
 impl SettingsSheet {
@@ -115,7 +121,7 @@ impl SettingsSheet {
 }
 
 /// One problem of the files, as a line of the Problems footer.
-fn problem_text(e: &hutan_settings::SettingsError) -> String {
+pub(super) fn problem_text(e: &hutan_settings::SettingsError) -> String {
     match (&e.file, e.key_path.is_empty()) {
         (Some(file), false) => format!("{} · {}: {}", file.display(), e.key_path, e.message),
         (Some(file), true) => format!("{}: {}", file.display(), e.message),
@@ -169,6 +175,9 @@ impl Workbench {
             zone: super::settings_keys::SheetFocus::Search,
             focus_row: None,
             cursor: None,
+            pack_filter: String::new(),
+            pack_preview: None,
+            scroll: gpui::ScrollHandle::new(),
         });
         window.focus(&self.sheet_focus, cx);
         self.edits.sheet_query.reset();
@@ -215,6 +224,12 @@ impl Workbench {
         };
         let abandoned = sheet.edit.take();
         let closed_dropdown = sheet.dropdown.take().is_some();
+        if closed_dropdown {
+            // Escape cancels a picker: nothing was applied, so there is nothing to restore.
+            sheet.cursor = None;
+            sheet.pack_filter.clear();
+            sheet.pack_preview = None;
+        }
         if abandoned.is_some() || closed_dropdown {
             // Giving up an edit the daemon refused shows the setting as it is.
             if let Some(key) = abandoned
@@ -268,6 +283,10 @@ impl Workbench {
             sheet.zone = super::settings_keys::SheetFocus::Categories;
             sheet.focus_row = None;
             sheet.cursor = None;
+            sheet.pack_filter.clear();
+            sheet.pack_preview = None;
+            // A page starts at its top, whatever the previous one was scrolled to.
+            sheet.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
         }
         self.settings_page_opened(page, cx);
         cx.notify();
@@ -295,6 +314,9 @@ impl Workbench {
                 sheet.layer = None;
                 sheet.focus_row = None;
                 sheet.cursor = None;
+                sheet.pack_filter.clear();
+                sheet.pack_preview = None;
+                sheet.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
                 moved = Some(*first);
             }
         }
@@ -344,6 +366,9 @@ impl Workbench {
                 .map(|d| d.layout.name)
                 .collect();
             return FieldKind::Enum(names);
+        }
+        if let Some(pack) = super::settings_themes::PackField::of(f.namespace, &f.dotted()) {
+            return FieldKind::Enum(self.pack_values(pack));
         }
         refine_kind(f.namespace, &f.dotted(), &f.kind)
     }
@@ -420,7 +445,16 @@ impl Workbench {
         if let Some(FieldKind::Enum(values)) = self.sheet_kind(field)
             && values.iter().any(|v| v == choice)
         {
-            self.sheet_write(field, toml::Value::String(choice.to_owned()), cx);
+            // A theme or icon pack: written once, and the default is a removed key.
+            let pack = self
+                .sheet
+                .as_ref()
+                .and_then(|s| s.field(field))
+                .and_then(|f| super::settings_themes::PackField::of(f.namespace, &f.dotted()));
+            match pack {
+                Some(pack) => self.pack_apply(pack, choice, cx),
+                None => self.sheet_write(field, toml::Value::String(choice.to_owned()), cx),
+            }
         }
     }
 
@@ -849,7 +883,11 @@ impl Workbench {
     // ---- rendering --------------------------------------------------------------------------
 
     pub(crate) fn render_settings_sheet(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.sheet.as_ref()?;
+        // A catalog generation or a settings change since the last frame refreshes the preview.
+        self.sync_pack_preview();
         let sheet = self.sheet.as_ref()?;
+        let scroll = sheet.scroll.clone();
         let theme = self.theme;
         let tokens = self.density.ui();
         let hover = theme.surface_hover;
@@ -1092,6 +1130,7 @@ impl Workbench {
                                                 .flex_1()
                                                 .min_h_0()
                                                 .overflow_y_scroll()
+                                                .track_scroll(&scroll)
                                                 .px(px(tokens.spacing * 4.0))
                                                 .when(rows.is_empty(), |s| {
                                                     s.child(

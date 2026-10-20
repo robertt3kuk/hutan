@@ -82,12 +82,50 @@ theme = "auto"                 # auto | any pack id
 - A bad override value (not `#rrggbb[aa]`, or an alpha on an opaque role) rejects the override table: the previous accepted overrides stay, or none apply if there were none. An unknown token is a warning. Overrides never change the pack file.
 - Terminal font family, size and line height: the user's `terminal.font_family`, `font_size` and `line_height` win **only if written** in a settings layer (user, workspace or project) or set by the zoom keys; otherwise the pack's `[fonts] mono`, `terminal.font-size` and `terminal.line-height` apply. Density (`appearance.density`) is the user's; the pack supplies the numbers of each density.
 
+## Picking a pack in Settings
+
+*Settings ▸ Appearance* has a picker for the **light theme**, the **dark theme** and the **icon theme** (beside the mode and density); *Settings ▸ Terminal* has one for the **color theme** (Automatic, or any valid color pack: its terminal colors only). Each is the same control:
+
+- **The list.** Every pack of the registry with its name, id, author(s), license, version and origin: *Embedded*, *User*, *User override* (your pack of a built-in's id) or *Imported* (its `[provenance]` names a `source_format`), plus *Last good version* for a pack whose latest edit is invalid. A light slot lists light packs and a dark slot dark ones; an icon pack that declares a polarity is tagged. A pack that cannot load is listed **disabled** with its errors (file, key, reason) and cannot be picked. Typing searches by name, id or author. The list follows the folders live.
+- **Preview, without applying.** Moving through the list (↑ ↓ or the pointer) shows the pack under the cursor in the picker's own preview; nothing is written and nothing in the window changes. A color pack is shown as sample chrome (sidebar rows, card, buttons, link), state cards, a diff and a terminal row with its 16 ANSI colors, with the pack's warnings under it; an icon pack as a grid of navigation, action, state and dock icons, each marked *this pack* or *Phosphor* (the fallback), with one fallback called out. The preview is drawn from the pack's own values by the picker alone: it never touches the window's style, the installed icons or another window, so there is nothing to restore.
+- **Apply and cancel.** **Return** (or **Apply**, or a click on a pack) writes the selection once. Choosing what is already in effect writes nothing, and choosing the embedded default removes the key instead of writing it. **Escape**, a click outside the picker, closing Settings and quitting cancel: the window shows the current persisted state, a settings-file or system-mode change made while the preview was open included.
+- **Actions** (under each setting). **Open pack folder** (`themes/` or `icon-themes/`, created if missing), **Validate / Reload** (reads the folders again and says how many packs and problems there are), **Duplicate as new pack** (a copy of the highlighted pack under a free id, `<id>-copy`, ready to edit; it selects nothing), **Reset to embedded default** (removes the key).
+- **A theme nobody can read** never removes the way back: *View ▸ Reset Theme and Icons to Default* (a native menu), the palette command of the same name and the *Reset to embedded default* row of the picker each remove `appearance.light_theme`, `dark_theme`, `icon_theme`, `theme_overrides` and `terminal.theme` from your settings file.
+
+## The `hutan theme` command
+
+Local only: it reads and writes the data folder (`$HUTAN_HOME`, else `~/Library/Application Support/Hutan`) and never starts or contacts the daemon. `--kind color|icon` (default `color`) picks the kind; `--json` prints one versioned document (`"version": 1`).
+
+```text
+hutan theme ls [--kind color|icon] [--json]
+hutan theme validate <id-or-path> [--kind color|icon] [--strict] [--json]
+hutan theme new <id> --name <name> --author <author> --license <spdx>
+                [--extends builtin:hutan-dark] [--kind color|icon] [--output <dir>]
+hutan theme export <id> --output <dir> [--kind color|icon] [--resolved]
+```
+
+- **`ls`** lists id, name, appearance, origin, status (`ok`, `ok (1 warning)`, `invalid (2 errors)`) and where the pack is selected (`light`, `dark`, `icon`), then the problems of the folder.
+- **`validate`** judges a pack exactly as the desktop does: manifest, inherited values, assets, contrast and license. The target is an installed id (embedded ones included) or a path: anything with a `/`, starting with `.` or `~`, or ending in `.toml` is a path (`./name` for a folder named like an id). A folder of the other kind is named: `holds an icon pack; use --kind icon`.
+- **`new`** writes `<output>/<id>/` (default: `themes/` or `icon-themes/` of the data folder): a complete **sparse** pack with an explicit `extends`, your metadata, a version and one override (the base's accent, for you to change); an icon pack also gets `icons/close.svg`, a safe example mapped to `action.close`. The manifest is checked by the loader before anything is written, and nothing is ever replaced: an existing `<id>` folder is an error.
+- **`export`** writes the installed pack as an editable native pack into `<output>/<id>/` (which must not exist): the manifest with its comments and `[provenance]`, the license file, and for an icon pack every referenced SVG. An embedded pack exports as its embedded source. **`--resolved`** writes a self-contained `root = true` pack instead: every required token, both density tables, every metric and font role (a color pack), or all icons with the embedded Phosphor artwork and its notices (`LICENSE-phosphor`, `PROVENANCE-phosphor`; an icon pack's `license` then reads `(<license>) AND MIT`). Optional colors that were derived stay derived, `[provenance]` is kept and `exported_from` added, and for a color pack your `appearance.theme_overrides` of that pack are laid over it, so the file is what Settings shows. Reading an export back gives an equal resolved theme.
+
+Exit status: **0** ok (warnings included), **1** errors in a pack, a pack that is not found, or a file that cannot be read or written (`validate --strict` also for warnings), **2** an invalid invocation (a missing option, an id that is not a pack id, an unknown base). `ls` exits 0 when it could read the folders, even if some packs are invalid (they are listed with their errors). Importers (`hutan theme import`) arrive with TH-4.
+
+```sh
+hutan theme new canopy-night --name "Canopy Night" --author "Me" --license "MIT OR Apache-2.0"
+$EDITOR "$HOME/Library/Application Support/Hutan/themes/canopy-night/theme.toml"
+hutan theme validate canopy-night --strict          # same lines as Settings > Problems
+# pick it in Settings > Appearance (↑ ↓ preview, Return applies), then share a flat copy:
+hutan theme export canopy-night --resolved --output ~/Desktop
+hutan theme new canopy-lines --kind icon --name "Canopy Lines" --author "Me" --license MIT
+```
+
 ## Hot reload
 
 One watcher per application watches `themes/` (creation, removal, single-file packs) and each pack folder (edits in place; atomic-save rename works). Events go through a bounded queue and a debounce (100 ms quiet, 500 ms at most) into one worker that rescans; a flood coalesces into one rescan. Editing the active pack restyles chrome, chat, diffs, terminal rows, fonts and density without a restart, and the daemon learns the new terminal colors once. An edit that changes nothing publishes nothing, and editing a pack that is not in use changes only the catalog (pickers, Problems): no view is invalidated.
 
 - An invalid edit of a pack that was valid keeps the **last good** version and adds Problems (`kept the previous version of theme ...`). A pack that was never valid is listed disabled and cannot be selected. A removed pack disappears; one that reappears loads again.
-- If the watcher cannot start, hot reload is off (a warning in the log); everything else works.
+- If the watcher cannot start, hot reload is off: a Problem says so and **Validate / Reload** (below) is the way to read the folders again.
 - A window that is fully covered by other windows shows its last frame: GPUI stops presenting frames while a window is occluded and repaints as soon as it is visible again (≈0.5 s, no input needed). Visible windows, including ones side by side with your editor, update in under a second (measured 0.16–0.89 s, `docs/spikes/2026-10-21-ux-audit.md` §4).
 
 ## Limits and safety
@@ -105,7 +143,7 @@ Paths (`license_file` and icon assets) are normalized relative UTF-8 paths with 
 
 ## Problems and contrast
 
-Pack and selection problems appear in the Settings Problems list (the same list as settings errors) with the file, the key (`colors.ui.border`, `appearance.dark_theme`) and the reason. Contrast is advice only (key `contrast`, WCAG 2.2 ratios, translucent colors composed over what they are drawn on): a user pack is reported for the pairs it makes worse than its base. The built-ins' own known shortfalls (for example white on the orange accent) are a reviewed baseline in `crates/settings/tests/it/themes.rs`; they are reported nowhere else and nothing is repaired.
+Pack and selection problems appear in the Settings Problems list (the same list as settings errors), one line each, with the file, the key (`colors.ui.border`, `icons.action.close`, `appearance.dark_theme`) and the reason, for color and icon packs alike (`hutan theme validate` prints the same lines). A change that only adds, fixes or removes a problem (an unused pack, a bad icon file) updates the list without restyling anything. Contrast is advice only (key `contrast`, WCAG 2.2 ratios, translucent colors composed over what they are drawn on): a user pack is reported for the pairs it makes worse than its base (a root pack is judged against the built-in of its polarity, so an exported flat copy reports what its source did). The built-ins' own known shortfalls (for example white on the orange accent) are a reviewed baseline in `crates/settings/tests/it/themes.rs`; they are reported nowhere else and nothing is repaired. A `license` that is not an SPDX expression (`MIT OR Apache-2.0`) or a `LicenseRef-<name>` marker, or is `LicenseRef-Unknown`, is a warning (key `license`; a syntax check, not legal advice).
 
 ## Differences from the hard-coded look
 

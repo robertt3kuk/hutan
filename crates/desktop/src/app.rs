@@ -151,6 +151,7 @@ pub fn menus(presets: &[LayoutPreset], daemon_menu: &DaemonMenu) -> Vec<Menu> {
                 MenuItem::action("Compact", actions::SetDensityCompact),
                 MenuItem::action("Comfortable", actions::SetDensityComfortable),
             ])),
+            MenuItem::action("Reset Theme and Icons to Default", actions::ResetTheme),
             MenuItem::separator(),
             MenuItem::action("Command Palette…", actions::TogglePalette),
         ]),

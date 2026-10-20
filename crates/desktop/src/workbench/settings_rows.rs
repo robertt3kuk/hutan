@@ -109,7 +109,7 @@ pub(super) fn note(text: impl Into<SharedString>, theme: &Theme, tokens: &Tokens
 impl Workbench {
     /// The line under a field's help that says which layer the value comes from; the file is
     /// the hover.
-    fn source_line(&self, field: &Field, cx: &App) -> AnyElement {
+    pub(super) fn source_line(&self, field: &Field, cx: &App) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
         let source = self.source_of_field(field, cx);
@@ -161,6 +161,9 @@ impl Workbench {
         };
         let key = field.dotted();
         let ns = field.namespace;
+        if let Some(pack) = super::settings_themes::PackField::of(ns, &key) {
+            return self.render_pack_row(pack, field, cx);
+        }
         let current = sheet
             .entry_of(ns)
             .map_or(Json::Null, |e| e.current(&self.settings));

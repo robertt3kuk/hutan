@@ -345,6 +345,9 @@ impl Workbench {
             let next = this.density().toggled();
             this.set_density(next, cx);
         }))
+        .on_action(cx.listener(|this, _: &actions::ResetTheme, _, cx| {
+            this.reset_theme(cx);
+        }))
         .on_action(cx.listener(|this, _: &actions::SetDensityCompact, _, cx| {
             this.set_density(Density::Compact, cx);
         }))

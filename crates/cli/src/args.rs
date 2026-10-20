@@ -136,6 +136,10 @@ pub enum Command {
     /// Tasks with dependencies, run in the main checkout or a worktree (`hutan task add|ls|start|done|review|cancel|reset|rm|show`)
     #[command(subcommand)]
     Task(TaskCommand),
+    /// Color and icon themes: list, validate, create and export packs. Local files only: it
+    /// never starts or contacts the daemon (`hutan theme ls|validate|new|export`)
+    #[command(subcommand)]
+    Theme(ThemeCommand),
     /// Control the desktop window through the daemon: actions, layout, settings
     /// (`hutan ui actions|layout|run|set`)
     #[command(subcommand)]
@@ -1513,6 +1517,92 @@ pub enum IntegrationTarget {
     Codex,
     Claude,
     Omp,
+}
+
+/// Color and icon theme packs (`docs/themes.md`): files in `$HUTAN_HOME` (else `~/Library/
+/// Application Support/Hutan`) read and written locally; no daemon is started or contacted.
+/// Exit status: 0 ok (warnings included), 1 errors in a pack or a file that cannot be read or
+/// written, 2 invalid invocation; `validate --strict` makes warnings status 1.
+#[derive(Debug, Subcommand)]
+pub enum ThemeCommand {
+    /// List the installed packs (embedded, yours, and the invalid ones with their errors)
+    Ls(ThemeLsArgs),
+    /// Check a pack by id or by path with the rules the desktop uses: manifest, inherited
+    /// values, assets, contrast and license notes
+    Validate(ThemeValidateArgs),
+    /// Write a new sparse pack that extends a built-in; refuses to replace an existing one
+    New(ThemeNewArgs),
+    /// Write an installed pack as an editable native pack into a folder: declarations, assets
+    /// and license notices
+    Export(ThemeExportArgs),
+}
+
+/// Which kind of pack a `hutan theme` command works on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum ThemeKind {
+    /// Chrome, terminal, state and diff colors, fonts, density (`theme.toml`)
+    #[default]
+    Color,
+    /// Monochrome product icons (`icon-theme.toml` and SVG files)
+    Icon,
+}
+
+#[derive(Debug, Args)]
+pub struct ThemeLsArgs {
+    #[arg(long, value_enum, default_value_t)]
+    pub kind: ThemeKind,
+}
+
+#[derive(Debug, Args)]
+pub struct ThemeValidateArgs {
+    /// A pack id (installed, or embedded), or the path of a pack folder or single-file color
+    /// pack (anything with a `/`, or starting with `.`, or ending in `.toml`)
+    pub target: String,
+    #[arg(long, value_enum, default_value_t)]
+    pub kind: ThemeKind,
+    /// Warnings fail the command too (exit 1); they never change how the pack renders
+    #[arg(long)]
+    pub strict: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ThemeNewArgs {
+    /// The pack id: lower-case words joined by `-`, e.g. `canopy-night`
+    pub id: String,
+    /// Display name
+    #[arg(long)]
+    pub name: String,
+    /// Author (written to `authors`)
+    #[arg(long)]
+    pub author: String,
+    /// SPDX expression or `LicenseRef-<name>`, e.g. `MIT OR Apache-2.0`
+    #[arg(long)]
+    pub license: String,
+    /// The built-in to extend: `builtin:hutan-dark` (default) or `builtin:hutan-light` for a
+    /// color theme, `builtin:phosphor` for an icon theme
+    #[arg(long, value_name = "BUILTIN")]
+    pub extends: Option<String>,
+    #[arg(long, value_enum, default_value_t)]
+    pub kind: ThemeKind,
+    /// Folder the pack folder `<id>` is created in (default: `themes/` or `icon-themes/` of the
+    /// data folder)
+    #[arg(long, value_name = "DIR")]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct ThemeExportArgs {
+    /// The id of an installed pack (embedded ones included)
+    pub id: String,
+    /// Folder the pack folder `<id>` is created in; it must not exist yet
+    #[arg(long, value_name = "DIR")]
+    pub output: PathBuf,
+    #[arg(long, value_enum, default_value_t)]
+    pub kind: ThemeKind,
+    /// Write a self-contained `root = true` pack with every fallback, base value and (for a
+    /// color pack) your overrides of it written out
+    #[arg(long)]
+    pub resolved: bool,
 }
 
 #[derive(Debug, Args)]

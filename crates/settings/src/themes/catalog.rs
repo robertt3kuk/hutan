@@ -48,6 +48,8 @@ pub struct ThemeDescriptor {
     pub source: PackSource,
     /// A user pack that shadows the built-in of the same id (shown as "user override").
     pub overrides_builtin: bool,
+    /// Converted from another tool's file (its `[provenance]` names a `source_format`).
+    pub imported: bool,
     /// The file has an invalid edit; this is the last good version.
     pub kept_previous: bool,
 }
@@ -143,6 +145,7 @@ fn descriptor(
         description: meta.description.clone(),
         source,
         overrides_builtin,
+        imported: declaration.imported,
         kept_previous,
     }
 }
@@ -150,6 +153,14 @@ fn descriptor(
 /// The ids of the built-in packs, dark first.
 pub fn builtin_ids() -> [&'static str; 2] {
     [Builtin::HutanDark.id(), Builtin::HutanLight.id()]
+}
+
+/// The embedded manifest text of `builtin`: what `hutan theme export` writes for it.
+pub const fn builtin_source(builtin: Builtin) -> &'static str {
+    match builtin {
+        Builtin::HutanDark => DARK_TOML,
+        Builtin::HutanLight => LIGHT_TOML,
+    }
 }
 
 /// The immutable embedded pack for `builtin` (never a user's shadow of it).
@@ -311,8 +322,18 @@ pub fn load_pack(
             (None, diagnostics)
         }
         Ok(resolved) => {
-            let base_theme = declaration.meta.extends.map(builtin_theme);
-            for issue in contrast::new_issues(&resolved, base_theme.as_deref()) {
+            if let Some(note) = manifest::license_note(&declaration.meta.license) {
+                diagnostics.push(SettingsError::warning(Some(file), "license", note));
+            }
+            // A root pack has no base to be worse than: it is judged against the built-in of its
+            // polarity, so an exported (flattened) copy reports what its source reported.
+            let base_theme = builtin_theme(
+                declaration
+                    .meta
+                    .extends
+                    .unwrap_or_else(|| builtin_for(declaration.meta.appearance)),
+            );
+            for issue in contrast::new_issues(&resolved, Some(&base_theme)) {
                 diagnostics.push(SettingsError::warning(
                     Some(file),
                     "contrast",

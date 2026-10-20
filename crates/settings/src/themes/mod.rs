@@ -10,6 +10,7 @@
 //! - [`registry`]: the watcher, debounce, generations and last-good snapshots.
 //! - [`contrast`]: warning-only WCAG checks.
 
+pub mod author;
 mod catalog;
 mod color;
 mod confine;

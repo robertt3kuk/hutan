@@ -45,7 +45,7 @@ crates/
   index/          opt-in session history index: SQLite FTS5 over Hutan blocks and agent transcripts, incremental scanner, FSEvents watcher, redaction (`docs/history-index.md`)
   security/       Keychain, permission policy evaluation, redaction
   notifications/  notification intents from domain events (daemon side)
-  cli/            hutan binary
+  cli/            hutan binary (`hutan theme` reads and writes pack files through `settings`, never the daemon)
   buffer/         editor text model (E-1, ADR 0012): `crop` rope with byte offsets, atomic transactions, undo tree with groups, multi-cursor selections, anchors, UTF-16/LSP coordinates, `apply_external` (minimal diff), search; no GPUI, no I/O, no Hutan dependencies
   syntax/         editor syntax (E-2, ADR 0012): tree-sitter parsing that follows edits on a worker thread (a newer version cancels the parse in flight; reads never wait), highlights reduced to the `syntax.*` token table, node/expand/shrink selection, folds, bracket match, indent levels; up to 15 grammars behind cargo features, vendored query data with attribution (`crates/syntax/queries/NOTICE.md`); optional `buffer` feature for `hutan_buffer::Text`; no GPUI, no I/O
   vim/            Vim modal layer (E-7a, ADR 0012), extracted from the desktop's V-1: `Vim<H: VimHost>` (modes, counts, motions, operators, text objects, unnamed register, `.` repeat) over a host that answers byte-offset reads (char at, line of, slice) and applies `Transaction`s with undo groups; the desktop's `TextInput` is one host (every text field), a rope host over `hutan_buffer::Buffer` is the editor's (E-8); no dependencies, no GPUI, no I/O
@@ -63,6 +63,7 @@ flowchart BT
   client --> desktop
   protocol --> terminal_view --> desktop
   settings --> desktop
+  settings --> cli
   settings --> terminal_view
   core --> terminal & runtime & storage & security & notifications
   buffer

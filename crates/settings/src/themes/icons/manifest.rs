@@ -12,6 +12,8 @@ pub struct Declaration {
     pub appearance: Option<SystemAppearance>,
     pub icons: BTreeMap<IconId, String>,
     pub source_hash: u64,
+    /// `[provenance]` names a `source_format`: converted from another tool's files.
+    pub imported: bool,
 }
 
 pub fn parse(text: &str, file: Option<&Path>) -> (Option<Declaration>, Vec<SettingsError>) {
@@ -24,6 +26,7 @@ pub fn parse(text: &str, file: Option<&Path>) -> (Option<Declaration>, Vec<Setti
         Ok(table) => table,
         Err(e) => return fail(format!("invalid icon TOML: {}", e.message())),
     };
+    let imported = manifest::provenance_marks_import(&table);
     let appearance = match table.get("appearance") {
         None => None,
         Some(toml::Value::String(s)) if s == "dark" => Some(SystemAppearance::Dark),
@@ -136,6 +139,7 @@ pub fn parse(text: &str, file: Option<&Path>) -> (Option<Declaration>, Vec<Setti
             appearance,
             icons: entries,
             source_hash: manifest::hash_text(text),
+            imported,
         }
     });
     // Per-id errors may fall back; structural errors from the shared parser reject the pack.

@@ -1145,6 +1145,7 @@ impl Workbench {
             .diagnostics
             .extend(self.themes.icon_snapshot().diagnostics.iter().cloned());
         frame.diagnostics.extend(icon_notes);
+        frame.diagnostics.extend(self.theme_watch_note.clone());
         if crate::icons::install(icons) {
             self.invalidate_cached_views(cx);
             cx.notify();
@@ -1162,6 +1163,8 @@ impl Workbench {
         }
         self.terminal_theme_name = frame.terminal.name.clone();
         self.apply_terminal_style(&frame.terminal, terminal, cx);
+        // An open picker's preview reads the catalog and the user's overrides: keep it current.
+        self.sync_pack_preview();
     }
 
     /// Same as [`refresh_theme`](Self::refresh_theme): the terminal's colors and fonts come

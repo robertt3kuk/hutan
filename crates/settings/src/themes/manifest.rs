@@ -54,7 +54,7 @@ impl Builtin {
         format!("builtin:{}", self.id())
     }
 
-    fn from_reference(text: &str) -> Option<Self> {
+    pub fn from_reference(text: &str) -> Option<Self> {
         let id = text.strip_prefix("builtin:")?;
         Self::ALL.into_iter().find(|b| b.id() == id)
     }
@@ -87,6 +87,8 @@ pub struct Declaration {
     pub(super) fonts: [Option<Vec<String>>; 3],
     /// Hash of the manifest text; unchanged text means an unchanged pack.
     pub source_hash: u64,
+    /// `[provenance]` names a `source_format`: the pack was converted from another tool's file.
+    pub imported: bool,
 }
 
 impl Declaration {
@@ -127,6 +129,44 @@ pub(super) const fn density_index(density: Density) -> usize {
 pub struct Parsed {
     pub declaration: Option<Declaration>,
     pub diagnostics: Vec<SettingsError>,
+}
+
+/// What is wrong with `license` as an SPDX expression or `LicenseRef-*` marker, for a warning:
+/// identifiers joined by `AND` / `OR` / `WITH`, optionally parenthesized. A syntax check, not a
+/// look-up in the SPDX list. `None` when it is fine.
+pub fn license_note(license: &str) -> Option<String> {
+    let spaced = license.replace(['(', ')'], " ");
+    let tokens: Vec<&str> = spaced.split_whitespace().collect();
+    let is_id = |t: &str| {
+        !t.is_empty()
+            && t.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+' | ':'))
+    };
+    let operator = |t: &str| matches!(t, "AND" | "OR" | "WITH");
+    let well_formed = !tokens.is_empty()
+        && tokens.len() % 2 == 1
+        && tokens.iter().enumerate().all(|(i, t)| {
+            if i % 2 == 1 {
+                operator(t)
+            } else {
+                is_id(t) && !operator(t)
+            }
+        });
+    if !well_formed {
+        return Some(format!(
+            "`{license}` is not an SPDX expression (`MIT OR Apache-2.0`) or a `LicenseRef-<name>` marker"
+        ));
+    }
+    if tokens
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case("LicenseRef-Unknown"))
+    {
+        return Some(
+            "license not established (LicenseRef-Unknown): private use only, verify before sharing"
+                .to_owned(),
+        );
+    }
+    None
 }
 
 pub(super) fn hash_text(text: &str) -> u64 {
@@ -286,6 +326,7 @@ fn parse_into(text: &str, sink: &mut Sink<'_>) -> Option<Declaration> {
         metrics: [None; Metric::COUNT],
         fonts: [None, None, None],
         source_hash: hash_text(text),
+        imported: provenance_marks_import(&table),
     };
     parse_colors(&table, &mut declaration, sink);
     parse_density(&table, &mut declaration, sink);
@@ -305,6 +346,14 @@ fn parse_into(text: &str, sink: &mut Sink<'_>) -> Option<Declaration> {
         check_complete(&declaration, sink);
     }
     Some(declaration)
+}
+
+/// Whether the inert `[provenance]` table records the foreign format the pack came from.
+pub(super) fn provenance_marks_import(table: &toml::Table) -> bool {
+    table
+        .get("provenance")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|p| p.get("source_format").is_some_and(toml::Value::is_str))
 }
 
 fn placeholder_meta() -> Meta {

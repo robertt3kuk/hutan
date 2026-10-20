@@ -2537,6 +2537,7 @@ dependencies = [
  "hutan-daemon",
  "hutan-gateway",
  "hutan-protocol",
+ "hutan-settings",
  "hutan-storage",
  "parking_lot",
  "portable-pty",

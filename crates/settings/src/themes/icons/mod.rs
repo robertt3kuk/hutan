@@ -19,6 +19,18 @@ pub const DEFAULT: &str = "phosphor";
 const MAX_PACK_BYTES: usize = 8 * 1024 * 1024;
 pub const LICENSE: &str = include_str!("../../../../../assets/icon-themes/phosphor/LICENSE");
 const BUILTIN: &str = include_str!("../../../../../assets/icon-themes/phosphor/icon-theme.toml");
+/// The upstream revision and what was changed, shipped beside the embedded artwork.
+pub const PROVENANCE: &str = include_str!("../../../../../assets/icon-themes/phosphor/PROVENANCE");
+
+/// The embedded `icon-theme.toml` of the built-in `phosphor` pack.
+pub const fn builtin_manifest() -> &'static str {
+    BUILTIN
+}
+
+/// The embedded artwork `rel` (a path of [`builtin_manifest`]'s `[icons]` table).
+pub fn builtin_asset(rel: &str) -> Option<&'static [u8]> {
+    ids::embedded(rel)
+}
 
 #[derive(Debug)]
 pub struct IconAsset {
@@ -177,136 +189,25 @@ impl IconCatalog {
             }
             let mut total = 0;
             for path in candidates {
+                // Staging folders of a pack being written (`.<id>.hutan-new-…`) are not packs.
+                if path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with('.'))
+                {
+                    continue;
+                }
                 let file = path.join("icon-theme.toml");
                 let old = previous.and_then(|p| {
                     p.packs
                         .iter()
                         .find(|p| p.source == PackSource::User(file.clone()))
                 });
-                let mut manifest_notes = Vec::new();
-                let rel = file.strip_prefix(data_dir).ok().and_then(Path::to_str);
-                let loaded = rel
-                    .ok_or_else(|| "non-UTF-8 icon pack path".to_owned())
-                    .and_then(|rel| {
-                        confine::read_text(data_dir, rel, super::MAX_MANIFEST_BYTES as u64)
-                    });
-                let declaration = match loaded {
-                    Ok(text) => {
-                        total += text.len();
-                        if total > super::MAX_TOTAL_MANIFEST_BYTES {
-                            out.diagnostics.push(SettingsError::error(
-                                Some(&file),
-                                "",
-                                "catalog manifest limit is 16 MiB",
-                            ));
-                            break;
-                        }
-                        let declaration = if let Some(old) = old.filter(|p| {
-                            p.declaration.source_hash == super::manifest::hash_text(&text)
-                        }) {
-                            manifest_notes = old.manifest_notes.clone();
-                            Some(old.declaration.clone())
-                        } else {
-                            let (declaration, notes) = parse(&text, Some(&file));
-                            manifest_notes = notes;
-                            declaration
-                        };
-                        out.diagnostics.extend(manifest_notes.iter().cloned());
-                        declaration
-                    }
-                    Err(why) => {
-                        out.diagnostics
-                            .push(SettingsError::error(Some(&file), "", why));
-                        None
-                    }
-                };
-                let Some(declaration) = declaration else {
-                    if let Some(old) = previous.and_then(|p| {
-                        p.packs
-                            .iter()
-                            .find(|p| p.source == PackSource::User(file.clone()))
-                    }) {
-                        let mut old = old.clone();
-                        old.kept_previous = true;
-                        out.packs.push(old);
-                        out.diagnostics.push(SettingsError::warning(
-                            Some(&file),
-                            "",
-                            "kept previous icon pack; invalid manifest edit",
-                        ));
-                    } else {
-                        out.disabled.push(DisabledPack {
-                            path: file,
-                            id: None,
-                        });
-                    }
-                    continue;
-                };
-                if let Err(why) = inventory(&path) {
-                    out.diagnostics
-                        .push(SettingsError::error(Some(&file), "", why));
-                    out.disabled.push(DisabledPack {
-                        path: file,
-                        id: Some(declaration.meta.id),
-                    });
-                    continue;
+                match load_dir(data_dir, &path, old, &mut total, &mut out.diagnostics) {
+                    Load::Budget => break,
+                    Load::Pack(pack) | Load::Kept(pack) => out.packs.push(pack),
+                    Load::Disabled(disabled) => out.disabled.push(disabled),
                 }
-                let mut pack = IconPack {
-                    declaration,
-                    source: PackSource::User(file.clone()),
-                    kept_previous: false,
-                    hashes: BTreeMap::new(),
-                    source_hashes: BTreeMap::new(),
-                    manifest_notes,
-                };
-                let mut bytes = 0;
-                let mut files = BTreeSet::new();
-                // Validate one pack at a time; discard raw bytes immediately for inactive packs.
-                for (&id, rel) in &pack.declaration.icons {
-                    let result = read_asset(data_dir, &file, rel).and_then(|raw| {
-                        if files.insert(rel) {
-                            bytes += raw.len();
-                        }
-                        if bytes > MAX_PACK_BYTES || files.len() > 512 {
-                            return Err("pack exceeds 8 MiB / 512 files".into());
-                        }
-                        let source_hash = Sha256::digest(&raw).into();
-                        pack.source_hashes.insert(id, source_hash);
-                        if let Some(hash) = old
-                            .filter(|old| old.source_hashes.get(&id) == Some(&source_hash))
-                            .and_then(|old| old.hashes.get(&id))
-                        {
-                            Ok(*hash)
-                        } else {
-                            svg::sanitize(&raw).map(|raw| Sha256::digest(&raw).into())
-                        }
-                    });
-                    match result { Ok(hash)=>{pack.hashes.insert(id,hash);},Err(why)=>out.diagnostics.push(SettingsError::warning(Some(&file),format!("icons.{}",id.id()),format!("{why}; kept last-good entry when active, otherwise using default icon for this id"))) }
-                }
-                if let Some(license) = &pack.declaration.meta.license_file {
-                    let license_path = path.join(license);
-                    let result = license_path
-                        .strip_prefix(data_dir)
-                        .ok()
-                        .and_then(Path::to_str)
-                        .ok_or_else(|| "invalid license path".to_owned())
-                        .and_then(|rel| {
-                            confine::read_text(data_dir, rel, super::MAX_MANIFEST_BYTES as u64)
-                        });
-                    if let Err(why) = result {
-                        out.diagnostics.push(SettingsError::error(
-                            Some(&file),
-                            "license_file",
-                            why,
-                        ));
-                        out.disabled.push(DisabledPack {
-                            path: file,
-                            id: Some(pack.declaration.meta.id),
-                        });
-                        continue;
-                    }
-                }
-                out.packs.push(pack);
             }
         }
         let mut counts = BTreeMap::new();
@@ -438,6 +339,180 @@ impl IconCatalog {
             diagnostics,
         )
     }
+}
+
+/// What loading one pack folder came to.
+enum Load {
+    /// The catalog's manifest budget is spent: stop scanning.
+    Budget,
+    Pack(IconPack),
+    /// The manifest edit is invalid; the previous version stays.
+    Kept(IconPack),
+    Disabled(DisabledPack),
+}
+
+/// Loads the pack folder `path` (below `root`, the confinement root): manifest, folder
+/// inventory, every referenced asset and the license file. The one implementation behind both
+/// the catalog scan and `hutan theme validate <path>`, so a pack is judged the same way in both.
+fn load_dir(
+    root: &Path,
+    path: &Path,
+    old: Option<&IconPack>,
+    total: &mut usize,
+    diagnostics: &mut Vec<SettingsError>,
+) -> Load {
+    let file = path.join("icon-theme.toml");
+    let mut manifest_notes = Vec::new();
+    let rel = file.strip_prefix(root).ok().and_then(Path::to_str);
+    let loaded = rel
+        .ok_or_else(|| "non-UTF-8 icon pack path".to_owned())
+        .and_then(|rel| confine::read_text(root, rel, super::MAX_MANIFEST_BYTES as u64));
+    let declaration = match loaded {
+        Ok(text) => {
+            *total += text.len();
+            if *total > super::MAX_TOTAL_MANIFEST_BYTES {
+                diagnostics.push(SettingsError::error(
+                    Some(&file),
+                    "",
+                    "catalog manifest limit is 16 MiB",
+                ));
+                return Load::Budget;
+            }
+            let declaration = if let Some(old) =
+                old.filter(|p| p.declaration.source_hash == super::manifest::hash_text(&text))
+            {
+                manifest_notes = old.manifest_notes.clone();
+                Some(old.declaration.clone())
+            } else {
+                let (declaration, mut notes) = parse(&text, Some(&file));
+                if let Some(note) = declaration
+                    .as_ref()
+                    .and_then(|d| super::manifest::license_note(&d.meta.license))
+                {
+                    notes.push(SettingsError::warning(Some(&file), "license", note));
+                }
+                manifest_notes = notes;
+                declaration
+            };
+            diagnostics.extend(manifest_notes.iter().cloned());
+            declaration
+        }
+        Err(why) => {
+            diagnostics.push(SettingsError::error(Some(&file), "", why));
+            None
+        }
+    };
+    let Some(declaration) = declaration else {
+        return if let Some(old) = old {
+            let mut old = old.clone();
+            old.kept_previous = true;
+            diagnostics.push(SettingsError::warning(
+                Some(&file),
+                "",
+                "kept previous icon pack; invalid manifest edit",
+            ));
+            Load::Kept(old)
+        } else {
+            Load::Disabled(DisabledPack {
+                path: file,
+                id: None,
+            })
+        };
+    };
+    if let Err(why) = inventory(path) {
+        diagnostics.push(SettingsError::error(Some(&file), "", why));
+        return Load::Disabled(DisabledPack {
+            path: file,
+            id: Some(declaration.meta.id),
+        });
+    }
+    let mut pack = IconPack {
+        declaration,
+        source: PackSource::User(file.clone()),
+        kept_previous: false,
+        hashes: BTreeMap::new(),
+        source_hashes: BTreeMap::new(),
+        manifest_notes,
+    };
+    let mut bytes = 0;
+    let mut files = BTreeSet::new();
+    // Validate one pack at a time; discard raw bytes immediately for inactive packs.
+    for (&id, rel) in &pack.declaration.icons {
+        let result = read_asset(root, &file, rel).and_then(|raw| {
+            if files.insert(rel) {
+                bytes += raw.len();
+            }
+            if bytes > MAX_PACK_BYTES || files.len() > 512 {
+                return Err("pack exceeds 8 MiB / 512 files".into());
+            }
+            let source_hash = Sha256::digest(&raw).into();
+            pack.source_hashes.insert(id, source_hash);
+            if let Some(hash) = old
+                .filter(|old| old.source_hashes.get(&id) == Some(&source_hash))
+                .and_then(|old| old.hashes.get(&id))
+            {
+                Ok(*hash)
+            } else {
+                svg::sanitize(&raw).map(|raw| Sha256::digest(&raw).into())
+            }
+        });
+        match result {
+            Ok(hash) => {
+                pack.hashes.insert(id, hash);
+            }
+            Err(why) => diagnostics.push(SettingsError::warning(
+                Some(&file),
+                format!("icons.{}", id.id()),
+                format!(
+                    "{why}; kept last-good entry when active, otherwise using default icon for this id"
+                ),
+            )),
+        }
+    }
+    if let Some(license) = &pack.declaration.meta.license_file {
+        let license_path = path.join(license);
+        let result = license_path
+            .strip_prefix(root)
+            .ok()
+            .and_then(Path::to_str)
+            .ok_or_else(|| "invalid license path".to_owned())
+            .and_then(|rel| confine::read_text(root, rel, super::MAX_MANIFEST_BYTES as u64));
+        if let Err(why) = result {
+            diagnostics.push(SettingsError::error(Some(&file), "license_file", why));
+            return Load::Disabled(DisabledPack {
+                path: file,
+                id: Some(pack.declaration.meta.id),
+            });
+        }
+    }
+    Load::Pack(pack)
+}
+
+/// The verdict of validating one icon pack folder outside a catalog.
+#[derive(Debug)]
+pub struct DirVerdict {
+    /// The pack, when it can be used (assets with problems fall back per id and are warnings).
+    pub declaration: Option<Declaration>,
+    pub diagnostics: Vec<SettingsError>,
+}
+
+/// Validates the icon pack folder `dir` exactly as the catalog scan would. `dir` is resolved
+/// once (it may be a symlink the user named); nothing below it is followed.
+pub fn validate_dir(dir: &Path) -> Result<DirVerdict, String> {
+    let dir = std::fs::canonicalize(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let root = dir
+        .parent()
+        .ok_or_else(|| format!("{} has no parent folder", dir.display()))?;
+    let mut diagnostics = Vec::new();
+    let mut total = 0;
+    let declaration = match load_dir(root, &dir, None, &mut total, &mut diagnostics) {
+        Load::Pack(pack) | Load::Kept(pack) => Some(pack.declaration),
+        Load::Budget | Load::Disabled(_) => None,
+    };
+    Ok(DirVerdict {
+        declaration,
+        diagnostics,
+    })
 }
 
 fn read_asset(data_dir: &Path, manifest: &Path, rel: &str) -> Result<Vec<u8>, String> {

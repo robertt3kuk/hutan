@@ -39,6 +39,7 @@ mod recovery;
 mod resources;
 mod sessions;
 mod tasks;
+mod theme;
 mod ui;
 mod workspaces;
 mod worktrees;
@@ -57,6 +58,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             Ok(())
         }
         Command::Integration(command) => integration::run(cli.json, command),
+        Command::Theme(command) => theme::run(cli.json, command),
         Command::Help(args) => help::run(&args.topic),
         Command::Mcp => crate::mcp::run(ctx?.socket_arg).await,
         Command::Ui(command) => ctx?.ui(command).await,
