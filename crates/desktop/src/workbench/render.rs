@@ -966,6 +966,13 @@ impl Workbench {
             this.set_sidebar_organize(a.0, cx);
         }))
         .on_action(
+            cx.listener(|this, a: &actions::RenameSessionTo, window, cx| {
+                if let Ok(id) = a.0.session.parse() {
+                    this.rename_session_to(id, a.0.title.clone(), window, cx);
+                }
+            }),
+        )
+        .on_action(
             cx.listener(|this, a: &actions::RenameWorkspaceTo, window, cx| {
                 if let Ok(id) = a.0.workspace.parse() {
                     this.rename_workspace_to(id, a.0.name.clone(), window, cx);

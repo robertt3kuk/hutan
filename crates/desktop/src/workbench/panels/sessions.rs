@@ -34,9 +34,9 @@ use crate::settings::{
 };
 use crate::workbench::actions::{
     CloseSessionById, DropProjectOnto, MoveWorkspaceOnto, OpenFolder, OpenSession, OpenWorkspace,
-    ProjectDrop, ProjectMenuAt, RenameTo, RenameWorkspaceTo, SessionMenuAt, ShowPlusMenu,
-    ShowProjectMenu, ShowSessionMenu, ShowSortMenu, ShowWorkspaceMenu, WorkspaceDrop,
-    WorkspaceMenuAt,
+    ProjectDrop, ProjectMenuAt, RenameSessionTo, RenameTo, RenameWorkspaceTo, SessionMenuAt,
+    SessionRenameTo, ShowPlusMenu, ShowProjectMenu, ShowSessionMenu, ShowSortMenu,
+    ShowWorkspaceMenu, WorkspaceDrop, WorkspaceMenuAt,
 };
 use crate::workbench::actions::{LauncherOpen, OpenLauncher};
 use crate::workbench::chat::vim::Outcome;
@@ -191,9 +191,16 @@ impl LayoutKey {
     }
 }
 
+/// What an inline rename edits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RenameTarget {
+    Workspace(WorkspaceId),
+    Session(SessionId),
+}
+
 /// An inline rename in progress; losing focus confirms it.
 struct Renaming {
-    workspace: WorkspaceId,
+    target: RenameTarget,
     text: String,
     _blur: Subscription,
 }
@@ -522,13 +529,45 @@ impl SessionsPanel {
         else {
             return false;
         };
+        self.start_rename(RenameTarget::Workspace(workspace), name, window, cx);
+        true
+    }
+
+    /// Starts editing the title of `session`'s row in place (the row must be listed: the
+    /// workbench asks the region first); the whole title starts selected.
+    pub fn begin_session_rename(
+        &mut self,
+        session: SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(title) = self
+            .env
+            .sessions
+            .read(cx)
+            .session(session)
+            .map(|s| s.title.clone())
+        else {
+            return false;
+        };
+        self.start_rename(RenameTarget::Session(session), title, window, cx);
+        true
+    }
+
+    fn start_rename(
+        &mut self,
+        target: RenameTarget,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let blur = cx.on_focus_out(&self.rename_focus, window, |this, _, window, cx| {
             this.finish_rename(true, window, cx);
         });
-        self.rename_edit.reset_selected(&name);
+        self.rename_edit.reset_selected(&text);
         self.renaming = Some(Renaming {
-            workspace,
-            text: name,
+            target,
+            text,
             _blur: blur,
         });
         cx.defer_in(window, |this, window, cx| {
@@ -537,14 +576,22 @@ impl SessionsPanel {
             }
         });
         cx.notify();
-        true
     }
 
     /// The row being renamed and the text typed so far.
     pub fn renaming(&self) -> Option<(WorkspaceId, &str)> {
-        self.renaming
-            .as_ref()
-            .map(|r| (r.workspace, r.text.as_str()))
+        self.renaming.as_ref().and_then(|r| match r.target {
+            RenameTarget::Workspace(id) => Some((id, r.text.as_str())),
+            RenameTarget::Session(_) => None,
+        })
+    }
+
+    /// The session whose title is being edited in place and the text typed so far.
+    pub fn renaming_session(&self) -> Option<(SessionId, &str)> {
+        self.renaming.as_ref().and_then(|r| match r.target {
+            RenameTarget::Session(id) => Some((id, r.text.as_str())),
+            RenameTarget::Workspace(_) => None,
+        })
     }
 
     /// Whether the inline rename opened with the whole old name selected and nothing changed it
@@ -561,25 +608,30 @@ impl SessionsPanel {
             return;
         };
         let name = renaming.text.trim().to_owned();
-        let changed = self
-            .env
-            .sessions
-            .read(cx)
-            .workspace(renaming.workspace)
-            .is_none_or(|w| w.name != name);
+        let changed = {
+            let store = self.env.sessions.read(cx);
+            match renaming.target {
+                RenameTarget::Workspace(id) => store.workspace(id).is_none_or(|w| w.name != name),
+                RenameTarget::Session(id) => store.session(id).is_none_or(|s| s.title != name),
+            }
+        };
         // The workbench takes the focus back either way (an empty name only does that).
         let name = if confirm && changed {
             name
         } else {
             String::new()
         };
-        window.dispatch_action(
-            Box::new(RenameWorkspaceTo(RenameTo {
-                workspace: renaming.workspace.to_string(),
+        let action: Box<dyn gpui::Action> = match renaming.target {
+            RenameTarget::Workspace(id) => Box::new(RenameWorkspaceTo(RenameTo {
+                workspace: id.to_string(),
                 name,
             })),
-            cx,
-        );
+            RenameTarget::Session(id) => Box::new(RenameSessionTo(SessionRenameTo {
+                session: id.to_string(),
+                title: name,
+            })),
+        };
+        window.dispatch_action(action, cx);
         cx.notify();
     }
 
@@ -1196,7 +1248,7 @@ impl SessionsPanel {
                 let renaming = self
                     .renaming
                     .as_ref()
-                    .filter(|r| r.workspace == row.info.id)
+                    .filter(|r| r.target == RenameTarget::Workspace(row.info.id))
                     .map(|r| r.text.clone());
                 self.render_container(
                     row,
@@ -1260,6 +1312,46 @@ impl SessionsPanel {
             .into_any_element()
     }
 
+    /// The in-place name field of a rename: `id_text` keys its elements, `text` is what was
+    /// typed.
+    fn rename_editor(&self, id_text: &str, text: &str, cx: &mut Context<Self>) -> AnyElement {
+        let style = UiStyle::get(cx);
+        let (theme, tokens) = (style.theme, style.density.ui());
+        let accent = theme.accent;
+        div()
+            .id(SharedString::from(format!("rename-{id_text}")))
+            .key_context("SidebarRename")
+            .track_focus(&self.rename_focus)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.on_rename_key(event, window, cx);
+            }))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .h(px(tokens.sidebar_row - 6.0))
+            .px(px(tokens.spacing))
+            .rounded(px(tokens.radius))
+            .bg(theme.bg)
+            .border_1()
+            .border_color(accent)
+            .text_color(theme.fg)
+            .children(vim_ui::string_field(
+                SharedString::from(format!("rename-text-{id_text}")),
+                &self.rename_edit,
+                text,
+                VimConfig::of(&self.env.settings).enabled,
+                "",
+                true,
+                false,
+                self.rename_field(cx),
+                &theme,
+                &tokens,
+            ))
+            .into_any_element()
+    }
+
     /// `▾ ★ NAME  ······  ● 2  3` for a workspace; `▾ ◧ ★ NAME …` for a project (repository or
     /// folder), `▾ ⌂ Home …` for Home. Click shows it, the chevron folds its sessions,
     /// right-click opens its menu, ⌘-click / ⇧-click select projects, and a row can be dragged:
@@ -1302,38 +1394,7 @@ impl SessionsPanel {
             WorkspaceKind::Workspace => None,
         };
         let name: AnyElement = match renaming {
-            Some(text) => div()
-                .id(SharedString::from(format!("rename-{id_text}")))
-                .key_context("SidebarRename")
-                .track_focus(&self.rename_focus)
-                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                    this.on_rename_key(event, window, cx);
-                }))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .h(px(tokens.sidebar_row - 6.0))
-                .px(px(tokens.spacing))
-                .rounded(px(tokens.radius))
-                .bg(theme.bg)
-                .border_1()
-                .border_color(accent)
-                .text_color(theme.fg)
-                .children(vim_ui::string_field(
-                    SharedString::from(format!("rename-text-{id_text}")),
-                    &self.rename_edit,
-                    &text,
-                    VimConfig::of(&self.env.settings).enabled,
-                    "",
-                    true,
-                    false,
-                    self.rename_field(cx),
-                    &theme,
-                    &tokens,
-                ))
-                .into_any_element(),
+            Some(text) => self.rename_editor(&id_text, &text, cx),
             None => div()
                 .flex_1()
                 .min_w_0()
@@ -1585,6 +1646,11 @@ impl SessionsPanel {
             )
         });
         let has = |field: &str| settings.row.iter().any(|f| f == field);
+        let renaming = self
+            .renaming
+            .as_ref()
+            .filter(|r| r.target == RenameTarget::Session(info.id))
+            .map(|r| r.text.clone());
 
         let mut line = div()
             .flex()
@@ -1627,15 +1693,32 @@ impl SessionsPanel {
                         .child(crate::icons::glyph(kind_icon(info.kind))),
                 ),
                 "title" => line
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(CARD_TITLE))
-                            .when(unread, |s| s.font_weight(gpui::FontWeight::MEDIUM))
-                            .child(SharedString::from(info.title.clone())),
-                    )
+                    .child(match renaming.as_deref() {
+                        Some(text) => self.rename_editor(&id, text, cx),
+                        None => {
+                            let title = div()
+                                .id(SharedString::from(format!("session-title-{id}")))
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(CARD_TITLE))
+                                .when(unread, |s| s.font_weight(gpui::FontWeight::MEDIUM))
+                                .child(SharedString::from(info.title.clone()));
+                            // The name says what the session is; where it is, in full, is one
+                            // hover away.
+                            match session_folder(info) {
+                                Some(path) => {
+                                    let tip: SharedString = path.display().to_string().into();
+                                    title
+                                        .tooltip(move |_, cx| {
+                                            cx.new(|_| TextTooltip(tip.clone())).into()
+                                        })
+                                        .into_any_element()
+                                }
+                                None => title.into_any_element(),
+                            }
+                        }
+                    })
                     .children(badge.take())
                     .children(recovery.take()),
                 "age" => line.child(
@@ -1725,6 +1808,7 @@ impl SessionsPanel {
         let mut element = div()
             .id(SharedString::from(format!("session-row-{id}")))
             .group(row_group)
+            .relative()
             .flex()
             .flex_col()
             .mx(px(tokens.spacing * 1.5))
@@ -1755,7 +1839,8 @@ impl SessionsPanel {
                 }),
             )
             .child(line)
-            .children(place_line);
+            .children(place_line)
+            .child(probe(&self.env.regions, Region::SessionRow(info.id)));
         if row.in_needs_you {
             let subtitle = if presentation.detail.is_empty() {
                 presentation.label.clone()

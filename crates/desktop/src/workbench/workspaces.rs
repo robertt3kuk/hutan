@@ -893,10 +893,16 @@ impl Workbench {
             let badge = crate::sessions::placement_badge(session)
                 .map(|badge| format!(" · {}", badge.text))
                 .unwrap_or_default();
+            // How long ago the session started tells two namesakes apart when nothing else does.
+            let age = super::panels::age_label(session.created_at_ms);
+            let command = match session.command.join(" ") {
+                command if command.is_empty() => String::new(),
+                command => format!(" · {command}"),
+            };
             entries.push(PickerEntry {
                 icon: super::panels::kind_icon(session.kind),
                 title: session.title.clone().into(),
-                detail: format!("{label} · {folder}{badge} · {}", session.command.join(" ")).into(),
+                detail: format!("{label} · {folder}{badge} · {age}{command}").into(),
                 action: PickerAction::Session(session.id),
                 fixed: false,
             });

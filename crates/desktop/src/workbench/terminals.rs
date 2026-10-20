@@ -19,10 +19,11 @@ use hutan_terminal_view::{
 use super::actions;
 use super::modal::PromptSpec;
 use super::model::{Edge, FocusTarget, ItemRef, PaneId};
+use super::panels::SessionsPanel;
 use super::registry::StatusBarLayout;
 use super::style::{TerminalStyle, UiStyle};
 use super::ui::{self, Mascot};
-use super::view::{MenuEntry, Workbench};
+use super::view::{MenuEntry, Region, Workbench};
 use crate::sessions::TerminalSession;
 use crate::settings::{AppearanceSettings, KeymapSettings, LayoutSettings, TerminalSettings};
 use crate::theme::Theme;
@@ -628,6 +629,26 @@ impl Workbench {
         self.report("restart the session", task, window, cx);
     }
 
+    /// `session.rename`: the answer to the sidebar's inline edit.
+    pub fn rename_session_to(
+        &mut self,
+        session: SessionId,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // The inline editor is gone: the workbench takes the keyboard back.
+        self.focus_root(window, cx);
+        let title = title.trim().to_owned();
+        if title.is_empty() {
+            return;
+        }
+        let task = self
+            .sessions
+            .update(cx, |store, cx| store.rename(session, title, cx));
+        self.report("rename the session", task, window, cx);
+    }
+
     pub fn rename_session(
         &mut self,
         session: SessionId,
@@ -637,6 +658,15 @@ impl Workbench {
         let Some(info) = self.info_of(session, cx) else {
             return;
         };
+        // Where the session's row is on screen, its title becomes a field right there.
+        if self.region_bounds(Region::SessionRow(session)).is_some()
+            && let Some(panel) = self.panel::<SessionsPanel>("sessions")
+            && panel.update(cx, |panel, cx| {
+                panel.begin_session_rename(session, window, cx)
+            })
+        {
+            return;
+        }
         self.open_prompt(
             PromptSpec {
                 title: "Rename session",

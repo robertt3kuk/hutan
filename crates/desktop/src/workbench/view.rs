@@ -269,6 +269,8 @@ pub enum Region {
     LauncherItem(&'static str, usize),
     /// The hover × of a session's row in the sidebar or card in the Agent Dashboard.
     SessionClose(hutan_core::SessionId),
+    /// A session's row in the Projects sidebar (where its title can be edited in place).
+    SessionRow(hutan_core::SessionId),
     /// A control of the "Closed … · Undo" toast (`undo`).
     CloseToast(&'static str),
     /// The ▶ Start button of project row `workspace` in the sidebar.
@@ -1145,11 +1147,16 @@ impl Workbench {
         let id = session.parse::<SessionId>().ok()?;
         let store = self.sessions.read(cx);
         let info = store.session(id)?;
-        let badge = crate::sessions::placement_badge(info)?;
-        Some(format!(
-            "{} · {}\n{}",
-            info.title, badge.text, badge.tooltip
-        ))
+        let folder = crate::sessions::tree::session_folder(info).map(|path| path.display());
+        match (crate::sessions::placement_badge(info), folder) {
+            (Some(badge), _) => Some(format!(
+                "{} · {}\n{}",
+                info.title, badge.text, badge.tooltip
+            )),
+            // Without a checkout the tab still says where the session is, in full.
+            (None, Some(folder)) => Some(format!("{}\n{folder}", info.title)),
+            (None, None) => None,
+        }
     }
 
     pub fn item_title(&self, item: &ItemRef, cx: &App) -> SharedString {

@@ -504,7 +504,11 @@ async fn only_a_non_zero_exit_raises_an_intent_and_ack_removes_it() {
     assert_eq!(intent.kind, IntentKind::SessionExitedWithError);
     assert_eq!(intent.session_id, failing.id);
     assert_eq!(intent.workspace_id, Some(failing.workspace_id));
-    assert_eq!(intent.title, "sh: exited with an error");
+    // Sessions of one folder are told apart by number: `sh 3`, not just `sh`.
+    assert_eq!(
+        intent.title,
+        format!("{}: exited with an error", failing.title)
+    );
     assert_eq!(intent.body, "The process exited with code 3.");
     assert_eq!(intent.actions.len(), 1);
     assert_eq!(t.intents().await, vec![intent.clone()]);
@@ -643,7 +647,11 @@ async fn a_long_enough_turn_ending_raises_agent_finished_and_failures_do_not() {
     expected.sort();
     assert_eq!(sessions, expected);
     for intent in &raised {
-        assert_eq!(intent.title, "sh: fake finished");
+        let session = [&finished, &released, &plain]
+            .into_iter()
+            .find(|s| s.id == intent.session_id)
+            .unwrap();
+        assert_eq!(intent.title, format!("{}: fake finished", session.title));
         assert!(
             intent.body.starts_with("Finished after 1"),
             "{}",

@@ -58,6 +58,7 @@ use crate::projects::{self, Assignment, Folder, HomeRules, Ident};
 use crate::providers::ProviderService;
 use crate::recovery;
 use crate::restore::{self, Stored};
+use crate::session_names::{self, Facts, Naming};
 use crate::terminals::{TerminalEntry, TerminalHub};
 use crate::tree::{self, TreeState};
 
@@ -2036,11 +2037,29 @@ impl SessionRegistry {
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .map(str::to_owned);
+        let placement = self.placement_of(spec.cwd.as_deref());
+        let title = match &chosen {
+            Some(chosen) => chosen.clone(),
+            None => {
+                let facts = Facts {
+                    folder: spec.cwd.clone(),
+                    branch: placement.as_ref().and_then(|p| p.branch.clone()),
+                    osc_title: None,
+                    default_title: default_title.clone(),
+                    running_command: None,
+                };
+                self.derive_titles(workspace_id, Some((now_ms(), facts)))
+                    .1
+                    .pop()
+                    .flatten()
+                    .unwrap_or_else(|| default_title.clone())
+            }
+        };
         let info = SessionInfo {
             id: SessionId::new(),
             workspace_id,
             kind: SessionKind::Terminal,
-            title: chosen.clone().unwrap_or_else(|| default_title.clone()),
+            title,
             state: SessionState::Starting,
             command: spec.command.clone(),
             cwd: spec.cwd.clone(),
@@ -2049,7 +2068,7 @@ impl SessionRegistry {
             created_at_ms: now_ms(),
             restored: false,
             chat: None,
-            placement: self.placement_of(spec.cwd.as_deref()),
+            placement,
             folder: spec.cwd.clone(),
             recovery: None,
         };
@@ -2079,6 +2098,8 @@ impl SessionRegistry {
             close: None,
         });
         let index = self.sessions.len() - 1;
+        // The new name may change what its namesakes are called (a named session counts too).
+        self.retitle_workspace(workspace_id, None);
         // A new session is activity; the workspace announcement that follows the session's
         // first update carries the new time together with the new counts.
         self.touch_workspace(workspace_id);
@@ -2223,9 +2244,7 @@ impl SessionRegistry {
             .take()
             .filter(|cwd| cwd.is_dir())
             .or_else(|| session.spec.cwd.clone());
-        if !session.title_locked {
-            session.info.title.clone_from(&session.default_title);
-        }
+        // The title the old process set is gone; `emit_session` names the session again.
         self.emit_session(index);
         self.start_terminal(index);
         Ok(self.sessions[index].info.clone())
@@ -2353,6 +2372,7 @@ impl SessionRegistry {
         self.flush_at
             .get_or_insert_with(|| Instant::now() + DIRTY_WRITE_INTERVAL);
         self.emit(&Event::SessionClosed { session_id: id });
+        self.retitle_workspace(entry.info.workspace_id, None);
         self.sync_workspace(entry.info.workspace_id);
         // A checkout it shared is not shared any more.
         for other in self.sync_shared() {
@@ -2432,6 +2452,10 @@ impl SessionRegistry {
             self.commands_dirty = true;
             self.flush_at
                 .get_or_insert_with(|| Instant::now() + DIRTY_WRITE_INTERVAL);
+            if self.retitle(index) {
+                self.emit_session(index);
+                self.mark_dirty(index);
+            }
         }
     }
 
@@ -2511,6 +2535,7 @@ impl SessionRegistry {
         session.info = info.clone();
         session.title_locked = true;
         self.persist_session(index);
+        self.retitle_workspace(info.workspace_id, None);
         Ok(info)
     }
 
@@ -2701,23 +2726,11 @@ impl SessionRegistry {
                     return;
                 }
                 session.osc_title.clone_from(&title);
-                let session_title = if session.title_locked {
-                    None
-                } else {
-                    Some(
-                        title
-                            .clone()
-                            .unwrap_or_else(|| session.default_title.clone()),
-                    )
-                };
                 self.emit(&Event::TerminalTitle {
                     terminal_id: terminal,
                     title,
                 });
-                if let Some(session_title) = session_title
-                    && self.sessions[index].info.title != session_title
-                {
-                    self.sessions[index].info.title = session_title;
+                if self.retitle(index) {
                     self.emit_session(index);
                     self.mark_dirty(index);
                 }
@@ -4148,6 +4161,9 @@ impl SessionRegistry {
     /// Announces the session and, when the change moved its workspace's counts, the workspace.
     fn emit_session(&mut self, index: usize) {
         self.refresh_placement(index);
+        if self.retitle(index) {
+            self.mark_dirty(index);
+        }
         self.emit(&Event::SessionUpdated {
             session: self.sessions[index].info.clone(),
         });
@@ -4229,6 +4245,89 @@ impl SessionRegistry {
             self.sessions[index].info.placement = self.placement_of(cwd.as_deref());
         }
         self.sync_shared();
+        let workspaces: Vec<WorkspaceId> = self.workspaces.iter().map(|w| w.info.id).collect();
+        for workspace in workspaces {
+            self.retitle_workspace(workspace, None);
+        }
+    }
+
+    // Names -----------------------------------------------------------------------------------
+
+    /// What the naming policy (`session_names`) sees of a session.
+    fn name_entry(session: &SessionEntry) -> session_names::Entry {
+        let auto = session.chat.is_none()
+            && session.info.kind == SessionKind::Terminal
+            && !session.title_locked;
+        session_names::Entry {
+            created_at_ms: session.info.created_at_ms,
+            naming: if auto {
+                Naming::Auto(Facts {
+                    folder: session.info.cwd.clone(),
+                    branch: session
+                        .info
+                        .placement
+                        .as_ref()
+                        .and_then(|p| p.branch.clone()),
+                    osc_title: session.osc_title.clone(),
+                    default_title: session.default_title.clone(),
+                    running_command: session.running_command.clone(),
+                })
+            } else {
+                Naming::Fixed(session.info.title.clone())
+            },
+        }
+    }
+
+    /// The names of the sessions of `workspace` (indices into `self.sessions`, then the names,
+    /// `None` for those the user named), and of `extra`, a session about to be created, last.
+    fn derive_titles(
+        &self,
+        workspace: WorkspaceId,
+        extra: Option<(u64, Facts)>,
+    ) -> (Vec<usize>, Vec<Option<String>>) {
+        let indices: Vec<usize> = (0..self.sessions.len())
+            .filter(|&i| self.sessions[i].info.workspace_id == workspace)
+            .collect();
+        let mut entries: Vec<session_names::Entry> = indices
+            .iter()
+            .map(|&i| Self::name_entry(&self.sessions[i]))
+            .collect();
+        entries.extend(extra.map(|(created_at_ms, facts)| session_names::Entry {
+            created_at_ms,
+            naming: Naming::Auto(facts),
+        }));
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        (indices, session_names::derive(&entries, home.as_deref()))
+    }
+
+    /// Names the automatically named sessions of `workspace` again and announces (and
+    /// stores) the ones that changed, except `own`, whose caller announces it. Returns whether
+    /// `own` changed.
+    fn retitle_workspace(&mut self, workspace: WorkspaceId, own: Option<usize>) -> bool {
+        let (indices, titles) = self.derive_titles(workspace, None);
+        let mut own_changed = false;
+        for (index, title) in indices.into_iter().zip(titles) {
+            let Some(title) = title else { continue };
+            if self.sessions[index].info.title == title {
+                continue;
+            }
+            self.sessions[index].info.title = title;
+            if Some(index) == own {
+                own_changed = true;
+            } else {
+                self.emit(&Event::SessionUpdated {
+                    session: self.sessions[index].info.clone(),
+                });
+                self.mark_dirty(index);
+            }
+        }
+        own_changed
+    }
+
+    /// Names session `index` and its namesakes again; whether its own name changed.
+    fn retitle(&mut self, index: usize) -> bool {
+        let workspace = self.sessions[index].info.workspace_id;
+        self.retitle_workspace(workspace, Some(index))
     }
 
     /// For changes that already happened: a rejected event is logged, not rolled back.

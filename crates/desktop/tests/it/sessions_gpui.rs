@@ -298,7 +298,9 @@ fn stop_and_restart_from_the_ui(cx: &mut TestAppContext) {
         "still one tab"
     );
 
-    // Rename through the prompt.
+    // Rename through the prompt: with the sidebar hidden the session has no row to edit.
+    cx.dispatch_action(actions::HideLeftSidebar);
+    draw(cx);
     cx.dispatch_action(actions::RenameSessionById(info.id.to_string()));
     view.update(cx, |wb, cx| wb.set_modal_input("renamed by test", cx));
     cx.simulate_keystrokes("enter");
@@ -322,6 +324,9 @@ fn the_session_rename_prompt_opens_with_the_title_selected(cx: &mut TestAppConte
     let info = daemon.sh("sleep 600");
     let (view, cx) = open(cx, &daemon);
     wait_synced(&view, cx, 1);
+    // No row to edit in place (the sidebar is hidden): the prompt asks.
+    cx.dispatch_action(actions::HideLeftSidebar);
+    draw(cx);
     cx.dispatch_action(actions::RenameSessionById(info.id.to_string()));
     assert!(view.read_with(cx, |wb, _| wb.modal_open() && wb.modal_input_selected()));
     cx.simulate_input("Orchard review");
@@ -340,6 +345,51 @@ fn the_session_rename_prompt_opens_with_the_title_selected(cx: &mut TestAppConte
                 .is_some_and(|s| s.title == "Orchard review")
         })
     });
+}
+
+#[gpui::test]
+fn a_session_row_is_renamed_in_place(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let named = daemon.sh_titled("build", "sleep 600");
+    let (view, cx) = open(cx, &daemon);
+    wait_synced(&view, cx, 1);
+    draw(cx);
+    let panel = view
+        .read_with(cx, |wb, _| wb.panel::<SessionsPanel>("sessions"))
+        .expect("the sessions panel is drawn in the left dock");
+    let editing = |cx: &mut VisualTestContext| {
+        panel.read_with(cx, |p, _| {
+            p.renaming_session().map(|(id, text)| (id, text.to_owned()))
+        })
+    };
+
+    // The row is on screen: Rename… edits its title where it is, with no dialog.
+    cx.dispatch_action(actions::RenameSessionById(named.id.to_string()));
+    draw(cx);
+    assert!(!view.read_with(cx, |wb, _| wb.modal_open()));
+    assert_eq!(editing(cx), Some((named.id, "build".to_owned())));
+    assert!(panel.read_with(cx, |p, _| p.rename_selected()));
+    cx.simulate_input("deploy");
+    assert_eq!(editing(cx), Some((named.id, "deploy".to_owned())));
+    cx.simulate_keystrokes("enter");
+    wait_until(cx, "the new title", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .session(named.id)
+                .is_some_and(|s| s.title == "deploy")
+        })
+    });
+    assert_eq!(editing(cx), None);
+
+    // Escape leaves the name alone.
+    cx.dispatch_action(actions::RenameSessionById(named.id.to_string()));
+    draw(cx);
+    cx.simulate_input("nope");
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert_eq!(editing(cx), None);
+    assert_eq!(daemon.session(named.id).title, "deploy");
 }
 
 #[gpui::test]

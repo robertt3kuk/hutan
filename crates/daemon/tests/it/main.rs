@@ -23,6 +23,7 @@ mod recovery;
 mod resources;
 mod restore;
 mod session_env;
+mod session_names;
 mod sessions;
 mod tasks;
 mod workspaces;

@@ -78,6 +78,7 @@ pub mod registry;
 pub mod resources;
 pub mod restore;
 pub mod router;
+pub mod session_names;
 pub mod tasks;
 pub mod terminals;
 pub mod tree;

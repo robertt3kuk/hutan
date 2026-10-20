@@ -304,6 +304,8 @@ data_actions! {
     SetSidebarOrganize(SidebarOrganize);
     /// The inline rename of a workspace or project row was confirmed.
     RenameWorkspaceTo(RenameTo);
+    /// The inline rename of a session row was confirmed (an empty title only returns focus).
+    RenameSessionTo(SessionRenameTo);
     /// Resume a session found in the history index: its command in a new terminal session.
     ResumeHistoryHit(HistoryResume);
     /// Copy a resume command line to the clipboard.
@@ -376,6 +378,13 @@ pub struct ProjectDrop {
 pub struct RenameTo {
     pub workspace: String,
     pub name: String,
+}
+
+/// A session (`session` is its id) and the title the user typed for it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SessionRenameTo {
+    pub session: String,
+    pub title: String,
 }
 
 /// A block of a session's terminal (`block` is the daemon's block id).
