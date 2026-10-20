@@ -5,7 +5,11 @@
 # macOS) those deadlines are sometimes missed although the code is fine. A failed test is run
 # again up to twice; nextest still reports it as FLAKY, so a test that needs a retry is visible
 # in every run and can be fixed. Assertions are not relaxed.
+#
+# Four test threads: each daemon/desktop test spawns processes and PTYs; more threads on the
+# 16 GB dev laptop only add memory pressure and deadline misses. Override with `-j N`.
 [profile.default]
 retries = { backoff = "fixed", count = 2, delay = "2s" }
 slow-timeout = { period = "30s", terminate-after = 6 }
 fail-fast = false
+test-threads = 4

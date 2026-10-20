@@ -1,0 +1,4 @@
+# Bounded build parallelism: the dev machine is a 16 GB laptop that also runs agents and the
+# desktop app. Override for one run with `CARGO_BUILD_JOBS=N`.
+[build]
+jobs = 4

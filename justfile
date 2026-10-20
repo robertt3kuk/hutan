@@ -46,3 +46,9 @@ menubar-icon:
 # `just install --dest ~/Applications`, `just install --debug`.
 install *args:
     cargo run -p xtask --locked -- install {{args}}
+
+# Free disk without losing the build: drop incremental caches (rebuilt on demand) and print what
+# the target dir and slice worktrees still take.
+sweep:
+    rm -rf target/debug/incremental target/release/incremental
+    -du -sh target ../hutan-wt/*/target 2>/dev/null

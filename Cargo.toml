@@ -100,6 +100,14 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 
+# Debug builds keep file:line for backtraces but no variable info: full debuginfo made each
+# checkout's target 30–55 GB and linking the desktop test binaries memory-heavy.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # The VT engine and the terminal crate run in every debug-built daemon and desktop test; left
 # unoptimized they are ~10x slower and the flood tests (20 MB through the engine) time out.
 [profile.dev.package.alacritty_terminal]

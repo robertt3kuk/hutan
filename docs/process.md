@@ -85,7 +85,7 @@ Two working modes:
 | Mode | When | Where |
 |---|---|---|
 | **Worktree** (default) | Parallel slices, or the orchestrator keeps working in the main checkout meanwhile | `../hutan-wt/<slice>` on `slice/<slice>` |
-| **Main checkout** | One slice at a time, nothing else editing the repo (small fixes, debugging, work that needs the user's live environment) | `/Users/workie/proj/hutan` on `slice/<slice>` (task says so explicitly); no worktree |
+| **Main checkout** | One slice at a time, nothing else editing the repo (small fixes, debugging, work that needs the user's live environment) | the main checkout on `slice/<slice>` (task says so explicitly); no worktree |
 
 Humans and the orchestrator can always work directly in the main checkout; only concurrent agents need worktrees.
 
@@ -97,6 +97,8 @@ Loop per slice:
 5. Record the slice in `status.md` (what landed, verification run, deviations).
 
 Rules: implementers never edit `status.md`/`roadmap.md`; a needed contract change comes back as a report item, not an edit. Dependent slices start after their dependency merges. Changing the implementer model = edit `.omp/agents/implementer.md` (one place).
+
+Resources (dev machine: M1 Pro, 10 cores, 16 GB RAM): builds use 4 jobs (`.cargo/config.toml`), tests 4 threads (`.config/nextest.toml`); debug builds carry line tables only (`Cargo.toml` `[profile.dev]`). At most **one implementer worktree** builds at a time besides the main checkout. Before dispatching, check `df -h ~` and `just sweep`; after merging, `git worktree remove` the slice (its `target/` goes with it). Every test run uses a temporary `HUTAN_HOME`; after a run, `pgrep -x hutand` must find no test daemon.
 
 ## Branching and commits
 
