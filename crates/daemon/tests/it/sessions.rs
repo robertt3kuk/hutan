@@ -137,7 +137,10 @@ async fn ack_pacing_keeps_floods_bounded_and_the_daemon_responsive() {
             .is_some_and(|line| line.trim() == "FLOOD-DONE")
     };
     let mut observer = View::attach(&observer_client, tid, None).await;
-    observer.wait_for("flood finished", finished).await;
+    // A liveness bound: 20 MB through a debug build takes 15-16 s alone, longer under load.
+    observer
+        .wait_for_within("flood finished", Duration::from_secs(60), finished)
+        .await;
     status(&observer_client).await;
 
     // The next render after acking reflects the latest screen, not the intermediate one.

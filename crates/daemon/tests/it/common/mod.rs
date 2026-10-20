@@ -383,7 +383,18 @@ impl View {
 
     /// Applies renders (acking each when `auto_ack`) until the screen satisfies `pred`.
     pub async fn wait_for(&mut self, what: &str, pred: impl Fn(&Screen) -> bool) {
-        let outcome = timeout(WAIT, async {
+        self.wait_for_within(what, WAIT, pred).await;
+    }
+
+    /// [`View::wait_for`] with its own overall deadline, for waits that are a liveness bound
+    /// on slow work rather than a latency check. Each render must still arrive within `WAIT`.
+    pub async fn wait_for_within(
+        &mut self,
+        what: &str,
+        deadline: Duration,
+        pred: impl Fn(&Screen) -> bool,
+    ) {
+        let outcome = timeout(deadline, async {
             loop {
                 if pred(&self.screen) {
                     return;
