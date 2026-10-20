@@ -149,9 +149,13 @@ pub struct HistoryPanel {
     pick: Option<ItemKey>,
     pub(super) scan_open: bool,
     pub(super) menu: Option<Menu>,
-    /// The off-state card's checkboxes, in [`SOURCES`] order, and what the daemon has now.
+    /// The off-state card's checkboxes, in [`SOURCES`] order (unticked until the user ticks
+    /// them: consent is never pre-given), and what the daemon has now.
     pub(super) card_sources: [bool; 4],
     card_daemon: Option<[bool; 4]>,
+    /// The card shows its sources (the user pressed *Set up history…*); until then it is one
+    /// short line and a button.
+    pub(super) card_open: bool,
     confirm: Option<Confirm>,
     /// What a running request is called ("Enabling…"); the buttons wait for it.
     pub(super) busy: Option<&'static str>,
@@ -295,8 +299,9 @@ impl HistoryPanel {
             pick: None,
             scan_open: false,
             menu: None,
-            card_sources: [true; 4],
+            card_sources: [false; 4],
             card_daemon: None,
+            card_open: false,
             confirm: None,
             busy: None,
             error: None,
@@ -458,6 +463,11 @@ impl HistoryPanel {
     /// The off-state card's checkboxes: Hutan, Claude, Codex, OMP.
     pub fn card_sources(&self) -> [bool; 4] {
         self.card_sources
+    }
+
+    /// Whether the off-state card shows its sources (after *Set up history…*).
+    pub fn card_open(&self) -> bool {
+        self.card_open
     }
 
     /// True while the panel is narrower than [`NARROW_WIDTH`] (as of the last frame).
@@ -1116,15 +1126,32 @@ impl HistoryPanel {
         }
     }
 
-    /// **Enable**: writes the sources the card ticked to `daemon.toml` where they differ, turns
-    /// indexing on (`history.set_enabled`), then follows the first scan.
+    /// *Set up history…*: the short card shows the sources to tick.
+    pub fn open_card(&mut self, cx: &mut Context<Self>) {
+        self.card_open = true;
+        cx.notify();
+    }
+
+    /// *Not now*: back to the short card (the ticks stay).
+    pub fn close_card(&mut self, cx: &mut Context<Self>) {
+        self.card_open = false;
+        cx.notify();
+    }
+
+    /// **Enable**: writes the sources the card ticked to `daemon.toml` where they differ (all
+    /// four while the daemon's values are not known), turns indexing on
+    /// (`history.set_enabled`), then follows the first scan. Nothing happens until a source is
+    /// ticked.
     pub fn enable_indexing(&mut self, cx: &mut Context<Self>) {
         if self.busy.is_some() || self.card_sources.iter().all(|on| !on) {
             return;
         }
         let connection = self.env.sessions.read(cx).connection().clone();
         let wanted = self.card_sources;
-        let have = self.card_daemon;
+        let have = self
+            .card_daemon
+            .filter(|_| connection.supports_daemon_settings());
+        let write_all = have.is_none() && connection.supports_daemon_settings();
         self.busy = Some("Enabling…");
         self.error = None;
         cx.notify();
@@ -1132,9 +1159,9 @@ impl HistoryPanel {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    if let Some(have) = have {
+                    if have.is_some() || write_all {
                         for (i, source) in SOURCES.iter().enumerate() {
-                            if wanted[i] != have[i] {
+                            if write_all || have.is_some_and(|have| wanted[i] != have[i]) {
                                 connection
                                     .daemon_setting_set(
                                         &format!("history.{}", source.as_str()),
@@ -1196,6 +1223,7 @@ impl HistoryPanel {
                         this.selected = None;
                         this.scan_open = false;
                         this.card_daemon = None;
+                        this.card_open = false;
                         this.rebuild(cx);
                     }
                     Err(error) => {
@@ -1217,7 +1245,8 @@ impl HistoryPanel {
         }
     }
 
-    /// Reads the sources `daemon.toml` has, once, for the card's checkboxes.
+    /// Reads the sources `daemon.toml` has, once: Enable writes only what differs from them.
+    /// The checkboxes are not set from them: they start unticked whatever the file says.
     pub(super) fn load_card(&mut self, cx: &mut Context<Self>) {
         if self.card_daemon.is_some() || self.card_task.is_some() {
             return;
@@ -1242,7 +1271,6 @@ impl HistoryPanel {
                         }
                     }
                     this.card_daemon = Some(have);
-                    this.card_sources = have;
                     cx.notify();
                 }
             })

@@ -610,11 +610,18 @@ impl Workbench {
                 .state_path
                 .as_ref()
                 .is_none_or(|path| !path.exists());
+        // The very first launch of an installation (a layout file is expected and does not exist
+        // yet): the right sidebar waits on its rail, so that nothing opens on a panel the user
+        // has not asked for. A layout that is saved, or handed in, is never touched.
+        let first_launch = fresh && options.state_path.is_some();
         let mut state = match (options.initial_state, &options.state_path) {
             (Some(state), _) => state,
             (None, Some(path)) => persistence::load_state(path),
             (None, None) => WorkbenchState::default(),
         };
+        if first_launch {
+            state.docks.right.collapsed = true;
+        }
         if fresh
             && layout_settings.preset != LayoutPreset::DEFAULT
             && let Some(def) = preset_defs

@@ -731,3 +731,38 @@ fn a_user_who_had_hutan_keeps_the_assistant_on_and_a_new_user_does_not() {
     );
     assert!(!AssistantSettings::default().enabled);
 }
+
+#[gpui::test]
+fn the_very_first_launch_opens_with_the_right_sidebar_on_its_rail(cx: &mut TestAppContext) {
+    // No layout file yet: the right sidebar (History first) waits on its rail.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(STATE_FILE);
+    let (view, _settings, cx) = open_in(cx, false, Some(path.clone()));
+    let docks = state(&view, cx).docks;
+    assert_eq!(
+        docks.right.mode(),
+        hutan_desktop::workbench::model::DockMode::Compact
+    );
+    assert_eq!(docks.right.active, Some(PanelId::new("history")));
+    assert!(
+        docks.left.is_expanded(),
+        "the left sidebar is as it always was"
+    );
+    // ⌘L opens the body on the first tab.
+    cx.simulate_keystrokes("cmd-l");
+    assert!(state(&view, cx).docks.right.is_expanded());
+    assert_eq!(
+        state(&view, cx).docks.right.active,
+        Some(PanelId::new("history"))
+    );
+}
+
+#[gpui::test]
+fn a_saved_layout_keeps_its_right_sidebar_open(cx: &mut TestAppContext) {
+    // A layout file that exists is the user's: nothing about it changes.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(STATE_FILE);
+    std::fs::write(&path, WorkbenchState::default().to_json().unwrap()).unwrap();
+    let (view, _settings, cx) = open_in(cx, false, Some(path));
+    assert!(state(&view, cx).docks.right.is_expanded());
+}

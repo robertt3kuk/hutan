@@ -818,7 +818,9 @@ fn refresh_and_the_timer_keep_the_scroll_position(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn the_off_state_is_one_card_with_the_sources_and_an_enable_button(cx: &mut TestAppContext) {
+fn the_off_state_is_a_short_card_then_unticked_sources_and_an_enable_button(
+    cx: &mut TestAppContext,
+) {
     let env = HistoryEnv::new();
     env.write_fixtures();
     let daemon = TestDaemon::start_with_config(&env.daemon_toml(false));
@@ -828,7 +830,30 @@ fn the_off_state_is_one_card_with_the_sources_and_an_enable_button(cx: &mut Test
         panel.read_with(cx, |p, _| p.status().is_some())
     });
     assert!(!panel.read_with(cx, |p, _| p.status().unwrap().enabled));
-    // The card: the four sources (all on, as `daemon.toml` has them), Enable, Settings.
+    // First: one short card and a quiet button, no form (`daemon.toml` has every source on,
+    // and still nothing is ticked here).
+    pump_until(cx, "the short card", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::History("setup")).is_some()
+        })
+    });
+    for region in [
+        Region::HistoryItem("source", 0),
+        Region::History("enable"),
+        Region::History("search"),
+    ] {
+        assert!(
+            view.read_with(cx, |wb, _| wb.region_bounds(region))
+                .is_none(),
+            "{region:?}: the card does not show the form until it is asked for"
+        );
+    }
+    assert!(!panel.read_with(cx, |p, _| p.card_open()));
+    assert_eq!(panel.read_with(cx, |p, _| p.card_sources()), [false; 4]);
+
+    // *Set up history…* shows the four sources, unticked, with Enable and Settings.
+    click(&view, cx, Region::History("setup"));
     pump_until(cx, "the card's sources", |cx| {
         draw(cx);
         view.read_with(cx, |wb, _| {
@@ -838,28 +863,50 @@ fn the_off_state_is_one_card_with_the_sources_and_an_enable_button(cx: &mut Test
     for region in [
         Region::History("enable"),
         Region::History("settings"),
+        Region::History("not-now"),
         Region::HistoryItem("source", 0),
     ] {
         bounds(&view, cx, region);
     }
-    assert!(
-        view.read_with(cx, |wb, _| wb.region_bounds(Region::History("search")))
-            .is_none(),
-        "no search field, no list"
+    assert!(panel.read_with(cx, |p, _| p.card_open()));
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.card_sources()),
+        [false; 4],
+        "nothing is ticked until the user ticks it"
     );
-    assert_eq!(panel.read_with(cx, |p, _| p.card_sources()), [true; 4]);
     assert!(!daemon.paths.index_database.exists(), "nothing is read yet");
 
-    // Unticking every source switches Enable off.
-    for n in 0..4 {
-        click(&view, cx, Region::HistoryItem("source", n));
-    }
-    assert_eq!(panel.read_with(cx, |p, _| p.card_sources()), [false; 4]);
+    // Enable does nothing while no source is ticked.
     click(&view, cx, Region::History("enable"));
     pump_until(cx, "nothing", |_| true);
     assert!(!panel.read_with(cx, |p, _| p.status().unwrap().enabled));
+    assert!(!daemon.paths.index_database.exists(), "still nothing read");
 
-    // Codex off, the rest on; Enable writes the sources to daemon.toml and turns indexing on.
+    // *Not now* folds the card; the ticks are kept for the next time.
+    click(&view, cx, Region::HistoryItem("source", 1));
+    click(&view, cx, Region::History("not-now"));
+    pump_until(cx, "the short card", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::History("setup")).is_some()
+        })
+    });
+    click(&view, cx, Region::History("setup"));
+    pump_until(cx, "the sources", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::HistoryItem("source", 0)).is_some()
+        })
+    });
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.card_sources()),
+        [false, true, false, false]
+    );
+    click(&view, cx, Region::HistoryItem("source", 1));
+    assert_eq!(panel.read_with(cx, |p, _| p.card_sources()), [false; 4]);
+
+    // Hutan, Claude and OMP ticked, Codex not; Enable writes the sources to daemon.toml and
+    // turns indexing on.
     for n in [0, 1, 3] {
         click(&view, cx, Region::HistoryItem("source", n));
     }
@@ -900,10 +947,10 @@ fn the_off_state_is_one_card_with_the_sources_and_an_enable_button(cx: &mut Test
         panel.read_with(cx, |p, _| p.status().is_some_and(|s| !s.enabled))
     });
     assert!(panel.read_with(cx, |p, _| p.sessions().is_empty()));
-    pump_until(cx, "the card again", |cx| {
+    pump_until(cx, "the short card again", |cx| {
         draw(cx);
         view.read_with(cx, |wb, _| {
-            wb.region_bounds(Region::History("enable")).is_some()
+            wb.region_bounds(Region::History("setup")).is_some()
         })
     });
 }

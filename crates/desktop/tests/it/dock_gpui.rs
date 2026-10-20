@@ -745,6 +745,9 @@ fn with_the_setting_off_a_narrow_window_collapses_nothing(cx: &mut TestAppContex
 fn the_dock_modes_are_saved_and_restored(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(STATE_FILE);
+    // A layout that was saved before (the very first launch starts the right sidebar on its
+    // rail already): both sidebars are open, ⌘B and ⌘L take them down to their rails.
+    std::fs::write(&path, WorkbenchState::default().to_json().unwrap()).unwrap();
     let (view, _, cx) = open_at(cx, false, Some(path.clone()));
     cx.simulate_keystrokes("cmd-b");
     cx.simulate_keystrokes("cmd-l");

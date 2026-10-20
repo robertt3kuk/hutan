@@ -1,5 +1,5 @@
 //! The first-run setup (design.md § First-run setup): a centered sheet in the v2 style that walks
-//! through Welcome, Look, Agents, Background, Command line and Done. It is shown once (until
+//! through Welcome, Look, Agents, History, Background, Command line and Done. It is shown once (until
 //! `app.setup_done`), and again from ⌘K "Hutan: Run Setup…" and Settings → app → "Run setup
 //! again".
 //!
@@ -49,16 +49,18 @@ pub enum SetupStep {
     Welcome,
     Look,
     Agents,
+    History,
     Background,
     CommandLine,
     Done,
 }
 
 impl SetupStep {
-    pub const ALL: [SetupStep; 6] = [
+    pub const ALL: [SetupStep; 7] = [
         SetupStep::Welcome,
         SetupStep::Look,
         SetupStep::Agents,
+        SetupStep::History,
         SetupStep::Background,
         SetupStep::CommandLine,
         SetupStep::Done,
@@ -85,6 +87,7 @@ impl SetupStep {
             SetupStep::Welcome => "Welcome",
             SetupStep::Look => "Look",
             SetupStep::Agents => "Agents",
+            SetupStep::History => "History",
             SetupStep::Background => "Background",
             SetupStep::CommandLine => "Command line",
             SetupStep::Done => "Done",
@@ -96,6 +99,7 @@ impl SetupStep {
             SetupStep::Welcome => Mascot::AngleFront,
             SetupStep::Look => Mascot::Angle34Left,
             SetupStep::Agents => Mascot::Focus,
+            SetupStep::History => Mascot::Thinking,
             SetupStep::Background => Mascot::Sleep,
             SetupStep::CommandLine => Mascot::AngleLookDown,
             SetupStep::Done => Mascot::Success,
@@ -126,6 +130,9 @@ pub struct SetupState {
     pub auto_install: bool,
     /// The harnesses whose hooks the user ticked to install when the Agents step is left.
     pub hooks: BTreeSet<&'static str>,
+    /// The History step's sources, in [`HISTORY_SOURCES`] order. Unticked: reading other
+    /// tools' transcripts is something the user chooses.
+    pub history: [bool; 4],
     pub keep_running: bool,
     pub start_at_login: bool,
     pub global_shortcut: String,
@@ -150,6 +157,7 @@ impl SetupState {
             assistant_backend: None,
             auto_install: settings.get::<IntegrationsSettings>().auto_install,
             hooks: BTreeSet::new(),
+            history: [false; 4],
             keep_running: app.keep_running,
             start_at_login: app.start_at_login,
             global_shortcut: assistant.global_shortcut.clone(),
@@ -160,6 +168,15 @@ impl SetupState {
         }
     }
 }
+
+/// What the History step offers to read: the source's id in `daemon.toml` (`history.<id>`), its
+/// name, and where it reads.
+pub const HISTORY_SOURCES: [(&str, &str, &str); 4] = [
+    ("hutan", "Hutan", "this app's own terminals and chats"),
+    ("claude", "Claude Code", "~/.claude/projects"),
+    ("codex", "Codex", "~/.codex/sessions"),
+    ("omp", "OMP", "~/.omp/agent/sessions"),
+];
 
 /// What the Done step's buttons do after the setup closes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -386,6 +403,11 @@ impl Workbench {
         };
         match step {
             SetupStep::Welcome | SetupStep::Done => {}
+            SetupStep::History => {
+                if state.history.iter().any(|on| *on) {
+                    self.setup_enable_history(state.history, cx);
+                }
+            }
             SetupStep::Look => {
                 self.setup_write(
                     "appearance.appearance",
@@ -440,6 +462,38 @@ impl Workbench {
             tracing::warn!("cannot save {key}: {error}");
             self.set_notice(format!("Cannot save {key}: {error}"), cx);
         }
+    }
+
+    /// The History step's ticked sources reach `daemon.toml` (`history.<source>`, all four, so
+    /// an unticked one stays unread whatever the file had) and indexing is turned on.
+    fn setup_enable_history(&mut self, sources: [bool; 4], cx: &mut Context<Self>) {
+        let connection = self.connection(cx);
+        if !connection.supports_history() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let result: Result<(), hutan_client::ClientError> = async {
+                if connection.supports_daemon_settings() {
+                    for ((id, _, _), on) in HISTORY_SOURCES.iter().zip(sources) {
+                        connection
+                            .daemon_setting_set(
+                                &format!("history.{id}"),
+                                Some(serde_json::Value::Bool(on)),
+                            )
+                            .await?;
+                    }
+                }
+                connection.history_set_enabled(true).await.map(drop)
+            }
+            .await;
+            if let Err(error) = result {
+                this.update(cx, |this, cx| {
+                    this.set_notice(format!("Cannot turn on history: {error}"), cx);
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     /// The Agents step's backend choice reaches the daemon (`assistant.configure`, global scope).
@@ -576,6 +630,16 @@ impl Workbench {
             } else {
                 state.hooks.remove(harness);
             }
+            cx.notify();
+        }
+    }
+
+    /// Ticks or unticks a source of the History step (index into [`HISTORY_SOURCES`]).
+    pub fn setup_set_history_source(&mut self, index: usize, on: bool, cx: &mut Context<Self>) {
+        if let Some(state) = &mut self.setup.state
+            && let Some(slot) = state.history.get_mut(index)
+        {
+            *slot = on;
             cx.notify();
         }
     }
@@ -747,6 +811,7 @@ impl Workbench {
             SetupStep::Welcome => self.setup_welcome(&theme, &tokens),
             SetupStep::Look => self.setup_look(&state, window, cx),
             SetupStep::Agents => self.setup_agents(&state, cx),
+            SetupStep::History => self.setup_history(&state, cx),
             SetupStep::Background => self.setup_background(&state, cx),
             SetupStep::CommandLine => self.setup_command_line(&state, cx),
             SetupStep::Done => self.setup_done(&state, cx),
@@ -1411,6 +1476,80 @@ impl Workbench {
             .into_any_element()
     }
 
+    /// Optional: the sources History may read, unticked, each with the folder it reads. Leaving
+    /// the step with none ticked changes nothing.
+    fn setup_history(&self, state: &SetupState, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (index, (id, name, place)) in HISTORY_SOURCES.iter().enumerate() {
+            let ticked = state.history[index];
+            rows.push(
+                div()
+                    .id(SharedString::from(format!("setup-history-{id}")))
+                    .relative()
+                    .flex()
+                    .items_start()
+                    .gap(px(tokens.spacing * 3.0))
+                    .py(px(tokens.spacing * 2.0))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let on = this.setup.state.as_ref().is_some_and(|s| !s.history[index]);
+                        this.setup_set_history_source(index, on, cx);
+                    }))
+                    .child(div().flex_none().child(crate::icons::glyph(if ticked {
+                        crate::icons::Icon::StateCompleted
+                    } else {
+                        crate::icons::Icon::StateTodo
+                    })))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .gap(px(2.0))
+                            .child(div().medium().child(*name))
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(theme.muted)
+                                    .child(*place),
+                            ),
+                    )
+                    .child(probe(&self.regions, Region::SetupHarness(*id, "history")))
+                    .into_any_element(),
+            );
+        }
+        let content = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .border_t_1()
+            .border_color(theme.border)
+            .children(rows)
+            .child(
+                div()
+                    .pt(px(tokens.spacing * 2.0))
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.muted)
+                    .child(
+                        "Hutan reads a source only when you tick it, into one index file on \
+                         this Mac, with secrets masked as far as possible. Nothing leaves \
+                         the machine. Leave everything unticked to keep history off; the \
+                         History panel can set it up later.",
+                    ),
+            )
+            .into_any_element();
+        self.setup_page(
+            "Search your agent sessions",
+            "Optional. History lists and searches the sessions of your agents in one place. \
+             These are the folders it would read.",
+            Some(content),
+        )
+    }
+
     fn setup_background(&self, state: &SetupState, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -1721,6 +1860,7 @@ mod tests {
                 "Welcome",
                 "Look",
                 "Agents",
+                "History",
                 "Background",
                 "Command line",
                 "Done"

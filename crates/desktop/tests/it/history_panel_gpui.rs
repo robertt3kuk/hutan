@@ -68,7 +68,21 @@ fn indexing_off_shows_the_card_and_reads_nothing(cx: &mut TestAppContext) {
     let (view, cx) = open(cx, &daemon);
     let panel = show_panel(&view, cx);
     assert!(!panel.read_with(cx, |p, _| p.status().unwrap().enabled));
-    // The card offers the button and the link to the settings.
+    // The card is short: one quiet button, no form.
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::History("setup")))
+            .is_some()
+    );
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::History("enable")))
+            .is_none()
+    );
+    let setup = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::History("setup")))
+        .unwrap();
+    cx.simulate_click(setup.center(), Modifiers::none());
+    // Set up history… offers the button and the link to the settings.
     for region in ["enable", "settings"] {
         draw(cx);
         assert!(

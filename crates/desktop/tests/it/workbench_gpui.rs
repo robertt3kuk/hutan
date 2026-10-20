@@ -370,10 +370,13 @@ fn corrupt_or_unknown_version_state_falls_back_to_default(cx: &mut TestAppContex
     let (view, cx) = open(cx, Some(path.clone()));
     assert_eq!(state(&view, cx), WorkbenchState::default());
 
-    // Missing file: default too, and nothing is created until the layout changes.
+    // Missing file (the very first launch): the default, with the right sidebar on its rail;
+    // nothing is created until the layout changes.
     std::fs::remove_file(&path).unwrap();
     let (view, cx) = open(cx, Some(path.clone()));
-    assert_eq!(state(&view, cx), WorkbenchState::default());
+    let mut first_launch = WorkbenchState::default();
+    first_launch.docks.right.collapsed = true;
+    assert_eq!(state(&view, cx), first_launch);
     assert!(!path.exists());
 }
 

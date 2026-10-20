@@ -206,7 +206,17 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
     assert!(history.read_with(cx, |p, _| p.hits().is_empty() && !p.searching()));
     history.update(cx, |p, cx| p.set_query("", cx));
 
-    // ---- Enable indexing (a real click) → indexed ----------------------------------------------
+    // ---- Set up history…, tick every source, Enable (real clicks) → indexed ----------------------
+    click(&view, cx, Region::History("setup"));
+    pump_until(cx, "the sources", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::HistoryItem("source", 3)).is_some()
+        })
+    });
+    for n in 0..4 {
+        click(&view, cx, Region::HistoryItem("source", n));
+    }
     click(&view, cx, Region::History("enable"));
     pump_until(cx, "indexing to be enabled", |cx| {
         history.read_with(cx, |p, _| p.status().is_some_and(|s| s.enabled))

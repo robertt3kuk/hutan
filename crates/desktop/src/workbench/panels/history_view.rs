@@ -310,7 +310,8 @@ impl HistoryPanel {
 
     // ---- the off-state card ----------------------------------------------------------------
 
-    /// What indexing reads, which sources, what stays local, and the button.
+    /// While indexing is off: one quiet line and a button; the sources (unticked), what stays
+    /// local and **Enable** only appear after *Set up history…*.
     fn render_disabled(
         &mut self,
         theme: &Theme,
@@ -318,6 +319,9 @@ impl HistoryPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.load_card(cx);
+        if !self.card_open {
+            return self.render_short_card(theme, tokens, cx);
+        }
         let busy = self.busy.is_some();
         let none = self.card_sources.iter().all(|on| !on);
         let mut sources = div().flex().flex_col().gap(px(tokens.spacing));
@@ -400,11 +404,12 @@ impl HistoryPanel {
                 div()
                     .text_size(px(tokens.font_size + 2.0))
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .child("Show your agent sessions"),
+                    .child("Search your agent sessions"),
             )
             .child(div().text_color(theme.muted).child(
                 "Browse, search and resume the sessions of Hutan, Claude Code, Codex and OMP \
-                     in one list. Pick what Hutan may read:",
+                     in one list. Tick what Hutan may read; nothing is read until you press \
+                     Enable:",
             ))
             .child(sources)
             .child(
@@ -436,6 +441,20 @@ impl HistoryPanel {
                         .child(probe(&self.env.regions, Region::History("enable"))),
                     )
                     .child(
+                        button(
+                            "history-not-now",
+                            "Not now",
+                            ButtonKind::Ghost,
+                            !busy,
+                            theme,
+                            tokens,
+                        )
+                        .when(!busy, |b| {
+                            b.on_click(cx.listener(|this, _, _, cx| this.close_card(cx)))
+                        })
+                        .child(probe(&self.env.regions, Region::History("not-now"))),
+                    )
+                    .child(
                         div()
                             .id("history-settings-link")
                             .cursor_pointer()
@@ -454,6 +473,50 @@ impl HistoryPanel {
             .when_some(self.error.clone(), |s, error| {
                 s.child(div().text_color(theme.danger).child(shared(error)))
             })
+            .into_any_element()
+    }
+
+    /// The calm default of the off state: what this is, that it is off, one quiet action.
+    fn render_short_card(
+        &mut self,
+        theme: &Theme,
+        tokens: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .id("history-disabled")
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap(px(tokens.spacing * 2.0))
+            .px(px(tokens.spacing * 3.0))
+            .py(px(tokens.spacing * 3.0))
+            .child(
+                div()
+                    .text_size(px(tokens.font_size + 1.0))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .child("Search your agent sessions"),
+            )
+            .child(
+                div()
+                    .text_color(theme.muted)
+                    .child("Off until you choose sources."),
+            )
+            .child(
+                div().flex().child(
+                    button(
+                        "history-setup",
+                        "Set up history…",
+                        ButtonKind::Secondary,
+                        true,
+                        theme,
+                        tokens,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.open_card(cx)))
+                    .child(probe(&self.env.regions, Region::History("setup"))),
+                ),
+            )
             .into_any_element()
     }
 

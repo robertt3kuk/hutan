@@ -323,7 +323,7 @@ fn the_setup_is_modal_shortcuts_wait_and_escape_skips_it(cx: &mut TestAppContext
 }
 
 #[gpui::test]
-fn back_continue_and_skip_walk_the_six_steps(cx: &mut TestAppContext) {
+fn back_continue_and_skip_walk_the_seven_steps(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
     let (view, cx) = open_first_run(cx, &daemon, &env);
@@ -333,7 +333,7 @@ fn back_continue_and_skip_walk_the_six_steps(cx: &mut TestAppContext) {
     );
 
     let mut seen = vec![step(&view, cx).unwrap()];
-    for _ in 0..5 {
+    for _ in 0..6 {
         click(&view, cx, Region::Setup("continue"));
         seen.push(step(&view, cx).unwrap());
     }
@@ -353,6 +353,54 @@ fn back_continue_and_skip_walk_the_six_steps(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("enter");
     assert!(!setup_open(&view, cx));
     assert!(saved(&daemon).contains("setup_done = true"));
+}
+
+#[gpui::test]
+fn the_history_step_names_the_folders_unticked_and_reads_only_what_is_ticked(
+    cx: &mut TestAppContext,
+) {
+    // The roots are temporary folders: no real transcript store is ever listed.
+    let history = common::history::HistoryEnv::new();
+    let daemon = TestDaemon::start_with_config(&history.daemon_toml(false));
+    let env = Env::new();
+    let (view, cx) = open_first_run(cx, &daemon, &env);
+    go_to(&view, cx, SetupStep::History);
+    let ticked = |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.setup().unwrap().history);
+    for id in ["hutan", "claude", "codex", "omp"] {
+        assert!(
+            drawn(&view, cx, Region::SetupHarness(id, "history")),
+            "{id} is listed"
+        );
+    }
+    assert_eq!(ticked(cx), [false; 4], "nothing starts ticked");
+
+    // Leaving it with nothing ticked changes nothing: indexing stays off.
+    click(&view, cx, Region::Setup("continue"));
+    assert_eq!(step(&view, cx), Some(SetupStep::Background));
+    pump_for(cx, Duration::from_millis(300));
+    let toml = std::fs::read_to_string(&daemon.paths.config_file).unwrap_or_default();
+    assert!(toml.contains("enabled = false"), "{toml}");
+    assert!(!daemon.paths.index_database.exists());
+
+    // Tick Hutan and Codex, leave: those two are written, the others stay off, indexing is on.
+    click(&view, cx, Region::Setup("back"));
+    assert_eq!(step(&view, cx), Some(SetupStep::History));
+    click(&view, cx, Region::SetupHarness("hutan", "history"));
+    click(&view, cx, Region::SetupHarness("codex", "history"));
+    assert_eq!(ticked(cx), [true, false, true, false]);
+    click(&view, cx, Region::Setup("continue"));
+    wait_until(cx, "indexing to be turned on", |cx| {
+        draw(cx);
+        let toml = std::fs::read_to_string(&daemon.paths.config_file).unwrap_or_default();
+        toml.contains("enabled = true")
+    });
+    let toml = std::fs::read_to_string(&daemon.paths.config_file).unwrap();
+    assert!(toml.contains("hutan = true"), "{toml}");
+    assert!(toml.contains("codex = true"), "{toml}");
+    assert!(
+        toml.contains("claude = false") && toml.contains("omp = false"),
+        "{toml}"
+    );
 }
 
 #[gpui::test]
