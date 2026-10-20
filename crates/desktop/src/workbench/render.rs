@@ -1028,7 +1028,11 @@ impl Workbench {
             .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                 this.show_preset_menu(event.position(), window, cx);
             }))
-            .child(format!("Layout: {preset_name} ▾"));
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .child(format!("Layout: {preset_name}"))
+            .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown));
 
         let accent = theme.accent;
         let overview_button = div()
@@ -1045,7 +1049,9 @@ impl Workbench {
             .when(overview_active, move |s| s.bg(theme.accent_soft))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, _, cx| this.toggle_overview(cx)))
-            .child(format!("▤ Agents overview {overview_hint}"));
+            .gap(px(4.0))
+            .child(crate::icons::glyph(crate::icons::Icon::NavAgents))
+            .child(format!("Agents overview {overview_hint}"));
 
         let left_toggle = self.dock_toggle_button(DockPosition::Left, window, cx);
         let right_toggle = self.dock_toggle_button(DockPosition::Right, window, cx);
@@ -1186,7 +1192,7 @@ impl Workbench {
                     .on_drop(cx.listener(move |this, d: &DraggedItem, window, cx| {
                         this.drop_item(d, DropTarget::Dock { pos, index }, window, cx);
                     }))
-                    .child(icon)
+                    .child(crate::icons::glyph(icon))
                     .child(title)
                     .child(probe(&self.regions, Region::DockTab(pos, index)))
                     .into_any_element()
@@ -1877,7 +1883,7 @@ impl Workbench {
                     cx,
                 );
             }))
-            .child(icon)
+            .child(crate::icons::glyph(icon))
             .child(title)
             .children(badge)
             .children(attention.map(|p| {
@@ -1919,7 +1925,7 @@ impl Workbench {
                         }
                         cx.stop_propagation();
                     }))
-                    .child("×"),
+                    .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
             )
             .child(probe(&self.regions, Region::Tab(pane_id, index)))
             .into_any_element()
@@ -1967,7 +1973,7 @@ impl Workbench {
     ) -> AnyElement {
         ui::button(
             "pane-empty-start",
-            "▶ Start…",
+            "Start…",
             ui::ButtonKind::Primary,
             true,
             theme,
@@ -2234,11 +2240,15 @@ impl Workbench {
                         this.run_menu_entry(i, window, cx);
                     }))
                     .child(
-                        div()
-                            .w(px(12.0))
-                            .child(if entry.checked { "✓" } else { "" }),
+                        div().w(px(12.0)).children(
+                            (entry.checked)
+                                .then(|| crate::icons::glyph(crate::icons::Icon::StateCompleted)),
+                        ),
                     )
-                    .child(entry.label)
+                    .child(div().flex_1().child(entry.label))
+                    .when(entry.submenu, |s| {
+                        s.child(crate::icons::glyph(crate::icons::Icon::ActionDisclose))
+                    })
                     .child(probe(&self.regions, Region::MenuEntry(i)))
                     .into_any_element()
             })

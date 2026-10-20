@@ -984,10 +984,15 @@ impl ChangesView {
                                 this.review.list_open = !this.review.list_open;
                                 cx.notify();
                             }))
-                            .child(SharedString::from(format!(
-                                "{} {summary}",
-                                if self.review.list_open { "▾" } else { "▸" }
-                            )))
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .child(crate::icons::glyph(if self.review.list_open {
+                                crate::icons::Icon::ActionExpand
+                            } else {
+                                crate::icons::Icon::ActionDisclose
+                            }))
+                            .child(SharedString::from(summary))
                             .child(probe(&self.env.regions, Region::Changes("review-summary"))),
                     )
                     .child(div().flex_1())
@@ -1022,7 +1027,7 @@ impl ChangesView {
                     .child(
                         ui::button(
                             "changes-review-menu",
-                            "▾",
+                            "",
                             ui::ButtonKind::Secondary,
                             !self.review.sending,
                             theme,
@@ -1033,6 +1038,7 @@ impl ChangesView {
                             this.review.menu_open = !this.review.menu_open;
                             cx.notify();
                         }))
+                        .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                         .child(probe(&self.env.regions, Region::Changes("review-menu"))),
                     ),
             );
@@ -1192,9 +1198,16 @@ impl ChangesView {
                         }
                         cx.notify();
                     }))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .child(crate::icons::glyph(if open {
+                        crate::icons::Icon::ActionExpand
+                    } else {
+                        crate::icons::Icon::ActionDisclose
+                    }))
                     .child(SharedString::from(format!(
-                        "{} Sent · {} · {} comment{} → {to}",
-                        if open { "▾" } else { "▸" },
+                        "Sent · {} · {} comment{} → {to}",
                         clock(batch),
                         rows.len(),
                         if rows.len() == 1 { "" } else { "s" },

@@ -46,6 +46,27 @@ pub struct Presentation {
     pub needs_you: bool,
 }
 
+impl Presentation {
+    /// The state word remains the accessible meaning; artwork is independently replaceable.
+    pub fn icon(&self) -> crate::icons::Icon {
+        use crate::icons::Icon;
+        match self.label.as_str() {
+            "working" | "starting" | "running" => Icon::StateWorking,
+            "blocked" => Icon::StateBlocked,
+            "approval" => Icon::StateApproval,
+            "question" => Icon::StateQuestion,
+            "done" | "completed" | "exited" => Icon::StateCompleted,
+            "failed" => Icon::StateFailed,
+            "stopped" => Icon::StateStopped,
+            "interrupted" => Icon::StateInterrupted,
+            "disconnected" => Icon::StateDisconnected,
+            "review" => Icon::StateReview,
+            "idle" => Icon::StateIdle,
+            _ => Icon::StateUnknown,
+        }
+    }
+}
+
 /// Why a session counts in the menu bar item and the Dock badge (design.md § Attention
 /// model → macOS surfaces). Finished-and-unread sessions are in the sidebar's *Needs you* but
 /// not here: a badge is for what blocks someone or went wrong.

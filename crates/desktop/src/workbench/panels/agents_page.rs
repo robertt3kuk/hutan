@@ -28,7 +28,7 @@ use gpui::{
 use hutan_core::{ApprovalId, SessionId, WorkspaceId};
 
 use super::common::{now_ms, tone_color};
-use crate::icons::{Icon, icon};
+use crate::icons::{Icon, glyph, icon};
 use crate::sessions::agents_list::{self, Empty, Key, Listing, Query, Row};
 use crate::sessions::agents_text;
 use crate::sessions::presentation::{AgentPresentation, AgentRecord, Group, Link};
@@ -996,7 +996,7 @@ impl AgentsPage {
             .gap(px(12.0))
             .h(px(HEADER))
             .px(px(16.0))
-            .child(icon(Icon::Bot, 16.0, theme.muted))
+            .child(icon(Icon::PanelAgentsDashboard, 16.0, theme.muted))
             .child(
                 div()
                     .text_size(px(16.0))
@@ -1176,7 +1176,8 @@ impl AgentsPage {
             .border_b_1()
             .border_color(theme.border)
             .child(
-                control("agents-scope", format!("{scope_label} ▾").into())
+                control("agents-scope", scope_label.clone().into())
+                    .child(glyph(Icon::ActionMenuDown))
                     .on_click(|event, window, cx| {
                         window.dispatch_action(Box::new(ShowAgentsScopeMenu(event.position())), cx);
                     })
@@ -1218,7 +1219,8 @@ impl AgentsPage {
                 .child(probe(&self.env.regions, Region::AgentsPage("finished"))),
             )
             .children(self.group.map(|group| {
-                control("agents-group-filter", format!("{} ✕", group.label()).into())
+                control("agents-group-filter", group.label().into())
+                    .child(glyph(Icon::ActionClose))
                     .bg(theme.accent_soft)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.group = None;
@@ -1512,7 +1514,11 @@ impl AgentsPage {
                         .flex_none()
                         .w(px(12.0))
                         .text_color(theme.muted)
-                        .child(if open { "▾" } else { "▸" }),
+                        .child(glyph(if open {
+                            Icon::ActionExpand
+                        } else {
+                            Icon::ActionDisclose
+                        })),
                 )
             })
             .child(
@@ -1545,7 +1551,7 @@ impl AgentsPage {
             .px(px(16.0))
             .text_color(theme.muted)
             .text_size(px(tokens.secondary_font_size))
-            .child(icon(Icon::Folder, 14.0, theme.muted))
+            .child(icon(Icon::NavProjectFolder, 14.0, theme.muted))
             .child(
                 div()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -1596,7 +1602,7 @@ impl AgentsPage {
                     .flex_none()
                     .w(px(14.0))
                     .text_color(color)
-                    .child(child.state.glyph()),
+                    .child(glyph(child.state.glyph())),
             )
             .child(
                 div()

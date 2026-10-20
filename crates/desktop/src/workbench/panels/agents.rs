@@ -50,7 +50,7 @@ pub struct RowView {
     pub label: String,
     /// The subagent's definition when it is not the name already.
     pub agent_type: Option<String>,
-    pub glyph: &'static str,
+    pub glyph: crate::icons::Icon,
     /// What the glyph says: `working`, `blocked`, `completed`, `disconnected`, …
     pub meaning: &'static str,
     pub tone: Tone,
@@ -103,7 +103,7 @@ fn row_view(row: &NodeRow<'_>, now_ms: u64) -> RowView {
             .clone()
             .filter(|t| node.name.is_some() && *t != label),
         label,
-        glyph: g.text,
+        glyph: g.icon,
         meaning: g.meaning,
         tone: g.tone,
         animated: g.animated,
@@ -598,7 +598,11 @@ impl AgentsPanel {
                                 }
                                 cx.notify();
                             }))
-                            .child(if row.collapsed { "▸" } else { "▾" })
+                            .child(crate::icons::glyph(if row.collapsed {
+                                crate::icons::Icon::ActionDisclose
+                            } else {
+                                crate::icons::Icon::ActionExpand
+                            }))
                             .child(probe(&self.env.regions, Region::MonitorFold(index)))
                             .into_any_element()
                     } else {
@@ -610,7 +614,7 @@ impl AgentsPanel {
                     .flex_none()
                     .w(px(12.0))
                     .text_color(glyph_color)
-                    .child(row.glyph),
+                    .child(crate::icons::glyph(row.glyph)),
             )
             .child(
                 div()

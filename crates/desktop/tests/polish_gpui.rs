@@ -100,14 +100,14 @@ fn the_window_title_follows_the_center_item_never_a_sidebar_page(cx: &mut TestAp
 fn nav_rows_are_thirty_pixels_with_a_real_icon(cx: &mut TestAppContext) {
     let (view, cx) = open_offline(cx, true);
     let entries = view.read_with(cx, |wb, cx| wb.nav_entries(cx));
-    let icons: Vec<(String, Option<Icon>)> = entries.into_iter().map(|e| (e.key, e.icon)).collect();
+    let icons: Vec<(String, Icon)> = entries.into_iter().map(|e| (e.key, e.icon)).collect();
     assert_eq!(
         icons,
         [
-            ("search".to_owned(), Some(Icon::Search)),
-            ("tasks".to_owned(), Some(Icon::ListChecks)),
-            ("agents".to_owned(), Some(Icon::Bot)),
-            ("assistant".to_owned(), Some(Icon::Sparkles)),
+            ("search".to_owned(), Icon::NavSearch),
+            ("tasks".to_owned(), Icon::NavTasks),
+            ("agents".to_owned(), Icon::NavAgents),
+            ("assistant".to_owned(), Icon::NavMawas),
         ]
     );
     let mut previous_bottom = None;
@@ -132,7 +132,7 @@ fn nav_rows_are_thirty_pixels_with_a_real_icon(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_panel_the_set_has_no_icon_for_keeps_its_glyph(cx: &mut TestAppContext) {
+fn every_registered_panel_has_a_semantic_icon(cx: &mut TestAppContext) {
     let (view, cx) = open_offline(cx, false);
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| {
@@ -141,10 +141,8 @@ fn a_panel_the_set_has_no_icon_for_keeps_its_glyph(cx: &mut TestAppContext) {
     });
     let entries = view.read_with(cx, |wb, cx| wb.nav_entries(cx));
     let notifications = entries.iter().find(|e| e.key == "notifications").unwrap();
-    assert_eq!(notifications.icon, None);
-    assert!(!notifications.glyph.is_empty());
-    let resources_icon = Icon::for_panel("resources");
-    assert_eq!(resources_icon, Some(Icon::Gauge));
+    assert_eq!(notifications.icon, Icon::PanelNotifications);
+    assert_eq!(Icon::for_panel("resources"), Icon::PanelResources);
 }
 
 // ---- the Agents page ---------------------------------------------------------------------------
@@ -228,21 +226,6 @@ fn mawas_homes_header_is_one_row_whose_controls_stay_inside_it(cx: &mut TestAppC
         // The retired second row and its buttons are gone.
         assert!(!painted(&view, cx, Region::Assistant("global")));
         assert!(!painted(&view, cx, Region::Assistant("workspace")));
-    }
-}
-
-// ---- icons ------------------------------------------------------------------------------------------
-
-#[gpui::test]
-fn every_panel_of_the_right_strip_has_an_icon_of_the_set(cx: &mut TestAppContext) {
-    let (view, cx) = open_offline(cx, false);
-    let right = view.read_with(cx, |wb, _| wb.state().docks.right.panels.clone());
-    assert!(!right.is_empty());
-    for panel in right {
-        assert!(
-            Icon::for_panel(panel.as_str()).is_some(),
-            "{panel} has no icon"
-        );
     }
 }
 

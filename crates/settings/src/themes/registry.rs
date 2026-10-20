@@ -40,6 +40,8 @@ struct Shared {
     themes_dir: PathBuf,
     data_dir: PathBuf,
     snapshot: RwLock<Arc<ThemeCatalogSnapshot>>,
+    icons: RwLock<Arc<super::icons::IconCatalog>>,
+    active_icons: Mutex<Option<Arc<super::icons::ResolvedIcons>>>,
     tx: watch::Sender<u64>,
     memory: Mutex<OverrideMemory>,
     /// Serializes scans so two callers never publish out of order.
@@ -79,8 +81,13 @@ impl ThemeRegistry {
             shared: Arc::new(Shared {
                 folder: true,
                 themes_dir,
-                data_dir,
+                data_dir: data_dir.clone(),
                 snapshot: RwLock::new(snapshot),
+                icons: RwLock::new(Arc::new(super::icons::IconCatalog::scan(
+                    Some(&data_dir),
+                    None,
+                ))),
+                active_icons: Mutex::new(None),
                 tx,
                 memory: Mutex::new(OverrideMemory::default()),
                 scanning: Mutex::new(()),
@@ -100,6 +107,8 @@ impl ThemeRegistry {
                 data_dir: PathBuf::new(),
                 snapshot: RwLock::new(snapshot),
                 tx,
+                icons: RwLock::new(Arc::new(super::icons::IconCatalog::builtin_only())),
+                active_icons: Mutex::new(None),
                 memory: Mutex::new(OverrideMemory::default()),
                 scanning: Mutex::new(()),
                 watching: Mutex::new(None),
@@ -117,6 +126,22 @@ impl ThemeRegistry {
     /// The current catalog. Cheap; hold it for as long as a frame or a style pass needs.
     pub fn snapshot(&self) -> Arc<ThemeCatalogSnapshot> {
         Arc::clone(&self.shared.snapshot.read())
+    }
+
+    pub fn icon_snapshot(&self) -> Arc<super::icons::IconCatalog> {
+        Arc::clone(&self.shared.icons.read())
+    }
+
+    pub fn select_icons(
+        &self,
+        selector: &str,
+        appearance: super::SystemAppearance,
+    ) -> (Arc<super::icons::ResolvedIcons>, Vec<SettingsError>) {
+        let catalog = self.icon_snapshot();
+        let mut previous = self.shared.active_icons.lock();
+        let (resolved, diagnostics) = catalog.select(selector, appearance, previous.as_ref());
+        *previous = Some(Arc::clone(&resolved));
+        (resolved, diagnostics)
     }
 
     pub fn generation(&self) -> u64 {
@@ -233,11 +258,18 @@ impl Shared {
         let _guard = self.scanning.lock();
         let previous = Arc::clone(&self.snapshot.read());
         let next = scan(&self.themes_dir, Some(&previous));
-        if next.fingerprint() == previous.fingerprint() {
+        let previous_icons = Arc::clone(&self.icons.read());
+        let mut icons =
+            super::icons::IconCatalog::scan(Some(&self.data_dir), Some(&previous_icons));
+        if next.fingerprint() == previous.fingerprint()
+            && icons.fingerprint() == previous_icons.fingerprint()
+        {
             return false;
         }
         let generation = previous.generation + 1;
         *self.snapshot.write() = Arc::new(next.with_generation(generation));
+        icons.generation = generation;
+        *self.icons.write() = Arc::new(icons);
         self.tx.send_replace(generation);
         true
     }
@@ -249,6 +281,8 @@ impl Shared {
             std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
         };
         let mut wanted = BTreeSet::new();
+        wanted.insert(self.data_dir.clone());
+        super::icons::watch_dirs(&self.data_dir, &mut wanted);
         if is_real_dir(&self.themes_dir) {
             wanted.insert(self.themes_dir.clone());
             let snapshot = Arc::clone(&self.snapshot.read());

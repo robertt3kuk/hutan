@@ -649,7 +649,13 @@ fn header_cell(
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _, _, cx| this.sort_by(sort_key, cx)))
         .child(label)
-        .when(on, |s| s.child(if descending { "▾" } else { "▴" }))
+        .when(on, |s| {
+            s.child(crate::icons::glyph(if descending {
+                crate::icons::Icon::ActionSortDescending
+            } else {
+                crate::icons::Icon::ActionSortAscending
+            }))
+        })
         .child(probe(&panel.env.regions, Region::ResourceControl(region)))
         .into_any_element()
 }
@@ -702,7 +708,7 @@ impl ResourcesPanel {
                     );
                 }
             })
-            .child("⋯")
+            .child(crate::icons::glyph(crate::icons::Icon::ActionMore))
             .child(probe(&self.env.regions, Region::ResourceMenu(index)))
             .into_any_element()
     }
@@ -784,7 +790,11 @@ impl ResourcesPanel {
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| this.dismiss_error(&target, cx)))
                     .child(div().flex_1().min_w_0().child(SharedString::from(error)))
-                    .child(div().flex_none().child("×")),
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
+                    ),
             );
         }
         block.into_any_element()
@@ -838,7 +848,11 @@ impl ResourcesPanel {
                         .text_color(theme.muted)
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle_fold(fold, cx)))
-                        .child(if process.collapsed { "▸" } else { "▾" })
+                        .child(crate::icons::glyph(if process.collapsed {
+                            crate::icons::Icon::ActionDisclose
+                        } else {
+                            crate::icons::Icon::ActionExpand
+                        }))
                         .child(probe(&self.env.regions, Region::ResourceFold(index)))
                         .into_any_element()
                 }
@@ -979,13 +993,13 @@ impl ResourcesPanel {
             .flex()
             .items_center()
             .gap(px(tokens.spacing))
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(12.0))
-                    .text_color(theme.muted)
-                    .child(if line.collapsed { "▸" } else { "▾" }),
-            )
+            .child(div().flex_none().w(px(12.0)).text_color(theme.muted).child(
+                crate::icons::glyph(if line.collapsed {
+                    crate::icons::Icon::ActionDisclose
+                } else {
+                    crate::icons::Icon::ActionExpand
+                }),
+            ))
             .child(
                 div()
                     .min_w_0()
@@ -1006,7 +1020,7 @@ impl ResourcesPanel {
         }
         if let Some(badge) = &line.placement {
             let (color, text) = if badge.shared {
-                (theme.warning, format!("⚠ {}", badge.text))
+                (theme.warning, badge.text.clone())
             } else {
                 (theme.muted, badge.text.clone())
             };
@@ -1236,7 +1250,7 @@ impl Render for ResourcesPanel {
                 &self.filter_edit,
                 &self.filter,
                 VimConfig::of(&self.env.settings).enabled,
-                "⌕ Filter by process, command or session",
+                "Filter by process, command or session",
                 filter_focused,
                 false,
                 self.filter_field(cx),

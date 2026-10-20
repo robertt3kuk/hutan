@@ -216,7 +216,11 @@ impl ChangesPanel {
                     } else {
                         theme.muted
                     })
-                    .child(if worktree.dirty { "●" } else { "±" }),
+                    .child(crate::icons::glyph(if worktree.dirty {
+                        Icon::VcsDirty
+                    } else {
+                        Icon::VcsClean
+                    })),
             )
             .child(
                 div()
@@ -268,7 +272,7 @@ impl Render for ChangesPanel {
             .hover(move |s| s.bg(hover))
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
-            .child(icon(Icon::RefreshCw, 14.0, theme.muted))
+            .child(icon(Icon::ActionRefresh, 14.0, theme.muted))
             .child(probe(&self.env.regions, Region::Changes("panel-refresh")))
             .into_any_element();
 

@@ -410,6 +410,8 @@ pub(crate) struct MenuEntry {
     pub label: SharedString,
     pub checked: bool,
     pub disabled: bool,
+    /// Opens another menu; drawn with `action.disclose`, not encoded in the accessible label.
+    pub submenu: bool,
     pub run: MenuAction,
 }
 
@@ -621,13 +623,22 @@ impl Workbench {
             Some(data_dir) => ThemeRegistry::new(data_dir),
             None => ThemeRegistry::builtin_only(),
         };
-        let frame = resolve_frame(
+        let mut frame = resolve_frame(
             &themes,
             &themes.snapshot(),
             &appearance_settings,
             &terminal_settings.theme,
             crate::theme::polarity(appearance_settings.appearance, window_appearance),
         );
+        let (icons, icon_notes) = themes.select_icons(
+            &appearance_settings.icon_theme,
+            crate::theme::polarity(appearance_settings.appearance, window_appearance),
+        );
+        crate::icons::install(icons);
+        frame
+            .diagnostics
+            .extend(themes.icon_snapshot().diagnostics.iter().cloned());
+        frame.diagnostics.extend(icon_notes);
         if !frame.diagnostics.is_empty() {
             settings.set_notes("themes", frame.diagnostics.clone());
         }
@@ -1071,7 +1082,11 @@ impl Workbench {
         }
     }
 
-    pub fn item_icon_and_title(&self, item: &ItemRef, cx: &App) -> (SharedString, SharedString) {
+    pub fn item_icon_and_title(
+        &self,
+        item: &ItemRef,
+        cx: &App,
+    ) -> (crate::icons::Icon, SharedString) {
         match item {
             ItemRef::Terminal { session } | ItemRef::Chat { session } => {
                 let info = session
@@ -1080,22 +1095,22 @@ impl Workbench {
                     .and_then(|id| self.sessions.read(cx).session(id).cloned());
                 match info {
                     Some(info) => (
-                        crate::workbench::panels::kind_icon(info.kind).into(),
+                        crate::workbench::panels::kind_icon(info.kind),
                         info.title.into(),
                     ),
-                    None => ("❯".into(), "Terminal".into()),
+                    None => (crate::icons::Icon::SessionTerminal, "Terminal".into()),
                 }
             }
             ItemRef::Panel { panel } => (
                 self.panels
                     .get(panel)
-                    .map(|s| s.icon.clone())
-                    .unwrap_or_else(|| "▫".into()),
+                    .map(|s| s.icon)
+                    .unwrap_or(crate::icons::Icon::StateInfo),
                 self.panels.title(panel),
             ),
-            ItemRef::Placeholder { title } => ("▫".into(), title.clone().into()),
+            ItemRef::Placeholder { title } => (crate::icons::Icon::StateInfo, title.clone().into()),
             ItemRef::Changes { path } => (
-                "±".into(),
+                crate::icons::Icon::PanelChanges,
                 match self.changes_views.get(path) {
                     Some(view) => view.read(cx).title().into(),
                     None => format!(
@@ -1577,7 +1592,18 @@ impl Workbench {
             label: label.into(),
             checked: false,
             disabled: false,
+            submenu: false,
             run: Rc::new(run),
+        }
+    }
+
+    pub(crate) fn submenu_entry(
+        label: impl Into<SharedString>,
+        run: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
+    ) -> MenuEntry {
+        MenuEntry {
+            submenu: true,
+            ..Self::entry(label, run)
         }
     }
 
@@ -1587,6 +1613,7 @@ impl Workbench {
             label: label.into(),
             checked: false,
             disabled: true,
+            submenu: false,
             run: Rc::new(|_, _, _| {}),
         }
     }

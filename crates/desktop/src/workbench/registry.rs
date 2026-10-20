@@ -31,8 +31,8 @@ pub type PanelFactory = Rc<dyn Fn(&PanelEnv, &mut Window, &mut App) -> AnyView>;
 pub struct PanelSpec {
     pub id: PanelId,
     pub title: SharedString,
-    /// A single glyph; no icon assets are bundled yet.
-    pub icon: SharedString,
+    /// Stable semantic icon; the selected pack supplies the artwork.
+    pub icon: crate::icons::Icon,
     pub default_dock: DockPosition,
     pub factory: PanelFactory,
 }

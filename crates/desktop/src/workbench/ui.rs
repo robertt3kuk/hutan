@@ -208,7 +208,7 @@ pub fn button(
 /// otherwise a hairline-bordered `surface` circle. A disabled one is dim and inert.
 pub fn round_button(
     id: impl Into<gpui::ElementId>,
-    glyph: impl Into<SharedString>,
+    glyph: crate::icons::Icon,
     primary: bool,
     enabled: bool,
     size: f32,
@@ -229,7 +229,7 @@ pub fn round_button(
         .rounded(px(pill_radius()))
         .medium()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(glyph.into());
+        .child(crate::icons::glyph(glyph));
     let base = if primary {
         base.bg(theme.accent).text_color(theme.on_accent())
     } else {

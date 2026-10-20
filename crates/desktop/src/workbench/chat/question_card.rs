@@ -411,7 +411,11 @@ impl ChatView {
                     .child(
                         div()
                             .text_color(if pending { theme.warning } else { theme.muted })
-                            .child(if pending { "●" } else { "○" }),
+                            .child(crate::icons::glyph(if pending {
+                                crate::icons::Icon::StateUnread
+                            } else {
+                                crate::icons::Icon::StateIdle
+                            })),
                     )
                     .child(
                         div()
@@ -562,7 +566,7 @@ impl ChatView {
             (
                 FieldKind::Choice {
                     options,
-                    multi,
+                    multi: _,
                     allow_other,
                 },
                 Input::Choice { chosen, other },
@@ -574,11 +578,10 @@ impl ChatView {
                     .map(|(k, option)| {
                         let value = option.value.clone();
                         let picked = chosen.contains(&option.value);
-                        let mark = match (*multi, picked) {
-                            (true, true) => "☑ ",
-                            (true, false) => "☐ ",
-                            (false, true) => "◉ ",
-                            (false, false) => "○ ",
+                        let mark = if picked {
+                            crate::icons::Icon::StateCompleted
+                        } else {
+                            crate::icons::Icon::StateTodo
                         };
                         div()
                             .flex()
@@ -586,7 +589,7 @@ impl ChatView {
                             .child(
                                 button(
                                     SharedString::from(format!("question-option-{id}-{at}-{k}")),
-                                    format!("{mark}{}", option.label),
+                                    option.label.clone(),
                                     if picked {
                                         ButtonKind::Primary
                                     } else {
@@ -608,6 +611,7 @@ impl ChatView {
                                     }
                                     cx.notify();
                                 }))
+                                .child(crate::icons::glyph(mark))
                                 .child(probe(&self.regions, option_region(at, k))),
                             )
                             .children(option.description.as_ref().map(|d| {

@@ -415,7 +415,11 @@ impl Workbench {
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.toggle_modal_checkbox(cx);
                                     }))
-                                    .child(if checkbox.checked { "☑" } else { "☐" })
+                                    .child(crate::icons::glyph(if checkbox.checked {
+                                        crate::icons::Icon::StateCompleted
+                                    } else {
+                                        crate::icons::Icon::StateTodo
+                                    }))
                                     .child(checkbox.label),
                             )
                         })

@@ -87,16 +87,18 @@ impl State {
     }
 
     /// The state's own shape: state is never color alone.
-    pub const fn glyph(self) -> &'static str {
+    pub const fn glyph(self) -> crate::icons::Icon {
+        use crate::icons::Icon;
         match self {
-            State::Working => "●",
-            State::Blocked => "▲",
-            State::Idle => "○",
-            State::Unconfirmed => "◌",
-            State::Completed => "✓",
-            State::Failed => "✗",
-            State::Stopped | State::Interrupted => "⊘",
-            State::Disconnected => "⏹",
+            State::Working => Icon::StateWorking,
+            State::Blocked => Icon::StateBlocked,
+            State::Idle => Icon::StateIdle,
+            State::Unconfirmed => Icon::StateUnknown,
+            State::Completed => Icon::StateCompleted,
+            State::Failed => Icon::StateFailed,
+            State::Stopped => Icon::StateStopped,
+            State::Interrupted => Icon::StateInterrupted,
+            State::Disconnected => Icon::StateDisconnected,
         }
     }
 

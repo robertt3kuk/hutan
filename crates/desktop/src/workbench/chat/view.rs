@@ -549,12 +549,19 @@ impl ChatView {
                 .px(px(tokens.spacing * 3.0))
                 .border_b_1()
                 .border_color(theme.border)
-                .child(div().min_w_0().truncate().text_color(theme.warning).child(
-                    SharedString::from(format!(
-                        "● {pending} approval{} waiting",
-                        if pending == 1 { "" } else { "s" }
-                    )),
-                ))
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .text_color(theme.warning)
+                        .child(crate::icons::glyph(crate::icons::Icon::StateApproval))
+                        .child(div().truncate().child(SharedString::from(format!(
+                            "{pending} approval{} waiting",
+                            if pending == 1 { "" } else { "s" }
+                        )))),
+                )
                 .child(probe(&self.regions, Region::Chat("header")))
                 .into_any_element();
         }
@@ -589,7 +596,11 @@ impl ChatView {
             .px(px(tokens.spacing * 3.0))
             .border_b_1()
             .border_color(theme.border)
-            .child(div().text_color(theme.muted).child(kind_icon(info.kind)))
+            .child(
+                div()
+                    .text_color(theme.muted)
+                    .child(crate::icons::glyph(kind_icon(info.kind))),
+            )
             .child(
                 div()
                     .font_weight(gpui::FontWeight::MEDIUM)
@@ -640,8 +651,12 @@ impl ChatView {
                     div()
                         .flex_none()
                         .text_color(theme.warning)
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .child(crate::icons::glyph(crate::icons::Icon::StateApproval))
                         .child(SharedString::from(format!(
-                            "● {pending} approval{} waiting",
+                            "{pending} approval{} waiting",
                             if pending == 1 { "" } else { "s" }
                         ))),
                 )
@@ -746,7 +761,7 @@ impl ChatView {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.model.update(cx, |model, cx| model.clear_error(cx));
                             }))
-                            .child("×"),
+                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
                     )
                 })
                 .child(probe(&self.regions, Region::Chat("banner")))
@@ -1042,7 +1057,7 @@ impl ChatView {
                         }
                         cx.notify();
                     }))
-                    .child("×")
+                    .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
                     .child(probe(&self.regions, Region::Chat("send-key-dismiss"))),
             )
             .into_any_element()
@@ -1160,7 +1175,7 @@ impl ChatView {
                                 this.model
                                     .update(cx, |model, cx| model.remove_chip(index, cx));
                             }))
-                            .child("×"),
+                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
                     )
                     .child(probe(&self.regions, Region::ChatChip(index)))
             }),
@@ -1175,16 +1190,30 @@ impl ChatView {
             .overflow_y_scroll()
             .child(self.input_text(typing_here, look, cx));
 
-        let send = round_button("chat-send", "↑", true, can_send, SEND_SIZE, look)
-            .when(can_send, |s| {
-                s.on_click(cx.listener(|this, _, _, cx| {
-                    this.send(cx);
-                }))
-            })
-            .child(probe(&self.regions, Region::Chat("send")));
-        let interrupt = round_button("chat-interrupt", "■", true, true, SEND_SIZE, look)
-            .on_click(cx.listener(|this, _, _, cx| this.interrupt(cx)))
-            .child(probe(&self.regions, Region::Chat("interrupt")));
+        let send = round_button(
+            "chat-send",
+            crate::icons::Icon::ActionForward,
+            true,
+            can_send,
+            SEND_SIZE,
+            look,
+        )
+        .when(can_send, |s| {
+            s.on_click(cx.listener(|this, _, _, cx| {
+                this.send(cx);
+            }))
+        })
+        .child(probe(&self.regions, Region::Chat("send")));
+        let interrupt = round_button(
+            "chat-interrupt",
+            crate::icons::Icon::ActionInterrupt,
+            true,
+            true,
+            SEND_SIZE,
+            look,
+        )
+        .on_click(cx.listener(|this, _, _, cx| this.interrupt(cx)))
+        .child(probe(&self.regions, Region::Chat("interrupt")));
         let restart = button("chat-restart", "Restart", ButtonKind::Secondary, true, look)
             .on_click(move |_, window, cx| {
                 window.dispatch_action(Box::new(RestartSessionById(session.to_string())), cx);

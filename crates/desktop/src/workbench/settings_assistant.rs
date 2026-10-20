@@ -999,11 +999,12 @@ impl Workbench {
         let (backend, provider) = (config.backend, config.provider.clone());
         let head = small_button(
             SharedString::from(format!("amodel-{id}")),
-            SharedString::from(format!("{}: {label} ▾", words::MODEL_TITLE)),
+            SharedString::from(format!("{}: {label}", words::MODEL_TITLE)),
             open,
             &theme,
             &tokens,
         )
+        .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
         .on_click(cx.listener(move |this, _, _, cx| {
             let opening = this
                 .sheet

@@ -186,16 +186,11 @@ impl ChatView {
                 .object_fit(ObjectFit::Cover)
                 .into_any_element(),
             None => {
-                let glyph = match chip.kind() {
-                    AttachmentKind::Image => "▣",
-                    AttachmentKind::PastedText => "¶",
-                    AttachmentKind::File => "≡",
-                    _ => "",
-                };
+                let glyph = crate::icons::Icon::ActionAddContext;
                 div()
                     .flex_none()
                     .text_color(theme.muted)
-                    .child(glyph)
+                    .child(crate::icons::glyph(glyph))
                     .into_any_element()
             }
         }
@@ -255,7 +250,13 @@ impl ChatView {
                     })
                     .when(rich, |s| s.child(self.chip_icon(chip, look)))
                     .child(SharedString::from(chip.label()))
-                    .when(foldable, |s| s.child(if open { "▾" } else { "▸" }))
+                    .when(foldable, |s| {
+                        s.child(crate::icons::glyph(if open {
+                            crate::icons::Icon::ActionExpand
+                        } else {
+                            crate::icons::Icon::ActionDisclose
+                        }))
+                    })
                     .when_some(refusal, |s, reason| {
                         s.child(
                             div()
@@ -275,7 +276,7 @@ impl ChatView {
                                 this.model
                                     .update(cx, |model, cx| model.remove_context(index, cx));
                             }))
-                            .child("×"),
+                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
                     )
                     .child(probe(&self.regions, Region::ChatContextChip(index)))
             }))

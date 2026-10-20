@@ -596,13 +596,10 @@ impl Workbench {
                         this.new_workspace_from(new_from.clone(), window, cx);
                     },
                 ),
-                Self::entry(
-                    "Move Selection to Workspace ▸",
-                    move |this, window, cx| {
-                        let entries = this.move_menu(&move_to, cx);
-                        this.open_menu(position, entries, window, cx);
-                    },
-                ),
+                Self::submenu_entry("Move Selection to Workspace", move |this, window, cx| {
+                    let entries = this.move_menu(&move_to, cx);
+                    this.open_menu(position, entries, window, cx);
+                }),
                 Self::entry(
                     "Remove Selection from Workspace",
                     move |this, window, cx| {
@@ -620,7 +617,7 @@ impl Workbench {
                 if pinned { "Unpin" } else { "Pin" },
                 move |this, window, cx| this.pin_workspace(project, !pinned, window, cx),
             ),
-            Self::entry("Move to Workspace ▸", move |this, window, cx| {
+            Self::submenu_entry("Move to Workspace", move |this, window, cx| {
                 let entries = this.move_menu(&[project], cx);
                 this.open_menu(position, entries, window, cx);
             }),
@@ -646,7 +643,7 @@ impl Workbench {
         entries
     }
 
-    /// The "Move to Workspace ▸" submenu: every workspace (the current one checked), and a new one.
+    /// The "Move to Workspace" submenu: every workspace (the current one checked), and a new one.
     fn move_menu(&self, projects: &[WorkspaceId], cx: &gpui::App) -> Vec<MenuEntry> {
         let store = self.sessions.read(cx);
         let current: Vec<Option<WorkspaceId>> = projects
@@ -674,7 +671,7 @@ impl Workbench {
     }
 
     /// The "+" menu of the sidebar header: New Workspace…, Open Folder…, and Open Folder into
-    /// Workspace ▸.
+    /// Workspace.
     pub(crate) fn plus_menu(
         &self,
         position: gpui::Point<gpui::Pixels>,
@@ -691,11 +688,11 @@ impl Workbench {
         ];
         if workspaces.is_empty() {
             entries.push(Self::disabled_entry(
-                "Open Folder into Workspace ▸ (no workspaces yet)",
+                "Open Folder into Workspace (no workspaces yet)",
             ));
         } else {
-            entries.push(Self::entry(
-                "Open Folder into Workspace ▸",
+            entries.push(Self::submenu_entry(
+                "Open Folder into Workspace",
                 move |this, window, cx| {
                     let entries: Vec<MenuEntry> = this
                         .user_workspaces(cx)

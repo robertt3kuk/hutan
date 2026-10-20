@@ -354,7 +354,7 @@ impl Workbench {
                     format!("{place} · {}", notes.join(", "))
                 };
                 PickerEntry {
-                    icon: "±".into(),
+                    icon: crate::icons::Icon::VcsWorktree,
                     title: w
                         .branch
                         .clone()

@@ -212,11 +212,17 @@ impl HistoryPanel {
         let mut controls = div().flex().flex_none().items_center().gap(px(2.0));
         if catalog && self.mode() == Mode::Catalog {
             controls = controls.child(
-                icon_button("history-group", Icon::Rows3, "Group by", theme, tokens)
-                    .on_click(cx.listener(|this, e: &ClickEvent, _, cx| {
-                        this.open_menu(Menu::GroupBy(e.position()), cx);
-                    }))
-                    .child(probe(&self.env.regions, Region::History("group"))),
+                icon_button(
+                    "history-group",
+                    Icon::ActionGroup,
+                    "Group by",
+                    theme,
+                    tokens,
+                )
+                .on_click(cx.listener(|this, e: &ClickEvent, _, cx| {
+                    this.open_menu(Menu::GroupBy(e.position()), cx);
+                }))
+                .child(probe(&self.env.regions, Region::History("group"))),
             );
         }
         if enabled {
@@ -224,7 +230,7 @@ impl HistoryPanel {
                 .child(
                     icon_button(
                         "history-sources",
-                        Icon::ListFilter,
+                        Icon::ActionFilter,
                         "Sources",
                         theme,
                         tokens,
@@ -235,15 +241,21 @@ impl HistoryPanel {
                     .child(probe(&self.env.regions, Region::History("sources"))),
                 )
                 .child(
-                    icon_button("history-refresh", Icon::RefreshCw, "Refresh", theme, tokens)
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_now(cx)))
-                        .child(probe(&self.env.regions, Region::History("refresh"))),
+                    icon_button(
+                        "history-refresh",
+                        Icon::ActionRefresh,
+                        "Refresh",
+                        theme,
+                        tokens,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh_now(cx)))
+                    .child(probe(&self.env.regions, Region::History("refresh"))),
                 );
         }
         controls = controls.child(
             icon_button(
                 "history-gear",
-                Icon::Settings,
+                Icon::ActionSettings,
                 "History settings",
                 theme,
                 tokens,
@@ -346,14 +358,18 @@ impl HistoryPanel {
                             .border_color(if on { theme.accent } else { theme.faint })
                             .when(on, |s| s.bg(theme.accent).text_color(theme.on_accent()))
                             .text_size(px(10.0))
-                            .child(if on { "✓" } else { "" }),
+                            .children(
+                                (on).then(|| {
+                                    crate::icons::glyph(crate::icons::Icon::StateCompleted)
+                                }),
+                            ),
                     )
                     .child(
                         div()
                             .w(px(14.0))
                             .flex_none()
                             .text_color(theme.muted)
-                            .child(source_icon(source)),
+                            .child(crate::icons::glyph(source_icon(source))),
                     )
                     .child(
                         div().flex_1().min_w_0().child(name).child(
@@ -589,12 +605,13 @@ impl HistoryPanel {
                     });
                 }),
             )
+            .child(crate::icons::icon(Icon::ActionSearch, 14.0, theme.muted))
             .children(vim_ui::string_field(
                 "history-search-text",
                 &self.query_edit,
                 &self.query,
                 VimConfig::of(&self.env.settings).enabled,
-                "⌕ Search sessions…",
+                "Search sessions…",
                 focused,
                 false,
                 self.search_field(cx),
@@ -641,9 +658,9 @@ impl HistoryPanel {
             .child(div().truncate().child(shared(text)))
             .child(icon(
                 if self.scan_open() {
-                    Icon::ChevronUp
+                    Icon::ActionCollapse
                 } else {
-                    Icon::ChevronDown
+                    Icon::ActionExpand
                 },
                 14.0,
                 theme.muted,
@@ -882,7 +899,7 @@ impl HistoryPanel {
                             this.open_menu(Menu::Sort(e.position()), cx);
                         }))
                         .child(label)
-                        .child(icon(Icon::ChevronDown, 14.0, theme.muted))
+                        .child(icon(Icon::ActionExpand, 14.0, theme.muted))
                         .child(probe(&self.env.regions, Region::History("sort"))),
                 )
             })
@@ -1051,7 +1068,11 @@ impl HistoryPanel {
                     .flex_none()
                     .text_size(px(tokens.secondary_font_size))
                     .text_color(theme.muted)
-                    .child(if collapsed { "▸" } else { "▾" }),
+                    .child(crate::icons::glyph(if collapsed {
+                        crate::icons::Icon::ActionDisclose
+                    } else {
+                        crate::icons::Icon::ActionExpand
+                    })),
             )
             .child(
                 div()
@@ -1213,9 +1234,9 @@ impl HistoryPanel {
                             .text_color(theme.muted)
                             .child(icon(
                                 if expanded {
-                                    Icon::ChevronUp
+                                    Icon::ActionCollapse
                                 } else {
-                                    Icon::ChevronDown
+                                    Icon::ActionExpand
                                 },
                                 14.0,
                                 theme.muted,
@@ -1226,7 +1247,7 @@ impl HistoryPanel {
                             )),
                     )
                     .child(
-                        icon_button("history-more", Icon::Ellipsis, "Actions", theme, tokens)
+                        icon_button("history-more", Icon::ActionMore, "Actions", theme, tokens)
                             .id(("history-more", index))
                             .on_click({
                                 let key = key.clone();
@@ -1263,7 +1284,7 @@ impl HistoryPanel {
                         div()
                             .flex_none()
                             .w(px(14.0))
-                            .child(source_icon(item.source)),
+                            .child(crate::icons::glyph(source_icon(item.source))),
                     )
                     .child(div().flex_1().min_w_0().truncate().child(meta)),
             );
@@ -1377,7 +1398,7 @@ impl HistoryPanel {
             ));
         }
         if let Some(branch) = item.branch.as_deref().filter(|b| !b.is_empty()) {
-            place.push(format!("⑂ {branch}"));
+            place.push(branch.to_owned());
         }
         if !place.is_empty() {
             details = details.child(
@@ -1385,6 +1406,12 @@ impl HistoryPanel {
                     .truncate()
                     .text_size(small)
                     .text_color(theme.muted)
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .when(item.branch.as_deref().is_some_and(|b| !b.is_empty()), |s| {
+                        s.child(crate::icons::glyph(Icon::VcsBranch))
+                    })
                     .child(shared(place.join(" · "))),
             );
         }
@@ -1493,7 +1520,9 @@ impl HistoryPanel {
                             this.pick_menu(pick, window, cx);
                         }))
                     })
-                    .child(div().w(px(12.0)).child(if checked { "✓" } else { "" }))
+                    .child(div().w(px(12.0)).children(
+                        (checked).then(|| crate::icons::glyph(crate::icons::Icon::StateCompleted)),
+                    ))
                     .child(shared(label))
                     .child(probe(&self.env.regions, Region::HistoryItem("menu", i)))
                     .into_any_element()

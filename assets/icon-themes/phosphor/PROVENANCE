@@ -1,0 +1,7 @@
+Phosphor Regular, official https://github.com/phosphor-icons/core
+Pinned revision: 2b75f3ad12b420c9504ef05df8d2564a28f8500e
+Only artwork named by the Hutan semantic catalog is included.
+sidebar-right.svg: sidebar-simple.svg mirrored in geometry.
+hutan.svg: original Hutan-owned monochrome mascot silhouette (MIT).
+Mawas and harness identities use the catalog-approved Phosphor fallbacks.
+See LICENSE for the upstream MIT notice.

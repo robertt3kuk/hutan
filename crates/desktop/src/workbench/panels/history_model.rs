@@ -173,13 +173,14 @@ pub fn source_label(source: HistorySource) -> &'static str {
     }
 }
 
-/// A single glyph per source (no icon assets are bundled).
-pub fn source_icon(source: HistorySource) -> &'static str {
+/// Semantic harness identity; readable source names are always retained.
+pub fn source_icon(source: HistorySource) -> crate::icons::Icon {
+    use crate::icons::Icon;
     match source {
-        HistorySource::Hutan => "❯",
-        HistorySource::Claude => "✳",
-        HistorySource::Codex => "◈",
-        HistorySource::Omp => "π",
+        HistorySource::Hutan => Icon::HarnessHutan,
+        HistorySource::Claude => Icon::HarnessClaude,
+        HistorySource::Codex => Icon::HarnessCodex,
+        HistorySource::Omp => Icon::HarnessOmp,
     }
 }
 

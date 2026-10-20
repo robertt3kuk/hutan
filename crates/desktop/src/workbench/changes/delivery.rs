@@ -468,7 +468,7 @@ impl ChangesView {
             controls.push(
                 ui::button(
                     "changes-accept",
-                    if accepted { "Accepted ✓" } else { "Accept" },
+                    if accepted { "Accepted" } else { "Accept" },
                     ui::ButtonKind::Secondary,
                     accept_enabled,
                     theme,

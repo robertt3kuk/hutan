@@ -514,7 +514,11 @@ impl Workbench {
                         div()
                             .w(px(14.0))
                             .text_color(theme.muted)
-                            .child(if selected { "●" } else { "○" }),
+                            .child(crate::icons::glyph(if selected {
+                                crate::icons::Icon::StateUnread
+                            } else {
+                                crate::icons::Icon::StateIdle
+                            })),
                     )
                     .child(
                         div()

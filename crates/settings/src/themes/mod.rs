@@ -14,9 +14,11 @@ mod catalog;
 mod color;
 mod confine;
 mod contrast;
+pub mod icons;
 mod manifest;
 mod registry;
 mod resolve;
+mod svg;
 mod tokens;
 
 pub use catalog::{

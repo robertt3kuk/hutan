@@ -478,6 +478,7 @@ impl Workbench {
                             label: format!("Add {name}").into(),
                             checked: false,
                             disabled: false,
+                            submenu: false,
                             run: std::rc::Rc::new(move |this, _, cx| {
                                 this.provider_call(
                                     Request::ProviderAdd(request.clone()),
@@ -577,16 +578,26 @@ impl Workbench {
                 .p(px(12.0))
                 .mb(px(8.0))
                 .card(&look.theme, &look.tokens)
-                .child(SharedString::from(format!(
-                    "{} · {} · key {}",
-                    provider.name,
-                    provider.kind,
-                    if provider.has_credential {
-                        "✓"
-                    } else {
-                        "—"
-                    }
-                )))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .child(SharedString::from(format!(
+                            "{} · {} · key",
+                            provider.name, provider.kind
+                        )))
+                        .child(crate::icons::glyph(if provider.has_credential {
+                            crate::icons::Icon::StateCompleted
+                        } else {
+                            crate::icons::Icon::StateUnknown
+                        }))
+                        .child(if provider.has_credential {
+                            "saved"
+                        } else {
+                            "missing"
+                        }),
+                )
                 .child(
                     div()
                         .text_color(look.theme.muted)
@@ -861,11 +872,15 @@ impl Workbench {
                             this.providers.details_open = !this.providers.details_open;
                             cx.notify();
                         }))
-                        .child(SharedString::from(format!(
-                            "{} {}",
-                            super::settings_labels::words::PROVIDER_DETAILS,
-                            if open { "▴" } else { "▾" }
-                        ))),
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .child(super::settings_labels::words::PROVIDER_DETAILS)
+                        .child(crate::icons::glyph(if open {
+                            crate::icons::Icon::ActionCollapse
+                        } else {
+                            crate::icons::Icon::ActionExpand
+                        })),
                 )
             })
             .when(has_details && open, |s| {

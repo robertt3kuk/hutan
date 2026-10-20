@@ -10,7 +10,7 @@ use hutan_core::SessionId;
 use hutan_core::agent::PermissionOptionKind;
 
 use super::{AgentsPage, Layout, Look};
-use crate::icons::{Icon, icon};
+use crate::icons::{Icon, glyph, icon};
 use crate::sessions::agents_text::{self, Primary};
 use crate::sessions::presentation::{AgentRecord, ReasonKind, Role};
 use crate::workbench::actions::{
@@ -47,13 +47,13 @@ fn fact(label: &str, value: impl Into<SharedString>, look: Look) -> AnyElement {
 impl AgentsPage {
     /// What the leading glyph of a row says: attention first (a triangle for a decision, a
     /// cross for a failure), else the state's own shape. Never colour alone.
-    fn row_glyph(record: &AgentRecord) -> (&'static str, crate::sessions::Tone) {
+    fn row_glyph(record: &AgentRecord) -> (Icon, crate::sessions::Tone) {
         use crate::sessions::Tone;
         match record.headline().map(|r| r.kind) {
             Some(ReasonKind::Approval | ReasonKind::Question | ReasonKind::Blocked) => {
-                ("▲", Tone::Warning)
+                (Icon::StateBlocked, Tone::Warning)
             }
-            Some(ReasonKind::Failed) => ("✗", Tone::Error),
+            Some(ReasonKind::Failed) => (Icon::StateFailed, Tone::Error),
             _ => (record.state.glyph(), record.state.tone()),
         }
     }
@@ -75,7 +75,7 @@ impl AgentsPage {
         let layout = self.layout;
         let hover = theme.surface_hover;
         let primary = agents_text::primary(record);
-        let (glyph, glyph_tone) = Self::row_glyph(record);
+        let (glyph_icon, glyph_tone) = Self::row_glyph(record);
         let needs = record.needs_you();
         let reason = agents_text::reason_text(record);
         let status = reason
@@ -165,11 +165,15 @@ impl AgentsPage {
                         this.select_session_row(session);
                         this.toggle_children(session, cx);
                     }))
-                    .child(SharedString::from(format!(
-                        "{} {}",
-                        children,
-                        if open { "▾" } else { "▸" }
-                    )))
+                    .flex()
+                    .items_center()
+                    .gap(px(2.0))
+                    .child(SharedString::from(children.to_string()))
+                    .child(glyph(if open {
+                        Icon::ActionExpand
+                    } else {
+                        Icon::ActionDisclose
+                    }))
                     .child(probe(
                         &self.env.regions,
                         Region::AgentAction(session, "children"),
@@ -227,7 +231,7 @@ impl AgentsPage {
                         } else {
                             theme.muted
                         })
-                        .child(icon(Icon::GitBranch, 12.0, theme.muted))
+                        .child(icon(Icon::VcsBranch, 12.0, theme.muted))
                         .child(
                             div()
                                 .min_w_0()
@@ -341,7 +345,7 @@ impl AgentsPage {
                 );
             }))
             .tooltip(|_, cx| cx.new(|_| TextTooltip("More".into())).into())
-            .child(icon(Icon::Ellipsis, 16.0, theme.muted))
+            .child(icon(Icon::ActionMore, 16.0, theme.muted))
             .child(probe(
                 &self.env.regions,
                 Region::AgentAction(session, "more"),
@@ -407,7 +411,7 @@ impl AgentsPage {
                     .flex_none()
                     .w(px(20.0))
                     .text_color(tone_color(&theme, glyph_tone))
-                    .child(glyph),
+                    .child(glyph(glyph_icon)),
             )
             .child(identity)
             .children(location_column)

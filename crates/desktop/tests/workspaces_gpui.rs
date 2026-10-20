@@ -1129,7 +1129,7 @@ fn the_project_and_workspace_menus_pin_rename_add_folders_and_close(cx: &mut Tes
         [
             "Rename…",
             "Pin",
-            "Move to Workspace ▸",
+            "Move to Workspace",
             "Remove from Workspace (in no workspace)",
             "Reveal in Finder",
             "Close (1 live session)",

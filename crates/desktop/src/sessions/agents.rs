@@ -40,7 +40,7 @@ pub fn display_name(node: &AgentNode) -> &str {
 /// shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Glyph {
-    pub text: &'static str,
+    pub icon: crate::icons::Icon,
     pub tone: Tone,
     /// Working nodes pulse (unless the user asked to reduce motion).
     pub animated: bool,
@@ -50,21 +50,56 @@ pub struct Glyph {
 
 /// The glyph of `node`: its outcome when it has finished, else its state.
 pub fn glyph(node: &AgentNode) -> Glyph {
-    let g = |text, tone, animated, meaning| Glyph {
-        text,
+    let g = |icon, tone, animated, meaning| Glyph {
+        icon,
         tone,
         animated,
         meaning,
     };
     match (node.outcome, node.state) {
-        (Some(NodeOutcome::Completed), _) => g("✓", Tone::Success, false, "completed"),
-        (Some(NodeOutcome::Failed), _) => g("✗", Tone::Error, false, "failed"),
-        (Some(NodeOutcome::Interrupted), _) => g("⊘", Tone::Muted, false, "interrupted"),
-        (Some(NodeOutcome::Disconnected), _) => g("⏹", Tone::Muted, false, "disconnected"),
-        (None, NodeState::Working) => g("●", Tone::Accent, true, "working"),
-        (None, NodeState::Blocked) => g("▲", Tone::Warning, false, "blocked"),
-        (None, NodeState::Idle) => g("○", Tone::Muted, false, "idle"),
-        (None, NodeState::Unknown) => g("◌", Tone::Muted, false, "state unavailable"),
+        (Some(NodeOutcome::Completed), _) => g(
+            crate::icons::Icon::StateCompleted,
+            Tone::Success,
+            false,
+            "completed",
+        ),
+        (Some(NodeOutcome::Failed), _) => g(
+            crate::icons::Icon::StateFailed,
+            Tone::Error,
+            false,
+            "failed",
+        ),
+        (Some(NodeOutcome::Interrupted), _) => g(
+            crate::icons::Icon::StateInterrupted,
+            Tone::Muted,
+            false,
+            "interrupted",
+        ),
+        (Some(NodeOutcome::Disconnected), _) => g(
+            crate::icons::Icon::StateDisconnected,
+            Tone::Muted,
+            false,
+            "disconnected",
+        ),
+        (None, NodeState::Working) => g(
+            crate::icons::Icon::StateWorking,
+            Tone::Accent,
+            true,
+            "working",
+        ),
+        (None, NodeState::Blocked) => g(
+            crate::icons::Icon::StateBlocked,
+            Tone::Warning,
+            false,
+            "blocked",
+        ),
+        (None, NodeState::Idle) => g(crate::icons::Icon::StateIdle, Tone::Muted, false, "idle"),
+        (None, NodeState::Unknown) => g(
+            crate::icons::Icon::StateUnknown,
+            Tone::Muted,
+            false,
+            "state unavailable",
+        ),
     }
 }
 
@@ -346,14 +381,14 @@ impl AgentBadge {
         self.running_subagents == 0 && self.blocked.is_empty()
     }
 
-    /// `↳2`: the subagents running; `None` without any.
+    /// The subagent count; artwork is rendered separately.
     pub fn running_text(&self) -> Option<String> {
-        (self.running_subagents > 0).then(|| format!("↳{}", self.running_subagents))
+        (self.running_subagents > 0).then(|| self.running_subagents.to_string())
     }
 
     /// The blocked marker; `None` while nothing is blocked.
-    pub fn blocked_text(&self) -> Option<&'static str> {
-        (!self.blocked.is_empty()).then_some("▲")
+    pub fn blocked_icon(&self) -> Option<crate::icons::Icon> {
+        (!self.blocked.is_empty()).then_some(crate::icons::Icon::StateBlocked)
     }
 
     /// `2 subagents running` and `Blocked: reviewer, main (omp)`, one per line.
@@ -516,7 +551,7 @@ mod tests {
             NodeState::Unknown,
         ] {
             n.state = state;
-            assert!(seen.insert(glyph(&n).text), "{state:?}");
+            assert!(seen.insert(glyph(&n).icon), "{state:?}");
         }
         for outcome in [
             NodeOutcome::Completed,
@@ -525,15 +560,24 @@ mod tests {
             NodeOutcome::Disconnected,
         ] {
             n.outcome = Some(outcome);
-            assert!(seen.insert(glyph(&n).text), "{outcome:?}");
+            assert!(seen.insert(glyph(&n).icon), "{outcome:?}");
         }
         n.outcome = Some(NodeOutcome::Completed);
-        assert_eq!((glyph(&n).text, glyph(&n).tone), ("✓", Tone::Success));
+        assert_eq!(
+            (glyph(&n).icon, glyph(&n).tone),
+            (crate::icons::Icon::StateCompleted, Tone::Success)
+        );
         n.outcome = Some(NodeOutcome::Failed);
-        assert_eq!((glyph(&n).text, glyph(&n).tone), ("✗", Tone::Error));
+        assert_eq!(
+            (glyph(&n).icon, glyph(&n).tone),
+            (crate::icons::Icon::StateFailed, Tone::Error)
+        );
         n.outcome = None;
         n.state = NodeState::Unknown;
-        assert_eq!((glyph(&n).text, glyph(&n).tone), ("◌", Tone::Muted));
+        assert_eq!(
+            (glyph(&n).icon, glyph(&n).tone),
+            (crate::icons::Icon::StateUnknown, Tone::Muted)
+        );
         n.state = NodeState::Blocked;
         assert_eq!(glyph(&n).tone, Tone::Warning);
         n.state = NodeState::Working;
@@ -805,8 +849,8 @@ mod tests {
             b.running_subagents, 2,
             "working and blocked count; idle and finished do not"
         );
-        assert_eq!(b.running_text().as_deref(), Some("↳2"));
-        assert_eq!(b.blocked_text(), Some("▲"));
+        assert_eq!(b.running_text().as_deref(), Some("2"));
+        assert_eq!(b.blocked_icon(), Some(crate::icons::Icon::StateBlocked));
         assert_eq!(b.tooltip(), "2 subagents running\nBlocked: reviewer");
         assert!(!b.blocked[0].main);
 

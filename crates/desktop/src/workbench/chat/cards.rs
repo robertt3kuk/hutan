@@ -229,7 +229,11 @@ impl ChatView {
                             this.toggle(index, id, PART_BODY, cx);
                         }))
                         .child(probe(&self.regions, Region::ChatPart(index, PART_BODY)))
-                        .child(if open { "▾" } else { "▸" })
+                        .child(crate::icons::glyph(if open {
+                            crate::icons::Icon::ActionExpand
+                        } else {
+                            crate::icons::Icon::ActionDisclose
+                        }))
                         .child(if open {
                             "Attached context"
                         } else {
@@ -314,7 +318,11 @@ impl ChatView {
                         this.toggle(index, id, PART_BODY, cx);
                     }))
                     .child(probe(&self.regions, Region::ChatPart(index, PART_BODY)))
-                    .child(if open { "▾" } else { "▸" })
+                    .child(crate::icons::glyph(if open {
+                        crate::icons::Icon::ActionExpand
+                    } else {
+                        crate::icons::Icon::ActionDisclose
+                    }))
                     .child(SharedString::from(label))
                     .when(!open && !preview.is_empty(), |s| {
                         s.child(
@@ -363,10 +371,12 @@ impl ChatView {
                 .is_some_and(|a| a.state == ApprovalState::Pending)
         });
         let icon = match tool.kind {
-            ToolKind::Command => "$",
-            ToolKind::FileChange => "✎",
-            ToolKind::WebSearch => "⌕",
-            ToolKind::Mcp | ToolKind::Dynamic | ToolKind::Other => "⚙",
+            ToolKind::Command => crate::icons::Icon::SessionTerminal,
+            ToolKind::FileChange => crate::icons::Icon::ActionRename,
+            ToolKind::WebSearch => crate::icons::Icon::ActionSearch,
+            ToolKind::Mcp | ToolKind::Dynamic | ToolKind::Other => {
+                crate::icons::Icon::ActionSettings
+            }
         };
         let color = status_color(look, tool);
         let id = entry.id;
@@ -416,7 +426,7 @@ impl ChatView {
                             .w(px(tokens.font_size))
                             .text_color(theme.muted)
                             .font_family(look.mono.clone())
-                            .child(icon),
+                            .child(crate::icons::glyph(icon)),
                     )
                     .child(
                         div()
@@ -569,11 +579,13 @@ impl ChatView {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.toggle(index, id, part, cx);
                             }))
-                            .child(div().flex_none().text_color(theme.muted).child(if open {
-                                "▾"
-                            } else {
-                                "▸"
-                            }))
+                            .child(div().flex_none().text_color(theme.muted).child(
+                                crate::icons::glyph(if open {
+                                    crate::icons::Icon::ActionExpand
+                                } else {
+                                    crate::icons::Icon::ActionDisclose
+                                }),
+                            ))
                             .child(
                                 div()
                                     .flex_1()
@@ -652,7 +664,11 @@ impl ChatView {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.toggle(index, id, PART_BODY, cx);
                     }))
-                    .child(if open { "▾" } else { "▸" })
+                    .child(crate::icons::glyph(if open {
+                        crate::icons::Icon::ActionExpand
+                    } else {
+                        crate::icons::Icon::ActionDisclose
+                    }))
                     .child(SharedString::from(format!("{} · arguments", tool.name))),
             )
             .when_some(args.filter(|_| open), |s, args| {
@@ -728,7 +744,11 @@ impl ChatView {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.toggle(index, id, PART_BODY, cx);
                     }))
-                    .child(if open { "▾" } else { "▸" })
+                    .child(crate::icons::glyph(if open {
+                        crate::icons::Icon::ActionExpand
+                    } else {
+                        crate::icons::Icon::ActionDisclose
+                    }))
                     .child(SharedString::from(format!(
                         "Changes this turn · {} file{}",
                         files.len(),
@@ -865,7 +885,11 @@ impl ChatView {
                     .child(
                         div()
                             .text_color(if pending { theme.warning } else { theme.muted })
-                            .child(if pending { "●" } else { "○" }),
+                            .child(crate::icons::glyph(if pending {
+                                crate::icons::Icon::StateUnread
+                            } else {
+                                crate::icons::Icon::StateIdle
+                            })),
                     )
                     .child(
                         div()
@@ -1033,14 +1057,19 @@ fn plan_card(plan: &Plan, look: &Look) -> AnyElement {
         }))
         .children(plan.steps.iter().map(|step| {
             let (mark, color) = match step.status {
-                PlanStepStatus::Pending => ("☐", theme.muted),
-                PlanStepStatus::InProgress => ("◐", theme.accent),
-                PlanStepStatus::Completed => ("☑", theme.success),
+                PlanStepStatus::Pending => (crate::icons::Icon::StateTodo, theme.muted),
+                PlanStepStatus::InProgress => (crate::icons::Icon::StateWorking, theme.accent),
+                PlanStepStatus::Completed => (crate::icons::Icon::StateCompleted, theme.success),
             };
             div()
                 .flex()
                 .gap(px(tokens.spacing * 2.0))
-                .child(div().flex_none().text_color(color).child(mark))
+                .child(
+                    div()
+                        .flex_none()
+                        .text_color(color)
+                        .child(crate::icons::glyph(mark)),
+                )
                 .child(
                     div()
                         .flex_1()
@@ -1088,9 +1117,21 @@ fn usage_text(usage: &TurnUsage) -> String {
 fn footer_card(footer: &Footer, look: &Look) -> AnyElement {
     let (theme, tokens) = (&look.theme, &look.tokens);
     let (mark, color, text) = match &footer.outcome {
-        TurnOutcome::Completed => ("✓", theme.success, "done".to_owned()),
-        TurnOutcome::Failed { message, .. } => ("✗", theme.danger, format!("failed: {message}")),
-        TurnOutcome::Cancelled => ("■", theme.muted, "interrupted".to_owned()),
+        TurnOutcome::Completed => (
+            crate::icons::Icon::StateCompleted,
+            theme.success,
+            "done".to_owned(),
+        ),
+        TurnOutcome::Failed { message, .. } => (
+            crate::icons::Icon::StateFailed,
+            theme.danger,
+            format!("failed: {message}"),
+        ),
+        TurnOutcome::Cancelled => (
+            crate::icons::Icon::StateInterrupted,
+            theme.muted,
+            "interrupted".to_owned(),
+        ),
     };
     let mut line = vec![text];
     if let Some(ms) = footer.duration_ms {
@@ -1109,7 +1150,12 @@ fn footer_card(footer: &Footer, look: &Look) -> AnyElement {
         .gap(px(tokens.spacing * 1.5))
         .text_color(theme.muted)
         .text_size(px(tokens.secondary_font_size))
-        .child(div().flex_none().text_color(color).child(mark))
+        .child(
+            div()
+                .flex_none()
+                .text_color(color)
+                .child(crate::icons::glyph(mark)),
+        )
         .child(
             div()
                 .min_w_0()
@@ -1124,15 +1170,15 @@ fn footer_card(footer: &Footer, look: &Look) -> AnyElement {
 fn notice_card(level: NoticeLevel, message: &str, look: &Look) -> AnyElement {
     let (theme, tokens) = (&look.theme, &look.tokens);
     let (mark, color) = match level {
-        NoticeLevel::Info => ("ⓘ", theme.muted),
-        NoticeLevel::Warning => ("⚠", theme.warning),
-        NoticeLevel::Error => ("✗", theme.danger),
+        NoticeLevel::Info => (crate::icons::Icon::StateInfo, theme.muted),
+        NoticeLevel::Warning => (crate::icons::Icon::StateWarning, theme.warning),
+        NoticeLevel::Error => (crate::icons::Icon::StateFailed, theme.danger),
     };
     div()
         .flex()
         .gap(px(tokens.spacing * 1.5))
         .text_color(color)
-        .child(div().flex_none().child(mark))
+        .child(div().flex_none().child(crate::icons::glyph(mark)))
         .child(
             div()
                 .min_w_0()

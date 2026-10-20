@@ -75,7 +75,7 @@ pub(crate) enum PickerAction {
 /// One row of the picker.
 #[derive(Debug, Clone)]
 pub struct PickerEntry {
-    pub icon: SharedString,
+    pub icon: crate::icons::Icon,
     pub title: SharedString,
     pub detail: SharedString,
     pub(crate) action: PickerAction,
@@ -703,7 +703,7 @@ impl Workbench {
     /// ⌘O: "Open Folder…" and the recent projects (`workspace.recent`).
     pub fn open_project_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let open_folder = PickerEntry {
-            icon: "＋".into(),
+            icon: crate::icons::Icon::ActionOpenWorktree,
             title: "Open Folder…".into(),
             detail: "Choose a folder in Finder".into(),
             action: PickerAction::OpenFolder,
@@ -754,9 +754,9 @@ impl Workbench {
             .entries
             .extend(projects.into_iter().map(|project| PickerEntry {
                 icon: if project.workspace_id.is_some() {
-                    "▣".into()
+                    crate::icons::Icon::NavWorkspace
                 } else {
-                    "▢".into()
+                    crate::icons::Icon::NavProjectFolder
                 },
                 title: project.name.into(),
                 detail: tilde(&project.path).into(),
@@ -803,21 +803,21 @@ impl Workbench {
         let project_entry = |project: &ProjectNode, workspace: Option<&str>| {
             let info = &project.info;
             let icon = match info.kind {
-                WorkspaceKind::Home => "⌂",
+                WorkspaceKind::Home => crate::icons::Icon::NavHome,
                 _ if info
                     .project
                     .as_ref()
                     .is_some_and(|p| p.common_dir.is_some()) =>
                 {
-                    "▣"
+                    crate::icons::Icon::NavProjectRepository
                 }
-                _ => "▢",
+                _ => crate::icons::Icon::NavProjectFolder,
             };
             let folder = project_root_of(info)
                 .map(|root| tilde(&root))
                 .unwrap_or_default();
             PickerEntry {
-                icon: icon.into(),
+                icon,
                 title: info.name.clone().into(),
                 detail: match workspace {
                     Some(workspace) => format!("{workspace} › {folder}"),
@@ -844,7 +844,7 @@ impl Workbench {
                 Node::Workspace(workspace) => {
                     let projects = workspace.projects.len();
                     entries.push(PickerEntry {
-                        icon: "▤".into(),
+                        icon: crate::icons::Icon::NavWorkspace,
                         title: workspace.info.name.clone().into(),
                         detail: match projects {
                             0 => "no projects".to_owned(),
@@ -894,7 +894,7 @@ impl Workbench {
                 .map(|badge| format!(" · {}", badge.text))
                 .unwrap_or_default();
             entries.push(PickerEntry {
-                icon: super::panels::kind_icon(session.kind).into(),
+                icon: super::panels::kind_icon(session.kind),
                 title: session.title.clone().into(),
                 detail: format!("{label} · {folder}{badge} · {}", session.command.join(" ")).into(),
                 action: PickerAction::Session(session.id),
@@ -921,7 +921,7 @@ impl Workbench {
                         .map(|(i, o)| format!("{} {}", i + 1, o.label))
                         .collect();
                     PickerEntry {
-                        icon: "●".into(),
+                        icon: crate::icons::Icon::StateApproval,
                         title: approval.title.clone().into(),
                         detail: format!(
                             "{} · {}",
@@ -1041,7 +1041,7 @@ impl Workbench {
                             div()
                                 .w(px(14.0))
                                 .text_color(theme.muted)
-                                .child(entry.icon.clone()),
+                                .child(crate::icons::glyph(entry.icon)),
                         )
                         .child(
                             div()

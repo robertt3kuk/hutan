@@ -22,7 +22,7 @@ pub fn button(
 /// A round icon button (see [`ui::round_button`]).
 pub fn round_button(
     id: impl Into<gpui::ElementId>,
-    glyph: impl Into<SharedString>,
+    glyph: crate::icons::Icon,
     primary: bool,
     enabled: bool,
     size: f32,

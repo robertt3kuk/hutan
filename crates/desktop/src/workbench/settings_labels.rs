@@ -107,6 +107,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "appearance",
+        "icon_theme",
+        "Icon theme",
+        "The independent monochrome icon pack from Hutan's icon-themes folder. The default is Phosphor; omitted icons fall back individually. Changes apply live without changing colors.",
+    ),
+    field(
+        "appearance",
         "theme_overrides",
         "Theme color overrides",
         "Colors you change on top of a theme, by theme id. Edit the settings file to change these; the themes guide lists every color.",
@@ -1135,7 +1141,7 @@ pub mod words {
         RESET_PAGE_TITLE = "Reset this page?";
         RESET_PAGE_CONFIRM = "Reset page";
         RESET_PAGE_NOTHING = "Nothing on this page is set in the file it edits";
-        ADD_CHOICE = "+ add ▾";
+        ADD_CHOICE = "+ add";
         ENV_WARNING = "Do not put secrets here: the values stay in settings.toml as plain text.";
         ENV_ADD = "+ add variable";
         ENV_ADD_HINT = "NAME=value";

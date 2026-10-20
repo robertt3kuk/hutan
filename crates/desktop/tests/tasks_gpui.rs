@@ -195,7 +195,7 @@ fn rows(panel: &Entity<TasksPanel>, cx: &VisualTestContext) -> Vec<TaskRowView> 
 fn shape(panel: &Entity<TasksPanel>, cx: &VisualTestContext) -> Vec<(String, usize, &'static str)> {
     rows(panel, cx)
         .into_iter()
-        .map(|r| (r.title, r.depth, r.glyph))
+        .map(|r| (r.title, r.depth, r.glyph.id()))
         .collect()
 }
 
@@ -242,10 +242,10 @@ fn the_panel_shows_the_dependency_tree_and_follows_task_updates(cx: &mut TestApp
     assert_eq!(
         shape(&panel, cx),
         [
-            ("Build".to_owned(), 0, "◎"),
-            ("Test".to_owned(), 1, "○"),
-            ("Ship".to_owned(), 2, "○"),
-            ("Lint".to_owned(), 0, "◎"),
+            ("Build".to_owned(), 0, "state.ready"),
+            ("Test".to_owned(), 1, "state.todo"),
+            ("Ship".to_owned(), 2, "state.todo"),
+            ("Lint".to_owned(), 0, "state.ready"),
         ]
     );
     let first = rows(&panel, cx).remove(0);
@@ -262,7 +262,11 @@ fn the_panel_shows_the_dependency_tree_and_follows_task_updates(cx: &mut TestApp
     // task.updated: finishing Build makes Test ready; the tree follows without a refresh.
     env.set_state(&build, TaskState::Done);
     wait_until(cx, "Build done and Test ready", |cx| {
-        shape(&panel, cx)[..2] == [("Build".to_owned(), 0, "✓"), ("Test".to_owned(), 1, "◎")]
+        shape(&panel, cx)[..2]
+            == [
+                ("Build".to_owned(), 0, "state.completed"),
+                ("Test".to_owned(), 1, "state.ready"),
+            ]
     });
 
     // A new task appears; a deleted one goes (task.removed).

@@ -680,10 +680,17 @@ impl ChatView {
 
     /// The Attach button of the composer's footer.
     pub(super) fn render_attach_button(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
-        super::widgets::round_button("chat-attach", "＋", self.attach.is_some(), true, 28.0, look)
-            .on_click(cx.listener(|this, _, _, cx| this.toggle_attach_menu(cx)))
-            .child(probe(&self.regions, Region::Attach("button")))
-            .into_any_element()
+        super::widgets::round_button(
+            "chat-attach",
+            crate::icons::Icon::ActionAddContext,
+            self.attach.is_some(),
+            true,
+            28.0,
+            look,
+        )
+        .on_click(cx.listener(|this, _, _, cx| this.toggle_attach_menu(cx)))
+        .child(probe(&self.regions, Region::Attach("button")))
+        .into_any_element()
     }
 
     /// One line of a list: a title, what it is, and its buttons.
@@ -808,7 +815,7 @@ impl ChatView {
                     })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(|this, _, _, cx| this.close_attach(cx)))
-                    .child("×")
+                    .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
                     .child(probe(&self.regions, Region::Attach("close"))),
             );
         let body = match stage {
@@ -992,13 +999,18 @@ impl ChatView {
                         .into_any_element(),
                         button(
                             format!("attach-blocks-{terminal}"),
-                            if open { "Blocks ▴" } else { "Blocks ▾" },
+                            "Blocks",
                             ButtonKind::Secondary,
                             true,
                             look,
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.toggle_blocks(terminal, cx);
+                        }))
+                        .child(crate::icons::glyph(if open {
+                            crate::icons::Icon::ActionCollapse
+                        } else {
+                            crate::icons::Icon::ActionExpand
                         }))
                         .child(probe(&self.regions, Region::Attach("blocks")))
                         .into_any_element(),

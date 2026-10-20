@@ -788,7 +788,7 @@ fn a_new_workspace_from_the_selected_projects(cx: &mut TestAppContext) {
         menu_labels(&view, cx),
         [
             "New Workspace from Selection…",
-            "Move Selection to Workspace ▸",
+            "Move Selection to Workspace",
             "Remove Selection from Workspace"
         ]
     );
@@ -843,7 +843,7 @@ fn the_plus_menu_makes_workspaces_and_opens_folders_into_them(cx: &mut TestAppCo
     let (view, cx) = w.synced(cx, None);
     let _panel = panel(&view, cx);
 
-    // Open Folder into Workspace ▸ asks for a folder and puts its project into the workspace.
+    // Open Folder into Workspace asks for a folder and puts its project into the workspace.
     let plus = center_of_region(&view, cx, Region::SidebarControl("plus"));
     cx.simulate_click(plus, Modifiers::none());
     assert_eq!(
@@ -851,7 +851,7 @@ fn the_plus_menu_makes_workspaces_and_opens_folders_into_them(cx: &mut TestAppCo
         [
             "New Workspace…",
             "Open Folder…",
-            "Open Folder into Workspace ▸"
+            "Open Folder into Workspace"
         ]
     );
     run_entry(&view, cx, "Open Folder into Workspace");

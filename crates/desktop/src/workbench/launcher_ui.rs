@@ -450,11 +450,13 @@ impl Workbench {
                                 cx.notify();
                             }))
                             .child(SharedString::from(current))
-                            .child(div().text_color(theme.muted).child(if open {
-                                "▴"
-                            } else {
-                                "▾"
-                            }))
+                            .child(div().text_color(theme.muted).child(crate::icons::glyph(
+                                if open {
+                                    crate::icons::Icon::ActionCollapse
+                                } else {
+                                    crate::icons::Icon::ActionExpand
+                                },
+                            )))
                             .child(probe(&self.regions, Region::Launcher("model"))),
                     );
                     if open {
@@ -505,12 +507,13 @@ impl Workbench {
                                             cx,
                                         );
                                     }))
-                                    .child(
-                                        div()
-                                            .w(px(14.0))
-                                            .text_color(theme.muted)
-                                            .child(if selected { "●" } else { "○" }),
-                                    )
+                                    .child(div().w(px(14.0)).text_color(theme.muted).child(
+                                        crate::icons::glyph(if selected {
+                                            crate::icons::Icon::StateUnread
+                                        } else {
+                                            crate::icons::Icon::StateIdle
+                                        }),
+                                    ))
                                     .child(
                                         div()
                                             .flex_none()
@@ -745,12 +748,13 @@ impl Workbench {
                             this.launcher_focus_stop(LauncherStop::Where, window, cx);
                             this.launcher_set_place(LaunchWhere::Existing(pick.clone()), cx);
                         }))
-                        .child(
-                            div()
-                                .w(px(14.0))
-                                .text_color(theme.muted)
-                                .child(if selected { "●" } else { "○" }),
-                        )
+                        .child(div().w(px(14.0)).text_color(theme.muted).child(
+                            crate::icons::glyph(if selected {
+                                crate::icons::Icon::StateUnread
+                            } else {
+                                crate::icons::Icon::StateIdle
+                            }),
+                        ))
                         .child(
                             div()
                                 .flex_none()
@@ -791,7 +795,11 @@ impl Workbench {
                     .relative()
                     .text_size(px(tokens.secondary_font_size))
                     .text_color(theme.warning)
-                    .child(SharedString::from(format!("⚠ {warning}")))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .child(crate::icons::glyph(crate::icons::Icon::VcsSharedWarning))
+                    .child(SharedString::from(warning))
                     .child(probe(&self.regions, Region::Launcher("shared-warning"))),
             );
         }
@@ -860,7 +868,12 @@ impl Workbench {
                 this.launcher_focus_stop(LauncherStop::More, window, cx);
                 this.launcher_toggle_more(cx);
             }))
-            .child(if more_open { "▾ More" } else { "▸ More" })
+            .child(crate::icons::glyph(if more_open {
+                crate::icons::Icon::ActionExpand
+            } else {
+                crate::icons::Icon::ActionDisclose
+            }))
+            .child("More")
             .child(div().text_color(theme.faint).child(if direct {
                 "after, system prompt"
             } else {
@@ -911,7 +924,11 @@ impl Workbench {
                             }
                             this.launcher_toggle_after(task, cx);
                         }))
-                        .child(if ticked { "☑" } else { "☐" })
+                        .child(crate::icons::glyph(if ticked {
+                            crate::icons::Icon::StateCompleted
+                        } else {
+                            crate::icons::Icon::StateTodo
+                        }))
                         .child(div().truncate().child(SharedString::from(candidate.title)))
                         .child(probe(&self.regions, Region::LauncherItem("after", at))),
                 );
@@ -1027,7 +1044,11 @@ impl Workbench {
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.launcher_toggle_confirm_remember(cx);
                         }))
-                        .child(if remember { "☑" } else { "☐" })
+                        .child(crate::icons::glyph(if remember {
+                            crate::icons::Icon::StateCompleted
+                        } else {
+                            crate::icons::Icon::StateTodo
+                        }))
                         .child("Don't ask again for this model")
                         .child(probe(&self.regions, Region::Launcher("confirm-remember"))),
                 )

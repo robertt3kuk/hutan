@@ -55,7 +55,7 @@ pub(crate) fn send_key_control(
         .text_size(px(tokens.secondary_font_size))
         .hover(move |s| s.bg(hover).text_color(fg))
         .child(text.into())
-        .child("▾")
+        .child(crate::icons::glyph(crate::icons::Icon::ActionExpand))
 }
 
 impl Workbench {

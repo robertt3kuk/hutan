@@ -54,6 +54,8 @@ pub struct AppearanceSettings {
     /// Id of the color pack used while the window is dark (`hutan-dark`, or a dark pack from
     /// `<data dir>/themes`).
     pub dark_theme: String,
+    /// Independent monochrome icon pack from `<data dir>/icon-themes`.
+    pub icon_theme: String,
     /// Color overrides per pack id, applied on top of the pack.
     pub theme_overrides: BTreeMap<String, ThemeOverrides>,
 }
@@ -65,6 +67,7 @@ impl Default for AppearanceSettings {
             appearance: AppearanceMode::default(),
             light_theme: LIGHT.to_owned(),
             dark_theme: DARK.to_owned(),
+            icon_theme: "phosphor".to_owned(),
             theme_overrides: BTreeMap::new(),
         }
     }

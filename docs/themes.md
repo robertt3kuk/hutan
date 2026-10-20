@@ -1,6 +1,6 @@
 # Themes
 
-Hutan's look is data. A **color pack** is one TOML file that sets the chrome, the terminal palette, state and diff colors, fonts, density and effects. `hutan-dark` and `hutan-light` are packs too: they are embedded in the binary (`assets/themes/<id>/theme.toml`) and parsed by the same loader as yours. Decision and format contract: ADR 0018 and `docs/spikes/2026-10-20-theme-packs.md`. Icon packs are a separate, later slice (TH-2); this page is about colors, fonts and density.
+Hutan's look is data. A **color pack** sets chrome, terminal palette, state/diff colors, fonts, density and effects. An independent **icon pack** maps stable semantic ids to monochrome SVG artwork. Built-ins (`hutan-dark`, `hutan-light`, `phosphor`) are embedded manifests parsed by the same loaders as user packs. Decision: ADR 0018.
 
 A pack is data only: no code, no CSS, no network, no font files. The daemon never sees a pack; only the desktop reads them.
 
@@ -100,7 +100,7 @@ One watcher per application watches `themes/` (creation, removal, single-file pa
 | Diagnostics kept | 512 plus one summary line |
 | Font families per role | 8, each at most 120 characters |
 
-Paths (`license_file`) are normalized relative UTF-8 paths with no `..`, absolute, `~`, `:`, backslash or empty component. Every component is checked with `lstat` and refused if it is a symlink, the file is opened with `O_NOFOLLOW`, must be a regular file, and the identity of every component is compared again after the read, so a path swapped for a symlink mid-read fails instead of leaking another file.
+Paths (`license_file` and icon assets) are normalized relative UTF-8 paths with no `..`, absolute, `~`, `:`, backslash or empty component. Descriptor-relative `openat(O_NOFOLLOW)` opens every component, the final descriptor must be a regular file, and identity checks reject replacements during the read. A symlink swap cannot redirect the read outside the configured data root.
 
 ## Problems and contrast
 
@@ -248,3 +248,183 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | `mono` | `Menlo` | Terminal default and monospaced text. The first installed family wins. |
 
 <!-- tokens:end -->
+
+## Icon packs
+
+Install one directory under `<data dir>/icon-themes/<id>/` (never project auto-discovery):
+
+```text
+icon-themes/canopy-lines/
+  icon-theme.toml
+  icons/search.svg
+  icons/close.svg
+  LICENSE
+```
+
+```toml
+schema_version = 1
+id = "canopy-lines"
+name = "Canopy Lines"
+authors = ["Hutan Theme Authors"]
+license = "MIT OR Apache-2.0"
+extends = "builtin:phosphor"
+
+[icons]
+"nav.search" = "icons/search.svg"
+"action.close" = "icons/close.svg"
+```
+
+Example `icons/search.svg`:
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="10.5" cy="10.5" r="6.5"/>
+  <path d="M15.5 15.5 21 21"/>
+</svg>
+```
+
+Example `icons/close.svg`:
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
+  <path d="M6 6 18 18M18 6 6 18"/>
+</svg>
+```
+
+Select independently of colors, live:
+
+```toml
+[appearance]
+icon_theme = "canopy-lines" # default: phosphor
+```
+
+Metadata uses the color-pack rules above; `appearance` is optional (normally omit it for currentColor). A declared light/dark polarity must match the window or selection warns and uses embedded Phosphor. Sparse packs require `extends = "builtin:phosphor"`; complete root packs use `root = true`, omit `extends` and cover every registered id. User packs can shadow `phosphor`, but `builtin:phosphor` always means immutable embedded content. Duplicate user ids disable all duplicates. Unknown ids warn and are ignored. Multiple ids may name the same SVG.
+
+Omitted ids fall back individually: the two-icon example changes only the nav search and close controls, not `action.search`, other icons, colors, control sizes, focus, keyboard bindings or click handlers. Malformed SVG edits warn and preserve the active entry's last-good bytes; on first load they use the built-in for that id. Invalid metadata/TOML rejects the update (previous manifest retained when available); invalid initial packs are listed disabled. Missing selection retains the requested setting and recovers on installation. Errors use the existing Settings Problems list, with file and `icons.<id>` key.
+
+The same debounced, bounded theme worker watches `icon-themes/`, pack folders and nested asset folders, including atomic saves. Validated normalized bytes are immutable; cache keys contain pack identity, SHA-256 content and semantic id. Only the selected pack retains user SVG bytes; inactive catalogs retain paths/hashes. Desktop keeps at most one retired raw generation (two 8 MiB snapshots plus built-in, below the 32 MiB raw limit). A separate 64 MiB LRU owns decoded/raster images and evicts their GPUI atlas entries; current-frame references live through the frame. No pack can force an intrinsic raster size.
+
+### Artwork and security
+
+- Use square positive `viewBox` (24×24 recommended; native Phosphor 256×256 works), padded for 14/16/20 pt. Only `currentColor` or `none` paint; the location supplies color. Expanded filled paths and strokes are both supported. Geometry never sets a hit target or changes a layout. Right-facing semantic assets such as `dock.right` are already oriented; Hutan never mirrors a user's asset.
+- Accepted elements: svg, g, path, rect, circle, ellipse, line, polyline, polygon. Accepted attributes: numeric geometry/points/transforms, viewBox, fill/stroke, opacity, fill/clip rules and stroke width/cap/join/miterlimit. Intrinsic root width/height are ignored. Unsupported markup is rejected, not silently stripped. Only reconstructed safe XML is decoded.
+- Refused: scripts, event attributes, DTD/entities/processing instructions, CSS/style, external/data/file URLs, images, text/fonts, foreign namespaces/objects, animation, filters, masks, patterns, use/href and `url(...)`. The loader does not fetch anything.
+- Bounds: 256 pack candidates, 256 KiB manifests / 16 MiB per scan, 512 icon entries/files, asset subdirectory depth 4, 64 KiB per SVG / 8 MiB per pack. XML depth 16, 2,048 elements, 16,384 path segments, 32 KiB attributes, finite coordinates of absolute value ≤1e6, square viewBox side ≤4096. Paths and licenses use descriptor-relative confinement.
+- Root built-in Phosphor Regular comes only from official `phosphor-icons/core`, pinned to `2b75f3ad12b420c9504ef05df8d2564a28f8500e`. Only catalog artwork is included; `assets/icon-themes/phosphor/LICENSE` retains its MIT notice, `PROVENANCE` records the revision and the baked right-sidebar mirror. Harness and Mawas identities use the catalog-approved complete Phosphor fallbacks; the Hutan silhouette is original MIT artwork, not an upstream trademark/logo.
+- macOS traffic lights, native menu notation, app icon, menu-bar template PNGs and notification identity remain fixed system/product surfaces. `brand.menu-bar` is unsupported and warns. Colorful mascot illustrations and user image attachments are not monochrome product icons.
+- Text exceptions: terminal/agent output, code, filenames/user text, prose punctuation, actual diff `+`/`−`/`±`, multiplication dimensions, and real keyboard keycaps (`⌘`, `⇧`, `⌥`, arrows, `↵`) remain text. Tooltip and status-strip sentences cannot embed artwork and keep their own prose marks: the `⚠` that opens the shared-checkout line of a placement tooltip, the `✓` of the History scan strip, and the `▾` that a sentence uses to point at a control. State words, counts, harness names and control labels remain beside icons; custom artwork never replaces their meaning.
+
+### Semantic id reference
+
+Generated from `IconId::ALL`; a drift test enforces this list. Offline schema: `docs/schemas/icon-theme-v1.json` (generated from the same registry; never downloaded).
+
+<!-- icons:start -->
+- `nav.search`
+- `action.search`
+- `nav.tasks`
+- `panel.tasks`
+- `nav.agents`
+- `panel.agents-dashboard`
+- `nav.mawas`
+- `panel.assistant`
+- `panel.history`
+- `panel.changes`
+- `action.show-changes`
+- `panel.inspector`
+- `panel.agents`
+- `panel.resources`
+- `action.group`
+- `action.filter`
+- `action.refresh`
+- `action.settings`
+- `nav.settings`
+- `action.expand`
+- `action.menu-down`
+- `action.collapse`
+- `action.sort-ascending`
+- `action.back`
+- `action.more`
+- `action.add`
+- `action.new-session`
+- `action.sort`
+- `panel.sessions`
+- `nav.projects`
+- `panel.mawas-memory`
+- `nav.memory`
+- `panel.notifications`
+- `status.notifications`
+- `nav.home`
+- `nav.workspace`
+- `status.workspace`
+- `nav.project.repository`
+- `nav.project.folder`
+- `session.terminal`
+- `harness.hutan`
+- `session.harness`
+- `session.direct`
+- `harness.omp`
+- `harness.claude`
+- `harness.codex`
+- `harness.unknown`
+- `vcs.branch`
+- `vcs.worktree`
+- `vcs.main-checkout`
+- `vcs.dirty`
+- `vcs.clean`
+- `vcs.shared-warning`
+- `state.working`
+- `state.blocked`
+- `state.warning`
+- `state.idle`
+- `state.todo`
+- `state.ready`
+- `state.running`
+- `state.completed`
+- `state.failed`
+- `state.interrupted`
+- `state.cancelled`
+- `state.disconnected`
+- `state.stopped`
+- `state.unknown`
+- `state.unread`
+- `state.approval`
+- `status.approvals`
+- `state.question`
+- `state.review`
+- `state.info`
+- `status.attention`
+- `status.connected`
+- `status.connecting`
+- `status.disconnected`
+- `status.sessions`
+- `status.density`
+- `status.theme`
+- `status.palette`
+- `dock.left`
+- `dock.right`
+- `dock.bottom`
+- `dock.compact`
+- `dock.hide`
+- `dock.expand`
+- `action.disclose`
+- `action.sort-descending`
+- `action.start`
+- `action.close`
+- `action.interrupt`
+- `action.stop`
+- `action.approve`
+- `action.deny`
+- `action.open-session`
+- `action.reveal-session`
+- `action.open-worktree`
+- `action.copy`
+- `action.rename`
+- `action.delete`
+- `action.pin`
+- `action.recover`
+- `action.subagents`
+- `action.forward`
+- `action.add-context`
+- `brand.hutan`
+- `brand.mawas`
+<!-- icons:end -->

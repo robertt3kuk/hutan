@@ -163,16 +163,17 @@ pub fn actions_for(state: TaskState) -> Vec<TaskAction> {
     }
 }
 
-/// The glyph, what it says, and its tone, as `hutan task ls` draws them.
-pub fn state_glyph(state: TaskState) -> (&'static str, Tone) {
+/// Semantic state artwork and tone, independent of CLI text output.
+pub fn state_glyph(state: TaskState) -> (crate::icons::Icon, Tone) {
+    use crate::icons::Icon;
     match state {
-        TaskState::Todo => ("○", Tone::Muted),
-        TaskState::Ready => ("◎", Tone::Accent),
-        TaskState::Running => ("▶", Tone::Accent),
-        TaskState::Blocked => ("◆", Tone::Warning),
-        TaskState::Done => ("✓", Tone::Success),
-        TaskState::Failed => ("✗", Tone::Error),
-        TaskState::Cancelled => ("⊘", Tone::Muted),
+        TaskState::Todo => (Icon::StateTodo, Tone::Muted),
+        TaskState::Ready => (Icon::StateReady, Tone::Accent),
+        TaskState::Running => (Icon::StateRunning, Tone::Accent),
+        TaskState::Blocked => (Icon::StateBlocked, Tone::Warning),
+        TaskState::Done => (Icon::StateCompleted, Tone::Success),
+        TaskState::Failed => (Icon::StateFailed, Tone::Error),
+        TaskState::Cancelled => (Icon::StateCancelled, Tone::Muted),
     }
 }
 
@@ -224,7 +225,7 @@ pub struct TaskRowView {
     pub depth: usize,
     pub title: String,
     pub state: TaskState,
-    pub glyph: &'static str,
+    pub glyph: crate::icons::Icon,
     pub tone: Tone,
     /// `main` or `wt <branch>`.
     pub placement: String,
@@ -515,7 +516,7 @@ mod tests {
         assert_eq!(row.run, "$ cargo test");
         assert_eq!(row.elapsed.as_deref(), Some("1m 05s"));
         assert!(row.reviewable);
-        assert_eq!(row.glyph, "▶");
+        assert_eq!(row.glyph, crate::icons::Icon::StateRunning);
 
         t.state = TaskState::Failed;
         t.ended_at_ms = Some(40_000);

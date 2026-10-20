@@ -94,7 +94,17 @@ pub fn builtin_status_items() -> StatusItemRegistry {
                 .text_color(ctx.theme.muted)
                 .tooltip(tooltip(format!("{epoch} · click for the daemon controls")))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(daemon::Status), cx))
-                .child(div().size(px(7.0)).rounded_full().bg(color))
+                .child(crate::icons::icon(
+                    match ctx.data.connection {
+                        ConnectionState::Connected => crate::icons::Icon::StatusConnected,
+                        ConnectionState::Connecting | ConnectionState::Reconnecting { .. } => {
+                            crate::icons::Icon::StatusConnecting
+                        }
+                        ConnectionState::Stopped => crate::icons::Icon::StatusDisconnected,
+                    },
+                    14.0,
+                    color,
+                ))
                 .child(SharedString::from(text))
                 .into_any_element()
         }),
@@ -112,7 +122,11 @@ pub fn builtin_status_items() -> StatusItemRegistry {
                 .text_color(ctx.theme.fg)
                 .tooltip(tooltip("Active workspace · click to jump".to_owned()))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenJump), cx))
-                .child(SharedString::from(format!("▣ {name}")))
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .child(crate::icons::glyph(crate::icons::Icon::StatusWorkspace))
+                .child(SharedString::from(name))
                 .into_any_element()
         }),
     });
@@ -149,7 +163,11 @@ pub fn builtin_status_items() -> StatusItemRegistry {
                 .on_click(|_, window, cx| {
                     window.dispatch_action(Box::new(JumpToNextAttention), cx);
                 })
-                .child(format!("● {n} need{} you", if n == 1 { "s" } else { "" }))
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .child(crate::icons::glyph(crate::icons::Icon::StatusAttention))
+                .child(format!("{n} need{} you", if n == 1 { "s" } else { "" }))
                 .into_any_element()
         }),
     });
@@ -167,7 +185,11 @@ pub fn builtin_status_items() -> StatusItemRegistry {
                     "Review the permission requests of your agents".to_owned(),
                 ))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(ReviewApprovals), cx))
-                .child(format!("◔ {n} approval{}", if n == 1 { "" } else { "s" }))
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .child(crate::icons::glyph(crate::icons::Icon::StatusApprovals))
+                .child(format!("{n} approval{}", if n == 1 { "" } else { "s" }))
                 .into_any_element()
         }),
     });
@@ -254,26 +276,15 @@ fn dock_button(
             } else {
                 ctx.theme.muted
             };
-            let side = div().absolute().bg(if state.visible {
-                color
-            } else {
-                color.opacity(0.3)
-            });
-            let side = match pos {
-                DockPosition::Left => side.left_0().top_0().bottom_0().w(px(4.0)),
-                DockPosition::Right => side.right_0().top_0().bottom_0().w(px(4.0)),
-                DockPosition::Bottom => side.left_0().right_0().bottom_0().h(px(4.0)),
-            };
-            let glyph = div()
-                .relative()
-                .flex_none()
-                .w(px(14.0))
-                .h(px(11.0))
-                .rounded(px(2.0))
-                .border_1()
-                .border_color(color)
-                .overflow_hidden()
-                .child(side);
+            let glyph = crate::icons::icon(
+                match pos {
+                    DockPosition::Left => crate::icons::Icon::DockLeft,
+                    DockPosition::Right => crate::icons::Icon::DockRight,
+                    DockPosition::Bottom => crate::icons::Icon::DockBottom,
+                },
+                14.0,
+                color,
+            );
             let tip = dock_tooltip(name, state, &hint);
             let button = div()
                 .id(id)

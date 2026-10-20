@@ -489,9 +489,17 @@ impl Render for InspectorPanel {
                                 };
                                 let status = match (row.state, row.exit_code) {
                                     (BlockState::Running, _) => "running".to_owned(),
-                                    (_, Some(0)) => "✓".to_owned(),
-                                    (_, Some(code)) => format!("✗ {code}"),
+                                    (_, Some(0)) => "ok".to_owned(),
+                                    (_, Some(code)) => code.to_string(),
                                     (_, None) => "–".to_owned(),
+                                };
+                                let status_icon = match (row.state, row.exit_code) {
+                                    (BlockState::Running, _) => {
+                                        Some(crate::icons::Icon::StateRunning)
+                                    }
+                                    (_, Some(0)) => Some(crate::icons::Icon::StateCompleted),
+                                    (_, Some(_)) => Some(crate::icons::Icon::StateFailed),
+                                    (_, None) => None,
                                 };
                                 let jump = BlockRef {
                                     session: session.clone(),
@@ -528,6 +536,10 @@ impl Render for InspectorPanel {
                                                 div()
                                                     .flex_none()
                                                     .text_color(color)
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap(px(2.0))
+                                                    .children(status_icon.map(crate::icons::glyph))
                                                     .child(SharedString::from(status)),
                                             )
                                             .children(row.duration.map(|d| {

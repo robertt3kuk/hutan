@@ -1043,7 +1043,7 @@ impl Workbench {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.sheet_map_remove(&k_remove, &n_remove, cx);
                             }))
-                            .child("×")
+                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
                             .child(probe(
                                 &self.regions,
                                 Region::SettingsItem("env-remove", index),

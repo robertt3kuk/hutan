@@ -975,12 +975,16 @@ impl Workbench {
                     .flex()
                     .items_center()
                     .w_full()
-                    .children(self.overlay_parts(OverlayField::SheetQuery, "⌕ Search settings", cx))
+                    .children(self.overlay_parts(OverlayField::SheetQuery, "Search settings", cx))
                     .into_any_element()
             } else if query.is_empty() {
                 div()
                     .text_color(theme.faint)
-                    .child("⌕ Search settings")
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .child(crate::icons::glyph(crate::icons::Icon::ActionSearch))
+                    .child("Search settings")
                     .into_any_element()
             } else {
                 div()

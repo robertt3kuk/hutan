@@ -43,6 +43,7 @@ pub(super) fn small_button(
         .px(px(tokens.spacing * 2.0))
         .h(px(tokens.control_height - 2.0))
         .flex()
+        .gap(px(tokens.spacing))
         .flex_none()
         .items_center()
         .rounded(px(tokens.radius))
@@ -184,11 +185,12 @@ impl Workbench {
                 };
                 let head = small_button(
                     SharedString::from(format!("dropdown-{key}")),
-                    SharedString::from(format!("{label} ▾")),
+                    SharedString::from(label),
                     open,
                     &theme,
                     &tokens,
                 )
+                .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if let Some(sheet) = &mut this.sheet {
                         sheet.dropdown = if sheet.dropdown.as_deref() == Some(k.as_str()) {
@@ -486,7 +488,7 @@ impl Workbench {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.sheet_remove_list_item(&k, index, cx);
                         }))
-                        .child("×"),
+                        .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
                 )
         });
         let add: AnyElement = if choices.is_some() {
@@ -508,6 +510,7 @@ impl Workbench {
                             &theme,
                             &tokens,
                         )
+                        .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(sheet) = &mut this.sheet {
                                 sheet.dropdown =

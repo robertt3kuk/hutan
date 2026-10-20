@@ -1,0 +1,649 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hutan icon pack, schema v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "authors",
+    "license",
+    "icons"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "maxLength": 64,
+      "not": {
+        "const": "auto"
+      }
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "authors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "license_file": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1024
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^https://",
+      "maxLength": 512
+    },
+    "version": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "appearance": {
+      "enum": [
+        "dark",
+        "light"
+      ]
+    },
+    "root": {
+      "type": "boolean"
+    },
+    "extends": {
+      "const": "builtin:phosphor"
+    },
+    "icons": {
+      "type": "object",
+      "maxProperties": 512,
+      "properties": {
+        "nav.search": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.search": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "nav.tasks": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "panel.tasks": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "nav.agents": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "panel.agents-dashboard": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "nav.mawas": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "panel.assistant": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "panel.history": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "panel.changes": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.show-changes": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "panel.inspector": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "panel.agents": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "panel.resources": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.group": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.filter": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.refresh": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.settings": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "nav.settings": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.expand": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.menu-down": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.collapse": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.sort-ascending": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.back": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.more": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.add": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.new-session": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.sort": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "panel.sessions": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "nav.projects": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "panel.mawas-memory": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "nav.memory": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "panel.notifications": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "status.notifications": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "nav.home": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "nav.workspace": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "status.workspace": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "nav.project.repository": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "nav.project.folder": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "session.terminal": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "harness.hutan": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "session.harness": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "session.direct": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "harness.omp": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "harness.claude": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "harness.codex": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "harness.unknown": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "vcs.branch": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "vcs.worktree": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "vcs.main-checkout": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "vcs.dirty": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "vcs.clean": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "vcs.shared-warning": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.working": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.blocked": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.warning": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.idle": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.todo": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.ready": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.running": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.completed": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.failed": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.interrupted": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.cancelled": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.disconnected": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.stopped": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.unknown": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.unread": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.approval": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "status.approvals": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.question": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.review": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "state.info": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "status.attention": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "status.connected": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "status.connecting": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "status.disconnected": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "status.sessions": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "status.density": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "status.theme": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "status.palette": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "dock.left": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "dock.right": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "dock.bottom": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "dock.compact": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "dock.hide": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "dock.expand": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.disclose": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.sort-descending": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.start": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.close": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.interrupt": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.stop": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.approve": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.deny": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.open-session": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.reveal-session": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.open-worktree": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.copy": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.rename": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.delete": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.pin": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.recover": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.subagents": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.forward": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.add-context": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "brand.hutan": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "brand.mawas": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "root": {
+          "const": true
+        }
+      },
+      "required": [
+        "root"
+      ],
+      "not": {
+        "required": [
+          "extends"
+        ]
+      }
+    },
+    {
+      "properties": {
+        "root": {
+          "const": false
+        }
+      },
+      "required": [
+        "extends"
+      ]
+    }
+  ],
+  "additionalProperties": true
+}

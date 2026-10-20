@@ -1344,11 +1344,12 @@ impl Workbench {
         let k = key.clone();
         let head = small_button(
             SharedString::from(format!("ddropdown-{key}")),
-            SharedString::from(format!("{label} ▾")),
+            SharedString::from(label),
             open,
             &theme,
             &tokens,
         )
+        .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
         .on_click(cx.listener(move |this, _, _, cx| {
             if let Some(sheet) = &mut this.sheet {
                 sheet.dropdown = if sheet.dropdown.as_deref() == Some(tag.as_str()) {
@@ -1512,7 +1513,7 @@ impl Workbench {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.daemon_list_remove(&k_remove, index, cx);
                         }))
-                        .child("×"),
+                        .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
                 )
         });
         let add: AnyElement = if let Some(choices) = &choices {
@@ -1534,6 +1535,7 @@ impl Workbench {
                             &theme,
                             &tokens,
                         )
+                        .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(sheet) = &mut this.sheet {
                                 sheet.dropdown =
@@ -1678,7 +1680,7 @@ impl Workbench {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.daemon_map_remove(&k_remove, &n_remove, cx);
                             }))
-                            .child("×"),
+                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
                     )
             })
             .collect::<Vec<_>>();

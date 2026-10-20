@@ -1,14 +1,12 @@
 //! Path confinement for pack files: relative normalized UTF-8 paths only, no symlink anywhere
 //! below the pack root, regular files only, bounded reads.
 //!
-//! Without `unsafe` there is no descriptor-relative `openat`, so a path is checked component by
-//! component with `lstat`, the file is opened with `O_NOFOLLOW`, and the identity (device and
-//! inode) of every component is compared again after the read: a directory swapped for a
-//! symlink while the file was being read fails the read instead of leaking another file.
+//! Descriptor-relative `openat(O_NOFOLLOW)` opens every component, so concurrent path swaps
+//! cannot redirect a read through a symlink. Identity checks also reject a moved/replaced pack.
 
 use std::fs::{self, File, Metadata};
 use std::io::Read;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 /// Whether `path` is a normalized relative UTF-8 path that stays inside its root.
@@ -99,9 +97,9 @@ pub(super) fn read_confined_with(
     between: &mut dyn FnMut(),
 ) -> Result<Vec<u8>, String> {
     check_relative(rel)?;
-    let (path, before) = walk(root, rel)?;
+    let (_, before) = walk(root, rel)?;
     between();
-    let file = open_nofollow(&path)?;
+    let file = open_confined(root, rel)?;
     let meta = file.metadata().map_err(|e| format!("cannot stat: {e}"))?;
     if !meta.is_file() {
         return Err("not a regular file".to_owned());
@@ -147,18 +145,21 @@ pub(super) fn read_text_with(
     String::from_utf8(bytes).map_err(|_| "not valid UTF-8".to_owned())
 }
 
-fn open_nofollow(path: &Path) -> Result<File, String> {
-    fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)
-        .map_err(|e| {
-            if e.raw_os_error() == Some(libc::ELOOP) {
-                "symlink component refused".to_owned()
-            } else {
-                format!("cannot open: {e}")
-            }
-        })
+fn open_confined(root: &Path, rel: &str) -> Result<File, String> {
+    use rustix::fs::{Mode, OFlags, open, openat};
+    let fail = |e| format!("cannot open confined file (symlink component refused): {e}");
+    let dirs = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let mut parent = open(root, dirs, Mode::empty()).map_err(fail)?;
+    let mut parts = rel.split('/').peekable();
+    while let Some(part) = parts.next() {
+        let flags = if parts.peek().is_some() {
+            dirs
+        } else {
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC
+        };
+        parent = openat(&parent, part, flags, Mode::empty()).map_err(fail)?;
+    }
+    Ok(File::from(parent))
 }
 
 #[cfg(test)]

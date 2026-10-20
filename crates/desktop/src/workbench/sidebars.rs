@@ -50,9 +50,8 @@ pub struct NavEntry {
     /// Stable name of the row (`search`, `tasks`, `agents`, `assistant`, or the panel id).
     pub key: String,
     pub label: SharedString,
-    /// The row's icon of the set; a panel the set has no icon for shows `glyph`.
-    pub icon: Option<Icon>,
-    pub glyph: SharedString,
+    /// Stable semantic id, never a vendor filename or a text fallback.
+    pub icon: Icon,
     /// A count shown as a pill (the agents that need you).
     pub badge: Option<usize>,
     pub target: NavTarget,
@@ -95,8 +94,7 @@ impl Workbench {
             NavEntry {
                 key: "search".to_owned(),
                 label: "Search".into(),
-                icon: Some(Icon::Search),
-                glyph: "⌕".into(),
+                icon: Icon::NavSearch,
                 badge: None,
                 target: NavTarget::Search,
                 selected: false,
@@ -104,8 +102,7 @@ impl Workbench {
             NavEntry {
                 key: "tasks".to_owned(),
                 label: "Tasks".into(),
-                icon: Some(Icon::ListChecks),
-                glyph: "☑".into(),
+                icon: Icon::NavTasks,
                 badge: None,
                 target: NavTarget::Page(PanelId::new("tasks")),
                 selected: selected("tasks"),
@@ -113,8 +110,7 @@ impl Workbench {
             NavEntry {
                 key: "agents".to_owned(),
                 label: "Agents".into(),
-                icon: Some(Icon::Bot),
-                glyph: "▤".into(),
+                icon: Icon::NavAgents,
                 // Agent sessions that need you: the page's own count, not every session's.
                 badge: Some(self.sessions.read(cx).agent_presentation().needs_you())
                     .filter(|n| *n > 0),
@@ -129,8 +125,7 @@ impl Workbench {
             entries.push(NavEntry {
                 key: "assistant".to_owned(),
                 label: "Mawas".into(),
-                icon: Some(Icon::Sparkles),
-                glyph: "✦".into(),
+                icon: Icon::NavMawas,
                 badge: None,
                 target: NavTarget::Assistant,
                 selected: self.state.active_center_item().as_ref() == Some(&home),
@@ -154,8 +149,7 @@ impl Workbench {
             entries.push(NavEntry {
                 key: panel.to_string(),
                 label: title,
-                icon: Icon::for_panel(panel.as_str()),
-                glyph,
+                icon: glyph,
                 badge: None,
                 target: NavTarget::Page(panel.clone()),
                 selected: selected(panel.as_str()),
@@ -229,18 +223,7 @@ impl Workbench {
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.nav_click(&target, window, cx);
                     }))
-                    .child(match entry.icon {
-                        Some(glyph) => icon(glyph, NAV_ICON, color).into_any_element(),
-                        None => div()
-                            .flex_none()
-                            .w(px(NAV_ICON))
-                            .flex()
-                            .justify_center()
-                            .text_size(px(NAV_ICON - 2.0))
-                            .text_color(color)
-                            .child(entry.glyph.clone())
-                            .into_any_element(),
-                    })
+                    .child(icon(entry.icon, NAV_ICON, color))
                     .child(
                         div()
                             .flex_1()
@@ -333,7 +316,7 @@ impl Workbench {
                         this.open_panel("sessions", cx);
                         this.focus_root(window, cx);
                     }))
-                    .child(icon(Icon::ChevronLeft, 14.0, theme.muted))
+                    .child(icon(Icon::ActionBack, 14.0, theme.muted))
                     .child(div().min_w_0().truncate().child("Projects"))
                     .child(probe(&self.regions, Region::Nav("projects")))
                     .into_any_element(),
@@ -377,18 +360,22 @@ impl Workbench {
             .border_t_1()
             .border_color(theme.border)
             .child(
-                button("toolbar-new", Icon::Plus, "New session", "new").on_click(
+                button("toolbar-new", Icon::ActionAdd, "New session", "new").on_click(
                     |_, window, cx| {
                         window.dispatch_action(Box::new(actions::NewTerminal), cx);
                     },
                 ),
             )
             .child(
-                button("toolbar-settings", Icon::Settings, "Settings", "settings").on_click(
-                    |_, window, cx| {
-                        window.dispatch_action(Box::new(actions::OpenSettings), cx);
-                    },
-                ),
+                button(
+                    "toolbar-settings",
+                    Icon::ActionSettings,
+                    "Settings",
+                    "settings",
+                )
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(actions::OpenSettings), cx);
+                }),
             )
             .into_any_element()
     }
@@ -434,15 +421,7 @@ impl Workbench {
             let selected =
                 entry.selected && matches!(target, NavTarget::Agents | NavTarget::Assistant);
             let color = if selected { theme.fg } else { theme.muted };
-            let face = match entry.icon {
-                Some(set_icon) => icon(set_icon, NAV_ICON, color).into_any_element(),
-                None => div()
-                    .flex_none()
-                    .text_size(px(NAV_ICON - 2.0))
-                    .text_color(color)
-                    .child(entry.glyph.clone())
-                    .into_any_element(),
-            };
+            let face = icon(entry.icon, NAV_ICON, color).into_any_element();
             let button = rail_button(
                 self,
                 RailButton {
@@ -465,7 +444,7 @@ impl Workbench {
                 self,
                 RailButton {
                     id: SharedString::from("rail-projects"),
-                    face: icon(Icon::Folder, NAV_ICON, theme.muted).into_any_element(),
+                    face: icon(Icon::NavProjects, NAV_ICON, theme.muted).into_any_element(),
                     label: "Projects".into(),
                     background: None,
                     badge: None,
@@ -482,7 +461,7 @@ impl Workbench {
             self,
             RailButton {
                 id: SharedString::from("rail-new"),
-                face: icon(Icon::Plus, NAV_ICON, theme.muted).into_any_element(),
+                face: icon(Icon::ActionAdd, NAV_ICON, theme.muted).into_any_element(),
                 label: "New session".into(),
                 background: None,
                 badge: None,
@@ -497,7 +476,7 @@ impl Workbench {
             self,
             RailButton {
                 id: SharedString::from("rail-settings"),
-                face: icon(Icon::Settings, NAV_ICON, theme.muted).into_any_element(),
+                face: icon(Icon::ActionSettings, NAV_ICON, theme.muted).into_any_element(),
                 label: "Settings".into(),
                 background: None,
                 badge: None,
@@ -636,14 +615,7 @@ impl Workbench {
                 };
                 let click_panel = panel.clone();
                 let menu_panel = panel.clone();
-                let face = match Icon::for_panel(panel.as_str()) {
-                    Some(set_icon) => icon(set_icon, 16.0, color).into_any_element(),
-                    None => div()
-                        .text_size(px(15.0))
-                        .text_color(color)
-                        .child(glyph)
-                        .into_any_element(),
-                };
+                let face = icon(glyph, 16.0, color).into_any_element();
                 rail_button(
                     self,
                     RailButton {
@@ -693,7 +665,7 @@ impl Workbench {
                 self,
                 RailButton {
                     id: SharedString::from("strip-more"),
-                    face: icon(Icon::Ellipsis, 16.0, theme.muted).into_any_element(),
+                    face: icon(Icon::ActionMore, 16.0, theme.muted).into_any_element(),
                     label: "More".into(),
                     background: None,
                     badge: None,
@@ -723,7 +695,7 @@ impl Workbench {
             RailButton {
                 id: SharedString::from("rail-collapse"),
                 face: icon(
-                    Icon::PanelRight,
+                    Icon::DockRight,
                     16.0,
                     if open { accent } else { theme.muted },
                 )
@@ -816,7 +788,7 @@ impl Workbench {
         let hover = theme.surface_hover;
         let (glyph, name, states): (Icon, &str, [(&str, DockMode); 3]) = match pos {
             DockPosition::Left => (
-                Icon::PanelLeft,
+                Icon::DockLeft,
                 "sidebar",
                 [
                     ("Expanded", DockMode::Expanded),
@@ -825,7 +797,7 @@ impl Workbench {
                 ],
             ),
             _ => (
-                Icon::PanelRight,
+                Icon::DockRight,
                 "right panel",
                 [
                     ("Panel open", DockMode::Expanded),

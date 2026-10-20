@@ -75,7 +75,7 @@ fn picker_entry(hit: &HistoryHit, query: &str, home: Option<&Path>) -> PickerEnt
         },
     };
     PickerEntry {
-        icon: source_icon(hit.source).into(),
+        icon: source_icon(hit.source),
         title: hit_title(hit).into(),
         detail: detail.into(),
         action,

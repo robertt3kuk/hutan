@@ -1042,7 +1042,7 @@ impl AssistantPanel {
                     .truncate()
                     .child(SharedString::from(scope_label)),
             )
-            .child(icon(Icon::ChevronDown, 12.0, theme.muted))
+            .child(icon(Icon::ActionExpand, 12.0, theme.muted))
             .child(probe(&self.env.regions, Region::Assistant("scope")));
         div()
             .relative()
@@ -1191,7 +1191,7 @@ impl AssistantPanel {
             .when(!enabled, |s| s.opacity(0.5))
             .tooltip(move |_, cx| cx.new(|_| TextTooltip(help.into())).into())
             .child(label)
-            .child(icon(Icon::ChevronDown, 12.0, theme.muted))
+            .child(icon(Icon::ActionExpand, 12.0, theme.muted))
             .child(probe(&self.env.regions, Region::Assistant("mode")))
             .into_any_element()
     }
@@ -1278,7 +1278,7 @@ impl AssistantPanel {
                     .truncate()
                     .child(SharedString::from(label)),
             )
-            .child(icon(Icon::ChevronDown, 12.0, theme.muted))
+            .child(icon(Icon::ActionExpand, 12.0, theme.muted))
             .child(probe(&self.env.regions, Region::Assistant("backend")))
             .into_any_element()
     }

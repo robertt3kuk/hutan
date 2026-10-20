@@ -1024,7 +1024,7 @@ impl Render for SessionsPanel {
             .items_center()
             .gap(px(4.0))
             .min_w_0()
-            .child(icon(Icon::ArrowUpDown, 12.0, theme.muted))
+            .child(icon(Icon::ActionSort, 12.0, theme.muted))
             .child(
                 div()
                     .min_w_0()
@@ -1032,7 +1032,7 @@ impl Render for SessionsPanel {
                     .truncate()
                     .child(ws_settings.sort.label().to_string()),
             )
-            .child(icon(Icon::ChevronDown, 12.0, theme.muted))
+            .child(icon(Icon::ActionExpand, 12.0, theme.muted))
             .into_any_element();
         let plus_button = div()
             .id("sessions-plus")
@@ -1047,7 +1047,7 @@ impl Render for SessionsPanel {
             .on_click(|event, window, cx| {
                 window.dispatch_action(Box::new(ShowPlusMenu(event.position())), cx);
             })
-            .child(icon(Icon::Plus, 14.0, theme.muted))
+            .child(icon(Icon::ActionAdd, 14.0, theme.muted))
             .child(probe(&self.env.regions, Region::SidebarControl("plus")))
             .into_any_element();
         let start_button = div()
@@ -1064,7 +1064,11 @@ impl Render for SessionsPanel {
             .on_click(|_, window, cx| {
                 window.dispatch_action(Box::new(OpenLauncher(LauncherOpen::default())), cx);
             })
-            .child("▶ Start")
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .child(crate::icons::glyph(Icon::ActionStart))
+            .child("Start")
             .child(probe(&self.env.regions, Region::SidebarControl("start")))
             .into_any_element();
 
@@ -1104,7 +1108,7 @@ impl Render for SessionsPanel {
                 &self.query_edit,
                 &self.query,
                 VimConfig::of(&self.env.settings).enabled,
-                "⌕ Filter projects and sessions",
+                "Filter projects and sessions",
                 searching,
                 false,
                 self.search_field(cx),
@@ -1283,16 +1287,16 @@ impl SessionsPanel {
         let drop_id = id_text.clone();
         let is_project = kind == WorkspaceKind::Project;
         let icon = match kind {
-            WorkspaceKind::Home => Some("⌂"),
+            WorkspaceKind::Home => Some(Icon::NavHome),
             WorkspaceKind::Project => Some(
                 if info
                     .project
                     .as_ref()
                     .is_some_and(|p| p.common_dir.is_some())
                 {
-                    "◧"
+                    Icon::NavProjectRepository
                 } else {
-                    "▭"
+                    Icon::NavProjectFolder
                 },
             ),
             WorkspaceKind::Workspace => None,
@@ -1474,11 +1478,20 @@ impl SessionsPanel {
                         }
                         cx.notify();
                     }))
-                    .child(if collapsed { "▸" } else { "▾" }),
+                    .child(crate::icons::glyph(if collapsed {
+                        crate::icons::Icon::ActionDisclose
+                    } else {
+                        crate::icons::Icon::ActionExpand
+                    })),
             )
-            .children(icon.map(|icon| div().flex_none().child(icon)))
+            .children(icon.map(crate::icons::glyph))
             .when(info.pinned, |s| {
-                s.child(div().flex_none().text_color(theme.accent).child("★"))
+                s.child(
+                    div()
+                        .flex_none()
+                        .text_color(theme.accent)
+                        .child(crate::icons::glyph(crate::icons::Icon::ActionPin)),
+                )
             })
             .child(name)
             .when(row.needs > 0, |s| {
@@ -1486,7 +1499,11 @@ impl SessionsPanel {
                     div()
                         .flex_none()
                         .text_color(theme.warning)
-                        .child(format!("● {}", row.needs)),
+                        .flex()
+                        .items_center()
+                        .gap(px(2.0))
+                        .child(crate::icons::glyph(Icon::StatusAttention))
+                        .child(row.needs.to_string()),
                 )
             })
             .children(count_text(info).map(|count| ui::counter(count, &theme, &tokens)))
@@ -1518,7 +1535,7 @@ impl SessionsPanel {
                                 );
                                 cx.stop_propagation();
                             })
-                            .child("▶")
+                            .child(crate::icons::glyph(crate::icons::Icon::ActionStart))
                             .child(probe(&self.env.regions, Region::ProjectStart(id))),
                     )
                 },
@@ -1607,7 +1624,7 @@ impl SessionsPanel {
                     div()
                         .flex_none()
                         .text_color(theme.muted)
-                        .child(kind_icon(info.kind)),
+                        .child(crate::icons::glyph(kind_icon(info.kind))),
                 ),
                 "title" => line
                     .child(
@@ -1655,7 +1672,7 @@ impl SessionsPanel {
                         window.dispatch_action(Box::new(CloseSessionById(close_id.clone())), cx);
                         cx.stop_propagation();
                     })
-                    .child("×")
+                    .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
                     .child(probe(&self.env.regions, Region::SessionClose(session))),
             );
         }

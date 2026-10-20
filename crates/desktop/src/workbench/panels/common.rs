@@ -33,15 +33,14 @@ pub fn tone_color(theme: &Theme, tone: Tone) -> Hsla {
     }
 }
 
-/// Filled dot for things that need a look, hollow ring otherwise (state is never color alone).
+/// State shape and tone from the same presentation used by the adjacent label/tooltip.
 pub fn state_dot(theme: &Theme, presentation: &Presentation) -> AnyElement {
-    let color = tone_color(theme, presentation.tone);
-    let dot = div().flex_none().size(px(8.0)).rounded_full();
-    if presentation.filled {
-        dot.bg(color).into_any_element()
-    } else {
-        dot.border_1().border_color(color).into_any_element()
-    }
+    icon(
+        presentation.icon(),
+        14.0,
+        tone_color(theme, presentation.tone),
+    )
+    .into_any_element()
 }
 
 /// The compact agent badge of a session: `↳2` for the subagents running, `▲` when any node is
@@ -78,13 +77,17 @@ pub fn agent_badge(
             .children(badge.running_text().map(|text| {
                 div()
                     .text_color(theme.accent)
+                    .flex()
+                    .items_center()
+                    .gap(px(2.0))
+                    .child(crate::icons::glyph(Icon::ActionSubagents))
                     .child(SharedString::from(text))
             }))
-            .children(
-                badge
-                    .blocked_text()
-                    .map(|text| div().text_color(theme.warning).child(text)),
-            )
+            .children(badge.blocked_icon().map(|id| {
+                div()
+                    .text_color(theme.warning)
+                    .child(crate::icons::glyph(id))
+            }))
             .child(probe(regions, Region::AgentBadge(site, session)))
             .into_any_element(),
     )
@@ -104,7 +107,7 @@ pub fn placement_badge(
     let tokens = UiStyle::get(cx).density.ui();
     let tip = SharedString::from(badge.tooltip.clone());
     let (color, text) = if badge.shared {
-        (theme.warning, format!("⚠ {}", badge.text))
+        (theme.warning, badge.text.clone())
     } else {
         (theme.muted, badge.text.clone())
     };
@@ -112,6 +115,9 @@ pub fn placement_badge(
         .id(SharedString::from(format!("placement-badge-{session}")))
         .relative()
         .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(2.0))
         .max_w(px(130.0))
         .truncate()
         .px(px(tokens.spacing * 2.0))
@@ -130,6 +136,9 @@ pub fn placement_badge(
                 })),
                 cx,
             );
+        })
+        .when(badge.shared, |s| {
+            s.child(crate::icons::glyph(Icon::VcsSharedWarning))
         })
         .child(SharedString::from(text))
         .child(probe(regions, Region::PlacementBadge(site, session)))
@@ -158,8 +167,8 @@ pub fn recovery_chip(
         // readable; the tooltip has the word and the sentence.
         let tip = SharedString::from(format!("{}: {}", chip.label, chip.detail));
         let glyph = match chip.tone {
-            hutan_client::recovery::ChipTone::Info => "↻",
-            hutan_client::recovery::ChipTone::Warn => "⚠",
+            hutan_client::recovery::ChipTone::Info => Icon::ActionRecover,
+            hutan_client::recovery::ChipTone::Warn => Icon::StateWarning,
         };
         return div()
             .id(SharedString::from(format!("recovery-chip-{session}")))
@@ -168,7 +177,7 @@ pub fn recovery_chip(
             .text_size(px(tokens.secondary_font_size))
             .text_color(color)
             .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
-            .child(glyph)
+            .child(crate::icons::glyph(glyph))
             .child(probe(regions, Region::RecoveryChip(site, session)))
             .into_any_element();
     }
@@ -188,11 +197,11 @@ pub fn recovery_chip(
         .into_any_element()
 }
 
-pub fn kind_icon(kind: SessionKind) -> &'static str {
+pub fn kind_icon(kind: SessionKind) -> Icon {
     match kind {
-        SessionKind::Terminal => "❯",
-        SessionKind::Harness => "◆",
-        SessionKind::Direct => "✦",
+        SessionKind::Terminal => Icon::SessionTerminal,
+        SessionKind::Harness => Icon::SessionHarness,
+        SessionKind::Direct => Icon::SessionDirect,
     }
 }
 
@@ -369,7 +378,7 @@ pub fn panel_header_with(
                                 cx,
                             );
                         })
-                        .child(icon(Icon::Settings, 14.0, style.theme.muted)),
+                        .child(icon(Icon::ActionSettings, 14.0, style.theme.muted)),
                 ),
         )
         .into_any_element()

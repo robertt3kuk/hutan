@@ -627,7 +627,7 @@ impl TasksPanel {
                             .flex_none()
                             .w(px(12.0))
                             .text_color(glyph_color)
-                            .child(row.glyph),
+                            .child(crate::icons::glyph(row.glyph)),
                     )
                     .child(
                         div()

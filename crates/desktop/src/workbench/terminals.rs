@@ -1100,13 +1100,25 @@ impl Workbench {
         let appearance = self.settings.get::<AppearanceSettings>();
         let terminal = self.settings.get::<TerminalSettings>();
         let snapshot = self.themes.snapshot();
-        let frame = crate::theme::resolve_frame(
+        let mut frame = crate::theme::resolve_frame(
             &self.themes,
             &snapshot,
             &appearance,
             &terminal.theme,
             crate::theme::polarity(self.chrome, self.appearance),
         );
+        let (icons, icon_notes) = self.themes.select_icons(
+            &appearance.icon_theme,
+            crate::theme::polarity(self.chrome, self.appearance),
+        );
+        frame
+            .diagnostics
+            .extend(self.themes.icon_snapshot().diagnostics.iter().cloned());
+        frame.diagnostics.extend(icon_notes);
+        if crate::icons::install(icons) {
+            self.invalidate_cached_views(cx);
+            cx.notify();
+        }
         if frame.diagnostics != self.theme_notes {
             self.settings.set_notes("themes", frame.diagnostics.clone());
             self.theme_notes = frame.diagnostics.clone();

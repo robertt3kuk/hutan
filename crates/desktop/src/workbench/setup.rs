@@ -1355,7 +1355,11 @@ impl Workbench {
                     .child(
                         div()
                             .flex_none()
-                            .child(if present || ticked { "☑" } else { "☐" }),
+                            .child(crate::icons::glyph(if present || ticked {
+                                crate::icons::Icon::StateCompleted
+                            } else {
+                                crate::icons::Icon::StateTodo
+                            })),
                     )
                     .child(
                         div()

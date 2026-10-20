@@ -124,7 +124,7 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: "sessions".into(),
         title: "Projects".into(),
-        icon: "≣".into(),
+        icon: crate::icons::Icon::PanelSessions,
         default_dock: DockPosition::Left,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
@@ -134,7 +134,7 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: "history".into(),
         title: "History".into(),
-        icon: "⟲".into(),
+        icon: crate::icons::Icon::PanelHistory,
         default_dock: DockPosition::Right,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
@@ -144,7 +144,7 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: "changes".into(),
         title: "Changes".into(),
-        icon: "±".into(),
+        icon: crate::icons::Icon::PanelChanges,
         default_dock: DockPosition::Right,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
@@ -154,7 +154,7 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: "inspector".into(),
         title: "Requests".into(),
-        icon: "ⓘ".into(),
+        icon: crate::icons::Icon::PanelInspector,
         default_dock: DockPosition::Right,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
@@ -164,7 +164,7 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: super::model::AGENTS_PAGE.into(),
         title: "Agents".into(),
-        icon: "▤".into(),
+        icon: crate::icons::Icon::PanelAgentsDashboard,
         default_dock: DockPosition::Left,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
@@ -174,7 +174,7 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: "agents".into(),
         title: "Agents".into(),
-        icon: "⑂".into(),
+        icon: crate::icons::Icon::PanelAgents,
         default_dock: DockPosition::Right,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
@@ -184,7 +184,7 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: "resources".into(),
         title: "Resources".into(),
-        icon: "◫".into(),
+        icon: crate::icons::Icon::PanelResources,
         default_dock: DockPosition::Right,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
@@ -194,7 +194,7 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: "tasks".into(),
         title: "Tasks".into(),
-        icon: "☑".into(),
+        icon: crate::icons::Icon::PanelTasks,
         default_dock: DockPosition::Left,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
@@ -204,7 +204,7 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: "assistant".into(),
         title: "Mawas".into(),
-        icon: "✦".into(),
+        icon: crate::icons::Icon::PanelAssistant,
         default_dock: DockPosition::Left,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
@@ -214,7 +214,7 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: "mawas-memory".into(),
         title: "Memory".into(),
-        icon: "◈".into(),
+        icon: crate::icons::Icon::PanelMawasMemory,
         default_dock: DockPosition::Left,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
@@ -224,7 +224,7 @@ pub fn builtin_panels() -> PanelRegistry {
     registry.register(PanelSpec {
         id: "notifications".into(),
         title: "Notifications".into(),
-        icon: "◔".into(),
+        icon: crate::icons::Icon::PanelNotifications,
         default_dock: DockPosition::Bottom,
         factory: Rc::new(|_env, _window, cx| {
             AnyView::from(cx.new(|_| {

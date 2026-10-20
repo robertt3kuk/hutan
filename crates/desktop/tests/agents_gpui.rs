@@ -67,7 +67,12 @@ fn sections(panel: &Entity<AgentsPanel>, cx: &VisualTestContext) -> Vec<SectionV
 fn glyphs(panel: &Entity<AgentsPanel>, cx: &VisualTestContext) -> Vec<(String, &'static str)> {
     sections(panel, cx)
         .first()
-        .map(|s| s.rows.iter().map(|r| (r.label.clone(), r.glyph)).collect())
+        .map(|s| {
+            s.rows
+                .iter()
+                .map(|r| (r.label.clone(), r.glyph.id()))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -222,14 +227,14 @@ fn the_tree_shows_the_right_glyph_per_state_and_outcome_in_a_stable_order(cx: &m
 
     let listed = glyphs(&panel, cx);
     let expected: Vec<(String, &str)> = [
-        ("omp", "●"),
-        ("scout", "●"),
-        ("writer", "▲"),
-        ("waiter", "○"),
-        ("done", "✓"),
-        ("broke", "✗"),
-        ("stopped", "⊘"),
-        ("lost", "⏹"),
+        ("omp", "state.working"),
+        ("scout", "state.working"),
+        ("writer", "state.blocked"),
+        ("waiter", "state.idle"),
+        ("done", "state.completed"),
+        ("broke", "state.failed"),
+        ("stopped", "state.interrupted"),
+        ("lost", "state.disconnected"),
     ]
     .map(|(l, g)| (l.to_owned(), g))
     .to_vec();
@@ -306,7 +311,7 @@ fn a_release_finishes_a_node_and_a_restart_leaves_the_main_agent_unknown(cx: &mu
     wait_until(cx, "beta to end", move |cx| {
         glyphs(&p, cx)
             .last()
-            .is_some_and(|(l, g)| l == "beta" && *g == "✗")
+            .is_some_and(|(l, g)| l == "beta" && *g == "state.failed")
     });
 
     // The stored tree is written within a second; wait for it before the daemon goes down.
@@ -336,16 +341,18 @@ fn a_release_finishes_a_node_and_a_restart_leaves_the_main_agent_unknown(cx: &mu
     wait_until(cx, "the restored tree", move |cx| {
         glyphs(&p, cx)
             == [
-                ("omp".to_owned(), "◌"),
-                ("alpha".to_owned(), "⏹"),
-                ("beta".to_owned(), "✗"),
+                ("omp".to_owned(), "state.unknown"),
+                ("alpha".to_owned(), "state.disconnected"),
+                ("beta".to_owned(), "state.failed"),
             ]
     });
     // The resumed agent reports again and is alive.
     rep.report(&daemon, Node::main("root").idle().name("omp"));
     let p = panel.clone();
     wait_until(cx, "the main agent to report again", move |cx| {
-        glyphs(&p, cx).first().is_some_and(|(_, g)| *g == "○")
+        glyphs(&p, cx)
+            .first()
+            .is_some_and(|(_, g)| *g == "state.idle")
     });
 }
 
@@ -374,7 +381,10 @@ fn finished_subtrees_dim_and_collapse_until_unfolded(cx: &mut TestAppContext) {
     wait_rows(&panel, cx, "the live agents", 2);
     assert_eq!(
         glyphs(&panel, cx),
-        [("omp".to_owned(), "●"), ("coder".to_owned(), "●")]
+        [
+            ("omp".to_owned(), "state.working"),
+            ("coder".to_owned(), "state.working")
+        ]
     );
 
     set(
@@ -438,9 +448,9 @@ fn the_chips_filter_the_tree_and_write_the_settings(cx: &mut TestAppContext) {
     assert_eq!(
         glyphs(&panel, cx),
         [
-            ("omp".to_owned(), "●"),
-            ("alpha".to_owned(), "●"),
-            ("beta".to_owned(), "▲"),
+            ("omp".to_owned(), "state.working"),
+            ("alpha".to_owned(), "state.working"),
+            ("beta".to_owned(), "state.blocked"),
         ]
     );
     assert_eq!(
@@ -455,7 +465,7 @@ fn the_chips_filter_the_tree_and_write_the_settings(cx: &mut TestAppContext) {
     assert!(settings(&view, cx).get::<AgentsSettings>().show_finished);
     assert_eq!(
         glyphs(&panel, cx).last().unwrap(),
-        &("gamma".to_owned(), "✓")
+        &("gamma".to_owned(), "state.completed")
     );
     click(&view, cx, Region::MonitorChip("finished"));
     wait_rows(&panel, cx, "finished agents hidden again", 3);
@@ -466,7 +476,10 @@ fn the_chips_filter_the_tree_and_write_the_settings(cx: &mut TestAppContext) {
     wait_rows(&panel, cx, "blocked agents only", 2);
     assert_eq!(
         glyphs(&panel, cx),
-        [("omp".to_owned(), "●"), ("beta".to_owned(), "▲")]
+        [
+            ("omp".to_owned(), "state.working"),
+            ("beta".to_owned(), "state.blocked")
+        ]
     );
     assert!(settings(&view, cx).get::<AgentsSettings>().only_blocked);
     // The other session has nothing blocked, so even with every workspace it has no section.
@@ -679,8 +692,11 @@ fn a_blocked_agent_badges_the_row_the_tab_and_the_card_and_clears_on_resolution(
         b.running_subagents, 2,
         "the worker and the blocked reviewer"
     );
-    assert_eq!(b.running_text().as_deref(), Some("↳2"));
-    assert_eq!(b.blocked_text(), Some("▲"));
+    assert_eq!(b.running_text().as_deref(), Some("2"));
+    assert_eq!(
+        b.blocked_icon(),
+        Some(hutan_desktop::icons::Icon::StateBlocked)
+    );
     assert_eq!(b.tooltip(), "2 subagents running\nBlocked: reviewer");
 
     // Row and tab.
@@ -723,7 +739,7 @@ fn a_blocked_agent_badges_the_row_the_tab_and_the_card_and_clears_on_resolution(
     rep.report(&daemon, Node::sub("n2", "root").working().name("reviewer"));
     rep.report(&daemon, Node::sub("n1", "root").working().name("worker"));
     wait_until(cx, "the marker to clear", |cx| badge(cx).blocked.is_empty());
-    assert_eq!(badge(cx).running_text().as_deref(), Some("↳2"));
+    assert_eq!(badge(cx).running_text().as_deref(), Some("2"));
     assert!(sessions.read_with(cx, |s, _| s.needs_you().is_empty()));
     assert_eq!(events.borrow().len(), 2, "resolving is not an event");
     // Blocking again after it cleared is news again.

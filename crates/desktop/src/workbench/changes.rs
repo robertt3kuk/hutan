@@ -1026,11 +1026,14 @@ impl ChangesView {
                     .flex_col()
                     .font_family(Look::of(cx).mono.clone())
                     .text_size(px(tokens.secondary_font_size))
-                    .children(
-                        form.conflicts
-                            .iter()
-                            .map(|file| div().child(SharedString::from(format!("⚠ {file}")))),
-                    ),
+                    .children(form.conflicts.iter().map(|file| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .child(crate::icons::glyph(crate::icons::Icon::StateWarning))
+                            .child(SharedString::from(file.clone()))
+                    })),
             );
         }
         body.child(
@@ -1234,7 +1237,11 @@ impl ChangesView {
                     div()
                         .flex_none()
                         .text_color(theme.muted)
-                        .child(if self.files_open { "▴" } else { "▾" }),
+                        .child(crate::icons::glyph(if self.files_open {
+                            crate::icons::Icon::ActionCollapse
+                        } else {
+                            crate::icons::Icon::ActionExpand
+                        })),
                 )
                 .child(div().flex_none().w(px(12.0)).text_color(color).child(mark))
                 .child(
@@ -1425,7 +1432,11 @@ impl ChangesView {
                                     .flex_none()
                                     .w(px(tokens.font_size * 1.5))
                                     .text_color(theme.muted)
-                                    .child(if folded { "▸" } else { "▾" }),
+                                    .child(crate::icons::glyph(if folded {
+                                        crate::icons::Icon::ActionDisclose
+                                    } else {
+                                        crate::icons::Icon::ActionExpand
+                                    })),
                             )
                             .child(diff_row(header, look))
                             .when(folded && hidden > 0, |s| {
