@@ -2,6 +2,7 @@ mod agent;
 mod assistant;
 mod attach;
 mod chat;
+mod checkpoints;
 mod cli;
 mod common;
 mod config;

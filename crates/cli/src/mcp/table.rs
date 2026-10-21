@@ -653,6 +653,55 @@ static TOOLS: &[Tool] = &[
             )
         },
     },
+    // ---- checkpoints --------------------------------------------------------------------------
+    Tool {
+        name: "checkpoint_list",
+        description: "List the checkpoints of agent turns: what the user can rewind to; you \
+                      cannot restore. A checkpoint is the files of a git checkout before and \
+                      after one turn of an agent chat (Hutan keeps them in hidden refs; your \
+                      index and branches are never touched). Newest first: id, session, turn, \
+                      time, files changed, lines added and removed, state (`ok`, `late`, \
+                      `failed`, `off`, with the reason) and files that were not captured. \
+                      Read-only. `checkpoint_diff` shows what a turn changed.",
+        read_only: true,
+        call: request("checkpoint.list"),
+        schema: || {
+            object(
+                json!({
+                    "session_id": id("Only this chat session's checkpoints (`session_list` shows the sessions)."),
+                    "workspace_id": workspace_id("Only the checkpoints of this workspace's (or project's) sessions."),
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50,
+                              "description": "How many, newest first."},
+                    "before": id("The page after this checkpoint: the `next` of the previous answer."),
+                }),
+                &[],
+            )
+        },
+    },
+    Tool {
+        name: "checkpoint_diff",
+        description: "What one agent turn changed in the checkout: from a checkpoint's start to \
+                      its end, or to the checkout as it is now (`against: \"now\"`), or through \
+                      a later checkpoint's turn (`against`: that checkpoint's id). Files with \
+                      status (added, modified, deleted), line counts and a binary flag, and the \
+                      unified diff unless `stat`. Bounded like `worktree_diff`: 2 MiB of patch \
+                      per file, 20 MiB in all, 5000 files; what is cut says `truncated`. This is \
+                      what the user can rewind to; you cannot restore. Read-only.",
+        read_only: true,
+        call: request("checkpoint.diff"),
+        schema: || {
+            object(
+                json!({
+                    "checkpoint_id": id("The checkpoint (`checkpoint_list` shows them)."),
+                    "against": {"type": "string", "default": "end", "examples": ["end", "now"],
+                                "description": "`end` (what the turn changed), `now` (the checkout as it is) or another checkpoint's id."},
+                    "path": text("Only this file or directory, relative to the checkout."),
+                    "stat": {"type": "boolean", "default": false, "description": "Only the files, no patch."},
+                }),
+                &["checkpoint_id"],
+            )
+        },
+    },
     // ---- workspaces and projects ------------------------------------------------------------
     Tool {
         name: "workspace_list",
@@ -1279,6 +1328,8 @@ mod tests {
             "session_kill",
             "process_signal",
             "agent_interrupt",
+            "checkpoint_list",
+            "checkpoint_diff",
         ] {
             assert!(find(name).is_some(), "missing tool {name}");
         }
@@ -1286,6 +1337,19 @@ mod tests {
             tools().iter().all(|t| t.name != "approval_respond"),
             "agents never answer approvals"
         );
+        // Checkpoints are read: an agent never restores the user's files (ADR 0019).
+        for name in ["checkpoint_restore", "checkpoint_undo"] {
+            assert!(find(name).is_none(), "{name}: agents cannot restore");
+        }
+        for name in ["checkpoint_list", "checkpoint_diff"] {
+            let tool = find(name).unwrap();
+            assert!(tool.read_only, "{name}");
+            assert!(
+                tool.description.contains("you cannot restore"),
+                "{name}: {}",
+                tool.description
+            );
+        }
         // Memory has no direct write tool for an agent: it can only propose.
         for name in [
             "memory_write",

@@ -15,6 +15,8 @@ LOOK (always allowed)
   hutan chat log <session>     journal of an agent chat
   hutan task ls                tasks with dependencies and state
   hutan wt ls                  git worktrees
+  hutan checkpoint ls|diff     what the user can rewind to: the checkout's files before and
+                               after each agent turn (you cannot restore them)
   hutan ws ls                  workspaces and projects
   hutan ps                     processes of every live session with CPU and memory
   hutan memory ls              what Mawas remembers (the user approved each entry)
@@ -79,7 +81,9 @@ approves the request in Hutan; the result tells you when it did. If the user den
 it fails with DENIED: do not retry unless the user asks. In Advisor mode changes are refused \
 (REFUSED): describe what you would change instead. You can never answer approvals or change \
 grants yourself. `ui_actions` lists what the window can do and its settings; use `ui_run` and \
-`ui_set_setting` for those, and `open_file` to show the user a file at a line. `memory_list` and \
+`ui_set_setting` for those, and `open_file` to show the user a file at a line. `checkpoint_list` \
+and `checkpoint_diff` show what the user can rewind to (the files of each agent turn); you cannot \
+restore. `memory_list` and \
 `memory_search` read what Hutan remembers about the \
 user; `memory_propose` only proposes - nothing is remembered until the user approves it, so \
 never say it was saved.";

@@ -92,6 +92,10 @@ pub enum Command {
     /// the daemon
     #[command(subcommand)]
     Chat(ChatCommand),
+    /// Checkpoints of agent turns: the checkout's files before and after each turn of an agent
+    /// chat, which the user can rewind to (`hutan checkpoint ls|diff|rm`)
+    #[command(subcommand)]
+    Checkpoint(CheckpointCommand),
     /// The logins of the agent harnesses (OMP, Claude Code, Codex): list them, log in or out
     /// through each harness's own flow (Hutan never handles a token)
     #[command(subcommand)]
@@ -558,6 +562,58 @@ pub struct NotifyActArgs {
     pub intent: String,
     /// One of the intent's actions: an approval option (`accept`, `cancel`, ...) or `open`
     pub action: String,
+}
+
+/// Checkpoints of agent turns (ADR 0019): the checkout's files before and after each turn of an
+/// agent chat in a git repository, kept in hidden refs of that repository.
+#[derive(Debug, Subcommand)]
+pub enum CheckpointCommand {
+    /// List checkpoints, newest first: when, files and lines changed, state, files left out
+    Ls(CheckpointLsArgs),
+    /// Show what a checkpoint's turn changed (a unified diff, or --stat), or what changed since
+    /// its start (--against now, --against CHECKPOINT)
+    Diff(CheckpointDiffArgs),
+    /// Delete a checkpoint, or every checkpoint of a session (their refs and rows): what they
+    /// kept can no longer be restored
+    Rm(CheckpointRmArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CheckpointLsArgs {
+    /// Only this session's: session id, unique id prefix (at least 4 characters), or exact
+    /// title; a closed session by its full id
+    pub session: Option<String>,
+    /// Only the sessions of this workspace or project (id, unique id prefix, or exact name)
+    #[arg(long = "ws", value_name = "ID|NAME", conflicts_with = "session")]
+    pub workspace: Option<String>,
+    /// At most this many (1 to 200; default 50)
+    #[arg(long, value_name = "N")]
+    pub limit: Option<u32>,
+    /// The page after this checkpoint (what the last page said)
+    #[arg(long, value_name = "CHECKPOINT")]
+    pub before: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct CheckpointDiffArgs {
+    /// Checkpoint id, or a unique id prefix (see `hutan checkpoint ls`)
+    pub checkpoint: String,
+    /// Only this file or directory, relative to the checkout
+    pub path: Option<String>,
+    /// Compare the checkpoint's start with `end` (what its turn changed), `now` (the checkout as
+    /// it is) or another checkpoint (through the end of that one's turn)
+    #[arg(long, value_name = "end|now|CHECKPOINT", default_value = "end")]
+    pub against: String,
+    /// Print the changed files with their line counts instead of the patch
+    #[arg(long)]
+    pub stat: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CheckpointRmArgs {
+    /// A checkpoint (id or unique id prefix), or a session (id, prefix or title): every
+    /// checkpoint of it
+    pub target: String,
 }
 
 #[derive(Debug, Subcommand)]

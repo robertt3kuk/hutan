@@ -88,7 +88,17 @@ max_repo_refs = 1000
 mode = "off"
 ```
 
-Retention drops the oldest checkpoints first (a restore's, the state Undo needs, after every turn's), deletes their refs and packs `refs/hutan/*`; Hutan never runs `git gc` or `prune`, so their objects age out under git's own settings. `git log --all` shows checkpoint commits and `git push --mirror` would push them: do not mirror-push a repository Hutan checkpoints. The rows (`checkpoints` table) and the refs are reconciled when the daemon starts. Listing, diffing and restoring checkpoints come with CK-3 and CK-4.
+Retention drops the oldest checkpoints first (a restore's, the state Undo needs, after every turn's), deletes their refs and packs `refs/hutan/*`; Hutan never runs `git gc` or `prune`, so their objects age out under git's own settings. `git log --all` shows checkpoint commits and `git push --mirror` would push them: do not mirror-push a repository Hutan checkpoints. The rows (`checkpoints` table) and the refs are reconciled when the daemon starts. Restoring checkpoints comes with CK-4.
+
+**Listing, diffing, removing** (protocol 0.37, capability `checkpoint`; `docs/protocol.md` § Checkpoints):
+
+```text
+hutan checkpoint ls [SESSION|--ws W] [--limit N] [--before CP] [--json]   # newest first: when, files, +/-, state, files not captured
+hutan checkpoint diff CHECKPOINT [PATH] [--against end|now|CP] [--stat]  # what the turn changed; `now`: since its start, up to the checkout as it is
+hutan checkpoint rm CHECKPOINT|SESSION                                   # deletes the ref(s) and row(s): no longer restorable
+```
+
+`ls` shows checkpoints that keep files or say why not (`ok`, `late`, `failed`, `off`); a turn that changed nothing and a folder outside git are not listed, and a chat outside git says `checkpoints: unsupported` with the reason in its `ChatInfo`. A checkpoint id prefix works where it is unique among the newest 200. `diff --against now` reads the checkout through a fresh snapshot of Hutan's own index (your index is never read or written); diffs are bounded like `hutan wt diff` (2 MiB per file, 20 MiB in all, 5 000 files) and flag binary files. What is captured: tracked and untracked-not-ignored files of the checkout, raw bytes; never ignored files, nested repositories, `filter=` (LFS) paths, files over `max_file_bytes` or names in `exclude` — those are listed as not captured. Privacy: diffs carry file contents and go only to the client that asked; events, logs and the MCP list carry paths and counts. Agents may list and diff (CLI, MCP `checkpoint_list` / `checkpoint_diff`); `rm` from an agent asks per `[control]` (`docs/control.md`).
 
 ## Configuration
 

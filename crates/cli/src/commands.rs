@@ -26,6 +26,7 @@ mod agents;
 mod assistant;
 mod attach;
 mod chat;
+mod checkpoints;
 mod config;
 mod files;
 mod grants;
@@ -98,6 +99,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Search(args) => ctx?.search(args).await,
         Command::Index(command) => ctx?.index(command).await,
         Command::Chat(command) => ctx?.chat(command).await,
+        Command::Checkpoint(command) => ctx?.checkpoint(command).await,
         Command::Account(command) => ctx?.account(command).await,
         Command::Provider(command) => ctx?.provider(command).await,
         Command::Config(command) => ctx?.config(command).await,

@@ -161,6 +161,8 @@ A stdio MCP server (hand-rolled JSON-RPC, one message per line; protocol version
 | `worktree_merge` | `worktree.merge` | yes | merge a worktree's branch into the main checkout's branch (local commit; refusals and conflicts change nothing) |
 | `worktree_commit` | `worktree.commit` | yes | stage everything in a worktree and commit it, so a merge takes it (0.25) |
 | `worktree_rm` | `worktree.remove` | yes | remove a worktree |
+| `checkpoint_list` | `checkpoint.list` | no | checkpoints of agent turns, newest first: what the user can rewind to; the agent cannot restore (0.37) |
+| `checkpoint_diff` | `checkpoint.diff` | no | what a turn changed, or what changed since it started (`against: now`); bounded like `worktree_diff` (0.37) |
 | `workspace_list` | `workspace.list` | no | workspaces and projects |
 | `project_recent` | `workspace.recent` | no | recently opened folders |
 | `workspace_create` | `workspace.create` | yes | a workspace (group) with folders and projects |
@@ -176,6 +178,8 @@ A stdio MCP server (hand-rolled JSON-RPC, one message per line; protocol version
 | `ui_set_setting` | `ui.set_setting` | yes | change a setting |
 
 `hutan help agent` prints the same guide for agents that only have a shell (what is allowed, that changes may wait for approval, exit codes).
+
+**Checkpoints** (protocol 0.37): `checkpoint.list` and `checkpoint.diff` are reads, free under every policy. `checkpoint.remove` is a change: under `ask` it raises a `control` approval ("delete the checkpoint …"), `read_only` refuses it, `allow` runs it; for Mawas it always asks (it destroys what a restore needs). There is no MCP tool to remove or restore; restoring will be user-only (CK-4).
 
 ## Wiring
 
