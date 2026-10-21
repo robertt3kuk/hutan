@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 
-use hutan_buffer::{SearchQuery, Text};
+use hutan_buffer::{MAX_SEARCH_MATCHES, SearchQuery, Text};
 
 /// Most matches one search keeps (the count says "10000+" past it).
 pub const MAX_FIND_MATCHES: usize = 10_000;
@@ -38,18 +38,21 @@ pub struct FindResult {
     pub error: Option<String>,
 }
 
+fn search_query(query: &FindQuery) -> SearchQuery {
+    if query.regex {
+        SearchQuery::regex(query.text.clone())
+    } else {
+        SearchQuery::literal(query.text.clone())
+    }
+    .case_sensitive(query.case_sensitive)
+}
+
 /// Searches `text` for `query` (blocking: call it off the main thread).
 pub fn run(text: &Text, query: &FindQuery) -> FindResult {
     if query.text.is_empty() {
         return FindResult::default();
     }
-    let search = if query.regex {
-        SearchQuery::regex(query.text.clone())
-    } else {
-        SearchQuery::literal(query.text.clone())
-    }
-    .case_sensitive(query.case_sensitive);
-    match text.search_all(&search, MAX_FIND_MATCHES) {
+    match text.search_all(&search_query(query), MAX_FIND_MATCHES) {
         Ok(found) => FindResult {
             matches: found.matches,
             truncated: found.truncated,
@@ -60,6 +63,17 @@ pub fn run(text: &Text, query: &FindQuery) -> FindResult {
             ..FindResult::default()
         },
     }
+}
+
+/// Every match of `query` in `text`, up to [`MAX_SEARCH_MATCHES`] (what Replace All replaces);
+/// empty for an empty query or a pattern that does not compile.
+pub fn run_all(text: &Text, query: &FindQuery) -> Vec<Range<usize>> {
+    if query.text.is_empty() {
+        return Vec::new();
+    }
+    text.search_all(&search_query(query), MAX_SEARCH_MATCHES)
+        .map(|found| found.matches)
+        .unwrap_or_default()
 }
 
 /// The find state of one view.
@@ -73,6 +87,8 @@ pub struct FindState {
     pub searching: bool,
     /// Bumped by every new query: a search that finishes for an older one is dropped.
     pub generation: u64,
+    /// The text version `result` was searched in.
+    pub version: u64,
 }
 
 impl FindState {

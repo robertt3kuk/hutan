@@ -60,6 +60,21 @@ pub fn byte_of_col(line: &str, x_cols: f32) -> usize {
     line.len()
 }
 
+/// The byte of `line` where a caret that wants column `goal` goes on it: the last character
+/// boundary at or before the column (the end of a shorter line), never inside a wide character
+/// or a tab.
+pub fn byte_at_col(line: &str, goal: usize) -> usize {
+    let mut col = 0usize;
+    for (at, c) in line.char_indices() {
+        let width = cells(c, col);
+        if width > 0 && col + width > goal {
+            return at;
+        }
+        col += width;
+    }
+    line.len()
+}
+
 /// The part of a line drawn for columns `from..to`: the text to shape (one glyph per cell) and
 /// where each source character went.
 #[derive(Debug, Clone, PartialEq, Eq)]

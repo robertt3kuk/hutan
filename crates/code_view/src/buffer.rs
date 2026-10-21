@@ -1,20 +1,30 @@
-//! [`FileBuffer`]: the text of one open file, shared by every view of it, with its load state and
-//! — while some view of it is on screen — its syntax.
+//! [`FileBuffer`]: the text of one open file, shared by every view of it, with its load state,
+//! its undo history and — while some view of it is on screen — its syntax.
 //!
 //! The owner (the desktop's buffer store) reads the file through the daemon and hands the text
-//! over with [`FileBuffer::set_loaded`]; views only read. A tree-sitter tree costs about 37 bytes
-//! per byte of source (`docs/perf.md` § Editor: syntax), so the buffer keeps a [`Syntax`] only
-//! while [`FileBuffer::set_syntax_active`] says a view of it is visible, and never for a file in
-//! large-file mode; the rope stays either way and the tree is parsed again on show.
+//! over with [`FileBuffer::set_loaded`]; views edit it through [`FileBuffer::edit`],
+//! [`FileBuffer::undo`] and [`FileBuffer::redo`], which apply `hutan-buffer` transactions, feed
+//! every edit to the parser (an incremental reparse, never a full one) and announce it with
+//! [`BufferEdited`] so that the other views carry their selections across it. A tree-sitter tree
+//! costs about 37 bytes per byte of source (`docs/perf.md` § Editor: syntax), so the buffer keeps
+//! a [`Syntax`] only while [`FileBuffer::set_syntax_active`] says a view of it is visible, and
+//! never for a file in large-file mode; the rope stays either way and the tree is parsed again on
+//! show.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use futures::StreamExt as _;
 use futures::channel::mpsc;
-use gpui::{Context, Task};
-use hutan_buffer::{Buffer, LineEnding, Text};
+use gpui::{Context, EntityId, EventEmitter, Task};
+use hutan_buffer::{Applied, Buffer, LineEnding, Text, Transaction};
 use hutan_syntax::{Language, Syntax, SyntaxStats, SyntaxView};
+
+use crate::rules::IndentUnit;
+
+/// Typing that pauses longer than this starts a new undo step.
+pub const TYPING_GROUP_PAUSE: Duration = Duration::from_secs(1);
 
 /// Why a file cannot be shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,21 +69,72 @@ pub enum LoadState {
     Failed { reason: FailReason, message: String },
 }
 
+/// The file on disk is no longer what the buffer was read from, and the buffer has changes of
+/// its own (or a save was refused): the owner shows the conflict bar and never writes over the
+/// file without being told to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Conflict {
+    /// Somebody else changed the file. `disk` is its text now, when it could be read (for
+    /// *Show diff* and *Reload*).
+    Changed { disk: Option<Arc<str>> },
+    /// The file was deleted (or moved away).
+    Deleted,
+}
+
+/// How an edit joins the undo history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Coalesce {
+    /// A step of its own.
+    Step,
+    /// Typing: joins the typing of the same view that came less than [`TYPING_GROUP_PAUSE`]
+    /// before, so a typed word (or an input method's composition) is one undo step.
+    Typing,
+}
+
+/// What changed the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditKind {
+    Edit,
+    Undo,
+    Redo,
+    /// The file changed on disk and the buffer took the new text (`apply_external`).
+    Reload,
+}
+
+/// The text of the buffer changed by `transaction` (in the coordinates of the text before it).
+/// `origin` is the view that made the change; every other view maps its selections through it.
+#[derive(Debug, Clone)]
+pub struct BufferEdited {
+    pub transaction: Transaction,
+    pub origin: Option<EntityId>,
+    pub kind: EditKind,
+    /// The buffer's [`version`](FileBuffer::version) after the change.
+    pub version: u64,
+}
+
+struct OpenGroup {
+    owner: EntityId,
+    last: Instant,
+}
+
 /// The text of one file and what is known about it.
 pub struct FileBuffer {
     path: PathBuf,
     state: LoadState,
-    text: Text,
-    line_ending: LineEnding,
-    bom: bool,
-    /// Bumped every time the text is replaced; caches of what was drawn key on it.
+    buffer: Buffer,
+    /// Bumped every time the text changes; caches of what was drawn and the parser key on it.
     version: u64,
     language: Option<Language>,
+    indent: IndentUnit,
     /// Large-file mode: no syntax, read-only until the user says otherwise.
     large: bool,
     size: u64,
     syntax_active: bool,
     syntax: Option<Syntax>,
+    /// The typing group that is open in the undo history, if any.
+    group: Option<OpenGroup>,
+    conflict: Option<Conflict>,
+    saving: bool,
     /// Wakes the views when the parser published a tree.
     published: Arc<Mutex<mpsc::Sender<()>>>,
     _repaint: Task<()>,
@@ -85,12 +146,16 @@ impl std::fmt::Debug for FileBuffer {
             .field("path", &self.path)
             .field("state", &self.state)
             .field("version", &self.version)
+            .field("dirty", &self.is_dirty())
             .field("language", &self.language)
             .field("large", &self.large)
             .field("syntax", &self.syntax.is_some())
+            .field("conflict", &self.conflict.is_some())
             .finish_non_exhaustive()
     }
 }
+
+impl EventEmitter<BufferEdited> for FileBuffer {}
 
 impl FileBuffer {
     /// A buffer for `path` (absolute, canonical), still loading.
@@ -108,14 +173,16 @@ impl FileBuffer {
             language: Language::from_path(&path).filter(|l| l.is_compiled()),
             path,
             state: LoadState::Loading,
-            text: Text::new(),
-            line_ending: LineEnding::default(),
-            bom: false,
+            buffer: Buffer::new(),
             version: 0,
+            indent: IndentUnit::default(),
             large: false,
             size: 0,
             syntax_active: false,
             syntax: None,
+            group: None,
+            conflict: None,
+            saving: false,
             published: Arc::new(Mutex::new(sender)),
             _repaint: repaint,
         }
@@ -138,18 +205,23 @@ impl FileBuffer {
         self.state == LoadState::Ready
     }
 
-    /// The text (line endings normalized to `\n`, no byte-order mark: what is drawn).
-    pub fn text(&self) -> &Text {
-        &self.text
+    /// Whether the text may be changed: it is in, and the file is not in large-file mode.
+    pub fn is_editable(&self) -> bool {
+        self.is_ready() && !self.large
     }
 
-    /// How the file ends its lines on disk.
+    /// The text (line endings normalized to `\n`, no byte-order mark: what is drawn).
+    pub fn text(&self) -> &Text {
+        self.buffer.text()
+    }
+
+    /// How the file ends its lines on disk (and is written back).
     pub fn line_ending(&self) -> LineEnding {
-        self.line_ending
+        self.buffer.line_ending()
     }
 
     pub fn has_bom(&self) -> bool {
-        self.bom
+        self.buffer.has_bom()
     }
 
     pub fn version(&self) -> u64 {
@@ -160,6 +232,11 @@ impl FileBuffer {
         self.language
     }
 
+    /// What one level of indentation is in this file (detected when it was read).
+    pub fn indent_unit(&self) -> IndentUnit {
+        self.indent
+    }
+
     /// Large-file mode: opened without syntax.
     pub fn is_large(&self) -> bool {
         self.large
@@ -168,6 +245,43 @@ impl FileBuffer {
     /// The size of the file on disk, in bytes.
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    /// Whether the text differs from what was last read or saved.
+    pub fn is_dirty(&self) -> bool {
+        self.is_ready() && self.buffer.is_dirty()
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.buffer.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.buffer.can_redo()
+    }
+
+    /// The conflict with the file on disk, if there is one.
+    pub fn conflict(&self) -> Option<&Conflict> {
+        self.conflict.as_ref()
+    }
+
+    pub fn set_conflict(&mut self, conflict: Option<Conflict>, cx: &mut Context<Self>) {
+        if self.conflict != conflict {
+            self.conflict = conflict;
+            cx.notify();
+        }
+    }
+
+    /// A save is on its way to the daemon.
+    pub fn is_saving(&self) -> bool {
+        self.saving
+    }
+
+    pub fn set_saving(&mut self, saving: bool, cx: &mut Context<Self>) {
+        if self.saving != saving {
+            self.saving = saving;
+            cx.notify();
+        }
     }
 
     /// Moves to `state` (loading, waiting for a confirmation, failed).
@@ -183,18 +297,20 @@ impl FileBuffer {
         self.size = size;
     }
 
-    /// The file's text arrived (exactly as on disk); `large` opens it in large-file mode.
+    /// The file's text arrived (exactly as on disk); `large` opens it in large-file mode. The
+    /// undo history starts over.
     pub fn set_loaded(&mut self, text: &str, large: bool, cx: &mut Context<Self>) {
-        let buffer = Buffer::from_content(text);
-        self.text = buffer.snapshot();
-        self.line_ending = buffer.line_ending();
-        self.bom = buffer.has_bom();
+        self.buffer = Buffer::from_content(text);
+        self.group = None;
+        self.conflict = None;
         self.size = self.size.max(text.len() as u64);
         self.version += 1;
         self.large = large;
+        self.indent = IndentUnit::detect(self.buffer.text());
         if self.language.is_none() {
             self.language = self
-                .text
+                .buffer
+                .text()
                 .line_text(0)
                 .ok()
                 .and_then(|first| Language::from_shebang(&first))
@@ -206,6 +322,172 @@ impl FileBuffer {
         self.sync_syntax();
         cx.notify();
     }
+
+    // ---- editing ---------------------------------------------------------------------------
+
+    /// Applies `transaction` (made by the view `origin`) as one atomic change, and as an undo
+    /// step of its own or joined to the typing before it (`coalesce`). `None` when the buffer
+    /// is read-only or the transaction does not fit the text.
+    pub fn edit(
+        &mut self,
+        transaction: Transaction,
+        coalesce: Coalesce,
+        origin: EntityId,
+        cx: &mut Context<Self>,
+    ) -> Option<Applied> {
+        if !self.is_editable() || transaction.is_empty() {
+            return None;
+        }
+        let now = Instant::now();
+        match coalesce {
+            Coalesce::Typing => {
+                let joins = self.group.as_ref().is_some_and(|g| {
+                    g.owner == origin && now.saturating_duration_since(g.last) < TYPING_GROUP_PAUSE
+                });
+                if !joins {
+                    self.break_group();
+                    self.buffer.begin_group();
+                }
+                self.group = Some(OpenGroup {
+                    owner: origin,
+                    last: now,
+                });
+            }
+            Coalesce::Step => self.break_group(),
+        }
+        let before = self.buffer.snapshot();
+        match self.buffer.apply(transaction) {
+            Ok(applied) => {
+                self.changed(&before, &applied, Some(origin), EditKind::Edit, cx);
+                Some(applied)
+            }
+            Err(error) => {
+                tracing::warn!(path = %self.path.display(), "edit refused: {error}");
+                None
+            }
+        }
+    }
+
+    /// Ends the typing step that is open: the next edit is an undo step of its own (the caret
+    /// moved, a command ran, the file is being saved).
+    pub fn break_group(&mut self) {
+        if self.group.take().is_some() {
+            self.buffer.end_group();
+        }
+    }
+
+    /// Undoes the last step; the transaction's `selection_after` is the selection to restore.
+    pub fn undo(&mut self, origin: EntityId, cx: &mut Context<Self>) -> Option<Applied> {
+        if !self.is_editable() {
+            return None;
+        }
+        // `Buffer::undo` closes the open group itself.
+        self.group = None;
+        let before = self.buffer.snapshot();
+        let applied = self.buffer.undo()?;
+        self.changed(&before, &applied, Some(origin), EditKind::Undo, cx);
+        Some(applied)
+    }
+
+    /// Redoes the step undone last.
+    pub fn redo(&mut self, origin: EntityId, cx: &mut Context<Self>) -> Option<Applied> {
+        if !self.is_editable() {
+            return None;
+        }
+        self.group = None;
+        let before = self.buffer.snapshot();
+        let applied = self.buffer.redo()?;
+        self.changed(&before, &applied, Some(origin), EditKind::Redo, cx);
+        Some(applied)
+    }
+
+    /// The file changed on disk and the buffer takes its text (`text` exactly as on disk): the
+    /// minimal difference is applied as one undo step, so selections in unchanged regions stay
+    /// and undo steps back over it; the buffer is clean afterwards. Returns whether the text
+    /// changed.
+    pub fn reload(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        if !self.is_ready() {
+            return false;
+        }
+        self.break_group();
+        let before = self.buffer.snapshot();
+        let changed = match self.buffer.apply_external(text) {
+            Ok(Some(applied)) => {
+                self.changed(&before, &applied, None, EditKind::Reload, cx);
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(path = %self.path.display(), "reload refused: {error}");
+                return false;
+            }
+        };
+        self.buffer.mark_saved();
+        self.size = text.len() as u64;
+        self.conflict = None;
+        cx.notify();
+        changed
+    }
+
+    /// The bytes to write (byte-order mark and line endings as the file had them) and the
+    /// version they are of. Ends the open typing step, so that what is typed while the save is
+    /// on its way is a step after the saved state.
+    pub fn bytes_to_save(&mut self) -> (u64, String) {
+        self.break_group();
+        let bytes = self.buffer.to_bytes();
+        // The text is UTF-8 and the BOM and line breaks it adds are too.
+        let text = String::from_utf8(bytes)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+        (self.version, text)
+    }
+
+    /// The bytes of `version` reached the disk (`size` of them): the buffer is clean again,
+    /// unless it was edited meanwhile.
+    pub fn saved(&mut self, version: u64, size: u64, cx: &mut Context<Self>) {
+        if version == self.version {
+            self.break_group();
+            self.buffer.mark_saved();
+        }
+        self.size = size;
+        self.conflict = None;
+        self.saving = false;
+        cx.notify();
+    }
+
+    fn changed(
+        &mut self,
+        before: &Text,
+        applied: &Applied,
+        origin: Option<EntityId>,
+        kind: EditKind,
+        cx: &mut Context<Self>,
+    ) {
+        self.version += 1;
+        if let Some(syntax) = &self.syntax {
+            match hutan_syntax::edits_of_transaction(before, &applied.transaction) {
+                Ok(edits) => {
+                    for edit in edits {
+                        syntax.edit(self.version, edit);
+                    }
+                    syntax.reparse(self.version, self.buffer.snapshot());
+                }
+                // Cannot happen for a transaction that applied to `before`; a fresh parse is
+                // the safe answer.
+                Err(_) => {
+                    syntax.reset(self.version, self.buffer.snapshot());
+                }
+            }
+        }
+        cx.emit(BufferEdited {
+            transaction: applied.transaction.clone(),
+            origin,
+            kind,
+            version: self.version,
+        });
+        cx.notify();
+    }
+
+    // ---- syntax ----------------------------------------------------------------------------
 
     /// Whether some view of the buffer is on screen: the syntax is kept (and parsed) only then.
     pub fn set_syntax_active(&mut self, active: bool, cx: &mut Context<Self>) {
@@ -239,7 +521,7 @@ impl FileBuffer {
         });
         match started {
             Ok(syntax) => {
-                syntax.reparse(self.version, self.text.clone());
+                syntax.reparse(self.version, self.buffer.snapshot());
                 self.syntax = Some(syntax);
             }
             // The view draws without colors.

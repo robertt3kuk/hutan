@@ -25,6 +25,9 @@ pub const MAX_LOGGED_EDITS: usize = 4096;
 pub struct SyntaxStats {
     /// Parses the worker started.
     pub started: u64,
+    /// Of those, the parses that started from an earlier tree edited to the new text (the rest
+    /// parsed from scratch).
+    pub incremental: u64,
     /// Parses that finished and were published.
     pub completed: u64,
     /// Parses stopped because a newer version arrived (or the handle was dropped).
@@ -414,6 +417,9 @@ fn run_worker(shared: &Shared, language: Language) {
                         .collect()
                 })
                 .unwrap_or_default();
+            if base.is_some() {
+                state.stats.incremental += 1;
+            }
             (request, cancel, base, edits)
         };
 

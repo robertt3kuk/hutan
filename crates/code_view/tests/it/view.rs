@@ -133,9 +133,10 @@ fn a_theme_change_restyles_without_a_reparse(cx: &mut TestAppContext) {
     draw(cx);
     let drawn = view.read_with(cx, |v, _| v.stats().last_lines.len());
     let restyled = shaped(&view, cx) - before;
+    // Lines that show the same text in the same colors share one shape.
     assert!(
-        restyled >= drawn && restyled <= rows,
-        "every line in view ({drawn}) is drawn again in the new colors, no more: {restyled}"
+        restyled >= 1 && restyled <= drawn.min(rows),
+        "the lines in view ({drawn}) are drawn again in the new colors, no more: {restyled}"
     );
     assert_eq!(
         buffer.read_with(cx, |b, _| b.syntax_stats().expect("syntax").started),
