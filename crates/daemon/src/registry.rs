@@ -4748,6 +4748,7 @@ fn chat_info(spec: &ChatSpec) -> ChatInfo {
         assistant: spec.assistant,
         images: None,
         mode: None,
+        checkpoints: None,
         agent_session_id: (!is_gateway_agent(&spec.agent))
             .then(|| spec.thread_id.clone())
             .flatten(),

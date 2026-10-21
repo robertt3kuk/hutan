@@ -419,6 +419,13 @@ pub struct ChatInfo {
     /// chats). Hutan only reads it: it never changes an ordinary chat's mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<ChatMode>,
+    /// Protocol 0.37 (capability `checkpoint`, ADR 0019): whether the chat's turns get
+    /// checkpoints of its checkout — `on`, `off` (turned off in the settings, or switched off by
+    /// failures or low disk) or `unsupported` (not in git, the home directory, …), with the
+    /// reason. Absent for chats that never have checkpoints (assistants, direct chats) and until
+    /// the agent first started; it keeps the last state once the agent stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoints: Option<hutan_core::CheckpointStatus>,
 }
 
 impl ChatInfo {

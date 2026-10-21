@@ -1209,6 +1209,7 @@ mod tests {
             assistant,
             images: None,
             mode: None,
+            checkpoints: None,
         }
     }
 

@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`checkpoint`]: checkpoints of agent edits on the wire — `checkpoint.list|diff|remove`, the
+//!   events `checkpoint.created|removed|state` and `ChatInfo.checkpoints` (protocol 0.37,
+//!   capability `checkpoint`, ADR 0019).
 //! - [`chat`] also carries the daemon-owned queue of a chat: `chat.queue.add|edit|remove|clear|list`,
 //!   the `chat.queue` event, `chat.send_now` (steer where the agent can, else interrupt and send)
 //!   and `chat.interrupt`'s `keep_queue` (protocol 0.36, capability `chat.queue`).
@@ -58,6 +61,7 @@ pub mod account;
 pub mod assistant;
 pub mod blocks;
 pub mod chat;
+pub mod checkpoint;
 pub mod control;
 pub mod daemon_settings;
 pub mod error;
@@ -88,7 +92,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 36,
+    minor: 37,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

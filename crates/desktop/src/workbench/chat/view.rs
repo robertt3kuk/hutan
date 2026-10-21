@@ -1834,6 +1834,7 @@ mod mode_chip_tests {
             assistant: false,
             images: None,
             mode,
+            checkpoints: None,
         }
     }
 

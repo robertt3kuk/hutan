@@ -5,8 +5,9 @@ use std::path::PathBuf;
 
 use hutan_core::agent::{DecidedBy, PermissionOutcome};
 use hutan_core::{
-    AgentEvent, AgentNode, ApprovalId, Epoch, NodeOutcome, QuestionId, QuestionOutcome, Seq,
-    SessionId, SessionKind, SessionState, Task, TaskId, TerminalId, WorkspaceId,
+    AgentEvent, AgentNode, ApprovalId, CheckpointAvailability, CheckpointId, CheckpointInfo, Epoch,
+    NodeOutcome, QuestionId, QuestionOutcome, Seq, SessionId, SessionKind, SessionState, Task,
+    TaskId, TerminalId, WorkspaceId,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,7 @@ use crate::chat::{
     ChatRetry, ChatSend, ChatSendNow, QuestionAnswer, QuestionInfo, QuestionListRequest,
     QueueChange,
 };
+use crate::checkpoint::{CheckpointDiffRequest, CheckpointListRequest, CheckpointRemove};
 use crate::control::{ErrorBody, ErrorCode};
 use crate::daemon_settings::DaemonSettingSet;
 use crate::error::ProtocolError;
@@ -502,6 +504,18 @@ pub enum Request {
     /// Capability `fs.watch`: releases paths; answered with `FsWatching`.
     #[serde(rename = "fs.unwatch")]
     FsUnwatch(FsUnwatch),
+    /// Capability `checkpoint` (protocol 0.37): checkpoints of agent chat turns, newest first;
+    /// answered with `CheckpointList`. Read-only.
+    #[serde(rename = "checkpoint.list")]
+    CheckpointList(CheckpointListRequest),
+    /// Capability `checkpoint`: what a checkpoint's turn changed (or what changed since its
+    /// start); answered with `CheckpointDiff`. Read-only, bounded like `worktree.diff`.
+    #[serde(rename = "checkpoint.diff")]
+    CheckpointDiff(CheckpointDiffRequest),
+    /// Capability `checkpoint`: delete a checkpoint or a session's checkpoints (refs and rows);
+    /// answered with `CheckpointRemoved`. A mutation: an agent asks per `[control]`.
+    #[serde(rename = "checkpoint.remove")]
+    CheckpointRemove(CheckpointRemove),
 }
 
 impl Request {
@@ -1135,6 +1149,23 @@ pub enum Event {
         queue: ChatQueue,
         change: QueueChange,
     },
+    /// Capability `checkpoint` (protocol 0.37): a turn's checkpoint was recorded (its end, or
+    /// why there is none: `failed`, `off`). A turn that changed nothing, or whose folder cannot
+    /// have checkpoints, raises none.
+    #[serde(rename = "checkpoint.created")]
+    CheckpointCreated { checkpoint: Box<CheckpointInfo> },
+    /// Capability `checkpoint`: checkpoints were removed (`checkpoint.remove`, or retention).
+    #[serde(rename = "checkpoint.removed")]
+    CheckpointRemoved { ids: Vec<CheckpointId> },
+    /// Capability `checkpoint`: whether a chat's turns get checkpoints changed; the same as its
+    /// `ChatInfo.checkpoints`.
+    #[serde(rename = "checkpoint.state")]
+    CheckpointStateChanged {
+        session_id: SessionId,
+        state: CheckpointAvailability,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     /// Capability `chat.codex`: an agent asks for permission.
     #[serde(rename = "approval.required")]
     ApprovalRequired { approval: Box<ApprovalInfo> },
@@ -1324,6 +1355,9 @@ impl Event {
         "fs.generation",
         "fs.search.progress",
         "chat.queue",
+        "checkpoint.created",
+        "checkpoint.removed",
+        "checkpoint.state",
     ];
 }
 

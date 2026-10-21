@@ -23,7 +23,9 @@ use hutan_core::{
     ApprovalPolicy, ItemId, Liveness, ModelInfo, NodeKind, NodeOutcome, NodeState, SandboxMode,
     TurnId, Usage,
 };
-use hutan_core::{Epoch, Seq, SessionId, SessionKind, SessionState, TerminalId, WorkspaceId};
+use hutan_core::{
+    CheckpointId, Epoch, Seq, SessionId, SessionKind, SessionState, TerminalId, WorkspaceId,
+};
 use hutan_protocol::account::*;
 use hutan_protocol::assistant::*;
 use hutan_protocol::blocks::{
@@ -49,6 +51,7 @@ use hutan_protocol::resources::*;
 use hutan_protocol::task::*;
 use hutan_protocol::tree::*;
 use hutan_protocol::worktree::*;
+use hutan_protocol::checkpoint::*;
 use hutan_protocol::{ErrorBody, ErrorCode, Frame, PROTOCOL_VERSION};
 fn daemon_setting_entries() -> Vec<hutan_protocol::daemon_settings::DaemonSetting> {
     use hutan_protocol::daemon_settings::{Applies, DaemonSetting, DaemonSettingKind};
@@ -269,6 +272,7 @@ fn chat_info() -> ChatInfo {
         assistant: false,
         images: None,
         mode: None,
+        checkpoints: None,
     }
 }
 
@@ -290,6 +294,7 @@ fn harness_chat_session_info() -> SessionInfo {
             assistant: false,
             images: Some(true),
             mode: None,
+            checkpoints: None,
         }),
         ..chat_session_info()
     }
@@ -313,6 +318,7 @@ fn harness_assistant_session_info() -> SessionInfo {
             assistant: true,
             images: Some(false),
             mode: None,
+            checkpoints: None,
         }),
         ..chat_session_info()
     }
@@ -336,6 +342,7 @@ fn direct_chat_session_info() -> SessionInfo {
             assistant: false,
             images: None,
             mode: None,
+            checkpoints: None,
         }),
         ..chat_session_info()
     }
@@ -421,6 +428,7 @@ fn assistant_session_info() -> SessionInfo {
             assistant: false,
             images: None,
             mode: None,
+            checkpoints: None,
         }),
         ..chat_session_info()
     }
@@ -2779,7 +2787,90 @@ fn requests() -> Vec<(&'static str, Request)> {
                 item_id: Some(2),
             }),
         ),
+        (
+            "checkpoint_list_session",
+            Request::CheckpointList(CheckpointListRequest {
+                session_id: Some(sid()),
+                ..CheckpointListRequest::default()
+            }),
+        ),
+        (
+            "checkpoint_list_workspace_page",
+            Request::CheckpointList(CheckpointListRequest {
+                session_id: None,
+                workspace_id: Some(ws()),
+                limit: Some(20),
+                before: Some(checkpoint_id(2)),
+            }),
+        ),
+        (
+            "checkpoint_diff",
+            Request::CheckpointDiff(CheckpointDiffRequest {
+                checkpoint_id: checkpoint_id(1),
+                against: DiffAgainst::End,
+                path: None,
+                stat: false,
+            }),
+        ),
+        (
+            "checkpoint_diff_now_path_stat",
+            Request::CheckpointDiff(CheckpointDiffRequest {
+                checkpoint_id: checkpoint_id(1),
+                against: DiffAgainst::Now,
+                path: Some("src".into()),
+                stat: true,
+            }),
+        ),
+        (
+            "checkpoint_diff_through",
+            Request::CheckpointDiff(CheckpointDiffRequest {
+                checkpoint_id: checkpoint_id(1),
+                against: DiffAgainst::Checkpoint(checkpoint_id(2)),
+                path: None,
+                stat: false,
+            }),
+        ),
+        (
+            "checkpoint_remove_checkpoint",
+            Request::CheckpointRemove(CheckpointRemove {
+                checkpoint_id: Some(checkpoint_id(1)),
+                session_id: None,
+            }),
+        ),
+        (
+            "checkpoint_remove_session",
+            Request::CheckpointRemove(CheckpointRemove {
+                checkpoint_id: None,
+                session_id: Some(sid()),
+            }),
+        ),
     ]
+}
+
+fn checkpoint_id(n: u8) -> CheckpointId {
+    format!("01K7F3B5N2Q9W8E4R6T1Y0V3C{n}").parse().unwrap()
+}
+
+fn checkpoint_fixture() -> CheckpointInfo {
+    CheckpointInfo {
+        id: checkpoint_id(1),
+        session_id: sid(),
+        turn_id: Some(turn()),
+        kind: CheckpointKind::Turn,
+        state: CheckpointState::Ok,
+        reason: None,
+        created_ms: 1_760_000_000_000,
+        checkout: Some(PathBuf::from("/Users/me/repo")),
+        files_changed: 2,
+        added: 1,
+        removed: 1,
+        bytes: 5321,
+        skipped: vec![SkippedFile {
+            path: ".env.local".into(),
+            reason: SkipReason::SecretName,
+            bytes: Some(120),
+        }],
+    }
 }
 
 fn chat_queue_fixture(held: Option<QueueHold>, steer: bool) -> ChatQueue {
@@ -3709,6 +3800,34 @@ fn events() -> Vec<(&'static str, Event)> {
             Event::ChatQueueChanged {
                 queue: chat_queue_fixture(Some(QueueHold::Stopped), false),
                 change: QueueChange::Held,
+            },
+        ),
+        (
+            "checkpoint_created",
+            Event::CheckpointCreated {
+                checkpoint: Box::new(checkpoint_fixture()),
+            },
+        ),
+        (
+            "checkpoint_removed",
+            Event::CheckpointRemoved {
+                ids: vec![checkpoint_id(1), checkpoint_id(2)],
+            },
+        ),
+        (
+            "checkpoint_state_unsupported",
+            Event::CheckpointStateChanged {
+                session_id: sid(),
+                state: CheckpointAvailability::Unsupported,
+                reason: Some("/Users/me/notes is not in a git repository".into()),
+            },
+        ),
+        (
+            "checkpoint_state_on",
+            Event::CheckpointStateChanged {
+                session_id: sid(),
+                state: CheckpointAvailability::On,
+                reason: None,
             },
         ),
     ]
@@ -5604,6 +5723,99 @@ fn responses_match_fixtures() {
         (
             "chat_sent_now_started",
             ControlMessage::ok(46, &ChatSentNow::Started { turn_id: turn() }).unwrap(),
+        ),
+        (
+            "checkpoint_list",
+            ControlMessage::ok(
+                47,
+                &CheckpointList {
+                    checkpoints: vec![checkpoint_fixture()],
+                    next: Some(checkpoint_id(2)),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "checkpoint_diff",
+            ControlMessage::ok(
+                48,
+                &CheckpointDiff {
+                    files: vec![
+                        CheckpointFile {
+                            path: "assets/logo.png".into(),
+                            status: CheckpointFileStatus::Added,
+                            added: 0,
+                            removed: 0,
+                            binary: true,
+                            truncated: false,
+                        },
+                        CheckpointFile {
+                            path: "src/lib.rs".into(),
+                            status: CheckpointFileStatus::Modified,
+                            added: 1,
+                            removed: 1,
+                            binary: false,
+                            truncated: false,
+                        },
+                    ],
+                    patch: Some(
+                        "diff --git a/assets/logo.png b/assets/logo.png\nnew file mode 100644\n\
+                         index 0000000..3f78685\nBinary files /dev/null and b/assets/logo.png differ\n\
+                         diff --git a/src/lib.rs b/src/lib.rs\nindex 3f78685..4b825dc 100644\n\
+                         --- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-fn a() {}\n+fn b() {}\n"
+                            .into(),
+                    ),
+                    truncated: false,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "checkpoint_diff_stat_truncated",
+            ControlMessage::ok(
+                49,
+                &CheckpointDiff {
+                    files: vec![CheckpointFile {
+                        path: "data/big.csv".into(),
+                        status: CheckpointFileStatus::Deleted,
+                        added: 0,
+                        removed: 90_000,
+                        binary: false,
+                        truncated: true,
+                    }],
+                    patch: None,
+                    truncated: true,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "checkpoint_removed",
+            ControlMessage::ok(
+                50,
+                &CheckpointRemoved {
+                    removed: vec![checkpoint_id(1), checkpoint_id(2)],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "chat_session_result_checkpoints_unsupported",
+            ControlMessage::ok(
+                51,
+                &SessionResult {
+                    session: SessionInfo {
+                        chat: harness_chat_session_info().chat.map(|chat| ChatInfo {
+                            checkpoints: Some(CheckpointStatus::unsupported(
+                                "/Users/me/notes is not in a git repository",
+                            )),
+                            ..chat
+                        }),
+                        ..harness_chat_session_info()
+                    },
+                },
+            )
+            .unwrap(),
         ),
     ];
     for (name, message) in cases {

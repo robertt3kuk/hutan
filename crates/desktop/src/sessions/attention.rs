@@ -790,6 +790,7 @@ mod tests {
             assistant: false,
             images: None,
             mode: None,
+            checkpoints: None,
         });
         session
     }
