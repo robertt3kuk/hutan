@@ -8,6 +8,7 @@
 //! The public API uses no async runtime; async callers run the blocking calls ([`Storage::open`],
 //! reads, [`Storage::flush`], [`Storage::close`]) on a blocking thread.
 
+mod checkpoints;
 mod error;
 mod memory;
 mod migrate;
@@ -28,6 +29,7 @@ use parking_lot::Mutex;
 use rusqlite::Connection;
 use tracing::{debug, error};
 
+pub use checkpoints::{CheckpointFilter, CheckpointRow, Checkpoints};
 pub use error::{Result, StorageError};
 pub use memory::{
     Action, Author, Category, Change, EntryRow, EntryState, EntryView, Memory, MemoryError,
@@ -189,6 +191,10 @@ impl Storage {
 
     pub fn memory(&self) -> Memory<'_> {
         Memory(self)
+    }
+
+    pub fn checkpoints(&self) -> Checkpoints<'_> {
+        Checkpoints(self)
     }
 
     /// Queues one write. Returns once it is queued, not once it is durable.

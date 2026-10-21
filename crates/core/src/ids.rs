@@ -102,6 +102,11 @@ ulid_id!(
     TaskId,
     "task"
 );
+ulid_id!(
+    /// One checkpoint of a chat session's files (ADR 0019): a turn's start and end, or a restore.
+    CheckpointId,
+    "checkpoint"
+);
 
 /// Daemon-assigned terminal handle, unique within an epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

@@ -1,7 +1,8 @@
 //! Hutan domain types: identifiers, session lifecycle, the agent event model, the agent
-//! observation tree, and tasks with dependencies. No I/O lives here.
+//! observation tree, tasks with dependencies, and checkpoints. No I/O lives here.
 
 pub mod agent;
+pub mod checkpoint;
 pub mod ids;
 pub mod observation;
 pub mod question;
@@ -12,9 +13,13 @@ pub use agent::{
     AgentEvent, AgentEventDraft, AgentEventKind, ApprovalPolicy, DecidedBy, Delivery, ModelInfo,
     SandboxMode,
 };
+pub use checkpoint::{
+    CheckpointAvailability, CheckpointInfo, CheckpointKind, CheckpointState, CheckpointStatus,
+    SkipReason, SkippedFile,
+};
 pub use ids::{
-    ApprovalId, Epoch, ItemId, ParseIdError, QuestionId, Seq, SessionId, TaskId, TerminalId,
-    TurnId, WorkspaceId,
+    ApprovalId, CheckpointId, Epoch, ItemId, ParseIdError, QuestionId, Seq, SessionId, TaskId,
+    TerminalId, TurnId, WorkspaceId,
 };
 pub use observation::{
     AgentNode, AgentObservation, Changes, Liveness, NodeKind, NodeOutcome, NodeState, NodeUpdate,
