@@ -29,6 +29,7 @@ use crate::conn::{self, ConnContext};
 use crate::control::ControlService;
 use crate::daemon_settings::{SettingsService, Targets};
 use crate::error::{DaemonError, MAX_SOCKET_PATH_BYTES};
+use crate::files::FileService;
 use crate::harness::Harnesses;
 use crate::history::HistoryService;
 use crate::mcp_wiring::McpWiring;
@@ -106,6 +107,9 @@ pub struct DaemonConfig {
     /// 60 s): how long an idle harness assistant keeps its agent process. `None` reads the
     /// setting. Tests shorten it.
     pub assistant_idle_stop: Option<Duration>,
+    /// The bounds of the file service (protocol 0.33): 500 changes per `fs.changed` event,
+    /// 30 s without a chunk before an upload is discarded. Tests lower them.
+    pub fs_limits: crate::files::Limits,
 }
 
 impl DaemonConfig {
@@ -125,6 +129,7 @@ impl DaemonConfig {
             ui_command_timeout: Duration::from_millis(hutan_protocol::ui::COMMAND_TIMEOUT_MS),
             socket_check_interval: SOCKET_CHECK_INTERVAL,
             assistant_idle_stop: None,
+            fs_limits: crate::files::Limits::default(),
         }
     }
 }
@@ -376,6 +381,12 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         storage.clone(),
         &paths.base,
     );
+    let files = FileService::new(
+        registry.clone(),
+        bus.clone(),
+        shutdown.clone(),
+        config.fs_limits,
+    );
     let ui = UiHub::with_timeout(bus.clone(), config.ui_command_timeout);
     let menu_bar = menu_bar.map(|(menu_bar, _, changes)| {
         (
@@ -418,6 +429,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             resources,
             control,
             memory,
+            files,
             ui,
             settings: settings_service,
         },

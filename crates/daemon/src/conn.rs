@@ -63,6 +63,8 @@ pub const CAPABILITIES: &[&str] = &[
     "session.close",
     "control.grants",
     "memory",
+    "fs",
+    "fs.watch",
 ];
 
 /// How long a closing connection may take to flush already queued messages.
@@ -83,6 +85,16 @@ pub enum Outbound {
     Frame(Frame),
     /// Written back to back; used for replay so it costs one queue slot however long it is.
     Batch(Vec<Frame>),
+}
+
+/// What became of a frame offered with [`ConnHandle::enqueue_local`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalSend {
+    Queued,
+    /// The queue was full; the frame is lost.
+    Dropped,
+    /// The connection is gone.
+    Gone,
 }
 
 /// Cheap, cloneable way to push messages to (or close) one connection.
@@ -137,6 +149,17 @@ impl ConnHandle {
         match self.tx.try_send(Outbound::Frame(frame)) {
             Ok(()) | Err(TrySendError::Full(_)) => true,
             Err(TrySendError::Closed(_)) => false,
+        }
+    }
+
+    /// Queues a frame of an event stream that lies outside the sequence (`fs.changed`) without
+    /// waiting, and without closing the connection when its queue is full: the caller learns the
+    /// frame was dropped and says so in the next one (`overflow`).
+    pub fn enqueue_local(&self, frame: Frame) -> LocalSend {
+        match self.tx.try_send(Outbound::Frame(frame)) {
+            Ok(()) => LocalSend::Queued,
+            Err(TrySendError::Full(_)) => LocalSend::Dropped,
+            Err(TrySendError::Closed(_)) => LocalSend::Gone,
         }
     }
 
@@ -336,7 +359,7 @@ async fn next_frame<R: AsyncRead + Unpin>(
     }
 }
 
-async fn run(reader: &mut Reader, handle: &ConnHandle, ctx: &ConnContext) {
+async fn run(reader: &mut Reader, handle: &ConnHandle, ctx: &Arc<ConnContext>) {
     let Some(client) = handshake(reader, handle, ctx).await else {
         return;
     };
@@ -354,7 +377,7 @@ async fn run(reader: &mut Reader, handle: &ConnHandle, ctx: &ConnContext) {
 }
 
 /// Returns `false` if the connection must be closed.
-async fn handle_frame(frame: Frame, handle: &ConnHandle, ctx: &ConnContext) -> bool {
+async fn handle_frame(frame: Frame, handle: &ConnHandle, ctx: &Arc<ConnContext>) -> bool {
     match frame.kind {
         FrameKind::Control => {}
         FrameKind::TerminalInput => return handle_input(&frame, handle, ctx).await,
@@ -373,6 +396,16 @@ async fn handle_frame(frame: Frame, handle: &ConnHandle, ctx: &ConnContext) -> b
     match msg {
         ControlMessage::Request { id, method, params } => {
             let outcome = match Request::decode(&method, params) {
+                // A search runs for as long as it takes: on a task of its own, so that the
+                // connection goes on reading (its `fs.search.cancel` arrives meanwhile).
+                Ok(request @ Request::FsSearch(_)) => {
+                    let (ctx, handle) = (ctx.clone(), handle.clone());
+                    tokio::spawn(async move {
+                        let outcome = ctx.router.dispatch(&handle, request).await;
+                        handle.send_response(id, outcome);
+                    });
+                    return true;
+                }
                 Ok(request) => ctx.router.dispatch(handle, request).await,
                 Err(error) => Err(error),
             };

@@ -59,6 +59,9 @@ struct Inner {
     task_observer: Option<mpsc::Sender<Event>>,
     /// Told (never with the event) when something the menu bar item shows may have changed.
     attention: Option<mpsc::Sender<()>>,
+    /// Internal consumer of the file changes agents report (`file_diff` journal events), which
+    /// the file service attributes `fs.changed` events with.
+    fs_observer: Option<mpsc::Sender<Event>>,
 }
 
 #[derive(Debug)]
@@ -82,6 +85,7 @@ impl EventBus {
                 observer: None,
                 task_observer: None,
                 attention: None,
+                fs_observer: None,
             }),
         }
     }
@@ -113,6 +117,12 @@ impl EventBus {
     /// for it (the service looks at its sessions directly now and then).
     pub fn set_task_observer(&self, observer: Option<mpsc::Sender<Event>>) {
         self.lock().task_observer = observer;
+    }
+
+    /// Sends a copy of every `file_diff` event of a chat (see [`feeds_fs`]) to `observer` from
+    /// now on (`None` stops). Never blocks: when the queue is full the event is dropped for it.
+    pub fn set_fs_observer(&self, observer: Option<mpsc::Sender<Event>>) {
+        self.lock().fs_observer = observer;
     }
 
     /// Pokes `attention` whenever an event that may change what needs the user (see
@@ -201,6 +211,17 @@ impl EventBus {
                     tracing::warn!("task observer is full; dropped an event");
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => inner.task_observer = None,
+            }
+        }
+        if feeds_fs(event)
+            && let Some(observer) = &inner.fs_observer
+        {
+            match observer.try_send(event.clone()) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    tracing::debug!("file observer is full; dropped an event");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => inner.fs_observer = None,
             }
         }
         if feeds_attention(event)
@@ -307,6 +328,19 @@ fn feeds_attention(event: &Event) -> bool {
             | Event::QuestionRequired { .. }
             | Event::QuestionResolved { .. }
             | Event::NotifyIntent { .. }
+    )
+}
+
+/// The events the file service attributes changes with: the files an agent says it changed
+/// (live `file_diff` events of a chat's journal, never replays).
+fn feeds_fs(event: &Event) -> bool {
+    use hutan_core::AgentEventKind;
+    use hutan_core::agent::Delivery;
+    matches!(
+        event,
+        Event::ChatEvent { event, .. }
+            if event.delivery == Delivery::Live
+                && matches!(event.kind, AgentEventKind::FileDiff { .. })
     )
 }
 

@@ -35,4 +35,16 @@ impl ClientError {
         }
         serde_json::from_value(error.data.as_ref()?.get("busy")?.clone()).ok()
     }
+
+    /// The version a refused `fs.write` found on disk (`conflict` with `data.current`); `None`
+    /// for any other error, and when the file is gone.
+    pub fn conflict_current(&self) -> Option<hutan_protocol::fs::FileVersion> {
+        let Self::Remote(error) = self else {
+            return None;
+        };
+        if error.code != hutan_protocol::ErrorCode::Conflict {
+            return None;
+        }
+        serde_json::from_value(error.data.as_ref()?.get("current")?.clone()).ok()
+    }
 }

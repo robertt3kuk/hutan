@@ -589,7 +589,7 @@ impl Supervisor {
         for (seq, event) in batch {
             // Outside the sequence: it carries the seq of the last retained event, which is
             // `applied` already, so the check below would drop every sample.
-            if matches!(event, Event::ResourcesUpdated { .. }) {
+            if event.is_connection_local() {
                 effects.extend(self.state.apply(event));
                 continue;
             }

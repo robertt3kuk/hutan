@@ -146,6 +146,11 @@ pub(crate) const SESSION_CLOSE_CAPABILITY: &str = "session.close";
 pub(crate) const CONTROL_GRANTS_CAPABILITY: &str = "control.grants";
 /// Capability for `memory.*` and the `memory.changed` event (protocol 0.32).
 pub(crate) const MEMORY_CAPABILITY: &str = "memory";
+/// Capability for the `fs.*` requests and the `fs.search.progress` event (protocol 0.33).
+pub(crate) const FS_CAPABILITY: &str = "fs";
+/// Capability for `fs.watch` / `fs.unwatch` and the `fs.changed` and `fs.generation` events
+/// (protocol 0.33).
+pub(crate) const FS_WATCH_CAPABILITY: &str = "fs.watch";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -178,6 +183,8 @@ const CAPABILITIES: &[&str] = &[
     SESSION_CLOSE_CAPABILITY,
     CONTROL_GRANTS_CAPABILITY,
     MEMORY_CAPABILITY,
+    FS_CAPABILITY,
+    FS_WATCH_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -847,6 +854,11 @@ impl Client {
         self.call::<Empty>(Request::ControlGrantRevoke(ControlGrantRevoke { id }))
             .await
             .map(|_| ())
+    }
+
+    /// Whether the daemon advertised `capability` in its welcome.
+    pub(crate) fn has_capability(&self, capability: &str) -> bool {
+        self.welcome.capabilities.iter().any(|c| c == capability)
     }
 
     /// True when the daemon advertised capability `memory` (protocol 0.32): Mawas's curated

@@ -10,6 +10,7 @@ mod control;
 mod daemon;
 mod daemon_settings;
 mod direct;
+mod files;
 mod harness;
 mod history;
 mod history_sessions;

@@ -197,8 +197,8 @@ pub enum FsKind {
     Other,
 }
 
-/// `fs.stat`: what the path is; a symbolic link is described, not followed. Answered with
-/// [`FsEntry`].
+/// `fs.stat`: what the path is (a symbolic link that stays inside the roots is followed;
+/// `fs.list` shows links as `symlink` entries). Answered with [`FsEntry`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FsStat {
     pub path: PathBuf,

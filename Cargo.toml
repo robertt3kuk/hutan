@@ -42,6 +42,9 @@ crossterm = { version = "0.29.0", default-features = false }
 # Hands work to the main thread's run loop (the daemon's Cocoa side, ADR 0007).
 dispatch2 = { version = "0.3.1", default-features = false, features = ["std", "alloc", "objc2"] }
 futures = "0.3.34"
+# Honours .gitignore / .ignore when the daemon's file service lists, indexes and searches a
+# folder (hutan-daemon `fs`, E-3); the same rules ripgrep applies.
+ignore = "0.4.33"
 libc = "0.2.190"
 notify = "8.2.0"
 # Native notifications posted by the daemon (ADR 0007): Objective-C bindings, macOS only.

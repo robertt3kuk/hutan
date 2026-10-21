@@ -1145,6 +1145,11 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
             r.path.display(),
             r.message.lines().next().unwrap_or_default()
         ),
+        Request::FsWriteBegin(r) => format!(
+            "{} the file {}",
+            if r.create { "create" } else { "overwrite" },
+            r.path.display()
+        ),
         Request::UiRun(r) => format!("run the window action {}", r.action),
         Request::UiSetSetting(r) => format!(
             "change the setting {}.{} ({} layer)",

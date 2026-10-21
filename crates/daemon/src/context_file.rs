@@ -187,7 +187,11 @@ fn read_text(
 
 /// `openat` of one path component below `parent`, never following a symlink in it.
 #[allow(unsafe_code)] // Isolated openat boundary, matching the terminal/index syscall wrappers.
-fn open_component(parent: &File, name: &std::ffi::OsStr, flags: libc::c_int) -> io::Result<File> {
+pub(crate) fn open_component(
+    parent: &File,
+    name: &std::ffi::OsStr,
+    flags: libc::c_int,
+) -> io::Result<File> {
     let name = CString::new(name.as_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in file path"))?;
     // SAFETY: the parent descriptor and NUL-terminated component remain valid for openat.
@@ -209,7 +213,7 @@ fn open_component(parent: &File, name: &std::ffi::OsStr, flags: libc::c_int) -> 
 /// component, the root's own ancestors included, is opened with `O_NOFOLLOW` relative to its
 /// parent descriptor, so a symlink swapped in at any level after the path was checked fails the
 /// open instead of being followed.
-fn open_beneath(root: &Path, relative: &Path) -> io::Result<File> {
+pub(crate) fn open_beneath(root: &Path, relative: &Path) -> io::Result<File> {
     let mut directory = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)

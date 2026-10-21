@@ -426,6 +426,12 @@ impl StoreState {
             Event::ResourcesUpdated { sample } => {
                 effects.notices.push(Notice::ResourcesUpdated { sample });
             }
+            // The file service's streams (protocol 0.33) are no state of the sessions list and
+            // not yet a notice: whoever watches files (`Client::fs_watch`) reads them from
+            // `Client::events`, outside the sequence like the resource samples.
+            Event::FsChanged { .. }
+            | Event::FsGeneration { .. }
+            | Event::FsSearchProgress { .. } => {}
             Event::UiCommand {
                 request_id,
                 window_id,

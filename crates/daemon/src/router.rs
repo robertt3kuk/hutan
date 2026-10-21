@@ -27,6 +27,7 @@ use crate::bus::EventBus;
 use crate::conn::{ConnHandle, ConnId};
 use crate::control::{Access, ControlService};
 use crate::daemon_settings::SettingsService;
+use crate::files::FileService;
 use crate::history::HistoryService;
 use crate::memory::MemoryService;
 use crate::notify::NotifyService;
@@ -51,6 +52,7 @@ pub struct Services {
     pub resources: Arc<ResourceService>,
     pub control: Arc<ControlService>,
     pub memory: Arc<MemoryService>,
+    pub files: Arc<FileService>,
     pub ui: Arc<UiHub>,
     pub settings: Arc<SettingsService>,
 }
@@ -72,6 +74,7 @@ pub struct Router {
     clients: Arc<AtomicU32>,
     control: Arc<ControlService>,
     memory: Arc<MemoryService>,
+    files: Arc<FileService>,
     ui: Arc<UiHub>,
     settings: Arc<SettingsService>,
     /// The shutdown in progress asked to drop the stopped sessions from the restore set.
@@ -103,6 +106,7 @@ impl Router {
             clients,
             control: services.control,
             memory: services.memory,
+            files: services.files,
             ui: services.ui,
             settings: services.settings,
             forget: AtomicBool::new(false),
@@ -117,6 +121,11 @@ impl Router {
         let Some(origin) = self.agent_origin(conn).await else {
             return self.run(conn, request).await;
         };
+        // The chunks and the commit of an upload go on with what the begin was allowed to
+        // start: one approval covers the write, not one per chunk.
+        if self.files.continues_upload(conn.id(), &request) {
+            return self.run(conn, request).await;
+        }
         let gated = self
             .control
             .gate(origin, conn.client_kind(), &request)
@@ -460,6 +469,41 @@ impl Router {
                 self.ui.command_result(conn.id(), req)?;
                 ok(&Empty {})
             }
+            Request::FsRead(req) => {
+                let trusted = self.agent_origin(conn).await.is_none();
+                ok(&self.files.read(trusted, req).await?)
+            }
+            Request::FsStat(req) => {
+                let trusted = self.agent_origin(conn).await.is_none();
+                ok(&self.files.stat(trusted, req).await?)
+            }
+            Request::FsList(req) => {
+                let trusted = self.agent_origin(conn).await.is_none();
+                ok(&self.files.list(trusted, req).await?)
+            }
+            Request::FsFind(req) => ok(&self.files.find(req).await?),
+            Request::FsSearch(req) => ok(&self.files.search(conn, req).await?),
+            Request::FsSearchCancel(req) => ok(&self.files.search_cancel(conn.id(), &req)),
+            Request::FsWriteBegin(req) => {
+                let agent = self.agent_origin(conn).await;
+                ok(&self.files.write_begin(conn, agent, req).await?)
+            }
+            Request::FsWriteChunk(req) => ok(&self.files.write_chunk(conn.id(), req).await?),
+            Request::FsWriteCommit(req) => {
+                let upload = req.upload_id.clone();
+                let written = self.files.write_commit(conn, req).await;
+                let what = written
+                    .as_ref()
+                    .map_or(upload, |w| w.path.display().to_string());
+                audit(Actor::of(conn), "fs.write", &what, &written);
+                ok(&written?)
+            }
+            Request::FsWriteAbort(req) => ok(&self.files.write_abort(conn.id(), &req)),
+            Request::FsWatch(req) => {
+                let agent = self.agent_origin(conn).await;
+                ok(&self.files.watch(conn, agent, req).await?)
+            }
+            Request::FsUnwatch(req) => ok(&self.files.unwatch(conn.id(), req).await?),
         }
     }
 
@@ -586,6 +630,7 @@ impl Router {
         self.notify.connection_closed(conn);
         self.resources.unsubscribe(conn);
         self.ui.connection_closed(conn);
+        self.files.connection_closed(conn);
     }
 
     /// Stops the history indexer, applying what it has queued; the index stays on disk.
@@ -743,6 +788,23 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::UiRun(_) => ("ui.run", Mutate),
         Request::UiSetSetting(_) => ("ui.set_setting", Mutate),
         Request::UiCommandResult(_) => ("ui.command_result", UserOnly),
+        // The file service (protocol 0.33): reading, listing, finding, searching and watching
+        // are free. Writing replaces a file the user may have open: an agent asks, once per
+        // write: the begin asks, and the chunks and the commit that follow it are covered by
+        // its approval (`FileService::continues_upload`).
+        Request::FsRead(_) => ("fs.read", Read),
+        Request::FsStat(_) => ("fs.stat", Read),
+        Request::FsList(_) => ("fs.list", Read),
+        Request::FsFind(_) => ("fs.find", Read),
+        Request::FsSearch(_) => ("fs.search", Read),
+        Request::FsSearchCancel(_) => ("fs.search.cancel", Read),
+        Request::FsWatch(_) => ("fs.watch", Read),
+        Request::FsUnwatch(_) => ("fs.unwatch", Read),
+        Request::FsWriteBegin(_) => ("fs.write.begin", Mutate),
+        Request::FsWriteChunk(_) => ("fs.write.chunk", Mutate),
+        Request::FsWriteCommit(_) => ("fs.write.commit", Mutate),
+        // Throwing away an upload of its own connection changes nothing on disk.
+        Request::FsWriteAbort(_) => ("fs.write.abort", Read),
     }
 }
 
@@ -858,5 +920,43 @@ mod classification_tests {
             ),
             Access::Mutate
         );
+    }
+
+    /// The file service (protocol 0.33): looking is free, writing asks.
+    #[test]
+    fn files_are_free_to_read_and_ask_to_write() {
+        let path = serde_json::json!({"path": "/repo/a.rs"});
+        for (method, params) in [
+            ("fs.read", path.clone()),
+            ("fs.stat", path.clone()),
+            ("fs.list", serde_json::json!({"dir": "/repo"})),
+            (
+                "fs.find",
+                serde_json::json!({"root": "/repo", "query": "a"}),
+            ),
+            (
+                "fs.search",
+                serde_json::json!({"search_id": "s", "root": "/repo", "pattern": "a"}),
+            ),
+            ("fs.search.cancel", serde_json::json!({"search_id": "s"})),
+            ("fs.watch", serde_json::json!({"paths": []})),
+            ("fs.unwatch", serde_json::json!({"paths": []})),
+            ("fs.write.abort", serde_json::json!({"upload_id": "u"})),
+        ] {
+            assert_eq!(access_of(method, params), Access::Read, "{method}");
+        }
+        for (method, params) in [
+            ("fs.write.begin", path),
+            (
+                "fs.write.chunk",
+                serde_json::json!({"upload_id": "u", "seq": 0, "text": "x"}),
+            ),
+            (
+                "fs.write.commit",
+                serde_json::json!({"upload_id": "u", "total_bytes": 1}),
+            ),
+        ] {
+            assert_eq!(access_of(method, params), Access::Mutate, "{method}");
+        }
     }
 }

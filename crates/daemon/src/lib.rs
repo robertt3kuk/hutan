@@ -40,6 +40,9 @@
 //! - [`control`]: who is asking (`ClientInfo.origin`), the `[control]` policy for agents, the
 //!   `control` approvals and their audit (protocol 0.21, ADR 0016).
 //! - [`uihub`]: the desktop's published catalog and layout, `ui.run` / `ui.set_setting` routing.
+//! - [`files`]: the file service: confined `fs.read`/`fs.list`/`fs.stat`, atomic chunked
+//!   `fs.write.*`, `fs.find`, `fs.search`, `fs.watch` with `fs.changed` and who made a change
+//!   (protocol 0.33).
 //! - [`mcp_wiring`]: how `hutan mcp` is registered with the agents Hutan starts.
 //! - [`daemon_settings`]: `daemon.toml` as a list of settings: `daemon.settings.get` / `.set`
 //!   validate, edit the file in place and apply what can change live (protocol 0.28).
@@ -59,6 +62,7 @@ pub mod daemon;
 pub mod daemon_settings;
 pub mod direct;
 pub mod error;
+pub mod files;
 pub mod harness;
 pub mod history;
 pub mod history_catalog;
