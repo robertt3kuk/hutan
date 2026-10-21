@@ -196,7 +196,8 @@ impl InspectorPanel {
             .id(id.into())
             .min_w_0()
             .truncate()
-            .text_color(theme.accent)
+            // A link: `markdown.link`, the accent text that passes AA on every ground.
+            .text_color(theme.link)
             .cursor_pointer()
             .on_click(move |_, window, cx| {
                 window.dispatch_action(

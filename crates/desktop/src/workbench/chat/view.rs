@@ -694,11 +694,13 @@ impl ChatView {
         // Who runs it: `OMP · opus-4-6`, muted. Where the model can change it is a ghost menu
         // (it replaces the *Switch model…* button): ▾ and a click between turns, plain words
         // while a turn runs.
+        // In a narrow pane it gives way first, but keeps the harness readable (`OMP · gitl…`).
+        const WHO_MIN_WIDTH: f32 = 80.0;
         let who = detail.map(|text| {
             let words = div().min_w_0().truncate().child(SharedString::from(text));
             if !switchable {
                 return div()
-                    .min_w_0()
+                    .min_w(px(WHO_MIN_WIDTH))
                     .text_color(theme.muted)
                     .text_size(px(tokens.secondary_font_size))
                     .child(words)
@@ -709,7 +711,7 @@ impl ChatView {
                 .id("chat-switch-model")
                 .relative()
                 .flex()
-                .min_w_0()
+                .min_w(px(WHO_MIN_WIDTH))
                 .items_center()
                 .gap(px(2.0))
                 .h(px(tokens.control_height - 4.0))
