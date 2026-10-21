@@ -17,7 +17,9 @@ use crate::workbench::actions::{
     InterruptSessionById, SessionMenuAt, ShowAgentMenu, StopSessionById,
 };
 use crate::workbench::agents_page::primary_action;
-use crate::workbench::panels::common::{agent_lead_glyph, agent_title_line, now_ms};
+use crate::workbench::panels::common::{
+    agent_lead_glyph, agent_state_word, agent_title_line, now_ms,
+};
 use crate::workbench::render::probe;
 use crate::workbench::style::TextTooltip;
 use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _};
@@ -44,6 +46,19 @@ fn fact(label: &str, value: impl Into<SharedString>, look: Look) -> AnyElement {
         .into_any_element()
 }
 
+/// What a status line says after the state word: nothing when it only repeats it, the rest when
+/// it starts with it (`State unavailable · no report` after `State unavailable`).
+fn after_word(status: &str, word: &str) -> Option<String> {
+    if status == word {
+        return None;
+    }
+    let rest = status
+        .strip_prefix(word)
+        .and_then(|rest| rest.strip_prefix(" · "))
+        .unwrap_or(status);
+    Some(rest.to_owned())
+}
+
 impl AgentsPage {
     pub(super) fn agent_row(
         &self,
@@ -64,15 +79,26 @@ impl AgentsPage {
         let primary = agents_text::primary(record);
         let needs = record.needs_you();
         // The reason without the kind the state word already says; the activity otherwise.
-        let status =
-            agents_text::reason_detail(record).unwrap_or_else(|| agents_text::status_line(record));
+        let status = after_word(
+            &agents_text::reason_detail(record).unwrap_or_else(|| agents_text::status_line(record)),
+            &agents_text::state_word(record),
+        );
+        // Where the location and the harness are no columns, they follow on the status line
+        // (compact) or on a third line (comfortable): never both a column and a repeat.
         let tail = match layout {
             Layout::Wide => None,
-            Layout::Medium | Layout::Narrow => Some(format!(
-                "{} · {}",
-                record.location(),
-                agents_text::harness_text(record)
-            )),
+            Layout::Medium | Layout::Narrow => {
+                let mut tail = record.location();
+                if look.comfortable
+                    && let Some(checkout) = &record.checkout
+                {
+                    tail.push_str(" · ");
+                    tail.push_str(&checkout.label);
+                }
+                tail.push_str(" · ");
+                tail.push_str(&agents_text::harness_text(record));
+                Some(tail)
+            }
         };
         let duration = agents_text::duration_cell(record, now);
         let updated = agents_text::updated_text(record, now);
@@ -83,14 +109,15 @@ impl AgentsPage {
 
         // ---- the identity: title and the one state word, then the reason or the status ----
         let reason_tip = agents_text::reason_tooltip(record, now).map(SharedString::from);
-        let title_line = agent_title_line(record, selected, &theme, &tokens);
+        let title_line = agent_title_line(record, &theme, &tokens);
         let mut status_line = div()
             .flex()
             .items_center()
-            .gap(px(8.0))
+            .gap(px(4.0))
             .h(px(16.0))
             .text_size(px(tokens.secondary_font_size))
-            .child(
+            .child(agent_state_word(record, selected, &theme, &tokens))
+            .children(status.map(|status| {
                 div()
                     .id(SharedString::from(format!("agents-reason-{session}")))
                     .min_w_0()
@@ -99,9 +126,9 @@ impl AgentsPage {
                     .when_some(reason_tip, |s, tip| {
                         s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
                     })
-                    .child(SharedString::from(status)),
-            );
-        if let Some(tail) = tail {
+                    .child(SharedString::from(format!("· {status}")))
+            }));
+        if let Some(tail) = tail.as_ref().filter(|_| !look.comfortable) {
             status_line = status_line.child(
                 div()
                     .min_w_0()
@@ -152,12 +179,7 @@ impl AgentsPage {
             .gap(px(2.0))
             .child(title_line)
             .child(status_line);
-        if look.comfortable {
-            let mut third = record.location();
-            if let Some(checkout) = &record.checkout {
-                third.push_str(" · ");
-                third.push_str(&checkout.label);
-            }
+        if let Some(third) = tail.filter(|_| look.comfortable) {
             identity = identity.child(
                 div()
                     .h(px(16.0))

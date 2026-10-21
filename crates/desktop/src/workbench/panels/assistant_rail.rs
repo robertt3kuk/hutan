@@ -17,7 +17,7 @@ use hutan_core::agent::PermissionOptionKind;
 use hutan_core::{ApprovalId, QuestionId, SessionId};
 
 use super::assistant::AssistantPanel;
-use super::common::{agent_lead_glyph, agent_title_line};
+use super::common::{agent_lead_glyph, agent_state_word, agent_title_line};
 use crate::icons::{Icon, icon};
 use crate::sessions::{AgentRecord, AttentionKind, SessionsStore, agents_text};
 use crate::workbench::actions::{
@@ -391,16 +391,25 @@ impl AssistantPanel {
                             .flex_1()
                             .min_w_0()
                             .gap(px(2.0))
-                            .child(agent_title_line(&row.record, false, &theme, &tokens))
+                            .child(agent_title_line(&row.record, &theme, &tokens))
                             .child(
                                 div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(4.0))
                                     .h(px(16.0))
-                                    .truncate()
-                                    .text_size(px(tokens.secondary_font_size))
-                                    .text_color(theme.muted)
-                                    .child(SharedString::from(agents_text::harness_text(
-                                        &row.record,
-                                    ))),
+                                    .child(agent_state_word(&row.record, false, &theme, &tokens))
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_size(px(tokens.secondary_font_size))
+                                            .text_color(theme.muted)
+                                            .child(SharedString::from(format!(
+                                                "· {}",
+                                                agents_text::harness_text(&row.record)
+                                            ))),
+                                    ),
                             ),
                     )
                     .child(probe(

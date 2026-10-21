@@ -590,19 +590,25 @@ impl AgentsPanel {
                     )
                     .child(
                         div()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
                             .h(px(16.0))
-                            .truncate()
                             .text_size(px(tokens.secondary_font_size))
-                            .text_color(state_word_color(theme, section.tone, false))
-                            .child(SharedString::from(section.word.clone())),
-                    )
-                    .child(
-                        div()
-                            .h(px(16.0))
-                            .truncate()
-                            .text_size(px(tokens.secondary_font_size))
-                            .text_color(theme.muted)
-                            .child(SharedString::from(parts.join(" · "))),
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .whitespace_nowrap()
+                                    .text_color(state_word_color(theme, section.tone, false))
+                                    .child(SharedString::from(section.word.clone())),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(theme.muted)
+                                    .child(SharedString::from(format!("· {}", parts.join(" · ")))),
+                            ),
                     ),
             );
         if solo.is_some() {

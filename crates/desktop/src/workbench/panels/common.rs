@@ -46,18 +46,10 @@ pub fn state_word_color(theme: &Theme, tone: Tone, selected: bool) -> Hsla {
     }
 }
 
-/// The identity line of an agent record, one component for the Agents page, the Agents panel
-/// and Today: the title in medium weight (cut with "…" first), `Assistant` for Mawas, and the
-/// one state word of the record (`agents_text::state_word`: attention wins over `Working`).
-pub fn agent_title_line(
-    record: &AgentRecord,
-    selected: bool,
-    theme: &Theme,
-    tokens: &Tokens,
-) -> gpui::Div {
-    use crate::sessions::agents_text;
+/// The title of an agent record, one component for the Agents page, the Agents panel and Today:
+/// medium weight, cut with "…", and `Assistant` beside it for Mawas.
+pub fn agent_title_line(record: &AgentRecord, theme: &Theme, tokens: &Tokens) -> gpui::Div {
     use crate::sessions::presentation::Role;
-    let (_, tone) = agents_text::lead(record);
     let mut line = div().flex().items_center().gap(px(8.0)).h(px(16.0)).child(
         div()
             .min_w_0()
@@ -74,14 +66,25 @@ pub fn agent_title_line(
                 .child(Role::Assistant.label()),
         );
     }
-    line.child(
-        div()
-            .flex_none()
-            .whitespace_nowrap()
-            .text_size(px(tokens.secondary_font_size))
-            .text_color(state_word_color(theme, tone, selected))
-            .child(SharedString::from(agents_text::state_word(record))),
-    )
+    line
+}
+
+/// The one state word of an agent record (`agents_text::state_word`: attention wins over
+/// `Working`), at the start of the line under the title, in `state_word_color`.
+pub fn agent_state_word(
+    record: &AgentRecord,
+    selected: bool,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> gpui::Div {
+    use crate::sessions::agents_text;
+    let (_, tone) = agents_text::lead(record);
+    div()
+        .flex_none()
+        .whitespace_nowrap()
+        .text_size(px(tokens.secondary_font_size))
+        .text_color(state_word_color(theme, tone, selected))
+        .child(SharedString::from(agents_text::state_word(record)))
 }
 
 /// The 16 px lane of a row's state glyph: attention first, else the state's own shape, in the
