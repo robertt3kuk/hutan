@@ -998,7 +998,10 @@ impl Workbench {
             .px(px(tokens.spacing * 2.0))
             .outlined(&theme, &tokens)
             .focus_ring(
-                editing.is_none() && zone == SheetFocus::Search,
+                // An open theme picker has the keyboard (its filter draws the ring).
+                editing.is_none()
+                    && zone == SheetFocus::Search
+                    && self.open_pack_picker().is_none(),
                 &theme,
                 &tokens,
             )
