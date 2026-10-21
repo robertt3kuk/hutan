@@ -123,7 +123,8 @@ mod tests {
         }
         assert_eq!(s, "let [a] = [a];\nfoo\nlet b = [a];\n");
         let counted = substitute(&text, 0..4, &pattern("a"), "x", true, true, &|| false);
-        assert_eq!(counted.matches, 6);
+        // `a` in "let a = a;" twice and in "let b = a;" once.
+        assert_eq!(counted.matches, 3);
         assert!(counted.edits.is_empty());
     }
 

@@ -630,6 +630,8 @@ B15 is a non-search Vim Normal command on a 1 MB buffer, key → applied, budget
 
 The host reads the rope in `O(log n)` and copies only what a command returns (a word, a line). This removes the per-command copy of the whole text that `vim.rs:1321` made before E-7a. `:s`, `:g` and `:v` search a snapshot of the rope on a background thread and can be cancelled (`CodeView::ex_running`).
 
+Re-measured after E-7b (the grown layer: command parser, registers, marks that follow every edit, display columns), same bench, 2026-10-21, release, load average 3.5–6: `dd` p95 0.011 ms (max 0.109), `w` 0.008, `ciw`+text+Esc 0.013, `yy p` 0.021, `G` 0.001, `x u` 0.006 — all within B15 (≤ 2 ms). The bench has not yet been extended to the E-7b commands (`%`, `}`, `>>`, `J`, block `I`, a macro); search (`/`, `n`, `*`) is outside B15 and scans line by line from the caret.
+
 ## Editor: the Vim layer (slice E-7a, `hutan-vim`)
 
 E-7a moves the V-1 modal layer out of `desktop` into a GPUI-free crate and changes no behaviour, so
