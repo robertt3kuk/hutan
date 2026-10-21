@@ -300,7 +300,7 @@ fn saving_keeps_crlf_and_never_overwrites_a_change_on_disk(cx: &mut TestAppConte
     // Somebody else changes the file: the clean buffer takes it.
     std::fs::write(&file, "external\r\ntwo\r\n").unwrap();
     wait_until(cx, "the reload", |cx| {
-        buffer.read_with(cx, |b, _| b.text().to_string() == "external\ntwo\n")
+        buffer.read_with(cx, |b, _| b.text() == "external\ntwo\n")
     });
     assert!(!buffer.read_with(cx, |b, _| b.is_dirty()));
 
