@@ -23,6 +23,10 @@ use crate::chat::{
 use crate::control::{ErrorBody, ErrorCode};
 use crate::daemon_settings::DaemonSettingSet;
 use crate::error::ProtocolError;
+use crate::fs::{
+    FsChange, FsFind, FsList, FsRead, FsSearch, FsSearchCancel, FsStat, FsUnwatch, FsWatch,
+    FsWriteAbort, FsWriteBegin, FsWriteChunk, FsWriteCommit,
+};
 use crate::grants::{ControlGrantRevoke, ControlGrantsList};
 use crate::history::{HistorySearch, HistorySetEnabled};
 use crate::memory::{
@@ -425,6 +429,44 @@ pub enum Request {
     /// Capability `control`: type text into a terminal session; answered with `SessionTextSent`.
     #[serde(rename = "session.send_text")]
     SessionSendText(SessionSendText),
+    /// Capability `fs` (protocol 0.33): a chunk of a file's text; answered with `FsFile`.
+    #[serde(rename = "fs.read")]
+    FsRead(FsRead),
+    /// Capability `fs`: starts an atomic write; answered with `FsUpload`. A mutation: an agent
+    /// asks first.
+    #[serde(rename = "fs.write.begin")]
+    FsWriteBegin(FsWriteBegin),
+    /// Capability `fs`: the next piece of an upload; answered with `Empty`.
+    #[serde(rename = "fs.write.chunk")]
+    FsWriteChunk(FsWriteChunk),
+    /// Capability `fs`: writes the file; answered with `FsWritten`.
+    #[serde(rename = "fs.write.commit")]
+    FsWriteCommit(FsWriteCommit),
+    /// Capability `fs`: discards an upload; answered with `Empty`.
+    #[serde(rename = "fs.write.abort")]
+    FsWriteAbort(FsWriteAbort),
+    /// Capability `fs`: what a path is; answered with `FsEntry`.
+    #[serde(rename = "fs.stat")]
+    FsStat(FsStat),
+    /// Capability `fs`: the entries of a directory; answered with `FsListing`.
+    #[serde(rename = "fs.list")]
+    FsList(FsList),
+    /// Capability `fs`: fuzzy file finder; answered with `FsFound`.
+    #[serde(rename = "fs.find")]
+    FsFind(FsFind),
+    /// Capability `fs`: text search below a root, with `fs.search.progress` events; answered
+    /// with `FsSearchResult` when it ends.
+    #[serde(rename = "fs.search")]
+    FsSearch(FsSearch),
+    /// Capability `fs`: ends a running search; answered with `Empty`.
+    #[serde(rename = "fs.search.cancel")]
+    FsSearchCancel(FsSearchCancel),
+    /// Capability `fs.watch`: `fs.changed` for paths; answered with `FsWatching`.
+    #[serde(rename = "fs.watch")]
+    FsWatch(FsWatch),
+    /// Capability `fs.watch`: releases paths; answered with `FsWatching`.
+    #[serde(rename = "fs.unwatch")]
+    FsUnwatch(FsUnwatch),
 }
 
 impl Request {
@@ -1155,9 +1197,44 @@ pub enum Event {
         workspace_id: Option<WorkspaceId>,
         scope_revision: u64,
     },
+    /// Capability `fs.watch` (protocol 0.33): paths this connection watches (`fs.watch`)
+    /// changed, gathered for at least 50 ms and at most 500 at a time; `overflow` says more
+    /// happened than are listed (rescan). Sent to the watching connections only, outside the
+    /// replay ring: it carries the seq of the last retained event and is never replayed.
+    #[serde(rename = "fs.changed")]
+    FsChanged {
+        changes: Vec<FsChange>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        overflow: bool,
+    },
+    /// Capability `fs.watch`: something below a watched `root` changed (at most once a second
+    /// per root): finder and tree caches of that root are stale. Delivered like `fs.changed`.
+    #[serde(rename = "fs.generation")]
+    FsGeneration { root: PathBuf, generation: u64 },
+    /// Capability `fs`: how far the connection's `fs.search` named `search_id` has come. At most
+    /// a few a second; delivered like `fs.changed`.
+    #[serde(rename = "fs.search.progress")]
+    FsSearchProgress {
+        search_id: String,
+        files_searched: u64,
+        hits: u32,
+    },
 }
 
 impl Event {
+    /// Events one connection receives, outside the replay ring and the sequence: they carry the
+    /// seq of the last retained event, so "newer than what I applied" cannot be asked of them
+    /// and a lagging receiver just waits for the next one.
+    pub fn is_connection_local(&self) -> bool {
+        matches!(
+            self,
+            Self::ResourcesUpdated { .. }
+                | Self::FsChanged { .. }
+                | Self::FsGeneration { .. }
+                | Self::FsSearchProgress { .. }
+        )
+    }
+
     pub fn encode(&self) -> Result<(String, Value), ProtocolError> {
         split_tagged(serde_json::to_value(self)?, "event", "data")
     }
@@ -1198,6 +1275,9 @@ impl Event {
         "ui.command",
         "session.closed",
         "memory.changed",
+        "fs.changed",
+        "fs.generation",
+        "fs.search.progress",
     ];
 }
 

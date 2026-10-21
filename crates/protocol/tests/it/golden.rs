@@ -32,6 +32,7 @@ use hutan_protocol::blocks::{
 };
 use hutan_protocol::chat::*;
 use hutan_protocol::control::ControlMessage;
+use hutan_protocol::fs::*;
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
 use hutan_protocol::history::*;
 use hutan_protocol::memory::*;
@@ -1159,6 +1160,26 @@ fn memory_approval() -> ApprovalInfo {
             option("reject", "Reject", PermissionOptionKind::RejectOnce),
         ],
         requested_at_ms: 1_791_894_180_000,
+    }
+}
+
+fn file_version() -> FileVersion {
+    FileVersion {
+        mtime_ns: 1_791_894_150_123_456_789,
+        size: 6_291_456,
+        ino: 8_834_113,
+    }
+}
+
+fn fs_entry(name: &str, kind: FsKind, ignored: bool) -> FsEntry {
+    FsEntry {
+        name: name.into(),
+        path: format!("/repo/{name}").into(),
+        kind,
+        size: if kind == FsKind::File { 1_204 } else { 96 },
+        mtime_ns: 1_791_894_150_123_456_789,
+        ino: 8_834_113,
+        ignored,
     }
 }
 
@@ -2512,6 +2533,150 @@ fn requests() -> Vec<(&'static str, Request)> {
                 edited_body: Some("Uses jj; the main branch is `trunk`.".into()),
             }),
         ),
+        (
+            "fs_read",
+            Request::FsRead(FsRead {
+                path: "/repo/src/main.rs".into(),
+                offset: None,
+                max_bytes: None,
+                picked: false,
+            }),
+        ),
+        (
+            "fs_read_chunk_picked",
+            Request::FsRead(FsRead {
+                path: "/Users/dev/Desktop/notes.md".into(),
+                offset: Some(1_048_576),
+                max_bytes: Some(65_536),
+                picked: true,
+            }),
+        ),
+        (
+            "fs_write_begin",
+            Request::FsWriteBegin(FsWriteBegin {
+                path: "/repo/src/main.rs".into(),
+                expect: Some(file_version()),
+                create: false,
+                size_hint: Some(6_291_456),
+                picked: false,
+            }),
+        ),
+        (
+            "fs_write_begin_create",
+            Request::FsWriteBegin(FsWriteBegin {
+                path: "/repo/src/new.rs".into(),
+                expect: None,
+                create: true,
+                size_hint: None,
+                picked: false,
+            }),
+        ),
+        (
+            "fs_write_chunk",
+            Request::FsWriteChunk(FsWriteChunk {
+                upload_id: "01K7F3B5N2Q9W8E4R6T1Y0V3UP".into(),
+                seq: 0,
+                text: "fn main() {}\n".into(),
+            }),
+        ),
+        (
+            "fs_write_commit",
+            Request::FsWriteCommit(FsWriteCommit {
+                upload_id: "01K7F3B5N2Q9W8E4R6T1Y0V3UP".into(),
+                total_bytes: 13,
+            }),
+        ),
+        (
+            "fs_write_abort",
+            Request::FsWriteAbort(FsWriteAbort {
+                upload_id: "01K7F3B5N2Q9W8E4R6T1Y0V3UP".into(),
+            }),
+        ),
+        (
+            "fs_stat",
+            Request::FsStat(FsStat {
+                path: "/repo/Cargo.toml".into(),
+                picked: false,
+            }),
+        ),
+        (
+            "fs_list",
+            Request::FsList(FsList {
+                dir: "/repo".into(),
+                ignore: true,
+                limit: None,
+                picked: false,
+            }),
+        ),
+        (
+            "fs_list_plain_limited",
+            Request::FsList(FsList {
+                dir: "/repo/src".into(),
+                ignore: false,
+                limit: Some(100),
+                picked: false,
+            }),
+        ),
+        (
+            "fs_find",
+            Request::FsFind(FsFind {
+                root: "/repo".into(),
+                query: "rtr".into(),
+                limit: Some(20),
+            }),
+        ),
+        (
+            "fs_search",
+            Request::FsSearch(FsSearch {
+                search_id: "s1".into(),
+                root: "/repo".into(),
+                pattern: "fn main".into(),
+                regex: false,
+                case_sensitive: None,
+                globs: vec![],
+                limit: None,
+            }),
+        ),
+        (
+            "fs_search_regex_globs",
+            Request::FsSearch(FsSearch {
+                search_id: "s2".into(),
+                root: "/repo".into(),
+                pattern: r"TODO\(\w+\)".into(),
+                regex: true,
+                case_sensitive: Some(true),
+                globs: vec!["*.rs".into(), "!target/**".into()],
+                limit: Some(1000),
+            }),
+        ),
+        (
+            "fs_search_cancel",
+            Request::FsSearchCancel(FsSearchCancel {
+                search_id: "s2".into(),
+            }),
+        ),
+        (
+            "fs_watch",
+            Request::FsWatch(FsWatch {
+                paths: vec![
+                    FsWatchPath {
+                        path: "/repo/src/main.rs".into(),
+                        recursive: false,
+                    },
+                    FsWatchPath {
+                        path: "/repo/docs".into(),
+                        recursive: true,
+                    },
+                ],
+                picked: false,
+            }),
+        ),
+        (
+            "fs_unwatch",
+            Request::FsUnwatch(FsUnwatch {
+                paths: vec!["/repo/src/main.rs".into()],
+            }),
+        ),
     ]
 }
 
@@ -3301,6 +3466,87 @@ fn events() -> Vec<(&'static str, Event)> {
             "approval_required_memory",
             Event::ApprovalRequired {
                 approval: Box::new(memory_approval()),
+            },
+        ),
+        (
+            "fs_changed",
+            Event::FsChanged {
+                changes: vec![
+                    FsChange {
+                        path: "/repo/src/main.rs".into(),
+                        kind: ChangeKind::Modified,
+                        from: None,
+                        version: Some(file_version()),
+                        origin: Some(FsOrigin::Own {
+                            write_id: "01K7F3B5N2Q9W8E4R6T1Y0V3WR".into(),
+                        }),
+                    },
+                    FsChange {
+                        path: "/repo/src/router.rs".into(),
+                        kind: ChangeKind::Modified,
+                        from: None,
+                        version: Some(file_version()),
+                        origin: Some(FsOrigin::Agent {
+                            session_id: sid(),
+                            tool_call_id: Some(item()),
+                            confidence: AgentConfidence::ToolCall,
+                        }),
+                    },
+                    FsChange {
+                        path: "/repo/src/lib.rs".into(),
+                        kind: ChangeKind::Created,
+                        from: None,
+                        version: Some(file_version()),
+                        origin: Some(FsOrigin::Agent {
+                            session_id: sid(),
+                            tool_call_id: None,
+                            confidence: AgentConfidence::Session,
+                        }),
+                    },
+                    FsChange {
+                        path: "/repo/src/old.rs".into(),
+                        kind: ChangeKind::Removed,
+                        from: None,
+                        version: None,
+                        origin: Some(FsOrigin::External),
+                    },
+                    FsChange {
+                        path: "/repo/src/renamed.rs".into(),
+                        kind: ChangeKind::Renamed,
+                        from: Some("/repo/src/before.rs".into()),
+                        version: Some(file_version()),
+                        origin: None,
+                    },
+                ],
+                overflow: false,
+            },
+        ),
+        (
+            "fs_changed_overflow",
+            Event::FsChanged {
+                changes: vec![FsChange {
+                    path: "/repo/target/debug/hutand".into(),
+                    kind: ChangeKind::Modified,
+                    from: None,
+                    version: None,
+                    origin: Some(FsOrigin::External),
+                }],
+                overflow: true,
+            },
+        ),
+        (
+            "fs_generation",
+            Event::FsGeneration {
+                root: "/repo".into(),
+                generation: 42,
+            },
+        ),
+        (
+            "fs_search_progress",
+            Event::FsSearchProgress {
+                search_id: "s2".into(),
+                files_searched: 1_280,
+                hits: 37,
             },
         ),
     ]
@@ -4819,6 +5065,142 @@ fn responses_match_fixtures() {
             )
             .unwrap(),
         ),
+        (
+            "fs_file",
+            ControlMessage::ok(
+                27,
+                &FsFile {
+                    path: "/repo/src/main.rs".into(),
+                    text: "\u{feff}fn main() {\r\n}\r\n".into(),
+                    offset: 0,
+                    size: 20,
+                    eof: true,
+                    version: FileVersion {
+                        mtime_ns: 1_791_894_150_123_456_789,
+                        size: 20,
+                        ino: 8_834_113,
+                    },
+                    line_ending: LineEnding::Crlf,
+                    bom: true,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "fs_upload",
+            ControlMessage::ok(
+                28,
+                &FsUpload {
+                    upload_id: "01K7F3B5N2Q9W8E4R6T1Y0V3UP".into(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "fs_written",
+            ControlMessage::ok(
+                29,
+                &FsWritten {
+                    path: "/repo/src/main.rs".into(),
+                    version: file_version(),
+                    write_id: "01K7F3B5N2Q9W8E4R6T1Y0V3WR".into(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "fs_entry",
+            ControlMessage::ok(30, &fs_entry("Cargo.toml", FsKind::File, false)).unwrap(),
+        ),
+        (
+            "fs_listing",
+            ControlMessage::ok(
+                31,
+                &FsListing {
+                    dir: "/repo".into(),
+                    entries: vec![
+                        fs_entry("src", FsKind::Dir, false),
+                        fs_entry("target", FsKind::Dir, true),
+                        fs_entry("Cargo.toml", FsKind::File, false),
+                        fs_entry("current", FsKind::Symlink, false),
+                    ],
+                    truncated: true,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "fs_found",
+            ControlMessage::ok(
+                32,
+                &FsFound {
+                    root: "/repo".into(),
+                    matches: vec![FsFindMatch {
+                        path: "crates/daemon/src/router.rs".into(),
+                        score: 214,
+                        matched: vec![[21, 22], [24, 26]],
+                    }],
+                    indexed: 5_412,
+                    index_truncated: false,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "fs_search_result",
+            ControlMessage::ok(
+                33,
+                &FsSearchResult {
+                    search_id: "s1".into(),
+                    hits: vec![SearchHit {
+                        path: "src/main.rs".into(),
+                        line: 12,
+                        text: "fn main() {".into(),
+                        matched: vec![[0, 7]],
+                    }],
+                    files_searched: 412,
+                    truncated: false,
+                    cancelled: true,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "fs_watching",
+            ControlMessage::ok(
+                34,
+                &FsWatching {
+                    watching: 2,
+                    roots: vec!["/repo".into()],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "fs_error_conflict",
+            ControlMessage::err(35, {
+                let mut error = ErrorBody::new(
+                    ErrorCode::Conflict,
+                    "/repo/src/main.rs changed on disk since it was read",
+                );
+                error.data = Some(serde_json::json!({
+                    "reason": "version",
+                    "current": file_version(),
+                }));
+                error
+            }),
+        ),
+        (
+            "fs_error_forbidden",
+            ControlMessage::err(36, {
+                let mut error = ErrorBody::new(
+                    ErrorCode::Forbidden,
+                    "/etc/hosts is outside the workspace roots",
+                );
+                error.data = Some(serde_json::json!({"reason": "outside_roots"}));
+                error
+            }),
+        ),
     ];
     for (name, message) in cases {
         let json = String::from_utf8(message.to_json().unwrap()).unwrap();
@@ -4991,5 +5373,40 @@ fn no_response_or_event_fixture_has_a_secret_field() {
             assert!(!has_key(&value, "secret"), "{name} has a secret field");
         }
         assert!(!text.contains("not-a-real-key"), "{name}");
+    }
+}
+
+#[test]
+fn fs_requests_default_what_they_omit() {
+    let list = Request::decode("fs.list", serde_json::json!({"dir": "/repo"})).unwrap();
+    assert_eq!(
+        list,
+        Request::FsList(FsList {
+            dir: "/repo".into(),
+            ignore: true,
+            limit: None,
+            picked: false,
+        })
+    );
+    let read = Request::decode("fs.read", serde_json::json!({"path": "/repo/a"})).unwrap();
+    assert_eq!(
+        read,
+        Request::FsRead(FsRead {
+            path: "/repo/a".into(),
+            offset: None,
+            max_bytes: None,
+            picked: false,
+        })
+    );
+}
+
+#[test]
+fn only_fs_and_resource_events_are_connection_local() {
+    for (name, event) in events() {
+        assert_eq!(
+            event.is_connection_local(),
+            name.starts_with("fs_") || name == "resources_updated",
+            "{name}"
+        );
     }
 }

@@ -1,0 +1,1 @@
+{"id":187,"method":"fs.watch","params":{"paths":[{"path":"/repo/src/main.rs"},{"path":"/repo/docs","recursive":true}]}}

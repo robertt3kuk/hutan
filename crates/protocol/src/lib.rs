@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`fs`]: the daemon's file service: `fs.read`, chunked atomic `fs.write.*`, `fs.stat`,
+//!   `fs.list`, `fs.find`, `fs.search`, `fs.watch` and the `fs.changed` event (protocol 0.33,
+//!   capabilities `fs`, `fs.watch`).
 //! - [`memory`]: Mawas's curated memory: entries, revisions, proposals, receipts (protocol 0.32,
 //!   capability `memory`).
 //! - [`grants`]: `control.grants.list` / `.revoke`, the grants Mawas's approvals store (protocol
@@ -49,6 +52,7 @@ pub mod control;
 pub mod daemon_settings;
 pub mod error;
 pub mod frame;
+pub mod fs;
 pub mod grants;
 pub mod history;
 pub mod memory;
@@ -74,7 +78,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 32,
+    minor: 33,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

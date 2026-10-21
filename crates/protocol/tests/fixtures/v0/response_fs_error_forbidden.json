@@ -1,0 +1,1 @@
+{"error":{"code":"forbidden","data":{"reason":"outside_roots"},"message":"/etc/hosts is outside the workspace roots"},"id":36}
