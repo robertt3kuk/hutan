@@ -615,6 +615,21 @@ What E-8 changed: shaped lines are found again by line, displayed text and the t
 
 **Still a miss, not relaxed**, measured under a machine load twice that of the first number. What remains is the workbench shell (layout of its uncached chrome, its `render`) and the parser-publish frame drawn inside a key's dispatch. Next steps (E-14 or a fix slice): make the status bar and title bar cached views of fixed height, and measure again on an idle machine.
 
+## Editor: Vim in file tabs (slice E-8, B15)
+
+B15 is a non-search Vim Normal command on a 1 MB buffer, key → applied, budget ≤ 2 ms. Run `cargo bench -p hutan-code-view --bench vim` (`crates/code_view/benches/vim.rs`). Each of 200 samples lends a 1 MB rope (`hutan_buffer::Buffer`) to the code view's `BufferHost` with the caret in the middle of the file, runs the command's keys through `hutan_vim::Vim`, and takes the model back, as `CodeView::vim_key` does for each key. Release build, plain `Instant`, 2026-10-21, load average 14–19 (other agents building). The frame that shows the result is B12's.
+
+| Command on 1 MB | p50 | p95 | max | Budget |
+|---|---|---|---|---|
+| `dd` | 0.005 ms | **0.007 ms** | 0.051 ms | ≤ 2 ms ✓ |
+| `w` | 0.004 ms | **0.009 ms** | 0.028 ms | ✓ |
+| `ciw`, a letter, Escape | 0.009 ms | **0.012 ms** | 0.026 ms | ✓ |
+| `yy` then `p` | 0.013 ms | **0.019 ms** | 0.029 ms | ✓ |
+| `G` | 0.001 ms | **0.001 ms** | 0.003 ms | ✓ |
+| `x` then `u` | 0.003 ms | **0.004 ms** | 0.013 ms | ✓ |
+
+The host reads the rope in `O(log n)` and copies only what a command returns (a word, a line). This removes the per-command copy of the whole text that `vim.rs:1321` made before E-7a. `:s`, `:g` and `:v` search a snapshot of the rope on a background thread and can be cancelled (`CodeView::ex_running`).
+
 ## Editor: the Vim layer (slice E-7a, `hutan-vim`)
 
 E-7a moves the V-1 modal layer out of `desktop` into a GPUI-free crate and changes no behaviour, so
