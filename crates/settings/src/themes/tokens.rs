@@ -82,8 +82,8 @@ use Fallback::{Absent, Alias, Alpha, AlphaByPolarity, Declared, Mix};
 
 colors! {
     // ---- chrome: the 16 fields of the old `Theme` plus the text on the accent ----
-    Background = "ui.background", false, Declared, "Window and center panes.";
-    SidebarBackground = "ui.sidebar.background", false, Declared, "Left dock and the title bar strip.";
+    Background = "ui.background", false, Declared, "Window, center panes and the active tab of a pane.";
+    SidebarBackground = "ui.sidebar.background", false, Declared, "Left dock, the title bar, the tab strips and the status bar.";
     SidebarSelected = "ui.sidebar.selected", false, Declared, "Selected nav row and active project card of the left sidebar.";
     SidebarRightBackground = "ui.sidebar-right.background", false, Declared, "The right sidebar surface.";
     SidebarRightSelected = "ui.sidebar-right.selected", false, Declared, "Hover and selected rows of the right sidebar.";

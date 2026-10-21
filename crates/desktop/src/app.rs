@@ -83,17 +83,23 @@ pub fn init(cx: &mut App, presets: &[LayoutPreset]) {
         }
     })
     .detach();
-    cx.set_menus(menus(presets, &DaemonMenu::default()));
+    cx.set_menus(menus(
+        presets,
+        LayoutPreset::DEFAULT,
+        &DaemonMenu::default(),
+    ));
 }
 
 /// App, Session, Workspace, View, Daemon, and Window menus. Items dispatch the same named actions as the
-/// keymap and palette.
-pub fn menus(presets: &[LayoutPreset], daemon_menu: &DaemonMenu) -> Vec<Menu> {
+/// keymap and palette. View → Layout Preset checks `current`, the preset the window shows (the
+/// title bar no longer has a preset switcher, CL-CHROME).
+pub fn menus(presets: &[LayoutPreset], current: &str, daemon_menu: &DaemonMenu) -> Vec<Menu> {
     let preset_items = presets.iter().map(|p| {
         MenuItem::action(
             crate::workbench::preset_label(&p.name),
             ApplyPreset(p.name.clone()),
         )
+        .checked(p.name == current)
     });
     vec![
         Menu::new("Hutan").items([
@@ -144,6 +150,7 @@ pub fn menus(presets: &[LayoutPreset], daemon_menu: &DaemonMenu) -> Vec<Menu> {
             MenuItem::separator(),
             MenuItem::submenu(Menu::new("Layout Preset").items(preset_items)),
             MenuItem::action("Save Layout as Preset…", actions::SaveLayoutAsPreset),
+            MenuItem::action("Use New Default Layout", actions::UseNewDefaultLayout),
             MenuItem::action("Overview", actions::ToggleOverview),
             MenuItem::action("Toggle Zoom Pane", actions::ToggleZoom),
             MenuItem::separator(),

@@ -293,6 +293,10 @@ impl WorkbenchState {
         for pos in DockPosition::ALL {
             let dock = self.docks.get_mut(pos);
             dock.panels.retain(|p| placed.insert(p.clone()));
+            let panels = &dock.panels;
+            let mut listed = HashSet::new();
+            dock.more
+                .retain(|p| panels.contains(p) && listed.insert(p.clone()));
             let (min, max) = pos.size_range();
             if !dock.size.is_finite() {
                 dock.size = 240.0;

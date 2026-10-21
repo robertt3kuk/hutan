@@ -40,8 +40,8 @@ flowchart TB
 - **Panel**: a registered component with an id, title, icon, default dock, and a typed settings section. Panels: `sessions` (Projects), `tasks`, `agents-dashboard` (the Agents page, a tab of the center and the center item of the `overview` preset), `assistant` (titled *Mawas*: Mawas Home, a tab of the center), `history`, `changes`, `inspector` (titled *Requests*), `agents`, `resources`, `notifications`, later `worktrees`, `providers`. Mawas Home is described in `docs/assistant.md` § Desktop; **Memory** (`mawas-memory`, protocol 0.32) is its sibling page: one more center tab, one instance, opened from ⌘K → *Mawas: Memory* or the Today rail.
 - **Dock**: left, right, bottom. A dock hosts a stack of panels. The left dock is the **left sidebar** (its panels are *pages* chosen from a nav list), the right dock the **right sidebar** (its panels are tabs of an icon rail), the bottom dock keeps a strip of text tabs. Docks resize, can be emptied, and **collapse on demand** (§ Docks): the left sidebar is Expanded, Compact (a 44 px icon rail) or Hidden, the right side is its panel body next to a 40 px rail (open, rail only, or hidden), the bottom dock is open or hidden; collapsing never stops a session, closes a tab or dismisses an approval. Mawas Home (`assistant`) is a **page of the center**: it opens as a tab of the active pane (`WorkbenchState::open_panel_in_center`, the nav row, ⌘K, the global shortcut), never in a preset, and the user may still move it like any panel.
 - **Center**: a binary split tree of panes; each pane has its own tab strip. Items are session views (terminal/chat), diffs, or any panel opened as a tab.
-- **Status bar**: an ordered list of status items (`connection`, `sessions`, `attention`, `density`, `theme`, `palette_hint`, the dock buttons `dock_left`, `dock_bottom`, `dock_right`, …) left and right; each is configurable. The dock buttons sit at the right end, like Zed's: a small window glyph with the dock's side filled, drawn pressed (accent) while the dock shows. A click toggles the dock (the same action as its key), the tooltip names the key of the active keymap base, and a hidden dock without panels shows a dimmed, inert button. A preset that lists its own `status_bar.right` shows them only when it names them.
-- **Title bar**: transparent with traffic lights; shows the active item title, preset switcher, Agents overview toggle. Can be hidden into a minimal mode.
+- **Status bar**: an ordered list of status items left and right; each is configurable per preset (`layout.presets.<name>.status_bar`). The built-in presets show only what needs you and the way to every command (CL-CHROME): left `attention` (`▲ 1 needs you`: the glyph in `warning`, the words `fg`; nothing while nothing needs you, the bar stays) and `connection` (only while the daemon is not simply up: connecting, reconnecting, restarting, stopped), right the editor's items while a file tab has focus and `palette_hint` (`⌘⇧P`). The other items stay registered for presets that name them: `workspace`, `sessions`, `approvals`, `density`, `theme`, and the dock buttons `dock_left`, `dock_bottom`, `dock_right` (a small window glyph with the dock's side filled, pressed — an `accent_soft` fill, the glyph `fg` — while the dock shows; a click toggles the dock, the tooltip names the key of the active keymap base, and a hidden dock without panels shows a dimmed, inert button). A status notice (a one-off message such as "No approvals are waiting") is `fg` text, never accent.
+- **Title bar**: transparent with traffic lights; the two dock recovery buttons and the active item's title (`fg`), nothing else (CL-CHROME). Layout presets are in View → Layout Preset (the current one checked), the palette (*Layout: Apply Preset …*) and ⌘⇧1…9; the Agents overview in View → Overview, the palette and ⌘⇧O.
 - **Presets**: named layouts (`default`, `focus`, `overview`, user-defined). Switching a preset swaps docks/center arrangement without closing sessions.
 
 ### Moving things
@@ -56,32 +56,30 @@ flowchart TB
 | Focus neighbour | — | ⌘⌥←→↑↓ |
 | Zoom pane | double-click tab | ⌘⇧↩ (Zed base: also ⇧⎋) |
 | Toggle docks | status bar dock buttons | ⌘B left sidebar, ⌘L right sidebar (both bases; also ⌘⌥B, and ⌘R in the Zed base), Zed base ⌘J / ⌃\` bottom, ⌘⌥Y close all; Hutan base ⌘⌥J bottom |
-| Switch preset / Overview | title bar menu | ⌘⇧O overview, ⌘⇧1…9 presets |
-| Save current layout as preset | title bar menu | palette → "Save layout as preset…" |
+| Switch preset / Overview | View → Layout Preset, View → Overview | ⌘⇧O overview, ⌘⇧1…9 presets |
+| Save current layout as preset | View → Save Layout as Preset… | palette → "Save layout as preset…" |
 | Close tab (detach) | × on tab | ⌘W |
 | Stop session | session menu (confirm if running) | ⌘⇧W |
 
 ## Layout (Orca-style, 2026-10-18)
 
-Hutan is laid out like Orca (stablyai/orca, MIT; studied in `docs/spikes/2026-10-18-orca-layout.md`): three columns, a 36 px title bar row and a 24 px status bar. Ideas ported, nothing copied.
+Hutan is laid out like Orca (stablyai/orca, MIT; studied in `docs/spikes/2026-10-18-orca-layout.md`): three columns, a 36 px title bar row and a 24 px status bar. Ideas ported, nothing copied. The chrome is quiet (CL-CHROME, `docs/spikes/2026-10-21-clean-aesthetic.md` §3.4): two tones (`sidebar` for both sidebars, the title bar, the tab strips and the status bar; `bg` for the panes and the active tab), one hairline per boundary, no accent on the chrome.
 
 ```text
-┌──────────────────────┬──────────────────────────────────┬──────────────────────────┐
-│ ● ● ●                │ title bar (36 px): active item,  │ ⟲  ±  ⓘ  ⑂  ◫      strip │ 36
-│                      │ Layout ▾, Overview               │ (History Changes         │
-│ ⌕ Search             ├──────────────────────────────────┤  Requests Agents         │
-│ ☑ Tasks              │ tab strip                        │  Resources)              │
-│ ⊞ Agents        [2]  ├──────────────────────────────────┤                          │
-│ ✦ Mawas (opt-in)     │                                  │  History / Changes /     │
-│ Projects      ＋ ⇅ ▶ │  terminals · chats · diffs       │  Requests / Agents /     │
-│ ▸ hutan              │  (split panes)                   │  Resources body          │
-│   ◆ M2 · claude      │                                  │                          │
-│   ❯ tests            │                                  │                          │
-│ ＋ New session  ⚙    │                                  │                          │
-├──────────────────────┴──────────────────────────────────┴──────────────────────────┤
-│ hutand connected · 7 sessions · ● 2 need you                 Compact · Dark · ⌘⇧P  │ 24
-└────────────────────────────────────────────────────────────────────────────────────┘
-   left sidebar 280 px                      center                  right sidebar 350 px
+┌──────────────────────┬──────────────────────────────────────────────────┬────┐
+│ ● ● ●  ▯             │ git                                            ▯ │    │ 36
+│ ⌕ Search             ├────┬────┬──────────────────────────┬──────────────┤ ⑂  │ Changes
+│ ☑ Tasks              │api │git │ web                      │ acme-api     │ ◉  │ Agents
+│ ⊞ Agents         2   ├────┘    └──────────────────────────┴──────────────┤ ⟲  │ History
+│ ✦ Mawas              │ ❯ git status                                      │ ✋1 │ Requests, while one waits
+│ Projects      ＋ ⇅ ▶ │ …                                                 │ ⋯  │ Requests, Resources
+│ ▸ acme-api           │                                                   │    │
+│   ❯ git              │  terminals · chats · diffs (split panes)          │    │
+│ ＋ New session  ⚙    │                                                   │    │
+├──────────────────────┴──────────────────────────────────────────────────┴────┤
+│ ▲ 1 needs you                                                       ⌘⇧P    │ 24
+└──────────────────────────────────────────────────────────────────────────────┘
+   left sidebar 280 px                 center                          rail 40
 ```
 
 **Left sidebar** (280 px expanded, resizable 220–500 or what leaves the center 480 px; ⌘B; 44 px compact, see § Docks). From the top: the inset under the traffic lights, the **nav list**, the **page**, a bottom toolbar.
@@ -98,7 +96,7 @@ Rows are 64 pt (80 comfortable): state glyph, title, state word, the reason or s
 
 **Agents overview (⌘⇧O)** is a reversible focus layout: it shows the same page entity as the only center item and stashes the layout it replaced; ⌘⇧O again (or opening a session from the page) restores it. The right **Agents** panel is the compact projection of the same records (Workspace / Session / All scope chips, *All agents* opens the page; its child tree shows the subagents); Mawas **Today** reads the same predicates (Working is only confirmed-working sessions; unknown ones show *State unavailable · N*).
 
-**Right sidebar** (a 350 px body, 240–480, next to a 40 px **activity rail** outside it; ⌘L). The rail runs from the title bar row to the status bar, always there unless the user hid it, with 32 px icon targets and tooltips: **History** (the first tab, the Agent Session History), **Changes** (the checkouts of the workspace, uncommitted ones first; a click opens the full Changes view as a tab), **Requests** (the inspector: approvals and block requests; its badge keeps the number of waiting requests, also while the body is collapsed), **Agents** (the observation tree / monitor), **Resources**. Icons that do not fit the height move into a **⋯** More menu (the active one always stays visible). Icons drag to reorder or to another dock. The body has a 36 px header with the panel's name. A **new layout** (first run; a project or workspace seen for the first time) starts with this sidebar down to its rail, so the first thing in the window is not an opt-in feature's card; ⌘L (or a rail icon) opens the body on the first tab. Layouts already saved keep what they had, and the `default` preset (⌘⇧1) still shows the body. See § Docks for what the icons and ⌘L do.
+**Right sidebar** (a 350 px body, 240–480, next to a 40 px **activity rail** outside it; ⌘L). The rail runs from the title bar row to the status bar, always there unless the user hid it, with 32 px icon targets and tooltips. The clean default (CL-CHROME) has three icons: **Changes** (the first tab: the checkouts of the workspace, uncommitted ones first; a click opens the full Changes view as a tab), **Agents** (the observation tree / monitor), **History** (the Agent Session History); and a **⋯** More menu with **Requests** (the inspector: approvals and block requests) and **Resources**. A dock lists such panels in `more` (saved with the layout, `layout.presets.<name>.right.more` in a preset): one of them is an icon only while it is the panel the body shows, or while it has a badge — **Requests comes onto the rail with the number of waiting requests while one waits** (also while the body is collapsed) and leaves when none does; a request never opens the body by itself. Icons that do not fit the height move into ⋯ too (the active one always stays visible). Icons are `muted`, the active one `fg` (on the `right_sidebar_accent` fill while the body shows); the rail spends no accent. Icons drag to reorder or to another dock. The body has a 36 px header with the panel's name (13 px medium). A **new layout** (first run; a project or workspace seen for the first time) starts with this sidebar down to its rail, so the first thing in the window is not an opt-in feature's card; ⌘L (or a rail icon) opens the body on the first tab. Layouts already saved keep what they had (§ Layout migration: *Layout: Use New Default*), and the `default` preset (⌘⇧1) still shows the body. See § Docks for what the icons and ⌘L do.
 
 **Mawas.** `assistant.enabled` is **on** by default (decision D-P4, PR-FIRST-RUN: Mawas stays a headline feature with its nav row and page, the first run no longer asks for it, and nothing is written to `settings.toml` for it; an explicit `assistant.enabled = false` is the user's own choice and is kept). When on, *Mawas* appears in the left nav and **Mawas Home** opens as **one tab of the center** (a registered panel like the others, so it can be closed, reopened and moved; no preset places it): ⌘K → *Mawas: Open*, *Mawas: New chat*, *Panel: Open Mawas*, the nav row, the menu bar item and the global shortcut all show it (`OpenAssistant` needs the setting on); turning the setting off closes it. The page is a **header** (scope dropdown, state dot, backend·model chip, **mode chip** *Ask before acting ▾* / *Advisor ▾*, **New chat**, **Stop**, **Today** toggle), the conversation (the ordinary chat view, centered, at most 46 rem wide) and the collapsible **Today** rail (300 px, left border): *Needs you*, *Working*, *Upcoming* ("No schedules yet"); no link to a service that does not exist. Mawas's own approvals are cards above the conversation and the first rows of *Needs you*. A page that is not the active tab does no work (no re-render on store changes, no timer). Text is cut with "…" at the room it has; `docs/assistant.md` § Desktop has the behavior.
 
@@ -108,7 +106,9 @@ Rows are 64 pt (80 comfortable): state glyph, title, state word, the reason or s
 
 **Window title.** The title bar and the window title name the active item of the **center** (a session, a tab); the page a sidebar shows never becomes the title, so focusing History or Tasks leaves it as it was (Mawas Home, a center tab, is the title while it shows).
 
-**Tokens.** Chrome follows Orca's structure in Hutan's warm hues (see § Visual system): the right sidebar has its own surface (`right_sidebar`, darker than the left in dark, lighter in light), selected rows step away from the sidebar (`sidebar_accent`, `right_sidebar_accent`), the dark hairline is white at 7 %, the title bar and the right strip are 36 px, the status bar 24 px in both densities. Accent (orange) and fonts are unchanged.
+**Tokens.** Chrome follows Orca's structure in Hutan's warm hues (see § Visual system) with two tones: `sidebar` (both sidebars, the title bar, the tab strips, the status bar; `right_sidebar` has the same value in the built-ins) and `bg` (the panes and the active tab, which is connected to its pane); selected rows step away from the sidebar (`sidebar_accent`, `right_sidebar_accent`), the dark hairline is white at 7 %, the title bar and the right strip are 36 px, the status bar 24 px in both densities.
+
+**Hairlines.** One per boundary, owned by one side: the left sidebar's right edge, the right body's and the rail's left edges, the status bar's top, each tab strip's bottom (broken under the active tab, whose `bg` fill reaches the pane), a pane header's bottom, and between two split panes (owned by the second). The title bar and the tab strips below it share the `sidebar` tone with no line between them.
 
 ### Docks: collapse on demand, always recoverable (DK-1)
 
@@ -117,12 +117,12 @@ Design: `docs/spikes/2026-10-20-chrome-v3.md` § 4 and its mockup. What the user
 | Dock | Expanded | Compact | Hidden |
 |---|---|---|---|
 | **Left sidebar** | 280 px (220–500), the nav, the page, the toolbar | a **44 px icon rail**: Search, Tasks, Agents, Mawas (when enabled), any other page, Projects; New session and Settings at the bottom; 32 px targets, a tooltip on every icon, the Agents count stays as a badge. Search, Agents and Mawas work as they do expanded and do not widen the rail; Tasks and Projects are pages of the sidebar and expand it | 0 px, no hitboxes, no focus stop |
-| **Right side** | the panel body (350 px, 240–480) next to the 40 px rail | the **rail alone** (History, Changes, Requests, Agents, Resources, ⋯) | no rail (explicit *Hide Right Rail*) |
+| **Right side** | the panel body (350 px, 240–480) next to the 40 px rail | the **rail alone** (Changes, Agents, History, Requests while one waits, ⋯ with Requests and Resources) | no rail (explicit *Hide Right Rail*) |
 | **Bottom** | the body with its tab strip | — (it has no rail) | 0 px |
 
 - **⌘B** toggles the left sidebar between Expanded and Compact; from Hidden it comes back in the mode it was hidden from. **⌘L** (the rail's bottom button, the titlebar's right-dock button) toggles the right body between open and rail only; from Hidden it opens. **⌘⌥J** / **⌘J** (per keymap base) toggles the bottom dock, tab strip included. The status bar's dock buttons dispatch the same toggles. No existing default key changed.
 - **Always recoverable.** A **titlebar button** sits next to the traffic lights for the left sidebar (after the 80 px they take when the sidebar does not cover them) and at the right end for the right side. The left one hides the sidebar, or brings it back; the right one does what ⌘L does. A right click on either lists the states (*Expanded* · *Compact (icons)* · *Hidden*; *Panel open* · *Rail only* · *Hidden*) with the current one checked. *View: Hide Left Sidebar* and *View: Hide Right Rail* (palette) hide completely; the titlebar buttons stay.
-- **The right rail.** Clicking the icon of the panel the body shows collapses the body to the rail; the rail stays and remembers the panel and the width. Clicking any icon while collapsed opens that panel, the remembered one included; clicking another icon while open switches panel. The icon of the remembered panel of a collapsed body looks selected, not pressed. A new permission request never expands a body the user collapsed and never takes the keyboard: the Requests icon is selected, keeps its badge, and a notice says a request is waiting.
+- **The right rail.** Clicking the icon of the panel the body shows collapses the body to the rail; the rail stays and remembers the panel and the width. Clicking any icon while collapsed opens that panel, the remembered one included; clicking another icon while open switches panel. The icon of the remembered panel of a collapsed body looks selected (`fg`), not pressed. A new permission request never expands a body the user collapsed, never changes the panel it remembers and never takes the keyboard: the Requests icon comes onto the rail with its badge while the request waits, and the status bar's `▲ 1 needs you` says it (CL-CHROME: no second sentence in the status bar). With the body open, `panels.inspector.reveal_on_approval` switches it to Requests as before.
 - **Drag to collapse.** The edge of an expanded side dock tracks the pointer down to its minimum (220 / 240 px) and stops. 24 px further, a translucent **preview** of the rail appears at the window edge; releasing the mouse collapses the dock to its rail, Escape cancels (the dock keeps the size it had, nothing collapses on release). A collapsed dock reopens at the width it had before the drag; nothing in between is saved. The compact rail has no edge to drag. The dock edge also stops where the center would get narrower than 480 px.
 - **Responsive collapse** (`layout.auto_collapse`, default on; Settings → Layout *Collapse sidebars in a narrow window*). Below **1180 px** of window width the right body collapses to its rail; below **900 px** the left sidebar goes Compact; the center keeps at least **480 px** (a dock the center cannot afford collapses at any width, the right one first). A collapsed dock comes back only **80 px** above its threshold, and only when the center fits with it open. This is temporary: it is not saved and never overwrites what the user chose, a dock the user hid or collapsed is never auto-restored, and a dock the user opens in a narrow window (⌘B, a rail icon, a command) stays open until the window has grown past the same margin. At 1280 / 1180 / 900 / 640 px: both open · both open · right on its rail · both on their rails.
 - **Focus.** A dock that stops being drawn as a body (user or window) hands the keyboard to the last active center item; a hidden element never keeps focus or a hitbox. Collapsing never stops a session, closes a tab or dismisses an approval.
@@ -131,15 +131,17 @@ Design: `docs/spikes/2026-10-20-chrome-v3.md` § 4 and its mockup. What the user
 
 ### Presets shipped
 
-| Preset | Left sidebar pages | Center | Right sidebar tabs | Bottom dock | Use |
+| Preset | Left sidebar pages | Center | Right sidebar rail | Bottom dock | Use |
 |---|---|---|---|---|---|
-| `default` | sessions (Projects), tasks | pane tree | history, changes, inspector, agents, resources | empty, hidden | daily work |
+| `default` | sessions (Projects), tasks | pane tree | changes, agents, history; inspector (Requests) and resources under ⋯ | empty, hidden | daily work |
 | `focus` | same, hidden | pane tree, zoomed active pane | same, hidden | empty, hidden | deep terminal work (layout C) |
-| `overview` (Agents overview) | sessions, tasks | the Agents page (`agents-dashboard`) as the only center item | history, changes, inspector, agents, resources | empty, hidden | many agents at once (layout B) |
+| `overview` (Agents overview) | sessions, tasks | the Agents page (`agents-dashboard`) as the only center item | same as `default` | empty, hidden | many agents at once (layout B) |
 
-Mawas Home is in no preset; it is a center tab, so a preset that replaces the center takes it with the rest of the center.
+All three show the quiet status bar (`attention`, `connection` / the editor's items, `palette_hint`; § Workbench model). Mawas Home is in no preset; it is a center tab, so a preset that replaces the center takes it with the rest of the center.
 
 ### Layout migration
+
+**The clean default (CL-CHROME, absorbing PR-CLEAN-DEFAULT).** A new installation starts with the `default` preset above. A layout saved before it (its right dock lists nothing in `more` and its docks hold other panels than the default's) is read as it is — no field of `desktop-state.json` is rewritten, the version stays 6, and `more` is only written for a dock that has it — and gets one line under the title bar, once: *A quieter default layout is available…* with **Use new default** (the default preset's panels in every dock; the dock modes, the widths and the center stay) and **Keep mine**. Either answer turns `layout.offer_new_default` off. View → Use New Default Layout and the palette's *Layout: Use New Default* do the same at any time; *Layout: Reset Layout* stays. A preset in `settings.toml` may list `more` per dock (`[layout.presets.mine.right] more = ["resources"]`).
 
 The saved layout (`desktop-state.json`) is version 6. Version 6 (AG-1) replaced the `overview` panel (the old board of terminal previews) with the Agents page: every layout older than 6 — a center tab, the Agents overview preset with its stash, a dock's panel, a parked workspace — is read with `overview` renamed to `agents-dashboard` once, so no tab or dock entry is lost; user presets in `settings.toml` that list `overview` in a dock are mapped the same way, and the `overview` preset keeps its name. Version 5 (DK-1) gave the side docks a rail: a dock now has `collapsed` next to `visible` (visible and collapsed is the 44 pt left icon rail, or the right activity rail alone; hidden keeps the mode the dock comes back in), the layout keeps what the user left the docks at in each preset (`dock_memory`, per saved layout and per parked workspace layout), and the side widths are clamped to 220–500 (left) and 240–480 (right body). A version 4 file needs no rewrite: `visible: true` is Expanded and `false` is Hidden (the choice is kept), `collapsed` defaults to off, panels and widths stay, and the widths are clamped like every loaded layout; the next save writes version 6. Version 4 (MW-1) turned the Assistant from a left page into Mawas Home, a center tab: a version 3 file (and an older one, migrated first) loses the `assistant` panel from every dock, once, in the live layout, the overview stash and every parked workspace layout; a Home tab already in the center stays. Version 3 (OL-4) turned *Agents* from a left page into the dashboard drawer: a version 2 file (and a migrated version 1 file) loses the `overview` panel from its left dock, once, in the live layout, the overview stash and every parked workspace layout; an `overview` the user put in another dock or a center tab stays. A version 1 file is migrated once when it is read, for the live layout, the overview stash and every workspace's parked layout: History moves to the front of the right dock and becomes its active tab; Changes joins the right dock after it; Resources moves there from a hidden bottom dock; Tasks moves from the right dock to the left sidebar behind Projects; the Assistant leaves every dock and the center (its conversations stay in the daemon; the nav opens it again); Projects becomes the left page; a dock still at the old default width (240 / 300 px) takes the new one (280 / 350 px). Center tabs, splits, zoom, focus, the preset name, user-changed widths and a visible bottom dock are kept.
 
@@ -150,6 +152,12 @@ The saved layout (`desktop-state.json`) is version 6. Version 6 (AG-1) replaced 
 | AG-1 | `overview` panel (board of terminal previews), in every saved layout, preset and dock | the Agents page (`agents-dashboard`); layouts older than v6 are migrated once, the `overview` preset keeps its name and ⌘⇧O |
 | AG-1 | the Agents dashboard drawer (OL-4) | the Agents page: ↩ opens a row, Space shows its details, ⇧F10 its menu (§ Keyboard) |
 | DK-1 | fixed-width side docks | Expanded / Compact / Hidden left sidebar (⌘B), right body + activity rail (⌘L), titlebar recovery buttons; nothing removed |
+| CL-CHROME | title bar *Layout: Default ▾* switcher (with the current preset checked) | View → Layout Preset (current one checked), View → Save Layout as Preset…, palette *Layout: Apply Preset …*, ⌘⇧1…9 |
+| CL-CHROME | title bar *Agents overview ⌘⇧O* toggle | View → Overview, palette *View: Agents Overview*, ⌘⇧O, the Agents nav row |
+| CL-CHROME | Requests and Resources icons on the default right rail | the rail's ⋯ menu; Requests comes back on the rail with its count while a request waits; *Panel: Open Requests* / *Panel: Open Resources* in the palette; layouts saved before keep their icons until *Use new default* |
+| CL-CHROME | status items `workspace`, `sessions`, `approvals`, `density`, `theme`, `dock_left`, `dock_bottom`, `dock_right` in the built-in presets; `connection` while connected; "nothing needs you" | still registered: a preset's `status_bar` that names them shows them; the active workspace in the Projects tree and the jump palette (⌘P); approvals in the attention item, the Requests badge and the Agents page; density in View → Density and the palette, the theme in Settings → Appearance; docks in View, ⌘B / ⌘L / ⌘⌥J and the title bar buttons; daemon controls in the Daemon menu and *Daemon: Status* |
+| CL-CHROME | the status bar sentence "A permission request is waiting: open Requests to answer it", and Requests becoming the remembered panel of a collapsed rail on a new request | the `▲ 1 needs you` status item and the Requests icon with its badge on the rail |
+| CL-CHROME | the chat pane header's kind icon and title, and its "1 approval" count | the tab and the window title name the session; the state word carries the reason (`blocked · approval`) |
 
 ## Closing and reopening sessions (CL-1)
 
@@ -157,13 +165,21 @@ Every session row of the sidebar (project tree, Home, Needs you) has a hover **�
 
 ## Session pane header
 
-`[kind icon] title  [state chip]  [placement badge]  [Chat | Terminal]  … ⋯`
+A **status line**, not a second title (CL-CHROME, D-C5): the tab and the window title name the session, so the header starts with its state.
 
-- Kind icon: semantic `session.terminal` (Terminal), `session.harness` (Robot) or `session.direct` (ChatCircle), beside the readable session title.
-- State chip: see attention model. Hidden for plain idle shells unless enabled.
-- Placement badge: `main` (main checkout) or `wt <branch>` (worktree); click → reveal in Finder / copy path.
-- View switch: only when the session has both a TUI and a structured protocol (M4).
-- `⋯` menu: rename, restart, stop, move to split/dock, copy session id, open in new window.
+`[state glyph] state word · reason   harness · model   [mode] [context]   [Switch model…]`
+
+- State: `ui::state_label` — the glyph in the state's color, the word in it too (`fg` for working, whose accent is only the glyph); what needs you carries its reason (`blocked · approval`, `blocked · 2 approvals`). A waiting approval is not counted a second time here.
+- Harness and model (`OMP · opus-4-6`), muted; the mode chip and the context chip as before.
+- The tab strip is always drawn, so the title never has to come back into the header. A terminal pane has no header.
+- Still to come (CL-CHAT): the model as a ghost menu replacing *Switch model…*, the `[Chat | Terminal]` view switch as one segmented control, and the `⋯` menu.
+
+## Center tabs (CL-CHROME)
+
+- The tab strip is chrome: the `sidebar` tone under the title bar, one hairline at its bottom. The **active tab** of a pane is a `bg` fill with 6 px top corners that reaches the strip's bottom, so it is connected to its pane (the hairline is broken under it); the other tabs have no fill and a `sidebar_hover` fill on hover.
+- **Focus is the tab's weight**: the focused pane's active tab is `fg` medium; the active tab of every other pane is `muted` regular like the inactive tabs, and its terminal's cursor is hollow. Nothing else changes with focus: no outline on the pane or the tab, no accent (`TabLook`). Zooming a pane (double-click a tab, ⌘⇧↩) keeps its strip.
+- One attention mark per tab: the agent badge's warning glyph when an agent is blocked, else the attention dot; × to close.
+- Two panes of a split are separated by one hairline owned by the second pane.
 
 ## Attention model
 
@@ -221,7 +237,7 @@ Rollups: session → workspace header → sidebar "Needs you" → status bar `at
 - **Components** (the kit is `crates/desktop/src/workbench/ui.rs`; CL-PRIMITIVES):
   - *Drawing rules*: borders mean containment, fills mean selection. A card (tool call, approval, Today, memory proposal) is a `surface` fill without a border; a 1 px `border` hairline outlines only text inputs and secondary buttons (`outlined()`); a selected row or chip is an `accent_soft` fill without an outline. The accent is never a border, a pane outline or a tab outline: the only accent edges are drag-over targets (tab strip, panes, dock edges, project headers, the chat's file drop), and a test (`ui::tests::the_accent_is_a_border_only_on_drag_targets`) fails on any other.
   - *Keyboard focus ring*: 2 px in `focus` (`ui.focus`, else the macOS keyboard focus indicator color read at startup, drawn opaque; else `accent` in tests) 1 px outside the control, only while focus came from the keyboard: Tab, an arrow, Home/End/Page keys or a keystroke that moved focus turn it on, any mouse press turns it off. Typing in a field you clicked shows no ring; the caret is the focus there. Inputs, the settings sheet's category list, search box and rows, the launcher's stops, the Agents page row and the theme picker's filter carry it; the composer does not.
-  - *Focused pane*: its active tab's text is `fg`; the active tab of a pane without focus is `muted`. No outline on the pane or the tab (they were accent before CL-PRIMITIVES).
+  - *Focused pane*: its active tab's text is `fg` medium; the active tab of a pane without focus is `muted` regular, and its terminal's cursor is hollow. The active tab is a `bg` fill connected to its pane on the `sidebar`-toned strip (§ Center tabs). No outline on the pane or the tab (they were accent before CL-PRIMITIVES).
   - *Sidebar rows* (the Projects tree; the left nav uses Orca's 8 × 6 px rows, 13 px medium): 30 px (comfortable), 8 px horizontal padding, rounded 6 px hover/selected (`surface_hover` / `sidebar_accent`; a project picked for a bulk action is `accent_soft`), icon 16 px `muted`, title `fg`, second line or right side `muted`; counters as small pills.
   - *Buttons*: primary = `accent` fill, `on_accent` (dark ink) text, one per surface; secondary = `outlined()`; ghost = text only with hover fill; all at the control height, 6 px radius. *Choices* (`choice`) are outlined with `muted` text, the selected one an `accent_soft` fill; a *segmented control* (`segmented` + `segment`) is one outlined strip whose selected segment is the fill.
   - *Pills and states*: a pill is neutral (`fg` on `surface_hover`); a state is `state_label(glyph, word, tone, on_selected)`: the glyph in the state color and the word too, except on a selected row (the word is `fg`) and for the accent (only the glyph). Install, login, process, delivery, review-comment and recovery states use it; plans, places, counts and the Vim mode are pills.
@@ -298,12 +314,14 @@ confirm_multiline_paste = true # ask before a multi-line paste into a program wi
 [layout]
 preset = "default"
 auto_collapse = true           # a narrow window shows the right panel as its rail below 1180 pt, the left sidebar as its icons below 900 pt (Layout § Docks)
+offer_new_default = true       # a layout saved before the clean default is offered it once (Layout migration); off after you answer
 
-[layout.presets.default]
-left   = { panels = ["sessions"],  size = 240, visible = true }
-right  = { panels = ["inspector", "agents"], size = 300, visible = true }
-bottom = { panels = ["resources"], size = 200, visible = false }
-status_bar = { left = ["connection", "workspace", "sessions", "attention"], right = ["density", "theme", "palette_hint", "dock_left", "dock_bottom", "dock_right"] }
+# A preset of your own: every rail icon shown, and the status bar of before CL-CHROME.
+[layout.presets.busy]
+left   = { panels = ["sessions", "tasks"], size = 280, visible = true }
+right  = { panels = ["history", "changes", "inspector", "agents", "resources"], size = 350, visible = true, more = [] }
+bottom = { panels = [], size = 200, visible = false }
+status_bar = { left = ["connection", "workspace", "sessions", "attention", "approvals"], right = ["density", "theme", "palette_hint", "dock_left", "dock_bottom", "dock_right"] }
 
 [sidebar]
 organize = "workspaces"        # workspaces | projects (see Projects and workspaces)

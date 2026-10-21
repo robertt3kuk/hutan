@@ -550,6 +550,8 @@ pub struct Workbench {
     pub(crate) mac: MacControl,
     pub(crate) setup: super::setup::SetupControl,
     pub(crate) first_run: super::first_run::FirstRunControl,
+    /// The one-time offer of the clean default layout is on screen (`layout_offer.rs`).
+    pub(crate) layout_offer: bool,
     pub(crate) integrations: super::integrations::IntegrationControl,
     pub(crate) harness_install: super::harness_install::HarnessInstallControl,
     pub(crate) palette: Option<PaletteState>,
@@ -643,6 +645,7 @@ impl Workbench {
         // yet): the right sidebar waits on its rail, so that nothing opens on a panel the user
         // has not asked for. A layout that is saved, or handed in, is never touched.
         let first_launch = fresh && options.state_path.is_some();
+        let saved = options.initial_state.is_none() && !fresh;
         let mut state = match (options.initial_state, &options.state_path) {
             (Some(state), _) => state,
             (None, Some(path)) => persistence::load_state(path),
@@ -651,6 +654,14 @@ impl Workbench {
         if first_launch {
             state.docks.right.collapsed = true;
         }
+        // A layout saved before the clean default stays as it is, and is offered the new one
+        // once (`layout_offer.rs`); a new installation starts with it.
+        let layout_offer = saved
+            && layout_settings.offer_new_default
+            && preset_defs
+                .iter()
+                .find(|d| d.layout.name == LayoutPreset::DEFAULT)
+                .is_some_and(|def| state.predates(&def.layout));
         if fresh
             && layout_settings.preset != LayoutPreset::DEFAULT
             && let Some(def) = preset_defs
@@ -1021,6 +1032,7 @@ impl Workbench {
             mac,
             setup: super::setup::SetupControl::new(cx.focus_handle(), options.cli_link),
             first_run: super::first_run::FirstRunControl::default(),
+            layout_offer,
             integrations: super::integrations::IntegrationControl::new(
                 options.installer,
                 options.custom_home,
@@ -1313,6 +1325,8 @@ impl Workbench {
         self.note_dock_modes();
         self.attach_open_items(cx);
         self.sync_session_focus(cx);
+        // View → Layout Preset checks the preset on screen.
+        self.sync_menus(cx);
         cx.notify();
         self.schedule_save(cx);
         self.schedule_publish(cx);
@@ -1659,17 +1673,6 @@ impl Workbench {
         cx.notify();
     }
 
-    /// Open the title bar's layout-preset switcher at `position`.
-    pub fn show_preset_menu(
-        &mut self,
-        position: Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let entries = self.preset_menu();
-        self.open_menu(position, entries, window, cx);
-    }
-
     /// Labels (with check state) of the open context menu, in order.
     pub fn context_menu_entries(&self) -> Option<Vec<(SharedString, bool)>> {
         self.context_menu.as_ref().map(|m| {
@@ -1835,29 +1838,6 @@ impl Workbench {
         entries.push(Self::entry("Close", move |this, window, cx| {
             this.close_item_checked(pane, index, window, cx);
         }));
-        entries
-    }
-
-    /// Menu of layout presets (title bar "Layout" switcher).
-    pub(crate) fn preset_menu(&self) -> Vec<MenuEntry> {
-        let mut entries: Vec<MenuEntry> = self
-            .presets
-            .iter()
-            .map(|preset| {
-                let name = preset.name.clone();
-                let mut e = Self::entry(preset_label(&preset.name), move |this, _, cx| {
-                    this.apply_preset_named(&name, cx);
-                });
-                e.checked = self.state.preset == preset.name;
-                e
-            })
-            .collect();
-        entries.push(Self::entry(
-            "Save Layout as Preset…",
-            |this, window, cx| {
-                this.save_layout_as_preset(window, cx);
-            },
-        ));
         entries
     }
 

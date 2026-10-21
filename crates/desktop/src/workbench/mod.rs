@@ -22,6 +22,7 @@ mod history;
 mod integrations;
 mod launcher;
 mod launcher_ui;
+mod layout_offer;
 mod mac;
 mod modal;
 pub mod model;
@@ -81,6 +82,7 @@ pub use launcher::{
 pub use modal::{Modal, ModalCheckbox, ModalChoice};
 pub use panels::{HistoryConfirm, HistoryPanel, StatusTone, connection_label};
 pub use registry::{PanelEnv, StatusBarLayout, StatusData};
+pub use render::TabLook;
 pub use review::ReviewHandoff;
 pub use settings_assistant::{AssistantDefaults, MawasGrants, Running as AssistantRunning};
 pub use settings_daemon::DaemonSettingsState;
@@ -90,7 +92,7 @@ pub use settings_pages::{DataTarget, HistoryIndex};
 pub use settings_sheet::{Edit, SettingsSheet};
 pub use settings_themes::{PackField, PackPreview, PickerRow};
 pub use setup::{NotificationUi, SetupFinish, SetupState, SetupStep};
-pub use sidebars::{NavEntry, NavTarget, strip_split};
+pub use sidebars::{NavEntry, NavTarget, rail_split, strip_split};
 pub use terminals::session_of_item;
 pub use view::{
     BadgeSite, DragPreview, DraggedItem, Region, SAVE_DEBOUNCE, Workbench, WorkbenchOptions,

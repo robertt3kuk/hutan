@@ -171,6 +171,12 @@ pub struct Dock {
     /// is hidden: it is the mode the dock comes back in. Never set on the bottom dock.
     #[serde(default)]
     pub collapsed: bool,
+    /// Panels of this dock its rail lists in the `⋯` menu instead of as icons (the clean
+    /// default's Requests and Resources). Such a panel still shows as an icon while it is the
+    /// dock's active panel or carries a badge (a request waiting). Always a subset of `panels`;
+    /// absent in layouts saved before CL-CHROME, which keep every icon on the rail.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub more: Vec<PanelId>,
 }
 
 impl Dock {
@@ -182,7 +188,20 @@ impl Dock {
             size,
             visible,
             collapsed: false,
+            more: Vec::new(),
         }
+    }
+
+    /// The same dock with `panels` listed in the rail's `⋯` menu (see [`Dock::more`]).
+    pub fn with_more(mut self, panels: &[&str]) -> Self {
+        self.more = panels.iter().map(|p| PanelId::new(*p)).collect();
+        self
+    }
+
+    /// Whether the rail draws `panel` as an icon: it is not in the `⋯` menu, or it is the active
+    /// panel, or it has a badge to show (`badged`).
+    pub fn on_rail(&self, panel: &PanelId, badged: bool) -> bool {
+        !self.more.contains(panel) || self.active.as_ref() == Some(panel) || badged
     }
 
     pub fn contains(&self, panel: &PanelId) -> bool {

@@ -42,14 +42,16 @@ impl LayoutPreset {
         Dock::new(panels, Self::LEFT_SIZE, visible)
     }
 
-    /// The right sidebar's icon strip: History first (the default tab), then Changes, Requests
-    /// (the inspector), Agents and Resources.
+    /// The right side's activity rail (CL-CHROME, the clean default): Changes first (the
+    /// default tab), Agents, History as icons; Requests (the inspector) and Resources listed in
+    /// its `⋯` menu, Requests coming onto the rail with its count while a request waits.
     fn right(visible: bool) -> Dock {
         Dock::new(
-            &["history", "changes", "inspector", "agents", "resources"],
+            &["changes", "agents", "history", "inspector", "resources"],
             Self::RIGHT_SIZE,
             visible,
         )
+        .with_more(&["inspector", "resources"])
     }
 
     fn docks(left: Dock, right: Dock) -> Docks {
@@ -61,8 +63,8 @@ impl LayoutPreset {
     }
 
     /// `sessions` (Projects) and `tasks` as pages of the left sidebar (Agents is a page of the
-    /// center, not of the sidebar); `history`, `changes`, `inspector`, `agents` and `resources` in
-    /// the right sidebar's strip; the bottom dock hidden and empty; center untouched.
+    /// center, not of the sidebar); the right rail of [`Self::right`]; the bottom dock hidden
+    /// and empty; center untouched.
     pub fn default_preset() -> Self {
         Self {
             name: Self::DEFAULT.to_owned(),
@@ -262,6 +264,28 @@ impl WorkbenchState {
     fn remember_docks(&mut self) {
         self.dock_memory
             .insert(self.preset.clone(), self.docks.modes());
+    }
+
+    /// The layout predates the clean default (CL-CHROME): its right dock lists nothing in the
+    /// rail's `⋯` menu and its docks hold other panels than `preset`'s. Such a layout is kept as
+    /// it is; *Layout: Use New Default* is offered for it once.
+    pub fn predates(&self, preset: &LayoutPreset) -> bool {
+        let arrangement = |docks: &Docks| {
+            DockPosition::ALL.map(|pos| {
+                let dock = docks.get(pos);
+                (dock.panels.clone(), dock.more.clone())
+            })
+        };
+        self.docks.right.more.is_empty() && arrangement(&self.docks) != arrangement(&preset.docks)
+    }
+
+    /// *Layout: Use New Default*: the panels of `preset`'s docks, keeping the center and the
+    /// open, collapsed or hidden mode and the size the user left each dock at.
+    pub fn use_new_default(&mut self, preset: &LayoutPreset) {
+        let modes = self.docks.modes();
+        self.apply_preset(preset);
+        self.docks.set_modes(&modes);
+        self.normalize();
     }
 
     /// Switch to the preset called `name` by any path (menu, palette, keys, settings, restore).

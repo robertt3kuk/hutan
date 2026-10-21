@@ -3,15 +3,13 @@
 use super::actions::{self, palette};
 use super::model::{
     Axis, Direction, DockMode, DockPosition, DropTarget, Edge, FocusTarget, ItemRef, ItemSource,
-    LayoutPreset, Pane, PaneId, PaneTree, PanelDest,
+    Pane, PaneId, PaneTree, PanelDest,
 };
 use super::panels::AgentsRequest;
 use super::registry::{DockState, PerDock, StatusContext, StatusData};
 use super::terminals::session_of_item;
 use super::ui::{self, Mascot, StyledExt as _};
-use super::view::{
-    ContextMenu, DragPreview, DraggedItem, Region, Resizing, Workbench, preset_label, steps,
-};
+use super::view::{ContextMenu, DragPreview, DraggedItem, Region, Resizing, Workbench, steps};
 use super::vim_ui::OverlayField;
 use super::workspaces::PickerKind;
 use crate::theme::{Density, DensityExt as _};
@@ -35,6 +33,37 @@ pub const TITLEBAR_HEIGHT: f32 = 36.0;
 /// Space reserved for the traffic lights when the left dock does not cover them.
 const TRAFFIC_LIGHT_INSET: f32 = 80.0;
 const HANDLE_THICKNESS: f32 = 6.0;
+/// Room above a center pane's tabs in their strip; a tab reaches the strip's bottom, so the
+/// active one is connected to its pane.
+const TAB_TOP_INSET: f32 = 6.0;
+
+/// How a tab of a center pane is drawn (CL-CHROME). The strip is chrome (`sidebar`); the active
+/// tab is a `bg` fill connected to its pane; the other tabs have no fill (a hover fill only).
+/// The focused pane's active tab is `fg` medium, every other tab `muted` regular: the weight
+/// and the color of one tab are the whole focus indication, with the terminal's hollow cursor.
+/// No outline anywhere, no accent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TabLook {
+    pub text: gpui::Hsla,
+    pub weight: gpui::FontWeight,
+    /// The connected fill of the active tab; `None` for the others.
+    pub fill: Option<gpui::Hsla>,
+}
+
+impl TabLook {
+    pub fn of(theme: &crate::theme::Theme, active: bool, pane_focused: bool) -> Self {
+        let focused = active && pane_focused;
+        Self {
+            text: if focused { theme.fg } else { theme.muted },
+            weight: if focused {
+                gpui::FontWeight::MEDIUM
+            } else {
+                gpui::FontWeight::NORMAL
+            },
+            fill: active.then_some(theme.bg),
+        }
+    }
+}
 
 /// "⌘⇧O"-style hint for the highest-precedence binding of `action` in the current context.
 fn key_hint(window: &Window, action: &dyn Action) -> Option<SharedString> {
@@ -108,6 +137,7 @@ impl Render for Workbench {
         let titlebar = self.render_titlebar(window, cx);
         let status = self.render_status_bar(window, cx);
         let offer = self.render_notify_offer(cx);
+        let layout_offer = self.render_layout_offer(cx);
         self.rescue_orphaned_focus(window, cx);
         self.sync_assistant_focus(window, cx);
         self.sync_agents_page(cx);
@@ -174,6 +204,7 @@ impl Render for Workbench {
                         .min_w_0()
                         .child(titlebar)
                         .children(offer)
+                        .children(layout_offer)
                         .child(
                             div()
                                 .flex()
@@ -323,6 +354,11 @@ impl Workbench {
             }),
         )
         .on_action(cx.listener(|this, _: &actions::ResetLayout, _, cx| this.reset_layout(cx)))
+        .on_action(
+            cx.listener(|this, _: &actions::UseNewDefaultLayout, _, cx| {
+                this.use_new_default_layout(cx);
+            }),
+        )
         .on_action(cx.listener(|this, _: &actions::TogglePalette, window, cx| {
             this.toggle_palette(window, cx);
         }))
@@ -1046,56 +1082,13 @@ impl Workbench {
 
     // ---- title bar ---------------------------------------------------------------------------
 
+    /// The title bar row over the center: the two dock recovery buttons and the title of the
+    /// active item, nothing else (CL-CHROME). Layout presets live in View → Layout Preset, the
+    /// palette and ⌘⇧1…9; the Agents overview in View, the palette and ⌘⇧O.
     fn render_titlebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
         let left_extent = self.dock_extent(DockPosition::Left);
-        let overview_active = self.state.preset == LayoutPreset::OVERVIEW;
-        let overview_hint =
-            key_hint(window, &actions::ToggleOverview).unwrap_or_else(|| "⌘⇧O".into());
-        let preset_name = preset_label(&self.state.preset);
-        let hover = theme.surface_hover;
-
-        let preset_button = div()
-            .id("titlebar-preset")
-            .px(px(tokens.spacing * 2.0))
-            .h(px(tokens.control_height - 4.0))
-            .flex()
-            .items_center()
-            .rounded(px(tokens.radius))
-            .text_size(px(tokens.secondary_font_size))
-            .text_color(theme.muted)
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover).text_color(theme.fg))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
-                this.show_preset_menu(event.position(), window, cx);
-            }))
-            .flex()
-            .items_center()
-            .gap(px(4.0))
-            .child(format!("Layout: {preset_name}"))
-            .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown));
-
-        let accent = theme.accent;
-        let overview_button = div()
-            .id("titlebar-overview")
-            .px(px(tokens.spacing * 2.0))
-            .h(px(tokens.control_height - 4.0))
-            .flex()
-            .items_center()
-            .rounded(px(tokens.radius))
-            .text_size(px(tokens.secondary_font_size))
-            .text_color(if overview_active { accent } else { theme.muted })
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover).text_color(theme.fg))
-            .when(overview_active, move |s| s.bg(theme.accent_soft))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|this, _, _, cx| this.toggle_overview(cx)))
-            .gap(px(4.0))
-            .child(crate::icons::glyph(crate::icons::Icon::NavAgents))
-            .child(format!("Agents overview {overview_hint}"));
-
         let left_toggle = self.dock_toggle_button(DockPosition::Left, window, cx);
         let right_toggle = self.dock_toggle_button(DockPosition::Right, window, cx);
         div()
@@ -1125,11 +1118,9 @@ impl Workbench {
                     .justify_center()
                     .truncate()
                     .text_size(px(tokens.font_size))
-                    .text_color(theme.muted)
+                    .text_color(theme.fg)
                     .child(self.active_title(cx)),
             )
-            .child(preset_button)
-            .child(overview_button)
             .child(right_toggle)
             .child(probe(&self.regions, Region::Titlebar))
             .into_any_element()
@@ -1562,6 +1553,9 @@ impl Workbench {
                     let mut child_path = path.clone();
                     child_path.push(index);
                     let element = self.render_tree(child, child_path, window, cx);
+                    // One hairline between two panes, owned by the second (CL-CHROME): the
+                    // boundary, never a focus outline.
+                    let border = self.theme.border;
                     container = container.child(
                         div()
                             .flex()
@@ -1572,6 +1566,12 @@ impl Workbench {
                             .min_w_0()
                             .min_h_0()
                             .overflow_hidden()
+                            .when(index > 0 && horizontal, |s| {
+                                s.border_l_1().border_color(border)
+                            })
+                            .when(index > 0 && !horizontal, |s| {
+                                s.border_t_1().border_color(border)
+                            })
                             .child(div().flex_1().min_h_0().min_w_0().child(element)),
                     );
                 }
@@ -1652,17 +1652,29 @@ impl Workbench {
             })
             .collect();
 
+        // The strip is chrome (the `sidebar` tone, like the title bar above it); its hairline is
+        // drawn first and the active tab, a `bg` fill reaching the strip's bottom, covers it: the
+        // tab is connected to its pane (CL-CHROME).
         let strip = div()
+            .relative()
             .flex()
             .flex_none()
-            .items_center()
+            .items_end()
             .h(px(tokens.tab_height))
             .w_full()
             .px(px(4.0))
             .gap(px(2.0))
             .overflow_hidden()
-            .border_b_1()
-            .border_color(theme.border)
+            .bg(theme.sidebar)
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(px(1.0))
+                    .bg(theme.border),
+            )
             .children(tabs)
             .child(
                 div()
@@ -1822,11 +1834,18 @@ impl Workbench {
         let theme = self.theme;
         let tokens = self.density.ui();
         let accent = theme.accent;
-        let hover = theme.surface_hover;
+        let hover = theme.sidebar_hover;
+        let look = TabLook::of(&theme, active, pane_focused);
         let (icon, title) = self.item_icon_and_title(item, cx);
         let tab_tip = self.item_tooltip(item, cx).map(SharedString::from);
-        let badge = session_of_item(item).and_then(|id| {
-            let badge = self.sessions.read(cx).agent_badge(id);
+        let agent_badge =
+            session_of_item(item).map(|id| (id, self.sessions.read(cx).agent_badge(id)));
+        // One attention mark per tab: the agent badge's warning glyph already says "blocked",
+        // so the attention dot only shows when the badge has none (CL-CHROME).
+        let badge_blocked = agent_badge
+            .as_ref()
+            .is_some_and(|(_, badge)| badge.blocked_icon().is_some());
+        let badge = agent_badge.and_then(|(id, badge)| {
             super::panels::agent_badge(
                 &theme,
                 &badge,
@@ -1836,13 +1855,15 @@ impl Workbench {
                 cx,
             )
         });
-        let attention = session_of_item(item).and_then(|id| {
-            let store = self.sessions.read(cx);
-            store
-                .session(id)
-                .map(|info| store.presentation(info))
-                .filter(|p| p.needs_you)
-        });
+        let attention = session_of_item(item)
+            .and_then(|id| {
+                let store = self.sessions.read(cx);
+                store
+                    .session(id)
+                    .map(|info| store.presentation(info))
+                    .filter(|p| p.needs_you)
+            })
+            .filter(|_| !badge_blocked);
         let dragged = DraggedItem {
             source: ItemSource::Pane {
                 pane: pane_id,
@@ -1860,20 +1881,13 @@ impl Workbench {
             .gap(px(tokens.spacing))
             .pl(px(tokens.spacing * 2.0))
             .pr(px(tokens.spacing))
-            .h(px(tokens.tab_height - 8.0))
-            .rounded(px(tokens.radius))
+            .h(px(tokens.tab_height - TAB_TOP_INSET))
+            .rounded_t(px(tokens.radius))
             .cursor_pointer()
-            // The focused pane shows as its active tab's `fg` text; the active tab of a pane
-            // without focus is `muted` like the others. No accent outline on the tab or the pane.
-            .text_color(if active && pane_focused {
-                theme.fg
-            } else {
-                theme.muted
-            })
-            .when(active, |s| {
-                s.bg(theme.surface).border_1().border_color(theme.border)
-            })
-            .when(!active, |s| s.hover(move |s| s.bg(hover)))
+            .text_color(look.text)
+            .font_weight(look.weight)
+            .when_some(look.fill, |s, fill| s.bg(fill))
+            .when(look.fill.is_none(), |s| s.hover(move |s| s.bg(hover)))
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.try_mutate(cx, |s| {
                     s.set_active_item(pane_id, index)?;
@@ -1980,6 +1994,19 @@ impl Workbench {
             )
             .child(probe(&self.regions, Region::Tab(pane_id, index)))
             .into_any_element()
+    }
+
+    /// How the tab at `index` of `pane` is drawn now ([`TabLook`]); `None` when there is no such
+    /// tab.
+    pub fn tab_look(&self, pane: PaneId, index: usize) -> Option<TabLook> {
+        let found = self.state.pane(pane)?;
+        (index < found.items.len()).then(|| {
+            TabLook::of(
+                &self.theme,
+                index == found.active,
+                self.state.focus == FocusTarget::Pane(pane),
+            )
+        })
     }
 
     fn render_item(
@@ -2149,7 +2176,8 @@ impl Workbench {
                     .children(
                         self.notice
                             .clone()
-                            .map(|n| div().text_color(theme.accent).child(n)),
+                            // A notice is words, not an action: `fg`, never the accent.
+                            .map(|n| div().min_w_0().truncate().text_color(theme.fg).child(n)),
                     ),
             )
             .child(

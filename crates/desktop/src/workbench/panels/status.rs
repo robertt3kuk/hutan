@@ -1,5 +1,10 @@
 //! Status bar items: `connection`, `workspace`, `sessions`, `attention`, `approvals`, `density`,
-//! `theme`, `palette_hint`, and the dock buttons `dock_left`, `dock_bottom`, `dock_right`.
+//! `theme`, `palette_hint`, the editor's items, and the dock buttons `dock_left`, `dock_bottom`,
+//! `dock_right`. The built-in presets show `attention` and `connection` on the left and the
+//! editor's items and `palette_hint` on the right ([`StatusBarLayout`]); an item with nothing to
+//! say draws nothing.
+//!
+//! [`StatusBarLayout`]: crate::workbench::registry::StatusBarLayout
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -33,6 +38,13 @@ pub fn connection_label(state: ConnectionState) -> (String, Tone) {
         ),
         ConnectionState::Stopped => ("hutand stopped".to_owned(), Tone::Error),
     }
+}
+
+/// The connection item says something only while the daemon is not simply up (connecting,
+/// reconnecting, restarting, stopped); a working connection is the normal state and draws
+/// nothing. The daemon's controls stay in the Daemon menu and the palette (*Daemon: Status*).
+pub fn connection_shown(tone: Tone) -> bool {
+    tone != Tone::Ok
 }
 
 fn retry_text(retry_in: Duration) -> String {
@@ -77,6 +89,9 @@ pub fn builtin_status_items() -> StatusItemRegistry {
         default_side: StatusSide::Left,
         render: Rc::new(|ctx: &StatusContext<'_>| {
             let (text, tone) = ctx.data.connection_line.clone();
+            if !connection_shown(tone) {
+                return div().id("status-connection").into_any_element();
+            }
             let color = match tone {
                 Tone::Ok => ctx.theme.success,
                 Tone::Warn => ctx.theme.warning,
@@ -146,16 +161,15 @@ pub fn builtin_status_items() -> StatusItemRegistry {
         id: "attention",
         default_side: StatusSide::Left,
         render: Rc::new(|ctx: &StatusContext<'_>| {
+            // Nothing needs you: the bar stays, the words go.
             let n = ctx.data.needs_you;
             if n == 0 {
-                return div()
-                    .id("status-attention")
-                    .text_color(ctx.theme.muted)
-                    .child("nothing needs you")
-                    .into_any_element();
+                return div().id("status-attention").into_any_element();
             }
+            // A state is a glyph in its color and a word: the glyph is the warning, the words
+            // are `fg` (CL-CHROME; the bar is not a place for colored text).
             clickable("status-attention", ctx)
-                .text_color(ctx.theme.warning)
+                .text_color(ctx.theme.fg)
                 .tooltip(tooltip(format!(
                     "Jump to the next session that needs you {}",
                     ctx.attention_hint
@@ -166,7 +180,11 @@ pub fn builtin_status_items() -> StatusItemRegistry {
                 .flex()
                 .items_center()
                 .gap(px(4.0))
-                .child(crate::icons::glyph(crate::icons::Icon::StatusAttention))
+                .child(
+                    div()
+                        .text_color(ctx.theme.warning)
+                        .child(crate::icons::glyph(crate::icons::Icon::StatusAttention)),
+                )
                 .child(format!("{n} need{} you", if n == 1 { "s" } else { "" }))
                 .into_any_element()
         }),
@@ -303,8 +321,9 @@ pub fn builtin_status_items() -> StatusItemRegistry {
 }
 
 /// The status item that toggles one dock: a small window glyph with the dock's side filled,
-/// pressed (accent) while the dock shows, dim and inert while it is hidden and holds no panel.
-/// Its tooltip carries the key of the active keymap.
+/// pressed (an `accent_soft` fill, the glyph `fg`) while the dock shows, dim and inert while it
+/// is hidden and holds no panel. Its tooltip carries the key of the active keymap. Not in the
+/// built-in presets' status bar; a preset that names it shows it.
 fn dock_button(
     id: &'static str,
     pos: DockPosition,
@@ -319,7 +338,7 @@ fn dock_button(
             let enabled = state.visible || state.has_panels;
             let hint = ctx.dock_hints.get(pos).clone();
             let color = if state.visible {
-                ctx.theme.accent
+                ctx.theme.fg
             } else {
                 ctx.theme.muted
             };
@@ -374,6 +393,57 @@ fn dock_tooltip(name: &str, state: DockState, hint: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_status_bar_is_attention_and_connection_then_the_palette_key() {
+        use crate::workbench::registry::StatusBarLayout;
+        let bar = StatusBarLayout::default();
+        assert_eq!(bar.left, ["attention", "connection"]);
+        assert_eq!(
+            bar.right,
+            [
+                "editor.mode",
+                "editor.position",
+                "editor.language",
+                "palette_hint"
+            ]
+        );
+        // Every item the built-in bar names is registered, and so is every item it no longer
+        // shows: a preset that lists them still gets them.
+        let registry = builtin_status_items();
+        let registered: Vec<&str> = registry.iter().map(|spec| spec.id).collect();
+        for id in bar.left.iter().chain(&bar.right) {
+            assert!(registered.contains(&id.as_str()), "{id} is registered");
+        }
+        for id in [
+            "workspace",
+            "sessions",
+            "approvals",
+            "density",
+            "theme",
+            "dock_left",
+            "dock_bottom",
+            "dock_right",
+        ] {
+            assert!(registered.contains(&id), "{id} stays registered");
+            assert!(
+                !bar.left.iter().chain(&bar.right).any(|shown| shown == id),
+                "{id} is not in the default bar"
+            );
+        }
+    }
+
+    #[test]
+    fn the_connection_item_speaks_only_while_the_daemon_is_not_up() {
+        let shown = |state| connection_shown(connection_label(state).1);
+        assert!(!shown(ConnectionState::Connected));
+        assert!(shown(ConnectionState::Connecting));
+        assert!(shown(ConnectionState::Stopped));
+        assert!(shown(ConnectionState::Reconnecting {
+            attempt: 1,
+            retry_in: Duration::from_secs(2),
+        }));
+    }
 
     #[test]
     fn connection_states_have_distinct_labels() {

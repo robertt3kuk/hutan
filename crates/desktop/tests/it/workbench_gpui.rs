@@ -884,27 +884,59 @@ fn right_click_menus_list_the_documented_entries(cx: &mut TestAppContext) {
     );
 }
 
+/// The title bar has no preset switcher (CL-CHROME): View → Layout Preset lists the presets
+/// with the current one checked, and follows a change of preset.
 #[gpui::test]
-fn title_bar_preset_menu_marks_the_current_preset(cx: &mut TestAppContext) {
+fn the_view_menu_checks_the_current_preset(cx: &mut TestAppContext) {
+    use gpui::OwnedMenuItem;
     let (view, cx) = open(cx, None);
-    view.update_in(cx, |wb, window, cx| {
-        wb.show_preset_menu(point(px(500.0), px(30.0)), window, cx)
-    });
-    let entries = view
-        .read_with(cx, |wb, _| wb.context_menu_entries())
-        .unwrap();
-    let shown: Vec<(String, bool)> = entries.iter().map(|(l, c)| (l.to_string(), *c)).collect();
+    let presets = |cx: &mut VisualTestContext| -> Vec<(String, bool)> {
+        let menus = cx.update(|_, cx| cx.get_menus()).expect("menus are set");
+        let view_menu = menus
+            .iter()
+            .find(|m| m.name.as_ref() == "View")
+            .expect("a View menu");
+        let submenu = view_menu
+            .items
+            .iter()
+            .find_map(|item| match item {
+                OwnedMenuItem::Submenu(menu) if menu.name.as_ref() == "Layout Preset" => {
+                    Some(menu.clone())
+                }
+                _ => None,
+            })
+            .expect("View → Layout Preset");
+        submenu
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                OwnedMenuItem::Action { name, checked, .. } => Some((name.clone(), *checked)),
+                _ => None,
+            })
+            .collect()
+    };
     assert_eq!(
-        shown,
-        vec![
-            ("Default".into(), true),
-            ("Focus".into(), false),
-            ("Overview".into(), false),
-            ("Save Layout as Preset…".into(), false)
+        presets(cx),
+        [
+            ("Default".to_owned(), true),
+            ("Focus".to_owned(), false),
+            ("Overview".to_owned(), false)
         ]
     );
-    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(1, window, cx));
+    cx.dispatch_action(actions::ApplyPreset("focus".into()));
     assert_eq!(state(&view, cx).preset, "focus");
+    assert_eq!(
+        presets(cx),
+        [
+            ("Default".to_owned(), false),
+            ("Focus".to_owned(), true),
+            ("Overview".to_owned(), false)
+        ]
+    );
+    assert!(
+        !view.read_with(cx, |wb, _| wb.layout_offer_shown()),
+        "a layout handed in is never offered the new default"
+    );
 }
 
 #[gpui::test]

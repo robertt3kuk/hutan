@@ -1719,6 +1719,7 @@ fn version_1() -> WorkbenchState {
             size: 240.0,
             visible: true,
             collapsed: false,
+            more: Vec::new(),
         },
         right: Dock {
             panels: ids(&["inspector", "agents", "tasks", "assistant"]),
@@ -1726,6 +1727,7 @@ fn version_1() -> WorkbenchState {
             size: 300.0,
             visible: true,
             collapsed: false,
+            more: Vec::new(),
         },
         bottom: Dock::new(&["resources"], 200.0, false),
     };

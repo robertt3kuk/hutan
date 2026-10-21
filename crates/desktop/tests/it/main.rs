@@ -5,6 +5,7 @@ mod attention_controls_gpui;
 mod blocks_gpui;
 mod changes_fresh_gpui;
 mod chat_gpui;
+mod chrome_gpui;
 mod close_gpui;
 mod common;
 mod control_gpui;

@@ -67,8 +67,8 @@ pub(crate) struct DaemonControl {
     fetching: bool,
     /// Quitting has started; nothing else may run.
     pub quitting: bool,
-    /// What the menu bar was last built for.
-    menu: Option<DaemonMenu>,
+    /// What the menu bar was last built for: the daemon menu and the current layout preset.
+    menu: Option<(DaemonMenu, String)>,
     task: Option<Task<()>>,
     fetch: Option<Task<()>>,
     /// `hutand.log`, as `Open Logs` reveals it and the popover shows it.
@@ -258,13 +258,19 @@ impl Workbench {
     /// Rebuilds the menu bar for the current layout presets and daemon state.
     pub(crate) fn refresh_menus(&mut self, cx: &mut Context<Self>) {
         let state = self.menu_state(cx);
-        cx.set_menus(crate::app::menus(&self.presets, &state));
-        self.daemon.menu = Some(state);
+        cx.set_menus(crate::app::menus(&self.presets, &self.state.preset, &state));
+        self.daemon.menu = Some((state, self.state.preset.clone()));
     }
 
-    /// Rebuilds the menu bar when the daemon menu's checks or enabled items changed.
-    pub(crate) fn sync_daemon_menu(&mut self, cx: &mut Context<Self>) {
-        if self.daemon.menu != Some(self.menu_state(cx)) {
+    /// Rebuilds the menu bar when the daemon menu's checks or enabled items, or the preset View
+    /// → Layout Preset checks, changed.
+    pub(crate) fn sync_menus(&mut self, cx: &mut Context<Self>) {
+        let current = self
+            .daemon
+            .menu
+            .as_ref()
+            .map(|(menu, preset)| (*menu, preset.as_str()));
+        if current != Some((self.menu_state(cx), self.state.preset.as_str())) {
             self.refresh_menus(cx);
         }
     }
@@ -272,7 +278,7 @@ impl Workbench {
     /// The connection changed: keep the menu, the popover data and the terminals current.
     pub(crate) fn on_daemon_state_changed(&mut self, cx: &mut Context<Self>) {
         self.follow_daemon_started(cx);
-        self.sync_daemon_menu(cx);
+        self.sync_menus(cx);
         self.sync_mac_surfaces(cx);
         self.daemon_settings_follow_run(cx);
         if self.daemon.popover {

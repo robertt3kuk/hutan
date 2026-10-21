@@ -598,6 +598,7 @@ fn version_1_file(dir: &std::path::Path) -> PathBuf {
             size: 240.0,
             visible: true,
             collapsed: false,
+            more: Vec::new(),
         },
         right: Dock {
             panels: ids(&["inspector", "agents", "tasks", "assistant"]),
@@ -605,6 +606,7 @@ fn version_1_file(dir: &std::path::Path) -> PathBuf {
             size: 300.0,
             visible: true,
             collapsed: false,
+            more: Vec::new(),
         },
         bottom: Dock::new(&["resources"], 200.0, false),
     };

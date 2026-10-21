@@ -26,7 +26,7 @@ use crate::sessions::SessionsStore;
 use crate::settings::{ChatSettings, SendKey};
 use crate::workbench::actions::{self, RestartSessionById};
 use crate::workbench::harnesses::harness_name;
-use crate::workbench::panels::{kind_icon, recovery_chip, state_dot, tone_color};
+use crate::workbench::panels::{recovery_chip, tone_color};
 use crate::workbench::render::probe;
 use crate::workbench::send_key::{send_key_control, stop_asking, write_send_key};
 use crate::workbench::text_field::{EditableText, FieldRef, FieldState, edit_keys};
@@ -655,7 +655,6 @@ impl ChatView {
                 )
             }
         });
-        let pending = self.pending.len();
         let session = self.session;
         let context = self.model.read(cx).transcript().context_use();
         // `UX-MODE-CHIP` (protocol 0.34): the mode a harness reports, read only.
@@ -663,6 +662,11 @@ impl ChatView {
             .filter(|chat| is_harness_chat(&chat.agent))
             .filter(|_| self.sessions.read(cx).supports_chat_mode())
             .map(mode_chip);
+        // A status line, not a second title (CL-CHROME, D-C5): the tab and the window title name
+        // the session; this row says its state (a glyph in the state's color and the word), who
+        // runs it and what is open to change. The tab strip is always drawn, so the title never
+        // has to come back here. A waiting approval is the state's word ("blocked · approval")
+        // and the card's to say, not a count beside it.
         div()
             .relative()
             .flex()
@@ -673,23 +677,19 @@ impl ChatView {
             .px(px(tokens.spacing * 3.0))
             .border_b_1()
             .border_color(theme.border)
-            .child(
-                div()
-                    .text_color(theme.muted)
-                    .child(crate::icons::glyph(kind_icon(info.kind))),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .child(SharedString::from(info.title.clone())),
-            )
-            .child(state_dot(theme, &presentation))
-            .child(
-                div()
-                    .text_color(tone_color(theme, presentation.tone))
-                    .child(SharedString::from(presentation.label.clone())),
-            )
+            .child(crate::workbench::ui::state_label(
+                presentation.icon(),
+                // What needs you carries its reason: "blocked · approval".
+                if presentation.needs_you && !presentation.detail.is_empty() {
+                    format!("{} · {}", presentation.label, presentation.detail)
+                } else {
+                    presentation.label.clone()
+                },
+                tone_color(theme, presentation.tone),
+                false,
+                theme,
+                tokens,
+            ))
             .children(detail.map(|text| {
                 div()
                     .flex_1()
@@ -780,24 +780,6 @@ impl ChatView {
                     )
                 },
             )
-            .when(pending > 0, |s| {
-                s.child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(theme.warning)
-                        .flex()
-                        .items_center()
-                        .gap(px(4.0))
-                        .child(crate::icons::glyph(crate::icons::Icon::StateApproval))
-                        // "waiting" is the state label's and the card's to say: with the context
-                        // chip the row has no room for it. What still does not fit ends in "…".
-                        .child(div().min_w_0().truncate().child(SharedString::from(format!(
-                            "{pending} approval{}",
-                            if pending == 1 { "" } else { "s" }
-                        )))),
-                )
-            })
             .child(probe(&self.regions, Region::Chat("header")))
             .into_any_element()
     }

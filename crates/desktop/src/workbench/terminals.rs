@@ -1458,7 +1458,7 @@ impl Workbench {
             self.apply_layout_settings(cx);
         }
         if changes.contains("app") {
-            self.sync_daemon_menu(cx);
+            self.sync_menus(cx);
         }
         if changes.contains("editor") {
             self.refresh_code_style(cx);

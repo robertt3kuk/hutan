@@ -223,27 +223,19 @@ pub struct StatusBarLayout {
 }
 
 impl Default for StatusBarLayout {
+    /// The quiet status bar of the built-in presets (CL-CHROME): what needs you and the
+    /// connection while it is not up on the left, the editor's items while a file tab has
+    /// focus and the palette's key on the right. The other items (`workspace`, `sessions`,
+    /// `approvals`, `density`, `theme`, the dock buttons) stay registered for presets that
+    /// name them.
     fn default() -> Self {
         Self {
-            left: [
-                "connection",
-                "workspace",
-                "sessions",
-                "attention",
-                "approvals",
-            ]
-            .map(str::to_owned)
-            .to_vec(),
+            left: ["attention", "connection"].map(str::to_owned).to_vec(),
             right: [
                 "editor.mode",
                 "editor.position",
                 "editor.language",
-                "density",
-                "theme",
                 "palette_hint",
-                "dock_left",
-                "dock_bottom",
-                "dock_right",
             ]
             .map(str::to_owned)
             .to_vec(),

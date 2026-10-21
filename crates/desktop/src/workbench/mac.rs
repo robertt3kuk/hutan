@@ -184,7 +184,7 @@ impl Workbench {
             return;
         }
         // The settings change would do it too; doing it here keeps the answer immediate.
-        self.sync_daemon_menu(cx);
+        self.sync_menus(cx);
         self.sync_status_item(cx);
         cx.notify();
     }
@@ -298,7 +298,7 @@ impl Workbench {
         let status = self.mac.login_item.status();
         if status != self.mac.login_status {
             self.mac.login_status = status;
-            self.sync_daemon_menu(cx);
+            self.sync_menus(cx);
             self.sync_status_item(cx);
             cx.notify();
         }

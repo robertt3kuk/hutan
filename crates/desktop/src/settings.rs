@@ -297,6 +297,9 @@ pub struct DockSetting {
     /// Shown as its rail only: the left sidebar's 44 pt icon rail, the right side's activity
     /// rail without the panel body. Ignored on the bottom dock.
     pub collapsed: bool,
+    /// Panels of `panels` the rail lists in its `⋯` menu instead of as icons (shown anyway while
+    /// active or while they have a badge), e.g. `["inspector", "resources"]`.
+    pub more: Vec<String>,
 }
 
 impl Default for DockSetting {
@@ -306,6 +309,7 @@ impl Default for DockSetting {
             size: 240.0,
             visible: false,
             collapsed: false,
+            more: Vec::new(),
         }
     }
 }
@@ -317,22 +321,33 @@ impl DockSetting {
             size: f64::from(dock.size),
             visible: dock.visible,
             collapsed: dock.collapsed,
+            more: dock.more.iter().map(|p| p.to_string()).collect(),
         }
     }
 
     fn to_dock(&self) -> Dock {
         // The old Overview board is the Agents page now (saved presets keep working).
+        fn renamed(panel: &str) -> &str {
+            match panel {
+                "overview" => crate::workbench::model::AGENTS_PAGE,
+                other => other,
+            }
+        }
         let mut panels: Vec<&str> = Vec::new();
         for panel in &self.panels {
-            let panel = match panel.as_str() {
-                "overview" => super::workbench::model::AGENTS_PAGE,
-                other => other,
-            };
+            let panel = renamed(panel);
             if !panels.contains(&panel) {
                 panels.push(panel);
             }
         }
-        let mut dock = Dock::new(&panels, self.size as f32, self.visible);
+        let more: Vec<&str> = self
+            .more
+            .iter()
+            .map(String::as_str)
+            .map(renamed)
+            .filter(|p| panels.contains(p))
+            .collect();
+        let mut dock = Dock::new(&panels, self.size as f32, self.visible).with_more(&more);
         dock.collapsed = self.collapsed;
         dock
     }
@@ -381,6 +396,11 @@ pub struct LayoutSettings {
     /// 900 pt) to their rails when the window is narrow, and bring them back when it grows. The
     /// collapse is temporary and never changes what you chose.
     pub auto_collapse: bool,
+    /// Offer the quieter default layout (three icons on the right rail, the rest under `⋯`) once
+    /// to a layout saved before it existed: one line under the title bar with *Use new default*
+    /// and *Keep mine*. Off after you answered, so it is asked once; nothing changes unless you
+    /// choose it (View → Use New Default Layout does it any time).
+    pub offer_new_default: bool,
 }
 
 impl Default for LayoutSettings {
@@ -389,6 +409,7 @@ impl Default for LayoutSettings {
             preset: LayoutPreset::DEFAULT.to_owned(),
             presets: BTreeMap::new(),
             auto_collapse: true,
+            offer_new_default: true,
         }
     }
 }
@@ -1399,6 +1420,7 @@ mod tests {
                     size: 300.0,
                     visible: true,
                     collapsed: false,
+                    more: Vec::new(),
                 },
                 ..PresetSetting::default()
             },
@@ -1411,6 +1433,7 @@ mod tests {
                     size: 280.0,
                     visible: true,
                     collapsed: false,
+                    more: Vec::new(),
                 },
                 ..PresetSetting::default()
             },

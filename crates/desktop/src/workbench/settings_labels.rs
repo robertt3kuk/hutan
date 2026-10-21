@@ -307,6 +307,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "layout",
+        "offer_new_default",
+        "Offer the new default layout",
+        "Shows a one-line offer once when your saved layout predates the quieter default (Changes, Agents and History on the right rail, Requests and Resources under ⋯): “Use new default” or “Keep mine”. Your layout stays as it is unless you choose it. Off after you answered.",
+    ),
+    field(
+        "layout",
         "presets",
         "Your layout presets",
         "Layouts you saved, by name. Save the layout you have on screen, rename a preset or delete one. A saved preset named like a built-in one replaces it until you delete it.",

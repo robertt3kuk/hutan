@@ -9,7 +9,9 @@
 //!   While compact (`docks.rs`) the sidebar is a 44 pt icon rail of the same nav.
 //! - **Right**: the panel body (a header with the panel's name, then the panel) next to a 40 pt
 //!   activity rail of panel icons with tooltips, outside the body and always there unless hidden;
-//!   icons that do not fit move into a More menu. The titlebar's two dock buttons are here too.
+//!   panels the dock lists in `⋯` ([`Dock::more`]: Requests and Resources in the clean default)
+//!   and icons that do not fit are in the More menu ([`rail_split`]). The titlebar's two dock
+//!   buttons are here too.
 
 use gpui::{
     AnyElement, ClickEvent, Context, Div, Hsla, InteractiveElement, IntoElement, MouseButton,
@@ -79,6 +81,41 @@ pub fn strip_split(panels: usize, active: Option<usize>, extent: f32) -> (Vec<us
     }
     let hidden = (0..panels).filter(|i| !shown.contains(i)).collect();
     (shown, hidden)
+}
+
+/// The icons of a side dock's rail in `extent` pt of room and what its More (`⋯`) menu lists:
+/// `(shown, more)` as indices into `dock.panels`, in dock order. A panel the dock lists in `⋯`
+/// ([`Dock::more`]) is an icon only while it is active or `badged` (Requests while a request
+/// waits); the rest are icons as long as they fit, the active one always among them. A dock
+/// that lists panels in `⋯` always has the More button.
+pub fn rail_split(
+    dock: &Dock,
+    badged: impl Fn(&PanelId) -> bool,
+    extent: f32,
+) -> (Vec<usize>, Vec<usize>) {
+    let icons: Vec<usize> = dock
+        .panels
+        .iter()
+        .enumerate()
+        .filter(|(_, panel)| dock.on_rail(panel, badged(panel)))
+        .map(|(index, _)| index)
+        .collect();
+    let active = dock
+        .active
+        .as_ref()
+        .and_then(|a| icons.iter().position(|i| dock.panels.get(*i) == Some(a)));
+    // Panels listed in `⋯` count as one more icon that never shows: it takes the More button's
+    // slot when everything else fits, and goes into More with the overflow when it does not.
+    let listed = usize::from(icons.len() < dock.panels.len());
+    let (fit, _) = strip_split(icons.len() + listed, active, extent);
+    let shown: Vec<usize> = fit
+        .into_iter()
+        .filter_map(|slot| icons.get(slot).copied())
+        .collect();
+    let more = (0..dock.panels.len())
+        .filter(|i| !shown.contains(i))
+        .collect();
+    (shown, more)
 }
 
 impl Workbench {
@@ -546,17 +583,20 @@ impl Workbench {
             .border_b_1()
             .border_color(theme.border)
             .text_size(px(tokens.font_size))
-            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .font_weight(gpui::FontWeight::MEDIUM)
             .text_color(theme.fg)
             .child(div().min_w_0().truncate().child(title))
             .into_any_element()
     }
 
     /// The 40 pt activity rail of the right side, outside the body of the panel and always there
-    /// unless the user hid it: one icon per panel of the dock (History, Changes, Requests, Agents,
-    /// Resources; icons that do not fit move into More), the way back to the body at the bottom.
-    /// The icon of the panel the body shows collapses the body to the rail; any other icon opens
-    /// that panel (also while the body is collapsed). The Requests badge keeps its count.
+    /// unless the user hid it: one icon per panel of the dock (Changes, Agents, History in the
+    /// clean default), the panels it lists in `⋯` (Requests, Resources) and icons that do not fit
+    /// in the More menu, the way back to the body at the bottom. Requests comes onto the rail
+    /// with its count while a request waits; it never opens the body by itself. The icon of the
+    /// panel the body shows collapses the body to the rail; any other icon opens that panel (also
+    /// while the body is collapsed). Icons are `muted`, the active one `fg` (on the selected fill
+    /// while the body shows): the rail spends no accent.
     pub(super) fn right_rail(
         &mut self,
         dock: &Dock,
@@ -568,10 +608,6 @@ impl Workbench {
         let accent = theme.accent;
         let status_h = self.density.ui().status_bar;
         let open = self.dock_mode(pos) == DockMode::Expanded;
-        let active_index = dock
-            .active
-            .as_ref()
-            .and_then(|a| dock.panels.iter().position(|p| p == a));
         // What is left of the window's height for icons: under the inset, over the bottom
         // button and the status bar.
         let room = f32::from(window.viewport_size().height)
@@ -579,9 +615,11 @@ impl Workbench {
             - status_h
             - RAIL_BUTTON
             - 3.0 * RIGHT_RAIL_PAD;
-        let (shown, hidden) = strip_split(dock.panels.len(), active_index, room);
-        let append_index = dock.panels.len();
         let approvals = self.sessions.read(cx).approvals().len();
+        let badge_of =
+            |panel: &PanelId| (panel.as_str() == "inspector" && approvals > 0).then_some(approvals);
+        let (shown, hidden) = rail_split(dock, |panel| badge_of(panel).is_some(), room);
+        let append_index = dock.panels.len();
         let hover = theme.right_sidebar_accent;
 
         let buttons: Vec<AnyElement> = shown
@@ -590,13 +628,7 @@ impl Workbench {
             .map(|(index, panel)| {
                 let active = dock.active.as_ref() == Some(&panel);
                 let pressed = active && open;
-                let color = if pressed {
-                    accent
-                } else if active {
-                    theme.fg
-                } else {
-                    theme.muted
-                };
+                let color = if active { theme.fg } else { theme.muted };
                 let (glyph, title) = self.item_icon_and_title(
                     &ItemRef::Panel {
                         panel: panel.clone(),
@@ -623,8 +655,7 @@ impl Workbench {
                         face,
                         label: title,
                         background: pressed.then_some(theme.right_sidebar_accent),
-                        badge: (panel.as_str() == "inspector" && approvals > 0)
-                            .then_some(approvals),
+                        badge: badge_of(&panel),
                         region: Region::DockTab(pos, index),
                     },
                     hover,
@@ -697,7 +728,7 @@ impl Workbench {
                 face: icon(
                     Icon::DockRight,
                     16.0,
-                    if open { accent } else { theme.muted },
+                    if open { theme.fg } else { theme.muted },
                 )
                 .into_any_element(),
                 label: format!(
@@ -818,8 +849,9 @@ impl Workbench {
             (_, DockMode::Hidden) => format!("Show {name}{hint}"),
         }
         .into();
+        // Icons are `muted` at rest and `fg` when what they stand for shows: no accent here.
         let color = if mode == DockMode::Expanded {
-            theme.accent
+            theme.fg
         } else {
             theme.muted
         };
@@ -985,5 +1017,43 @@ mod tests {
         // Never fewer than one icon, whatever the width.
         let (shown, _) = strip_split(5, None, 20.0);
         assert_eq!(shown.len(), 1);
+    }
+
+    #[test]
+    fn the_clean_rail_shows_three_icons_and_lists_requests_and_resources_in_more() {
+        use crate::workbench::model::LayoutPreset;
+        let dock = LayoutPreset::default_preset().docks.right;
+        let none = |_: &PanelId| false;
+        let names = |indices: &[usize]| -> Vec<String> {
+            indices
+                .iter()
+                .map(|i| dock.panels[*i].to_string())
+                .collect()
+        };
+        // Changes, Agents, History as icons; Requests and Resources behind ⋯.
+        let (shown, more) = rail_split(&dock, none, 600.0);
+        assert_eq!(names(&shown), ["changes", "agents", "history"]);
+        assert_eq!(names(&more), ["inspector", "resources"]);
+        // A waiting request brings Requests onto the rail with its count; Resources stays.
+        let requests = |p: &PanelId| p.as_str() == "inspector";
+        let (shown, more) = rail_split(&dock, requests, 600.0);
+        assert_eq!(names(&shown), ["changes", "agents", "history", "inspector"]);
+        assert_eq!(names(&more), ["resources"]);
+        // The panel the body shows is always an icon.
+        let mut active = dock.clone();
+        active.active = Some(PanelId::new("resources"));
+        let (shown, more) = rail_split(&active, none, 600.0);
+        assert_eq!(names(&shown), ["changes", "agents", "history", "resources"]);
+        assert_eq!(names(&more), ["inspector"]);
+        // Short of room, icons join ⋯ and the More button keeps its slot (130 pt: three slots).
+        let (shown, more) = rail_split(&dock, none, 130.0);
+        assert_eq!(names(&shown), ["changes", "agents"]);
+        assert_eq!(names(&more), ["history", "inspector", "resources"]);
+        // A layout without `more` (saved before the clean default) keeps every icon.
+        let mut old = dock.clone();
+        old.more.clear();
+        let (shown, more) = rail_split(&old, none, 600.0);
+        assert_eq!(shown.len(), 5);
+        assert!(more.is_empty());
     }
 }

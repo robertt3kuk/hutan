@@ -813,19 +813,17 @@ impl Workbench {
             return;
         }
         let inspector = super::model::PanelId::new("inspector");
-        match self.state.docks.find(&inspector) {
-            // A right panel the user (or a narrow window) collapsed to its rail stays collapsed:
-            // the request is announced and its badge stays on the rail, the user chooses.
-            Some(pos) if self.dock_mode(pos) != super::model::DockMode::Expanded => {
-                self.mutate(cx, |s| {
-                    let _ = s.set_dock_active(pos, &inspector);
-                });
-                self.set_notice(
-                    "A permission request is waiting: open Requests to answer it",
-                    cx,
-                );
-            }
-            _ => self.open_panel("inspector", cx),
+        // A right panel the user (or a narrow window) collapsed to its rail stays collapsed and
+        // keeps the panel it remembers: the Requests icon, with its count, is on the rail while
+        // the request waits, and the status bar's "needs you" says it once (CL-CHROME: no second
+        // sentence, no change of the remembered panel).
+        let on_rail = self
+            .state
+            .docks
+            .find(&inspector)
+            .is_some_and(|pos| self.dock_mode(pos) != super::model::DockMode::Expanded);
+        if !on_rail {
+            self.open_panel("inspector", cx);
         }
     }
 
