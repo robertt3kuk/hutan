@@ -1,11 +1,13 @@
 //! Hutan domain types: identifiers, session lifecycle, the agent event model, the agent
-//! observation tree, tasks with dependencies, and checkpoints. No I/O lives here.
+//! observation tree, tasks with dependencies, checkpoints and the plan of a restore. No I/O
+//! lives here.
 
 pub mod agent;
 pub mod checkpoint;
 pub mod ids;
 pub mod observation;
 pub mod question;
+pub mod restore;
 pub mod session;
 pub mod task;
 
@@ -26,6 +28,10 @@ pub use observation::{
     ObservationTree, Patch, Usage,
 };
 pub use question::{QuestionOutcome, QuestionResponse, QuestionSpec};
+pub use restore::{
+    AcceptError, Change, FileMode, PlannedFile, Present, RestoreAction, RestoreEntry, RestorePlan,
+    RestoreState, TreeFile, TurnChanges, restore_plan,
+};
 pub use session::{InvalidTransition, SessionEvent, SessionKind, SessionState};
 pub use task::{
     AfterPolicy, DELIVERY_HISTORY_MAX, DeliveryActor, DeliveryRecord, DeliveryState,
