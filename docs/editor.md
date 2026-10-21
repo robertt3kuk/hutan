@@ -12,8 +12,20 @@ Hutan's own code editor (ADR 0012 and its amendment of 2026-10-21; plan and budg
 | E-6 | editing: carets, multi-cursor, input methods, undo, auto-indent and pairs, clipboard, save through the daemon, conflict bar, replace | `crates/code_view/src/{editing,motion,input,rules}.rs`, `crates/desktop/src/workbench/file_sync.rs` |
 | E-8 | Vim in file tabs: modes, block caret, the Escape rule for input methods, the `:` line, splits, clipboard registers | `crates/code_view/src/{vim_host,modal,ex}.rs`, `crates/desktop/src/workbench/{file_ex,editor_status}.rs` |
 | **E-10** | **Agent-aware editing: an agent's writes reach open buffers safely, its turn's hunks are highlighted and rejected one by one, a pending ledger survives restarts, Follow agent, Open from chat/Changes/terminal, MCP `open_file`** | `crates/code_view/src/agent.rs`, `crates/desktop/src/workbench/{agent_edits,file_sync,file_view}.rs` |
+| E-11a | LSP client library: one supervised language server, coalescing document sync, typed requests, a scripted fake server | `crates/lsp_client` |
 
-LSP and the file tree (E-13a) are not here yet.
+Language servers in the daemon (E-11b), their UI (E-12a) and the file tree (E-13a) are not here yet.
+
+## LSP client (E-11a)
+
+`hutan-lsp-client` runs one language server as a child process; the daemon's `LspHub` (E-11b) will own one `Server` per `(server, workspace root)`. No GPUI, no daemon types; types from `ls-types` (the maintained fork of `lsp-types 0.97`; the API is the same except that `ReferencesOptions` is now `ReferenceOptions`).
+
+- **Lifecycle:** `initialize` (offers `positionEncodings: [utf-8, utf-16]`) → `initialized` … `shutdown` → `exit` → stdin closed → the process group is killed after a grace. States: `starting → indexing ⇄ ready → failed | stopped`; `indexing` while work-done `$/progress` runs.
+- **Restarts:** a crash restarts after a backoff that doubles per failure (1 s … 30 s); 5 failures in 3 minutes make it `failed`. A missing executable is `failed` at once ("not installed", never downloaded). Open documents are sent again to the new process.
+- **Documents:** `open` / `change` (an applied transaction's changes) / `replace` / `save` / `close`. Changes coalesce for 50 ms or until the next request: a burst of edits is one `didChange` per document, a single range replacement for incremental servers, the whole text for full-sync ones.
+- **Requests:** hover, definition, references, completion, document symbols, formatting, prepare rename, rename, code action; refused unsent when the server did not announce them; 5 s (completion 2 s) timeouts; a request that times out or is dropped is cancelled with `$/cancelRequest`. Server requests (`workspace/configuration`, progress creation, registrations, …) are answered; `workspace/applyEdit` is refused (the client never writes files).
+- **Bounds:** 64 MiB frames (larger incoming ones are skipped unbuffered); ≤ 64 messages / 16 MiB queued for the server, senders wait within their deadline; ≤ 1024 requests in flight; diagnostics ≤ 4096 files × 500 entries, messages ≤ 4 KiB; the last 256 log lines; 256 queued events per subscriber, a slow subscriber is told it lagged. The crate-level docs state the overflow policy in full.
+- **Processes:** the server runs in its own process group; dropping the `Server` kills the group (rust-analyzer's proc-macro servers included). `ServerStatus::pid` is the root of the tree Resources read RSS from.
 
 ## Agents' edits (E-10)
 
@@ -142,6 +154,7 @@ In text fields (composer, palette, forms) the same layer runs, except that `:`, 
   - large files ask first, and binary files are refused.
 - `links_gpui.rs`: a ⌘-click with `editor` opens the file at the line.
 - `control_gpui.rs`: `workbench::OpenFile` dispatches.
+- E-11a: `crates/lsp_client/src/{codec,position,sync,events,requests}.rs` (framing, UTF-16 and UTF-8 positions with emoji and CJK, coalescing incl. multi-edit transactions, bounded stores, request round trips); `crates/lsp_client/tests/it/` against `hutan-fake-lsp` (`src/bin/fake_lsp.rs`, a scripted server with its own document mirror): initialize → diagnostics → hover → definition; 100 changes in one tick are one `didChange` equal to the final text (incremental and full); UTF-16 positions after emoji and CJK; a crash restarts with doubling backoff and ends `failed`; a crashed server gets the current documents again; a hung request times out and is cancelled, a dropped one too; dropping the client kills the server and its child (by pid); `stop` kills a server that ignores `exit`; a flood of notifications and diagnostics stays within the bounds; a server that stops reading never grows the outgoing queue; no `unbounded` in the crate.
 - E-10: `crates/code_view/src/agent.rs` (hunks, rebase over the user's edits, Reject of one hunk, a created file, reverse patches); `crates/code_view/tests/it/agent.rs` (an agent's write to a clean buffer is one undo step and keeps the caret, Reject restores one hunk and is undoable, the user's typing is not a hunk, hunks follow an edit until the next diff, the arrows and the newest change, the highlight off); `crates/desktop/src/workbench/agent_edits.rs` (the ledger: turns, rebases, hints, bounds, save and load 0600); `crates/desktop/tests/it/agent_edits_gpui.rs` (over a real daemon and a Codex fixture: a shell write during the agent's turn, no `file_diff`, reaches the open file through `fs.changed` as one undo step with its hunk, and the ledger is saved for the next start); `crates/cli/src/mcp/table.rs` (`open_file` is `ui.run workbench::OpenFile`).
 - `model/tests.rs`: the stored form that older binaries read.
 - Timings: `just bench --only B11,B13` (`docs/perf.md` § Editor: the viewer).

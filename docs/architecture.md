@@ -28,7 +28,7 @@ flowchart LR
 
 ## Crates
 
-Crates are created when their first milestone starts (no empty placeholders); package names are `hutan-<dir>`. Present now: `core`, `protocol`, `daemon` (`hutand` + lib), `client`, `terminal`, `agents` (Codex chat, `docs/agents.md`), `gateway` (direct model chat, `docs/gateway.md`), `buffer` (the editor's text model, ADR 0012), `syntax` (the editor's tree-sitter layer), `vim` (the editor's Vim layer).
+Crates are created when their first milestone starts (no empty placeholders); package names are `hutan-<dir>`. Present now: `core`, `protocol`, `daemon` (`hutand` + lib), `client`, `terminal`, `agents` (Codex chat, `docs/agents.md`), `gateway` (direct model chat, `docs/gateway.md`), `buffer` (the editor's text model, ADR 0012), `syntax` (the editor's tree-sitter layer), `vim` (the editor's Vim layer), `lsp_client` (the LSP client the daemon's language servers will run on, ADR 0012).
 
 ```text
 crates/
@@ -49,6 +49,7 @@ crates/
   buffer/         editor text model (E-1, ADR 0012): `crop` rope with byte offsets, atomic transactions, undo tree with groups, multi-cursor selections, anchors, UTF-16/LSP coordinates, `apply_external` (minimal diff), search; no GPUI, no I/O, no Hutan dependencies
   syntax/         editor syntax (E-2, ADR 0012): tree-sitter parsing that follows edits on a worker thread (a newer version cancels the parse in flight; reads never wait), highlights reduced to the `syntax.*` token table, node/expand/shrink selection, folds, bracket match, indent levels; up to 15 grammars behind cargo features, vendored query data with attribution (`crates/syntax/queries/NOTICE.md`); optional `buffer` feature for `hutan_buffer::Text`; no GPUI, no I/O
   vim/            Vim modal layer (E-7a, ADR 0012), extracted from the desktop's V-1: `Vim<H: VimHost>` (modes, counts, motions, operators, text objects, unnamed register, `.` repeat) over a host that answers byte-offset reads (char at, line of, slice) and applies `Transaction`s with undo groups; the desktop's `TextInput` is one host (every text field), a rope host over `hutan_buffer::Buffer` is the editor's (E-8); no dependencies, no GPUI, no I/O
+  lsp_client/     LSP client (E-11a, ADR 0012): one supervised language server per `Server` — `Content-Length` framing with a frame cap, request correlation with timeouts and `$/cancelRequest`, bounded outgoing/incoming paths (documented overflow policy), answers to server requests, `initialize`…`shutdown`/`exit` with a kill fallback, `positionEncoding` negotiation (UTF-8 preferred, UTF-16 via `buffer`), state machine `starting → indexing ⇄ ready → failed | stopped` from `$/progress`, restarts with exponential backoff, coalescing document sync (one `didChange` per burst), typed request subset over `ls-types`, process group killed on drop; `hutan-fake-lsp` scripted test server; no GPUI, no daemon types
   settings/       layered TOML settings store, schema registry, watcher, keymap, color packs and their registry (`themes/`, ADR 0018; no GPUI; ADR 0010)
   terminal_view/  GPUI terminal element/view over render DTOs, input encoding (UI crate)
   code_view/      GPUI code view (E-5, ADR 0012, UI crate): `FileBuffer` (one file's text, load state, a `syntax` tree only while shown), `CodeView` and its element (shapes only the lines in view, `syntax.*` colors of the pack, mouse selection), find in file; read-only until E-6 (`docs/editor.md`)
@@ -68,6 +69,7 @@ flowchart BT
   settings --> terminal_view
   core --> terminal & runtime & storage & security & notifications
   buffer
+  buffer --> lsp_client
   buffer -.-> syntax
   buffer & syntax & settings --> code_view --> desktop
   vim --> desktop
