@@ -111,7 +111,7 @@ system prompt. Direct chats reuse the streaming transcript and usage footer. The
 **Switch model…** control (or ⌘K → **Chat: Switch Model…**) changes the next turn's provider
 and model; switching is disabled during a turn. The journal displays the switch notice.
 Missing/rejected keys offer **Set key…**; missing models offer **Pick another model…**.
-Other gateway errors remain inline, including the provider's retry-after hint for rate limits.
+Other gateway errors remain inline, including the provider's retry-after hint for rate limits. A failed turn that may pass (rate limit, provider failure, connection, timeout, broken stream) gets a recovery row under its footer in the desktop (`UX-RETRY`): one sentence on what to do next, `Retry available in N s` counted down from a `retry-after` until its window passes, and **Retry now**, which sends the conversation's last message again (`chat.send`); it is offered on the newest failure only, while no turn runs and nothing was sent since. Known gap: that resend is a second `message_end` of the user in the journal and the provider sees it twice; a retry that reuses the failed turn's message needs a daemon/protocol request.
 
 ## CLI
 

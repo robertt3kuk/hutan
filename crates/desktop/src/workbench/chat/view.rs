@@ -67,6 +67,8 @@ pub struct ChatView {
     /// Cards built and markdown parsed so far (tests: a frame builds what is in view and parses
     /// each message revision once).
     pub(super) entries_built: usize,
+    /// Draws a failed footer's `retry-after` countdown again in a second.
+    pub(super) retry_tick: Option<gpui::Task<()>>,
     pub(super) markdown_parsed: usize,
     /// Requests waiting for an answer, oldest first (the keys 1–4 answer the first).
     pub(super) pending: Vec<ApprovalId>,
@@ -166,6 +168,7 @@ impl ChatView {
             toggled: HashSet::new(),
             parsed: HashMap::new(),
             entries_built: 0,
+            retry_tick: None,
             markdown_parsed: 0,
             pending: Vec::new(),
             forms: HashMap::new(),
@@ -966,7 +969,7 @@ impl ChatView {
     }
 
     /// Sends the last message of the conversation again (the restart cut its turn off).
-    fn retry_last_message(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn retry_last_message(&mut self, cx: &mut Context<Self>) {
         let task = self
             .sessions
             .update(cx, |store, cx| store.retry_last_message(self.session, cx));

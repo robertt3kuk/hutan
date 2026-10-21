@@ -135,15 +135,20 @@ impl ChatView {
                 cx,
             ),
             Body::Footer(footer) => {
-                let recovery = match &footer.outcome {
-                    TurnOutcome::Failed { message, .. } => {
-                        self.provider_error_action(message, &look, cx)
-                    }
-                    _ => None,
+                let card = footer_card(footer, &look);
+                let (recovery, failed) = match &footer.outcome {
+                    TurnOutcome::Failed { message, .. } => (
+                        self.provider_error_action(message, &look, cx),
+                        Some((message.clone(), entry.ts_ms)),
+                    ),
+                    _ => (None, None),
                 };
+                let retry = failed
+                    .and_then(|(message, at)| self.footer_retry(index, &message, at, &look, cx));
                 div()
-                    .child(footer_card(footer, &look))
+                    .child(card)
                     .children(recovery)
+                    .children(retry)
                     .into_any_element()
             }
             Body::Notice { level, message } => notice_card(*level, message, &look),

@@ -429,3 +429,89 @@ fn a_provider_added_while_the_list_is_loading_survives_the_list(cx: &mut TestApp
         "an older list must not undo the new provider"
     );
 }
+
+#[gpui::test]
+fn a_rate_limited_turn_counts_down_and_retry_now_goes_on_in_place(cx: &mut TestAppContext) {
+    let daemon = daemon();
+    let mock = daemon.http_mock();
+    mock.route(
+        "POST",
+        "/v1/chat/completions",
+        Reply::json(429, r#"{"error":{"message":"slow down"}}"#).header("retry-after", "5"),
+    );
+    mock.route("POST", "/v1/chat/completions", reply("recovered"));
+    let (view, cx) = open(cx, &daemon);
+    let id = configure(&view, cx, &mock);
+    view.update_in(cx, |wb, window, cx| {
+        wb.close_settings(window, cx);
+        wb.new_direct_chat(window, cx);
+    });
+    wait_until(cx, "direct model catalog", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.launcher().is_some_and(|l| {
+                l.agent() == &LaunchAgent::Direct(id.clone())
+                    && matches!(wb.launcher_models(cx), Models::Ready(m) if m.len() == 2)
+            })
+        })
+    });
+    view.update_in(cx, |wb, window, cx| wb.launcher_start(false, window, cx));
+    wait_until(cx, "composer drawn", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Chat("composer")).is_some()
+        })
+    });
+    let session = view.read_with(cx, |wb, _| wb.focused_session()).unwrap();
+    cx.simulate_input("hello");
+    cx.simulate_keystrokes("cmd-enter");
+
+    // The failed footer names the cause, counts down the provider's window and offers Retry now.
+    wait_until(cx, "the countdown and Retry now", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Chat("retry-countdown")).is_some()
+                && wb.region_bounds(Region::Chat("retry-now")).is_some()
+        })
+    });
+    let failed = view.read_with(cx, |wb, cx| {
+        wb.chat_model_of(session)
+            .unwrap()
+            .read(cx)
+            .transcript()
+            .entries()
+            .iter()
+            .filter_map(|e| match &e.body {
+                Body::Footer(f) => match &f.outcome {
+                    hutan_chat_view::TurnOutcome::Failed { message, .. } => Some(message.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(
+        failed[0].starts_with("rate limited (retry after 5s)"),
+        "{failed:?}"
+    );
+
+    // Retry now sends the last message again; the answer arrives and the failure stays above it.
+    let retry = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Chat("retry-now")))
+        .unwrap();
+    cx.simulate_click(retry.center(), Modifiers::none());
+    wait_until(cx, "the retried answer", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.chat_model_of(session).is_some_and(|m| {
+                m.read(cx).transcript().entries().iter().any(
+                    |e| matches!(&e.body, Body::Assistant(a) if a.text == "recovered" && a.done),
+                )
+            })
+        })
+    });
+    assert_eq!(mock.requests_to("/v1/chat/completions").len(), 2);
+    // The old failure is not retried twice: its Retry now is gone with the new turn.
+    wait_until(cx, "the retry controls to go", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Chat("retry-now")).is_none()
+        })
+    });
+}

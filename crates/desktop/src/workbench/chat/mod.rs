@@ -15,6 +15,7 @@ mod markdown_view;
 mod model;
 mod question;
 mod question_card;
+mod retry;
 mod rich;
 mod rich_view;
 mod view;
