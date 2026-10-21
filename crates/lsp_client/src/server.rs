@@ -1010,9 +1010,8 @@ mod tests {
         assert_eq!(delays, [100, 200, 400, 500, 500]);
     }
 
-    #[test]
-    fn initialize_params_offer_utf8_first_and_parse_as_lsp() {
-        let config = ServerConfig::new(
+    fn shared() -> Shared {
+        let mut config = ServerConfig::new(
             "fake",
             Launch {
                 program: "fake".into(),
@@ -1022,7 +1021,13 @@ mod tests {
             },
             "/tmp",
         );
-        let shared = Shared::new(config);
+        config.settings = json!({"rust-analyzer": {"cargo": {"features": "all"}}});
+        Shared::new(config)
+    }
+
+    #[test]
+    fn initialize_params_offer_utf8_first_and_parse_as_lsp() {
+        let shared = shared();
         let params: ls_types::InitializeParams =
             serde_json::from_value(shared.initialize_params()).unwrap();
         let general = params.capabilities.general.unwrap();
@@ -1037,5 +1042,54 @@ mod tests {
             params.workspace_folders.unwrap()[0].uri.as_str(),
             "file:///tmp"
         );
+    }
+
+    #[test]
+    fn server_requests_get_minimal_answers() {
+        let shared = shared();
+        let ask = |method: &str, params: Value| {
+            let raw = serde_json::value::to_raw_value(&params).unwrap();
+            Handler::request(&shared, 1, method, Some(&raw))
+        };
+        assert_eq!(
+            ask(
+                "workspace/configuration",
+                json!({"items": [{"section": "rust-analyzer.cargo"}, {"section": "rust-analyzer.missing"}, {}]})
+            ),
+            Ok(json!([
+                {"features": "all"},
+                null,
+                {"rust-analyzer": {"cargo": {"features": "all"}}}
+            ]))
+        );
+        assert_eq!(
+            ask(
+                "client/registerCapability",
+                json!({"registrations": [{"id": "1", "method": "workspace/didChangeWatchedFiles"}]})
+            ),
+            Ok(Value::Null)
+        );
+        assert_eq!(
+            ask("window/workDoneProgress/create", json!({"token": 1})),
+            Ok(Value::Null)
+        );
+        assert_eq!(
+            ask("workspace/applyEdit", json!({"edit": {}}))
+                .unwrap()
+                .get("applied"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            ask("workspace/inlayHint/refresh", Value::Null),
+            Ok(Value::Null)
+        );
+        assert!(matches!(
+            ask("workspace/configuration", json!({"items": 3})),
+            Err((INVALID_PARAMS, _))
+        ));
+        assert!(matches!(
+            ask("custom/thing", json!({})),
+            Err((METHOD_NOT_FOUND, _))
+        ));
     }
 }
