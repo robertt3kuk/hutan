@@ -856,6 +856,67 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "Push after Finish",
         "Finish in Changes commits (and merges a worktree), then pushes the branch to its upstream with your own git credentials; it never force-pushes. Off, the commit stays on this Mac until you push it yourself. Agents can never Finish.",
     ),
+    // ---- checkpoints (ADR 0019; the Settings section itself is CK-5) ----
+    field(
+        "daemon",
+        "checkpoints.mode",
+        "Checkpoints",
+        "Before and after every turn of an agent chat in a git repository, Hutan records the files in a hidden ref, so the turn's edits can be rewound. Files only; edits made by shell commands outside the turn may be missed. Off takes effect from the next turn.",
+    ),
+    field(
+        "daemon",
+        "checkpoints.max_file_bytes",
+        "Largest file recorded (bytes)",
+        "A larger file is left out of a checkpoint and listed.",
+    ),
+    field(
+        "daemon",
+        "checkpoints.snapshot_budget_bytes",
+        "New content per checkpoint (bytes)",
+        "Past this much new content the largest files are left out and listed.",
+    ),
+    field(
+        "daemon",
+        "checkpoints.max_files",
+        "Changed files per checkpoint",
+        "Past this many changed files the largest are left out and listed.",
+    ),
+    field(
+        "daemon",
+        "checkpoints.max_untracked_files",
+        "Most untracked files",
+        "A checkout with more untracked files that are not ignored gets no checkpoints; ignore build output in .gitignore.",
+    ),
+    field(
+        "daemon",
+        "checkpoints.exclude",
+        "Never recorded",
+        "File names left out of every checkpoint (`*` matches anything, case ignored): likely secrets.",
+    ),
+    field(
+        "daemon",
+        "checkpoints.keep_turns",
+        "Turns kept per chat",
+        "Older turns' checkpoints are dropped, the oldest first.",
+    ),
+    field(
+        "daemon",
+        "checkpoints.keep_days",
+        "Days kept",
+        "A chat's checkpoints are dropped after this many days without a new one.",
+    ),
+    field(
+        "daemon",
+        "checkpoints.max_repo_bytes",
+        "Recorded content per repository (bytes)",
+        "Past this, the oldest checkpoints of the repository are dropped. Git removes their content later, under its own settings.",
+    ),
+    field(
+        "daemon",
+        "checkpoints.max_repo_refs",
+        "Checkpoints per repository",
+        "Past this many hidden refs, the oldest checkpoints of the repository are dropped.",
+    ),
     // ---- history indexing ----
     field(
         "daemon",
