@@ -406,7 +406,8 @@ impl Workbench {
             loop {
                 let event = match updates.recv().await {
                     Ok(ChatUpdate::Event(event)) => event,
-                    Ok(ChatUpdate::Resync { .. }) | Err(RecvError::Lagged(_)) => continue,
+                    Ok(ChatUpdate::Resync { .. } | ChatUpdate::Queue(_))
+                    | Err(RecvError::Lagged(_)) => continue,
                     Err(RecvError::Closed) => break,
                 };
                 if this
