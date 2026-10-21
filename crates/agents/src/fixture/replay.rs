@@ -159,11 +159,10 @@ impl<R: BufRead, W: Write> Server<R, W> {
                 )
             })?;
             if let Some(file) = &mut self.received {
-                writeln!(
-                    file,
-                    "{}",
-                    json!({"spawn": self.spawn_label, "msg": message})
-                )?;
+                // One `write` per line: `writeln!` on a bare `File` is one syscall per piece,
+                // and a test polling the log would read a line without its end.
+                let entry = format!("{}\n", json!({"spawn": self.spawn_label, "msg": message}));
+                file.write_all(entry.as_bytes())?;
             }
             return Ok(Some(message));
         }
