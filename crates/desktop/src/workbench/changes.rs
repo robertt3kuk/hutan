@@ -1323,6 +1323,21 @@ impl ChangesView {
                 Some(old) => format!("{old} → {}", file.path),
                 None => file.path.clone(),
             };
+            // "Open": the file in a tab, at its first hunk once its patch is read (E-10).
+            let first_line = match self.patches.get(&file.path) {
+                Some(FilePatch::Ready { diff, .. }) => diff.first_changed_line(),
+                _ => None,
+            };
+            let open = (file.status != DiffStatus::Deleted).then(|| {
+                self.open_button(
+                    SharedString::from(format!("changes-open-{index}")),
+                    &file.path,
+                    first_line,
+                    Region::ChangesOpen(index),
+                    theme,
+                    tokens,
+                )
+            });
             list = list.child(
                 div()
                     .id(SharedString::from(format!("changes-file-{index}")))
@@ -1357,10 +1372,53 @@ impl ChangesView {
                     } else {
                         counts_of(file.additions as usize, file.deletions as usize, &look)
                     })
+                    .children(open)
                     .child(probe(&self.env.regions, Region::ChangesFile(index))),
             );
         }
         list.into_any_element()
+    }
+
+    /// *Open* (E-10): `file` (relative to the checkout) in a file tab at `line`.
+    fn open_button(
+        &self,
+        id: SharedString,
+        file: &str,
+        line: Option<u32>,
+        region: Region,
+        theme: &Theme,
+        tokens: &Tokens,
+    ) -> AnyElement {
+        let target = super::actions::FileTarget {
+            path: self.canonical.join(file).display().to_string(),
+            line,
+            column: None,
+        };
+        let hover = theme.surface_hover;
+        let tip = SharedString::from(match line {
+            Some(line) => format!("Open the file at line {line}"),
+            None => "Open the file".to_owned(),
+        });
+        div()
+            .id(id)
+            .relative()
+            .flex_none()
+            .px(px(tokens.spacing * 1.5))
+            .rounded(px(tokens.radius - 2.0))
+            .cursor_pointer()
+            .text_size(px(tokens.secondary_font_size))
+            .text_color(theme.muted)
+            .font_family(super::ui::ui_family())
+            .hover(move |s| s.bg(hover))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .tooltip(move |_, cx| cx.new(|_| super::style::TextTooltip(tip.clone())).into())
+            .on_click(move |_, window, cx| {
+                cx.stop_propagation();
+                window.dispatch_action(Box::new(super::actions::OpenFile(target.clone())), cx);
+            })
+            .child("Open")
+            .child(probe(&self.env.regions, region))
+            .into_any_element()
     }
 
     fn render_patch(&self, look: &Look, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1470,6 +1528,14 @@ impl ChangesView {
                                         .child(SharedString::from(format!("{hidden} lines"))),
                                 )
                             })
+                            .child(self.open_button(
+                                SharedString::from(format!("changes-hunk-open-{hunk}")),
+                                &file,
+                                diff.changed_line_from(range.start),
+                                Region::ChangesHunkOpen(hunk),
+                                theme,
+                                tokens,
+                            ))
                             .child(probe(&self.env.regions, Region::ChangesHunk(hunk))),
                     );
                     if folded {

@@ -824,6 +824,28 @@ static TOOLS: &[Tool] = &[
             )
         },
     },
+    Tool {
+        name: "open_file",
+        description: ask!(
+            "Show the user a file in the Hutan window: a file tab (or the tab that already shows \
+             it) at a line and column, so you can point at the exact spot. The path must be \
+             absolute and inside the workspace's folders. The same as `ui_run` with \
+             `workbench::OpenFile`."
+        ),
+        read_only: false,
+        call: shaped("ui.run", shape_open_file),
+        schema: || {
+            object(
+                json!({
+                    "path": path("Absolute path of the file."),
+                    "line": {"type": "integer", "minimum": 1, "description": "1-based line to show."},
+                    "column": {"type": "integer", "minimum": 1, "description": "1-based column (characters) on that line."},
+                    "window_id": text("Default: the window used most recently."),
+                }),
+                &["path"],
+            )
+        },
+    },
     // ---- Mawas's memory ---------------------------------------------------------------------
     Tool {
         name: "memory_list",
@@ -968,6 +990,33 @@ fn shape_chat_log(args: Value) -> Result<Value, String> {
     Ok(Value::Object(args))
 }
 
+/// `open_file {path, line?, column?, window_id?}` is `ui.run workbench::OpenFile {path, line?,
+/// column?}`.
+fn shape_open_file(args: Value) -> Result<Value, String> {
+    let Value::Object(mut args) = args else {
+        return Err("arguments must be an object".to_owned());
+    };
+    let mut run = serde_json::Map::new();
+    let mut open = serde_json::Map::new();
+    for key in ["path", "line", "column"] {
+        if let Some(value) = args.remove(key) {
+            open.insert(key.to_owned(), value);
+        }
+    }
+    if !open.contains_key("path") {
+        return Err("`path` is required".to_owned());
+    }
+    run.insert("action".to_owned(), json!("workbench::OpenFile"));
+    run.insert("args".to_owned(), Value::Object(open));
+    if let Some(window) = args.remove("window_id") {
+        run.insert("window_id".to_owned(), window);
+    }
+    if let Some(unknown) = args.keys().next() {
+        return Err(format!("unknown argument `{unknown}`"));
+    }
+    Ok(Value::Object(run))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1030,6 +1079,29 @@ mod tests {
         {
             check_schema(&format!("{path}.*"), extra);
         }
+    }
+
+    #[test]
+    fn open_file_is_ui_run_of_workbench_open_file() {
+        let tool = find("open_file").unwrap();
+        assert!(!tool.read_only, "showing a file changes the window");
+        let shaped = shape_open_file(json!({
+            "path": "/w/src/lib.rs",
+            "line": 42,
+            "column": 7,
+            "window_id": "window-1",
+        }))
+        .unwrap();
+        assert_eq!(
+            shaped,
+            json!({
+                "action": "workbench::OpenFile",
+                "args": {"path": "/w/src/lib.rs", "line": 42, "column": 7},
+                "window_id": "window-1",
+            })
+        );
+        assert!(shape_open_file(json!({"line": 1})).is_err());
+        assert!(shape_open_file(json!({"path": "/a", "mode": "x"})).is_err());
     }
 
     #[test]
@@ -1198,6 +1270,7 @@ mod tests {
             "ui_actions",
             "ui_layout",
             "ui_run",
+            "open_file",
             "ui_set_setting",
             "memory_list",
             "memory_search",

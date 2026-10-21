@@ -67,9 +67,11 @@ fn click(terminal: &Entity<TerminalView>, cx: &mut VisualTestContext, target: Li
 }
 
 #[gpui::test]
-fn a_clicked_file_opens_with_the_system_by_default(cx: &mut TestAppContext) {
+fn a_clicked_file_opens_with_the_system_when_asked(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
-    let (_view, cx, terminal, opened) = open_terminal(cx, &daemon, "");
+    // `editor` is the default since E-10.
+    let (_view, cx, terminal, opened) =
+        open_terminal(cx, &daemon, "[terminal]\nopen_files_with = \"system\"\n");
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("lib.rs");
     std::fs::write(&file, "fn main() {}\n").unwrap();

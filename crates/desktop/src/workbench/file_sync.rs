@@ -5,7 +5,8 @@
 //! (*Reload*, *Keep mine*), and *Save before closing?*.
 //!
 //! Our own save comes back as an `fs.changed` with origin `self`; it is not somebody else's
-//! change and reloads nothing.
+//! change and reloads nothing. A change with origin `agent` also enters the pending ledger of
+//! agents' edits (E-10, `agent_edits.rs`), compared with the text the file had before.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +14,7 @@ use std::time::Duration;
 use gpui::{AppContext as _, Context, Entity, Subscription, Window};
 use hutan_client::{ClientError, Notice};
 use hutan_code_view::{BufferEdited, Conflict, EditKind, FileBuffer};
+use hutan_core::SessionId;
 use hutan_protocol::ErrorCode;
 use hutan_protocol::fs::{ChangeKind, FileVersion, FsChange, FsOrigin, FsWriteBegin};
 use tokio::sync::broadcast::error::RecvError;
@@ -99,14 +101,35 @@ impl Workbench {
         }));
     }
 
-    /// The file of `path` was read as `version`: the next save expects it; the file is watched
-    /// from now on.
-    pub(crate) fn loaded(&mut self, path: &str, version: FileVersion, cx: &mut Context<Self>) {
+    /// The file of `path` was read (or reloaded) as `version`, with `text` when the caller has
+    /// it: the next save expects that version, an agent's next write is compared with that
+    /// text, the ledger's changes of the file reach its buffer, and the file is watched from
+    /// now on.
+    pub(crate) fn loaded(
+        &mut self,
+        path: &str,
+        version: FileVersion,
+        text: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(text) = text {
+            self.agent_ledger.ledger.disk_is(path, text);
+        }
+        let changes = self.ledger_changes(path);
         let Some(stored) = self.buffers.buffers.get_mut(path) else {
             return;
         };
         stored.disk = Some(version);
         stored.conflict_disk = None;
+        if let Some(text) = text {
+            stored.disk_text =
+                (text.len() <= super::agent_edits::MAX_TEXT_BYTES).then(|| Arc::from(text));
+        }
+        if let Some(changes) = changes {
+            stored
+                .buffer
+                .update(cx, |b, cx| b.set_agent_changes(Some(changes), cx));
+        }
         if stored.watched {
             return;
         }
@@ -203,26 +226,35 @@ impl Workbench {
             picked,
         };
         let size = bytes.len() as u64;
+        let text: Option<Arc<str>> =
+            (bytes.len() <= super::agent_edits::MAX_TEXT_BYTES).then(|| Arc::from(bytes.as_str()));
         let write = cx.background_spawn(async move { connection.fs_write(request, &bytes).await });
         let key = path.to_owned();
         stored.save = Some(cx.spawn(async move |this, cx| {
             let written = write.await;
             this.update(cx, |this, cx| {
-                this.saved(&key, version, size, written, then_close, cx);
+                this.saved(&key, version, size, text, written, then_close, cx);
             })
             .ok();
         }));
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn saved(
         &mut self,
         path: &str,
         version: u64,
         size: u64,
+        text: Option<Arc<str>>,
         written: Result<hutan_protocol::fs::FsWritten, ClientError>,
         then_close: Option<ItemRef>,
         cx: &mut Context<Self>,
     ) {
+        if written.is_ok()
+            && let Some(text) = &text
+        {
+            self.agent_ledger.ledger.disk_is(path, text);
+        }
         let Some(stored) = self.buffers.buffers.get_mut(path) else {
             return;
         };
@@ -232,6 +264,7 @@ impl Workbench {
             Ok(written) => {
                 stored.disk = Some(written.version);
                 stored.conflict_disk = None;
+                stored.disk_text = text;
                 buffer.update(cx, |b, cx| b.saved(version, size, cx));
                 if let Some(item) = then_close
                     && let Some((pane, index)) = self.state.find_item(&item)
@@ -327,15 +360,22 @@ impl Workbench {
             buffer.update(cx, |b, cx| {
                 b.reload(&text, cx);
             });
-            self.loaded(path, version, cx);
+            self.loaded(path, version, Some(&text), cx);
             return;
         }
-        self.read_into(path, true, cx);
+        self.read_into(path, true, None, cx);
     }
 
     /// Reads the file of `path` and gives it to the buffer when the buffer is clean (or
-    /// `force`); a changed buffer gets the conflict bar instead.
-    fn read_into(&mut self, path: &str, force: bool, cx: &mut Context<Self>) {
+    /// `force`); a changed buffer gets the conflict bar instead. `agent`: an agent's session
+    /// wrote it (E-10: the write enters the ledger).
+    fn read_into(
+        &mut self,
+        path: &str,
+        force: bool,
+        agent: Option<SessionId>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(stored) = self.buffers.buffers.get_mut(path) else {
             return;
         };
@@ -346,7 +386,7 @@ impl Workbench {
         let key = path.to_owned();
         stored.check = Some(cx.spawn(async move |this, cx| {
             let read = read.await;
-            this.update(cx, |this, cx| this.took_disk(&key, read, force, cx))
+            this.update(cx, |this, cx| this.took_disk(&key, read, force, agent, cx))
                 .ok();
         }));
     }
@@ -356,6 +396,7 @@ impl Workbench {
         path: &str,
         read: Result<hutan_client::FsText, ClientError>,
         force: bool,
+        agent: Option<SessionId>,
         cx: &mut Context<Self>,
     ) {
         let Some(stored) = self.buffers.buffers.get_mut(path) else {
@@ -378,27 +419,44 @@ impl Workbench {
         if stored.disk == Some(read.version) && !force {
             return;
         }
+        // What the file was before this change (an agent's write is compared with it).
+        let before = stored.disk_text.clone();
         let (dirty, saving) = {
             let b = buffer.read(cx);
             (b.is_dirty(), b.is_saving())
         };
         if (dirty || saving) && !force {
+            // Never over the user's unsaved text: the bar asks. The agent's write still enters
+            // the ledger; its hunks show once the buffer takes the file (*Reload*).
             stored.conflict_disk = Some(read.version);
-            let disk: Arc<str> = read.text.into();
+            let disk: Arc<str> = read.text.as_str().into();
             buffer.update(cx, |b, cx| {
                 b.set_conflict(Some(Conflict::Changed { disk: Some(disk) }), cx);
             });
+            if let Some(session) = agent {
+                let changes =
+                    self.ledger_agent_wrote(path, session, before.as_deref(), &read.text, cx);
+                buffer.update(cx, |b, cx| b.set_agent_changes(changes, cx));
+            }
             return;
         }
-        buffer.update(cx, |b, cx| {
-            b.reload(&read.text, cx);
+        let at = buffer.update(cx, |b, cx| {
+            b.reload(&read.text, cx).then(|| b.last_reload()).flatten()
         });
-        self.loaded(path, read.version, cx);
+        if let Some(session) = agent {
+            let changes = self.ledger_agent_wrote(path, session, before.as_deref(), &read.text, cx);
+            buffer.update(cx, |b, cx| match changes {
+                Some(changes) => b.agent_wrote(changes, at.map(|r| r.start), cx),
+                None => b.set_agent_changes(None, cx),
+            });
+        }
+        self.loaded(path, read.version, Some(&read.text), cx);
     }
 
     /// `fs.changed`: a change of somebody else to an open file reloads a clean buffer and puts
     /// the bar over a changed one; our own save (origin `self`) is not a change; `overflow` (or
-    /// a reconnect) checks every open file.
+    /// a reconnect) checks every open file. An agent's write also enters the pending ledger
+    /// (E-10), for open files and for the files the ledger watches.
     pub(crate) fn on_files_changed(
         &mut self,
         changes: Vec<FsChange>,
@@ -406,11 +464,14 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         self.buffers.changes_seen += 1;
-        let mut touched: Vec<(String, Option<FileVersion>, bool)> = Vec::new();
+        self.ledger_files_changed(&changes, cx);
+        let mut touched: Vec<(String, Option<SessionId>, bool)> = Vec::new();
         for change in changes {
-            if matches!(change.origin, Some(FsOrigin::Own { .. })) {
-                continue;
-            }
+            let agent = match change.origin {
+                Some(FsOrigin::Own { .. }) => continue,
+                Some(FsOrigin::Agent { session_id, .. }) => Some(session_id),
+                Some(FsOrigin::External) | None => None,
+            };
             let key = change.path.display().to_string();
             let Some(stored) = self.buffers.buffers.get(&key) else {
                 continue;
@@ -422,7 +483,7 @@ impl Workbench {
             if !removed && change.version.is_some() && change.version == stored.disk {
                 continue;
             }
-            touched.push((key, change.version, removed));
+            touched.push((key, agent, removed));
         }
         if overflow {
             for (key, stored) in &self.buffers.buffers {
@@ -431,7 +492,7 @@ impl Workbench {
                 }
             }
         }
-        for (path, _, removed) in touched {
+        for (path, agent, removed) in touched {
             if removed {
                 if let Some(stored) = self.buffers.buffers.get_mut(&path) {
                     stored.conflict_disk = None;
@@ -441,7 +502,7 @@ impl Workbench {
                 }
                 continue;
             }
-            self.read_into(&path, false, cx);
+            self.read_into(&path, false, agent, cx);
         }
     }
 

@@ -260,8 +260,8 @@ const FIELDS: &[FieldText] = &[
         "terminal",
         "open_files_with",
         "Open files from terminal output with",
-        "What ⌘-click on a file path in terminal output (src/lib.rs:42:7) opens. System uses the file's default application; Editor opens it in a Hutan file tab at that line. A URL always opens in the browser.",
-        &[("system", "System default app"), ("editor", "Editor")],
+        "What ⌘-click on a file path in terminal output (src/lib.rs:42:7) opens. Editor (the default) opens it in a Hutan file tab at that line; System uses the file's default application. A URL always opens in the browser.",
+        &[("editor", "Editor"), ("system", "System default app")],
     ),
     field(
         "terminal",
@@ -525,6 +525,12 @@ const FIELDS: &[FieldText] = &[
         "autosave_delay_ms",
         "Autosave delay (ms)",
         "With Save files automatically set to After a delay: how long after the last change a file tab saves.",
+    ),
+    field(
+        "editor",
+        "agent_highlight",
+        "Highlight agents' changes",
+        "File tabs tint the lines an agent's current turn changed, mark them in the gutter, and let you reject one change at a time. Off, nothing is compared or drawn; agents still write the files as before.",
     ),
     // ---- agents ----
     field(

@@ -10,9 +10,25 @@ Hutan's own code editor (ADR 0012 and its amendment of 2026-10-21; plan and budg
 | E-4 | `editor.*` and `syntax.*` colors in the color packs | `docs/themes.md` |
 | E-5 | read-only viewer in file tabs | `crates/code_view`, `crates/desktop/src/workbench/{files,file_view}.rs` |
 | E-6 | editing: carets, multi-cursor, input methods, undo, auto-indent and pairs, clipboard, save through the daemon, conflict bar, replace | `crates/code_view/src/{editing,motion,input,rules}.rs`, `crates/desktop/src/workbench/file_sync.rs` |
-| **E-8** | **Vim in file tabs: modes, block caret, the Escape rule for input methods, the `:` line, splits, clipboard registers** | `crates/code_view/src/{vim_host,modal,ex}.rs`, `crates/desktop/src/workbench/{file_ex,editor_status}.rs` |
+| E-8 | Vim in file tabs: modes, block caret, the Escape rule for input methods, the `:` line, splits, clipboard registers | `crates/code_view/src/{vim_host,modal,ex}.rs`, `crates/desktop/src/workbench/{file_ex,editor_status}.rs` |
+| **E-10** | **Agent-aware editing: an agent's writes reach open buffers safely, its turn's hunks are highlighted and rejected one by one, a pending ledger survives restarts, Follow agent, Open from chat/Changes/terminal, MCP `open_file`** | `crates/code_view/src/agent.rs`, `crates/desktop/src/workbench/{agent_edits,file_sync,file_view}.rs` |
 
 LSP and the file tree (E-13a) are not here yet.
+
+## Agents' edits (E-10)
+
+Agents write files themselves (direct writes; there is no approve-before-write gate in the editor). The editor's job is to show what the current turn changed, never lose the user's text, and let the user take changes back one at a time. Evidence: `docs/spikes/2026-10-22-editor-research/agent-edits.md`.
+
+- **No silent overwrite.** An agent's write to an open file arrives as `fs.changed` with origin `agent {session}`. A clean buffer takes it with `apply_external`: one undo step, carets in unchanged text stay. A buffer with unsaved changes gets the conflict bar (E-6) and never loses text; the write still enters the ledger, and its hunks appear once the buffer takes the file (*Reload*).
+- **Hunks.** A file's turn has a **base** (the file before the turn's first write) and the **agent text** (after its last write). The hunks shown are the base, with the user's own later edits outside the agent's hunks carried into it (`agent::rebase`), diffed by lines against the buffer (`agent::agent_hunks`, Myers via `similar` with a 250 ms deadline). So the user's typing is never called the agent's, an edit inside a hunk stays part of it, and a rejected hunk (text equal to the base again) disappears; undo brings it back.
+- **Drawing.** Changed lines get the `editor.agent-changed` tint and a gutter bar (`editor.diff-gutter.added` / `.modified`); removed lines a `editor.diff-gutter.removed` mark on the edge where they were. Only the lines in view are looked at.
+- **Throttling.** The diff runs on a background thread: at once after a reload, a Reject or a new turn's changes; 150 ms after the last edit while typing; 1.5 s for a large (over 1 MiB) or minified (a line over 4 KiB) file. Between an edit and the next diff the hunks are carried across the edit. Large-file mode has none. `editor.agent_highlight = false` turns it all off: nothing is diffed or drawn.
+- **The agent bar** over the file: "*Codex* changed *n* places in this file, on disk", ↑ ↓ (⌘⌥[ ⌘⌥]) between the changes, **Reject** (⌘⌥Z) the change at the caret, **Accept All**, **Follow**. Reject puts the base's lines back as one undo step (⌘Z undoes it), never deletes a file (a file the agent created rejects to empty) and saves a file that had no other unsaved changes, so the disk and the agent's next read have it. Accept All drops the file from the ledger.
+- **Follow agent** (per tab, off by default): at every write of the agent, once its hunks are known, the view moves the caret to the newest change and scrolls it a third from the top.
+- **The pending ledger** (`agent_edits.rs`): per file, the session, its turn, the base, the agent text and the last text seen on disk; saved next to the layout as `agent-edits.json` (owner-only, 0600) and loaded at start, so the hunks survive switching chats or models and a restart of the desktop. It learns from `fs.changed` (origin `agent`) for open files (the text before is the one last read or saved) and for files it watches itself (files in the ledger, and files a recent `file_diff` named, whose base is the patch taken back, or empty for a created file); from `turn_started` (a write of a new turn starts a new base); and from other writers (`external`, a rescan), which only move its idea of the disk. A Bash write by the agent therefore shows like an edit-tool write as long as the file is watched. Bounds: 64 files (the oldest go first), texts up to 2 MiB, `file_diff` hints for 10 minutes. The checkpoint of the turn's start (CK-2) is not reachable through the protocol yet, so a write to a file that is neither open, nor in the ledger, nor named by a `file_diff` has no base and is not tracked.
+- **Open.** A file row of a chat's file-change card has *Open* (the file at its first change); a Changes view row has *Open* (at its first hunk once the patch is read) and so has every hunk header (at that hunk). ⌘-click on `src/lib.rs:42:7` in a terminal opens the file at the line: `terminal.open_files_with` is `editor` by default now. Agents use the MCP tool `open_file {path, line?, column?}` (`ui.run workbench::OpenFile`, `docs/control.md`).
+
+**Parity:** `terminal.open_files_with` defaults to `editor` (it was `system`); set it to `system` for the old behaviour. Nothing was removed.
 
 ## File tabs (E-5)
 
@@ -54,7 +70,8 @@ How it looks and which keys do what: `docs/design.md` § File tabs. Under the ho
 | `editor.large_file_bytes` | `16777216` | above it: ask first, then read-only without syntax |
 | `editor.autosave` | `off` | `on_focus_change` or `after_delay`; never while the conflict bar shows |
 | `editor.autosave_delay_ms` | `1000` | for `after_delay` |
-| `terminal.open_files_with` | `system` | `editor` sends ⌘-clicked paths to a file tab at the line |
+| `editor.agent_highlight` | `true` | highlight the lines an agent's current turn changed, with per-change Reject; off, nothing is diffed or drawn |
+| `terminal.open_files_with` | `editor` | `system` hands ⌘-clicked paths to the file's default application instead of a file tab at the line |
 
 ## Vim (E-8)
 
@@ -125,5 +142,6 @@ In text fields (composer, palette, forms) the same layer runs, except that `:`, 
   - large files ask first, and binary files are refused.
 - `links_gpui.rs`: a ⌘-click with `editor` opens the file at the line.
 - `control_gpui.rs`: `workbench::OpenFile` dispatches.
+- E-10: `crates/code_view/src/agent.rs` (hunks, rebase over the user's edits, Reject of one hunk, a created file, reverse patches); `crates/code_view/tests/it/agent.rs` (an agent's write to a clean buffer is one undo step and keeps the caret, Reject restores one hunk and is undoable, the user's typing is not a hunk, hunks follow an edit until the next diff, the arrows and the newest change, the highlight off); `crates/desktop/src/workbench/agent_edits.rs` (the ledger: turns, rebases, hints, bounds, save and load 0600); `crates/desktop/tests/it/agent_edits_gpui.rs` (over a real daemon and a Codex fixture: a shell write during the agent's turn, no `file_diff`, reaches the open file through `fs.changed` as one undo step with its hunk, and the ledger is saved for the next start); `crates/cli/src/mcp/table.rs` (`open_file` is `ui.run workbench::OpenFile`).
 - `model/tests.rs`: the stored form that older binaries read.
 - Timings: `just bench --only B11,B13` (`docs/perf.md` § Editor: the viewer).

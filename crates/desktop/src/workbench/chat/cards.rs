@@ -583,6 +583,7 @@ impl ChatView {
         let (theme, tokens) = (&look.theme, &look.tokens);
         let id = entry.id;
         let hover = theme.surface_hover;
+        let cwd = self.session_cwd(cx);
         let mut rows: Vec<AnyElement> = Vec::new();
         for (file, change) in tool.changes.iter().enumerate() {
             let diff = diff::from_change(change);
@@ -598,6 +599,10 @@ impl ChatView {
                 Some(from) => format!("{from} → {}", diff.path),
                 None => diff.path.clone(),
             };
+            // "Open": the file in a tab at its first change (E-10); a deleted file has none.
+            let target = (change.kind != FileChangeKind::Delete)
+                .then(|| open_target(change, cwd.as_deref(), diff.first_changed_line()))
+                .flatten();
             rows.push(
                 div()
                     .flex()
@@ -605,41 +610,87 @@ impl ChatView {
                     .gap(px(tokens.spacing))
                     .child(
                         div()
-                            .id(ids.next("file"))
-                            .relative()
                             .flex()
                             .items_center()
-                            .gap(px(tokens.spacing * 2.0))
-                            .rounded(px(tokens.radius - 2.0))
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(hover))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.toggle(index, id, part, cx);
-                            }))
-                            .child(div().flex_none().text_color(theme.muted).child(
-                                crate::icons::glyph(if open {
-                                    crate::icons::Icon::ActionExpand
-                                } else {
-                                    crate::icons::Icon::ActionDisclose
-                                }),
-                            ))
+                            .gap(px(tokens.spacing))
                             .child(
                                 div()
+                                    .id(ids.next("file"))
+                                    .relative()
                                     .flex_1()
                                     .min_w_0()
-                                    .truncate()
-                                    .font_family(look.mono.clone())
-                                    .child(SharedString::from(name)),
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(tokens.spacing * 2.0))
+                                    .rounded(px(tokens.radius - 2.0))
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(hover))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.toggle(index, id, part, cx);
+                                    }))
+                                    .child(div().flex_none().text_color(theme.muted).child(
+                                        crate::icons::glyph(if open {
+                                            crate::icons::Icon::ActionExpand
+                                        } else {
+                                            crate::icons::Icon::ActionDisclose
+                                        }),
+                                    ))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .font_family(look.mono.clone())
+                                            .child(SharedString::from(name)),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .text_color(theme.muted)
+                                            .text_size(px(tokens.secondary_font_size))
+                                            .child(label),
+                                    )
+                                    .child(counts(&diff, look))
+                                    .child(probe(&self.regions, Region::ChatPart(index, part))),
                             )
-                            .child(
+                            .children(target.map(|target| {
                                 div()
+                                    .id(ids.next("open"))
+                                    .relative()
                                     .flex_none()
+                                    .px(px(tokens.spacing * 1.5))
+                                    .rounded(px(tokens.radius - 2.0))
+                                    .cursor_pointer()
                                     .text_color(theme.muted)
                                     .text_size(px(tokens.secondary_font_size))
-                                    .child(label),
-                            )
-                            .child(counts(&diff, look))
-                            .child(probe(&self.regions, Region::ChatPart(index, part))),
+                                    .hover(move |s| s.bg(hover))
+                                    .tooltip({
+                                        let tip = SharedString::from(match target.line {
+                                            Some(line) => format!(
+                                                "Open {} at line {line} (its first change)",
+                                                target.path
+                                            ),
+                                            None => format!("Open {}", target.path),
+                                        });
+                                        move |_, cx| {
+                                            cx.new(|_| {
+                                                crate::workbench::style::TextTooltip(tip.clone())
+                                            })
+                                            .into()
+                                        }
+                                    })
+                                    .on_click(move |_, window, cx| {
+                                        cx.stop_propagation();
+                                        window.dispatch_action(
+                                            Box::new(crate::workbench::actions::OpenFile(
+                                                target.clone(),
+                                            )),
+                                            cx,
+                                        );
+                                    })
+                                    .child("Open")
+                                    .child(probe(&self.regions, Region::ChatOpen(index, part)))
+                            })),
                     )
                     .when(open, |s| s.child(diff_view(&diff, look, ids)))
                     .into_any_element(),
@@ -982,6 +1033,36 @@ impl ChatView {
 }
 
 // ---- pieces without state -------------------------------------------------------------------
+
+/// Where a file row's *Open* goes: the changed file (its new name after a move), relative
+/// paths taken from the chat's folder, at `line`.
+pub(crate) fn open_target(
+    change: &hutan_core::agent::FileChange,
+    cwd: Option<&std::path::Path>,
+    line: Option<u32>,
+) -> Option<crate::workbench::actions::FileTarget> {
+    let named = std::path::Path::new(change.move_path.as_deref().unwrap_or(&change.path));
+    let path = if named.is_absolute() {
+        named.to_owned()
+    } else {
+        cwd?.join(named)
+    };
+    Some(crate::workbench::actions::FileTarget {
+        path: path.display().to_string(),
+        line,
+        column: None,
+    })
+}
+
+impl ChatView {
+    /// The folder the chat works in.
+    fn session_cwd(&self, cx: &App) -> Option<std::path::PathBuf> {
+        self.sessions
+            .read(cx)
+            .session(self.session)
+            .and_then(|s| s.cwd.clone())
+    }
+}
 
 fn counts(diff: &FileDiff, look: &Look) -> AnyElement {
     counts_of(diff.added, diff.removed, look)

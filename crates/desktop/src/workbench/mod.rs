@@ -1,6 +1,7 @@
 //! The workbench: GPUI-free layout model plus the GPUI shell around it.
 
 pub mod actions;
+pub mod agent_edits;
 pub(crate) mod agents;
 mod agents_page;
 mod assistant;

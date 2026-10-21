@@ -171,6 +171,7 @@ A stdio MCP server (hand-rolled JSON-RPC, one message per line; protocol version
 | `ui_actions` | `ui.actions` | no | what the window can do, with argument schemas, and its settings |
 | `ui_layout` | `ui.layout` | no | what the window shows |
 | `ui_run` | `ui.run` | yes | run an action of the window |
+| `open_file` | `ui.run` (`workbench::OpenFile`) | yes | show the user a file at `line` / `column` (E-10): a file tab, or the one that has it; `path` absolute and below the workspace roots |
 | `ui_set_setting` | `ui.set_setting` | yes | change a setting |
 
 `hutan help agent` prints the same guide for agents that only have a shell (what is allowed, that changes may wait for approval, exit codes).

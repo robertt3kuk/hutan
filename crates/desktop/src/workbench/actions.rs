@@ -534,6 +534,23 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("View: Toggle Density", ToggleDensity),
         command("View: Reset Theme and Icons to Default", ResetTheme),
         command("Editor: Toggle Vim Mode", ToggleVimMode),
+        command("Editor: Next Agent Change", hutan_code_view::NextAgentHunk),
+        command(
+            "Editor: Previous Agent Change",
+            hutan_code_view::PreviousAgentHunk,
+        ),
+        command(
+            "Editor: Reject Agent Change at Caret",
+            hutan_code_view::RejectAgentHunk,
+        ),
+        command(
+            "Editor: Accept Agent Changes in File",
+            hutan_code_view::AcceptAgentChanges,
+        ),
+        command(
+            "Editor: Toggle Follow Agent",
+            hutan_code_view::ToggleFollowAgent,
+        ),
         command("App: Command Palette", TogglePalette),
         command("App: Settings…", OpenSettings),
         command("App: About Hutan", About),
@@ -928,6 +945,12 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<hutan_code_view::FindReplace>("cmd-alt-f", Some(super::file_view::KEY_CONTEXT)),
         bind::<hutan_code_view::FindNext>("cmd-g", Some(super::file_view::KEY_CONTEXT)),
         bind::<hutan_code_view::FindPrevious>("cmd-shift-g", Some(super::file_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::RejectAgentHunk>("cmd-alt-z", Some(super::file_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::NextAgentHunk>("cmd-alt-]", Some(super::file_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::PreviousAgentHunk>(
+            "cmd-alt-[",
+            Some(super::file_view::KEY_CONTEXT),
+        ),
     ]
 }
 
@@ -1322,6 +1345,9 @@ mod tests {
             "alt-cmd-f | code_view::FindReplace | FileView",
             "cmd-g | code_view::FindNext | FileView",
             "shift-cmd-g | code_view::FindPrevious | FileView",
+            "alt-cmd-z | code_view::RejectAgentHunk | FileView",
+            "alt-cmd-] | code_view::NextAgentHunk | FileView",
+            "alt-cmd-[ | code_view::PreviousAgentHunk | FileView",
         ]
         .map(str::to_owned)
         .to_vec();

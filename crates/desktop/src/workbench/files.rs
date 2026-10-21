@@ -61,6 +61,9 @@ pub(crate) struct Stored {
     /// The file's version when the conflict was found: what *Keep mine* overwrites, and no
     /// newer change.
     pub(crate) conflict_disk: Option<FileVersion>,
+    /// The file's text as last read or saved (E-10: what an agent's write is compared with);
+    /// kept up to [`super::agent_edits::MAX_TEXT_BYTES`].
+    pub(crate) disk_text: Option<std::sync::Arc<str>>,
     /// The file is watched for changes on disk.
     pub(crate) watched: bool,
     pub(crate) save: Option<Task<()>>,
@@ -264,6 +267,8 @@ impl Workbench {
             return stored.buffer.clone();
         }
         let buffer = cx.new(|cx| FileBuffer::new(PathBuf::from(path), cx));
+        let highlight = self.settings.get::<EditorSettings>().agent_highlight;
+        buffer.update(cx, |b, cx| b.set_agent_highlight(highlight, cx));
         let subscriptions = self.watch_buffer(path, &buffer, cx);
         self.buffers.last_number += 1;
         self.buffers.buffers.insert(
@@ -275,6 +280,7 @@ impl Workbench {
                 load: None,
                 disk: None,
                 conflict_disk: None,
+                disk_text: None,
                 watched: false,
                 save: None,
                 check: None,
@@ -331,7 +337,7 @@ impl Workbench {
                 Ok((size, Some(read))) => {
                     b.set_size(size);
                     b.set_loaded(&read.text, size > limit, cx);
-                    Some(read.version)
+                    Some((read.version, read.text))
                 }
                 Err(error) => {
                     b.set_state(
@@ -344,8 +350,8 @@ impl Workbench {
                     None
                 }
             });
-            if let Some(version) = loaded {
-                this.update(cx, |this, cx| this.loaded(&key, version, cx))
+            if let Some((version, text)) = loaded {
+                this.update(cx, |this, cx| this.loaded(&key, version, Some(&text), cx))
                     .ok();
             }
         }));
@@ -398,6 +404,9 @@ impl Workbench {
                 }
                 FileViewEvent::Ex(command) => {
                     this.run_file_command(pane, view, command.clone(), window, cx);
+                }
+                FileViewEvent::AcceptAgentChanges(path) => {
+                    this.accept_agent_changes(&path.display().to_string(), cx);
                 }
             },
         );
@@ -462,20 +471,26 @@ impl Workbench {
                 self.pruned_files.push(view);
             }
         }
-        let dropped: Vec<(String, bool)> = self
+        let dropped: Vec<(String, bool, bool)> = self
             .buffers
             .buffers
             .iter()
             .filter(|(path, _)| !wanted.contains(*path))
-            .map(|(path, stored)| (path.clone(), stored.watched))
+            .map(|(path, stored)| {
+                let b = stored.buffer.read(cx);
+                // Hunks not computed yet count as left: the ledger keeps the file.
+                let hunks_left = !b.agent_hunks().is_empty() || !b.agent_hunks_current();
+                (path.clone(), stored.watched, hunks_left)
+            })
             .collect();
-        for (path, watched) in dropped {
+        for (path, watched, hunks_left) in dropped {
             self.buffers.buffers.remove(&path);
             if watched {
-                self.unwatch_file(&path, cx);
+                // The ledger keeps watching a file with an agent's changes.
+                self.ledger_tab_closed(&path, hunks_left, cx);
             }
         }
-        if self.buffers.buffers.is_empty() {
+        if self.buffers.buffers.is_empty() && self.agent_ledger.watched.is_empty() {
             self.buffers.listener = None;
         }
         let shown: HashSet<&str> = self

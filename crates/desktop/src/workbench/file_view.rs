@@ -1,10 +1,12 @@
-//! A file tab (`ItemRef::File`, slices E-5, E-6 and E-8): the code view of one file
+//! A file tab (`ItemRef::File`, slices E-5, E-6, E-8 and E-10): the code view of one file
 //! (`hutan-code-view`), its find and replace bar, the conflict bar when the file changed on disk
-//! under unsaved changes (*Reload · Keep Mine · Show Diff*), Vim's `:` line and the answers of
-//! its commands, and what a file says while it loads, when it is too large to open without
-//! asking, and when it cannot be shown at all (binary, not UTF-8, gone, outside what the daemon
-//! lets the window read). One view per pane; the buffer is shared through the workbench's buffer
-//! store (`files.rs`), which saves it (`file_sync.rs`).
+//! under unsaved changes (*Reload · Keep Mine · Show Diff*), the agent bar when an agent's turn
+//! changed the file (its changes, ↑ ↓ between them, *Reject* the one at the caret, *Accept
+//! All*, *Follow*), Vim's `:` line and the answers of its commands, and what a file says while
+//! it loads, when it is too large to open without asking, and when it cannot be shown at all
+//! (binary, not UTF-8, gone, outside what the daemon lets the window read). One view per pane;
+//! the buffer is shared through the workbench's buffer store (`files.rs`), which saves it
+//! (`file_sync.rs`).
 
 use std::path::PathBuf;
 
@@ -16,8 +18,9 @@ use gpui::{
 };
 use hutan_chat_view::diff::DiffLine;
 use hutan_code_view::{
-    CloseFind, CodeStyle, CodeView, CodeViewEvent, Conflict, ExRun, FailReason, FileBuffer, Find,
-    FindNext, FindPrevious, FindQuery, FindReplace, LoadState, Save, VimSettings,
+    AcceptAgentChanges, CloseFind, CodeStyle, CodeView, CodeViewEvent, Conflict, ExRun, FailReason,
+    FileBuffer, Find, FindNext, FindPrevious, FindQuery, FindReplace, LoadState, NextAgentHunk,
+    PreviousAgentHunk, RejectAgentHunk, Save, ToggleFollowAgent, VimSettings,
 };
 use hutan_settings::SettingsStore;
 use hutan_vim::ex::Ex;
@@ -56,6 +59,9 @@ pub enum FileViewEvent {
     /// A `:` command about files, windows, buffers or terminals (`:w :q :e :sp :vs :b :ls
     /// :term`), for the workbench to run.
     Ex(Ex),
+    /// The agent bar's *Accept All*: keep the agent's changes to the file and stop tracking
+    /// them (the pending ledger drops the file).
+    AcceptAgentChanges(PathBuf),
 }
 
 /// Vim's `:` line while it is open.
@@ -93,6 +99,10 @@ pub struct FileView {
     /// The `:` line opened and takes the keyboard at the next frame (the event that opens it
     /// comes without a window).
     focus_command_on_render: bool,
+    /// *Follow agent*: the view scrolls to the agent's newest change at every write.
+    follow: bool,
+    /// The agent's write that Follow scrolled to last.
+    followed_epoch: u64,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -128,6 +138,7 @@ impl FileView {
                 if buffer.read(cx).conflict().is_none() {
                     this.diff = None;
                 }
+                this.follow_agent(cx);
                 cx.notify();
             }),
             cx.subscribe(&code, |this, _, event: &CodeViewEvent, cx| match event {
@@ -159,10 +170,245 @@ impl FileView {
             command_focus: cx.focus_handle(),
             history: Vec::new(),
             focus_command_on_render: false,
+            follow: false,
+            followed_epoch: 0,
             _subscriptions: subscriptions,
         };
         this.sync_vim(cx);
         this
+    }
+
+    // ---- an agent's changes (E-10) -----------------------------------------------------------
+
+    /// Whether *Follow agent* is on in this tab.
+    pub fn is_following(&self) -> bool {
+        self.follow
+    }
+
+    /// Turns *Follow agent* on or off; on, the view goes to the agent's newest change now.
+    pub fn set_follow(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.follow == on {
+            return;
+        }
+        self.follow = on;
+        self.followed_epoch = 0;
+        self.follow_agent(cx);
+        cx.notify();
+    }
+
+    /// While following: once the hunks of the agent's latest write are known, the view shows
+    /// the newest one (once per write).
+    fn follow_agent(&mut self, cx: &mut Context<Self>) {
+        if !self.follow {
+            return;
+        }
+        let (epoch, newest) = {
+            let b = self.buffer.read(cx);
+            if !b.agent_hunks_current() {
+                return;
+            }
+            (b.agent_epoch(), b.newest_agent_hunk())
+        };
+        if epoch <= self.followed_epoch {
+            return;
+        }
+        if let Some(index) = newest {
+            self.followed_epoch = epoch;
+            self.code
+                .update(cx, |code, cx| code.reveal_agent_hunk(index, cx));
+        }
+    }
+
+    /// *Reject* on the agent's change at the caret: the text before the turn goes back in its
+    /// place as one undo step; a file without other unsaved changes is saved, so the disk (and
+    /// the agent's next read) has it too.
+    pub fn reject_agent_hunk(&mut self, cx: &mut Context<Self>) -> bool {
+        let clean = !self.buffer.read(cx).is_dirty();
+        let rejected = self.code.update(cx, |code, cx| {
+            code.agent_hunk_at_caret(cx)
+                .is_some_and(|index| code.reject_agent_hunk(index, cx))
+        });
+        if rejected && clean {
+            self.save(cx);
+        }
+        rejected
+    }
+
+    fn accept_agent_changes(&mut self, cx: &mut Context<Self>) {
+        let path = self.buffer.read(cx).path().to_owned();
+        cx.emit(FileViewEvent::AcceptAgentChanges(path));
+    }
+
+    /// The bar over a file an agent's turn changed: who, how many changes, ↑ ↓ between them,
+    /// *Reject* (the change at the caret), *Accept All*, *Follow*. The agent wrote the file
+    /// itself; the bar says so.
+    fn render_agent_bar(
+        &self,
+        theme: &Theme,
+        tokens: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let (who, count, at_caret) = {
+            let buffer = self.buffer.read(cx);
+            let changes = buffer.agent_changes()?;
+            let count = buffer.agent_hunks().len();
+            if count == 0 {
+                return None;
+            }
+            let who = changes
+                .label
+                .title
+                .clone()
+                .unwrap_or_else(|| "An agent".to_owned());
+            (
+                who,
+                count,
+                self.code.read(cx).agent_hunk_at_caret(cx).is_some(),
+            )
+        };
+        let message = format!(
+            "{who} changed {count} {} in this file, on disk",
+            if count == 1 { "place" } else { "places" }
+        );
+        let icon_button = |id: &'static str, glyph, tip: &'static str| {
+            div()
+                .id(id)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(tokens.control_height))
+                .rounded(px(tokens.radius))
+                .cursor_pointer()
+                .text_color(theme.muted)
+                .hover(|s| s.bg(theme.surface_hover))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.into())).into())
+                .child(crate::icons::glyph(glyph))
+        };
+        let reject = ui::button(
+            "file-agent-reject",
+            "Reject",
+            ButtonKind::Secondary,
+            at_caret,
+            theme,
+            tokens,
+        )
+        .tooltip(move |_, cx| {
+            cx.new(|_| {
+                TextTooltip(if at_caret {
+                    "Put back what was there before this change (⌘⌥Z); ⌘Z undoes it".into()
+                } else {
+                    "Move the caret into a highlighted change (⌘⌥] / ⌘⌥[) to reject it".into()
+                })
+            })
+            .into()
+        })
+        .when(at_caret, |b| {
+            b.on_click(cx.listener(|this, _, _, cx| {
+                this.reject_agent_hunk(cx);
+            }))
+        })
+        .child(super::render::probe(
+            &self.regions,
+            super::view::Region::FileAgent("reject"),
+        ));
+        let accept = ui::button(
+            "file-agent-accept",
+            "Accept All",
+            ButtonKind::Ghost,
+            true,
+            theme,
+            tokens,
+        )
+        .tooltip(|_, cx| {
+            cx.new(|_| {
+                TextTooltip(
+                    "Keep the agent's changes to this file and stop highlighting them".into(),
+                )
+            })
+            .into()
+        })
+        .on_click(cx.listener(|this, _, _, cx| this.accept_agent_changes(cx)))
+        .child(super::render::probe(
+            &self.regions,
+            super::view::Region::FileAgent("accept"),
+        ));
+        let follow = self.follow;
+        let follow_toggle = div()
+            .id("file-agent-follow")
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(tokens.spacing))
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .tooltip(|_, cx| {
+                cx.new(|_| {
+                    TextTooltip(
+                        "Scroll to the agent's newest change whenever it writes this file".into(),
+                    )
+                })
+                .into()
+            })
+            .on_click(cx.listener(move |this, _, _, cx| this.set_follow(!follow, cx)))
+            .child(ui::switch("file-agent-follow-switch", follow, true, theme))
+            .child(div().text_color(theme.fg).child("Follow"))
+            .child(super::render::probe(
+                &self.regions,
+                super::view::Region::FileAgent("follow"),
+            ));
+        Some(
+            div()
+                .id("file-agent")
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(tokens.spacing * 2.0))
+                .px(px(tokens.spacing * 2.0))
+                .py(px(tokens.spacing))
+                .border_b_1()
+                .border_color(theme.border)
+                .bg(theme.sidebar)
+                .text_size(px(tokens.secondary_font_size))
+                .child(crate::icons::icon(
+                    crate::icons::Icon::NavAgents,
+                    14.0,
+                    theme.accent,
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.fg)
+                        .child(message),
+                )
+                .child(
+                    icon_button(
+                        "file-agent-previous",
+                        crate::icons::Icon::ActionCollapse,
+                        "Previous change (⌘⌥[)",
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.code.update(cx, |c, cx| c.previous_agent_hunk(cx));
+                    })),
+                )
+                .child(
+                    icon_button(
+                        "file-agent-next",
+                        crate::icons::Icon::ActionExpand,
+                        "Next change (⌘⌥])",
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.code.update(cx, |c, cx| c.next_agent_hunk(cx));
+                    })),
+                )
+                .child(reject)
+                .child(accept)
+                .child(follow_toggle)
+                .into_any_element(),
+        )
     }
 
     /// Follows `editor.vim_mode` and `editor.vim_use_system_clipboard` (live).
@@ -1162,6 +1408,9 @@ impl Render for FileView {
             .as_ref()
             .filter(|_| ready)
             .map(|c| self.render_conflict_bar(c, &theme, &tokens, cx));
+        let agent_bar = ready
+            .then(|| self.render_agent_bar(&theme, &tokens, cx))
+            .flatten();
         let diff = self.diff.clone().map(|lines| self.render_diff(&lines, cx));
         let body = if ready {
             self.code.clone().into_any_element()
@@ -1193,7 +1442,24 @@ impl Render for FileView {
                 this.open_replace(window, cx);
             }))
             .on_action(cx.listener(|this, _: &Save, _, cx| this.save(cx)))
+            .on_action(cx.listener(|this, _: &RejectAgentHunk, _, cx| {
+                this.reject_agent_hunk(cx);
+            }))
+            .on_action(cx.listener(|this, _: &AcceptAgentChanges, _, cx| {
+                this.accept_agent_changes(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleFollowAgent, _, cx| {
+                let on = !this.follow;
+                this.set_follow(on, cx);
+            }))
+            .on_action(cx.listener(|this, _: &NextAgentHunk, _, cx| {
+                this.code.update(cx, |c, cx| c.next_agent_hunk(cx));
+            }))
+            .on_action(cx.listener(|this, _: &PreviousAgentHunk, _, cx| {
+                this.code.update(cx, |c, cx| c.previous_agent_hunk(cx));
+            }))
             .children(conflict_bar)
+            .children(agent_bar)
             .children(diff)
             .children(find_bar)
             .children(replace_bar)

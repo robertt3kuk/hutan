@@ -364,6 +364,14 @@ pub enum Region {
     ChangesBatch(usize),
     /// Entry `index` of the "Send to agent ▾" menu's agents.
     ChangesTarget(usize),
+    /// The *Open* button of file `index` of the Changes view's list (at its first hunk).
+    ChangesOpen(usize),
+    /// The *Open* button of hunk header `index` of the shown file's diff (at that hunk).
+    ChangesHunkOpen(usize),
+    /// The *Open* button of a file row of chat entry `index`: part `part` (as `ChatPart`).
+    ChatOpen(usize, u32),
+    /// A control of a file tab's agent bar (`reject`, `accept`, `follow`, `previous`, `next`).
+    FileAgent(&'static str),
 }
 
 /// A pane tab or dock tab being dragged.
@@ -581,6 +589,8 @@ pub struct Workbench {
     pub(crate) changes_subscriptions: Vec<Subscription>,
     /// The buffers of the files tabs show (see `files.rs`).
     pub(crate) buffers: super::files::BufferStore,
+    /// The pending ledger of agents' edits (see `agent_edits.rs`).
+    pub(crate) agent_ledger: super::agent_edits::AgentLedger,
     /// The view of every file tab, by pane and path.
     pub(crate) file_views: HashMap<(PaneId, String), Entity<super::file_view::FileView>>,
     pub(crate) file_subscriptions: HashMap<(PaneId, String), Subscription>,
@@ -1057,6 +1067,7 @@ impl Workbench {
             changes_views: HashMap::new(),
             changes_subscriptions: Vec::new(),
             buffers: super::files::BufferStore::default(),
+            agent_ledger: super::agent_edits::AgentLedger::for_state(options.state_path.as_deref()),
             file_views: HashMap::new(),
             editor_items: None,
             file_subscriptions: HashMap::new(),
@@ -1078,6 +1089,7 @@ impl Workbench {
             _subscriptions: subscriptions,
         };
         this.mac.events_task = events_task;
+        this.start_agent_ledger(cx);
         // The first run is a first screen in the centre, not a modal walk-through; "Run setup
         // again" opens the walk-through.
         if first_run_setup
@@ -1344,9 +1356,10 @@ impl Workbench {
         }));
     }
 
-    /// Write the layout now if it changed since the last write. Called by the debounce timer,
-    /// on quit, and by tests.
+    /// Write the layout (and the agent ledger) now if it changed since the last write. Called
+    /// by the debounce timer, on quit, and by tests.
     pub fn flush_save(&mut self) {
+        self.flush_agent_ledger();
         let Some(path) = &self.state_path else {
             return;
         };

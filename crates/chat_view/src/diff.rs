@@ -70,6 +70,34 @@ impl FileDiff {
     pub fn counts(&self) -> String {
         format!("+{} −{}", self.added, self.removed)
     }
+
+    /// The 1-based line of the new file where the first change is: the first added line, or
+    /// the line removed lines were above ("Open" goes there).
+    pub fn first_changed_line(&self) -> Option<u32> {
+        self.changed_line_from(0)
+    }
+
+    /// [`first_changed_line`](Self::first_changed_line) from line `from` of [`lines`](Self::lines)
+    /// on (a hunk's header: that hunk's first change).
+    pub fn changed_line_from(&self, from: usize) -> Option<u32> {
+        let mut next_new: Option<u32> = None;
+        for line in self.lines.get(from..)? {
+            match line.kind {
+                LineKind::Hunk => {
+                    next_new = line
+                        .text
+                        .strip_prefix("@@")
+                        .and_then(hunk_start)
+                        .map(|(_, new)| new);
+                }
+                LineKind::Context => next_new = line.new.map(|n| n + 1),
+                LineKind::Add => return line.new,
+                LineKind::Remove => return Some(next_new.unwrap_or(1).max(1)),
+                LineKind::Note => {}
+            }
+        }
+        None
+    }
 }
 
 /// The diff of one reported change. `patch` holds the file's content for an added or deleted
@@ -267,6 +295,26 @@ mod tests {
         assert_eq!((diff.added, diff.removed), (2, 0));
         assert_eq!(diff.lines[1].new, Some(2));
         assert_eq!(diff.counts(), "+2 −0");
+    }
+
+    #[test]
+    fn open_goes_to_the_first_change_of_the_file_or_of_a_hunk() {
+        let added = from_change(&change(FileChangeKind::Add, Some("hi\n")));
+        assert_eq!(added.first_changed_line(), Some(1));
+        let patch = "@@ -10,3 +10,3 @@\n a\n-b\n+B\n c\n@@ -40,2 +40,1 @@\n x\n-y\n";
+        let diff = from_change(&change(FileChangeKind::Update, Some(patch)));
+        assert_eq!(diff.first_changed_line(), Some(11), "the added line");
+        let second = diff
+            .lines
+            .iter()
+            .rposition(|l| l.kind == LineKind::Hunk)
+            .unwrap();
+        assert_eq!(
+            diff.changed_line_from(second),
+            Some(41),
+            "a removal sits where the next line is"
+        );
+        assert_eq!(diff.changed_line_from(99), None);
     }
 
     #[test]

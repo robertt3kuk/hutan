@@ -205,7 +205,7 @@ pub(crate) fn register(root: Stateful<Div>, cx: &mut Context<CodeView>) -> State
     let root = run!(root, Paste, paste);
     let root = run!(root, Undo, undo);
     let root = run!(root, Redo, redo);
-    let root = run!(root, RejectAgentHunk, reject_agent_hunk_at_caret);
+    // `RejectAgentHunk` is the owner's: it may save the file after it.
     let root = run!(root, NextAgentHunk, next_agent_hunk);
     run!(root, PreviousAgentHunk, previous_agent_hunk)
 }

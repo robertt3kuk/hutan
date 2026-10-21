@@ -1466,6 +1466,20 @@ impl Workbench {
             for view in self.file_views.values() {
                 view.update(cx, |view, cx| view.sync_vim(cx));
             }
+            // `editor.agent_highlight` too.
+            let highlight = self
+                .settings
+                .get::<crate::settings::EditorSettings>()
+                .agent_highlight;
+            let buffers: Vec<_> = self
+                .buffers
+                .buffers
+                .values()
+                .map(|s| s.buffer.clone())
+                .collect();
+            for buffer in buffers {
+                buffer.update(cx, |b, cx| b.set_agent_highlight(highlight, cx));
+            }
         }
         if changes.contains("integrations") {
             self.on_integrations_setting_changed(cx);

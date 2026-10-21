@@ -27,6 +27,12 @@ fn changes(base: &str, agent_text: &str) -> AgentChanges {
     }
 }
 
+/// *Reject* on the hunk at the caret (the file tab's action runs this).
+fn reject_at_caret(view: &Entity<CodeView>, cx: &mut VisualTestContext) {
+    view.update(cx, |v, cx| v.reject_agent_hunk_at_caret(cx));
+    draw(cx);
+}
+
 /// Lets the debounced diff after an edit run.
 fn settle(cx: &mut VisualTestContext) {
     cx.executor().advance_clock(agent::SLOW_DIFF_DELAY * 2);
@@ -125,7 +131,7 @@ fn reject_restores_that_hunk_only_and_is_undoable(cx: &mut TestAppContext) {
     let (view, buffer, cx, base, agent_text) = written(cx);
     let second = agent_text.find("line twenty-five").unwrap();
     place(&view, cx, &[second + 3]);
-    run(cx, a::RejectAgentHunk);
+    reject_at_caret(&view, cx);
     let expected = agent_text.replace("line twenty-five\nline 25b\n", "line 25\n");
     assert_eq!(
         text_of(&buffer, cx),
@@ -261,7 +267,7 @@ fn a_created_file_rejects_to_empty_text(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(hunk_texts(&buffer, cx), ["hello\n"]);
     place(&view, cx, &[0]);
-    run(cx, a::RejectAgentHunk);
+    reject_at_caret(&view, cx);
     assert_eq!(text_of(&buffer, cx), "");
     assert!(buffer.read_with(cx, |b, _| b.agent_hunks().is_empty()));
 }

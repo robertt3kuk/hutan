@@ -74,13 +74,14 @@ pub enum TabClose {
 }
 
 /// What ⌘-click on a file path in terminal output opens it with (`terminal.open_files_with`).
+/// `editor` by default since E-10 (it was `system` before).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenFilesWith {
     /// The file's default application, as a double click in Finder.
-    #[default]
     System,
     /// Hutan's own file viewer, in a tab, at the clicked line and column.
+    #[default]
     Editor,
 }
 
@@ -115,8 +116,8 @@ pub struct TerminalSettings {
     /// What the × of a terminal tab does: `detach` (the session keeps running) or
     /// `close_session`.
     pub tab_close: TabClose,
-    /// What ⌘-click on a file path in terminal output opens it with: `system` (the file's
-    /// default application) or `editor`.
+    /// What ⌘-click on a file path in terminal output opens it with: `editor` (a file tab at
+    /// the line, the default) or `system` (the file's default application).
     pub open_files_with: OpenFilesWith,
     /// Ask before a multi-line paste into a program that did not turn on bracketed paste (a
     /// shell would run every line at once). Programs that handle bracketed paste are never
@@ -139,7 +140,7 @@ impl Default for TerminalSettings {
             shell: String::new(),
             env: BTreeMap::new(),
             tab_close: TabClose::Detach,
-            open_files_with: OpenFilesWith::System,
+            open_files_with: OpenFilesWith::Editor,
             confirm_multiline_paste: true,
         }
     }
@@ -919,6 +920,10 @@ pub struct EditorSettings {
     pub autosave: Autosave,
     /// For `autosave = "after_delay"`: milliseconds after the last change.
     pub autosave_delay_ms: u64,
+    /// Highlight the lines an agent's current turn changed in file tabs (a tint and a gutter
+    /// bar), with per-change Reject. Off, nothing is diffed or drawn; the agent's writes still
+    /// reach the file and the pending ledger.
+    pub agent_highlight: bool,
 }
 
 /// `editor.large_file_bytes` by default: 16 MiB.
@@ -934,6 +939,7 @@ impl Default for EditorSettings {
             large_file_bytes: DEFAULT_LARGE_FILE_BYTES,
             autosave: Autosave::Off,
             autosave_delay_ms: 1000,
+            agent_highlight: true,
         }
     }
 }
@@ -1560,19 +1566,23 @@ mod tests {
         };
         let on = TerminalSettings::default();
         assert!(on.confirm_multiline_paste, "the question is on by default");
-        assert_eq!(on.open_files_with, OpenFilesWith::System);
+        assert_eq!(
+            on.open_files_with,
+            OpenFilesWith::Editor,
+            "a file tab at the line by default (E-10)"
+        );
         assert!(
             on.view_settings(&terminal, &pack, TerminalExplicit::ALL)
                 .confirm_multiline_paste
         );
         let off: TerminalSettings =
-            toml::from_str("confirm_multiline_paste = false\nopen_files_with = \"editor\"")
+            toml::from_str("confirm_multiline_paste = false\nopen_files_with = \"system\"")
                 .unwrap();
         assert!(
             !off.view_settings(&terminal, &pack, TerminalExplicit::ALL)
                 .confirm_multiline_paste
         );
-        assert_eq!(off.open_files_with, OpenFilesWith::Editor);
+        assert_eq!(off.open_files_with, OpenFilesWith::System);
     }
 
     #[test]
