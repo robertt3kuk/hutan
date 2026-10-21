@@ -258,7 +258,10 @@ fn typing_right_after_search_history_lands_in_the_history_field(cx: &mut TestApp
     let field = panel.read_with(cx, |p, cx| gpui::Focusable::focus_handle(p, cx));
     let terminal = terminal(cx).expect("the terminal view is still there");
     cx.update(|window, _| {
-        assert!(field.is_focused(window), "the History field has the keyboard");
+        assert!(
+            field.is_focused(window),
+            "the History field has the keyboard"
+        );
         assert!(!terminal.is_focused(window));
     });
 }

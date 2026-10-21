@@ -74,16 +74,20 @@ fn crowded_sidebar(
     // The sessions end at once; their exits are real daemon events and would otherwise land
     // between two samples of a render count. So does the answer to the window's first
     // `task.list` (the sidebar lists tasks too), which a loaded daemon gives late.
-    wait_until(cx, "every session to have exited and the tasks to be listed", |cx| {
-        view.read_with(cx, |wb, cx| {
-            let store = wb.sessions().read(cx);
-            store.tasks().loaded()
-                && store
-                    .sessions()
-                    .iter()
-                    .all(|s| matches!(s.state, hutan_core::SessionState::Exited { .. }))
-        })
-    });
+    wait_until(
+        cx,
+        "every session to have exited and the tasks to be listed",
+        |cx| {
+            view.read_with(cx, |wb, cx| {
+                let store = wb.sessions().read(cx);
+                store.tasks().loaded()
+                    && store
+                        .sessions()
+                        .iter()
+                        .all(|s| matches!(s.state, hutan_core::SessionState::Exited { .. }))
+            })
+        },
+    );
     (daemon, view, cx)
 }
 
