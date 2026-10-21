@@ -61,7 +61,7 @@ impl Home {
 
 const BROKEN: &str = "schema_version = 1\nid = \"broken\"\nname = \"Broken\"\nauthors = [\"t\"]\nlicense = \"MIT\"\nappearance = \"dark\"\nextends = \"builtin:hutan-dark\"\n\n[colors]\n\"ui.border\" = \"oops\"\n";
 // A pale accent: valid, but the white text on it is advice-worthy (a warning).
-const PALE: &str = "schema_version = 1\nid = \"pale\"\nname = \"Pale\"\nauthors = [\"t\"]\nlicense = \"MIT\"\nappearance = \"dark\"\nextends = \"builtin:hutan-dark\"\n\n[colors]\n\"ui.accent\" = \"#eeeeaa\"\n";
+const PALE: &str = "schema_version = 1\nid = \"pale\"\nname = \"Pale\"\nauthors = [\"t\"]\nlicense = \"MIT\"\nappearance = \"dark\"\nextends = \"builtin:hutan-dark\"\n\n[colors]\n\"ui.accent\" = \"#eeeeaa\"\n\"ui.on-accent\" = \"#ffffff\"\n";
 
 fn ids(doc: &Value) -> Vec<String> {
     doc["themes"]
