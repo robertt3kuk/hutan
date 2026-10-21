@@ -218,7 +218,7 @@ fn use_new_default_takes_the_panels_and_keeps_the_modes_sizes_and_center(cx: &mu
         LayoutPreset::default_preset().docks.right.panels
     );
     assert_eq!(s.docks.right.more, ids(&["inspector", "resources"]));
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "files"]));
     // The user's modes and widths stay; so does the center.
     assert_eq!(s.docks.right.mode(), DockMode::Compact);
     assert_eq!((s.docks.left.size, s.docks.right.size), (300.0, 400.0));

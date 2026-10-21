@@ -112,7 +112,7 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     let (view, cx) = open(cx);
     let s = state(&view, cx);
     assert_eq!(s.preset, "default");
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "files"]));
     assert_eq!(s.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(
         s.docks.right.panels,
@@ -214,7 +214,7 @@ fn nav_items_switch_the_left_page_and_the_back_row_returns_to_projects(cx: &mut 
     // The panel list of the dock is untouched: pages are the dock's panels.
     assert_eq!(
         state(&view, cx).docks.left.panels,
-        ids(&["sessions", "tasks"])
+        ids(&["sessions", "tasks", "files"])
     );
 
     // Agents is no page of the sidebar: it opens the Agents page in the center and leaves the
@@ -261,8 +261,9 @@ fn a_panel_left_in_the_left_dock_gets_its_own_nav_row(cx: &mut TestAppContext) {
         ["resources"],
         "the move made it the page"
     );
-    // It is the dock's panel at index 2: the same probe the right strip uses.
-    assert!(painted(&view, cx, Region::DockTab(DockPosition::Left, 2)));
+    // It is the dock's panel at index 3 (after Files, which only has a nav row while it is the
+    // page): the same probe the right strip uses.
+    assert!(painted(&view, cx, Region::DockTab(DockPosition::Left, 3)));
 }
 
 // ---- assistant ---------------------------------------------------------------------------------
@@ -510,7 +511,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
     cx.dispatch_action(actions::ApplyPreset("focus".into()));
     let s = state(&view, cx);
     assert_eq!(visible(&view, cx), [false, false, false]);
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "files"]));
     assert_eq!(
         s.docks.right.panels,
         ids(&["changes", "agents", "history", "inspector", "resources"])
@@ -524,7 +525,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
     cx.dispatch_action(actions::ToggleOverview);
     let s = state(&view, cx);
     assert_eq!(s.preset, "overview");
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "files"]));
     assert!(
         s.active_pane()
             .unwrap()
@@ -534,7 +535,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
     cx.dispatch_action(actions::ToggleOverview);
     let s = state(&view, cx);
     assert_eq!(s.preset, "default");
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "files"]));
 }
 
 #[gpui::test]

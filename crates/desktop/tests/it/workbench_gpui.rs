@@ -51,7 +51,11 @@ fn opens_with_default_layout_and_title(cx: &mut TestAppContext) {
     assert!(state.docks.left.visible && state.docks.right.visible && !state.docks.bottom.visible);
     assert_eq!(
         state.docks.left.panels,
-        vec![PanelId::new("sessions"), PanelId::new("tasks")]
+        vec![
+            PanelId::new("sessions"),
+            PanelId::new("tasks"),
+            PanelId::new("files")
+        ]
     );
     assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
     assert_eq!(state.panes().len(), 1);
@@ -780,6 +784,7 @@ fn dragging_a_panel_tab_to_a_pane_and_to_another_dock(cx: &mut TestAppContext) {
         vec![
             PanelId::new("sessions"),
             PanelId::new("tasks"),
+            PanelId::new("files"),
             PanelId::new("inspector")
         ]
     );

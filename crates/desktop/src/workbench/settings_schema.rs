@@ -9,10 +9,10 @@ use hutan_settings::{AppearanceSettings, Setting, SettingsStore};
 use serde_json::Value as Json;
 
 use crate::settings::{
-    AgentsSettings, AppSettings, AssistantSettings, ChatSettings, EditorSettings, HistorySettings,
-    InspectorPanelSettings, IntegrationsSettings, KeymapSettings, LauncherSettings, LayoutSettings,
-    ResourcesSettings, SessionsPanelSettings, SidebarSettings, TasksSettings, TerminalSettings,
-    WorkspacesSettings,
+    AgentsSettings, AppSettings, AssistantSettings, ChatSettings, EditorSettings,
+    FilesPanelSettings, HistorySettings, InspectorPanelSettings, IntegrationsSettings,
+    KeymapSettings, LauncherSettings, LayoutSettings, ResourcesSettings, SessionsPanelSettings,
+    SidebarSettings, TasksSettings, TerminalSettings, WorkspacesSettings,
 };
 use crate::workbench::settings_labels::{field_search_text, namespace_title, page_keywords};
 
@@ -346,6 +346,7 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<SessionsPanelSettings>(),
         CatalogEntry::of::<SidebarSettings>().on_page(SessionsPanelSettings::NAMESPACE),
         CatalogEntry::of::<InspectorPanelSettings>(),
+        CatalogEntry::of::<FilesPanelSettings>(),
         CatalogEntry::of::<WorkspacesSettings>(),
         CatalogEntry::custom("sessions_restore"),
         CatalogEntry::of::<HistorySettings>(),
@@ -545,7 +546,7 @@ mod tests {
                 .map(|e| e.namespace)
                 .collect()
         };
-        assert_eq!(names("panels.").len(), 2);
+        assert_eq!(names("panels.").len(), 3);
         let mut font = names("font");
         font.sort_unstable();
         assert_eq!(font, ["editor", "terminal"], "code and terminal fonts");

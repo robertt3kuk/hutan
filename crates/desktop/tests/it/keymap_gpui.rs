@@ -122,7 +122,12 @@ fn zed_is_the_default_base_with_its_palette_jump_and_dock_keys(cx: &mut TestAppC
         Some("⌘⇧P"),
         "the palette hint is the Zed key, ⌘K stays an alias"
     );
-    assert_eq!(hint(cx, &actions::OpenJump).as_deref(), Some("⌘P"));
+    assert_eq!(hint(cx, &actions::QuickOpen).as_deref(), Some("⌘P"));
+    assert_eq!(
+        hint(cx, &actions::OpenJump),
+        None,
+        "the jump list is the Sessions section of ⌘P in the Zed base"
+    );
     assert_eq!(hint(cx, &actions::ToggleLeftDock).as_deref(), Some("⌘B"));
     assert_eq!(hint(cx, &actions::ToggleRightDock).as_deref(), Some("⌘L"));
     assert_eq!(hint(cx, &actions::ToggleBottomDock).as_deref(), Some("⌘J"));
