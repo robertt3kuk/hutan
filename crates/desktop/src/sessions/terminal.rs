@@ -6,6 +6,7 @@
 //! [`ViewStatus`] all views show. Dropping the session detaches.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::task::Poll;
 
@@ -34,12 +35,20 @@ pub(crate) fn terminal_colors(colors: DefaultColors) -> TerminalColors {
     }
 }
 
+/// The folder the shell is in now: its OSC 7 folder, else the one it started in.
+fn info_folder(info: &SessionInfo) -> Option<PathBuf> {
+    info.folder.clone().or_else(|| info.cwd.clone())
+}
+
 /// What views of a terminal ask of the daemon, through the session's handle.
 struct SessionBackend {
     handle: SharedHandle,
     connection: Connection,
     shared: WeakEntity<SharedTerminal>,
     cx: AsyncApp,
+    /// Where the shell is (the session's `folder`, else the folder it started in): relative
+    /// paths in output that no block places are looked for there.
+    folder: RefCell<Option<PathBuf>>,
 }
 
 impl TerminalBackend for SessionBackend {
@@ -92,6 +101,10 @@ impl TerminalBackend for SessionBackend {
         if let Some(handle) = self.handle.borrow().as_ref() {
             handle.set_colors(terminal_colors(colors));
         }
+    }
+
+    fn working_dir(&self) -> Option<PathBuf> {
+        self.folder.borrow().clone()
     }
 
     fn block_text(&self, block_id: u64, part: BlockPart) -> Task<Option<String>> {
@@ -182,6 +195,7 @@ impl TerminalSession {
                 connection: connection.clone(),
                 shared: shared.downgrade(),
                 cx: cx.to_async(),
+                folder: RefCell::new(info_folder(&info)),
             });
             let mut this = Self {
                 session: info.id,
@@ -414,6 +428,7 @@ impl TerminalSession {
         if self.info == info && self.info_epoch == epoch {
             return;
         }
+        *self.backend.folder.borrow_mut() = info.as_ref().and_then(info_folder);
         self.info = info;
         self.info_epoch = epoch;
         if !self.rebind_to_respawn(cx) {

@@ -19,6 +19,7 @@ mod icons_gpui;
 mod keymap_gpui;
 mod launcher_gpui;
 mod layout_gpui;
+mod links_gpui;
 mod mac_gpui;
 mod mawas_gpui;
 mod mcp_gpui;

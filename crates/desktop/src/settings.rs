@@ -73,6 +73,18 @@ pub enum TabClose {
     CloseSession,
 }
 
+/// What ⌘-click on a file path in terminal output opens it with (`terminal.open_files_with`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenFilesWith {
+    /// The file's default application, as a double click in Finder.
+    #[default]
+    System,
+    /// The editor: today the system's default text editor (`open -t`); the built-in editor
+    /// takes over when it exists.
+    Editor,
+}
+
 /// The `terminal` namespace: font, theme and behavior of every terminal view.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -104,6 +116,9 @@ pub struct TerminalSettings {
     /// What the × of a terminal tab does: `detach` (the session keeps running) or
     /// `close_session`.
     pub tab_close: TabClose,
+    /// What ⌘-click on a file path in terminal output opens it with: `system` (the file's
+    /// default application) or `editor`.
+    pub open_files_with: OpenFilesWith,
 }
 
 impl Default for TerminalSettings {
@@ -121,6 +136,7 @@ impl Default for TerminalSettings {
             shell: String::new(),
             env: BTreeMap::new(),
             tab_close: TabClose::Detach,
+            open_files_with: OpenFilesWith::System,
         }
     }
 }

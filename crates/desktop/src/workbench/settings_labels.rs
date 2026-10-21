@@ -244,6 +244,13 @@ const FIELDS: &[FieldText] = &[
             ("close_session", "Close the session"),
         ],
     ),
+    choice(
+        "terminal",
+        "open_files_with",
+        "Open files from terminal output with",
+        "What ⌘-click on a file path in terminal output (src/lib.rs:42:7) opens. System uses the file's default application; Editor uses your default text editor. A URL always opens in the browser.",
+        &[("system", "System default app"), ("editor", "Editor")],
+    ),
     field(
         "terminal",
         "blocks",

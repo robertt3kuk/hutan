@@ -6,12 +6,13 @@
 //! carry the view's input, resizes, acks and history requests to the daemon.
 //!
 //! GPUI-free building blocks (unit tested without a window): [`model`], [`blocks`], [`keys`],
-//! [`mouse`], [`paste`], [`selection`] and [`theme`].
+//! [`mouse`], [`paste`], [`links`], [`selection`] and [`theme`].
 
 pub mod blocks;
 mod convert;
 mod element;
 pub mod keys;
+pub mod links;
 pub mod model;
 pub mod mouse;
 pub mod paste;
@@ -27,6 +28,7 @@ use gpui::Task;
 pub use hutan_protocol::blocks::BlockPart;
 pub use hutan_protocol::messages::TerminalSize;
 pub use hutan_protocol::render::{Row, TerminalRender};
+pub use links::LinkTarget;
 pub use settings::{
     BlockSettings, CursorSettings, CursorStyle, OptionAsMeta, TerminalViewSettings, Tint,
 };
@@ -34,7 +36,7 @@ pub use shared::{SharedEvent, SharedTerminal};
 pub use theme::{DefaultColors, Rgb, TerminalPalette};
 pub use view::{
     BlockActions, Copy, CopyBlockCommand, CopyBlockOutput, JumpToNextPrompt, JumpToPreviousPrompt,
-    KEY_CONTEXT, Paste, RerunBlock, SelectBlockOutput, SendBlockToAgent, TerminalView,
+    KEY_CONTEXT, Paste, RerunBlock, Segment, SelectBlockOutput, SendBlockToAgent, TerminalView,
     TerminalViewEvent, ToggleBlockCollapse, ViewMode, ViewStatus, bind_default_keys,
 };
 
@@ -56,4 +58,9 @@ pub trait TerminalBackend: 'static {
     /// The colors the view draws defaults with, so OSC 10/11/12 replies match (called on creation
     /// and when they change; the protocol message arrives with a later wave).
     fn set_default_colors(&self, colors: DefaultColors);
+    /// The folder the shell is in now, for relative paths in output that no block places
+    /// (`None`: unknown; such paths are not links).
+    fn working_dir(&self) -> Option<std::path::PathBuf> {
+        None
+    }
 }

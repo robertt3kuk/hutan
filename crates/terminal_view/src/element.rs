@@ -16,8 +16,8 @@ use crate::blocks::{self, DisplayRow, OverlayReport, Tone};
 use crate::model::{row_cells, row_width};
 use crate::settings::Tint;
 use crate::shape::{
-    Decoration, FontSpec, RowCache, ShapedRow, UnderlineKind, hsla, row_key, shape_row, styled_row,
-    text_columns,
+    Decoration, FontSpec, RowCache, RowHover, ShapedRow, UnderlineKind, hsla, row_key, shape_row,
+    styled_row, text_columns,
 };
 use crate::theme::{Rgb, Theme};
 use crate::view::{ANIMATION_PHASES, Layout, TerminalView, ViewMode};
@@ -141,7 +141,7 @@ fn selection_text(
     Some(SelectionText {
         from,
         to,
-        shaped: shape_row(&recolored, theme, font, None, text_system),
+        shaped: shape_row(&recolored, theme, font, RowHover::NONE, text_system),
     })
 }
 
@@ -361,7 +361,7 @@ fn prepare(
                     &styled,
                     &view.theme,
                     &font,
-                    None,
+                    RowHover::NONE,
                     text_system,
                 ))),
                 selected,
@@ -372,14 +372,21 @@ fn prepare(
         }
         let row = model.row_at(line);
         let shaped = row.filter(|row| !row.runs.is_empty()).map(|row| {
-            let key = row_key(row, fingerprint, &font, hover_link);
+            let hover = RowHover {
+                link: hover_link,
+                columns: view
+                    .hover_detected
+                    .as_ref()
+                    .and_then(|detected| detected.columns_on(line)),
+            };
+            let key = row_key(row, fingerprint, &font, hover);
             shape_cached(
                 &mut view.rows,
                 key,
                 row,
                 &view.theme,
                 &font,
-                hover_link,
+                hover,
                 text_system,
             )
         });
@@ -416,17 +423,18 @@ fn prepare(
             col: cursor.col,
             row: cursor_row,
             cols: u16::try_from(text_columns(text)).unwrap_or(u16::MAX),
-            shaped: shape_row(&row, theme, &font, None, text_system),
+            shaped: shape_row(&row, theme, &font, RowHover::NONE, text_system),
         })
     });
 
-    let cursor_style = if view.hover_link().is_some() && view.cmd_held {
-        CursorStyle::PointingHand
-    } else if view.model.get().modes().mouse != hutan_protocol::render::MouseMode::None {
-        CursorStyle::Arrow
-    } else {
-        CursorStyle::IBeam
-    };
+    let cursor_style =
+        if (view.hover_link().is_some() || view.hover_detected.is_some()) && view.cmd_held {
+            CursorStyle::PointingHand
+        } else if view.model.get().modes().mouse != hutan_protocol::render::MouseMode::None {
+            CursorStyle::Arrow
+        } else {
+            CursorStyle::IBeam
+        };
 
     Prepaint {
         hitbox,
@@ -592,7 +600,7 @@ fn prepare_overlay(
             row,
             col,
             cols,
-            shaped: shape_row(&styled, &view.theme, font, None, text_system),
+            shaped: shape_row(&styled, &view.theme, font, RowHover::NONE, text_system),
         });
     }
     (overlay, report)
@@ -604,10 +612,10 @@ fn shape_cached(
     row: &hutan_protocol::render::Row,
     theme: &Theme,
     font: &FontSpec,
-    hover_link: Option<u32>,
+    hover: RowHover,
     text_system: &WindowTextSystem,
 ) -> Rc<ShapedRow> {
-    cache.get_or_shape(key, || shape_row(row, theme, font, hover_link, text_system))
+    cache.get_or_shape(key, || shape_row(row, theme, font, hover, text_system))
 }
 
 fn prepare_cursor(
@@ -655,7 +663,7 @@ fn prepare_cursor(
                 flags - CellFlags::WIDE,
             );
             // `styled_row` re-derives the WIDE flag from the character itself.
-            shape_row(&styled, &view.theme, font, None, text_system).line
+            shape_row(&styled, &view.theme, font, RowHover::NONE, text_system).line
         }
         _ => None,
     };

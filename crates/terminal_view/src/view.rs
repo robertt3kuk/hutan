@@ -23,7 +23,8 @@ use crate::blocks::{self, DisplayRow};
 use crate::convert;
 use crate::element::TerminalElement;
 use crate::keys::{KeyOptions, Mods, encode_key};
-use crate::model::{Applied, HISTORY_PAGE, TerminalModel, row_cells};
+use crate::links::{self, Candidate, LinkTarget};
+use crate::model::{Applied, HISTORY_PAGE, TerminalModel, row_cells, row_width};
 use crate::mouse::{
     Button, MouseAction, MouseEvent, WheelDirection, alternate_scroll, encode_mouse,
 };
@@ -115,6 +116,39 @@ pub enum TerminalViewEvent {
     /// view has no chat to send to: the owner fetches the text (`terminal.block_text`) and
     /// attaches it.
     SendBlockToAgent { block: u64 },
+    /// ⌘-click on a link: an OSC 8 hyperlink (`http(s)` and `mailto` only) or a URL or an
+    /// existing `path[:line[:col]]` found in the text. The view opens nothing itself: its owner
+    /// decides what opens it (the browser, the system, an editor).
+    OpenLink(LinkTarget),
+}
+
+/// Rows of one soft-wrapped line the link detector reads on each side of the hovered row.
+const LINK_SCAN_ROWS: i64 = 16;
+
+/// The columns `(absolute line, first column, end column)` a link covers on one row.
+pub type Segment = (i64, u16, u16);
+
+/// A link found in plain text under the pointer: what ⌘-click opens and the cells it underlines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Detected {
+    pub target: LinkTarget,
+    /// `(absolute line, first column, end column)`; one entry per row the text spans.
+    pub segments: Vec<Segment>,
+}
+
+impl Detected {
+    /// The underlined columns on `line`.
+    pub fn columns_on(&self, line: i64) -> Option<(u16, u16)> {
+        self.segments
+            .iter()
+            .find(|(l, ..)| *l == line)
+            .map(|(_, from, to)| (*from, *to))
+    }
+
+    fn covers(&self, line: i64, col: u16) -> bool {
+        self.columns_on(line)
+            .is_some_and(|(from, to)| from <= col && col < to)
+    }
 }
 
 /// Grid geometry from the last layout.
@@ -184,6 +218,9 @@ pub struct TerminalView {
     last_motion_cell: Option<(u16, u16)>,
     pub(crate) hover_cell: Option<(u16, u16)>,
     pub(crate) cmd_held: bool,
+    /// The link in plain text under the pointer while ⌘ is held (found on hover, never per
+    /// frame; dropped when the output changes).
+    pub(crate) hover_detected: Option<Detected>,
 
     marked: Option<Marked>,
 
@@ -310,6 +347,7 @@ impl TerminalView {
             last_motion_cell: None,
             hover_cell: None,
             cmd_held: false,
+            hover_detected: None,
             marked: None,
             layout: None,
             reported_size: None,
@@ -385,6 +423,7 @@ impl TerminalView {
     ) {
         match event {
             SharedEvent::Applied(applied) => {
+                self.hover_detected = None;
                 if applied.snapshot {
                     self.theme.set_overrides(self.model.get().palette());
                 }
@@ -740,9 +779,137 @@ impl TerminalView {
             .and_then(|c| c.run.link)
     }
 
+    /// The link in plain text under the pointer while ⌘ is held, and the cells it underlines as
+    /// `(absolute line, first column, end column)` per row.
+    pub fn hovered_link(&self) -> Option<(&LinkTarget, &[Segment])> {
+        self.hover_detected
+            .as_ref()
+            .map(|d| (&d.target, d.segments.as_slice()))
+    }
+
     pub(crate) fn hover_link(&self) -> Option<u32> {
         let (row, col) = self.hover_cell?;
         self.link_at(row, col)
+    }
+
+    /// The link in plain text at `(row, col)`: a URL, or a `path[:line[:col]]` that exists
+    /// (relative paths against the folder of the block the line belongs to, else the shell's
+    /// current folder). Reads the logical line around the cell; call on hover and click only.
+    pub(crate) fn detect_link(&self, row: u16, col: u16) -> Option<Detected> {
+        if self.mode != ViewMode::Interactive {
+            return None;
+        }
+        let line = match self.display().get(usize::from(row)) {
+            Some(DisplayRow::Summary(_)) => return None,
+            Some(DisplayRow::Line(line)) => *line,
+            None => self.line_for_row(row),
+        };
+        let model = self.model.get();
+        let mut first = line;
+        while line - first < LINK_SCAN_ROWS && model.row_at(first - 1).is_some_and(|r| r.wrapped) {
+            first -= 1;
+        }
+        let mut last = line;
+        while last - line < LINK_SCAN_ROWS
+            && model.row_at(last).is_some_and(|r| r.wrapped)
+            && model.row_at(last + 1).is_some()
+        {
+            last += 1;
+        }
+        // The logical line as text, and where each cell sits in it: (byte, line, from, to).
+        let mut text = String::new();
+        let mut cells: Vec<(usize, i64, u16, u16)> = Vec::new();
+        let mut at = None;
+        for l in first..=last {
+            let row = model.row_at(l)?;
+            for cell in row_cells(row) {
+                if l == line && cell.col <= col && col < cell.end() {
+                    at = Some(text.len());
+                }
+                cells.push((text.len(), l, cell.col, cell.end()));
+                match cell.text.chars().next() {
+                    Some(c) if !c.is_control() => text.push_str(cell.text),
+                    _ => text.push(' '),
+                }
+            }
+            if row.wrapped {
+                // A wrapped row is full: blanks the daemon trimmed are blanks of the text.
+                let width = row_width(row);
+                if width < model.cols() {
+                    cells.push((text.len(), l, width, model.cols()));
+                    text.push(' ');
+                }
+            }
+        }
+        let found = links::candidate_at(&text, at?)?;
+        let target = match found.candidate {
+            Candidate::Url(url) => LinkTarget::Url(url),
+            Candidate::Path {
+                path,
+                line: at_line,
+                column,
+            } => {
+                let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+                let relative = !path.starts_with(['/', '~']);
+                let cwd = if relative { self.link_cwd(line) } else { None };
+                let path = links::resolve(&path, cwd.as_deref(), home.as_deref())?;
+                std::fs::metadata(&path).ok()?;
+                LinkTarget::File {
+                    path,
+                    line: at_line,
+                    column,
+                }
+            }
+        };
+        let mut segments: Vec<Segment> = Vec::new();
+        for (byte, l, from, to) in &cells {
+            if !found.range.contains(byte) {
+                continue;
+            }
+            match segments.last_mut() {
+                Some((last_line, _, end)) if last_line == l => *end = *to,
+                _ => segments.push((*l, *from, *to)),
+            }
+        }
+        Some(Detected { target, segments })
+    }
+
+    /// The folder relative paths on `line` are relative to: where the command of the block that
+    /// owns the line ran, else the shell's current folder.
+    fn link_cwd(&self, line: i64) -> Option<std::path::PathBuf> {
+        let model = self.model.get();
+        if !model.modes().alt_screen {
+            let spans = blocks::spans(&model, self.cursor_line());
+            let cwd = blocks::block_at(&spans, line)
+                .and_then(|id| model.blocks().get(id))
+                .and_then(|block| block.cwd.clone());
+            if cwd.is_some() {
+                return cwd;
+            }
+        }
+        self.backend.working_dir()
+    }
+
+    /// Finds the plain-text link under the pointer while ⌘ is held. Returns whether what is
+    /// underlined changed.
+    fn refresh_detected(&mut self) -> bool {
+        let wanted = match self.hover_cell {
+            Some((row, col)) if self.cmd_held && self.link_at(row, col).is_none() => {
+                if self.hover_detected.as_ref().is_some_and(|d| {
+                    let line = self.line_for_row(row);
+                    d.covers(line, col)
+                }) {
+                    return false;
+                }
+                self.detect_link(row, col)
+            }
+            _ => None,
+        };
+        if wanted == self.hover_detected {
+            return false;
+        }
+        self.hover_detected = wanted;
+        true
     }
 
     pub(crate) fn marked_for_paint(&self) -> Option<&str> {
@@ -1134,14 +1301,19 @@ impl TerminalView {
         window.focus(&self.focus_handle, cx);
         let (row, col) = layout.cell_at(event.position);
         self.highlight = None;
-        if event.button == gpui::MouseButton::Left
-            && event.modifiers.platform
-            && let Some(id) = self.link_at(row, col)
-            && let Some(uri) = self.model.get().link(id).map(str::to_owned)
-            && OPENABLE_SCHEMES.iter().any(|s| uri.starts_with(s))
-        {
-            cx.open_url(&uri);
-            return;
+        if event.button == gpui::MouseButton::Left && event.modifiers.platform {
+            let hyperlink = self
+                .link_at(row, col)
+                .and_then(|id| self.model.get().link(id).map(str::to_owned))
+                .filter(|uri| OPENABLE_SCHEMES.iter().any(|s| uri.starts_with(s)));
+            if let Some(uri) = hyperlink {
+                cx.emit(TerminalViewEvent::OpenLink(LinkTarget::Url(uri)));
+                return;
+            }
+            if let Some(detected) = self.detect_link(row, col) {
+                cx.emit(TerminalViewEvent::OpenLink(detected.target));
+                return;
+            }
         }
         if self.captures_mouse(event.modifiers) {
             if let Some(button) = convert::button(event.button) {
@@ -1189,7 +1361,12 @@ impl TerminalView {
             let had_block = self.hover_block();
             self.hover_cell = hover;
             self.cmd_held = cmd;
-            if had_link || self.hover_link().is_some() || had_block != self.hover_block() {
+            let detected_changed = self.refresh_detected();
+            if detected_changed
+                || had_link
+                || self.hover_link().is_some()
+                || had_block != self.hover_block()
+            {
                 cx.notify();
             }
         }
@@ -1312,7 +1489,7 @@ impl TerminalView {
     ) {
         if event.modifiers.platform != self.cmd_held {
             self.cmd_held = event.modifiers.platform;
-            if self.hover_link().is_some() {
+            if self.refresh_detected() || self.hover_link().is_some() {
                 cx.notify();
             }
         }

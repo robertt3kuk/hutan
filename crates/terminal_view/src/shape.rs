@@ -146,12 +146,35 @@ fn push_merged<T>(list: &mut Vec<T>, item: T, merge: impl FnOnce(&mut T, &T) -> 
     list.push(item);
 }
 
-/// Shapes `row` for painting at column 0. `hover_link` underlines that hyperlink's runs.
+/// What the pointer underlines on one row while ⌘ is held.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct RowHover {
+    /// The hovered OSC 8 hyperlink: its runs are underlined.
+    pub link: Option<u32>,
+    /// The hovered link found in the text: its columns on this row, `from..to`.
+    pub columns: Option<(u16, u16)>,
+}
+
+impl RowHover {
+    pub const NONE: Self = Self {
+        link: None,
+        columns: None,
+    };
+
+    fn underlines(&self, run: &Run, cell_from: u16, cell_to: u16) -> bool {
+        (self.link.is_some() && run.link == self.link)
+            || self
+                .columns
+                .is_some_and(|(from, to)| from <= cell_from && cell_to <= to)
+    }
+}
+
+/// Shapes `row` for painting at column 0. `hover` underlines the hovered link.
 pub(crate) fn shape_row(
     row: &Row,
     theme: &Theme,
     font: &FontSpec,
-    hover_link: Option<u32>,
+    hover: RowHover,
     text_system: &WindowTextSystem,
 ) -> ShapedRow {
     let cells = row_cells(row);
@@ -192,7 +215,7 @@ pub(crate) fn shape_row(
             .underline_color
             .map_or(fg, |c| hsla(theme.resolve(c, colors.fg)));
         let mut kind = underline_kind(run.flags);
-        if kind.is_none() && hover_link.is_some() && run.link == hover_link {
+        if kind.is_none() && hover.underlines(run, cell.col, cell.end()) {
             kind = Some(UnderlineKind::Single);
         }
         if let Some(kind) = kind {
@@ -282,7 +305,7 @@ fn hash_color(color: Color, state: &mut impl Hasher) {
 }
 
 /// Content key of a row: everything that influences its shaped form.
-pub(crate) fn row_key(row: &Row, style_key: u64, font: &FontSpec, hover_link: Option<u32>) -> u64 {
+pub(crate) fn row_key(row: &Row, style_key: u64, font: &FontSpec, hover: RowHover) -> u64 {
     let mut h = DefaultHasher::new();
     style_key.hash(&mut h);
     font.hash_into(&mut h);
@@ -295,8 +318,9 @@ pub(crate) fn row_key(row: &Row, style_key: u64, font: &FontSpec, hover_link: Op
         if let Some(c) = run.underline_color {
             hash_color(c, &mut h);
         }
-        (hover_link.is_some() && run.link == hover_link).hash(&mut h);
+        (hover.link.is_some() && run.link == hover.link).hash(&mut h);
     }
+    hover.columns.hash(&mut h);
     h.finish()
 }
 
@@ -424,7 +448,7 @@ mod real_font_tests {
             wrapped: false,
         };
         let theme = Theme::new(TerminalPalette::default());
-        let shaped = shape_row(&row, &theme, &font, None, &ts);
+        let shaped = shape_row(&row, &theme, &font, RowHover::NONE, &ts);
         let line = shaped.line.expect("line");
         let offsets = cell_offsets(&row);
         assert!(offsets.len() > 15);

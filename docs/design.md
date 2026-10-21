@@ -275,6 +275,7 @@ cursor = { style = "block", blink = true }
 option_as_meta = "left"        # none | left | right | both
 copy_on_select = false
 blocks = true                  # prompt blocks over the terminal (see Terminal blocks)
+open_files_with = "system"     # system | editor — what ⌘-click on a file path in output opens (see Terminal links)
 
 [layout]
 preset = "default"
@@ -472,6 +473,18 @@ The wheel and ⇧PageUp / ⇧PageDown / ⇧Home scroll a primary-screen terminal
 ### Resize and reflow (UX-TERM-RESIZE, phase A)
 
 A width change reflows the soft-wrapped rows of the daemon's grid (scrollback, output) and the PTY gets the new size (SIGWINCH) after the view's 50 ms debounce. **While a shell sits at its prompt** (between `OSC 133;A` and `C`: fish 4, and zsh, bash, fish started by the daemon with the injected integration) the prompt is *not* reflowed: the rows from its first row down are erased, the cursor keeps its distance from the prompt's first row, and the shell repaints the prompt for the new width. Reflowing it made fish's repaint, which moves up the rows it believes the old prompt took, land inside the reflowed rows and leave stacked fragments or eat earlier output (audit F2; evidence and decision in `docs/spikes/2026-10-21-term-resize.md`). A shell without marks keeps the plain reflow. ⌘K **Terminal: Redraw** (`workbench::RedrawTerminal`) asks the focused terminal's program to repaint at the current size: one row less is reported, then the real size 150 ms later (a column would reflow); it cannot repair rows that are already garbled.
+
+### Terminal links (UX-LINKS)
+
+Hold **⌘** over terminal text: a URL or a file path that is really there is underlined and the pointer becomes a hand; **⌘-click** opens it. Without ⌘ nothing changes (a plain click selects, and the application keeps its mouse reports). The rule, which is also what the Settings sheet says under *Open files from terminal output with*:
+
+- **What is found.** An OSC 8 hyperlink (`http`, `https`, `mailto`; any other scheme is ignored as before), a plain `http://` or `https://` URL, and `path[:line[:col]]` (`src/lib.rs:42:7`, `(foo.rs:12)`, `Foo.cs(12,5)`, Python's `File "x.py", line 7`). Sentence punctuation after a URL (`.`, `,`, `;`, `:`, `!`, `?`) and a closing bracket without an opening one inside it (`(https://example.com/x)`, but not `…/Rust_(language)`) are not part of it.
+- **Paths must exist.** A path is a link only when the file or folder is on disk, so `e.g.`, `1.5` and `localhost:3000` are never underlined. `~/x` uses the home folder; an absolute path is taken as written; a relative path is resolved against the folder the command ran in (the working directory the shell reported for the block that owns the line, `OSC 7`), else the shell's current folder (`SessionInfo.folder`, else its start folder); with neither, a relative path is not a link.
+- **Wrapped lines.** A URL or path that the terminal soft-wrapped onto the next row is one link and is underlined on both rows; a hard line break never joins two rows.
+- **Cost.** Nothing is scanned per frame: the logical line under the pointer is read once when the pointer enters a new cell with ⌘ held (and once more on the click), at most 16 wrapped rows on each side, and one `stat` for a path. New output drops the underline until the pointer moves.
+- **Where it opens** (`terminal.open_files_with`, default `system`). A URL opens in the browser. A file opens with its default application (`system`, like a double click in Finder) or with the default text editor (`editor`, `open -t`; the built-in editor of E-5/E-10 takes this value over and will open the file at the line, which the system cannot be told). A file that is gone by the time of the click says so in a notice. One function, `workbench::open_link::open_link`, decides; the terminal view only emits `TerminalViewEvent::OpenLink(LinkTarget)`.
+
+Parity: OSC 8 ⌘-click kept (it now goes through the same event and opener); nothing removed.
 
 ## Terminal blocks (M10-C)
 

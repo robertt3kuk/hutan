@@ -12,8 +12,8 @@ use gpui::{
 };
 use hutan_protocol::blocks::BlockPart;
 use hutan_protocol::render::{
-    CellFlags, Color, Cursor, CursorShape, Link, Modes, MouseMode, Palette, Row, Run,
-    TerminalFrame, TerminalRender, TerminalSnapshot,
+    CellFlags, Color, Cursor, CursorShape, Modes, MouseMode, Palette, Row, Run, TerminalFrame,
+    TerminalRender, TerminalSnapshot,
 };
 use hutan_terminal_view::{
     DefaultColors, TerminalBackend, TerminalSize, TerminalView, TerminalViewEvent,
@@ -961,65 +961,6 @@ fn wheel_on_the_alternate_screen_sends_arrow_keys(cx: &mut TestAppContext) {
     wheel(cx, -1.0);
     assert_eq!(recorder.inputs().concat(), b"\x1b[B");
     assert_eq!(view.read_with(cx, |v, _| v.scroll_offset()), 0);
-}
-
-#[gpui::test]
-fn links_open_with_cmd_click_only_for_safe_schemes(cx: &mut TestAppContext) {
-    let (view, cx, recorder) = setup(cx, TerminalViewSettings::default());
-    let mut linked = run("click me");
-    linked.link = Some(0);
-    let mut risky = run("local");
-    risky.link = Some(1);
-    let render = TerminalRender::Snapshot(TerminalSnapshot {
-        frame: 1,
-        cols: 100,
-        rows: 2,
-        cursor: cursor(),
-        modes: Modes::default(),
-        palette: Palette::default(),
-        title: None,
-        lines: vec![
-            Row {
-                runs: vec![linked],
-                wrapped: false,
-            },
-            Row {
-                runs: vec![risky],
-                wrapped: false,
-            },
-        ],
-        links: vec![
-            Link {
-                id: 0,
-                uri: "https://example.com/a".into(),
-            },
-            Link {
-                id: 1,
-                uri: "file:///Applications/Calculator.app".into(),
-            },
-        ],
-        history_len: 0,
-        viewport_top: 0,
-    });
-    apply(&view, cx, render);
-    draw(cx);
-    recorder.take();
-    let cmd = Modifiers {
-        platform: true,
-        ..Modifiers::default()
-    };
-    cx.simulate_mouse_move(at(2.0, 0.0), None, cmd);
-    draw(cx);
-    cx.simulate_mouse_down(at(2.0, 0.0), MouseButton::Left, cmd);
-    cx.simulate_mouse_up(at(2.0, 0.0), MouseButton::Left, cmd);
-    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/a"));
-    cx.simulate_mouse_down(at(2.0, 1.0), MouseButton::Left, cmd);
-    cx.simulate_mouse_up(at(2.0, 1.0), MouseButton::Left, cmd);
-    assert_eq!(
-        cx.opened_url().as_deref(),
-        Some("https://example.com/a"),
-        "file: targets are not opened"
-    );
 }
 
 #[gpui::test]

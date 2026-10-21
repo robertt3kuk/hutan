@@ -256,11 +256,17 @@ impl Workbench {
         let view = cx.new(|cx| {
             TerminalView::with_shared(shared, backend, settings, ViewMode::Interactive, window, cx)
         });
-        let events = cx.subscribe_in(&view, window, move |this, _, event, window, cx| {
-            if let TerminalViewEvent::SendBlockToAgent { block } = event {
-                this.send_block_to_agent(session, *block, window, cx);
-            }
-        });
+        let events = cx.subscribe_in(
+            &view,
+            window,
+            move |this, _, event, window, cx| match event {
+                TerminalViewEvent::SendBlockToAgent { block } => {
+                    this.send_block_to_agent(session, *block, window, cx);
+                }
+                TerminalViewEvent::OpenLink(target) => this.open_terminal_link(target, cx),
+                TerminalViewEvent::TitleChanged(_) => {}
+            },
+        );
         self.terminals.insert(
             (pane, session),
             TerminalItem {

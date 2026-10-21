@@ -184,6 +184,9 @@ fn main() -> ExitCode {
                 TerminalViewEvent::SendBlockToAgent { block } => {
                     eprintln!("attach: send block {block} to an agent (no chat here)");
                 }
+                TerminalViewEvent::OpenLink(target) => {
+                    eprintln!("attach: open {target:?} (nothing opens links here)");
+                }
             })
             .detach();
             let pumped = view.clone();
