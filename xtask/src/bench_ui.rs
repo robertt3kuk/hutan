@@ -944,3 +944,48 @@ pub async fn editor_scroll(stack: &mut Stack<'_>) -> Result<Metrics> {
     display(&mut metrics, &trace, &frames)?;
     Ok(metrics)
 }
+
+// ---- B12a ----------------------------------------------------------------------------------
+
+const EDITOR_TYPE_KEYS: usize = 300;
+const EDITOR_TYPE_INTERVAL_MS: u64 = 60;
+
+/// B12a: 300 keys typed into the middle of a 1 MB Rust file with syntax on, one every 60 ms.
+pub async fn editor_type(stack: &mut Stack<'_>) -> Result<Metrics> {
+    let (files, layout) = editor_stack(stack, &[("one_mb.rs", 1_000_000)]).await?;
+    let scenario = json!({
+        "scenario": "editor_type",
+        "start_delay_ms": 3000,
+        "file": files[0],
+        "keys": EDITOR_TYPE_KEYS,
+        "interval_ms": EDITOR_TYPE_INTERVAL_MS,
+        "jitter_ms": 17,
+    });
+    stack.launch_layout(&layout, true, None, Some(&scenario))?;
+    wait_done(stack).await?;
+    let trace = stack.trace();
+    let typing = phase(&trace, "type").context("no type phase")?;
+    let keys = ops(&trace, "key", &[typing]);
+    if keys.len() < EDITOR_TYPE_KEYS * 3 / 4 {
+        bail!("only {} of the typed keys were painted", keys.len());
+    }
+    let mut metrics = Metrics::new();
+    put_stats(
+        &mut metrics,
+        "b12a_key",
+        &keys.iter().map(|k| k.1).collect::<Vec<_>>(),
+    );
+    put_stats(
+        &mut metrics,
+        "b12b_key_total",
+        &keys.iter().map(|k| k.0).collect::<Vec<_>>(),
+    );
+    let frames = intervals(&trace, &[typing]);
+    put_stats(
+        &mut metrics,
+        "b12a_work",
+        &series(&trace, "frame", "work_us", &[typing]),
+    );
+    display(&mut metrics, &trace, &frames)?;
+    Ok(metrics)
+}

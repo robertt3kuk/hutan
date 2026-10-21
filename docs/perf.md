@@ -580,6 +580,27 @@ harness in `xtask/src/bench_ui.rs`).
 
 **Orchestrator decision (2026-10-21) on the misses.** B11d was marked [INFERENCE] in the spike with the instruction to replace it by E-2's measurement before enforcing; the measured tree alone is 37 MB/MB for token-dense Rust. B11d is re-based on measurement, not relaxed silently: **≤ 60 MB desktop RSS growth for one visible 1 MB file with syntax, ≤ 8 MB without**, and the tree is kept only for visible files (already true). A future `syntax_max_bytes` threshold (no tree above it until asked) is the lever if real files exceed it. B13 stays 10.3 ms at 120 Hz: Hutan's frame work is 2.5 ms p95, the missed vsyncs are the display floor under load also seen in B7b; it is re-measured on an idle machine and with GF-1 (on-demand display link) when that spike runs.
 
+## Editor: typing (slice E-6, `hutan-code-view`)
+
+Budget B12a of `docs/spikes/2026-10-21-editor.md` § 4.8, end to end through the real daemon and the release desktop (`just bench --only B12a`; scenario `editor-type`: `HUTAN_BENCH_UI` `editor_type` in `crates/desktop/src/bench_ui.rs`, harness `editor_type` in `xtask/src/bench_ui.rs`).
+
+| | |
+|---|---|
+| Machine | Apple M1 Pro (10 cores, 16 GB), macOS 27.0.1, 120 Hz display (8.33 ms measured); other agents were building (load average 12–13), so the numbers are pessimistic |
+| Method | One run (`--runs 1`), 2026-10-21. The 1 MB generated Rust file of B11 is opened (`workbench::OpenFile`), its tree is waited for, the caret goes to its middle line and 300 letters are typed through `Window::dispatch_keystroke` (the keymap, then the platform text input: `EntityInputHandler::replace_text_in_range`), one every 60 ms with up to 17 ms of jitter. **Hutan path** (B12a) is from the key's dispatch to the end of the frame that shows it, without the wait for the display tick; **on screen** (B12b) includes that wait. |
+
+| # | Measure | Result | Budget | |
+|---|---|---|---|---|
+| B12a | key handled → frame with the glyph submitted, p95 | **3.12 ms** (p50 1.51, p99 4.56, max 10.0; 300 keys) | ≤ 2 ms | **✗ miss by 1.1 ms** |
+| B12a | frame work while typing (render + layout + paint), p95 | 2.57 ms (p50 1.17) | — | |
+| B12b | key → on screen, p95 | **9.31 ms** (p50 5.62) | 1 frame + 2 ms = 10.3 ms at 120 Hz | ✓ |
+| — | lines shaped per keystroke | 1 (GPUI test `a_keystroke_shapes_only_the_line_it_changed`) | ≤ the lines it changed | ✓ |
+| — | parses from scratch while typing | 0 after the first (`edits_reach_the_parser_incrementally`, `SyntaxStats::incremental`) | none | ✓ |
+
+What the key path does: one transaction on the rope (≈ 1 µs, E-1), the parser's `edit` + `reparse` scheduling (≈ 2 µs, E-2), the highlights of the lines in view carried across the edit (≈ 150 µs for 60 lines, E-2), one line shaped, and a frame. The median (1.5 ms) is inside the budget; the p95 is not, under a machine load of 12–13.
+
+**Miss, not relaxed.** The likely cost beyond the editor's own work is that every keystroke also redraws the workbench: the code view's `Changed` event (the status bar's `Ln, Col`) notifies the workbench, which renders its whole tree around the cached views. Follow-up (E-14 or a fix slice): notify only the status item for a caret move and keep the workbench render off the key path, then measure again on an idle machine.
+
 ## Editor: the Vim layer (slice E-7a, `hutan-vim`)
 
 E-7a moves the V-1 modal layer out of `desktop` into a GPUI-free crate and changes no behaviour, so

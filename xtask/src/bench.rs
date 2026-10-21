@@ -236,6 +236,14 @@ pub const BUDGETS: &[Budget] = &[
         frame_margin_ms: None,
     },
     Budget {
+        id: "B12a",
+        name: "Typing into a 1 MB Rust file with syntax: key handled to frame submitted (Hutan path), p95",
+        metric: "b12a_key_p95_ms",
+        unit: "ms",
+        limit: 2.0,
+        frame_margin_ms: None,
+    },
+    Budget {
         id: "B13",
         name: "Continuous scroll of a 1 MB file: frame interval p95 (one frame + 2 ms)",
         metric: "b13_scroll_frame_p95_ms",
@@ -271,10 +279,12 @@ enum Scenario {
     EditorOpen,
     /// B13: a 1 MB Rust file scrolled.
     EditorScroll,
+    /// B12a: typing into a 1 MB Rust file.
+    EditorType,
 }
 
 impl Scenario {
-    const ALL: [Scenario; 12] = [
+    const ALL: [Scenario; 13] = [
         Scenario::Idle,
         Scenario::IdleWide,
         Scenario::Typing,
@@ -287,6 +297,7 @@ impl Scenario {
         Scenario::Switching,
         Scenario::EditorOpen,
         Scenario::EditorScroll,
+        Scenario::EditorType,
     ];
 
     fn name(self) -> &'static str {
@@ -303,6 +314,7 @@ impl Scenario {
             Scenario::Switching => "switching (B10)",
             Scenario::EditorOpen => "editor open (B11)",
             Scenario::EditorScroll => "editor scroll (B13)",
+            Scenario::EditorType => "editor typing (B12a)",
         }
     }
 
@@ -320,6 +332,7 @@ impl Scenario {
             Scenario::Switching => &["B10"],
             Scenario::EditorOpen => &["B11a", "B11b", "B11c", "B11d"],
             Scenario::EditorScroll => &["B13"],
+            Scenario::EditorType => &["B12a"],
         }
     }
 }
@@ -358,7 +371,7 @@ pub async fn run(options: Options) -> Result<()> {
     for id in &wanted {
         if !BUDGETS.iter().any(|b| selects(id, b.id)) {
             bail!(
-                "unknown budget {id}; known: B1, B2, B2w, B3, B3p, B4a, B4b, B5, B6, B7a, B7b, B7c, B8a, B8b, B8c, B9a, B9b, B10, B11a, B11b, B11c, B11d, B13"
+                "unknown budget {id}; known: B1, B2, B2w, B3, B3p, B4a, B4b, B5, B6, B7a, B7b, B7c, B8a, B8b, B8c, B9a, B9b, B10, B11a, B11b, B11c, B11d, B12a, B13"
             );
         }
     }
@@ -996,6 +1009,7 @@ async fn run_scenario(
         Scenario::Switching => crate::bench_ui::switching(&mut stack).await,
         Scenario::EditorOpen => crate::bench_ui::editor_open(&mut stack).await,
         Scenario::EditorScroll => crate::bench_ui::editor_scroll(&mut stack).await,
+        Scenario::EditorType => crate::bench_ui::editor_type(&mut stack).await,
     };
     // The trace of the run stays next to the report: what the harness reads is what you can read.
     let trace = stack.path("trace.jsonl");

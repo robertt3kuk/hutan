@@ -14,6 +14,7 @@
 //! | `idle` | nothing: the frames drawn while the window idles (diagnosis of B3) | frames of the `idle` phase |
 //! | `switch` | jumps between the tabs with ⌘1…⌘9 and to sessions with ⌘P | `switch` and `jump` ops (B10) |
 //! | `editor_open` | opens each file in a tab (`workbench::OpenFile`), waits for its highlighted viewport, pauses for a memory sample | `open` op per file (B11a/b first paint), `editor_highlighted` (B11c), `editor_rss_point` (B11d) |
+//! | `editor_type` | opens a file, puts the caret in its middle and types into it | `key` ops of the `type` phase (B12a: the Hutan path) |
 //! | `editor_scroll` | opens a file, then scrolls it down and back up with the wheel | frames of the `scroll_down` / `scroll_up` phases (B13), `editor_shaped` |
 //!
 //! The windows must be in front and the display awake, as for the keystroke benchmarks.
@@ -96,6 +97,15 @@ pub enum Scenario {
         /// Seconds to wait after each file is highlighted (the harness samples memory then).
         #[serde(default)]
         pause_s: u64,
+    },
+    EditorType {
+        #[serde(default)]
+        start_delay_ms: u64,
+        file: String,
+        keys: usize,
+        interval_ms: u64,
+        #[serde(default)]
+        jitter_ms: u64,
     },
     EditorScroll {
         #[serde(default)]
@@ -390,6 +400,19 @@ impl Driver<'_> {
                     trace::event_with("editor_rss_point", &format!(r#""file":{n}"#));
                     self.sleep(Duration::from_secs(pause_s)).await;
                 }
+            }
+            Scenario::EditorType {
+                start_delay_ms,
+                file,
+                keys,
+                interval_ms,
+                jitter_ms,
+            } => {
+                self.sleep(Duration::from_millis(start_delay_ms)).await;
+                self.frame_event("bench_start");
+                frames::set_recording(true);
+                self.editor_open(0, &file, this).await;
+                self.editor_type(keys, interval_ms, jitter_ms, this).await;
             }
             Scenario::EditorScroll {
                 start_delay_ms,
@@ -730,6 +753,49 @@ impl Driver<'_> {
                 &format!(r#""file":{n},"after_first_paint_ms":{ms:.3}"#),
             );
         }
+    }
+
+    /// B12a: the caret goes to the middle of the file and `keys` letters are typed, each an
+    /// operation measured to the frame that shows it.
+    async fn editor_type(
+        &mut self,
+        keys: usize,
+        interval_ms: u64,
+        jitter_ms: u64,
+        this: &gpui::WeakEntity<Workbench>,
+    ) {
+        let placed = self
+            .cx
+            .update(|window, cx| {
+                let code = Self::code_view(this, cx)?;
+                let lines = code.read(cx).buffer().read(cx).text().line_count();
+                code.update(cx, |code, cx| code.reveal_line(lines / 2, None, cx));
+                let focus = gpui::Focusable::focus_handle(code.read(cx), cx);
+                window.focus(&focus, cx);
+                Some(())
+            })
+            .ok()
+            .flatten();
+        if placed.is_none() {
+            tracing::error!("bench_ui: no file to type into");
+            return;
+        }
+        self.sleep(Duration::from_millis(500)).await;
+        Self::phase("type", "start");
+        let started = Instant::now();
+        let interval = Duration::from_millis(interval_ms);
+        for n in 0..keys {
+            let due =
+                started + interval * u32::try_from(n).unwrap_or(u32::MAX) + jitter(jitter_ms, n);
+            self.sleep(due.saturating_duration_since(Instant::now()))
+                .await;
+            let key = char::from(b'a' + (n % 26) as u8).to_string();
+            if !self.key(&key, "key") {
+                return;
+            }
+        }
+        self.settled().await;
+        Self::phase("type", "end");
     }
 
     async fn editor_scroll(
