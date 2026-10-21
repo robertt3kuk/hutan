@@ -139,11 +139,46 @@ struct Merged {
     error: Option<String>,
 }
 
+/// Which uncommitted changes the file list shows (`worktree.index`, protocol 0.34): the header's
+/// *Staged · Unstaged · All*. Read-only: Hutan never stages or unstages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IndexFilter {
+    #[default]
+    All,
+    /// Files with changes in git's index (what a commit would take now).
+    Staged,
+    /// Files whose working tree differs from the index, and untracked files.
+    Unstaged,
+}
+
+impl IndexFilter {
+    /// Whether `file` is listed under this filter.
+    pub fn shows(self, file: &DiffFile) -> bool {
+        match self {
+            Self::All => true,
+            Self::Staged => file.staged,
+            Self::Unstaged => file.unstaged,
+        }
+    }
+}
+
+/// The marker of a file's row: `staged`, `unstaged` or `both`; none for a committed-only file.
+pub fn index_mark(file: &DiffFile) -> Option<&'static str> {
+    match (file.staged, file.unstaged) {
+        (true, true) => Some("both"),
+        (true, false) => Some("staged"),
+        (false, true) => Some("unstaged"),
+        (false, false) => None,
+    }
+}
+
 pub struct ChangesView {
     env: PanelEnv,
     path: PathBuf,
     base: Option<String>,
     include_uncommitted: bool,
+    /// The header's *Staged · Unstaged · All*.
+    index_filter: IndexFilter,
     info: Option<WorktreeInfo>,
     listing: Listing,
     /// Bumped by every reload; answers of older ones are dropped.
@@ -203,6 +238,7 @@ impl ChangesView {
             path,
             base,
             include_uncommitted: true,
+            index_filter: IndexFilter::All,
             info: None,
             listing: Listing::Loading,
             generation: 0,
@@ -293,6 +329,38 @@ impl ChangesView {
 
     pub fn include_uncommitted(&self) -> bool {
         self.include_uncommitted
+    }
+
+    pub fn index_filter(&self) -> IndexFilter {
+        self.index_filter
+    }
+
+    /// Shows only the staged files, only the unstaged ones, or all (nothing is re-listed).
+    pub fn set_index_filter(&mut self, filter: IndexFilter, cx: &mut Context<Self>) {
+        if self.index_filter != filter {
+            self.index_filter = filter;
+            cx.notify();
+        }
+    }
+
+    /// Whether the listing says what is staged: uncommitted changes are included and some file
+    /// carries a marker (a daemon without `worktree.index` sets none).
+    pub fn has_index_marks(&self) -> bool {
+        self.include_uncommitted && self.files().iter().any(|f| index_mark(f).is_some())
+    }
+
+    /// The paths the file list shows now, under the index filter.
+    pub fn visible_files(&self) -> Vec<String> {
+        let filter = if self.has_index_marks() {
+            self.index_filter
+        } else {
+            IndexFilter::All
+        };
+        self.files()
+            .iter()
+            .filter(|f| filter.shows(f))
+            .map(|f| f.path.clone())
+            .collect()
     }
 
     pub fn selected(&self) -> Option<&str> {
@@ -991,6 +1059,43 @@ impl Render for ChangesView {
 }
 
 impl ChangesView {
+    /// *Staged · Unstaged · All* (protocol 0.34): shown while the listing says what is staged.
+    /// It filters the list only; nothing is staged or unstaged.
+    fn render_index_filter(
+        &self,
+        theme: &Theme,
+        tokens: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !self.has_index_marks() {
+            return None;
+        }
+        let choice = |id: &'static str, label: &'static str, filter: IndexFilter| {
+            pill(id, label, self.index_filter == filter, theme, tokens)
+                .relative()
+                .on_click(cx.listener(move |this, _, _, cx| this.set_index_filter(filter, cx)))
+                .child(probe(&self.env.regions, Region::Changes(id)))
+        };
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(tokens.spacing))
+                .child(choice(
+                    "changes-index-staged",
+                    "Staged",
+                    IndexFilter::Staged,
+                ))
+                .child(choice(
+                    "changes-index-unstaged",
+                    "Unstaged",
+                    IndexFilter::Unstaged,
+                ))
+                .child(choice("changes-index-all", "All", IndexFilter::All))
+                .into_any_element(),
+        )
+    }
+
     fn render_header(
         &self,
         theme: &Theme,
@@ -1072,6 +1177,7 @@ impl ChangesView {
                     .justify_end()
                     .gap(px(tokens.spacing * 2.0))
                     .children(self.render_review_controls(theme, tokens, cx))
+                    .children(self.render_index_filter(theme, tokens, cx))
                     .child(
                         pill(
                             "changes-uncommitted",
@@ -1523,8 +1629,31 @@ impl ChangesView {
             // Unfolded under the strip: the whole width, at most eight rows tall.
             list.w_full().max_h(px(tokens.sidebar_row * 8.0))
         };
+        let filter = if self.has_index_marks() {
+            self.index_filter
+        } else {
+            IndexFilter::All
+        };
         for (index, file) in self.files().iter().enumerate() {
+            if !filter.shows(file) {
+                continue;
+            }
             let (mark, color) = status_mark(file.status, theme);
+            let index_chip = index_mark(file).map(|text| {
+                div()
+                    .flex_none()
+                    .px(px(tokens.spacing))
+                    .rounded(px(crate::theme::pill_radius()))
+                    .border_1()
+                    .border_color(theme.border)
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(if text == "unstaged" {
+                        theme.warning
+                    } else {
+                        theme.muted
+                    })
+                    .child(text)
+            });
             let selected = self.selected.as_deref() == Some(file.path.as_str());
             let path = file.path.clone();
             let name = match &file.old_path {
@@ -1554,6 +1683,7 @@ impl ChangesView {
                             .truncate()
                             .child(SharedString::from(name)),
                     )
+                    .children(index_chip)
                     .child(if file.binary {
                         div()
                             .flex_none()

@@ -346,6 +346,49 @@ async fn diff_lists_commits_and_uncommitted_changes_against_the_merge_base() {
     env.stop().await;
 }
 
+/// Protocol 0.34 (`worktree.index`): A staged, B edited, C staged then edited again, D untracked
+/// → A staged, B unstaged, C both, D unstaged; a committed-only file is neither. Read-only:
+/// the index is what it was.
+#[tokio::test(flavor = "multi_thread")]
+async fn staged_and_unstaged_changes_are_told_apart_and_the_index_is_left_alone() {
+    let env = Env::start().await;
+    let wt = env.worktree("feature/index").await;
+    let dir = &wt.path;
+    fs::write(dir.join("keep.txt"), "keep, committed\n").unwrap();
+    commit_all(dir, "committed only");
+    fs::write(dir.join("a.txt"), format!("{}staged\n", lines("a", 10))).unwrap();
+    git(dir, &["add", "a.txt"]);
+    fs::write(dir.join("gone.txt"), "gone, edited\n").unwrap();
+    fs::write(dir.join("old name.txt"), "first\n").unwrap();
+    git(dir, &["add", "old name.txt"]);
+    fs::write(dir.join("old name.txt"), "first\nthen more\n").unwrap();
+    fs::write(dir.join("new.txt"), "new\n").unwrap();
+    let status_before = git(dir, &["status", "--porcelain"]);
+
+    assert!(env.client.supports_worktree_index());
+    let diff = env.diff(dir, true).await;
+    let marks = |path: &str| {
+        let f = file(&diff, path);
+        (f.staged, f.unstaged, f.uncommitted)
+    };
+    assert_eq!(marks("a.txt"), (true, false, true), "staged");
+    assert_eq!(marks("gone.txt"), (false, true, true), "unstaged");
+    assert_eq!(marks("old name.txt"), (true, true, true), "both");
+    assert_eq!(
+        marks("new.txt"),
+        (false, true, true),
+        "untracked is unstaged"
+    );
+    assert_eq!(marks("keep.txt"), (false, false, false), "committed only");
+    assert!(file(&diff, "keep.txt").committed);
+
+    // Without uncommitted changes nothing is marked.
+    let committed = env.diff(dir, false).await;
+    assert!(committed.files.iter().all(|f| !f.staged && !f.unstaged));
+    assert_eq!(git(dir, &["status", "--porcelain"]), status_before);
+    env.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn commit_all_puts_every_uncommitted_change_into_one_commit_so_a_merge_takes_it() {
     let env = Env::start().await;

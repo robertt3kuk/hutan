@@ -156,6 +156,8 @@ pub(crate) const FS_WATCH_CAPABILITY: &str = "fs.watch";
 pub(crate) const NOTIFY_MUTE_CAPABILITY: &str = "notify.mute";
 /// Capability for `chat.retry` (protocol 0.34).
 pub(crate) const CHAT_RETRY_CAPABILITY: &str = "chat.retry";
+/// Capability for `DiffFile.staged` / `.unstaged` of `worktree.diff` (protocol 0.34).
+pub(crate) const WORKTREE_INDEX_CAPABILITY: &str = "worktree.index";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -192,6 +194,7 @@ const CAPABILITIES: &[&str] = &[
     FS_WATCH_CAPABILITY,
     NOTIFY_MUTE_CAPABILITY,
     CHAT_RETRY_CAPABILITY,
+    WORKTREE_INDEX_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -531,6 +534,15 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == CHAT_RETRY_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `worktree.index` (protocol 0.34): the files
+    /// of `worktree.diff` say whether they are staged, unstaged or both.
+    pub fn supports_worktree_index(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == WORKTREE_INDEX_CAPABILITY)
     }
 
     /// `chat.retry`: sends the chat's last user message again; the journal keeps it once.

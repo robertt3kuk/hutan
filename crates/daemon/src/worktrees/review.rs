@@ -14,7 +14,7 @@
 //! fails half way is aborted (`git merge --abort`, `git reset --merge` for a squash, `git rebase
 //! --abort`). Nothing is pushed or fetched.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read;
@@ -134,14 +134,16 @@ impl WorktreeService {
             collect_diff(&entry.path, &merge_base, req.include_uncommitted).await?;
         let (commits, commits_truncated) = commits_since(&entry.path, &merge_base).await?;
         if req.include_uncommitted {
-            let (committed, uncommitted) = scope_of(&entry.path, &merge_base).await?;
+            let scope = scope_of(&entry.path, &merge_base).await?;
             for file in &mut files {
-                file.committed = committed.contains(&file.path)
+                file.committed = scope.committed.contains(&file.path)
                     || file
                         .old_path
                         .as_ref()
-                        .is_some_and(|old| committed.contains(old));
-                file.uncommitted = uncommitted.contains(&file.path);
+                        .is_some_and(|old| scope.committed.contains(old));
+                file.staged = scope.staged.contains(&file.path);
+                file.unstaged = scope.unstaged.contains(&file.path);
+                file.uncommitted = file.staged || file.unstaged;
             }
         } else {
             for file in &mut files {
@@ -860,7 +862,21 @@ fn diff_args(
     include_uncommitted: bool,
     files: &[&str],
 ) -> Vec<OsString> {
-    let mut args: Vec<OsString> = [
+    let mut args = diff_prefix();
+    args.extend(mode.iter().map(OsString::from));
+    args.push(OsString::from(merge_base));
+    if !include_uncommitted {
+        args.push(OsString::from("HEAD"));
+    }
+    args.push(OsString::from("--"));
+    args.extend(files.iter().map(OsString::from));
+    args
+}
+
+/// `git diff` and the options every diff of the review uses (no pager, no external diff or
+/// text conversion, fixed prefixes, renames found).
+fn diff_prefix() -> Vec<OsString> {
+    [
         "--no-pager",
         "--literal-pathspecs",
         "-c",
@@ -876,15 +892,7 @@ fn diff_args(
     ]
     .iter()
     .map(OsString::from)
-    .collect();
-    args.extend(mode.iter().map(OsString::from));
-    args.push(OsString::from(merge_base));
-    if !include_uncommitted {
-        args.push(OsString::from("HEAD"));
-    }
-    args.push(OsString::from("--"));
-    args.extend(files.iter().map(OsString::from));
-    args
+    .collect()
 }
 
 /// The changed files of the checkout at `root` and whether some patch is too big to show whole.
@@ -952,6 +960,8 @@ async fn collect_diff(
                 status: entry.status,
                 committed: false,
                 uncommitted: false,
+                staged: false,
+                unstaged: false,
             }
         })
         .collect();
@@ -1045,53 +1055,68 @@ fn parse_log(output: &[u8]) -> Vec<CommitSummary> {
         .collect()
 }
 
-/// The paths changed by commits since `merge_base` and the paths with changes in no commit
-/// (staged, unstaged, untracked and not ignored); renames count under their new path.
-async fn scope_of(
-    root: &Path,
-    merge_base: &str,
-) -> Result<
-    (
-        std::collections::HashSet<String>,
-        std::collections::HashSet<String>,
-    ),
-    ErrorBody,
-> {
+/// What the changes of a checkout are made of, by path (renames under their new path).
+#[derive(Debug, Default)]
+struct Scope {
+    /// Changed by the commits since the merge base.
+    committed: HashSet<String>,
+    /// In the index: what a commit would take now (`git diff --cached HEAD`).
+    staged: HashSet<String>,
+    /// In the working tree but not the index (`git diff`), and untracked, not ignored files.
+    unstaged: HashSet<String>,
+}
+
+/// The paths changed by commits since `merge_base`, the staged ones and the unstaged ones
+/// (protocol 0.34, `worktree.index`); a path in neither of the last two is not uncommitted.
+async fn scope_of(root: &Path, merge_base: &str) -> Result<Scope, ErrorBody> {
     let committed_args = diff_args(&["--name-status", "-z"], merge_base, false, &[]);
-    let uncommitted_args = diff_args(&["--name-status", "-z"], "HEAD", true, &[]);
+    let staged_args = diff_args(&["--cached", "--name-status", "-z"], "HEAD", true, &[]);
+    let mut unstaged_args = diff_prefix();
+    unstaged_args.extend(["--name-status", "-z", "--"].map(OsString::from));
     let untracked_args: Vec<&str> = vec!["ls-files", "--others", "--exclude-standard", "-z"];
-    let (committed_refs, uncommitted_refs) = (os_refs(&committed_args), os_refs(&uncommitted_args));
-    let (committed, uncommitted, untracked) = tokio::join!(
+    let (committed_refs, staged_refs, unstaged_refs) = (
+        os_refs(&committed_args),
+        os_refs(&staged_args),
+        os_refs(&unstaged_args),
+    );
+    let (committed, staged, unstaged, untracked) = tokio::join!(
         run_git(root, &committed_refs, DIFF_TIMEOUT),
-        run_git(root, &uncommitted_refs, DIFF_TIMEOUT),
+        run_git(root, &staged_refs, DIFF_TIMEOUT),
+        run_git(root, &unstaged_refs, DIFF_TIMEOUT),
         git(root, &untracked_args, READ_TIMEOUT),
     );
-    let (committed, uncommitted, untracked) = (committed?, uncommitted?, untracked?);
-    if !committed.success {
-        return Err(git_failed("diff --name-status", &committed));
-    }
-    if !uncommitted.success {
-        return Err(git_failed("diff --name-status", &uncommitted));
+    let (committed, staged, unstaged, untracked) = (committed?, staged?, unstaged?, untracked?);
+    for (what, output) in [
+        ("diff --name-status", &committed),
+        ("diff --cached --name-status", &staged),
+        ("diff --name-status", &unstaged),
+    ] {
+        if !output.success {
+            return Err(git_failed(what, output));
+        }
     }
     if !untracked.success {
         return Err(git_failed("ls-files", &untracked));
     }
-    let committed = parse_name_status(&committed.stdout)
-        .into_iter()
-        .map(|entry| entry.path)
-        .collect();
-    let mut uncommitted: std::collections::HashSet<String> = parse_name_status(&uncommitted.stdout)
-        .into_iter()
-        .map(|entry| entry.path)
-        .collect();
-    uncommitted.extend(
+    let paths = |stdout: &[u8]| -> HashSet<String> {
+        parse_name_status(stdout)
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect()
+    };
+    let mut scope = Scope {
+        committed: paths(&committed.stdout),
+        staged: paths(&staged.stdout),
+        unstaged: paths(&unstaged.stdout),
+    };
+    scope.unstaged.extend(
         untracked
             .stdout
             .split(|b| *b == 0)
             .filter(|n| !n.is_empty() && !n.ends_with(b"/"))
             .map(|n| String::from_utf8_lossy(n).into_owned()),
     );
-    Ok((committed, uncommitted))
+    Ok(scope)
 }
 
 /// One entry of `git diff --name-status -z`.
@@ -1253,6 +1278,8 @@ fn untracked_files(root: &Path, names: Vec<String>) -> (Vec<DiffFile>, Vec<usize
             binary,
             committed: false,
             uncommitted: false,
+            staged: false,
+            unstaged: false,
         });
         sizes.push(size);
     }

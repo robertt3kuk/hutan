@@ -4404,6 +4404,8 @@ fn responses_match_fixtures() {
                             binary: false,
                             committed: true,
                             uncommitted: false,
+                            staged: false,
+                            unstaged: false,
                         },
                         DiffFile {
                             path: "assets/logo.png".into(),
@@ -4414,6 +4416,8 @@ fn responses_match_fixtures() {
                             binary: true,
                             committed: true,
                             uncommitted: false,
+                            staged: false,
+                            unstaged: false,
                         },
                         DiffFile {
                             path: "old.txt".into(),
@@ -4424,6 +4428,8 @@ fn responses_match_fixtures() {
                             binary: false,
                             committed: false,
                             uncommitted: true,
+                            staged: false,
+                            unstaged: false,
                         },
                         DiffFile {
                             path: "README.md".into(),
@@ -4434,6 +4440,8 @@ fn responses_match_fixtures() {
                             binary: false,
                             committed: true,
                             uncommitted: true,
+                            staged: false,
+                            unstaged: false,
                         },
                     ],
                     patch_truncated: true,
@@ -4448,6 +4456,35 @@ fn responses_match_fixtures() {
                         },
                     ],
                     commits_truncated: true,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "worktree_diff_index",
+            ControlMessage::ok(
+                35,
+                &WorktreeDiff {
+                    base: "main".into(),
+                    merge_base: "5b1c0f3e8f6d2a4c7b9e0d1f2a3b4c5d6e7f8091".into(),
+                    files: [("a.txt", true, false), ("b.txt", false, true), ("c.txt", true, true)]
+                        .into_iter()
+                        .map(|(path, staged, unstaged)| DiffFile {
+                            path: path.into(),
+                            old_path: None,
+                            status: DiffStatus::Modified,
+                            additions: 1,
+                            deletions: 0,
+                            binary: false,
+                            committed: false,
+                            uncommitted: true,
+                            staged,
+                            unstaged,
+                        })
+                        .collect(),
+                    patch_truncated: false,
+                    commits: Vec::new(),
+                    commits_truncated: false,
                 },
             )
             .unwrap(),

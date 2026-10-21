@@ -366,3 +366,53 @@ fn the_changes_panel_lists_the_checkouts_again_when_the_window_comes_back(cx: &m
     });
     assert!(panel.read_with(cx, |p, _| p.refresh_error().is_none()));
 }
+
+/// `UX-CHANGES-INDEX` (protocol 0.34, read-only): each uncommitted file says whether it is
+/// staged, unstaged or both, and *Staged · Unstaged · All* filters the list.
+#[gpui::test]
+fn the_changes_list_marks_staged_and_unstaged_files_and_filters_them(cx: &mut TestAppContext) {
+    use hutan_desktop::workbench::{IndexFilter, index_mark};
+    let fx = Fx::new();
+    fx.edit(&feature_with_zero());
+    fs::write(fx.wt.join("b.txt"), "staged\n").unwrap();
+    git(&fx.wt, &["add", "b.txt"]);
+    fs::write(fx.wt.join("c.txt"), "first\n").unwrap();
+    git(&fx.wt, &["add", "c.txt"]);
+    fs::write(fx.wt.join("c.txt"), "first\nthen more\n").unwrap();
+    let (view, cx) = open(cx, &fx);
+    let changes = open_changes(&view, cx, &fx.wt);
+    let marks = changes.read_with(cx, |c, _| {
+        c.files()
+            .iter()
+            .map(|f| (f.path.clone(), index_mark(f)))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        marks,
+        [
+            ("a.txt".to_owned(), Some("unstaged")),
+            ("b.txt".to_owned(), Some("staged")),
+            ("c.txt".to_owned(), Some("both")),
+        ]
+    );
+    assert!(changes.read_with(cx, |c, _| c.has_index_marks()));
+    let visible = |cx: &VisualTestContext| changes.read_with(cx, |c, _| c.visible_files());
+    changes.update(cx, |c, cx| c.set_index_filter(IndexFilter::Staged, cx));
+    assert_eq!(visible(cx), ["b.txt", "c.txt"]);
+    changes.update(cx, |c, cx| c.set_index_filter(IndexFilter::Unstaged, cx));
+    assert_eq!(visible(cx), ["a.txt", "c.txt"]);
+    changes.update(cx, |c, cx| c.set_index_filter(IndexFilter::All, cx));
+    assert_eq!(visible(cx), ["a.txt", "b.txt", "c.txt"]);
+    draw(cx);
+    // Nothing was staged or unstaged by looking.
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(&fx.wt)
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&status.stdout),
+        " M a.txt\nA  b.txt\nAM c.txt\n"
+    );
+}

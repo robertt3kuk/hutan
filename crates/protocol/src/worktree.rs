@@ -217,6 +217,16 @@ pub struct DiffFile {
     /// merge does not take them). Only set when the request included uncommitted changes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub uncommitted: bool,
+    /// Protocol 0.34 (capability `worktree.index`): the file has changes in git's index (what a
+    /// commit would take now), against `HEAD`. Only set when the request included uncommitted
+    /// changes. Read-only: Hutan never stages or unstages.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub staged: bool,
+    /// Protocol 0.34 (capability `worktree.index`): the working tree differs from the index
+    /// (changes not staged), or the file is untracked. A file can be both `staged` and
+    /// `unstaged` (staged, then edited again).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unstaged: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
