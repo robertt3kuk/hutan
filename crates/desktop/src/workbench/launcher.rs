@@ -221,6 +221,9 @@ pub struct Launcher {
     pub(crate) handoff: Option<super::review::ReviewHandoff>,
     pub(crate) stop: LauncherStop,
     pub(crate) error: Option<String>,
+    /// `error` is about the agent or its model (it cannot start, no provider, no model choice
+    /// on this daemon): an agent preselected in its place clears it, as it clears no other.
+    pub(crate) error_about_agent: bool,
     pub(crate) starting: bool,
     /// The agent and model of the last start: what the sheet offers while the user has not
     /// picked one.
@@ -295,6 +298,19 @@ impl Launcher {
 
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    /// Shows `error` until the user changes what it is about (or starts again).
+    pub(crate) fn fail(&mut self, error: impl Into<String>) {
+        self.error = Some(error.into());
+        self.error_about_agent = false;
+    }
+
+    /// Shows `error`, which is about the agent or its model: another agent clears it, also one
+    /// the sheet preselects on its own.
+    pub(crate) fn fail_agent(&mut self, error: impl Into<String>) {
+        self.error = Some(error.into());
+        self.error_about_agent = true;
     }
 
     pub fn starting(&self) -> bool {
@@ -966,6 +982,7 @@ impl Workbench {
             handoff: preset.handoff.clone(),
             stop: LauncherStop::Prompt,
             error: None,
+            error_about_agent: false,
             starting: false,
             remembered_agent,
             remembered_model: memory.model.clone(),
@@ -1443,7 +1460,8 @@ impl Workbench {
     }
 
     /// Until the user picks an agent, the sheet offers the last one that was started, else the
-    /// first harness that can be started. A new agent clears the old one's error.
+    /// first harness that can be started. A new agent clears the old one's error (not the
+    /// sheet's other errors: this runs whenever the harnesses' readiness arrives).
     fn launcher_repick_agent(&mut self, cx: &mut Context<Self>) {
         let Some(launcher) = &self.launcher else {
             return;
@@ -1461,7 +1479,11 @@ impl Workbench {
             if let Some(launcher) = &mut self.launcher {
                 launcher.agent = wanted;
                 launcher.model = model;
-                launcher.error = None;
+                // Only what was wrong with the old agent goes: a missing command or prompt, or
+                // the daemon's refusal, is still wrong.
+                if launcher.error_about_agent {
+                    launcher.error = None;
+                }
                 launcher.confirm = None;
             }
             self.launcher_load_models(cx);
@@ -1710,7 +1732,7 @@ impl Workbench {
             return;
         }
         let Some(project) = launcher.project else {
-            launcher.error = Some("Choose a project first.".to_owned());
+            launcher.fail("Choose a project first.");
             cx.notify();
             return;
         };
@@ -1725,7 +1747,7 @@ impl Workbench {
         let request = match launcher.create_request(project, &agent_name) {
             Ok(request) => request,
             Err(error) => {
-                launcher.error = Some(error);
+                launcher.fail(error);
                 cx.notify();
                 return;
             }
@@ -1749,7 +1771,7 @@ impl Workbench {
                 _ => "It is still being checked.",
             };
             if let Some(launcher) = &mut self.launcher {
-                launcher.error = Some(format!("{} cannot start yet. {hint}", harness.name));
+                launcher.fail_agent(format!("{} cannot start yet. {hint}", harness.name));
             }
             cx.notify();
             return;
@@ -1766,7 +1788,7 @@ impl Workbench {
                 .supports_task_chat_model()
         {
             if let Some(launcher) = &mut self.launcher {
-                launcher.error = Some("This hutand cannot start a chat on a chosen model; restart it (Daemon → Restart) or pick the default.".to_owned());
+                launcher.fail_agent("This hutand cannot start a chat on a chosen model; restart it (Daemon → Restart) or pick the default.");
             }
             cx.notify();
             return;
@@ -1867,8 +1889,7 @@ impl Workbench {
             return;
         };
         if provider.is_empty() {
-            launcher.error =
-                Some("Configure a model provider first (Settings → Models).".to_owned());
+            launcher.fail_agent("Configure a model provider first (Settings → Models).");
             cx.notify();
             return;
         }
@@ -1882,7 +1903,7 @@ impl Workbench {
         if let LaunchPlace::NewWorktree { branch, .. } = &place
             && branch.trim().is_empty()
         {
-            launcher.error = Some("Name the branch of the new worktree.".to_owned());
+            launcher.fail("Name the branch of the new worktree.");
             cx.notify();
             return;
         }
@@ -2026,7 +2047,7 @@ impl Workbench {
     fn launcher_failed(&mut self, error: String, cx: &mut Context<Self>) {
         if let Some(launcher) = &mut self.launcher {
             launcher.starting = false;
-            launcher.error = Some(error);
+            launcher.fail(error);
         }
         cx.notify();
     }
