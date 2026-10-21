@@ -7,6 +7,7 @@ mod assistant;
 mod assistant_rail;
 mod changes;
 mod common;
+mod files;
 mod history;
 mod history_catalog;
 mod history_model;
@@ -43,6 +44,10 @@ pub use common::{
     tone_color,
 };
 pub(crate) use common::{edit_text, field_box};
+pub use files::{
+    FilesPanel, MAX_WATCHED_DIRS as FILES_MAX_WATCHED_DIRS, Row as FileRow, RowKind as FileRowKind,
+    Tree as FileTree,
+};
 pub(crate) use history::pill;
 pub use history::{Confirm as HistoryConfirm, HistoryPanel, Mode as HistoryMode};
 pub use history_catalog::{
@@ -116,11 +121,12 @@ impl Render for PlaceholderPanel {
     }
 }
 
-/// `sessions`, `history`, `changes`, `inspector` (titled Requests), `agents` (the compact
-/// projection of the Agents page), `agents-dashboard` (the Agents page), `resources`, `tasks`,
-/// `assistant` (Mawas Home), `notifications`. `sessions` (Projects) and `tasks` open as pages of
-/// the left sidebar, `history`, `changes`, `inspector`, `agents` and `resources` as tabs of the
-/// right sidebar's strip, `assistant` and `agents-dashboard` as tabs of the center.
+/// `sessions`, `files`, `history`, `changes`, `inspector` (titled Requests), `agents` (the
+/// compact projection of the Agents page), `agents-dashboard` (the Agents page), `resources`,
+/// `tasks`, `assistant` (Mawas Home), `notifications`. `sessions` (Projects), `files` and
+/// `tasks` open as pages of the left sidebar, `history`, `changes`, `inspector`, `agents` and
+/// `resources` as tabs of the right sidebar's strip, `assistant` and `agents-dashboard` as tabs
+/// of the center.
 pub fn builtin_panels() -> PanelRegistry {
     let mut registry = PanelRegistry::new();
     registry.register(PanelSpec {
@@ -131,6 +137,16 @@ pub fn builtin_panels() -> PanelRegistry {
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
             AnyView::from(cx.new(|cx| SessionsPanel::new(env, cx)))
+        }),
+    });
+    registry.register(PanelSpec {
+        id: "files".into(),
+        title: "Files".into(),
+        icon: crate::icons::Icon::PanelFiles,
+        default_dock: DockPosition::Left,
+        factory: Rc::new(|env, _window, cx| {
+            let env = env.clone();
+            AnyView::from(cx.new(|cx| FilesPanel::new(env, cx)))
         }),
     });
     registry.register(PanelSpec {

@@ -523,6 +523,13 @@ pub struct Workbench {
     /// so it survives a restart, and told to the store at start. The store owns the truth; this
     /// is its last saved copy.
     pub(crate) attention_marks: crate::sessions::Marks,
+    /// The files opened last, saved with the layout (see [`persistence::RecentFiles`]).
+    pub(crate) recent_files: persistence::RecentFiles,
+    /// ⌘P's `fs.find` in flight (dropping it cancels it) and its listener of `fs.generation`
+    /// (`quick_open.rs`).
+    pub(crate) quick_open: super::quick_open::QuickOpenTasks,
+    /// The file of the focused tab the Files panel was last told about.
+    pub(crate) revealed_file: Option<String>,
     /// What tells the workbench a chat's composer changed, per chat model.
     pub(crate) chat_draft_watch: HashMap<SessionId, Subscription>,
     /// What tells the workbench a terminal's folds changed, per held session.
@@ -1022,6 +1029,13 @@ impl Workbench {
                 .as_deref()
                 .map(persistence::load_marks)
                 .unwrap_or_default(),
+            recent_files: options
+                .state_path
+                .as_deref()
+                .map(persistence::load_recent_files)
+                .unwrap_or_default(),
+            quick_open: super::quick_open::QuickOpenTasks::default(),
+            revealed_file: None,
             chat_drafts: options
                 .state_path
                 .as_deref()
@@ -1378,6 +1392,7 @@ impl Workbench {
             &self.launcher_memory,
             &self.chat_drafts,
             &self.attention_marks,
+            &self.recent_files,
         ) {
             Ok(json) => json,
             Err(err) => {

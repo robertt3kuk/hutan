@@ -1,5 +1,6 @@
 //! The desktop's settings namespaces (design.md § Settings): `app`, `terminal`, `layout`,
-//! `panels.sessions`, `panels.inspector`, `workspaces`, `history`, `chat`, `editor`, `agents`.
+//! `panels.sessions`, `panels.inspector`, `panels.files`, `workspaces`, `history`, `chat`,
+//! `editor`, `agents`.
 //! `appearance` lives in `hutan-settings`.
 //!
 //! Numbers are `f64` so values read back from TOML and the schema defaults stay free of `f32`
@@ -582,6 +583,29 @@ impl Default for InspectorPanelSettings {
 
 impl Setting for InspectorPanelSettings {
     const NAMESPACE: &'static str = "panels.inspector";
+}
+
+/// The `panels.files` namespace: the Files panel's tree of the active project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct FilesPanelSettings {
+    /// List what `.gitignore` and `.ignore` rules match (dimmed) too.
+    pub show_ignored: bool,
+    /// Select the file of the focused tab in the tree (its folders open) when the tab changes.
+    pub auto_reveal: bool,
+}
+
+impl Default for FilesPanelSettings {
+    fn default() -> Self {
+        Self {
+            show_ignored: false,
+            auto_reveal: true,
+        }
+    }
+}
+
+impl Setting for FilesPanelSettings {
+    const NAMESPACE: &'static str = "panels.files";
 }
 
 /// How the sidebar orders workspaces, and the projects inside each level (pinned ones always
@@ -1362,6 +1386,7 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<LayoutSettings>();
     store.register::<SessionsPanelSettings>();
     store.register::<InspectorPanelSettings>();
+    store.register::<FilesPanelSettings>();
     store.register::<WorkspacesSettings>();
     store.register::<SidebarSettings>();
     store.register::<HistorySettings>();
@@ -1794,6 +1819,7 @@ mod tests {
             "layout",
             "panels.sessions",
             "panels.inspector",
+            "panels.files",
             "workspaces",
             "history",
             "chat",

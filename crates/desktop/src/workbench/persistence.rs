@@ -142,6 +142,29 @@ pub fn load_marks(path: &Path) -> Marks {
     load_key(path, "attention")
 }
 
+/// The files opened last (`recent_files` in the state file), most recent first, canonical
+/// paths: ⌘P lists those of the active project on top when nothing is typed, and ranks them
+/// higher when something is. View state like the layout; never sent to the daemon. At most
+/// [`MAX_RECENT_FILES`].
+pub type RecentFiles = Vec<String>;
+
+/// Most files [`RecentFiles`] keeps.
+pub const MAX_RECENT_FILES: usize = 100;
+
+/// The recent files saved in `path`; none when the file is missing or has none.
+pub fn load_recent_files(path: &Path) -> RecentFiles {
+    let mut recent: RecentFiles = load_key(path, "recent_files");
+    recent.truncate(MAX_RECENT_FILES);
+    recent
+}
+
+/// Puts `file` first in `recent` (once), keeping at most [`MAX_RECENT_FILES`].
+pub fn note_recent_file(recent: &mut RecentFiles, file: &str) {
+    recent.retain(|f| f != file);
+    recent.insert(0, file.to_owned());
+    recent.truncate(MAX_RECENT_FILES);
+}
+
 /// What the state file holds besides the layout, read from top-level key `key`.
 fn load_key<T: serde::de::DeserializeOwned + Default>(path: &Path, key: &str) -> T {
     std::fs::read_to_string(path)
@@ -153,8 +176,8 @@ fn load_key<T: serde::de::DeserializeOwned + Default>(path: &Path, key: &str) ->
 }
 
 /// The state file's JSON: the layout plus, when there are any, the folded blocks, the review
-/// comments, the launcher memory, the chat drafts and what the user did to the attention queue
-/// (`attention`: marked unread, snoozed).
+/// comments, the launcher memory, the chat drafts, what the user did to the attention queue
+/// (`attention`: marked unread, snoozed) and the recent files.
 pub fn state_json(
     state: &WorkbenchState,
     collapsed: &CollapsedBlocks,
@@ -162,6 +185,7 @@ pub fn state_json(
     launcher: &LauncherMemory,
     drafts: &ChatDrafts,
     marks: &Marks,
+    recent: &RecentFiles,
 ) -> Result<String, ModelError> {
     let json = state.to_json()?;
     if collapsed.is_empty()
@@ -169,6 +193,7 @@ pub fn state_json(
         && launcher.is_empty()
         && drafts.is_empty()
         && marks.is_empty()
+        && recent.is_empty()
     {
         return Ok(json);
     }
@@ -203,6 +228,12 @@ pub fn state_json(
             map.insert(
                 "chat_drafts".to_owned(),
                 serde_json::to_value(drafts).map_err(invalid)?,
+            );
+        }
+        if !recent.is_empty() {
+            map.insert(
+                "recent_files".to_owned(),
+                serde_json::to_value(recent).map_err(invalid)?,
             );
         }
     }
@@ -259,7 +290,8 @@ mod tests {
                 &ReviewComments::new(),
                 &none,
                 &ChatDrafts::new(),
-                &Marks::default()
+                &Marks::default(),
+                &RecentFiles::new(),
             )
             .unwrap(),
             state.to_json().unwrap()
@@ -275,6 +307,7 @@ mod tests {
                 &none,
                 &ChatDrafts::new(),
                 &Marks::default(),
+                &RecentFiles::new(),
             )
             .unwrap(),
         )
@@ -309,6 +342,7 @@ mod tests {
                 &memory,
                 &ChatDrafts::new(),
                 &Marks::default(),
+                &RecentFiles::new(),
             )
             .unwrap(),
         )
@@ -341,6 +375,7 @@ mod tests {
                 &LauncherMemory::default(),
                 &drafts,
                 &Marks::default(),
+                &RecentFiles::new(),
             )
             .unwrap(),
         )
@@ -368,6 +403,39 @@ mod tests {
             "cut at a character boundary"
         );
         assert_eq!(bounded_draft("short"), "short");
+    }
+
+    #[test]
+    fn recent_files_travel_beside_the_layout_most_recent_first_and_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STATE_FILE);
+        let state = WorkbenchState::default();
+        let mut recent = RecentFiles::new();
+        note_recent_file(&mut recent, "/repo/a.rs");
+        note_recent_file(&mut recent, "/repo/b.rs");
+        note_recent_file(&mut recent, "/repo/a.rs");
+        assert_eq!(recent, ["/repo/a.rs", "/repo/b.rs"], "once, latest first");
+        save_json(
+            &path,
+            &state_json(
+                &state,
+                &CollapsedBlocks::new(),
+                &ReviewComments::new(),
+                &LauncherMemory::default(),
+                &ChatDrafts::new(),
+                &Marks::default(),
+                &recent,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(load_recent_files(&path), recent);
+        assert_eq!(load_state(&path), state);
+        for n in 0..MAX_RECENT_FILES + 5 {
+            note_recent_file(&mut recent, &format!("/repo/{n}.rs"));
+        }
+        assert_eq!(recent.len(), MAX_RECENT_FILES);
+        assert_eq!(recent[0], format!("/repo/{}.rs", MAX_RECENT_FILES + 4));
     }
 
     #[test]

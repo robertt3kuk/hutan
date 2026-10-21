@@ -30,6 +30,8 @@ pub(crate) struct MacControl {
     dock: Rc<dyn DockBadge>,
     hotkey: Rc<dyn GlobalHotkey>,
     presence: Rc<dyn Presence>,
+    /// The Open panel of *File: Open File…* (`files.rs`).
+    pub(crate) open_panel: Rc<dyn crate::macos::OpenPanel>,
     /// The window is hidden and the app is an accessory: it lives in the menu bar.
     in_menu_bar: bool,
     /// The status of the login item the last time it was read.
@@ -63,6 +65,7 @@ impl MacControl {
             dock,
             hotkey,
             presence,
+            open_panel,
             events,
             launchd_daemon,
             launchd_grace,
@@ -76,6 +79,7 @@ impl MacControl {
                 dock,
                 hotkey,
                 presence,
+                open_panel,
                 in_menu_bar: false,
                 login_status,
                 refused: None,

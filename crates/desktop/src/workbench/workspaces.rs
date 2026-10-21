@@ -1,5 +1,6 @@
 //! Workbench behavior around projects and workspaces (M12): the active workspace and its
-//! layout, the ⌘O project picker, the ⌘J jump palette, the workspace menus and commands.
+//! layout, the ⌘O project picker, the ⌘J jump palette (⌘P's Sessions section, `quick_open.rs`),
+//! the workspace menus and commands.
 //!
 //! One workspace is *active*: its layout is the live one in the model (the others are parked,
 //! see `model/workspace.rs`), its first root layers its `.hutan/settings.toml` over the user
@@ -44,6 +45,8 @@ pub enum PickerKind {
     Projects,
     /// ⌘J: every workspace and session, hidden workspaces included.
     Jump,
+    /// ⌘P: the files of the active project (`quick_open.rs`), then the rows of [`Self::Jump`].
+    QuickOpen,
     /// ⌘K "Review approvals": the permission requests of every chat that wait for an answer.
     Approvals,
     /// ⌘K "Worktree: Remove…": the removable worktrees of the active workspace.
@@ -70,6 +73,8 @@ pub(crate) enum PickerAction {
         source: HistorySource,
         key: String,
     },
+    /// A file of ⌘P's Files section.
+    OpenFile(super::quick_open::FileHit),
 }
 
 /// One row of the picker.
@@ -113,6 +118,8 @@ pub struct PickerState {
     /// The hits of the `?` search.
     pub history: Vec<PickerEntry>,
     pub history_state: HistoryState,
+    /// ⌘P's Files section (its rows are the first `files.rows` entries).
+    pub files: super::quick_open::FileFinder,
 }
 
 impl PickerState {
@@ -126,15 +133,16 @@ impl PickerState {
             loading: false,
             history: Vec::new(),
             history_state: HistoryState::Idle,
+            files: super::quick_open::FileFinder::default(),
         };
         state.refilter();
         state
     }
 
-    /// The text after the `?` of a ⌘J history search; `None` for every other query.
+    /// The text after the `?` of a ⌘J / ⌘P history search; `None` for every other query.
     pub fn history_query(&self) -> Option<&str> {
         match self.kind {
-            PickerKind::Jump => self.query.strip_prefix('?').map(str::trim),
+            PickerKind::Jump | PickerKind::QuickOpen => self.query.strip_prefix('?').map(str::trim),
             PickerKind::Projects
             | PickerKind::Approvals
             | PickerKind::Worktrees
@@ -142,7 +150,8 @@ impl PickerState {
         }
     }
 
-    /// The rows `matches` indexes: the hits in a history search, else the workspaces and sessions.
+    /// The rows `matches` indexes: the hits in a history search, else the files (⌘P) and the
+    /// workspaces and sessions.
     fn shown(&self) -> &[PickerEntry] {
         if self.history_query().is_some() {
             &self.history
@@ -151,8 +160,9 @@ impl PickerState {
         }
     }
 
-    /// Recomputes the filtered rows: fixed rows first, then the fuzzy matches, titles before
-    /// details. In a history search every hit is a row, in the order the index ranked them.
+    /// Recomputes the filtered rows: fixed rows first (⌘P's files, which the daemon matched),
+    /// then the fuzzy matches, titles before details. In a history search every hit is a row,
+    /// in the order the index ranked them.
     pub(super) fn refilter(&mut self) {
         if self.history_query().is_some() {
             self.matches = (0..self.history.len()).collect();
@@ -188,7 +198,7 @@ impl PickerState {
     }
 
     /// The row at position `row` of the filtered list.
-    fn entry_at(&self, row: usize) -> Option<&PickerEntry> {
+    pub(super) fn entry_at(&self, row: usize) -> Option<&PickerEntry> {
         self.matches
             .get(row)
             .and_then(|index| self.shown().get(*index))
@@ -699,7 +709,13 @@ impl Workbench {
     ) {
         self.palette = None;
         self.context_menu = None;
-        self.picker = Some(state);
+        if self
+            .picker
+            .replace(state)
+            .is_some_and(|old| old.kind == PickerKind::QuickOpen)
+        {
+            self.quick_open_closed(cx);
+        }
         self.edits.picker.reset();
         window.focus(&self.picker_focus, cx);
         cx.notify();
@@ -707,7 +723,10 @@ impl Workbench {
 
     pub fn close_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.picker_search = None;
-        if self.picker.take().is_some() {
+        if let Some(old) = self.picker.take() {
+            if old.kind == PickerKind::QuickOpen {
+                self.quick_open_closed(cx);
+            }
             self.focus_root(window, cx);
             cx.notify();
         }
@@ -780,23 +799,27 @@ impl Workbench {
         picker.refilter();
     }
 
-    /// ⌘J: every workspace, project (hidden ones too) and session, in the sidebar's order;
-    /// Enter shows it. A workspace or project row shows its container's layout; a session its
-    /// tab.
+    /// ⌘J: every workspace, project (hidden ones too, but not stale ones) and session, in the
+    /// sidebar's order; Enter shows it. A workspace or project row shows its container's
+    /// layout; a session its tab.
     pub fn open_jump_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let entries = self.jump_entries(cx);
         self.show_picker(PickerState::new(PickerKind::Jump, entries), window, cx);
     }
 
-    /// The rows of the ⌘J palette.
-    fn jump_entries(&self, cx: &gpui::App) -> Vec<PickerEntry> {
+    /// The rows of the ⌘J palette (and ⌘P's Sessions section). The filters of the sidebar do
+    /// not apply, except that a project that never had a session is **stale** (a folder opened
+    /// by mistake and left): it is not offered unless it is pinned, in a workspace or the one
+    /// the window is in. ⌘O's recent projects still list it.
+    pub(super) fn jump_entries(&self, cx: &gpui::App) -> Vec<PickerEntry> {
         use crate::sessions::tree::{self, Node, ProjectNode, folder_label, session_folder};
         let store = self.sessions.read(cx);
         let settings = self.settings.get::<WorkspacesSettings>();
         let everything = WorkspacesSettings {
-            hide_empty: false,
+            hide_empty: true,
             hide_sleeping: false,
             hide_cli_created: false,
+            always_show_active: true,
             ..(*settings).clone()
         };
         let sessions: Vec<&hutan_protocol::messages::SessionInfo> =
@@ -809,7 +832,7 @@ impl Workbench {
             sort: settings.sort,
             filters: &everything,
             query: "",
-            active: [None, None],
+            active: [store.active_workspace_id(), store.active_project_id()],
             needs: &needs,
             session_matches: &|_| true,
         });
@@ -965,10 +988,14 @@ impl Workbench {
         picker.selected = 0;
         picker.refilter();
         let searching_history = picker.history_query().is_some();
+        let quick_open = picker.kind == PickerKind::QuickOpen;
         if searching_history {
             self.search_history_in_picker(cx);
         } else {
             self.picker_search = None;
+        }
+        if quick_open {
+            self.quick_open_find(cx);
         }
         cx.notify();
     }
@@ -992,9 +1019,31 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(picker) = &self.picker else {
+        self.picker_confirm_at(index, super::files::FilePlace::Focused, window, cx);
+    }
+
+    /// [`Self::picker_confirm`]; `place` says where a file (or a session, in a split) opens.
+    /// On ⌘P's top row, while the answer to what was typed is still on its way, the Return
+    /// waits for it: the top row may be about to change.
+    pub fn picker_confirm_at(
+        &mut self,
+        index: Option<usize>,
+        place: super::files::FilePlace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(picker) = &mut self.picker else {
             return;
         };
+        if index.is_none()
+            && picker.kind == PickerKind::QuickOpen
+            && picker.files.searching
+            && picker.selected == 0
+        {
+            picker.files.pending_confirm = Some(place);
+            return;
+        }
+        let (line, column) = (picker.files.line, picker.files.column);
         let entry = match index {
             Some(row) => picker.entry_at(row),
             None => picker.selected_entry(),
@@ -1003,6 +1052,7 @@ impl Workbench {
             return;
         };
         self.close_picker(window, cx);
+        let split = place == super::files::FilePlace::Split;
         match action {
             PickerAction::OpenFolder => self.open_folder_dialog(window, cx),
             PickerAction::RemoveWorktree(choice) => {
@@ -1011,10 +1061,22 @@ impl Workbench {
             PickerAction::ReviewChanges(path) => self.open_changes(path, window, cx),
             PickerAction::OpenProject(path) => self.open_project_path(path, window, cx),
             PickerAction::Workspace(workspace) => self.switch_workspace(workspace, window, cx),
+            PickerAction::Session(session) if split => {
+                self.open_session_in_split(session, super::model::Edge::Right, window, cx);
+            }
             PickerAction::Session(session) => self.open_session(session, window, cx),
             PickerAction::ResumeHit(resume) => self.resume_history_hit(resume, window, cx),
             PickerAction::ShowHit { query, source, key } => {
                 self.show_history_hit(&query, source, &key, window, cx);
+            }
+            PickerAction::OpenFile(hit) => {
+                let target = super::files::FileOpen {
+                    path: hit.path,
+                    line,
+                    column,
+                    picked: true,
+                };
+                self.open_file_placed(target, place, window, cx);
             }
         }
     }
@@ -1029,59 +1091,93 @@ impl Workbench {
         let tokens = self.density.ui();
         const VISIBLE_ROWS: usize = 12;
         let start = picker.selected.saturating_sub(VISIBLE_ROWS - 1);
-        let rows: Vec<AnyElement> = picker
-            .matches
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(VISIBLE_ROWS)
-            .filter_map(|(row, _)| {
-                let entry = picker.entry_at(row)?;
-                let selected = row == picker.selected;
-                let hover = theme.surface_hover;
-                Some(
-                    div()
-                        .id(ElementId::from(SharedString::from(format!(
-                            "picker-row-{row}"
-                        ))))
-                        .flex()
-                        .items_center()
-                        .gap(px(tokens.spacing * 2.0))
-                        .h(px(tokens.sidebar_row))
-                        .px(px(tokens.spacing * 2.0))
-                        .rounded(px(tokens.radius))
-                        .cursor_pointer()
-                        .when(selected, |s| s.bg(theme.accent_soft))
-                        .hover(move |s| s.bg(hover))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.picker_confirm(Some(row), window, cx);
-                        }))
-                        .child(
-                            div()
-                                .w(px(14.0))
-                                .text_color(theme.muted)
-                                .child(crate::icons::glyph(entry.icon)),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .max_w(px(260.0))
-                                .truncate()
-                                .child(entry.title.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(theme.muted)
-                                .text_size(px(tokens.secondary_font_size))
-                                .child(entry.detail.clone()),
-                        )
-                        .into_any_element(),
-                )
-            })
-            .collect();
+        // ⌘P's sections: the files, then the jump list.
+        let sections = picker.kind == PickerKind::QuickOpen && picker.history_query().is_none();
+        let file_rows = if sections { picker.files.rows } else { 0 };
+        let header = |label: &'static str| {
+            div()
+                .flex()
+                .items_end()
+                .h(px(tokens.secondary_font_size + 10.0))
+                .px(px(tokens.spacing * 2.0))
+                .text_size(px(tokens.secondary_font_size))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(theme.muted)
+                .child(label)
+                .into_any_element()
+        };
+        let marked = |text: SharedString, marks: &[std::ops::Range<usize>]| -> AnyElement {
+            if marks.is_empty() {
+                return text.into_any_element();
+            }
+            let style = gpui::HighlightStyle {
+                color: Some(theme.accent),
+                font_weight: Some(gpui::FontWeight::SEMIBOLD),
+                ..Default::default()
+            };
+            gpui::StyledText::new(text)
+                .with_highlights(marks.iter().map(|r| (r.clone(), style)))
+                .into_any_element()
+        };
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for row in (0..picker.matches.len()).skip(start).take(VISIBLE_ROWS) {
+            let Some(entry) = picker.entry_at(row) else {
+                continue;
+            };
+            if sections && row == 0 && file_rows > 0 {
+                rows.push(header("Files"));
+            }
+            if sections && row == file_rows {
+                rows.push(header("Sessions"));
+            }
+            let selected = row == picker.selected;
+            let hover = theme.surface_hover;
+            let (title, detail) = match &entry.action {
+                PickerAction::OpenFile(hit) => (
+                    marked(entry.title.clone(), &hit.name_marks),
+                    marked(entry.detail.clone(), &hit.dir_marks),
+                ),
+                _ => (
+                    entry.title.clone().into_any_element(),
+                    entry.detail.clone().into_any_element(),
+                ),
+            };
+            rows.push(
+                div()
+                    .id(ElementId::from(SharedString::from(format!(
+                        "picker-row-{row}"
+                    ))))
+                    .flex()
+                    .items_center()
+                    .gap(px(tokens.spacing * 2.0))
+                    .h(px(tokens.sidebar_row))
+                    .px(px(tokens.spacing * 2.0))
+                    .rounded(px(tokens.radius))
+                    .cursor_pointer()
+                    .when(selected, |s| s.bg(theme.accent_soft))
+                    .hover(move |s| s.bg(hover))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.picker_confirm(Some(row), window, cx);
+                    }))
+                    .child(
+                        div()
+                            .w(px(14.0))
+                            .text_color(theme.muted)
+                            .child(crate::icons::glyph(entry.icon)),
+                    )
+                    .child(div().flex_none().max_w(px(260.0)).truncate().child(title))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(theme.muted)
+                            .text_size(px(tokens.secondary_font_size))
+                            .child(detail),
+                    )
+                    .into_any_element(),
+            );
+        }
         let hint: Option<SharedString> = match (
             picker.history_query().is_some(),
             picker.matches.is_empty(),
@@ -1105,6 +1201,9 @@ impl Workbench {
                 HistoryState::Failed(error) => format!("History search failed: {error}").into(),
             }),
             (true, false, false) => None,
+            (false, true, false) if picker.kind == PickerKind::QuickOpen && picker.files.searching => {
+                Some("Searching files…".into())
+            }
             (false, true, false) if picker.kind == PickerKind::Projects => {
                 Some("No matching project".into())
             }
@@ -1129,13 +1228,19 @@ impl Workbench {
                     "No checkout matches".into()
                 })
             }
-            (false, true, false) => Some("Nothing matches".into()),
+            (false, true, false) => Some(match &picker.files.failed {
+                Some(error) if picker.kind == PickerKind::QuickOpen => {
+                    format!("Cannot search the files: {error}").into()
+                }
+                _ => "Nothing matches".into(),
+            }),
             (false, false, false) => None,
         };
         let prompt = match (picker.kind, picker.history_query().is_some()) {
             (PickerKind::Projects, _) => "Open project ›",
-            (PickerKind::Jump, true) => "Search history ›",
+            (PickerKind::Jump | PickerKind::QuickOpen, true) => "Search history ›",
             (PickerKind::Jump, false) => "Jump to ›",
+            (PickerKind::QuickOpen, false) => "Go to ›",
             (PickerKind::Approvals, _) => "Review approvals ›",
             (PickerKind::Worktrees, _) => "Remove worktree ›",
             (PickerKind::Changes, _) => "Review changes of ›",
@@ -1181,6 +1286,16 @@ impl Workbench {
                         .on_action(cx.listener(|this, _: &palette::Confirm, window, cx| {
                             this.picker_confirm(None, window, cx);
                         }))
+                        .on_action(
+                            cx.listener(|this, _: &palette::ConfirmInSplit, window, cx| {
+                                this.picker_confirm_at(
+                                    None,
+                                    super::files::FilePlace::Split,
+                                    window,
+                                    cx,
+                                );
+                            }),
+                        )
                         .child(
                             div()
                                 .flex()

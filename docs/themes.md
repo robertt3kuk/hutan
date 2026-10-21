@@ -571,4 +571,7 @@ Generated from `IconId::ALL`; a drift test enforces this list. Offline schema: `
 - `brand.hutan`
 - `brand.mawas`
 - `item.file`
+- `item.folder`
+- `item.folder-open`
+- `panel.files`
 <!-- icons:end -->

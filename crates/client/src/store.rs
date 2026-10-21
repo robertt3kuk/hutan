@@ -144,6 +144,14 @@ pub enum Notice {
         changes: Vec<hutan_protocol::fs::FsChange>,
         overflow: bool,
     },
+    /// Something below a watched root changed (`fs.generation`, protocol 0.33, capability
+    /// `fs.watch`; at most one a second per root): the daemon's finder index of `root` and
+    /// any tree of it a client keeps are stale. Sent to connections that watch a path below
+    /// `root`. Outside the event sequence.
+    FsGeneration {
+        root: std::path::PathBuf,
+        generation: u64,
+    },
 }
 
 /// Side effects of folding events into the state, for the caller to act on after publishing.
@@ -451,9 +459,14 @@ impl StoreState {
                     .notices
                     .push(Notice::FsChanged { changes, overflow });
             }
-            // The finder's and the search's streams are no state of the sessions list; whoever
-            // asks for them reads them from `Client::events`.
-            Event::FsGeneration { .. } | Event::FsSearchProgress { .. } => {}
+            Event::FsGeneration { root, generation } => {
+                effects
+                    .notices
+                    .push(Notice::FsGeneration { root, generation });
+            }
+            // The search's stream is no state of the sessions list; whoever asks for it reads
+            // it from `Client::events`.
+            Event::FsSearchProgress { .. } => {}
             Event::UiCommand {
                 request_id,
                 window_id,

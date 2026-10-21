@@ -118,3 +118,6 @@ root = true
 "brand.hutan" = "hutan.svg"
 "brand.mawas" = "sparkle.svg"
 "item.file" = "file-code.svg"
+"item.folder" = "folder.svg"
+"item.folder-open" = "folder-open.svg"
+"panel.files" = "file-code.svg"

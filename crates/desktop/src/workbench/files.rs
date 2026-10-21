@@ -1,11 +1,12 @@
 //! Files in tabs (slice E-5): the buffer store (one [`FileBuffer`] per file, shared by every
-//! tab that shows it, freed with the last one), opening a file — from the palette's "File: Open
-//! File…", a session's or a project's "Open File…", a ⌘-click on a path in a terminal
+//! tab that shows it, freed with the last one), opening a file — from ⌘P and the Files panel
+//! (E-13a), the palette's "File: Open File…" (an Open panel that starts in the project), a
+//! session's or a project's "Open File…", a ⌘-click on a path in a terminal
 //! (`terminal.open_files_with = "editor"`), `hutan open` and `ui.run workbench::OpenFile` — and
 //! the views of file tabs. Files are read through the daemon (`fs.stat`, `fs.read`): the one
 //! place that decides what this window may read (ADR 0012, amendment decision 3). Saving,
 //! watching the files for changes on disk and the conflict bar's answers are in
-//! `file_sync.rs` (slice E-6).
+//! `file_sync.rs` (slice E-6). Every file opened goes first in the recent files ⌘P offers.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -22,7 +23,7 @@ use hutan_protocol::fs::{FileVersion, FsKind};
 use super::file_view::{FileView, FileViewEvent};
 use super::model::{Edge, ItemRef, PaneId};
 use super::view::{MenuEntry, Workbench};
-use crate::settings::EditorSettings;
+use crate::settings::{EditorSettings, FilesPanelSettings};
 
 /// A file to open, and where in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +48,19 @@ impl FileOpen {
             picked: true,
         }
     }
+}
+
+/// Where a file opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilePlace {
+    /// In the focused pane (its tab when it has one), with the keyboard.
+    #[default]
+    Focused,
+    /// In a new split right of the focused pane, with the keyboard (⌘Return in ⌘P).
+    Split,
+    /// In the focused pane, the keyboard staying where it is (Space or a click in the Files
+    /// panel).
+    Preview,
 }
 
 pub(crate) struct Stored {
@@ -174,6 +188,17 @@ impl Workbench {
     /// Opens `target` in a tab (or focuses the tab that shows it) and brings its line into view.
     /// The daemon is asked first what the path is: its canonical form is the tab's identity.
     pub fn open_file(&mut self, target: FileOpen, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_file_placed(target, FilePlace::Focused, window, cx);
+    }
+
+    /// [`Self::open_file`] at `place`.
+    pub fn open_file_placed(
+        &mut self,
+        target: FileOpen,
+        place: FilePlace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let connection = self.sessions.read(cx).connection().clone();
         if !connection.supports_fs() {
             self.set_notice(
@@ -191,17 +216,24 @@ impl Workbench {
             let entry = stat.await;
             this.update_in(cx, |this, window, cx| match entry {
                 Ok(entry) if entry.kind == FsKind::File => {
-                    this.show_file(&entry.path, entry.size, &target, window, cx);
+                    this.show_file(&entry.path, entry.size, &target, place, window, cx);
                 }
                 Ok(entry) => this.set_notice(format!("{} is not a file", entry.path.display()), cx),
-                Err(error) => this.set_notice(
-                    format!(
-                        "Cannot open {}: {}",
-                        target.path.display(),
-                        error_text(&error)
-                    ),
-                    cx,
-                ),
+                Err(error) => {
+                    if fail_reason(&error) == FailReason::Missing {
+                        // A recent file that is gone is not offered again.
+                        let gone = target.path.display().to_string();
+                        this.recent_files.retain(|f| *f != gone);
+                    }
+                    this.set_notice(
+                        format!(
+                            "Cannot open {}: {}",
+                            target.path.display(),
+                            error_text(&error)
+                        ),
+                        cx,
+                    );
+                }
             })
             .ok();
         })
@@ -209,19 +241,24 @@ impl Workbench {
     }
 
     /// Shows the file at canonical `path` in a tab: focuses the tab that has it, else adds one to
-    /// the focused pane (in place of a lone placeholder).
+    /// the focused pane (in place of a lone placeholder), or to a new split right of it.
     fn show_file(
         &mut self,
         path: &Path,
         size: u64,
         target: &FileOpen,
+        place: FilePlace,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let key = path.display().to_string();
+        super::persistence::note_recent_file(&mut self.recent_files, &key);
         self.ensure_buffer(&key, target.picked, Some(size), cx);
         let item = ItemRef::file(key.clone());
-        if let Some((pane, index)) = self.state.find_item(&item) {
+        if place == FilePlace::Split {
+            let pane = self.state.active_pane_id();
+            self.try_mutate(cx, |s| s.split_pane(pane, Edge::Right, item.clone()));
+        } else if let Some((pane, index)) = self.state.find_item(&item) {
             self.try_mutate(cx, |s| {
                 s.set_active_item(pane, index)?;
                 s.focus_pane(pane)
@@ -252,7 +289,9 @@ impl Workbench {
                 code.update(cx, |code, cx| code.reveal_line(line as usize, column, cx));
             }
         }
-        self.focus_root(window, cx);
+        if place != FilePlace::Preview {
+            self.focus_root(window, cx);
+        }
     }
 
     /// The buffer of `path`, made (and its file read) when there is none.
@@ -509,6 +548,7 @@ impl Workbench {
         for (buffer, visible) in buffers {
             buffer.update(cx, |b, cx| b.set_syntax_active(visible, cx));
         }
+        self.follow_active_file(cx);
     }
 
     /// How code looks now: the editor colors of the chrome's pack, its monospace family, and
@@ -551,19 +591,41 @@ impl Workbench {
         })
     }
 
-    /// "File: Open File…": a file picked in Finder.
+    /// "File: Open File…": a file picked in an Open panel that starts in the active project's
+    /// folder (Home's folder at Home).
     pub(crate) fn open_file_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let chosen = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Open".into()),
-        });
+        let start = {
+            let store = self.sessions.read(cx);
+            store.files_root().or_else(|| {
+                store
+                    .home_workspace()
+                    .and_then(|home| home.roots.first().cloned())
+            })
+        };
+        let panel = self.mac.open_panel.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = chosen.await else {
-                return;
+            // AppKit is asked outside of any update of the window, as GPUI does with its own.
+            let native = start.as_deref().and_then(|dir| panel.choose_file(dir));
+            let path = match native {
+                Some(chosen) => chosen.await.ok().flatten(),
+                None => {
+                    let Ok(chosen) = cx.update(|_, cx| {
+                        cx.prompt_for_paths(PathPromptOptions {
+                            files: true,
+                            directories: false,
+                            multiple: false,
+                            prompt: Some("Open".into()),
+                        })
+                    }) else {
+                        return;
+                    };
+                    match chosen.await {
+                        Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                        _ => None,
+                    }
+                }
             };
-            let Some(path) = paths.into_iter().next() else {
+            let Some(path) = path else {
                 return;
             };
             this.update_in(cx, |this, window, cx| {
@@ -574,8 +636,8 @@ impl Workbench {
         .detach();
     }
 
-    /// "Open File…" of a session or a project row: the same dialog (Finder cannot be told where
-    /// to start).
+    /// "Open File…" of a session or a project row: the same panel, starting in the active
+    /// project.
     pub(crate) fn open_file_entry() -> MenuEntry {
         Self::entry("Open File…", |this, window, cx| {
             this.open_file_dialog(window, cx);
@@ -625,13 +687,93 @@ impl Workbench {
             })
         };
         let copy = path.to_owned();
+        let reveal = path.to_owned();
         vec![
             split("Open in Split Right", Edge::Right, path.to_owned()),
             split("Open in Split Down", Edge::Bottom, path.to_owned()),
+            Self::entry("Reveal in Files Panel", move |this, window, cx| {
+                this.show_files_at(Some(reveal.clone()), window, cx);
+            }),
             Self::entry("Copy Path", move |this, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
                 this.set_notice("Copied the file's path", cx);
             }),
         ]
+    }
+
+    // ---- the Files panel (E-13a) -----------------------------------------------------------
+
+    /// The file of the center's active tab, if it is one.
+    pub(crate) fn active_center_file(&self) -> Option<String> {
+        self.state
+            .active_center_item()
+            .and_then(|item| item.as_file().map(str::to_owned))
+    }
+
+    /// Tells the Files panel which file the focused tab shows (`panels.files.auto_reveal`),
+    /// once per change; a panel not made yet hears of it when it is.
+    fn follow_active_file(&mut self, cx: &mut Context<Self>) {
+        let file = self.active_center_file();
+        if file == self.revealed_file {
+            return;
+        }
+        let Some(panel) = self.panel::<super::panels::FilesPanel>("files") else {
+            return;
+        };
+        self.revealed_file = file.clone();
+        let Some(file) = file else {
+            return;
+        };
+        if self.settings.get::<FilesPanelSettings>().auto_reveal {
+            panel.update(cx, |panel, cx| panel.reveal(Path::new(&file), cx));
+        }
+    }
+
+    /// The Files panel, shown (in its default dock when it is closed).
+    fn files_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<super::panels::FilesPanel>> {
+        self.open_panel("files", cx);
+        let view = self.panel_view(&super::model::PanelId::new("files"), window, cx)?;
+        view.downcast::<super::panels::FilesPanel>().ok()
+    }
+
+    /// ⌘⇧E: the Files panel with the keyboard in it, the focused tab's file selected.
+    pub(crate) fn show_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let file = self.active_center_file();
+        self.show_files_at(file, window, cx);
+    }
+
+    /// The Files panel with the keyboard in it and `file` (when there is one) selected.
+    pub(crate) fn show_files_at(
+        &mut self,
+        file: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(panel) = self.files_panel(window, cx) else {
+            self.set_notice("The Files panel is not available", cx);
+            return;
+        };
+        // The panel is drawn (and its tree can take the keyboard) after this frame.
+        cx.defer_in(window, move |_, window, cx| {
+            panel.update(cx, |panel, cx| {
+                if let Some(file) = &file {
+                    panel.reveal(Path::new(file), cx);
+                }
+                panel.focus_tree(window, cx);
+            });
+        });
+    }
+
+    /// *Files: Reveal Active File*: the focused tab's file selected in the Files panel.
+    pub(crate) fn reveal_active_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.active_center_file().is_none() {
+            self.set_notice("The focused tab is not a file", cx);
+            return;
+        }
+        self.show_files(window, cx);
     }
 }

@@ -121,13 +121,19 @@ actions!(
         OpenFileDialog,
         OpenFileInSplitRight,
         OpenFileInSplitDown,
+        QuickOpen,
+        ShowFiles,
+        RevealActiveFile,
     ]
 );
 
 /// Palette-local actions, bound only inside the `Palette` key context.
 pub mod palette {
     use gpui::actions;
-    actions!(palette, [SelectNext, SelectPrev, Confirm, Dismiss]);
+    actions!(
+        palette,
+        [SelectNext, SelectPrev, Confirm, ConfirmInSplit, Dismiss]
+    );
 }
 
 /// Actions of the prompt/confirm dialog (`Modal` key context).
@@ -361,6 +367,9 @@ data_actions! {
     /// Open a file in a tab (or focus its tab) at a line: `ui.run workbench::OpenFile`, `hutan
     /// open`. The daemon reads it only below the workspace roots (an agent may ask for this).
     OpenFile(FileTarget);
+    /// Open a file the user chose (the Files panel, ⌘P) in the focused pane, a split or as a
+    /// preview that leaves the keyboard where it is. Read as picked.
+    OpenChosenFile(ChosenFile);
 }
 
 /// A file to open, and where in it.
@@ -372,6 +381,18 @@ pub struct FileTarget {
     pub line: Option<u32>,
     /// 1-based, in characters.
     pub column: Option<u32>,
+}
+
+/// A file the user chose and where to show it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ChosenFile {
+    /// Absolute.
+    pub path: String,
+    /// 1-based.
+    pub line: Option<u32>,
+    /// 1-based, in characters.
+    pub column: Option<u32>,
+    pub place: super::files::FilePlace,
 }
 
 /// Where to open the context menu of a workspace.
@@ -590,6 +611,9 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Workspace: Open Project…", OpenProject),
         command("Workspace: Open Folder…", OpenFolder),
         command("Workspace: Jump to Workspace or Session…", OpenJump),
+        command("File: Go to File…", QuickOpen),
+        command("Files: Show Files Panel", ShowFiles),
+        command("Files: Reveal Active File", RevealActiveFile),
         command("Workspace: Go to Home", GoHome),
         command("File: Open File…", OpenFileDialog),
         command("File: Open in Split Right", OpenFileInSplitRight),
@@ -814,6 +838,8 @@ fn hutan_global_bindings() -> Vec<BindingSpec> {
         bind::<ToggleRightDock>("cmd-l", None),
         bind::<ToggleBottomDock>("cmd-alt-j", None),
         bind::<OpenJump>("cmd-j", None),
+        bind::<QuickOpen>("cmd-p", None),
+        bind::<ShowFiles>("cmd-shift-e", None),
         bind::<OpenProject>("cmd-o", None),
         bind::<ToggleOverview>("cmd-shift-o", None),
         bind::<ToggleResources>("cmd-alt-r", None),
@@ -880,6 +906,7 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<palette::SelectPrev>("up", Some("Picker")),
         bind::<palette::SelectPrev>("ctrl-p", Some("Picker")),
         bind::<palette::Confirm>("enter", Some("Picker")),
+        bind::<palette::ConfirmInSplit>("cmd-enter", Some("Picker")),
         bind::<palette::Dismiss>("escape", Some("Picker")),
         bind::<setup::Continue>("enter", Some("Setup")),
         bind::<setup::Skip>("escape", Some("Setup")),
@@ -1012,8 +1039,9 @@ fn numbered_bindings() -> Vec<BindingSpec> {
 /// read from Zed's published `default-macos.json`; Hutan-only actions keep keys Zed leaves
 /// free:
 ///
-/// - ⌘⇧P palette (⌘K is Zed's chord prefix, so it is not bound alone here), ⌘P quick open =
-///   jump, ⌘O open, ⌘, settings, ⌘⇧N new workspace, ⌘⇧F search history.
+/// - ⌘⇧P palette (⌘K is Zed's chord prefix, so it is not bound alone here), ⌘P quick open
+///   (files, then the jump list's workspaces and sessions), ⌘⇧E the Files panel, ⌘O open, ⌘,
+///   settings, ⌘⇧N new workspace, ⌘⇧F search history.
 /// - ⌘B left sidebar; ⌘⌥B / ⌘R / ⌘L right sidebar (⌘L is Orca's key and the one the tooltips
 ///   show; Zed's ⌘L is "go to line", which Hutan has no use for); ⌘J / ⌃\` bottom dock; ⌘⌥Y
 ///   close all docks.
@@ -1025,7 +1053,8 @@ fn numbered_bindings() -> Vec<BindingSpec> {
 fn zed_global_bindings() -> Vec<BindingSpec> {
     vec![
         bind::<TogglePalette>("cmd-shift-p", None),
-        bind::<OpenJump>("cmd-p", None),
+        bind::<QuickOpen>("cmd-p", None),
+        bind::<ShowFiles>("cmd-shift-e", None),
         bind::<OpenProject>("cmd-o", None),
         bind::<OpenSettings>("cmd-,", None),
         bind::<NewWorkspace>("cmd-shift-n", None),
@@ -1194,7 +1223,10 @@ mod tests {
         let last = |action: &str| keys(action).pop().unwrap_or_default();
         assert_eq!(last(TogglePalette::name_for_type()), "shift-cmd-p");
         assert!(!keys(TogglePalette::name_for_type()).contains(&"cmd-k".to_owned()));
-        assert_eq!(last(OpenJump::name_for_type()), "cmd-p");
+        // ⌘P is quick open: files first, then the jump list (E-13a, ADR 0012 amendment 8).
+        assert_eq!(last(QuickOpen::name_for_type()), "cmd-p");
+        assert!(keys(OpenJump::name_for_type()).is_empty());
+        assert_eq!(last(ShowFiles::name_for_type()), "shift-cmd-e");
         assert_eq!(last(ToggleLeftDock::name_for_type()), "cmd-b");
         assert_eq!(last(ToggleRightDock::name_for_type()), "cmd-l");
         assert!(keys(ToggleRightDock::name_for_type()).contains(&"cmd-r".to_owned()));
@@ -1223,7 +1255,8 @@ mod tests {
         assert_eq!(last(ToggleResources::name_for_type()), "alt-cmd-r");
     }
 
-    /// Today's table, kept for people who learned it: `keymap.base = "hutan"` must not drift.
+    /// Today's table, kept for people who learned it: `keymap.base = "hutan"` only gains keys
+    /// that were free (⌘P quick open and ⌘⇧E Files, E-13a); none it had moves.
     #[test]
     fn hutan_base_is_the_original_table() {
         let mut expected: Vec<String> = [
@@ -1249,6 +1282,8 @@ mod tests {
             "cmd-l | workbench::ToggleRightDock | -",
             "alt-cmd-j | workbench::ToggleBottomDock | -",
             "cmd-j | workbench::OpenJump | -",
+            "cmd-p | workbench::QuickOpen | -",
+            "shift-cmd-e | workbench::ShowFiles | -",
             "cmd-o | workbench::OpenProject | -",
             "shift-cmd-o | workbench::ToggleOverview | -",
             "alt-cmd-r | workbench::ToggleResources | -",
@@ -1293,6 +1328,7 @@ mod tests {
             "up | palette::SelectPrev | Picker",
             "ctrl-p | palette::SelectPrev | Picker",
             "enter | palette::Confirm | Picker",
+            "cmd-enter | palette::ConfirmInSplit | Picker",
             "escape | palette::Dismiss | Picker",
             "enter | setup::Continue | Setup",
             "escape | setup::Skip | Setup",
@@ -1394,11 +1430,14 @@ mod tests {
     #[test]
     fn every_palette_command_that_has_a_key_in_the_hutan_base_keeps_one_in_zed() {
         // Whatever the old base bound globally is still reachable by some key in the Zed base,
-        // except the keys Zed gives to other things (moved on purpose: jump, bottom dock).
+        // except the keys Zed gives to other things (moved on purpose: jump, bottom dock). The
+        // jump list is the Sessions section of Zed's ⌘P (`QuickOpen`), so `OpenJump` itself
+        // has no key there.
         let zed = default_bindings(KeymapBase::Zed);
         for binding in default_bindings(KeymapBase::Hutan)
             .iter()
             .filter(|b| b.context.is_none())
+            .filter(|b| b.action != OpenJump::name_for_type())
         {
             assert!(
                 zed.iter()
@@ -1407,5 +1446,6 @@ mod tests {
                 binding.action
             );
         }
+        assert!(zed.iter().any(|z| z.action == QuickOpen::name_for_type()));
     }
 }

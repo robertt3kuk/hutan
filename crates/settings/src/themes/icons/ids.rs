@@ -29,6 +29,7 @@ impl IconId {
             "assistant" => Self::PanelAssistant,
             "mawas-memory" => Self::PanelMawasMemory,
             "notifications" => Self::PanelNotifications,
+            "files" => Self::PanelFiles,
             _ => Self::StateInfo,
         }
     }
@@ -145,6 +146,9 @@ catalog! {
     BrandHutan => ("brand.hutan", "hutan.svg"),
     BrandMawas => ("brand.mawas", "sparkle.svg"),
     ItemFile => ("item.file", "file-code.svg"),
+    ItemFolder => ("item.folder", "folder.svg"),
+    ItemFolderOpen => ("item.folder-open", "folder-open.svg"),
+    PanelFiles => ("panel.files", "file-code.svg"),
 }
 
 pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {

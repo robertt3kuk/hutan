@@ -950,6 +950,35 @@ impl Workbench {
                 this.open_jump_palette(window, cx);
             }
         }))
+        .on_action(cx.listener(|this, _: &actions::QuickOpen, window, cx| {
+            if this
+                .picker()
+                .is_some_and(|p| p.kind == PickerKind::QuickOpen)
+            {
+                this.close_picker(window, cx);
+            } else {
+                this.open_quick_open(window, cx);
+            }
+        }))
+        .on_action(cx.listener(|this, _: &actions::ShowFiles, window, cx| {
+            this.show_files(window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::RevealActiveFile, window, cx| {
+                this.reveal_active_file(window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::OpenChosenFile, window, cx| {
+                let target = super::files::FileOpen {
+                    path: a.0.path.clone().into(),
+                    line: a.0.line,
+                    column: a.0.column,
+                    picked: true,
+                };
+                this.open_file_placed(target, a.0.place, window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, _: &actions::GoHome, window, cx| {
             let home = this.sessions.read(cx).home_workspace().map(|w| w.id);
             match home {

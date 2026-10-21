@@ -59,6 +59,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("panels.sessions", "Projects Sidebar"),
     ("sidebar", "Sidebar organization"),
     ("panels.inspector", "Requests"),
+    ("panels.files", "Files"),
     ("workspaces", "Workspaces"),
     ("history", "History"),
     ("chat", "Chat"),
@@ -376,6 +377,19 @@ const FIELDS: &[FieldText] = &[
         "reveal_on_approval",
         "Open when an approval arrives",
         "Shows the inspector as soon as an agent asks for an approval.",
+    ),
+    // ---- files ----
+    field(
+        "panels.files",
+        "show_ignored",
+        "Show ignored files",
+        "Lists the files and folders that .gitignore or .ignore rules leave out, dimmed. Off, the tree hides them.",
+    ),
+    field(
+        "panels.files",
+        "auto_reveal",
+        "Reveal the active file",
+        "Selects the file of the tab you switch to in the Files panel, opening the folders it is in.",
     ),
     // ---- workspaces ----
     choice(

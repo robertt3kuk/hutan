@@ -18,6 +18,7 @@ pub mod focus;
 pub mod hotkey;
 pub mod login_item;
 pub mod notifications;
+pub mod open_panel;
 pub mod presence;
 pub mod status_item;
 
@@ -32,6 +33,7 @@ pub use dock::{DockBadge, FakeDock};
 pub use hotkey::{FakeHotkey, GlobalHotkey, HotkeyError, Shortcut};
 pub use login_item::{FakeLoginItem, LoginItem, LoginItemCall, LoginItemStatus};
 pub use notifications::{FakeNotifications, NotificationAnswer, NotificationPermission};
+pub use open_panel::{FakeOpenPanel, OpenPanel};
 pub use presence::{FakePresence, Presence, PresenceCall};
 pub use status_item::{FakeStatusItem, MenuSpec, StatusItemHost, StatusItemModel};
 
@@ -81,6 +83,8 @@ pub struct MacServices {
     pub dock: Rc<dyn DockBadge>,
     pub hotkey: Rc<dyn GlobalHotkey>,
     pub presence: Rc<dyn Presence>,
+    /// The Open panel of *File: Open File…*.
+    pub open_panel: Rc<dyn OpenPanel>,
     /// What the system asked for; the workbench takes it when it is built.
     pub events: Option<EventReceiver>,
     /// The daemon is expected to be started by launchd (start at login is on and approved): the
@@ -110,6 +114,7 @@ impl MacServices {
             dock: Rc::new(dock::Nothing),
             hotkey: Rc::new(hotkey::Nothing),
             presence: Rc::new(presence::Nothing),
+            open_panel: Rc::new(open_panel::GpuiPrompt),
             events: None,
             launchd_daemon: false,
             launchd_grace: LAUNCHD_GRACE,
@@ -139,6 +144,7 @@ impl MacServices {
                 dock: Rc::new(dock::SystemDock),
                 hotkey: Rc::new(hotkey::SystemHotkey::new(sender)),
                 presence: Rc::new(presence::SystemPresence),
+                open_panel: Rc::new(open_panel::SystemOpenPanel),
                 events: Some(receiver),
                 launchd_daemon: false,
                 launchd_grace: LAUNCHD_GRACE,

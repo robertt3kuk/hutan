@@ -367,6 +367,26 @@ impl Connection {
         client.fs_write(req, text).await
     }
 
+    /// `fs.list` (see [`Client::fs_list`]): the entries of one folder, `.gitignore` matches
+    /// flagged.
+    pub async fn fs_list(
+        &self,
+        req: hutan_protocol::fs::FsList,
+    ) -> Result<hutan_protocol::fs::FsListing, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_list(req).await
+    }
+
+    /// `fs.find` (see [`Client::fs_find`]): the files below a root that match a fuzzy query,
+    /// best first.
+    pub async fn fs_find(
+        &self,
+        req: hutan_protocol::fs::FsFind,
+    ) -> Result<hutan_protocol::fs::FsFound, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_find(req).await
+    }
+
     /// True while connected to a daemon that advertised capability `fs.watch`
     /// ([`Client::supports_fs_watch`]); false when disconnected.
     pub fn supports_fs_watch(&self) -> bool {

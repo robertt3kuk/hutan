@@ -422,6 +422,10 @@ pub struct SessionsStore {
     /// When the daemon's state was last seen confirmed (connected), for "Offline · last
     /// confirmed …".
     last_confirmed_ms: Option<u64>,
+    /// Folders watched (`fs.watch`) for the Files panel and the ⌘P finder, with how many of
+    /// them want each: the connection keeps one wish per path, so the last one to let go
+    /// unwatches it.
+    dir_watches: HashMap<PathBuf, usize>,
     _tasks: Vec<Task<()>>,
 }
 
@@ -523,6 +527,7 @@ impl SessionsStore {
             agent_cache: RefCell::new(None),
             presentation_builds: Cell::new(0),
             last_confirmed_ms: None,
+            dir_watches: HashMap::new(),
             _tasks: vec![state_task, notice_task],
         }
     }
@@ -844,8 +849,10 @@ impl SessionsStore {
             | Notice::WorktreesChanged { .. }
             // `workbench/remote.rs` follows `Connection::notices` itself.
             | Notice::UiCommand { .. }
-            // The buffer store follows the file changes itself (`workbench/file_sync.rs`).
-            | Notice::FsChanged { .. } => {}
+            // The buffer store and the Files panel follow the file changes themselves
+            // (`workbench/file_sync.rs`, `panels/files.rs`), the ⌘P finder the generations.
+            | Notice::FsChanged { .. }
+            | Notice::FsGeneration { .. } => {}
             // The resources panel listens for itself too; the sample also says which terminals
             // run an agent that never reported.
             Notice::ResourcesUpdated { sample } => self.apply_sample(sample, cx),
@@ -970,6 +977,68 @@ impl SessionsStore {
             self.active_project = project;
             self.changed(StoreChanged::ACTIVE, cx);
         }
+    }
+
+    /// The folder the Files panel and ⌘P's files show: the root of the project the user works
+    /// in (the active project, else the first project of the active workspace, else the
+    /// workspace's own first folder). `None` at Home (its folder is the home folder, no
+    /// project) and before the daemon says what is active.
+    pub fn files_root(&self) -> Option<PathBuf> {
+        let container = self.active_workspace()?;
+        let project = match container.kind {
+            WorkspaceKind::Home => return None,
+            WorkspaceKind::Project => container,
+            WorkspaceKind::Workspace => self
+                .active_project()
+                .filter(|p| p.parent_id == Some(container.id))
+                .or_else(|| self.state.projects_in(container.id).next())
+                .unwrap_or(container),
+        };
+        project
+            .project
+            .as_ref()
+            .map(|p| p.root.clone())
+            .or_else(|| project.roots.first().cloned())
+    }
+
+    /// Watches the entries of folder `dir` (`fs.watch`, not recursive) for one more wisher;
+    /// its changes arrive as [`Notice::FsChanged`], and [`Notice::FsGeneration`] for its root.
+    pub fn watch_dir(&mut self, dir: &std::path::Path, cx: &mut Context<Self>) {
+        let count = self.dir_watches.entry(dir.to_owned()).or_insert(0);
+        *count += 1;
+        // While disconnected the connection keeps the wish and sends it on the next connection.
+        if *count > 1 {
+            return;
+        }
+        let connection = self.connection.clone();
+        let dir = dir.to_owned();
+        cx.background_spawn(async move {
+            if let Err(error) = connection.fs_watch(&dir, false).await {
+                tracing::debug!(dir = %dir.display(), %error, "fs.watch of a folder failed");
+            }
+        })
+        .detach();
+    }
+
+    /// One wisher less for `dir` ([`Self::watch_dir`]); the last one unwatches it.
+    pub fn unwatch_dir(&mut self, dir: &std::path::Path, cx: &mut Context<Self>) {
+        let Some(count) = self.dir_watches.get_mut(dir) else {
+            return;
+        };
+        *count -= 1;
+        if *count > 0 {
+            return;
+        }
+        self.dir_watches.remove(dir);
+        let connection = self.connection.clone();
+        let dir = dir.to_owned();
+        cx.background_spawn(async move { connection.fs_unwatch(&dir).await })
+            .detach();
+    }
+
+    /// The folders watched for the Files panel and the finder (tests).
+    pub fn watched_dirs(&self) -> usize {
+        self.dir_watches.len()
     }
 
     /// How many sessions of each workspace need the user.

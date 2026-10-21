@@ -35,6 +35,7 @@ pub mod panels;
 pub mod persistence;
 mod projects;
 mod providers;
+pub mod quick_open;
 mod recovery_summary;
 pub mod regions;
 pub mod registry;
