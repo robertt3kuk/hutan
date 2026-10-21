@@ -611,7 +611,11 @@ fn logging_in_pauses_the_setup_and_the_palette_continues_it(cx: &mut TestAppCont
     wait_until(cx, "the login terminal", |cx| {
         view.read_with(cx, |wb, cx| !wb.sessions().read(cx).sessions().is_empty())
     });
-    assert!(!setup_open(&view, cx), "the window shows the terminal");
+    // The session reaches the window by event, before the login's answer, which is what pauses
+    // the setup and shows the terminal.
+    wait_until(cx, "the setup to step aside for the terminal", |cx| {
+        !setup_open(&view, cx)
+    });
     assert_eq!(
         step(&view, cx),
         Some(SetupStep::Agents),
