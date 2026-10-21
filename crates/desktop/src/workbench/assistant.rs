@@ -183,6 +183,70 @@ impl Workbench {
         self.open_menu(position, entries, window, cx);
     }
 
+    /// Opens Home's ⋯ menu at `position`: **New chat** (only below 640 pt, where the header
+    /// has folded it; above, its button is in the header), **Stop Mawas** (greyed out while
+    /// there is nothing to stop), **Today** (checked while it replaces the conversation below
+    /// 640 pt; *Hide Today* / *Show Today* above) and **Backend: …**, the backend·model menu.
+    pub fn show_assistant_more_menu(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(panel) = self.panel::<AssistantPanel>("assistant") else {
+            return;
+        };
+        let (folded, today_only, rail_open, can_stop, label) = {
+            let page = panel.read(cx);
+            (
+                page.folded(),
+                page.today_only(),
+                page.rail_open(),
+                page.can_stop(cx),
+                page.backend_label(cx),
+            )
+        };
+        let mut entries = Vec::new();
+        if folded {
+            let new = panel.clone();
+            entries.push(Self::entry("New chat", move |_, _, cx| {
+                new.update(cx, |panel, cx| panel.new_chat(cx));
+            }));
+        }
+        entries.push(if can_stop {
+            let stop = panel.clone();
+            Self::entry("Stop Mawas", move |_, _, cx| {
+                stop.update(cx, |panel, cx| panel.stop(cx));
+            })
+        } else {
+            Self::disabled_entry("Stop Mawas")
+        });
+        let today = panel.clone();
+        entries.push(if folded {
+            let mut entry = Self::entry("Today", move |_, _, cx| {
+                today.update(cx, |panel, cx| panel.toggle_today_only(cx));
+            });
+            entry.checked = today_only;
+            entry
+        } else {
+            Self::entry(
+                if rail_open {
+                    "Hide Today"
+                } else {
+                    "Show Today"
+                },
+                move |_, _, cx| today.update(cx, |panel, cx| panel.toggle_rail(cx)),
+            )
+        });
+        entries.push(Self::entry(
+            format!("Backend: {label}"),
+            move |_, window, cx| {
+                window.dispatch_action(Box::new(actions::ShowAssistantModelMenu(position)), cx);
+            },
+        ));
+        self.open_menu(position, entries, window, cx);
+    }
+
     /// Opens the menu of Home's backend·model chip at `position`: Switch model…
     /// (the model of the running assistant) and the chooser of backends and models.
     pub fn show_assistant_model_menu(

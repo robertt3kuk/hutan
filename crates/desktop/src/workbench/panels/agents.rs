@@ -16,26 +16,26 @@ use std::time::Duration;
 use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Task, Window, div,
-    prelude::*, px, relative,
+    prelude::*, px,
 };
 use hutan_core::{NodeState, SessionId};
 
-use super::common::{now_ms, panel_header, tone_color};
-use super::history::pill;
+use super::common::{now_ms, state_word_color, tone_color};
 use crate::sessions::agents::{
     self, Filters, NodeRow, activity_text, any_running, duration_ms, format_duration, glyph,
     usage_label, visible_rows,
 };
+use crate::sessions::agents_text;
 use crate::sessions::{
     AgentPresentation, AgentRecord, Counts, Group, Scope, SessionsStore, State, Tone,
 };
 use crate::settings::{AgentsScope, AgentsSettings};
 use crate::theme::{DensityExt as _, reduce_motion};
 use crate::workbench::Region;
-use crate::workbench::actions::{AgentNodeAt, OpenSession, ShowAgentNodeMenu};
+use crate::workbench::actions::{AgentNodeAt, OpenSession, ShowAgentNodeMenu, ShowAgentsPanelMenu};
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
-use crate::workbench::style::UiStyle;
+use crate::workbench::style::{TextTooltip, UiStyle};
 use crate::workbench::ui::{self, Mascot};
 
 /// How often the durations (and the working dots) refresh while the panel is drawn.
@@ -77,18 +77,17 @@ pub struct SectionView {
     pub session: SessionId,
     pub workspace: String,
     pub title: String,
-    /// The state word of the record (`Working`, `State unavailable`, …), the page's.
-    pub state: &'static str,
-    /// `Permission: run cargo test +1` when the session needs the user, the page's headline.
-    pub headline: Option<String>,
+    /// The one state word of the record, the Agents page's (`agents_text::state_word`):
+    /// `Needs you · approval` while it waits for a decision, never also `Working`.
+    pub word: String,
+    /// What the session needs, without the kind the word says (`edit: src/lib.rs +1`).
+    pub detail: Option<String>,
+    /// The leading glyph and its tone (`agents_text::lead`).
+    pub glyph: crate::icons::Icon,
+    pub tone: Tone,
+    /// A finished session that needs nothing: its head recedes.
+    pub finished: bool,
     pub rows: Vec<RowView>,
-}
-
-impl SectionView {
-    /// `workspace › session title`.
-    pub fn heading(&self) -> String {
-        format!("{} › {}", self.workspace, self.title)
-    }
 }
 
 fn row_view(row: &NodeRow<'_>, now_ms: u64) -> RowView {
@@ -149,17 +148,6 @@ fn session_row(record: &AgentRecord) -> RowView {
             .or_else(|| Some(record.detail.clone()).filter(|d| !d.is_empty())),
         has_transcript: record.transcript.is_some(),
     }
-}
-
-/// `Permission: run cargo test +1`: the record's headline reason and how many more there are.
-fn headline_text(record: &AgentRecord) -> Option<String> {
-    let headline = record.headline()?;
-    let more = record.reasons.len().saturating_sub(1);
-    Some(if more == 0 {
-        headline.text.clone()
-    } else {
-        format!("{} +{more}", headline.text)
-    })
 }
 
 pub struct AgentsPanel {
@@ -274,12 +262,16 @@ impl AgentsPanel {
                 }
             };
             if !rows.is_empty() {
+                let (glyph, tone) = agents_text::lead(record);
                 out.push(SectionView {
                     session: record.session,
                     workspace: record.project.clone(),
                     title: record.title.clone(),
-                    state: record.state.label(),
-                    headline: headline_text(record),
+                    word: agents_text::state_word(record),
+                    detail: agents_text::reason_detail(record),
+                    glyph,
+                    tone,
+                    finished: record.state.is_finished() && !record.needs_you(),
                     rows,
                 });
             }
@@ -343,6 +335,20 @@ impl AgentsPanel {
             tracing::warn!("cannot save {key}: {err}");
         }
     }
+
+    /// ⋯ → *Show finished*: `agents.show_finished`.
+    pub fn toggle_show_finished(&mut self, cx: &mut Context<Self>) {
+        let on = self.env.settings.get::<AgentsSettings>().show_finished;
+        self.write_setting("agents.show_finished", toml::Value::Boolean(!on));
+        cx.notify();
+    }
+
+    /// ⋯ → *Blocked only*: `agents.only_blocked`.
+    pub fn toggle_only_blocked(&mut self, cx: &mut Context<Self>) {
+        let on = self.env.settings.get::<AgentsSettings>().only_blocked;
+        self.write_setting("agents.only_blocked", toml::Value::Boolean(!on));
+        cx.notify();
+    }
 }
 
 impl Render for AgentsPanel {
@@ -366,89 +372,52 @@ impl Render for AgentsPanel {
         let pulse_dim = !reduce_motion() && (now / 1000) % 2 == 1;
         let hover = theme.surface_hover;
 
-        let chip_row = div()
+        // The dock draws the panel's title; the scope is the one control of the top row, a
+        // segmented strip, and the rest (Show finished, Blocked only, All agents, settings)
+        // is in ⋯.
+        let scopes: [(AgentsScope, &'static str, &'static str); 3] = [
+            (AgentsScope::ActiveWorkspace, "Workspace", "scope-workspace"),
+            (AgentsScope::Session, "Session", "scope-session"),
+            (AgentsScope::All, "All", "scope-all"),
+        ];
+        let scope_strip =
+            ui::segmented(&theme, &tokens).children(scopes.map(|(scope, label, region)| {
+                ui::segment(
+                    SharedString::from(format!("agents-{region}")),
+                    label,
+                    settings.scope == scope,
+                    &theme,
+                    &tokens,
+                )
+                .relative()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.write_setting("agents.scope", toml::Value::String(scope.key().to_owned()));
+                    cx.notify();
+                }))
+                .child(probe(&self.env.regions, Region::MonitorChip(region)))
+            }));
+        let more = div()
+            .id("agents-more")
+            .relative()
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(tokens.spacing))
-            .px(px(tokens.spacing * 2.0))
-            .pb(px(tokens.spacing))
-            .child(
-                pill(
-                    "agents-chip-finished",
-                    "Finished",
-                    settings.show_finished,
-                    &theme,
-                    &tokens,
-                )
-                .relative()
-                .on_click(cx.listener({
-                    let value = !settings.show_finished;
-                    move |this, _, _, cx| {
-                        this.write_setting("agents.show_finished", toml::Value::Boolean(value));
-                        cx.notify();
-                    }
-                }))
-                .child(probe(&self.env.regions, Region::MonitorChip("finished"))),
-            )
-            .child(
-                pill(
-                    "agents-chip-blocked",
-                    "Blocked only",
-                    settings.only_blocked,
-                    &theme,
-                    &tokens,
-                )
-                .relative()
-                .on_click(cx.listener({
-                    let value = !settings.only_blocked;
-                    move |this, _, _, cx| {
-                        this.write_setting("agents.only_blocked", toml::Value::Boolean(value));
-                        cx.notify();
-                    }
-                }))
-                .child(probe(&self.env.regions, Region::MonitorChip("blocked"))),
-            )
-            .child(
-                pill(
-                    "agents-chip-scope",
-                    match settings.scope {
-                        AgentsScope::ActiveWorkspace => "This workspace",
-                        AgentsScope::Session => "Focused session",
-                        AgentsScope::All => "All workspaces",
-                    },
-                    settings.scope == AgentsScope::All,
-                    &theme,
-                    &tokens,
-                )
-                .relative()
-                .on_click(cx.listener({
-                    let next = match settings.scope {
-                        AgentsScope::ActiveWorkspace => AgentsScope::Session,
-                        AgentsScope::Session => AgentsScope::All,
-                        AgentsScope::All => AgentsScope::ActiveWorkspace,
-                    };
-                    move |this, _, _, cx| {
-                        this.write_setting(
-                            "agents.scope",
-                            toml::Value::String(next.key().to_owned()),
-                        );
-                        cx.notify();
-                    }
-                }))
-                .child(probe(&self.env.regions, Region::MonitorChip("scope"))),
-            )
-            .child(
-                pill("agents-chip-all", "All agents", false, &theme, &tokens)
-                    .relative()
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(
-                            Box::new(crate::workbench::actions::ShowAgentsPage),
-                            cx,
-                        );
-                    })
-                    .child(probe(&self.env.regions, Region::MonitorChip("all"))),
-            );
+            .justify_center()
+            .size(px(24.0))
+            .rounded(px(tokens.radius))
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(|event, window, cx| {
+                window.dispatch_action(Box::new(ShowAgentsPanelMenu(event.position())), cx);
+            })
+            .tooltip(|_, cx| cx.new(|_| TextTooltip("More".into())).into())
+            .child(crate::icons::icon(
+                crate::icons::Icon::ActionMore,
+                16.0,
+                theme.muted,
+            ))
+            .child(probe(&self.env.regions, Region::MonitorChip("more")));
 
         let mut list = div()
             .id("agents-list")
@@ -476,42 +445,15 @@ impl Render for AgentsPanel {
         let mut index = 0usize;
         for section in &sections {
             let session = section.session;
-            list = list.child(
-                div()
-                    .id(SharedString::from(format!("agents-section-{session}")))
-                    .flex()
-                    .items_center()
-                    .h(px(tokens.sidebar_row))
-                    .mt(px(tokens.spacing))
-                    .px(px(tokens.spacing * 2.0))
-                    .text_size(px(tokens.section_font_size))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(theme.muted)
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(hover))
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(Box::new(OpenSession(session.to_string())), cx);
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(SharedString::from(section.heading())),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .max_w(relative(0.6))
-                            .truncate()
-                            .pl(px(tokens.spacing))
-                            .text_size(px(tokens.secondary_font_size))
-                            .child(SharedString::from(match &section.headline {
-                                Some(reason) => format!("Needs you · {reason}"),
-                                None => section.state.to_owned(),
-                            })),
-                    ),
-            );
+            // A session the daemon reports no tree for is one row of its own: the head is that
+            // row, so its title is not drawn twice.
+            let solo = (section.rows.len() == 1 && section.rows[0].node_id.is_empty())
+                .then(|| &section.rows[0]);
+            list = list.child(self.render_head(section, solo, index, pulse_dim, &theme, &tokens));
+            if solo.is_some() {
+                index += 1;
+                continue;
+            }
             for row in &section.rows {
                 list = list
                     .child(self.render_row(session, row, index, pulse_dim, &theme, &tokens, cx));
@@ -525,33 +467,150 @@ impl Render for AgentsPanel {
             .flex_col()
             .text_size(px(tokens.font_size))
             .text_color(theme.fg)
-            .child(panel_header("Agents", "agents", cx))
             .child(
                 div()
-                    .id("agents-counts")
+                    .flex()
                     .flex_none()
-                    .px(px(tokens.spacing * 2.0))
-                    .pb(px(tokens.spacing))
-                    .truncate()
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.muted)
-                    .child(SharedString::from(match settings.scope {
-                        AgentsScope::All => format!("All workspaces · {}", counts.summary()),
-                        AgentsScope::ActiveWorkspace => {
-                            format!("This workspace · {}", counts.summary())
-                        }
-                        AgentsScope::Session => {
-                            format!("Focused session · {}", counts.summary())
-                        }
-                    }))
-                    .child(probe(&self.env.regions, Region::MonitorChip("counts"))),
+                    .items_center()
+                    .h(px(tokens.pane_header))
+                    .px(px(tokens.spacing * 3.0))
+                    .child(scope_strip),
             )
-            .child(chip_row)
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(tokens.spacing))
+                    .px(px(tokens.spacing * 3.0))
+                    .pb(px(tokens.spacing))
+                    .child(
+                        div()
+                            .id("agents-counts")
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(theme.muted)
+                            .child(SharedString::from(counts.summary()))
+                            .child(probe(&self.env.regions, Region::MonitorChip("counts"))),
+                    )
+                    .child(more),
+            )
             .child(list)
     }
 }
 
 impl AgentsPanel {
+    /// The head of a session: the Agents page's identity line (state glyph, title, the one state
+    /// word) and under it its reason, or what a session without a tree is doing, then its
+    /// workspace. Click focuses the session.
+    #[allow(clippy::too_many_arguments)] // one call site; a struct would only rename them
+    fn render_head(
+        &self,
+        section: &SectionView,
+        solo: Option<&RowView>,
+        index: usize,
+        pulse_dim: bool,
+        theme: &crate::theme::Theme,
+        tokens: &crate::theme::Tokens,
+    ) -> AnyElement {
+        let session = section.session;
+        let hover = theme.surface_hover;
+        let color = tone_color(theme, section.tone);
+        let glyph_color = if section.tone == Tone::Accent && pulse_dim {
+            color.opacity(0.4)
+        } else {
+            color
+        };
+        let mut parts: Vec<String> = Vec::new();
+        match (&section.detail, solo) {
+            (Some(detail), _) => parts.push(detail.clone()),
+            (None, Some(row)) => {
+                parts.extend(row.model.clone());
+                parts.extend(row.usage.clone());
+                parts.extend(row.activity.clone());
+            }
+            (None, None) => {}
+        }
+        parts.push(section.workspace.clone());
+        let mut head = div()
+            .id(SharedString::from(format!("agents-section-{session}")))
+            .relative()
+            .flex()
+            .items_start()
+            .gap(px(tokens.spacing * 1.5))
+            .mt(px(tokens.spacing))
+            .mx(px(tokens.spacing))
+            .px(px(tokens.spacing * 2.0))
+            .py(px(tokens.spacing))
+            .rounded(px(tokens.radius))
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .when(section.finished, |s| s.opacity(0.55))
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(Box::new(OpenSession(session.to_string())), cx);
+            })
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(16.0))
+                    .pt(px(1.0))
+                    .text_color(glyph_color)
+                    .child(crate::icons::glyph(section.glyph)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(tokens.spacing * 1.5))
+                            .h(px(16.0))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .child(SharedString::from(section.title.clone())),
+                            )
+                            .children(solo.and_then(|row| row.duration.clone()).map(|duration| {
+                                div()
+                                    .flex_none()
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(theme.muted)
+                                    .child(SharedString::from(duration))
+                            })),
+                    )
+                    .child(
+                        div()
+                            .h(px(16.0))
+                            .truncate()
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(state_word_color(theme, section.tone, false))
+                            .child(SharedString::from(section.word.clone())),
+                    )
+                    .child(
+                        div()
+                            .h(px(16.0))
+                            .truncate()
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(theme.muted)
+                            .child(SharedString::from(parts.join(" · "))),
+                    ),
+            );
+        if solo.is_some() {
+            head = head.child(probe(&self.env.regions, Region::MonitorRow(index)));
+        }
+        head.into_any_element()
+    }
+
     #[allow(clippy::too_many_arguments)] // one call site; a struct would only rename them
     fn render_row(
         &self,

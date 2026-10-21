@@ -315,6 +315,16 @@ impl Workbench {
             }),
         )
         .on_action(
+            cx.listener(|this, a: &actions::ShowAgentsPageMenu, window, cx| {
+                this.show_agents_page_menu(a.0, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::ShowAgentsPanelMenu, window, cx| {
+                this.show_agents_panel_menu(a.0, window, cx);
+            }),
+        )
+        .on_action(
             cx.listener(|this, a: &actions::InterruptSessionById, window, cx| {
                 if let Ok(id) = a.0.parse() {
                     this.interrupt_agent(id, window, cx);
@@ -1007,6 +1017,11 @@ impl Workbench {
         .on_action(
             cx.listener(|this, a: &actions::ShowAssistantModeMenu, window, cx| {
                 this.show_assistant_mode_menu(a.0, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::ShowAssistantMoreMenu, window, cx| {
+                this.show_assistant_more_menu(a.0, window, cx);
             }),
         )
         .on_action(

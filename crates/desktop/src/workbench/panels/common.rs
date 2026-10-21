@@ -12,7 +12,7 @@ use hutan_core::{SessionId, SessionKind};
 use hutan_protocol::messages::SessionInfo;
 
 use crate::icons::{Icon, icon};
-use crate::sessions::{AgentBadge, PlacementBadge, Presentation, Tone};
+use crate::sessions::{AgentBadge, AgentRecord, PlacementBadge, Presentation, Tone};
 use crate::theme::{Theme, Tokens};
 use crate::workbench::actions::{OpenSettingsFor, SessionMenuAt, ShowPlacementMenu};
 use crate::workbench::chat::TextInput;
@@ -32,6 +32,67 @@ pub fn tone_color(theme: &Theme, tone: Tone) -> Hsla {
         Tone::Muted => theme.muted,
         Tone::Error => theme.danger,
     }
+}
+
+/// The colour of a state word (`Needs you · approval`, `Completed`): the state's own colour for
+/// warning, error and success; `muted` for working and idle, because the accent is spent on the
+/// working glyph only; `fg` on a selected row, where state colours are not AA in the light pack
+/// and only the glyph keeps its colour.
+pub fn state_word_color(theme: &Theme, tone: Tone, selected: bool) -> Hsla {
+    match tone {
+        _ if selected => theme.fg,
+        Tone::Warning | Tone::Success | Tone::Error => tone_color(theme, tone),
+        Tone::Accent | Tone::Muted => theme.muted,
+    }
+}
+
+/// The identity line of an agent record, one component for the Agents page, the Agents panel
+/// and Today: the title in medium weight (cut with "…" first), `Assistant` for Mawas, and the
+/// one state word of the record (`agents_text::state_word`: attention wins over `Working`).
+pub fn agent_title_line(
+    record: &AgentRecord,
+    selected: bool,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> gpui::Div {
+    use crate::sessions::agents_text;
+    use crate::sessions::presentation::Role;
+    let (_, tone) = agents_text::lead(record);
+    let mut line = div().flex().items_center().gap(px(8.0)).h(px(16.0)).child(
+        div()
+            .min_w_0()
+            .truncate()
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .child(SharedString::from(record.title.clone())),
+    );
+    if record.role == Role::Assistant {
+        line = line.child(
+            div()
+                .flex_none()
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(theme.muted)
+                .child(Role::Assistant.label()),
+        );
+    }
+    line.child(
+        div()
+            .flex_none()
+            .whitespace_nowrap()
+            .text_size(px(tokens.secondary_font_size))
+            .text_color(state_word_color(theme, tone, selected))
+            .child(SharedString::from(agents_text::state_word(record))),
+    )
+}
+
+/// The 16 px lane of a row's state glyph: attention first, else the state's own shape, in the
+/// state's colour (a glyph is never colour alone).
+pub fn agent_lead_glyph(record: &AgentRecord, theme: &Theme) -> gpui::Div {
+    let (icon_id, tone) = crate::sessions::agents_text::lead(record);
+    div()
+        .flex_none()
+        .w(px(16.0))
+        .text_color(tone_color(theme, tone))
+        .child(crate::icons::glyph(icon_id))
 }
 
 /// State shape and tone from the same presentation used by the adjacent label/tooltip.

@@ -261,6 +261,12 @@ data_actions! {
     ShowAgentMenu(SessionMenuAt);
     /// Show the menu of the Agents page's scope button at this position.
     ShowAgentsScopeMenu(gpui::Point<gpui::Pixels>);
+    /// Show the Agents page's ⋯ menu at this position: Group by workspace, Show finished and,
+    /// below 640 pt where the toolbar folds, the scope.
+    ShowAgentsPageMenu(gpui::Point<gpui::Pixels>);
+    /// Show the right Agents panel's ⋯ menu at this position: Show finished, Blocked only, All
+    /// agents and the panel's settings.
+    ShowAgentsPanelMenu(gpui::Point<gpui::Pixels>);
     /// Interrupt the turn in progress of this session (an agent chat the daemon runs).
     InterruptSessionById(String);
     /// Show this session in the Projects sidebar (its workspace and row).
@@ -343,6 +349,9 @@ data_actions! {
     ShowAssistantModelMenu(gpui::Point<gpui::Pixels>);
     /// Show the menu of Mawas Home's mode chip (Ask before acting / Advisor) at this position.
     ShowAssistantModeMenu(gpui::Point<gpui::Pixels>);
+    /// Show Mawas Home's ⋯ menu at this position: New chat, Stop, Today and the backend; below
+    /// 640 pt it holds what the header folded.
+    ShowAssistantMoreMenu(gpui::Point<gpui::Pixels>);
     /// Show the menu behind a composer's send-key control (⌘Return or Return sends) at this
     /// position.
     ShowSendKeyMenu(gpui::Point<gpui::Pixels>);

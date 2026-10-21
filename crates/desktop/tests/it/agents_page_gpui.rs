@@ -13,9 +13,12 @@ use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::SessionId;
 use hutan_desktop::sessions::Group;
+use hutan_desktop::sessions::agents_text;
 use hutan_desktop::workbench::chat::LoadStatus;
-use hutan_desktop::workbench::model::ItemRef;
-use hutan_desktop::workbench::panels::{AgentsPage, AgentsPanel, AgentsRequest, today};
+use hutan_desktop::workbench::model::{DockPosition, ItemRef};
+use hutan_desktop::workbench::panels::{
+    AgentsPage, AgentsPanel, AgentsRequest, TodaySection, today,
+};
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_protocol::messages::{AgentApplied, AgentReportRequest, AgentState, Request};
 use hutan_settings::{SettingsPaths, SettingsStore};
@@ -147,6 +150,11 @@ fn an_agent_with_an_unknown_state_is_one_session_everywhere_and_never_working(
     let rail = view.read_with(cx, |wb, cx| today(wb.sessions().read(cx)));
     assert_eq!(rail.unconfirmed, 1);
     assert!(rail.working.is_empty());
+    assert_eq!(
+        rail.sections(),
+        [TodaySection::Working],
+        "Today draws the one section that has something in it"
+    );
     // The panel lists the same session.
     cx.dispatch_action(hutan_desktop::workbench::actions::OpenPanel(
         "agents".into(),
@@ -199,7 +207,7 @@ fn a_plain_agent_report_is_one_session_in_the_page_and_the_panel_with_the_same_w
     let sections = panel.read_with(cx, |p, cx| p.sections(0, cx));
     assert_eq!(sections.len(), 1);
     assert_eq!(sections[0].session, id);
-    assert_eq!(sections[0].state, "Working");
+    assert_eq!(sections[0].word, "Working");
     assert_eq!(sections[0].rows.len(), 1);
     let (panel_counts, page_counts) = (
         panel.read_with(cx, |p, cx| p.counts(cx)),
@@ -289,8 +297,11 @@ fn the_list_builds_only_the_rows_in_view_whether_there_are_none_one_or_hundreds(
     let (view, cx) = open(cx, &daemon);
     click(&view, cx, Region::Nav("agents"));
     let page = page(&view, cx);
-    // None: the teaching state, no list at all.
+    // None: the teaching state, no list at all, and Today has no section to draw.
     assert_eq!(rows_in_a_frame(&page, cx), 0, "no agents, no rows");
+    assert!(view.read_with(cx, |wb, cx| {
+        today(wb.sessions().read(cx)).sections().is_empty()
+    }));
     assert!(listed(&page, cx).is_empty());
 
     // The numbers of sessions a viewport can show many times over.
@@ -470,4 +481,157 @@ fn a_page_that_is_not_on_screen_does_no_work_when_the_store_changes(cx: &mut Tes
     wait_until(cx, "the page to catch up", move |cx| {
         listed(&p, cx).contains(&other)
     });
+}
+
+/// A chat that waits for a permission: one pending approval at the daemon, shown on the page.
+#[gpui::test]
+fn a_session_waiting_for_a_request_says_needs_you_and_never_working(cx: &mut TestAppContext) {
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("approval-touch"));
+    let info = daemon.create_chat(&env.cwd());
+    let (view, cx) = open(cx, &daemon);
+    view.update_in(cx, |wb, window, cx| wb.open_session(info.id, window, cx));
+    wait_until(cx, "the chat to load", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.chat_model_of(info.id)
+                .is_some_and(|m| *m.read(cx).status() == LoadStatus::Ready)
+        })
+    });
+    cx.simulate_input("Run `touch hi.txt` in a shell, then reply with the word done.");
+    cx.simulate_keystrokes("cmd-enter");
+    wait_until(cx, "the approval", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).approvals().len() == 1)
+    });
+    click(&view, cx, Region::Nav("agents"));
+    let page = page(&view, cx);
+    let p = page.clone();
+    wait_until(cx, "the chat under Needs you", move |cx| {
+        p.read_with(cx, |p, _| p.listed_groups().contains(&Group::NeedsYou))
+    });
+    // One state word for the record, and it is the attention, not the work underneath.
+    let record = view
+        .read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .agent_presentation()
+                .get(info.id)
+                .cloned()
+        })
+        .expect("the record");
+    assert_eq!(agents_text::state_word(&record), "Needs you · approval");
+    let (glyph, tone) = agents_text::lead(&record);
+    assert_eq!(glyph.id(), "state.blocked");
+    assert_eq!(tone, hutan_desktop::sessions::Tone::Warning);
+    let detail = agents_text::reason_detail(&record).expect("the reason");
+    assert!(!detail.starts_with("Permission:"), "{detail}");
+    assert!(
+        !page
+            .read_with(cx, |p, _| p.listed_groups())
+            .contains(&Group::Working),
+        "no Working group beside Needs you for the same session"
+    );
+    assert!(region(&view, cx, Region::AgentRow(info.id)).is_some());
+    // The panel's head says the same word.
+    cx.dispatch_action(hutan_desktop::workbench::actions::OpenPanel(
+        "agents".into(),
+    ));
+    draw(cx);
+    let panel = view
+        .read_with(cx, |wb, _| wb.panel::<AgentsPanel>("agents"))
+        .expect("the panel");
+    let sections = panel.read_with(cx, |p, cx| p.sections(0, cx));
+    assert_eq!(sections[0].word, "Needs you · approval");
+    assert_eq!(sections[0].detail.as_deref(), Some(detail.as_str()));
+}
+
+/// In a 1920 pt window the page is wider than 640 pt; in a 1000 × 700 pt window with the right
+/// panel open at 480 pt it is narrower.
+#[gpui::test]
+fn the_toolbar_folds_into_the_more_menu_below_640_pt_and_nothing_overflows(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let id = agent(&daemon, "work", true);
+    let (view, cx) = open(cx, &daemon);
+    click(&view, cx, Region::Nav("agents"));
+    let page = page(&view, cx);
+    let p = page.clone();
+    wait_until(cx, "the agent", move |cx| listed(&p, cx).contains(&id));
+    let labels = |cx: &mut VisualTestContext| -> Vec<String> {
+        view.read_with(cx, |wb, _| wb.context_menu_entries())
+            .expect("a menu is open")
+            .into_iter()
+            .map(|(label, _)| label.to_string())
+            .collect()
+    };
+    let close_menu = |cx: &mut VisualTestContext| {
+        view.update_in(cx, |wb, window, cx| {
+            wb.run_menu_entry(usize::MAX, window, cx)
+        });
+    };
+
+    // A wide window leaves the page room: scope, search and ⋯ side by side.
+    let p = page.clone();
+    wait_until(cx, "the unfolded toolbar", move |cx| {
+        !p.read_with(cx, |p, _| p.folded())
+    });
+    for what in ["scope", "search", "more"] {
+        assert!(
+            region(&view, cx, Region::AgentsPage(what)).is_some(),
+            "{what} is on the toolbar of a wide page"
+        );
+    }
+    click(&view, cx, Region::AgentsPage("more"));
+    assert_eq!(labels(cx), ["Group by workspace", "Show finished"]);
+    close_menu(cx);
+
+    // The 1000 × 700 pt window with the right panel open leaves it under 640 pt: the scope folds
+    // into ⋯, the search stays.
+    cx.simulate_resize(gpui::size(gpui::px(1000.0), gpui::px(700.0)));
+    cx.dispatch_action(hutan_desktop::workbench::actions::OpenPanel(
+        "agents".into(),
+    ));
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| s.resize_dock(DockPosition::Right, 480.0));
+    });
+    let p = page.clone();
+    wait_until(cx, "the folded toolbar", move |cx| {
+        p.read_with(cx, |p, _| p.folded())
+    });
+    draw(cx);
+    assert!(region(&view, cx, Region::AgentsPage("scope")).is_none());
+    let whole = region(&view, cx, Region::AgentsPage("page")).expect("the page");
+    for what in ["search", "more"] {
+        let at = region(&view, cx, Region::AgentsPage(what))
+            .unwrap_or_else(|| panic!("{what} stays on the folded toolbar"));
+        assert!(
+            at.origin.x >= whole.origin.x && at.right() <= whole.right(),
+            "{what} {at:?} sticks out of the page {whole:?}"
+        );
+    }
+    let search = region(&view, cx, Region::AgentsPage("search")).unwrap();
+    assert!(search.size.width >= gpui::px(96.0), "{search:?}");
+    click(&view, cx, Region::AgentsPage("more"));
+    let entries = labels(cx);
+    assert_eq!(
+        entries.first().map(String::as_str),
+        Some("Scope: All workspaces")
+    );
+    assert!(
+        entries.iter().any(|l| l == "Group by workspace"),
+        "{entries:?}"
+    );
+    assert!(entries.iter().any(|l| l == "Show finished"), "{entries:?}");
+    // Choosing a scope from ⋯ works like the button did.
+    let workspace = entries
+        .iter()
+        .position(|l| l.starts_with("Scope: ") && l != "Scope: All workspaces")
+        .expect("a workspace scope");
+    view.update_in(cx, |wb, window, cx| {
+        wb.run_menu_entry(workspace, window, cx)
+    });
+    assert_ne!(
+        page.read_with(cx, |p, _| p.scope()),
+        hutan_desktop::sessions::Scope::All
+    );
 }

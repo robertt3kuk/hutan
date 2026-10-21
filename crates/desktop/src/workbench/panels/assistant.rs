@@ -14,12 +14,14 @@
 //! `daemon.toml`. Without that setting the panel says what is missing and links to Models; it
 //! never picks a provider or model of its own.
 
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Focusable as _, InteractiveElement,
     IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
-    Subscription, Window, div, prelude::*, px,
+    Subscription, Window, canvas, div, prelude::*, px,
 };
 use hutan_client::{ClientError, ConnectionState};
 use hutan_core::agent::ModelInfo;
@@ -36,7 +38,8 @@ use serde_json::json;
 use super::common::state_dot;
 use crate::icons::{Icon, icon};
 use crate::workbench::actions::{
-    ManageProviders, ShowAssistantModeMenu, ShowAssistantModelMenu, ShowAssistantScopeMenu,
+    ManageProviders, ShowAssistantModeMenu, ShowAssistantModelMenu, ShowAssistantMoreMenu,
+    ShowAssistantScopeMenu,
 };
 use crate::workbench::agents::Models;
 use crate::workbench::chat::{ButtonKind, ChatModel, ChatView, ContextChip, Look, button};
@@ -182,6 +185,10 @@ impl MawasMode {
     }
 }
 
+/// Page widths (at the default rem) below which the header folds into ⋯ and Today leaves the page:
+/// the composer keeps its width instead of wrapping letter by letter.
+const FOLD_BELOW: f32 = 640.0;
+
 /// The widest the conversation gets (46 rem).
 const CONVERSATION_WIDTH: f32 = 736.0;
 
@@ -212,8 +219,15 @@ pub struct AssistantPanel {
     /// A failure of the controls of this page (a refused mode switch, an answer the daemon
     /// refused).
     error: Option<String>,
-    /// The Today rail is showing.
+    /// The Today rail is showing beside the conversation (a page below 640 pt has no room for
+    /// it: see `today_only`).
     pub(super) rail_open: bool,
+    /// A page below 640 pt: the header is folded into ⋯ and the rail leaves the page.
+    folded: bool,
+    /// Below 640 pt, Today replaces the conversation instead of sitting beside it (⋯ → Today).
+    today_only: bool,
+    /// The page's width as the last frame measured it.
+    width: Rc<Cell<f32>>,
     /// The page is on screen (the active tab of a pane). A hidden page does no work: the store
     /// changes no longer wake it.
     visible: bool,
@@ -250,6 +264,9 @@ impl AssistantPanel {
             mode_note: None,
             error: None,
             rail_open: true,
+            folded: false,
+            today_only: false,
+            width: Rc::new(Cell::new(0.0)),
             visible: false,
             renders: 0,
             _subscription: subscription,
@@ -487,6 +504,23 @@ impl AssistantPanel {
             .ok();
         })
         .detach();
+    }
+
+    /// Whether the page is below 640 pt: the header is folded into ⋯ and Today is a page of its
+    /// own (tests, the ⋯ menu).
+    pub fn folded(&self) -> bool {
+        self.folded
+    }
+
+    /// Whether Today replaces the conversation (only below 640 pt, ⋯ → Today).
+    pub fn today_only(&self) -> bool {
+        self.today_only
+    }
+
+    /// ⋯ → Today below 640 pt: Today instead of the conversation, and back.
+    pub fn toggle_today_only(&mut self, cx: &mut Context<Self>) {
+        self.today_only = !self.today_only;
+        cx.notify();
     }
 
     /// Whether Stop has something to stop: a turn runs, or a request of the shown chat waits.
@@ -986,6 +1020,10 @@ impl AssistantPanel {
         (!chat.turn_active).then_some(session)
     }
 
+    /// Mawas Home's header, one row with a hairline below: the scope and the mode as ghost
+    /// menus; the backend·model as muted text and **New chat** while the page is 640 pt wide
+    /// or more; **Stop** (the kill switch) only while there is something to stop, at any
+    /// width; and ⋯, which holds New chat, Stop, Today and the backend below 640 pt (`folded`).
     fn render_header(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
         let (theme, tokens) = (&look.theme, &look.tokens);
         let key = self.key(cx);
@@ -1044,6 +1082,34 @@ impl AssistantPanel {
             )
             .child(icon(Icon::ActionExpand, 12.0, theme.muted))
             .child(probe(&self.env.regions, Region::Assistant("scope")));
+        let dot = state.map(|presentation| {
+            let label = SharedString::from(presentation.label.clone());
+            div()
+                .id("assistant-state")
+                .flex_none()
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip(label.clone())).into())
+                .child(state_dot(theme, &presentation))
+                .into_any_element()
+        });
+        let folded = self.folded;
+        let more = div()
+            .id("assistant-more")
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(24.0))
+            .rounded(px(tokens.radius))
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
+                window.dispatch_action(Box::new(ShowAssistantMoreMenu(e.position())), cx);
+            }))
+            .tooltip(|_, cx| cx.new(|_| TextTooltip("More".into())).into())
+            .child(icon(Icon::ActionMore, 16.0, theme.muted))
+            .child(probe(&self.env.regions, Region::Assistant("more")));
         div()
             .relative()
             .flex()
@@ -1055,42 +1121,29 @@ impl AssistantPanel {
             .border_b_1()
             .border_color(theme.border)
             .child(scope)
-            .children(state.map(|presentation| {
-                let label = SharedString::from(presentation.label.clone());
-                div()
-                    .id("assistant-state")
-                    .flex_none()
-                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(label.clone())).into())
-                    .child(state_dot(theme, &presentation))
-            }))
-            .child(self.backend_chip(look, cx))
             .child(self.mode_chip(look, cx))
-            .child(self.header_button(
-                "assistant-new",
-                "New chat",
-                "new",
-                self.connected(cx),
-                look,
-                cx.listener(|this, _, _, cx| this.new_chat(cx)),
-            ))
-            .child(self.stop_button(look, cx))
-            .child(self.header_button(
-                "assistant-rail",
-                if self.rail_open {
-                    "Hide Today"
-                } else {
-                    "Today"
-                },
-                "rail",
-                true,
-                look,
-                cx.listener(|this, _, _, cx| this.toggle_rail(cx)),
-            ))
+            .child(if folded {
+                div().flex_1().min_w_0().into_any_element()
+            } else {
+                self.backend_chip(dot, look, cx)
+            })
+            .when(!folded, |s| {
+                s.child(self.header_button(
+                    "assistant-new",
+                    "New chat",
+                    "new",
+                    self.connected(cx),
+                    look,
+                    cx.listener(|this, _, _, cx| this.new_chat(cx)),
+                ))
+            })
+            .when(self.can_stop(cx), |s| s.child(self.stop_button(look, cx)))
+            .child(more)
             .child(probe(&self.env.regions, Region::Assistant("header")))
             .into_any_element()
     }
 
-    /// A small text button of the header.
+    /// A small ghost text button of the header: no outline, a hover fill.
     fn header_button(
         &self,
         id: &'static str,
@@ -1111,8 +1164,6 @@ impl AssistantPanel {
             .h(px(24.0))
             .px(px(8.0))
             .rounded(px(tokens.radius))
-            .border_1()
-            .border_color(theme.border)
             .text_size(px(tokens.secondary_font_size))
             .when(enabled, move |s| {
                 s.cursor_pointer()
@@ -1125,10 +1176,10 @@ impl AssistantPanel {
             .into_any_element()
     }
 
-    /// **Stop**: the kill switch. It looks like a danger button while there is something to stop.
+    /// **Stop**: the kill switch, in the error color (text, no outline) and drawn only while
+    /// there is something to stop, at any width.
     fn stop_button(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
-        let enabled = self.can_stop(cx);
         let danger = theme.danger;
         div()
             .id("assistant-stop")
@@ -1139,16 +1190,11 @@ impl AssistantPanel {
             .h(px(24.0))
             .px(px(8.0))
             .rounded(px(tokens.radius))
-            .border_1()
-            .border_color(if enabled { danger } else { theme.border })
-            .text_color(if enabled { danger } else { theme.muted })
+            .text_color(danger)
             .text_size(px(tokens.secondary_font_size))
-            .when(enabled, move |s| {
-                s.cursor_pointer()
-                    .hover(move |s| s.bg(danger.opacity(0.12)))
-                    .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
-            })
-            .when(!enabled, |s| s.opacity(0.5))
+            .cursor_pointer()
+            .hover(move |s| s.bg(danger.opacity(0.12)))
+            .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
             .tooltip(|_, cx| {
                 cx.new(|_| {
                     TextTooltip("Stop Mawas: deny what it asks and interrupt its turn".into())
@@ -1177,9 +1223,6 @@ impl AssistantPanel {
             .h(px(24.0))
             .px(px(8.0))
             .rounded(px(tokens.radius))
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.surface)
             .text_size(px(tokens.secondary_font_size))
             .when(enabled, move |s| {
                 s.cursor_pointer()
@@ -1240,9 +1283,15 @@ impl AssistantPanel {
             .unwrap_or_else(|| "Choose backend".to_owned())
     }
 
-    /// The header's backend·model chip: what the shown assistant runs on, cut with "…" to the
-    /// room the sidebar leaves it. It opens the menu with Switch model… and the chooser.
-    fn backend_chip(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+    /// The header's backend·model label: what the shown assistant runs on, as muted text with
+    /// the state dot, cut with "…" and right-aligned in the room the other controls leave (a
+    /// page below 640 pt keeps it in ⋯). It opens the menu with Switch model… and the chooser.
+    fn backend_chip(
+        &self,
+        dot: Option<AnyElement>,
+        look: &Look,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
         let label = self.backend_label(cx);
         let enabled = self.connected(cx);
@@ -1254,14 +1303,13 @@ impl AssistantPanel {
             .flex_1()
             .min_w_0()
             .items_center()
+            .justify_end()
             .gap(px(4.0))
             .h(px(24.0))
             .px(px(8.0))
             .rounded(px(tokens.radius))
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.surface)
             .text_size(px(tokens.secondary_font_size))
+            .text_color(theme.muted)
             .when(enabled, move |s| {
                 s.cursor_pointer().hover(move |s| s.bg(hover))
             })
@@ -1271,13 +1319,8 @@ impl AssistantPanel {
                     window.dispatch_action(Box::new(ShowAssistantModelMenu(e.position())), cx);
                 }))
             })
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(SharedString::from(label)),
-            )
+            .children(dot)
+            .child(div().min_w_0().truncate().child(SharedString::from(label)))
             .child(icon(Icon::ActionExpand, 12.0, theme.muted))
             .child(probe(&self.env.regions, Region::Assistant("backend")))
             .into_any_element()
@@ -1643,6 +1686,13 @@ impl Render for AssistantPanel {
             window.focus(&handle, cx);
         }
         let look = Look::of(cx);
+        let scale = f32::from(window.rem_size()) / 16.0;
+        let measured = self.width.get();
+        self.folded = if measured > 0.0 {
+            measured < FOLD_BELOW * scale
+        } else {
+            f32::from(window.viewport_size().width) * 0.6 < FOLD_BELOW * scale
+        };
         let header = self.render_header(&look, cx);
         let body = self.render_body(&look, cx);
         let (theme, tokens) = (look.theme, look.tokens);
@@ -1671,10 +1721,33 @@ impl Render for AssistantPanel {
                 .into_any_element()
         })
         .collect();
-        let rail = (self.rail_open && self.connected(cx)).then(|| self.render_rail(&look, cx));
+        let connected = self.connected(cx);
+        let today_page = self.folded && self.today_only && connected;
+        let rail = (!self.folded && self.rail_open && connected)
+            .then(|| self.render_rail(&look, false, cx));
         let asks = self.render_chat_asks(&look, cx);
+        let width_cell = self.width.clone();
+        let folded_for_paint = self.folded;
+        let conversation = div()
+            .relative()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .justify_center()
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .max_w(px(CONVERSATION_WIDTH))
+                    .h_full()
+                    .children(asks)
+                    .child(div().relative().flex_1().min_h_0().child(body)),
+            );
         div()
             .id("assistant-panel")
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -1689,26 +1762,30 @@ impl Render for AssistantPanel {
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .child(
-                        div()
-                            .relative()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .relative()
-                                    .flex()
-                                    .flex_col()
-                                    .w_full()
-                                    .max_w(px(CONVERSATION_WIDTH))
-                                    .h_full()
-                                    .children(asks)
-                                    .child(div().relative().flex_1().min_h_0().child(body)),
-                            ),
-                    )
+                    // Below 640 pt Today is a page of its own (⋯ → Today), never a column that
+                    // leaves the composer a few pixels.
+                    .when(!today_page, |s| s.child(conversation))
+                    .when(today_page, |s| s.child(self.render_rail(&look, true, cx)))
                     .children(rail),
+            )
+            .child(
+                // The width of this frame chooses the fold of the next; a frame on the other
+                // side of the line draws once more.
+                canvas(
+                    |bounds, _, _| bounds,
+                    move |_, bounds, window, cx| {
+                        let width: f32 = bounds.size.width.into();
+                        let scale = f32::from(window.rem_size()) / 16.0;
+                        width_cell.set(width);
+                        if (width < FOLD_BELOW * scale) != folded_for_paint {
+                            cx.notify(window.current_view());
+                        }
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
             )
     }
 }

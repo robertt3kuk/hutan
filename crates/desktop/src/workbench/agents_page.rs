@@ -14,7 +14,7 @@ use hutan_protocol::messages::WorkspaceKind;
 
 use super::actions;
 use super::model::{AGENTS_PAGE, DockMode, DockPosition, ItemRef, PanelId};
-use super::panels::{AgentsPage, AgentsRequest};
+use super::panels::{AgentsPage, AgentsPanel, AgentsRequest};
 use super::view::{MenuEntry, Workbench};
 use crate::sessions::agents_text::{self, Avail, Caps};
 
@@ -176,17 +176,14 @@ impl Workbench {
         }
     }
 
-    /// The menu of the page's scope button: All workspaces, then every workspace, project and
-    /// Home; the one shown is checked.
-    pub(crate) fn show_agents_scope_menu(
-        &mut self,
-        position: Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(page) = self.agents_page(window, cx) else {
-            return;
-        };
+    /// The entries of the page's scope: All workspaces, then every workspace, project and Home;
+    /// the one shown is checked. `prefix` heads each label (`Scope: ` inside the folded ⋯ menu).
+    fn agents_scope_entries(
+        &self,
+        page: &Entity<AgentsPage>,
+        prefix: &str,
+        cx: &gpui::App,
+    ) -> Vec<MenuEntry> {
         let current = page.read(cx).scope();
         let store = self.sessions.read(cx);
         let mut choices = vec![("All workspaces".to_owned(), crate::sessions::Scope::All)];
@@ -200,17 +197,97 @@ impl Workbench {
                 crate::sessions::Scope::Workspace(info.id),
             ));
         }
-        let entries = choices
+        choices
             .into_iter()
             .map(|(label, scope)| {
                 let page = page.clone();
-                let mut entry = Self::entry(label, move |_, _, cx| {
+                let mut entry = Self::entry(format!("{prefix}{label}"), move |_, _, cx| {
                     page.update(cx, |page, cx| page.set_scope(scope, cx));
                 });
                 entry.checked = scope == current;
                 entry
             })
-            .collect();
+            .collect()
+    }
+
+    /// The menu of the page's scope button.
+    pub(crate) fn show_agents_scope_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(page) = self.agents_page(window, cx) else {
+            return;
+        };
+        let entries = self.agents_scope_entries(&page, "", cx);
+        self.open_menu(position, entries, window, cx);
+    }
+
+    /// The page's ⋯ menu: *Group by workspace* and *Show finished* (checked while on), and,
+    /// while the toolbar is folded below 640 pt, the scope first (`Scope: All workspaces`).
+    pub(crate) fn show_agents_page_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(page) = self.agents_page(window, cx) else {
+            return;
+        };
+        let settings = self.settings.get::<crate::settings::AgentsSettings>();
+        let mut entries = if page.read(cx).folded() {
+            self.agents_scope_entries(&page, "Scope: ", cx)
+        } else {
+            Vec::new()
+        };
+        let group = page.clone();
+        let mut by_workspace = Self::entry("Group by workspace", move |_, _, cx| {
+            group.update(cx, |page, cx| page.toggle_group_by_workspace(cx));
+        });
+        by_workspace.checked = settings.page_group_by_workspace;
+        let finished = page.clone();
+        let mut show_finished = Self::entry("Show finished", move |_, _, cx| {
+            finished.update(cx, |page, cx| page.toggle_show_finished(cx));
+        });
+        show_finished.checked = settings.page_show_finished;
+        entries.push(by_workspace);
+        entries.push(show_finished);
+        self.open_menu(position, entries, window, cx);
+    }
+
+    /// The right Agents panel's ⋯ menu: *Show finished* and *Blocked only* (checked while on),
+    /// *All agents* (the page) and the panel's settings.
+    pub(crate) fn show_agents_panel_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(panel) = self.panel::<AgentsPanel>("agents") else {
+            return;
+        };
+        let settings = self.settings.get::<crate::settings::AgentsSettings>();
+        let finished = panel.clone();
+        let mut show_finished = Self::entry("Show finished", move |_, _, cx| {
+            finished.update(cx, |panel, cx| panel.toggle_show_finished(cx));
+        });
+        show_finished.checked = settings.show_finished;
+        let blocked = panel.clone();
+        let mut only_blocked = Self::entry("Blocked only", move |_, _, cx| {
+            blocked.update(cx, |panel, cx| panel.toggle_only_blocked(cx));
+        });
+        only_blocked.checked = settings.only_blocked;
+        let entries = vec![
+            show_finished,
+            only_blocked,
+            Self::entry("All agents", |_, window, cx| {
+                window.dispatch_action(Box::new(actions::ShowAgentsPage), cx);
+            }),
+            Self::entry("Agents settings…", |_, window, cx| {
+                window.dispatch_action(Box::new(actions::OpenSettingsFor("agents".to_owned())), cx);
+            }),
+        ];
         self.open_menu(position, entries, window, cx);
     }
 

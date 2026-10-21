@@ -34,7 +34,9 @@ pub use agents_page::{AgentsPage, AgentsRequest, TICK as AGENTS_PAGE_TICK};
 pub use assistant::{
     AssistantPanel, Choice as AssistantChoice, Failure, MawasMode, Opened, ScopeEntry, ScopeKey,
 };
-pub use assistant_rail::{NeedsKind, NeedsRow, RailOption, Today, WorkingRow, today};
+pub use assistant_rail::{
+    NeedsKind, NeedsRow, RailOption, Section as TodaySection, Today, WorkingRow, today,
+};
 pub use changes::{ChangesPanel, Checkouts as ChangesCheckouts, REFRESH_AFTER as CHANGES_REFRESH};
 pub use common::{
     age_label, agent_badge, kind_icon, placement_badge, recovery_chip, state_dot, time_tooltip,

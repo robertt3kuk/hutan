@@ -13,7 +13,7 @@ use common::{draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::{SessionId, WorkspaceId};
 use hutan_desktop::workbench::actions;
-use hutan_desktop::workbench::model::{ItemRef, PanelId};
+use hutan_desktop::workbench::model::{DockPosition, ItemRef, PanelId};
 use hutan_desktop::workbench::panels::{AssistantPanel, MawasMode, NeedsKind};
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_gateway::testing::Reply;
@@ -132,8 +132,14 @@ fn the_nav_row_opens_one_home_in_the_center_with_mawas_in_its_header(cx: &mut Te
     cx.dispatch_action(actions::OpenAssistant);
     assert_eq!(count(cx), 1);
 
-    // The header: scope, backend, mode, New chat, Stop, Today.
-    for region in ["scope", "backend", "mode", "new", "stop", "rail"] {
+    // The header: scope, mode and ⋯, and on a page of 640 pt or more the backend and New chat.
+    // Stop is there only while there is something to stop; Today is in ⋯.
+    let folded = panel.read_with(cx, |p, _| p.folded());
+    let mut regions = vec!["scope", "mode", "more"];
+    if !folded {
+        regions.extend(["backend", "new"]);
+    }
+    for region in regions {
         draw(cx);
         assert!(
             view.read_with(cx, |wb, _| wb.region_bounds(Region::Assistant(region)))
@@ -141,6 +147,12 @@ fn the_nav_row_opens_one_home_in_the_center_with_mawas_in_its_header(cx: &mut Te
             "{region} is in the header"
         );
     }
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Assistant("stop")))
+            .is_none(),
+        "nothing to stop, no Stop"
+    );
     // The first chat is Mawas's, and the session is titled so.
     let (session, _, _) = shown(&panel, cx);
     assert_eq!(env.daemon.session(session).title, "Mawas");
@@ -559,5 +571,92 @@ fn turning_mawas_off_hides_its_nav_row_and_closes_home(cx: &mut TestAppContext) 
                 && !wb.panel_open("assistant")
                 && wb.nav_entries(cx).iter().all(|e| e.key != "assistant")
         })
+    });
+}
+
+/// Below 640 pt the header folds into ⋯, Today leaves the page, and the composer keeps its
+/// width (it once wrapped letter by letter in a 470 pt pane).
+#[gpui::test]
+fn below_640_pt_the_header_folds_today_leaves_and_the_composer_keeps_its_width(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    let (view, cx) = open(cx, &env.daemon);
+    click(&view, cx, Region::Nav("assistant"));
+    let panel = panel(&view, cx);
+    wait_until(cx, "Mawas to open", |cx| {
+        panel.read_with(cx, |p, cx| p.session(cx).is_some())
+    });
+    let painted = |cx: &VisualTestContext, what: &'static str| {
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Assistant(what)))
+            .is_some()
+    };
+
+    // Room: the backend, New chat and the Today column beside the conversation.
+    wait_until(cx, "the unfolded header", |cx| {
+        !panel.read_with(cx, |p, _| p.folded())
+    });
+    wait_until(cx, "the header controls", |cx| {
+        painted(cx, "backend") && painted(cx, "new") && painted(cx, "today")
+    });
+
+    // No room (a 1000 × 700 pt window with the right panel open at 480 pt): scope, mode and ⋯;
+    // no Today column; a composer of a usable width.
+    cx.simulate_resize(gpui::size(gpui::px(1000.0), gpui::px(700.0)));
+    cx.dispatch_action(actions::OpenPanel("agents".into()));
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| s.resize_dock(DockPosition::Right, 480.0));
+    });
+    wait_until(cx, "the folded header", |cx| {
+        panel.read_with(cx, |p, _| p.folded())
+    });
+    wait_until(cx, "the folded page to be drawn", |cx| {
+        !painted(cx, "backend") && !painted(cx, "new") && !painted(cx, "today")
+    });
+    for what in ["scope", "mode", "more"] {
+        assert!(painted(cx, what), "{what} stays in the folded header");
+    }
+    let page = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Assistant("header")))
+        .expect("the header");
+    wait_until(cx, "the composer", |cx| {
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("composer")))
+            .is_some()
+    });
+    let composer = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Chat("composer")))
+        .unwrap();
+    assert!(
+        composer.size.width >= gpui::px(200.0) && composer.right() <= page.right(),
+        "the composer wraps per character in {composer:?}"
+    );
+
+    // ⋯ holds what folded: New chat, Stop, Today and the backend.
+    click(&view, cx, Region::Assistant("more"));
+    let labels: Vec<String> = view
+        .read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("the ⋯ menu")
+        .into_iter()
+        .map(|(label, _)| label.to_string())
+        .collect();
+    assert_eq!(
+        &labels[..3],
+        ["New chat", "Stop Mawas", "Today"],
+        "{labels:?}"
+    );
+    assert!(labels[3].starts_with("Backend: "), "{labels:?}");
+    // Today is a page of its own from there, and the conversation comes back.
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(2, window, cx));
+    wait_until(cx, "Today in place of the conversation", |cx| {
+        painted(cx, "today") && panel.read_with(cx, |p, _| p.today_only())
+    });
+    let today = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Assistant("today")))
+        .unwrap();
+    assert!(today.size.width >= gpui::px(300.0), "{today:?}");
+    click(&view, cx, Region::Assistant("more"));
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(2, window, cx));
+    wait_until(cx, "the conversation again", |cx| {
+        !panel.read_with(cx, |p, _| p.today_only()) && !painted(cx, "today")
     });
 }

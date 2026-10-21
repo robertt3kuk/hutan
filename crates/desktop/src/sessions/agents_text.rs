@@ -110,6 +110,67 @@ pub fn reason_text(record: &AgentRecord) -> Option<String> {
     Some(text)
 }
 
+/// The reason's own words, without the kind the state word already says (`Permission: ` for an
+/// approval, `Question: ` for a question): `edit: src/lib.rs +1 · 2 requests`. The line a
+/// *Needs you* row shows under its state word `Needs you · approval`.
+pub fn reason_detail(record: &AgentRecord) -> Option<String> {
+    let headline = record.headline()?;
+    let own = match headline.kind {
+        ReasonKind::Approval => headline.text.strip_prefix("Permission: "),
+        ReasonKind::Question => headline.text.strip_prefix("Question: "),
+        _ => None,
+    };
+    let Some(own) = own else {
+        return reason_text(record);
+    };
+    let mut text = own.to_owned();
+    if record.reasons.len() > 1 {
+        text.push_str(&format!(" +{}", record.reasons.len() - 1));
+    }
+    let requests = record.requests.len() + record.submitting;
+    if requests > 1 {
+        text.push_str(&format!(" · {requests} requests"));
+    }
+    if record.group == Group::Snoozed {
+        text.insert_str(0, "Snoozed · ");
+    }
+    Some(text)
+}
+
+/// The state word of a row, one per record: attention wins over the working state the agent
+/// is in (reducer precedence, chrome v3 § 2.2), so a session that waits for a decision says
+/// `Needs you · approval` and never also `Working`; every other record says its state.
+pub fn state_word(record: &AgentRecord) -> String {
+    if !record.needs_you() {
+        return record.state.label().to_owned();
+    }
+    let kind = match record.headline().map(|reason| reason.kind) {
+        Some(ReasonKind::Approval) => "approval",
+        Some(ReasonKind::Question) => "question",
+        Some(ReasonKind::Blocked) => "blocked",
+        Some(ReasonKind::Failed) => "failed",
+        Some(ReasonKind::Review) => "review",
+        Some(ReasonKind::CompletedUnread) => "completed",
+        Some(ReasonKind::MarkedUnread) => "unread",
+        None => return "Needs you".to_owned(),
+    };
+    format!("Needs you · {kind}")
+}
+
+/// The leading glyph of a row and the tone of the state word: attention first (a triangle for a
+/// decision, a cross for a failure), else the state's own shape. Never colour alone.
+pub fn lead(record: &AgentRecord) -> (crate::icons::Icon, super::Tone) {
+    use super::Tone;
+    use crate::icons::Icon;
+    match record.headline().map(|reason| reason.kind) {
+        Some(ReasonKind::Approval | ReasonKind::Question | ReasonKind::Blocked) => {
+            (Icon::StateBlocked, Tone::Warning)
+        }
+        Some(ReasonKind::Failed) => (Icon::StateFailed, Tone::Error),
+        _ => (record.state.glyph(), record.state.tone()),
+    }
+}
+
 /// What a row's reason says on hover, `UX-ATTENTION-CONTROLS`: every reason, then who said so
 /// and when — `Permission: run cargo test · reported by claude-hooks · 2m ago`. `None` when the
 /// session has no reason.
@@ -336,14 +397,12 @@ pub fn transcript(record: &AgentRecord) -> Avail {
     }
 }
 
-/// The group heading's text: `Needs you`, `2 sessions`, `3 requests`.
-pub fn group_counts(group: Group, count: usize, requests: usize) -> String {
-    let mut text = format!("{count} session{}", if count == 1 { "" } else { "s" });
-    if group == Group::NeedsYou && requests > 0 {
-        text.push_str(&format!(
-            " · {requests} request{}",
-            if requests == 1 { "" } else { "s" }
-        ));
+/// The group heading's text: `Needs you · 1`, `Idle · 2`; a *Needs you* group with more requests
+/// than sessions adds them (`Needs you · 1 · 3 requests`).
+pub fn group_label(group: Group, count: usize, requests: usize) -> String {
+    let mut text = format!("{} · {count}", group.label());
+    if group == Group::NeedsYou && requests > count {
+        text.push_str(&format!(" · {requests} requests"));
     }
     text
 }
@@ -466,6 +525,50 @@ mod tests {
             reason_text(&r).unwrap(),
             "Permission: run cargo test +1 · 3 requests"
         );
+    }
+
+    #[test]
+    fn a_group_heading_is_its_name_and_count() {
+        assert_eq!(group_label(Group::Idle, 2, 0), "Idle · 2");
+        assert_eq!(group_label(Group::NeedsYou, 1, 1), "Needs you · 1");
+        assert_eq!(
+            group_label(Group::NeedsYou, 1, 3),
+            "Needs you · 1 · 3 requests"
+        );
+    }
+
+    #[test]
+    fn a_session_waiting_for_a_decision_says_needs_you_and_never_working() {
+        use crate::sessions::presentation::{Reason, ReasonKind};
+        let mut r = record();
+        assert_eq!(state_word(&r), "Working");
+        // The agent is still `Working` underneath; attention wins.
+        r.group = Group::NeedsYou;
+        r.reasons = vec![Reason {
+            kind: ReasonKind::Approval,
+            text: "Permission: edit: src/lib.rs".into(),
+            since_ms: None,
+        }];
+        assert_eq!(r.state, State::Working);
+        assert_eq!(state_word(&r), "Needs you · approval");
+        assert_eq!(reason_detail(&r).unwrap(), "edit: src/lib.rs");
+        assert_eq!(lead(&r).0, crate::icons::Icon::StateBlocked);
+        assert_eq!(lead(&r).1, crate::sessions::Tone::Warning);
+        r.reasons[0] = Reason {
+            kind: ReasonKind::Question,
+            text: "Question: which branch".into(),
+            since_ms: None,
+        };
+        assert_eq!(state_word(&r), "Needs you · question");
+        assert_eq!(reason_detail(&r).unwrap(), "which branch");
+        r.reasons[0] = Reason {
+            kind: ReasonKind::Failed,
+            text: "Failed: exit 1".into(),
+            since_ms: None,
+        };
+        assert_eq!(state_word(&r), "Needs you · failed");
+        assert_eq!(reason_detail(&r), reason_text(&r));
+        assert_eq!(lead(&r).1, crate::sessions::Tone::Error);
     }
 
     #[test]

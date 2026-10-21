@@ -11,17 +11,21 @@
 
 use gpui::{
     AnyElement, App, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, div, px,
+    StatefulInteractiveElement, Styled, div, prelude::*, px,
 };
 use hutan_core::agent::PermissionOptionKind;
 use hutan_core::{ApprovalId, QuestionId, SessionId};
 
 use super::assistant::AssistantPanel;
-use crate::sessions::{AttentionKind, SessionsStore};
-use crate::workbench::actions::{EditMemoryProposal, OpenMawasMemory, OpenSession};
+use super::common::{agent_lead_glyph, agent_title_line};
+use crate::icons::{Icon, icon};
+use crate::sessions::{AgentRecord, AttentionKind, SessionsStore, agents_text};
+use crate::workbench::actions::{
+    EditMemoryProposal, JumpToNextAttention, OpenMawasMemory, OpenSession,
+};
 use crate::workbench::chat::{ButtonKind, Look, button};
 use crate::workbench::render::probe;
-use crate::workbench::ui;
+use crate::workbench::ui::{self, StyledExt as _};
 use crate::workbench::view::Region;
 
 /// The width of the rail.
@@ -74,23 +78,43 @@ pub struct NeedsRow {
     pub kind: NeedsKind,
 }
 
-/// One row of *Working*.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One row of *Working*: the agent record the Agents page draws, so the row is the page's.
+#[derive(Debug, Clone, PartialEq)]
 pub struct WorkingRow {
     pub session: SessionId,
-    pub title: String,
-    /// `Claude Code`, `OMP`, `Codex`, the agent that runs.
-    pub agent: String,
+    pub record: AgentRecord,
 }
 
 /// What the rail shows.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Today {
     pub needs_you: Vec<NeedsRow>,
     /// Agent sessions confirmed working (the same predicate as the Agents page).
     pub working: Vec<WorkingRow>,
     /// Agent sessions whose state is unavailable: never counted as working or idle.
     pub unconfirmed: usize,
+}
+
+/// A section of Today that has something in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    NeedsYou,
+    Working,
+}
+
+impl Today {
+    /// The sections Today draws, in order: only those with content. With none, Today says so in
+    /// one muted line instead of four empty sections.
+    pub fn sections(&self) -> Vec<Section> {
+        let mut sections = Vec::new();
+        if !self.needs_you.is_empty() {
+            sections.push(Section::NeedsYou);
+        }
+        if !self.working.is_empty() || self.unconfirmed > 0 {
+            sections.push(Section::Working);
+        }
+        sections
+    }
 }
 
 /// The rail's content as of now, from the sessions store alone.
@@ -181,12 +205,7 @@ pub fn today(store: &SessionsStore) -> Today {
         .filter(|record| record.group == crate::sessions::Group::Working)
         .map(|record| WorkingRow {
             session: record.session,
-            title: record.title.clone(),
-            agent: if record.role == crate::sessions::Role::Assistant {
-                "Mawas".to_owned()
-            } else {
-                record.harness.clone()
-            },
+            record: record.clone(),
         })
         .collect();
     let unconfirmed = presentation
@@ -265,7 +284,7 @@ impl AssistantPanel {
         let cards: Vec<AnyElement> = asks
             .iter()
             .enumerate()
-            .map(|(index, row)| self.render_needs_row(CHAT_ASK_BASE + index, row, look, cx))
+            .map(|(index, row)| self.render_needs_row(CHAT_ASK_BASE + index, row, false, look, cx))
             .collect();
         Some(
             div()
@@ -281,37 +300,66 @@ impl AssistantPanel {
         )
     }
 
-    pub(super) fn render_rail(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+    /// Today: only the sections that have something in them — *Needs you* (each request with
+    /// the options the daemon offered, and *Review what needs you*), *Working* (the Agents
+    /// page's rows) — or, with nothing at all, one muted line; and a `Memory ›` link row.
+    /// `full` is the page below 640 pt, where Today is the whole body instead of a column.
+    pub(super) fn render_rail(
+        &self,
+        look: &Look,
+        full: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
         let today = self.today(cx);
-        let heading = |text: &str, count: Option<usize>| {
+        let hover = theme.surface_hover;
+        let link = |id: &'static str, text: SharedString| {
             div()
+                .id(id)
+                .relative()
                 .flex()
                 .items_center()
-                .justify_between()
-                .child(ui::section_label(text, &theme, &tokens))
-                .children(count.filter(|n| *n > 0).map(|n| {
-                    div()
-                        .px(px(6.0))
-                        .rounded(px(crate::theme::pill_radius()))
-                        .bg(theme.warning.opacity(0.18))
-                        .text_color(theme.warning)
-                        .text_size(px(tokens.secondary_font_size))
-                        .child(SharedString::from(n.to_string()))
-                }))
+                .gap(px(4.0))
+                .h(px(28.0))
+                .px(px(tokens.spacing * 2.0))
+                .rounded(px(tokens.radius))
+                .cursor_pointer()
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(theme.muted)
+                .hover(move |s| s.bg(hover))
+                .child(text)
+                .child(icon(Icon::ActionDisclose, 12.0, theme.muted))
         };
-        let mut needs: Vec<AnyElement> = Vec::new();
-        for (row_index, row) in today.needs_you.iter().enumerate() {
-            needs.push(self.render_needs_row(row_index, row, look, cx));
-        }
-        if needs.is_empty() {
-            needs.push(
-                div()
-                    .text_color(theme.muted)
-                    .text_size(px(tokens.secondary_font_size))
-                    .child("Nothing needs you.")
+        let section = |label: String, items: Vec<AnyElement>| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(tokens.spacing))
+                .child(ui::section_label(label, &theme, &tokens))
+                .children(items)
+                .into_any_element()
+        };
+        let listed = today.sections();
+        let mut sections: Vec<AnyElement> = Vec::new();
+        if listed.contains(&Section::NeedsYou) {
+            let mut items: Vec<AnyElement> = today
+                .needs_you
+                .iter()
+                .enumerate()
+                .map(|(row_index, row)| self.render_needs_row(row_index, row, true, look, cx))
+                .collect();
+            items.push(
+                link("today-review", "Review what needs you".into())
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(JumpToNextAttention), cx);
+                    })
+                    .child(probe(&self.env.regions, Region::Assistant("today-review")))
                     .into_any_element(),
             );
+            sections.push(section(
+                format!("Needs you · {}", today.needs_you.len()),
+                items,
+            ));
         }
         let mut working: Vec<AnyElement> = Vec::new();
         for (index, row) in today.working.iter().enumerate() {
@@ -321,29 +369,39 @@ impl AssistantPanel {
                     .id(SharedString::from(format!("today-working-{index}")))
                     .relative()
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(tokens.spacing))
+                    .items_start()
+                    .gap(px(tokens.spacing * 1.5))
                     .px(px(tokens.spacing * 2.0))
                     .py(px(tokens.spacing))
                     .rounded(px(tokens.radius))
                     .cursor_pointer()
-                    .hover(move |s| s.bg(theme.surface_hover))
+                    .hover(move |s| s.bg(hover))
                     .on_click(move |_, window, cx| {
                         window.dispatch_action(Box::new(OpenSession(session.to_string())), cx);
                     })
                     .child(
                         div()
-                            .min_w_0()
-                            .truncate()
-                            .child(SharedString::from(row.title.clone())),
+                            .pt(px(1.0))
+                            .child(agent_lead_glyph(&row.record, &theme)),
                     )
                     .child(
                         div()
-                            .flex_none()
-                            .text_color(theme.muted)
-                            .text_size(px(tokens.secondary_font_size))
-                            .child(SharedString::from(row.agent.clone())),
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .gap(px(2.0))
+                            .child(agent_title_line(&row.record, false, &theme, &tokens))
+                            .child(
+                                div()
+                                    .h(px(16.0))
+                                    .truncate()
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(theme.muted)
+                                    .child(SharedString::from(agents_text::harness_text(
+                                        &row.record,
+                                    ))),
+                            ),
                     )
                     .child(probe(
                         &self.env.regions,
@@ -352,47 +410,47 @@ impl AssistantPanel {
                     .into_any_element(),
             );
         }
-        if working.is_empty() && today.unconfirmed == 0 {
-            working.push(
-                div()
-                    .text_color(theme.muted)
-                    .text_size(px(tokens.secondary_font_size))
-                    .child("No agents are working.")
-                    .into_any_element(),
-            );
-        }
         if today.unconfirmed > 0 {
             // Not "No agents are running": their state is not known.
             working.push(
+                link(
+                    "today-unconfirmed",
+                    format!("State unavailable · {}", today.unconfirmed).into(),
+                )
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(
+                        Box::new(crate::workbench::actions::OpenAgentsPageWith(
+                            super::AgentsRequest {
+                                group: Some("unconfirmed".to_owned()),
+                                ..super::AgentsRequest::default()
+                            },
+                        )),
+                        cx,
+                    );
+                })
+                .child(probe(
+                    &self.env.regions,
+                    Region::Assistant("today-unconfirmed"),
+                ))
+                .into_any_element(),
+            );
+        }
+        if listed.contains(&Section::Working) {
+            sections.push(section(
+                if today.working.is_empty() {
+                    "Working".to_owned()
+                } else {
+                    format!("Working · {}", today.working.len())
+                },
+                working,
+            ));
+        }
+        if listed.is_empty() {
+            sections.push(
                 div()
-                    .id("today-unconfirmed")
-                    .relative()
-                    .px(px(tokens.spacing * 2.0))
-                    .py(px(tokens.spacing))
-                    .rounded(px(tokens.radius))
-                    .cursor_pointer()
                     .text_color(theme.muted)
                     .text_size(px(tokens.secondary_font_size))
-                    .hover(move |s| s.bg(theme.surface_hover))
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(
-                            Box::new(crate::workbench::actions::OpenAgentsPageWith(
-                                super::AgentsRequest {
-                                    group: Some("unconfirmed".to_owned()),
-                                    ..super::AgentsRequest::default()
-                                },
-                            )),
-                            cx,
-                        );
-                    })
-                    .child(SharedString::from(format!(
-                        "State unavailable · {}",
-                        today.unconfirmed
-                    )))
-                    .child(probe(
-                        &self.env.regions,
-                        Region::Assistant("today-unconfirmed"),
-                    ))
+                    .child("Nothing needs you · nothing working · no schedules")
                     .into_any_element(),
             );
         }
@@ -401,44 +459,21 @@ impl AssistantPanel {
             .relative()
             .flex()
             .flex_col()
-            .flex_none()
-            .w(px(RAIL_WIDTH))
             .h_full()
             .overflow_y_scroll()
-            .gap(px(tokens.spacing * 2.0))
+            .gap(px(tokens.spacing * 3.0))
             .p(px(tokens.spacing * 3.0))
-            .border_l_1()
-            .border_color(theme.border)
-            .child(heading("Needs you", Some(today.needs_you.len())))
-            .children(needs)
-            .child(heading("Working", Some(today.working.len())))
-            .children(working)
-            .child(heading("Memory", None))
+            // The rail is a card: a `surface` fill and no hairline. As a page of its own it is
+            // the page's background.
+            .when(!full, |s| s.flex_none().w(px(RAIL_WIDTH)).bg(theme.surface))
+            .when(full, |s| s.flex_1().min_w_0())
+            .children(sections)
             .child(
-                div()
-                    .text_color(theme.muted)
-                    .text_size(px(tokens.secondary_font_size))
-                    .child("What Mawas remembers because you approved it."),
-            )
-            .child(
-                button(
-                    "today-memory",
-                    "Open Memory",
-                    ButtonKind::Secondary,
-                    true,
-                    look,
-                )
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(OpenMawasMemory), cx);
-                })
-                .child(probe(&self.env.regions, Region::Assistant("today-memory"))),
-            )
-            .child(heading("Upcoming", None))
-            .child(
-                div()
-                    .text_color(theme.muted)
-                    .text_size(px(tokens.secondary_font_size))
-                    .child("No schedules yet."),
+                link("today-memory", "Memory".into())
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(OpenMawasMemory), cx);
+                    })
+                    .child(probe(&self.env.regions, Region::Assistant("today-memory"))),
             )
             .child(probe(&self.env.regions, Region::Assistant("today")))
             .into_any_element()
@@ -448,6 +483,7 @@ impl AssistantPanel {
         &self,
         row_index: usize,
         row: &NeedsRow,
+        flat: bool,
         look: &Look,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -461,15 +497,17 @@ impl AssistantPanel {
             NeedsKind::Blocked => "Blocked",
             NeedsKind::Failed => "Failed",
         };
+        // In the rail a request is a flat item of the card that is the rail itself; above the
+        // conversation it is a card of its own. Never a card in a card.
         let mut card = div()
             .id(SharedString::from(format!("today-needs-{row_index}")))
             .relative()
             .flex()
             .flex_col()
             .gap(px(tokens.spacing))
-            .p(px(tokens.spacing * 2.0))
-            .rounded(px(tokens.radius))
-            .bg(theme.surface)
+            .when(!flat, |s| {
+                s.p(px(tokens.spacing * 2.0)).card(&theme, &tokens)
+            })
             .child(
                 div()
                     .text_color(theme.muted)
@@ -503,13 +541,7 @@ impl AssistantPanel {
                     .enumerate()
                     .map(|(index, option)| {
                         let id = option.id.clone();
-                        let kind = match option.kind {
-                            PermissionOptionKind::AllowOnce => ButtonKind::Primary,
-                            PermissionOptionKind::RejectOnce
-                            | PermissionOptionKind::RejectAlways
-                            | PermissionOptionKind::Cancel => ButtonKind::Secondary,
-                            _ => ButtonKind::Ghost,
-                        };
+                        let kind = ui::approval_button_kind(option.kind);
                         button(
                             SharedString::from(format!("today-option-{row_index}-{index}")),
                             option.label.clone(),

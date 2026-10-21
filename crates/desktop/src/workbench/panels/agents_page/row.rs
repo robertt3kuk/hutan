@@ -12,12 +12,12 @@ use hutan_core::agent::PermissionOptionKind;
 use super::{AgentsPage, Layout, Look};
 use crate::icons::{Icon, glyph, icon};
 use crate::sessions::agents_text::{self, Primary};
-use crate::sessions::presentation::{AgentRecord, ReasonKind, Role};
+use crate::sessions::presentation::AgentRecord;
 use crate::workbench::actions::{
     InterruptSessionById, SessionMenuAt, ShowAgentMenu, StopSessionById,
 };
 use crate::workbench::agents_page::primary_action;
-use crate::workbench::panels::common::{now_ms, tone_color};
+use crate::workbench::panels::common::{agent_lead_glyph, agent_title_line, now_ms};
 use crate::workbench::render::probe;
 use crate::workbench::style::TextTooltip;
 use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _};
@@ -45,19 +45,6 @@ fn fact(label: &str, value: impl Into<SharedString>, look: Look) -> AnyElement {
 }
 
 impl AgentsPage {
-    /// What the leading glyph of a row says: attention first (a triangle for a decision, a
-    /// cross for a failure), else the state's own shape. Never colour alone.
-    fn row_glyph(record: &AgentRecord) -> (Icon, crate::sessions::Tone) {
-        use crate::sessions::Tone;
-        match record.headline().map(|r| r.kind) {
-            Some(ReasonKind::Approval | ReasonKind::Question | ReasonKind::Blocked) => {
-                (Icon::StateBlocked, Tone::Warning)
-            }
-            Some(ReasonKind::Failed) => (Icon::StateFailed, Tone::Error),
-            _ => (record.state.glyph(), record.state.tone()),
-        }
-    }
-
     pub(super) fn agent_row(
         &self,
         session: SessionId,
@@ -75,12 +62,10 @@ impl AgentsPage {
         let layout = self.layout;
         let hover = theme.surface_hover;
         let primary = agents_text::primary(record);
-        let (glyph_icon, glyph_tone) = Self::row_glyph(record);
         let needs = record.needs_you();
-        let reason = agents_text::reason_text(record);
-        let status = reason
-            .clone()
-            .unwrap_or_else(|| agents_text::status_line(record));
+        // The reason without the kind the state word already says; the activity otherwise.
+        let status =
+            agents_text::reason_detail(record).unwrap_or_else(|| agents_text::status_line(record));
         let tail = match layout {
             Layout::Wide => None,
             Layout::Medium | Layout::Narrow => Some(format!(
@@ -96,31 +81,9 @@ impl AgentsPage {
         let expanded = self.details.contains(&session);
         let reviewing = self.reviewing == Some(session);
 
-        // ---- the identity: title and state, then the reason or the status ----
-        let mut title_line = div().flex().items_center().gap(px(8.0)).h(px(16.0)).child(
-            div()
-                .min_w_0()
-                .truncate()
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .child(SharedString::from(record.title.clone())),
-        );
-        if record.role == Role::Assistant {
-            title_line = title_line.child(
-                div()
-                    .flex_none()
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.muted)
-                    .child(Role::Assistant.label()),
-            );
-        }
+        // ---- the identity: title and the one state word, then the reason or the status ----
         let reason_tip = agents_text::reason_tooltip(record, now).map(SharedString::from);
-        title_line = title_line.child(
-            div()
-                .flex_none()
-                .text_size(px(tokens.secondary_font_size))
-                .text_color(tone_color(&theme, record.state.tone()))
-                .child(record.state.label()),
-        );
+        let title_line = agent_title_line(record, selected, &theme, &tokens);
         let mut status_line = div()
             .flex()
             .items_center()
@@ -132,11 +95,7 @@ impl AgentsPage {
                     .id(SharedString::from(format!("agents-reason-{session}")))
                     .min_w_0()
                     .truncate()
-                    .when(reason.is_some() && needs, |s| {
-                        s.text_color(theme.warning)
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                    })
-                    .when(reason.is_none() || !needs, |s| s.text_color(theme.muted))
+                    .text_color(theme.muted)
                     .when_some(reason_tip, |s, tip| {
                         s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
                     })
@@ -407,13 +366,7 @@ impl AgentsPage {
                     );
                 }),
             )
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(20.0))
-                    .text_color(tone_color(&theme, glyph_tone))
-                    .child(glyph(glyph_icon)),
-            )
+            .child(agent_lead_glyph(record, &theme))
             .child(identity)
             .children(location_column)
             .children(harness_column)
@@ -421,15 +374,15 @@ impl AgentsPage {
             .child(actions)
             .child(probe(&self.env.regions, Region::AgentRow(session)));
 
+        // A hairline between rows, inset to the 16 px spine the lanes start at.
         div()
             .flex()
             .flex_col()
             .w_full()
-            .border_b_1()
-            .border_color(theme.border)
             .child(main)
             .children(expanded.then(|| self.details_block(record, look, cx)))
             .children(reviewing.then(|| self.review_block(record, look, cx)))
+            .child(div().mx(px(16.0)).h(px(1.0)).bg(theme.border))
             .into_any_element()
     }
 

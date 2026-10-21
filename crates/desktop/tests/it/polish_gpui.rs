@@ -206,9 +206,20 @@ fn mawas_homes_header_is_one_row_whose_controls_stay_inside_it(cx: &mut TestAppC
             "one row at {width}: {} px",
             header.size.height
         );
-        // The mode chip, New chat, Stop and Today are there once connected; offline the page
-        // shows its header with the controls that need no daemon.
-        for region in ["scope", "backend", "mode", "new", "stop", "rail"] {
+        // The scope, the mode and ⋯ are always there; the backend and New chat only while the
+        // page is 640 pt wide or more (below it they are in ⋯), and Stop only while there is
+        // something to stop.
+        let folded = view.read_with(cx, |wb, cx| {
+            wb.panel::<hutan_desktop::workbench::panels::AssistantPanel>("assistant")
+                .expect("the assistant page")
+                .read(cx)
+                .folded()
+        });
+        let mut regions = vec!["scope", "mode", "more"];
+        if !folded {
+            regions.extend(["backend", "new"]);
+        }
+        for region in regions {
             let element = bounds(&view, cx, Region::Assistant(region));
             assert!(
                 element.origin.x >= header.origin.x - gpui::px(1.0)
@@ -221,6 +232,15 @@ fn mawas_homes_header_is_one_row_whose_controls_stay_inside_it(cx: &mut TestAppC
                 "{region} is in the header's row at {width}"
             );
         }
+        assert_eq!(
+            painted(&view, cx, Region::Assistant("backend")),
+            !folded,
+            "the backend label is drawn only on a page of 640 pt or more"
+        );
+        assert!(
+            !painted(&view, cx, Region::Assistant("stop")),
+            "nothing to stop"
+        );
         // The retired second row and its buttons are gone.
         assert!(!painted(&view, cx, Region::Assistant("global")));
         assert!(!painted(&view, cx, Region::Assistant("workspace")));

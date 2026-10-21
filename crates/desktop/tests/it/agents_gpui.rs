@@ -76,6 +76,19 @@ fn glyphs(panel: &Entity<AgentsPanel>, cx: &VisualTestContext) -> Vec<(String, &
         .unwrap_or_default()
 }
 
+/// Opens the panel's ⋯ menu and runs the entry named `label`.
+fn choose_from_more(view: &Entity<Workbench>, cx: &mut VisualTestContext, label: &str) {
+    click(view, cx, Region::MonitorChip("more"));
+    let entries = view
+        .read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("the ⋯ menu is open");
+    let at = entries
+        .iter()
+        .position(|(entry, _)| entry.as_ref() == label)
+        .unwrap_or_else(|| panic!("no `{label}` in {entries:?}"));
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(at, window, cx));
+}
+
 fn settings(view: &Entity<Workbench>, cx: &VisualTestContext) -> SettingsStore {
     view.read_with(cx, |wb, _| wb.settings_store().clone())
 }
@@ -241,7 +254,7 @@ fn the_tree_shows_the_right_glyph_per_state_and_outcome_in_a_stable_order(cx: &m
     assert_eq!(listed, expected);
 
     let first = sections(&panel, cx).remove(0);
-    assert_eq!(first.heading(), format!("{} › work", first.workspace));
+    assert_eq!(first.title, "work");
     let root = &first.rows[0];
     assert_eq!((root.depth, root.model.as_deref()), (0, Some("gpt-6")));
     assert_eq!(root.activity.as_deref(), Some("planning the change"));
@@ -459,20 +472,20 @@ fn the_chips_filter_the_tree_and_write_the_settings(cx: &mut TestAppContext) {
         "the other workspace is out of scope"
     );
 
-    // Finished: the finished agent is listed, dimmed.
-    click(&view, cx, Region::MonitorChip("finished"));
+    // Finished: the finished agent is listed, dimmed. The toggles are in the ⋯ menu.
+    choose_from_more(&view, cx, "Show finished");
     wait_rows(&panel, cx, "finished agents", 4);
     assert!(settings(&view, cx).get::<AgentsSettings>().show_finished);
     assert_eq!(
         glyphs(&panel, cx).last().unwrap(),
         &("gamma".to_owned(), "state.completed")
     );
-    click(&view, cx, Region::MonitorChip("finished"));
+    choose_from_more(&view, cx, "Show finished");
     wait_rows(&panel, cx, "finished agents hidden again", 3);
     assert!(!settings(&view, cx).get::<AgentsSettings>().show_finished);
 
     // Blocked only: the blocked agent and the main agent above it.
-    click(&view, cx, Region::MonitorChip("blocked"));
+    choose_from_more(&view, cx, "Blocked only");
     wait_rows(&panel, cx, "blocked agents only", 2);
     assert_eq!(
         glyphs(&panel, cx),
@@ -483,17 +496,17 @@ fn the_chips_filter_the_tree_and_write_the_settings(cx: &mut TestAppContext) {
     );
     assert!(settings(&view, cx).get::<AgentsSettings>().only_blocked);
     // The other session has nothing blocked, so even with every workspace it has no section.
-    // This workspace → the focused session → every workspace.
-    click(&view, cx, Region::MonitorChip("scope"));
+    // The scope is a segmented control: this workspace, the focused session, every workspace.
+    click(&view, cx, Region::MonitorChip("scope-session"));
     wait_until(cx, "the focused session", |cx| {
         settings(&view, cx).get::<AgentsSettings>().scope == AgentsScope::Session
     });
-    click(&view, cx, Region::MonitorChip("scope"));
+    click(&view, cx, Region::MonitorChip("scope-all"));
     wait_until(cx, "all workspaces", |cx| {
         settings(&view, cx).get::<AgentsSettings>().scope == AgentsScope::All
     });
     assert_eq!(sections(&panel, cx).len(), 1);
-    click(&view, cx, Region::MonitorChip("blocked"));
+    choose_from_more(&view, cx, "Blocked only");
     let p = panel.clone();
     wait_until(cx, "both sections", move |cx| sections(&p, cx).len() == 2);
     let all = sections(&panel, cx);
@@ -501,7 +514,7 @@ fn the_chips_filter_the_tree_and_write_the_settings(cx: &mut TestAppContext) {
     assert!(all.iter().any(|s| s.workspace == "elsewhere"));
 
     // Back to this workspace.
-    click(&view, cx, Region::MonitorChip("scope"));
+    click(&view, cx, Region::MonitorChip("scope-workspace"));
     wait_until(cx, "this workspace", |cx| {
         settings(&view, cx).get::<AgentsSettings>().scope == AgentsScope::ActiveWorkspace
     });

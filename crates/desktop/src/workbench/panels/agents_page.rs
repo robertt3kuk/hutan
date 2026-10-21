@@ -37,14 +37,15 @@ use crate::settings::AgentsSettings;
 use crate::theme::{Density, DensityExt as _, Theme, Tokens};
 use crate::workbench::actions::{
     AgentNodeAt, LauncherOpen, OpenLauncher, OpenSessionFromOverview, OpenSettingsFor,
-    SessionMenuAt, ShowAgentMenu, ShowAgentNodeMenu, ShowAgentsScopeMenu, daemon,
+    SessionMenuAt, ShowAgentMenu, ShowAgentNodeMenu, ShowAgentsPageMenu, ShowAgentsScopeMenu,
+    daemon,
 };
 use crate::workbench::chat::vim::Outcome;
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
-use crate::workbench::style::UiStyle;
+use crate::workbench::style::{TextTooltip, UiStyle};
 use crate::workbench::text_field::FieldRef;
-use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, Mascot};
+use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, Mascot, StyledExt as _};
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
 
@@ -245,6 +246,24 @@ impl AgentsPage {
 
     pub fn scope(&self) -> Scope {
         self.scope
+    }
+
+    /// Whether the toolbar is folded: the page is narrower than 640 pt, the scope is in ⋯.
+    pub fn folded(&self) -> bool {
+        self.layout == Layout::Narrow
+    }
+
+    /// ⋯ → *Group by workspace*: `agents.page_group_by_workspace`.
+    pub fn toggle_group_by_workspace(&mut self, cx: &mut Context<Self>) {
+        let on = self.page_settings().page_group_by_workspace;
+        self.write_setting("agents.page_group_by_workspace", toml::Value::Boolean(!on));
+        cx.notify();
+    }
+
+    /// ⋯ → *Show finished*: `agents.page_show_finished`.
+    pub fn toggle_show_finished(&mut self, cx: &mut Context<Self>) {
+        self.toggle_finished();
+        cx.notify();
     }
 
     pub fn query(&self) -> &str {
@@ -985,6 +1004,8 @@ impl Render for AgentsPage {
 }
 
 impl AgentsPage {
+    /// The header (44 pt): the title at the page-title size (15, medium: the tab names the page, so
+    /// no icon repeats it), the totals in muted text, and `Start agent…` as a ghost button.
     fn header(&self, counts: &Counts, look: Look, cx: &mut Context<Self>) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
         let scope = self.scope_label(cx);
@@ -996,11 +1017,11 @@ impl AgentsPage {
             .gap(px(12.0))
             .h(px(HEADER))
             .px(px(16.0))
-            .child(icon(Icon::PanelAgentsDashboard, 16.0, theme.muted))
             .child(
                 div()
-                    .text_size(px(16.0))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .flex_none()
+                    .text_size(px(tokens.prose_font_size))
+                    .font_weight(gpui::FontWeight::MEDIUM)
                     .child("Agents"),
             )
             .child(
@@ -1020,7 +1041,7 @@ impl AgentsPage {
                 ui::button(
                     "agents-start",
                     "Start agent…",
-                    ButtonKind::Secondary,
+                    ButtonKind::Ghost,
                     true,
                     &theme,
                     &tokens,
@@ -1092,45 +1113,24 @@ impl AgentsPage {
             .into_any_element()
     }
 
+    /// The toolbar (36 pt): the scope as a ghost menu, the search, and ⋯ (Group by workspace,
+    /// Show finished). Below 640 pt of page width it folds: the scope joins ⋯ and only the
+    /// search stays beside it, so nothing clips and nothing wraps.
     fn filter_band(&self, look: Look, searching: bool, cx: &mut Context<Self>) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
-        let settings = self.page_settings();
         let hover = theme.surface_hover;
-        let scope_label = self.scope_label(cx);
-        let control = |id: &'static str, label: SharedString| {
-            div()
-                .id(id)
-                .relative()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(px(4.0))
-                .h(px(28.0))
-                .px(px(10.0))
-                .rounded(px(tokens.radius))
-                .border_1()
-                .border_color(theme.border)
-                .text_size(px(tokens.secondary_font_size))
-                .text_color(theme.fg)
-                .cursor_pointer()
-                .hover(move |s| s.bg(hover))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(label)
-        };
+        let narrow = self.layout == Layout::Narrow;
         let search = div()
             .id("agents-search")
             .relative()
             .flex()
             .flex_1()
-            .min_w(px(120.0))
+            .min_w(px(96.0))
             .max_w(px(360.0))
             .items_center()
             .h(px(28.0))
             .px(px(10.0))
-            .rounded(px(tokens.radius))
-            .bg(theme.surface)
-            .border_1()
-            .border_color(theme.border)
+            .outlined(&theme, &tokens)
             .focus_ring(searching, &theme, &tokens)
             .cursor_text()
             .track_focus(&self.search_focus)
@@ -1152,7 +1152,7 @@ impl AgentsPage {
                 &self.query_edit,
                 &self.query,
                 VimConfig::of(&self.env.settings).enabled,
-                "Search title, harness, branch…",
+                "Search…",
                 searching,
                 false,
                 self.search_field(cx),
@@ -1160,71 +1160,81 @@ impl AgentsPage {
                 &tokens,
             ))
             .child(probe(&self.env.regions, Region::AgentsPage("search")));
-        let by_workspace = settings.page_group_by_workspace;
-        let show_finished = settings.page_show_finished;
+        let more = div()
+            .id("agents-more")
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(28.0))
+            .rounded(px(tokens.radius))
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(|event, window, cx| {
+                window.dispatch_action(Box::new(ShowAgentsPageMenu(event.position())), cx);
+            })
+            .tooltip(|_, cx| cx.new(|_| TextTooltip("More".into())).into())
+            .child(icon(Icon::ActionMore, 16.0, theme.muted))
+            .child(probe(&self.env.regions, Region::AgentsPage("more")));
         div()
             .id("agents-band")
             .flex()
             .flex_none()
             .items_center()
             .gap(px(8.0))
-            .h(px(BAND + 8.0))
+            .h(px(BAND))
             .px(px(16.0))
             .border_b_1()
             .border_color(theme.border)
-            .child(
-                control("agents-scope", scope_label.clone().into())
-                    .child(glyph(Icon::ActionMenuDown))
+            .when(!narrow, |s| {
+                s.child(
+                    ui::button(
+                        "agents-scope",
+                        self.scope_label(cx),
+                        ButtonKind::Ghost,
+                        true,
+                        &theme,
+                        &tokens,
+                    )
+                    .relative()
+                    .h(px(28.0))
+                    .max_w(px(200.0))
+                    .truncate()
                     .on_click(|event, window, cx| {
                         window.dispatch_action(Box::new(ShowAgentsScopeMenu(event.position())), cx);
                     })
+                    .child(glyph(Icon::ActionMenuDown))
                     .child(probe(&self.env.regions, Region::AgentsPage("scope"))),
-            )
+                )
+            })
             .child(search)
-            .child(
-                control(
-                    "agents-group",
-                    format!(
-                        "Group: {}",
-                        if by_workspace { "Workspace" } else { "State" }
-                    )
-                    .into(),
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.write_setting(
-                        "agents.page_group_by_workspace",
-                        toml::Value::Boolean(!by_workspace),
-                    );
-                    cx.notify();
-                }))
-                .child(probe(&self.env.regions, Region::AgentsPage("group"))),
-            )
-            .child(
-                control(
-                    "agents-finished",
-                    if show_finished {
-                        "Finished shown"
-                    } else {
-                        "Finished hidden"
-                    }
-                    .into(),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.toggle_finished();
-                    cx.notify();
-                }))
-                .child(probe(&self.env.regions, Region::AgentsPage("finished"))),
-            )
             .children(self.group.map(|group| {
-                control("agents-group-filter", group.label().into())
-                    .child(glyph(Icon::ActionClose))
+                div()
+                    .id("agents-group-filter")
+                    .relative()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(4.0))
+                    .h(px(28.0))
+                    .px(px(10.0))
+                    .rounded(px(tokens.radius))
                     .bg(theme.accent_soft)
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.fg)
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(group.label())
+                    .child(glyph(Icon::ActionClose))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.group = None;
                         cx.notify();
                     }))
                     .child(probe(&self.env.regions, Region::AgentsPage("clear-group")))
             }))
+            .child(more)
             .into_any_element()
     }
 
@@ -1481,21 +1491,17 @@ impl AgentsPage {
     ) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
         let hover = theme.surface_hover;
-        let tone = match group {
-            Group::NeedsYou => theme.warning,
-            _ => theme.muted,
-        };
+        // A section label (11 px medium, `muted`): the group and its count, one per group. The
+        // warning colour belongs to the rows' glyph and state word, never to the label.
         div()
             .id(SharedString::from(format!("agents-group-{}", group.key())))
             .relative()
             .flex()
             .items_center()
-            .gap(px(8.0))
-            .h(px(36.0))
-            .mt(px(8.0))
+            .gap(px(4.0))
+            .h(px(28.0))
+            .mt(px(12.0))
             .px(px(16.0))
-            .border_b_1()
-            .border_color(theme.border)
             .when(selected, |s| s.bg(theme.accent_soft))
             .when(foldable, |s| {
                 s.cursor_pointer()
@@ -1505,11 +1511,15 @@ impl AgentsPage {
                         cx.notify();
                     }))
             })
+            .child(ui::section_label(
+                agents_text::group_label(group, count, requests),
+                &theme,
+                &tokens,
+            ))
             .when(foldable, |s| {
                 s.child(
                     div()
                         .flex_none()
-                        .w(px(12.0))
                         .text_color(theme.muted)
                         .child(glyph(if open {
                             Icon::ActionExpand
@@ -1518,20 +1528,6 @@ impl AgentsPage {
                         })),
                 )
             })
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(theme.fg)
-                    .child(group.label()),
-            )
-            .child(
-                div()
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(tone)
-                    .child(SharedString::from(agents_text::group_counts(
-                        group, count, requests,
-                    ))),
-            )
             .child(probe(&self.env.regions, Region::AgentGroup(group)))
             .into_any_element()
     }
@@ -1551,7 +1547,7 @@ impl AgentsPage {
             .child(icon(Icon::NavProjectFolder, 14.0, theme.muted))
             .child(
                 div()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .font_weight(gpui::FontWeight::MEDIUM)
                     .text_color(theme.fg)
                     .child(SharedString::from(name.to_owned())),
             )

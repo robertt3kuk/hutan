@@ -1205,6 +1205,10 @@ impl ChatView {
             .into_any_element()
     }
 
+    /// The empty transcript: the mascot, one serif sentence, no button and, for Mawas, one muted
+    /// line on what is sent to the model. Mawas's composer below holds the keyboard
+    /// (placeholder `Ask Mawas…`), so asking needs no second way in; looking at what waits for
+    /// the user is Today's *Review what needs you*, ⌘⇧J and the Agents page.
     fn render_empty(&self, look: &Look, cx: &App) -> AnyElement {
         let mawas = self.supports_context(cx);
         let (mascot, text) = match self.model.read(cx).status() {
@@ -1212,48 +1216,22 @@ impl ChatView {
             LoadStatus::Failed(_) => (Mascot::Error, "No conversation to show."),
             LoadStatus::Ready if mawas => (
                 Mascot::Empty,
-                "Ask Mawas. What you attach (@shell, @omp, @agent, @file, @search, or the Attach button) is sent to the model of its backend; nothing else is.",
+                "Ask Mawas about this project; attach context with @ or the +.",
             ),
             LoadStatus::Ready => (
                 Mascot::Empty,
                 "Ask the agent to do something. Commands, edits and approvals appear here.",
             ),
         };
-        // Mawas offers what to do first: ask, or look at what waits for the user.
-        let actions =
-            (mawas && matches!(self.model.read(cx).status(), LoadStatus::Ready)).then(|| {
-                let ask = button(
-                    "chat-empty-ask",
-                    "Ask a question",
-                    ButtonKind::Primary,
-                    true,
-                    look,
-                )
-                .relative()
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(actions::OpenAssistant), cx);
-                })
-                .child(probe(&self.regions, Region::Chat("empty-ask")));
-                let review = button(
-                    "chat-empty-review",
-                    "Review what needs you",
-                    ButtonKind::Secondary,
-                    true,
-                    look,
-                )
-                .relative()
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(actions::JumpToNextAttention), cx);
-                })
-                .child(probe(&self.regions, Region::Chat("empty-review")));
-                div()
-                    .flex()
-                    .gap(px(look.tokens.spacing * 2.0))
-                    .child(ask)
-                    .child(review)
-                    .into_any_element()
-            });
-        ui::empty_state(mascot, text, actions, &look.theme, &look.tokens).into_any_element()
+        let empty = ui::EmptyState::new(text).mascot(mascot);
+        // What leaves the machine, said once and quietly: the composer's chips show what is
+        // attached.
+        let empty = if mawas && matches!(self.model.read(cx).status(), LoadStatus::Ready) {
+            empty.hint("Only what you attach is sent to the model of its backend.")
+        } else {
+            empty
+        };
+        empty.render(&look.theme, &look.tokens).into_any_element()
     }
 
     /// The composer's text with its caret and selection (while it has the keyboard), or the
@@ -1265,7 +1243,7 @@ impl ChatView {
             FieldState::of(model.input(), vim)
         };
         let placeholder = if self.supports_context(cx) {
-            "Ask Mawas… (@shell @file @search to attach context)"
+            "Ask Mawas…"
         } else {
             "Message the agent…"
         };
