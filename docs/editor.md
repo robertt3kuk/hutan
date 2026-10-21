@@ -14,12 +14,13 @@ Hutan's own code editor (ADR 0012 and its amendment of 2026-10-21; plan and budg
 | **E-10** | **Agent-aware editing: an agent's writes reach open buffers safely, its turn's hunks are highlighted and rejected one by one, a pending ledger survives restarts, Follow agent, Open from chat/Changes/terminal, MCP `open_file`** | `crates/code_view/src/agent.rs`, `crates/desktop/src/workbench/{agent_edits,file_sync,file_view}.rs` |
 | E-11a | LSP client library: one supervised language server, coalescing document sync, typed requests, a scripted fake server | `crates/lsp_client` |
 | E-13a | finding and opening files: ⌘P quick open (Files, then Sessions), the Files panel, *Open File…* starting in the project | `crates/desktop/src/workbench/{quick_open,files}.rs`, `crates/desktop/src/workbench/panels/files.rs`, `crates/desktop/src/macos/open_panel.rs` |
+| E-11b | LSP in the daemon: `LspHub` (one server per (server, root), trust per folder, idle stop, `max_servers`), `doc.*` / `lsp.*` (protocol 0.39), `hutan lsp` / `hutan diagnostics`, MCP `diagnostics` | `crates/daemon/src/lsp/`, `docs/lsp.md` |
 
-Language servers in the daemon (E-11b) and their UI (E-12a) are not here yet.
+Language servers in the daemon (E-11b, `docs/lsp.md`) are in; their UI (E-12a) is not here yet.
 
 ## LSP client (E-11a)
 
-`hutan-lsp-client` runs one language server as a child process; the daemon's `LspHub` (E-11b) will own one `Server` per `(server, workspace root)`. No GPUI, no daemon types; types from `ls-types` (the maintained fork of `lsp-types 0.97`; the API is the same except that `ReferencesOptions` is now `ReferenceOptions`).
+`hutan-lsp-client` runs one language server as a child process; the daemon's `LspHub` (E-11b, `docs/lsp.md`) owns one `Server` per `(server, workspace root)`. No GPUI, no daemon types; types from `ls-types` (the maintained fork of `lsp-types 0.97`; the API is the same except that `ReferencesOptions` is now `ReferenceOptions`).
 
 - **Lifecycle:** `initialize` (offers `positionEncodings: [utf-8, utf-16]`) → `initialized` … `shutdown` → `exit` → stdin closed → the process group is killed after a grace. States: `starting → indexing ⇄ ready → failed | stopped`; `indexing` while work-done `$/progress` runs.
 - **Restarts:** a crash restarts after a backoff that doubles per failure (1 s … 30 s); 5 failures in 3 minutes make it `failed`. A missing executable is `failed` at once ("not installed", never downloaded). Open documents are sent again to the new process.

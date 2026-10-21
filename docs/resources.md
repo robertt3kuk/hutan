@@ -7,6 +7,7 @@ Wire: `docs/protocol.md` § Resources. Code: `crates/terminal/src/procs.rs`, `cr
 ## What is listed
 
 - **Per live session, a process tree.** A terminal session: the PTY's child (the shell or the command) and every descendant. A chat session: the harness process (Codex `app-server`, later an ACP agent) and its descendants. A direct chat has no process and is not listed. A session that is not running is not listed.
+- **Language servers** (protocol 0.39, `docs/lsp.md`): every running server is a `service` node of kind `lsp` — `ResourceSample.services`, one entry per server with the server's process and everything below it (rust-analyzer's proc-macro server, `cargo check`, tsserver's workers), the same per-process figures and the same bounds, counted in the 4096 total. They belong to no session: `hutan ps SESSION` leaves them out. `lsp.status` carries each tree's RSS as `rss_bytes` too. The daemon starts and stops them (`max_servers`, idle stop, `hutan lsp stop`); signalling one process of a server is not offered.
 - **`hutand`** as one row of its own.
 - **Per process:** pid, ppid, name, command line, state, CPU %, resident memory, threads, start time. macOS `libproc` (`proc_listchildpids`, `proc_pidinfo`) and `sysctl(KERN_PROCARGS2)`; other systems list nothing (Hutan is macOS-first). Only the user's own processes can be read; a process that cannot be read is skipped.
 - **CPU %** is the delta of user + system CPU time between two readings of the same process (same pid *and* start time, so a reused pid has no history) over the wall time between them, in percent of one core: 100 is one busy core, a multi-threaded build shows more. It is absent when there is no earlier reading, and a window shorter than 200 ms repeats the previous figure instead of showing noise.
@@ -41,7 +42,7 @@ hutan agent interrupt SESSION [NODE] [--force]
 hutan agent report … --pid PID
 ```
 
-`SESSION` is an id, a unique id prefix, `t:<terminal id>` or an exact title, as everywhere. `ps` prints a block per session (tree by indentation: pid, CPU %, memory, state, command; processes of agents marked `◆ agent <label>`; agents without a process listed below) and a `hutand` line; with `--watch` it subscribes and prints at every sample (clearing the screen on a terminal); `--json` prints the sample as JSON, one line per sample. `top` is `ps --watch` with the busiest session and, within each tree, the busiest sibling first. `kill SESSION` is `session.kill`; with `--pid` it is `process.signal` (default `term`). `agent interrupt` prints how it was delivered.
+`SESSION` is an id, a unique id prefix, `t:<terminal id>` or an exact title, as everywhere. `ps` prints a block per session (tree by indentation: pid, CPU %, memory, state, command; processes of agents marked `◆ agent <label>`; agents without a process listed below), a block per language server (`lsp rust-analyzer /path`) and a `hutand` line; with `--watch` it subscribes and prints at every sample (clearing the screen on a terminal); `--json` prints the sample as JSON, one line per sample. `top` is `ps --watch` with the busiest session and, within each tree, the busiest sibling first. `kill SESSION` is `session.kill`; with `--pid` it is `process.signal` (default `term`). `agent interrupt` prints how it was delivered.
 
 ## Tests
 

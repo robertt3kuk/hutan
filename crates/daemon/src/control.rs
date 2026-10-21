@@ -1211,6 +1211,8 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
             ),
             (None, None) => "delete checkpoints".to_owned(),
         },
+        Request::LspRestart(r) => format!("restart the language server {}", r.server_id),
+        Request::LspStop(r) => format!("stop the language server {}", r.server_id),
         other => format!("make the request `{}`", request_method(other)),
     };
     Described { title, detail }

@@ -49,7 +49,7 @@ crates/
   buffer/         editor text model (E-1, ADR 0012): `crop` rope with byte offsets, atomic transactions, undo tree with groups, multi-cursor selections, anchors, UTF-16/LSP coordinates, `apply_external` (minimal diff), search; no GPUI, no I/O, no Hutan dependencies
   syntax/         editor syntax (E-2, ADR 0012): tree-sitter parsing that follows edits on a worker thread (a newer version cancels the parse in flight; reads never wait), highlights reduced to the `syntax.*` token table, node/expand/shrink selection, folds, bracket match, indent levels; up to 15 grammars behind cargo features, vendored query data with attribution (`crates/syntax/queries/NOTICE.md`); optional `buffer` feature for `hutan_buffer::Text`; no GPUI, no I/O
   vim/            Vim modal layer (E-7a, ADR 0012), extracted from the desktop's V-1: `Vim<H: VimHost>` (modes, counts, motions, operators, text objects, unnamed register, `.` repeat) over a host that answers byte-offset reads (char at, line of, slice) and applies `Transaction`s with undo groups; the desktop's `TextInput` is one host (every text field), a rope host over `hutan_buffer::Buffer` is the editor's (E-8); no dependencies, no GPUI, no I/O
-  lsp_client/     LSP client (E-11a, ADR 0012): one supervised language server per `Server` — `Content-Length` framing with a frame cap, request correlation with timeouts and `$/cancelRequest`, bounded outgoing/incoming paths (documented overflow policy), answers to server requests, `initialize`…`shutdown`/`exit` with a kill fallback, `positionEncoding` negotiation (UTF-8 preferred, UTF-16 via `buffer`), state machine `starting → indexing ⇄ ready → failed | stopped` from `$/progress`, restarts with exponential backoff, coalescing document sync (one `didChange` per burst), typed request subset over `ls-types`, process group killed on drop; `hutan-fake-lsp` scripted test server; no GPUI, no daemon types
+  lsp_client/     LSP client (E-11a, ADR 0012; the daemon's `LspHub`, E-11b, owns one `Server` per (server, root), `docs/lsp.md`): one supervised language server per `Server` — `Content-Length` framing with a frame cap, request correlation with timeouts and `$/cancelRequest`, bounded outgoing/incoming paths (documented overflow policy), answers to server requests, `initialize`…`shutdown`/`exit` with a kill fallback, `positionEncoding` negotiation (UTF-8 preferred, UTF-16 via `buffer`), state machine `starting → indexing ⇄ ready → failed | stopped` from `$/progress`, restarts with exponential backoff, coalescing document sync (one `didChange` per burst), typed request subset over `ls-types`, process group killed on drop; `hutan-fake-lsp` scripted test server; no GPUI, no daemon types
   settings/       layered TOML settings store, schema registry, watcher, keymap, color packs and their registry (`themes/`, ADR 0018; no GPUI; ADR 0010)
   terminal_view/  GPUI terminal element/view over render DTOs, input encoding (UI crate)
   code_view/      GPUI code view (E-5, ADR 0012, UI crate): `FileBuffer` (one file's text, load state, a `syntax` tree only while shown), `CodeView` and its element (shapes only the lines in view, `syntax.*` colors of the pack, mouse selection), find in file; read-only until E-6 (`docs/editor.md`)
@@ -70,6 +70,7 @@ flowchart BT
   core --> terminal & runtime & storage & security & notifications
   buffer
   buffer --> lsp_client
+  lsp_client & buffer --> daemon
   buffer -.-> syntax
   buffer & syntax & settings --> code_view --> desktop
   vim --> desktop
@@ -129,6 +130,28 @@ flowchart LR
 - **Bounded everywhere**: 1 MiB chunks under the 4 MiB frame, 64 MiB per file, 8 uploads (30 s idle expiry), 4 searches per connection, finder indexes of 200 000 paths (8 roots kept), 256 watched paths per connection, 500 changes per `fs.changed`, a bounded channel from each platform watcher; no unbounded channel (a test greps for it). A full connection queue drops an `fs.changed` and the next one says `overflow`; it never closes the connection.
 - **Watchers** exist only while a client has interest; the desktop's `BufferStore` (E-5) will hold open documents and expanded folders as interest and reconcile on `fs.changed`, treating its own `write_id` as no news.
 - **`fs.search`** runs on a task of its own per request (the connection goes on reading, so `fs.search.cancel` arrives); everything else is answered in order.
+
+## Language servers (E-11b, ADR 0012 amendment 2026-10-21, protocol 0.39)
+
+`crates/daemon/src/lsp/` (`docs/lsp.md`, `docs/protocol.md` § LSP): the daemon owns the language servers; clients mirror their open documents into it and read what the servers know.
+
+```mermaid
+flowchart LR
+  D[desktop tabs · hutan diagnostics · agent connections] -->|doc.open · doc.change · doc.close| H[LspHub]
+  D -->|lsp.status · lsp.diagnostics · lsp.hover · lsp.definition| H
+  H --> M[document mirrors, bounded]
+  H --> T[trust book: user-only lsp.trust, persisted]
+  H --> C[catalog + roots: found on the login PATH, topmost marker]
+  H --> S1[lsp_client::Server rust-analyzer @ root A]
+  H --> S2[lsp_client::Server tsserver @ root B]
+  S1 & S2 -->|publishDiagnostics, state| H
+  H -->|lsp.state: bus · lsp.diagnostics: per connection, outside the ring| D
+  S1 & S2 -.->|process trees| R[ResourceService: service nodes]
+```
+
+- **One server per (server, root)**, shared by every client; started by the first `doc.open` of a language in a trusted folder, stopped when idle or to make room (`max_servers`), restarted with backoff by E-11a's supervisor, killed with the daemon. A slot says why it has no process: `untrusted`, `not_installed`, `stopped`.
+- **Trust** is decided per folder by the user alone (`Access::UserOnly`) and stored in SQLite (`lsp_trust`); an untrusted folder never spawns.
+- The hub depends on `hutan-lsp-client` and `hutan-buffer` only for positions and mirrors; nothing in it links GPUI. All queues are bounded.
 
 ## Session environment (B-1)
 
