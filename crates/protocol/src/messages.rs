@@ -48,7 +48,7 @@ use crate::tree::{AgentTreeRequest, NodeReport};
 use crate::ui::{SessionSendText, UiCommandResult, UiPublish, UiRun, UiSetSetting, UiTarget};
 use crate::worktree::{
     Placement, WorktreeCommit, WorktreeCreate, WorktreeDiffRequest, WorktreeFileDiffRequest,
-    WorktreeListRequest, WorktreeMerge, WorktreeRemove,
+    WorktreeFinish, WorktreeListRequest, WorktreeMerge, WorktreeRemove,
 };
 
 /// Parameterless request body; encoded as `{}`.
@@ -360,6 +360,10 @@ pub enum Request {
     /// answered with `WorktreeCommitted`.
     #[serde(rename = "worktree.commit")]
     WorktreeCommit(WorktreeCommit),
+    /// Capability `finish` (protocol 0.35, ADR 0020): commit a checkout, merge a worktree into
+    /// its target, push; user-only. Answered with `WorktreeFinished`.
+    #[serde(rename = "worktree.finish")]
+    WorktreeFinish(WorktreeFinish),
     /// Capability `task` (protocol 0.16): a new task; answered with `TaskResult`.
     #[serde(rename = "task.create")]
     TaskCreate(TaskCreate),

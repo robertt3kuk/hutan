@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`worktree`] also carries `worktree.finish`: the user's Finish — commit, merge a worktree,
+//!   push to the upstream, step by step, user-only — and [`ui`]'s `PaneItem.path` names a file
+//!   tab's file (protocol 0.35, capability `finish`).
 //! - [`notify`] also carries `notify.mute` and `SessionInfo.muted`; a focused session raises no
 //!   intent and focusing one withdraws its intents (protocol 0.34, capability `notify.mute`).
 //! - [`chat`] also carries `chat.retry`: the last user message again, journaled once
@@ -82,7 +85,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 34,
+    minor: 35,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

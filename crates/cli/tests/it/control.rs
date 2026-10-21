@@ -91,6 +91,7 @@ fn catalog() -> UiPublish {
                     kind: "terminal".into(),
                     session_id: None,
                     panel: None,
+                    path: None,
                     title: "zsh".into(),
                 }],
                 active: Some(0),

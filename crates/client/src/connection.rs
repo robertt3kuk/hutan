@@ -661,6 +661,14 @@ impl Connection {
             .is_some_and(|client| client.supports_chat_mode())
     }
 
+    /// True while connected to a daemon that advertised capability `finish`
+    /// ([`Client::supports_finish`]); false when disconnected.
+    pub fn supports_finish(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_finish())
+    }
+
     /// `chat.retry` ([`Client::chat_retry`]).
     pub async fn chat_retry(&self, session: SessionId) -> Result<ChatSent, ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;

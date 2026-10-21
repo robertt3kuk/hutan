@@ -359,3 +359,183 @@ pub struct WorktreeCommitted {
     /// Files the commit changed.
     pub files: u32,
 }
+
+/// `worktree.finish` (protocol 0.35, capability `finish`, ADR 0020): the user's **Finish** of a
+/// checkout, in up to three steps, each reported in [`WorktreeFinished`]:
+///
+/// 1. **commit** — everything uncommitted in `checkout` (`git add -A`, as `worktree.commit`;
+///    hooks do not run), on its branch. A main checkout is committed in place.
+/// 2. **merge** (a worktree only) — its branch into `into` in the main checkout, as
+///    `worktree.merge` with `strategy`.
+/// 3. **push** — the branch that now holds the work (the main checkout's branch, or the merge
+///    target) to its upstream: `git push <remote> refs/heads/<branch>:<upstream>`, with the
+///    user's own credential helper and SSH agent from the login environment. Never forced, never
+///    rebased: a read-only `git fetch` of the upstream first says how far the branch is ahead and
+///    behind, and a branch behind its upstream is not pushed (`rejected`).
+///
+/// A step that fails leaves what the steps before it did (a failed push keeps the commit) and
+/// the steps after it are `skipped` (`earlier_step_failed`). **User-only** (ADR 0016): an
+/// agent-originated connection gets `forbidden` whatever `[control]` says.
+///
+/// Refused before anything changes: `bad_request` (`checkout` not absolute; an empty message
+/// while there is something to commit; an `into` that is no valid branch name), `not_found` (no
+/// such checkout, or no branch `into`), `invalid_state` (a detached HEAD, a merge or rebase in
+/// progress, and for a worktree the refusals of `worktree.merge` that do not depend on the
+/// commit: the target not checked out in the main checkout, a dirty main checkout, an operation
+/// in progress there, and for `rebase` live sessions in the worktree).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeFinish {
+    /// The checkout to finish: a worktree, or a repository's main checkout.
+    pub checkout: PathBuf,
+    /// The message of the commit step (and of a `squash` merge's commit). May be empty when
+    /// there is nothing to commit.
+    #[serde(default)]
+    pub message: String,
+    /// Push after committing (and merging). Absent: `[finish] push` of `daemon.toml` (default
+    /// `true`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push: Option<bool>,
+    /// A worktree's merge target; absent: the repository's default branch. Ignored for a main
+    /// checkout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub into: Option<String>,
+    /// How a worktree's branch is merged. Ignored for a main checkout.
+    #[serde(default)]
+    pub strategy: MergeStrategy,
+}
+
+/// Result of `worktree.finish`: one entry per step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeFinished {
+    pub commit: FinishCommit,
+    /// Absent for a main checkout (there is nothing to merge it into).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge: Option<FinishMerge>,
+    /// Absent when no push was asked for (`push: false`, or `[finish] push = false`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub push: Option<FinishPush>,
+}
+
+impl WorktreeFinished {
+    /// Whether some step failed.
+    pub fn failed(&self) -> bool {
+        self.commit.status == StepStatus::Failed
+            || self
+                .merge
+                .as_ref()
+                .is_some_and(|m| m.status == StepStatus::Failed)
+            || self
+                .push
+                .as_ref()
+                .is_some_and(|p| p.status == StepStatus::Failed)
+    }
+}
+
+/// How a step of `worktree.finish` went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepStatus {
+    Ok,
+    /// Not run; [`StepReason`] says why.
+    Skipped,
+    /// Run and failed; [`StepReason`] and the message say why.
+    Failed,
+}
+
+/// Why a step of `worktree.finish` was skipped or failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepReason {
+    /// Skipped commit: the checkout had no uncommitted change.
+    NothingToCommit,
+    /// Skipped merge: the target already contains the branch.
+    NothingToMerge,
+    /// Skipped push: the upstream already has every commit of the branch.
+    UpToDate,
+    /// Skipped: a step before it failed.
+    EarlierStepFailed,
+    /// Failed merge: the branches conflict; the merge was aborted ([`FinishMerge::conflicts`]).
+    Conflict,
+    /// Failed push: the branch has no upstream (or tracks a local branch).
+    NoUpstream,
+    /// Failed push: not a fast-forward — the upstream has commits the branch lacks (seen by the
+    /// fetch before pushing, [`FinishPush::behind`]), or the remote refused the update (a hook,
+    /// a protected branch). Hutan never forces.
+    Rejected,
+    /// Failed push (or its fetch): git could not authenticate (no credential, a refused key, no
+    /// terminal to ask on).
+    Auth,
+    /// Failed otherwise (git's own refusal, the network, a timeout); the message has git's words.
+    Error,
+}
+
+/// The commit step of [`WorktreeFinished`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinishCommit {
+    pub status: StepStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<StepReason>,
+    /// Why the step was skipped or failed, in words (git's own for a failure).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// The branch committed on.
+    pub branch: String,
+    /// The new commit (full hash), when one was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    /// Files the commit changed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub files: u32,
+}
+
+/// The merge step of [`WorktreeFinished`] (a worktree only).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinishMerge {
+    pub status: StepStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<StepReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// The worktree's branch.
+    pub branch: String,
+    /// The branch it was merged into.
+    pub target: String,
+    pub strategy: MergeStrategy,
+    /// The target's new tip (full hash), when the merge was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    /// The files of a `conflict`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<String>,
+    /// As [`WorktreeMerged::source_dirty`]: removing the worktree afterwards needs `force`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub source_dirty: bool,
+}
+
+/// The push step of [`WorktreeFinished`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinishPush {
+    pub status: StepStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<StepReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// The local branch pushed (or that would have been).
+    pub branch: String,
+    /// The upstream as git names it (`origin/main`), when the branch has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<String>,
+    /// The commit the upstream has now (full hash), after a push that went through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    /// Commits of the branch the upstream did not have, as the fetch before pushing saw it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ahead: Option<u32>,
+    /// Commits of the upstream the branch does not have; more than zero is not pushed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behind: Option<u32>,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}

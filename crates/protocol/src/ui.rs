@@ -119,8 +119,8 @@ pub enum PaneSummary {
 /// A tab of a pane.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PaneItem {
-    /// `terminal`, `chat`, `panel`, `placeholder` or `changes` (the Changes view of a checkout,
-    /// titled `Changes · <branch>`).
+    /// `terminal`, `chat`, `panel`, `placeholder`, `changes` (the Changes view of a checkout,
+    /// titled `Changes · <branch>`) or `file` (a file in the code view, titled with its name).
     pub kind: String,
     /// The session of a `terminal` or `chat` tab.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -128,6 +128,10 @@ pub struct PaneItem {
     /// The panel id of a `panel` tab.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub panel: Option<String>,
+    /// Protocol 0.35 (capability `finish`): the canonical absolute path of a `file` tab's file
+    /// (what `ui.run OpenFile` takes); absent for every other kind and from older desktops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<std::path::PathBuf>,
     pub title: String,
 }
 

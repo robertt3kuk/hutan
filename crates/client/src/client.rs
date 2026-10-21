@@ -63,8 +63,9 @@ use hutan_protocol::ui::{
 };
 use hutan_protocol::worktree::{
     WorktreeCommit, WorktreeCommitted, WorktreeCreate, WorktreeCreated, WorktreeDiff,
-    WorktreeDiffRequest, WorktreeFileDiff, WorktreeFileDiffRequest, WorktreeInfo, WorktreeList,
-    WorktreeListRequest, WorktreeMerge, WorktreeMerged, WorktreeRemove, WorktreeRemoved,
+    WorktreeDiffRequest, WorktreeFileDiff, WorktreeFileDiffRequest, WorktreeFinish,
+    WorktreeFinished, WorktreeInfo, WorktreeList, WorktreeListRequest, WorktreeMerge,
+    WorktreeMerged, WorktreeRemove, WorktreeRemoved,
 };
 use hutan_protocol::{
     ControlMessage, ErrorBody, Frame, FrameCodec, FrameKind, MAX_PAYLOAD, PROTOCOL_VERSION,
@@ -160,6 +161,8 @@ pub(crate) const CHAT_RETRY_CAPABILITY: &str = "chat.retry";
 pub(crate) const WORKTREE_INDEX_CAPABILITY: &str = "worktree.index";
 /// Capability for `ChatInfo.mode`: the session mode a harness reports (protocol 0.34).
 pub(crate) const CHAT_MODE_CAPABILITY: &str = "chat.mode";
+/// Capability for `worktree.finish` and `PaneItem.path` (protocol 0.35).
+pub(crate) const FINISH_CAPABILITY: &str = "finish";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -198,6 +201,7 @@ const CAPABILITIES: &[&str] = &[
     CHAT_RETRY_CAPABILITY,
     WORKTREE_INDEX_CAPABILITY,
     CHAT_MODE_CAPABILITY,
+    FINISH_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -555,6 +559,14 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == CHAT_MODE_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `finish` (protocol 0.35): `worktree.finish`.
+    pub fn supports_finish(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == FINISH_CAPABILITY)
     }
 
     /// `chat.retry`: sends the chat's last user message again; the journal keeps it once.
@@ -1047,6 +1059,14 @@ impl Client {
         req: WorktreeCommit,
     ) -> Result<WorktreeCommitted, ClientError> {
         self.call(Request::WorktreeCommit(req)).await
+    }
+
+    /// The user's Finish of a checkout: commit, merge a worktree, push (`worktree.finish`).
+    pub async fn worktree_finish(
+        &self,
+        req: WorktreeFinish,
+    ) -> Result<WorktreeFinished, ClientError> {
+        self.call(Request::WorktreeFinish(req)).await
     }
 
     /// True when the daemon advertised capability `task` (protocol 0.16).

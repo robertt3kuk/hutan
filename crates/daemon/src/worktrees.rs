@@ -1,18 +1,20 @@
 //! Git worktrees (protocol 0.14, capability `worktree`): `worktree.create`, `.list`, `.remove`;
-//! review and merge (protocol 0.21, capability `worktree.review`) in [`review`].
+//! review and merge (protocol 0.21, capability `worktree.review`) in [`review`]; the user's
+//! Finish (protocol 0.35, capability `finish`, ADR 0020) in [`finish`].
 //!
 //! git is the source of truth. Worktrees are discovered with `git worktree list --porcelain -z`
 //! in the main checkout of every repository the workspace's roots belong to; Hutan remembers
 //! only which of them it created (`hutan-storage`, table `worktrees`) so a client can offer
 //! cleanup. Every git call runs without a terminal prompt and without optional locks, under a
-//! timeout; none of them touches the network.
+//! timeout; none of them touches the network except Finish's fetch and push.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use hutan_core::{SessionId, WorkspaceId};
@@ -28,10 +30,13 @@ use tokio::sync::Mutex;
 use tracing::{error, warn};
 
 use crate::bus::EventBus;
+use crate::config::FinishSettings;
+use crate::harness::Harnesses;
 use crate::placement;
 use crate::projects;
 use crate::registry::{RegistryHandle, log_write, now_ms};
 
+mod finish;
 mod review;
 
 /// Reads (list, status, rev-parse) finish well within this, even in a large repository.
@@ -62,16 +67,38 @@ pub struct WorktreeService {
     /// Creating and removing worktrees one at a time keeps the checks and the git call that
     /// follows them consistent.
     writes: Mutex<()>,
+    /// The login environment git's push and fetch run in (credential helpers, SSH agent).
+    harnesses: Arc<Harnesses>,
+    /// `[finish] push`: whether a Finish that does not say pushes.
+    finish_push: AtomicBool,
 }
 
 impl WorktreeService {
-    pub fn new(registry: RegistryHandle, storage: Storage, bus: Arc<EventBus>) -> Arc<Self> {
+    pub fn new(
+        registry: RegistryHandle,
+        storage: Storage,
+        bus: Arc<EventBus>,
+        harnesses: Arc<Harnesses>,
+        finish: FinishSettings,
+    ) -> Arc<Self> {
         Arc::new(Self {
             registry,
             storage,
             bus,
             writes: Mutex::new(()),
+            harnesses,
+            finish_push: AtomicBool::new(finish.push),
         })
+    }
+
+    /// `[finish] push` as the daemon uses it now.
+    pub fn finish_push(&self) -> bool {
+        self.finish_push.load(Ordering::Relaxed)
+    }
+
+    /// Takes a new `[finish] push` (a live setting).
+    pub fn set_finish_push(&self, push: bool) {
+        self.finish_push.store(push, Ordering::Relaxed);
     }
 
     pub async fn create(&self, req: WorktreeCreate) -> Result<WorktreeCreated, ErrorBody> {
@@ -565,10 +592,17 @@ fn git_failed(what: &str, output: &GitOutput) -> ErrorBody {
 /// rewrite the index under a running agent), no editor or pager, English messages, the caller's
 /// `GIT_*` location variables ignored, stdin closed. Killed when dropped.
 fn git_command(cwd: &Path, args: &[&OsStr]) -> Command {
+    git_command_in(cwd, args, &BTreeMap::new())
+}
+
+/// [`git_command`] with `env` (the user's login environment, for a fetch or push that needs the
+/// user's credential helper and SSH agent) over the daemon's own; the settings above still win.
+fn git_command_in(cwd: &Path, args: &[&OsStr], env: &BTreeMap<String, String>) -> Command {
     let mut command = Command::new("git");
     command
         .current_dir(cwd)
         .args(args)
+        .envs(env)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_EDITOR", "true")
@@ -616,7 +650,17 @@ fn git_timed_out(args: &[&OsStr], limit: Duration) -> ErrorBody {
 
 /// Runs `git args` in `cwd` (see [`git_command`]). Killed when it outlives `limit`.
 async fn run_git(cwd: &Path, args: &[&OsStr], limit: Duration) -> Result<GitOutput, ErrorBody> {
-    let mut command = git_command(cwd, args);
+    run_git_in(cwd, args, &BTreeMap::new(), limit).await
+}
+
+/// [`run_git`] in `env` (see [`git_command_in`]).
+async fn run_git_in(
+    cwd: &Path,
+    args: &[&OsStr],
+    env: &BTreeMap<String, String>,
+    limit: Duration,
+) -> Result<GitOutput, ErrorBody> {
+    let mut command = git_command_in(cwd, args, env);
     let output = match tokio::time::timeout(limit, command.output()).await {
         Ok(Ok(output)) => output,
         Ok(Err(error)) => return Err(git_unavailable(&error)),

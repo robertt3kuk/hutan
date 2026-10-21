@@ -1,0 +1,1 @@
+{"error":{"code":"forbidden","data":{"control":{"decision":"user_only"}},"message":"`worktree.finish` is only available to the user, not to agents"},"id":40}

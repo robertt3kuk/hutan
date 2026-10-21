@@ -115,7 +115,11 @@ async fn run_git_capped(
 }
 
 /// `run_git` for string arguments.
-async fn git(cwd: &Path, args: &[&str], limit: Duration) -> Result<super::GitOutput, ErrorBody> {
+pub(super) async fn git(
+    cwd: &Path,
+    args: &[&str],
+    limit: Duration,
+) -> Result<super::GitOutput, ErrorBody> {
     let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
     run_git(cwd, &args, limit).await
 }
@@ -250,7 +254,10 @@ impl WorktreeService {
 
     /// The listed worktree at `path` and its repository's main checkout; a directory that is
     /// gone has nothing to show.
-    async fn checkout(&self, path: &Path) -> Result<(std::path::PathBuf, RawWorktree), ErrorBody> {
+    pub(super) async fn checkout(
+        &self,
+        path: &Path,
+    ) -> Result<(std::path::PathBuf, RawWorktree), ErrorBody> {
         if !path.is_absolute() {
             return Err(bad_request(format!(
                 "`{}` is not an absolute path",
@@ -276,6 +283,14 @@ impl WorktreeService {
         req: WorktreeMerge,
     ) -> Result<(WorktreeMerged, Vec<WorkspaceId>), ErrorBody> {
         let _writing = self.writes.lock().await;
+        self.merge_locked(req).await
+    }
+
+    /// [`merge`](Self::merge), for a caller that holds the write lock.
+    pub(super) async fn merge_locked(
+        &self,
+        req: WorktreeMerge,
+    ) -> Result<(WorktreeMerged, Vec<WorkspaceId>), ErrorBody> {
         let message = req
             .message
             .as_deref()
@@ -287,78 +302,7 @@ impl WorktreeService {
             ));
         }
         let (main, entry) = self.checkout(&req.path).await?;
-        if entry.is_main {
-            return Err(invalid_state(format!(
-                "{} is the main checkout of {}; there is nothing to merge it into",
-                entry.path.display(),
-                main.display()
-            )));
-        }
-        let Some(branch) = entry.branch.clone() else {
-            return Err(invalid_state(format!(
-                "{} has a detached HEAD; check a branch out there first (`git switch -c <name>`)",
-                entry.path.display()
-            )));
-        };
-
-        // Everything that can refuse, before the first change.
-        let target = match req.into.clone() {
-            Some(into) => into,
-            None => default_branch(&main).await.ok_or_else(|| {
-                invalid_state("the repository has no default branch (main, master); pass `into`")
-            })?,
-        };
-        if target.starts_with('-') || target.contains('\0') {
-            return Err(bad_request(format!(
-                "`{target}` is not a valid branch name"
-            )));
-        }
-        validate_branch(&main, &target).await?;
-        if !branch_exists(&main, &target).await? {
-            return Err(ErrorBody::new(
-                ErrorCode::NotFound,
-                format!("there is no local branch `{target}` to merge into"),
-            ));
-        }
-        if target == branch {
-            return Err(invalid_state(format!(
-                "`{branch}` is the target itself; there is nothing to merge"
-            )));
-        }
-        let listed = list_raw(&main).await?;
-        let main_entry = listed
-            .iter()
-            .find(|w| w.is_main)
-            .ok_or_else(|| invalid_state(format!("{} has no main checkout", main.display())))?;
-        if main_entry.branch.as_deref() != Some(target.as_str()) {
-            let elsewhere = listed
-                .iter()
-                .find(|w| w.branch.as_deref() == Some(target.as_str()))
-                .map_or_else(String::new, |w| {
-                    format!("; it is checked out at {}", w.path.display())
-                });
-            return Err(invalid_state(format!(
-                "`{target}` is not checked out in the main checkout {} (which has {}){elsewhere}; \
-                 check it out there first",
-                main_entry.path.display(),
-                main_entry
-                    .branch
-                    .as_deref()
-                    .map_or_else(|| "a detached HEAD".to_owned(), |b| format!("`{b}`"))
-            )));
-        }
-        if let Some(operation) = operation_in_progress(&main).await? {
-            return Err(invalid_state(format!(
-                "{operation} is in progress in the main checkout {}; finish or abort it first",
-                main.display()
-            )));
-        }
-        if dirty(&main).await? {
-            return Err(invalid_state(format!(
-                "the main checkout {} has uncommitted changes; commit or stash them first",
-                main.display()
-            )));
-        }
+        let (branch, target) = self.merge_target(&main, &entry, req.into.clone()).await?;
         let head_ref = format!("refs/heads/{branch}");
         let target_ref = format!("refs/heads/{target}");
         if git_ok_in(
@@ -385,37 +329,155 @@ impl WorktreeService {
                     entry.path.display()
                 )));
             }
-            let sessions = self.live_sessions().await?;
-            if !sessions_inside(&sessions, &entry.path).is_empty() {
-                return Err(invalid_state(format!(
-                    "live sessions work in {}; a rebase rewrites their files — stop them first",
-                    entry.path.display()
-                )));
-            }
+            self.refuse_live_sessions(&entry.path).await?;
         }
+        self.run_merge(
+            &main,
+            &entry.path,
+            &branch,
+            &target,
+            req.strategy,
+            message,
+            source_dirty,
+        )
+        .await
+    }
 
-        match req.strategy {
+    /// A rebase rewrites the worktree's files under any session working in it.
+    pub(super) async fn refuse_live_sessions(&self, root: &Path) -> Result<(), ErrorBody> {
+        let sessions = self.live_sessions().await?;
+        if sessions_inside(&sessions, root).is_empty() {
+            Ok(())
+        } else {
+            Err(invalid_state(format!(
+                "live sessions work in {}; a rebase rewrites their files — stop them first",
+                root.display()
+            )))
+        }
+    }
+
+    /// The branch of the worktree `entry` and the branch of the main checkout `main` it merges
+    /// into, with every refusal of a merge that no commit in the worktree could change: the main
+    /// checkout itself, a detached HEAD, a target that is no branch or not the one checked out
+    /// in the main checkout, an operation in progress or uncommitted changes there.
+    pub(super) async fn merge_target(
+        &self,
+        main: &Path,
+        entry: &RawWorktree,
+        into: Option<String>,
+    ) -> Result<(String, String), ErrorBody> {
+        if entry.is_main {
+            return Err(invalid_state(format!(
+                "{} is the main checkout of {}; there is nothing to merge it into",
+                entry.path.display(),
+                main.display()
+            )));
+        }
+        let Some(branch) = entry.branch.clone() else {
+            return Err(invalid_state(format!(
+                "{} has a detached HEAD; check a branch out there first (`git switch -c <name>`)",
+                entry.path.display()
+            )));
+        };
+
+        // Everything that can refuse, before the first change.
+        let target = match into {
+            Some(into) => into,
+            None => default_branch(main).await.ok_or_else(|| {
+                invalid_state("the repository has no default branch (main, master); pass `into`")
+            })?,
+        };
+        if target.starts_with('-') || target.contains('\0') {
+            return Err(bad_request(format!(
+                "`{target}` is not a valid branch name"
+            )));
+        }
+        validate_branch(main, &target).await?;
+        if !branch_exists(main, &target).await? {
+            return Err(ErrorBody::new(
+                ErrorCode::NotFound,
+                format!("there is no local branch `{target}` to merge into"),
+            ));
+        }
+        if target == branch {
+            return Err(invalid_state(format!(
+                "`{branch}` is the target itself; there is nothing to merge"
+            )));
+        }
+        let listed = list_raw(main).await?;
+        let main_entry = listed
+            .iter()
+            .find(|w| w.is_main)
+            .ok_or_else(|| invalid_state(format!("{} has no main checkout", main.display())))?;
+        if main_entry.branch.as_deref() != Some(target.as_str()) {
+            let elsewhere = listed
+                .iter()
+                .find(|w| w.branch.as_deref() == Some(target.as_str()))
+                .map_or_else(String::new, |w| {
+                    format!("; it is checked out at {}", w.path.display())
+                });
+            return Err(invalid_state(format!(
+                "`{target}` is not checked out in the main checkout {} (which has {}){elsewhere}; \
+                 check it out there first",
+                main_entry.path.display(),
+                main_entry
+                    .branch
+                    .as_deref()
+                    .map_or_else(|| "a detached HEAD".to_owned(), |b| format!("`{b}`"))
+            )));
+        }
+        if let Some(operation) = operation_in_progress(main).await? {
+            return Err(invalid_state(format!(
+                "{operation} is in progress in the main checkout {}; finish or abort it first",
+                main.display()
+            )));
+        }
+        if dirty(main).await? {
+            return Err(invalid_state(format!(
+                "the main checkout {} has uncommitted changes; commit or stash them first",
+                main.display()
+            )));
+        }
+        Ok((branch, target))
+    }
+
+    /// The git steps of a merge whose refusals are all decided; the main checkout is left as it
+    /// was when one fails.
+    #[allow(clippy::too_many_arguments)] // the decided merge, field by field
+    async fn run_merge(
+        &self,
+        main: &Path,
+        worktree: &Path,
+        branch: &str,
+        target: &str,
+        strategy: MergeStrategy,
+        message: Option<&str>,
+        source_dirty: bool,
+    ) -> Result<(WorktreeMerged, Vec<WorkspaceId>), ErrorBody> {
+        let head_ref = format!("refs/heads/{branch}");
+        let target_ref = format!("refs/heads/{target}");
+        match strategy {
             MergeStrategy::Merge => {
                 let mut args = vec!["merge", "--no-ff", "--no-edit", "--no-verify"];
                 if let Some(message) = message {
                     args.extend(["-m", message]);
                 }
                 // The branch name, not its full ref: it is in the default message.
-                args.push(&branch);
-                run_merge_step(&main, &args, &target, &branch, Abort::Merge).await?;
+                args.push(branch);
+                run_merge_step(main, &args, target, branch, Abort::Merge).await?;
             }
             MergeStrategy::Squash => {
                 run_merge_step(
-                    &main,
-                    &["merge", "--squash", "--no-verify", &branch],
-                    &target,
-                    &branch,
+                    main,
+                    &["merge", "--squash", "--no-verify", branch],
+                    target,
+                    branch,
                     Abort::Reset,
                 )
                 .await?;
                 let default = format!("Squash merge branch '{branch}'");
                 let committed = git(
-                    &main,
+                    main,
                     &[
                         "commit",
                         "--no-verify",
@@ -430,22 +492,22 @@ impl WorktreeService {
                     Ok(out) if out.success => {}
                     Ok(out) => {
                         let error = git_failed("commit", &out);
-                        return Err(abort(&main, Abort::Reset, error).await);
+                        return Err(abort(main, Abort::Reset, error).await);
                     }
-                    Err(error) => return Err(abort(&main, Abort::Reset, error).await),
+                    Err(error) => return Err(abort(main, Abort::Reset, error).await),
                 }
             }
             MergeStrategy::Rebase => {
                 run_merge_step(
-                    &entry.path,
+                    worktree,
                     &["rebase", "--no-verify", &target_ref],
-                    &target,
-                    &branch,
+                    target,
+                    branch,
                     Abort::Rebase,
                 )
                 .await?;
                 let forwarded = git(
-                    &main,
+                    main,
                     &["merge", "--ff-only", "--no-verify", &head_ref],
                     WORKTREE_MERGE_TIMEOUT,
                 )
@@ -454,7 +516,7 @@ impl WorktreeService {
                     Ok(out) if out.success => {}
                     Ok(out) => {
                         let error = git_failed("merge --ff-only", &out);
-                        return Err(abort(&main, Abort::Merge, ErrorBody::new(
+                        return Err(abort(main, Abort::Merge, ErrorBody::new(
                             error.code,
                             format!(
                                 "`{branch}` was rebased onto `{target}`, but `{target}` could not \
@@ -464,25 +526,25 @@ impl WorktreeService {
                         ))
                         .await);
                     }
-                    Err(error) => return Err(abort(&main, Abort::Merge, error).await),
+                    Err(error) => return Err(abort(main, Abort::Merge, error).await),
                 }
             }
         }
 
-        let tip = git(&main, &["rev-parse", "--verify", "HEAD"], READ_TIMEOUT).await?;
+        let tip = git(main, &["rev-parse", "--verify", "HEAD"], READ_TIMEOUT).await?;
         if !tip.success {
             return Err(git_failed("rev-parse", &tip));
         }
         let workspaces = self.registry.list_workspaces().await?.workspaces;
-        let affected = workspaces_of_repo(&workspaces, &main).await;
+        let affected = workspaces_of_repo(&workspaces, main).await;
         self.changed(&affected);
         Ok((
             WorktreeMerged {
                 commit: String::from_utf8_lossy(&tip.stdout).trim().to_owned(),
-                target,
-                branch,
-                strategy: req.strategy,
-                source_dirty: req.strategy != MergeStrategy::Rebase && source_dirty,
+                target: target.to_owned(),
+                branch: branch.to_owned(),
+                strategy,
+                source_dirty: strategy != MergeStrategy::Rebase && source_dirty,
             },
             affected,
         ))
@@ -520,65 +582,71 @@ impl WorktreeService {
                 entry.path.display()
             )));
         }
-        let staged = git(&entry.path, &["add", "-A"], WORKTREE_MERGE_TIMEOUT).await?;
-        if !staged.success {
-            return Err(git_failed("add", &staged));
-        }
-        let committed = git(
-            &entry.path,
-            &["commit", "--no-verify", "--cleanup=strip", "-m", message],
-            WORKTREE_MERGE_TIMEOUT,
-        )
-        .await;
-        match committed {
-            Ok(out) if out.success => {}
-            failed => {
-                // Leave the index as it was: nothing the caller did not ask for stays staged.
-                let _ = git(&entry.path, &["reset", "--quiet"], WORKTREE_MERGE_TIMEOUT).await;
-                return Err(match failed {
-                    Ok(out) => git_failed("commit", &out),
-                    Err(error) => error,
-                });
-            }
-        }
-        let tip = git(
-            &entry.path,
-            &["rev-parse", "--verify", "HEAD"],
-            READ_TIMEOUT,
-        )
-        .await?;
-        if !tip.success {
-            return Err(git_failed("rev-parse", &tip));
-        }
-        let changed = git(
-            &entry.path,
-            &[
-                "diff-tree",
-                "--no-commit-id",
-                "--name-only",
-                "-r",
-                "-z",
-                "--root",
-                "HEAD",
-            ],
-            READ_TIMEOUT,
-        )
-        .await?;
-        let files = changed
-            .stdout
-            .split(|b| *b == 0)
-            .filter(|name| !name.is_empty())
-            .count();
+        let (commit, files) = commit_all(&entry.path, message).await?;
         let workspaces = self.registry.list_workspaces().await?.workspaces;
         if let Ok((main, _)) = self.checkout(&req.path).await {
             self.changed(&workspaces_of_repo(&workspaces, &main).await);
         }
         Ok(WorktreeCommitted {
-            commit: String::from_utf8_lossy(&tip.stdout).trim().to_owned(),
+            commit,
             branch,
-            files: u32::try_from(files).unwrap_or(u32::MAX),
+            files,
         })
     }
+}
+
+/// Stages everything in the checkout `dir` (`git add -A`) and commits it with `message`, hooks
+/// off; the new commit's hash and how many files it changed. When git refuses, the index is
+/// left as it was.
+pub(super) async fn commit_all(dir: &Path, message: &str) -> Result<(String, u32), ErrorBody> {
+    let staged = git(dir, &["add", "-A"], WORKTREE_MERGE_TIMEOUT).await?;
+    if !staged.success {
+        return Err(git_failed("add", &staged));
+    }
+    let committed = git(
+        dir,
+        &["commit", "--no-verify", "--cleanup=strip", "-m", message],
+        WORKTREE_MERGE_TIMEOUT,
+    )
+    .await;
+    match committed {
+        Ok(out) if out.success => {}
+        failed => {
+            // Leave the index as it was: nothing the caller did not ask for stays staged.
+            let _ = git(dir, &["reset", "--quiet"], WORKTREE_MERGE_TIMEOUT).await;
+            return Err(match failed {
+                Ok(out) => git_failed("commit", &out),
+                Err(error) => error,
+            });
+        }
+    }
+    let tip = git(dir, &["rev-parse", "--verify", "HEAD"], READ_TIMEOUT).await?;
+    if !tip.success {
+        return Err(git_failed("rev-parse", &tip));
+    }
+    let changed = git(
+        dir,
+        &[
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "-z",
+            "--root",
+            "HEAD",
+        ],
+        READ_TIMEOUT,
+    )
+    .await?;
+    let files = changed
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|name| !name.is_empty())
+        .count();
+    Ok((
+        String::from_utf8_lossy(&tip.stdout).trim().to_owned(),
+        u32::try_from(files).unwrap_or(u32::MAX),
+    ))
 }
 
 // Merging -----------------------------------------------------------------------------------
@@ -708,7 +776,7 @@ async fn path_in_git_dir(dir: &Path, name: &str) -> bool {
 }
 
 /// What git is in the middle of in `dir`, if anything.
-async fn operation_in_progress(dir: &Path) -> Result<Option<&'static str>, ErrorBody> {
+pub(super) async fn operation_in_progress(dir: &Path) -> Result<Option<&'static str>, ErrorBody> {
     for (name, what) in [
         ("MERGE_HEAD", "a merge"),
         ("rebase-merge", "a rebase"),
@@ -724,7 +792,7 @@ async fn operation_in_progress(dir: &Path) -> Result<Option<&'static str>, Error
     Ok(None)
 }
 
-async fn git_ok_in(dir: &Path, args: &[&str]) -> Result<bool, ErrorBody> {
+pub(super) async fn git_ok_in(dir: &Path, args: &[&str]) -> Result<bool, ErrorBody> {
     Ok(git(dir, args, READ_TIMEOUT).await?.success)
 }
 

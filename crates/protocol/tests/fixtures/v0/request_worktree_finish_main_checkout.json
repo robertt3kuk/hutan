@@ -1,0 +1,1 @@
+{"id":193,"method":"worktree.finish","params":{"checkout":"/work/repo","message":"Fix the login form","strategy":"merge"}}

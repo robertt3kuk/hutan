@@ -982,6 +982,7 @@ fn layout_fixture() -> hutan_protocol::ui::LayoutSummary {
                         kind: "terminal".into(),
                         session_id: Some(sid()),
                         panel: None,
+                        path: None,
                         title: "omp".into(),
                     }],
                     active: Some(0),
@@ -992,6 +993,7 @@ fn layout_fixture() -> hutan_protocol::ui::LayoutSummary {
                         kind: "panel".into(),
                         session_id: None,
                         panel: Some("inspector".into()),
+                        path: None,
                         title: "Inspector".into(),
                     }],
                     active: Some(0),
@@ -2700,6 +2702,26 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_retry",
             Request::ChatRetry(hutan_protocol::chat::ChatRetry { session_id: sid() }),
+        ),
+        (
+            "worktree_finish",
+            Request::WorktreeFinish(WorktreeFinish {
+                checkout: "/work/repo-wt/feature-login".into(),
+                message: "Add login".into(),
+                push: Some(true),
+                into: Some("main".into()),
+                strategy: MergeStrategy::Squash,
+            }),
+        ),
+        (
+            "worktree_finish_main_checkout",
+            Request::WorktreeFinish(WorktreeFinish {
+                checkout: "/work/repo".into(),
+                message: "Fix the login form".into(),
+                push: None,
+                into: None,
+                strategy: MergeStrategy::Merge,
+            }),
         ),
     ]
 }
@@ -5293,6 +5315,149 @@ fn responses_match_fixtures() {
                 error.data = Some(serde_json::json!({"reason": "outside_roots"}));
                 error
             }),
+        ),
+        (
+            "worktree_finished",
+            ControlMessage::ok(
+                37,
+                &WorktreeFinished {
+                    commit: FinishCommit {
+                        status: StepStatus::Ok,
+                        reason: None,
+                        message: None,
+                        branch: "feature/login".into(),
+                        commit: Some("7a6b5c4d3e2f10987a6b5c4d3e2f10987a6b5c4d".into()),
+                        files: 3,
+                    },
+                    merge: Some(FinishMerge {
+                        status: StepStatus::Ok,
+                        reason: None,
+                        message: None,
+                        branch: "feature/login".into(),
+                        target: "main".into(),
+                        strategy: MergeStrategy::Squash,
+                        commit: Some("9d8c7b6a5f4e3d2c1b0a99887766554433221100".into()),
+                        conflicts: vec![],
+                        source_dirty: false,
+                    }),
+                    push: Some(FinishPush {
+                        status: StepStatus::Ok,
+                        reason: None,
+                        message: None,
+                        branch: "main".into(),
+                        upstream: Some("origin/main".into()),
+                        commit: Some("9d8c7b6a5f4e3d2c1b0a99887766554433221100".into()),
+                        ahead: Some(1),
+                        behind: Some(0),
+                    }),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "worktree_finished_push_rejected",
+            ControlMessage::ok(
+                38,
+                &WorktreeFinished {
+                    commit: FinishCommit {
+                        status: StepStatus::Ok,
+                        reason: None,
+                        message: None,
+                        branch: "main".into(),
+                        commit: Some("7a6b5c4d3e2f10987a6b5c4d3e2f10987a6b5c4d".into()),
+                        files: 1,
+                    },
+                    merge: None,
+                    push: Some(FinishPush {
+                        status: StepStatus::Failed,
+                        reason: Some(StepReason::Rejected),
+                        message: Some(
+                            "origin/main has 2 commits that main does not have; bring them in \
+                             (pull, then merge or rebase) and Finish again — Hutan never \
+                             force-pushes"
+                                .into(),
+                        ),
+                        branch: "main".into(),
+                        upstream: Some("origin/main".into()),
+                        commit: None,
+                        ahead: Some(1),
+                        behind: Some(2),
+                    }),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "worktree_finished_conflict",
+            ControlMessage::ok(
+                39,
+                &WorktreeFinished {
+                    commit: FinishCommit {
+                        status: StepStatus::Skipped,
+                        reason: Some(StepReason::NothingToCommit),
+                        message: Some("/work/repo-wt/feature-login has nothing to commit".into()),
+                        branch: "feature/login".into(),
+                        commit: None,
+                        files: 0,
+                    },
+                    merge: Some(FinishMerge {
+                        status: StepStatus::Failed,
+                        reason: Some(StepReason::Conflict),
+                        message: Some(
+                            "merging `feature/login` into `main` conflicts; nothing was changed"
+                                .into(),
+                        ),
+                        branch: "feature/login".into(),
+                        target: "main".into(),
+                        strategy: MergeStrategy::Merge,
+                        commit: None,
+                        conflicts: vec!["src/login.rs".into()],
+                        source_dirty: false,
+                    }),
+                    push: Some(FinishPush {
+                        status: StepStatus::Skipped,
+                        reason: Some(StepReason::EarlierStepFailed),
+                        message: None,
+                        branch: "main".into(),
+                        upstream: None,
+                        commit: None,
+                        ahead: None,
+                        behind: None,
+                    }),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "error_worktree_finish_forbidden",
+            ControlMessage::err(40, {
+                let mut error = ErrorBody::new(
+                    ErrorCode::Forbidden,
+                    "`worktree.finish` is only available to the user, not to agents",
+                );
+                error.data = Some(serde_json::json!({"control": {"decision": "user_only"}}));
+                error
+            }),
+        ),
+        (
+            "ui_layout_file_tab",
+            ControlMessage::ok(41, &hutan_protocol::ui::UiLayoutResult {
+                layout: hutan_protocol::ui::LayoutSummary {
+                    panes: hutan_protocol::ui::PaneSummary::Pane {
+                        pane_id: "pane-1".into(),
+                        items: vec![hutan_protocol::ui::PaneItem {
+                            kind: "file".into(),
+                            session_id: None,
+                            panel: None,
+                            path: Some("/work/repo/src/main.rs".into()),
+                            title: "main.rs".into(),
+                        }],
+                        active: Some(0),
+                    },
+                    ..layout_fixture()
+                },
+            })
+            .unwrap(),
         ),
     ];
     for (name, message) in cases {

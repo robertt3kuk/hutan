@@ -83,6 +83,9 @@
 //! agents = "ask"                 # "ask" (approval per mutation), "allow", or "read_only"
 //! mcp = true                     # Hutan-started harness/Codex sessions get `hutan mcp`
 //! approval_timeout_secs = 600    # a pending control approval is refused after this long
+//!
+//! [finish]                       # the user's Finish in Changes / `hutan finish` (protocol 0.35, ADR 0020)
+//! push = true                    # push to the upstream after committing (and merging); false: keep it local
 //! ```
 
 use std::collections::BTreeMap;
@@ -127,6 +130,7 @@ pub struct DaemonSettings {
     pub tasks: TasksSettings,
     pub projects: ProjectsSettings,
     pub control: ControlSettings,
+    pub finish: FinishSettings,
 }
 
 /// `[projects]` of `daemon.toml`: automatic projects (protocol 0.19).
@@ -524,6 +528,22 @@ impl Default for TasksSettings {
     }
 }
 
+/// `[finish]` of `daemon.toml`: what the user's Finish does after committing (protocol 0.35,
+/// ADR 0020).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FinishSettings {
+    /// `true` (default): push the branch to its upstream; `false`: commit (and merge) only. A
+    /// request's own `push` wins.
+    pub push: bool,
+}
+
+impl Default for FinishSettings {
+    fn default() -> Self {
+        Self { push: true }
+    }
+}
+
 /// What an agent-originated connection (one whose client runs in a chat session or in a terminal
 /// session an agent reported itself in, `ClientInfo.origin`) may change (protocol 0.21, ADR 0016).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -594,6 +614,8 @@ struct File {
     projects: ProjectsSettings,
     #[serde(default)]
     control: ControlSettings,
+    #[serde(default)]
+    finish: FinishSettings,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -699,6 +721,7 @@ impl DaemonSettings {
             tasks: file.tasks,
             projects: file.projects,
             control: file.control,
+            finish: file.finish,
         })
     }
 }
@@ -1118,6 +1141,15 @@ mod tests {
         assert_eq!(silent.sound, NotifySound::None);
         assert!(DaemonSettings::parse("[notify]\nsound = \"loud\"\n", None).is_err());
         assert!(DaemonSettings::parse("[notify]\nsound = false\n", None).is_err());
+    }
+
+    #[test]
+    fn finish_pushes_unless_told_not_to() {
+        assert!(DaemonSettings::parse("", None).unwrap().finish.push);
+        let local = DaemonSettings::parse("[finish]\npush = false\n", None).unwrap();
+        assert!(!local.finish.push);
+        assert!(DaemonSettings::parse("[finish]\npush = \"no\"\n", None).is_err());
+        assert!(DaemonSettings::parse("[finish]\nforce = true\n", None).is_err());
     }
 
     #[test]

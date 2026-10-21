@@ -316,7 +316,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
     history.start().await;
     let accounts = AccountService::new(
         registry.clone(),
-        harnesses,
+        harnesses.clone(),
         codex_config,
         bus.clone(),
         shutdown.clone(),
@@ -347,7 +347,13 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
     }
     // Observes the bus until shutdown; nothing needs its handle.
     drop(notify.start(shutdown.clone()));
-    let worktrees = WorktreeService::new(registry.clone(), storage.clone(), bus.clone());
+    let worktrees = WorktreeService::new(
+        registry.clone(),
+        storage.clone(),
+        bus.clone(),
+        harnesses,
+        settings.finish,
+    );
     // After the registry restored its sessions and the notifier listens: a task whose session
     // did not survive the last daemon ends here, and says so.
     let tasks = TaskService::open(
@@ -414,6 +420,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             control: control.clone(),
             memory: memory.clone(),
             registry: registry.clone(),
+            worktrees: worktrees.clone(),
         },
     );
     let router = Router::new(

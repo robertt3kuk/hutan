@@ -15,6 +15,7 @@
 //! The daemon only caches what is published; layout stays desktop state (ADR 0010).
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{Action, AsyncWindowContext, Context, FocusHandle, Task, WeakEntity, Window};
@@ -485,18 +486,19 @@ impl Workbench {
     pub(crate) fn layout_summary(&self, cx: &gpui::App) -> LayoutSummary {
         let item = |item: &ItemRef| -> PaneItem {
             let session = |id: &str| id.parse::<SessionId>().ok();
-            let (kind, session_id, panel) = match item {
-                ItemRef::Terminal { session: id } => ("terminal", session(id), None),
-                ItemRef::Chat { session: id } => ("chat", session(id), None),
-                ItemRef::Panel { panel } => ("panel", None, Some(panel.to_string())),
-                ItemRef::Placeholder { .. } => ("placeholder", None, None),
-                ItemRef::Changes { .. } => ("changes", None, None),
-                ItemRef::File { .. } => ("file", None, None),
+            let (kind, session_id, panel, path) = match item {
+                ItemRef::Terminal { session: id } => ("terminal", session(id), None, None),
+                ItemRef::Chat { session: id } => ("chat", session(id), None, None),
+                ItemRef::Panel { panel } => ("panel", None, Some(panel.to_string()), None),
+                ItemRef::Placeholder { .. } => ("placeholder", None, None, None),
+                ItemRef::Changes { .. } => ("changes", None, None, None),
+                ItemRef::File { path } => ("file", None, None, Some(PathBuf::from(path))),
             };
             PaneItem {
                 kind: kind.to_owned(),
                 session_id,
                 panel,
+                path,
                 title: self.item_title(item, cx).to_string(),
             }
         };

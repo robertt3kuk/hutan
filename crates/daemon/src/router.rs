@@ -437,6 +437,14 @@ impl Router {
                 ok(&merged)
             }
             Request::WorktreeCommit(req) => ok(&self.worktrees.commit(req).await?),
+            Request::WorktreeFinish(req) => {
+                let (finished, merged) = self.worktrees.finish(req).await?;
+                if let Some((merged, workspaces)) = merged {
+                    self.tasks
+                        .worktree_merged(&merged, &workspaces, self.actor(conn).await);
+                }
+                ok(&finished)
+            }
             Request::TaskCreate(req) => ok(&TaskResult {
                 task: self.tasks.create(req).await?,
             }),
@@ -787,6 +795,9 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::WorktreeMerge(_) => ("worktree.merge", Mutate),
         // Commits in a worktree an agent may work in, but it changes what a merge takes.
         Request::WorktreeCommit(_) => ("worktree.commit", Mutate),
+        // The user's Finish commits, merges and pushes to a remote: never an agent's, whatever
+        // `[control]` says (ADR 0020). Agents keep their own tools.
+        Request::WorktreeFinish(_) => ("worktree.finish", UserOnly),
         Request::TaskCreate(_) => ("task.create", Mutate),
         Request::TaskList(_) => ("task.list", Read),
         Request::TaskUpdate(_) => ("task.update", Mutate),
@@ -912,6 +923,14 @@ mod classification_tests {
             Access::Read
         );
         assert_eq!(access_of("worktree.merge", path), Access::Mutate);
+        assert_eq!(
+            access_of(
+                "worktree.finish",
+                serde_json::json!({"checkout": "/work/repo", "message": "x", "push": true})
+            ),
+            Access::UserOnly,
+            "an agent never finishes: it would commit and push"
+        );
         for method in ["resources.list", "resources.unsubscribe"] {
             assert_eq!(
                 access_of(method, serde_json::json!({})),

@@ -1,0 +1,1 @@
+{"id":38,"result":{"commit":{"branch":"main","commit":"7a6b5c4d3e2f10987a6b5c4d3e2f10987a6b5c4d","files":1,"status":"ok"},"push":{"ahead":1,"behind":2,"branch":"main","message":"origin/main has 2 commits that main does not have; bring them in (pull, then merge or rebase) and Finish again — Hutan never force-pushes","reason":"rejected","status":"failed","upstream":"origin/main"}}}

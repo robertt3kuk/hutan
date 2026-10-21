@@ -190,6 +190,7 @@ fn window(window_id: &str) -> UiPublish {
                     kind: "placeholder".into(),
                     session_id: None,
                     panel: None,
+                    path: None,
                     title: "Welcome".into(),
                 }],
                 active: Some(0),

@@ -38,6 +38,7 @@ use crate::memory::MemoryService;
 use crate::notify::NotifyService;
 use crate::registry::RegistryHandle;
 use crate::tasks::TaskService;
+use crate::worktrees::WorktreeService;
 use hutan_terminal::EnvInherit;
 
 /// The `[notify] kinds` names, as `IntentKind::as_str` gives them (a test keeps them equal).
@@ -105,6 +106,7 @@ enum Group {
     Control,
     Tasks,
     Gateway,
+    Finish,
 }
 
 struct Spec {
@@ -438,6 +440,9 @@ fn build_specs() -> Vec<Spec> {
             Group::Control,
             |c| int_value(c.control.approval_timeout_secs),
         ),
+        live("finish.push", Kind::Bool, Group::Finish, |c| {
+            json!(c.finish.push)
+        }),
     ]);
     specs
 }
@@ -1131,6 +1136,7 @@ pub struct SettingsService {
     control: Arc<ControlService>,
     memory: Arc<MemoryService>,
     registry: RegistryHandle,
+    worktrees: Arc<WorktreeService>,
     /// One edit of the file at a time.
     write: Mutex<()>,
 }
@@ -1145,6 +1151,7 @@ pub struct Targets {
     pub control: Arc<ControlService>,
     pub memory: Arc<MemoryService>,
     pub registry: RegistryHandle,
+    pub worktrees: Arc<WorktreeService>,
 }
 
 impl SettingsService {
@@ -1165,6 +1172,7 @@ impl SettingsService {
             control: targets.control,
             memory: targets.memory,
             registry: targets.registry,
+            worktrees: targets.worktrees,
             write: Mutex::new(()),
         })
     }
@@ -1183,6 +1191,7 @@ impl SettingsService {
         };
         running.tasks.max_parallel = self.tasks.max_parallel();
         running.gateway.max_context_chars = self.registry.chats().max_context_chars();
+        running.finish.push = self.worktrees.finish_push();
         running
     }
 
@@ -1304,6 +1313,7 @@ impl SettingsService {
                 .registry
                 .chats()
                 .set_max_context_chars(fresh.gateway.max_context_chars),
+            Group::Finish => self.worktrees.set_finish_push(fresh.finish.push),
         }
         Ok(())
     }
@@ -1398,6 +1408,7 @@ mod tests {
             tasks,
             projects,
             control,
+            finish,
         } = Config::default();
         let config::HistorySettings {
             enabled: _,
@@ -1471,6 +1482,7 @@ mod tests {
             mcp: _,
             approval_timeout_secs: _,
         } = control;
+        let config::FinishSettings { push: _ } = finish;
 
         let in_table: std::collections::BTreeSet<&str> = SPECS.iter().map(|s| s.key).collect();
         // Every key a field maps to (the permission tables share four names; the harness
@@ -1511,6 +1523,7 @@ mod tests {
             "control.agents",
             "control.mcp",
             "control.approval_timeout_secs",
+            "finish.push",
         ]
         .map(str::to_owned)
         .into();

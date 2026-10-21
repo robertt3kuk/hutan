@@ -220,7 +220,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "notify.mute",
             "chat.retry",
             "worktree.index",
-            "chat.mode"
+            "chat.mode",
+            "finish"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);
