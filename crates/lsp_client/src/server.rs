@@ -414,14 +414,13 @@ impl Server {
     }
 
     /// Stops the server (`shutdown`, `exit`, then its group is killed if it lingers) and
-    /// returns once it is `stopped`.
+    /// returns once it is `stopped`. A `failed` server becomes `stopped` too.
     pub async fn stop(&self) {
-        if self.stop.try_send(()).is_err() && self.supervisor.is_finished() {
-            // The supervisor is done (`failed`): nothing runs; record the user's decision.
-            self.shared.set_state(ServerState::Stopped);
-        }
-        self.wait_for(|s| s.state.is_final()).await;
-        if self.status().state == ServerState::Failed && self.supervisor.is_finished() {
+        // Full: a stop is already on its way; closed: the supervisor is done (`failed`).
+        let _ = self.stop.try_send(());
+        let status = self.wait_for(|s| s.state.is_final()).await;
+        if status.state == ServerState::Failed {
+            // The supervisor returns right after `failed`: nothing runs any more.
             self.shared.set_state(ServerState::Stopped);
         }
     }
