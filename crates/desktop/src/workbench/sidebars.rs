@@ -161,12 +161,13 @@ impl Workbench {
                 selected: self.state.active_center_item().as_ref() == Some(&home),
             });
         }
-        // Whatever else the user keeps in the left dock stays reachable.
+        // Whatever else the user keeps in the left dock stays reachable. Files (E-13a) has its
+        // keys and commands (⌘⇧E, ⌘P), so its row shows only while its page is the one shown.
         for panel in &dock.panels {
             let named = matches!(
                 panel.as_str(),
                 "sessions" | "tasks" | "assistant" | super::model::AGENTS_PAGE
-            );
+            ) || (panel.as_str() == "files" && !selected("files"));
             if named {
                 continue;
             }

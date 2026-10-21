@@ -155,7 +155,10 @@ fn default_presets() -> Vec<LayoutPreset> {
 fn default_state_is_valid() {
     let state = WorkbenchState::default();
     check(&state);
-    assert_eq!(state.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert_eq!(
+        state.docks.left.panels,
+        ids(&["sessions", "tasks", "files"])
+    );
     assert_eq!(state.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(
         state.docks.right.panels,
@@ -552,7 +555,7 @@ fn panel_dock_to_center_and_back() {
         .move_panel(&PanelId::new("sessions"), PanelDest::Center)
         .unwrap();
     check(&state);
-    assert_eq!(state.docks.left.panels, ids(&["tasks"]));
+    assert_eq!(state.docks.left.panels, ids(&["tasks", "files"]));
     assert!(
         state
             .active_pane()
@@ -568,7 +571,10 @@ fn panel_dock_to_center_and_back() {
         )
         .unwrap();
     check(&state);
-    assert_eq!(state.docks.left.panels, ids(&["tasks", "sessions"]));
+    assert_eq!(
+        state.docks.left.panels,
+        ids(&["tasks", "files", "sessions"])
+    );
     assert_eq!(sorted_items(&state), before);
 }
 
@@ -602,7 +608,7 @@ fn dock_reorder() {
     state.open_panel(&PanelId::new("notifications"), DockPosition::Left);
     assert_eq!(
         state.docks.left.panels,
-        ids(&["sessions", "tasks", "notifications"])
+        ids(&["sessions", "tasks", "files", "notifications"])
     );
     state
         .move_item(
@@ -619,7 +625,7 @@ fn dock_reorder() {
     check(&state);
     assert_eq!(
         state.docks.left.panels,
-        ids(&["notifications", "sessions", "tasks"])
+        ids(&["notifications", "sessions", "tasks", "files"])
     );
     assert_eq!(state.docks.left.active, Some(PanelId::new("notifications")));
 }
@@ -1599,20 +1605,22 @@ fn builtin_presets_place_the_pages_and_the_strip_and_never_the_assistant() {
     let more = ids(&["inspector", "resources"]);
 
     let default = by("default");
-    assert_eq!(default.docks.left.panels, ids(&["sessions", "tasks"]));
+    let pages = ids(&["sessions", "tasks", "files"]);
+    assert_eq!(default.docks.left.panels, pages);
+    assert_eq!(default.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(default.docks.right.panels, strip);
     assert_eq!(default.docks.right.more, more);
     assert!(default.docks.left.visible && default.docks.right.visible);
     assert!(default.docks.bottom.panels.is_empty() && !default.docks.bottom.visible);
 
     let focus = by("focus");
-    assert_eq!(focus.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert_eq!(focus.docks.left.panels, pages);
     assert_eq!(focus.docks.right.panels, strip);
     assert!(!focus.docks.left.visible && !focus.docks.right.visible && focus.zoom_active);
 
     // The overview shows the board in the center; the left nav has no second copy of it.
     let overview = by("overview");
-    assert_eq!(overview.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert_eq!(overview.docks.left.panels, pages);
     assert_eq!(overview.docks.right.panels, strip);
     assert_eq!(
         overview.center,

@@ -62,13 +62,16 @@ impl LayoutPreset {
         }
     }
 
-    /// `sessions` (Projects) and `tasks` as pages of the left sidebar (Agents is a page of the
-    /// center, not of the sidebar); the right rail of [`Self::right`]; the bottom dock hidden
-    /// and empty; center untouched.
+    /// The pages of the left sidebar in every built-in preset: Projects (shown), Tasks, Files.
+    const LEFT_PAGES: [&'static str; 3] = ["sessions", "tasks", "files"];
+
+    /// `sessions` (Projects), `tasks` and `files` as pages of the left sidebar (Agents is a
+    /// page of the center, not of the sidebar); the right rail of [`Self::right`]; the bottom
+    /// dock hidden and empty; center untouched.
     pub fn default_preset() -> Self {
         Self {
             name: Self::DEFAULT.to_owned(),
-            docks: Self::docks(Self::left(true, &["sessions", "tasks"]), Self::right(true)),
+            docks: Self::docks(Self::left(true, &Self::LEFT_PAGES), Self::right(true)),
             center: CenterLayout::Keep,
             zoom_active: false,
         }
@@ -78,10 +81,7 @@ impl LayoutPreset {
     pub fn focus_preset() -> Self {
         Self {
             name: Self::FOCUS.to_owned(),
-            docks: Self::docks(
-                Self::left(false, &["sessions", "tasks"]),
-                Self::right(false),
-            ),
+            docks: Self::docks(Self::left(false, &Self::LEFT_PAGES), Self::right(false)),
             center: CenterLayout::Keep,
             zoom_active: true,
         }
@@ -92,7 +92,7 @@ impl LayoutPreset {
     pub fn overview_preset() -> Self {
         Self {
             name: Self::OVERVIEW.to_owned(),
-            docks: Self::docks(Self::left(true, &["sessions", "tasks"]), Self::right(true)),
+            docks: Self::docks(Self::left(true, &Self::LEFT_PAGES), Self::right(true)),
             center: CenterLayout::Items(vec![ItemRef::panel(AGENTS_PAGE)]),
             zoom_active: false,
         }
