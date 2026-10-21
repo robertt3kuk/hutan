@@ -2290,3 +2290,43 @@ fn a_version_4_layout_keeps_its_panels_widths_and_visible_or_hidden_choice() {
     assert_eq!(migrated.docks.right.size, 480.0);
     assert_eq!(migrated.docks.left.size, 220.0);
 }
+
+#[test]
+fn a_file_tab_is_stored_so_that_older_binaries_read_a_placeholder() {
+    let file = ItemRef::file("/work/src/lib.rs");
+    let json = serde_json::to_value(&file).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({"placeholder": {"title": "lib.rs", "file": "/work/src/lib.rs"}})
+    );
+    // This binary reads it back as the file tab.
+    assert_eq!(
+        serde_json::from_value::<ItemRef>(json.clone()).unwrap(),
+        file
+    );
+    // A binary from before file tabs knows only `placeholder { title }`: unknown fields are
+    // ignored by serde, so it restores a placeholder titled with the file's name.
+    #[derive(serde::Deserialize, Debug, PartialEq)]
+    #[serde(rename_all = "snake_case")]
+    enum OldItem {
+        Placeholder { title: String },
+    }
+    assert_eq!(
+        serde_json::from_value::<OldItem>(json).unwrap(),
+        OldItem::Placeholder {
+            title: "lib.rs".into()
+        }
+    );
+    // A plain placeholder keeps its old shape.
+    assert_eq!(
+        serde_json::to_value(item("Notes")).unwrap(),
+        serde_json::json!({"placeholder": {"title": "Notes"}})
+    );
+}
+
+#[test]
+fn a_tab_kind_of_a_newer_binary_becomes_a_placeholder() {
+    let unknown: ItemRef =
+        serde_json::from_value(serde_json::json!({"notebook": {"path": "/x.ipynb"}})).unwrap();
+    assert!(matches!(unknown, ItemRef::Placeholder { .. }));
+}

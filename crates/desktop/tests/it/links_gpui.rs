@@ -86,23 +86,38 @@ fn a_clicked_file_opens_with_the_system_by_default(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn terminal_open_files_with_editor_is_honoured(cx: &mut TestAppContext) {
+fn terminal_open_files_with_editor_opens_the_file_in_a_tab(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
-    let (_view, cx, terminal, opened) =
+    let (view, cx, terminal, opened) =
         open_terminal(cx, &daemon, "[terminal]\nopen_files_with = \"editor\"\n");
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("lib.rs");
-    std::fs::write(&file, "").unwrap();
+    let text: String = (1..=200).map(|n| format!("// line {n}\n")).collect();
+    std::fs::write(&file, text).unwrap();
     click(
         &terminal,
         cx,
         LinkTarget::File {
             path: file.clone(),
-            line: None,
-            column: None,
+            line: Some(150),
+            column: Some(4),
         },
     );
-    assert_eq!(*opened.borrow(), [(file, OpenFilesWith::Editor)]);
+    let canonical = file.canonicalize().unwrap().display().to_string();
+    wait_until(cx, "the file's tab with its text", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.focused_file_view().is_some_and(|v| {
+                let buffer = v.read(cx).buffer().read(cx);
+                buffer.is_ready() && buffer.path().display().to_string() == canonical
+            })
+        })
+    });
+    assert!(opened.borrow().is_empty(), "the system opener is not used");
+    let position = view.read_with(cx, |wb, cx| {
+        let v = wb.focused_file_view().unwrap();
+        v.read(cx).code().read(cx).position(cx)
+    });
+    assert_eq!(position, (150, 4), "the clicked line and column are shown");
 }
 
 #[gpui::test]

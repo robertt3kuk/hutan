@@ -12,6 +12,7 @@ mod daemon_gpui;
 mod daemon_settings_gpui;
 mod direct_gpui;
 mod dock_gpui;
+mod editor_gpui;
 mod fx1_gpui;
 mod harness_gpui;
 mod history_catalog_gpui;

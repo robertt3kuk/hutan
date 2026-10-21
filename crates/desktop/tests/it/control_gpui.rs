@@ -535,6 +535,9 @@ fn arguments_for(
             json!(session.to_string())
         } else if action.id == "workbench::OpenWorkspace" && key == "id" {
             json!(workspace.to_string())
+        } else if action.id == "workbench::OpenFile" && key == "path" {
+            // Opening runs after the dispatch; a file outside the roots ends in a notice.
+            json!("/nonexistent/hutan/lib.rs")
         } else {
             return Err(format!("no way to supply `{key}`"));
         };

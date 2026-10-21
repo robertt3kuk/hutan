@@ -470,14 +470,26 @@ impl Workbench {
         })
     }
 
+    /// The file of `path` in a new split of `pane` at `edge`: a second view of the same buffer.
+    pub fn open_file_in_split(
+        &mut self,
+        pane: PaneId,
+        path: &str,
+        edge: Edge,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let item = ItemRef::file(path);
+        self.try_mutate(cx, |s| s.split_pane(pane, edge, item));
+        self.focus_root(window, cx);
+    }
+
     /// Entries of a file tab's menu: the same file in a new split (one buffer, two views), and
     /// its path.
     pub(crate) fn file_tab_entries(&self, pane: PaneId, path: &str) -> Vec<MenuEntry> {
         let split = |label: &'static str, edge: Edge, path: String| {
             Self::entry(label, move |this, window, cx| {
-                let item = ItemRef::file(path.clone());
-                this.try_mutate(cx, |s| s.split_pane(pane, edge, item));
-                this.focus_root(window, cx);
+                this.open_file_in_split(pane, &path, edge, window, cx);
             })
         };
         let copy = path.to_owned();
