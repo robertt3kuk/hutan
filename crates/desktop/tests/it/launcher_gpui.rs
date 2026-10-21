@@ -325,9 +325,9 @@ fn the_sheet_opens_from_each_entry_point_with_the_right_project(cx: &mut TestApp
     assert_eq!(launcher_project(&view, cx), Some(env.web_id));
     cx.simulate_keystrokes("escape");
 
-    // The sidebar header's ▶ Start takes the project in focus.
-    click(&view, cx, Region::SidebarControl("start"));
-    assert!(launcher_open(&view, cx), "from the sidebar header");
+    // The sidebar toolbar's ＋ Start takes the project in focus.
+    click(&view, cx, Region::Toolbar("start"));
+    assert!(launcher_open(&view, cx), "from the sidebar toolbar");
     assert_eq!(launcher_project(&view, cx), Some(env.api_id));
     cx.simulate_keystrokes("escape");
 

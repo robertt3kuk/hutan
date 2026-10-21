@@ -95,22 +95,16 @@ fn a_themed_dock_control_paints_the_user_svg_and_keeps_its_behavior(cx: &mut Tes
         "keyboard expands"
     );
 
-    // The themed nav search control still opens the jump palette; Escape still closes it.
-    let nav = |view: &gpui::Entity<hutan_desktop::workbench::Workbench>,
-               cx: &gpui::VisualTestContext| {
-        view.read_with(cx, |wb, _| wb.region_bounds(Region::Nav("search")))
-            .unwrap()
-    };
-    let search = nav(&view, cx);
-    cx.simulate_click(search.center(), Modifiers::none());
+    // The jump palette (the Search row is gone: the filter field and ⌘P) opens from its action
+    // and Escape closes it.
+    cx.dispatch_action(hutan_desktop::workbench::actions::OpenJump);
     assert!(
         view.read_with(cx, |wb, _| wb.picker().is_some()),
-        "click opens search"
+        "the action opens search"
     );
     cx.simulate_keystrokes("escape");
     draw(cx);
     assert!(view.read_with(cx, |wb, _| wb.picker().is_none()));
-    assert_eq!(search.size, nav(&view, cx).size, "same hit target");
 
     // The themed close control of a tab still closes exactly its tab.
     view.update(cx, |wb, cx| {

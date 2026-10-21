@@ -55,7 +55,7 @@ fn the_window_title_follows_the_center_item_never_a_sidebar_page(cx: &mut TestAp
     assert_eq!(cx.window_title().as_deref(), Some("Welcome — Hutan"));
 
     // Left pages: Tasks, then the Assistant.
-    click(&view, cx, Region::Nav("tasks"));
+    cx.dispatch_action(hutan_desktop::workbench::actions::OpenPanel("tasks".into()));
     common::draw(cx);
     assert_eq!(
         view.read_with(cx, |wb, _| wb.state().focus),
@@ -104,14 +104,12 @@ fn nav_rows_are_thirty_pixels_with_a_real_icon(cx: &mut TestAppContext) {
     assert_eq!(
         icons,
         [
-            ("search".to_owned(), Icon::NavSearch),
-            ("tasks".to_owned(), Icon::NavTasks),
             ("agents".to_owned(), Icon::NavAgents),
             ("assistant".to_owned(), Icon::NavMawas),
         ]
     );
     let mut previous_bottom = None;
-    for key in ["search", "tasks", "agents", "assistant"] {
+    for key in ["agents", "assistant"] {
         let row = bounds(&view, cx, Region::Nav(key));
         let height = f32::from(row.size.height);
         assert!(

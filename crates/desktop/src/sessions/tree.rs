@@ -9,6 +9,7 @@ use std::path::Path;
 use hutan_core::WorkspaceId;
 use hutan_protocol::messages::{SessionInfo, WorkspaceInfo, WorkspaceKind};
 
+use super::placement::{PlacementBadge, row_placement_badge};
 use super::workspaces as order;
 use crate::settings::{SidebarOrganize, WorkspaceSort, WorkspacesSettings};
 
@@ -262,6 +263,65 @@ pub fn folder_label(path: &Path) -> String {
 /// else the folder it started in.
 pub fn session_folder(session: &SessionInfo) -> Option<&Path> {
     session.folder.as_deref().or(session.cwd.as_deref())
+}
+
+/// The second line of a session row. A row is one line (state lane, kind icon, title, age); this
+/// line exists only when it says something the line above and the parent project row do not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subtitle {
+    /// The container the session sits in: only where the row is away from its parent project
+    /// row (Needs you, a flat list).
+    pub container: Option<String>,
+    /// The live folder's last two parts, only when the session has left the checkout it belongs
+    /// to (its placement's root, else its project's).
+    pub folder: Option<String>,
+    /// The placement badge, only when the session is not in the main checkout (or shares it).
+    pub badge: Option<PlacementBadge>,
+}
+
+/// What [`subtitle`] decides from.
+#[derive(Debug, Clone, Copy)]
+pub struct SubtitleInputs<'a> {
+    /// The row is not under its project row (the Needs you group, a flat list), so the project
+    /// is part of what it says.
+    pub away_from_parent: bool,
+    /// The name of the container the session sits in.
+    pub container_name: Option<&'a str>,
+    /// The root folder of the project the session sits in.
+    pub project_root: Option<&'a Path>,
+    /// `panels.sessions.row` lists `folder`.
+    pub show_folder: bool,
+    /// `panels.sessions.row` lists `placement`.
+    pub show_placement: bool,
+}
+
+/// The second line of `session`'s row, `None` for a one-line row.
+pub fn subtitle(session: &SessionInfo, inputs: SubtitleInputs<'_>) -> Option<Subtitle> {
+    let badge = inputs
+        .show_placement
+        .then(|| row_placement_badge(session))
+        .flatten();
+    let folder = inputs
+        .show_folder
+        .then(|| {
+            let live = session_folder(session)?;
+            let home = session
+                .placement
+                .as_ref()
+                .map(|p| p.root.as_path())
+                .or(inputs.project_root)?;
+            (!live.starts_with(home)).then(|| folder_label(live))
+        })
+        .flatten();
+    let container = inputs
+        .away_from_parent
+        .then(|| inputs.container_name.map(str::to_owned))
+        .flatten();
+    (badge.is_some() || folder.is_some() || container.is_some()).then_some(Subtitle {
+        container,
+        folder,
+        badge,
+    })
 }
 
 #[cfg(test)]
@@ -648,6 +708,136 @@ mod tests {
         assert_eq!(folder_label(Path::new("/")), "/");
         if let Some(home) = std::env::home_dir() {
             assert_eq!(folder_label(&home), "~");
+        }
+    }
+
+    fn placed(
+        mut info: SessionInfo,
+        kind: hutan_protocol::worktree::PlacementKind,
+        root: &str,
+        shared: usize,
+    ) -> SessionInfo {
+        info.placement = Some(hutan_protocol::worktree::Placement {
+            kind,
+            root: root.into(),
+            branch: Some("topic".to_owned()),
+            shared_with: (0..shared).map(|_| hutan_core::SessionId::new()).collect(),
+        });
+        info
+    }
+
+    fn inputs<'a>(away: bool, root: Option<&'a Path>) -> SubtitleInputs<'a> {
+        SubtitleInputs {
+            away_from_parent: away,
+            container_name: Some("api"),
+            project_root: root,
+            show_folder: true,
+            show_placement: true,
+        }
+    }
+
+    #[test]
+    fn a_session_in_the_main_checkout_under_its_project_is_one_line() {
+        use hutan_protocol::worktree::PlacementKind;
+        let api = project("api", 0);
+        let mut main = placed(session("s", &api), PlacementKind::Main, "/work/api", 0);
+        main.folder = Some("/work/api/src".into());
+        assert_eq!(
+            subtitle(&main, inputs(false, Some(Path::new("/work/api")))),
+            None
+        );
+        assert_eq!(subtitle(&session("plain", &api), inputs(false, None)), None);
+    }
+
+    #[test]
+    fn a_worktree_session_adds_its_badge_and_nothing_else() {
+        use hutan_protocol::worktree::PlacementKind;
+        let api = project("api", 0);
+        let mut wt = placed(session("s", &api), PlacementKind::Worktree, "/wt/topic", 0);
+        wt.folder = Some("/wt/topic/src".into());
+        let line = subtitle(&wt, inputs(false, Some(Path::new("/work/api")))).unwrap();
+        assert_eq!(
+            line.badge.as_ref().map(|b| b.text.as_str()),
+            Some("wt topic")
+        );
+        assert_eq!((line.container, line.folder), (None, None));
+    }
+
+    #[test]
+    fn a_shared_main_checkout_keeps_its_warning_on_the_second_line() {
+        use hutan_protocol::worktree::PlacementKind;
+        let api = project("api", 0);
+        let shared = placed(session("s", &api), PlacementKind::Main, "/work/api", 2);
+        let badge = subtitle(&shared, inputs(false, None))
+            .unwrap()
+            .badge
+            .unwrap();
+        assert!(badge.shared);
+    }
+
+    #[test]
+    fn a_session_that_left_its_checkout_names_the_folder() {
+        use hutan_protocol::worktree::PlacementKind;
+        let api = project("api", 0);
+        let mut away = placed(session("s", &api), PlacementKind::Main, "/work/api", 0);
+        away.folder = Some("/tmp/scratch".into());
+        let line = subtitle(&away, inputs(false, None)).unwrap();
+        assert_eq!(line.folder.as_deref(), Some("tmp/scratch"));
+        // Without a checkout, the project's root is where it belongs.
+        let mut bare = session("b", &api);
+        bare.cwd = Some("/work/api/tools".into());
+        assert_eq!(
+            subtitle(&bare, inputs(false, Some(Path::new("/work/api")))),
+            None
+        );
+        bare.cwd = Some("/elsewhere/x".into());
+        assert_eq!(
+            subtitle(&bare, inputs(false, Some(Path::new("/work/api"))))
+                .unwrap()
+                .folder
+                .as_deref(),
+            Some("elsewhere/x")
+        );
+    }
+
+    #[test]
+    fn a_row_away_from_its_project_names_the_project() {
+        let api = project("api", 0);
+        let line = subtitle(&session("s", &api), inputs(true, None)).unwrap();
+        assert_eq!(line.container.as_deref(), Some("api"));
+        assert_eq!((line.folder, line.badge), (None, None));
+    }
+
+    #[test]
+    fn the_row_fields_the_user_dropped_stay_dropped() {
+        use hutan_protocol::worktree::PlacementKind;
+        let api = project("api", 0);
+        let mut wt = placed(session("s", &api), PlacementKind::Worktree, "/wt/topic", 0);
+        wt.folder = Some("/tmp/x".into());
+        let quiet = SubtitleInputs {
+            show_folder: false,
+            show_placement: false,
+            ..inputs(false, None)
+        };
+        assert_eq!(subtitle(&wt, quiet), None);
+    }
+
+    #[test]
+    fn no_workspace_means_no_workspace_header_and_no_label() {
+        let solo = project("solo", 0);
+        let home = container("Home", WorkspaceKind::Home, 1);
+        let world = World {
+            sessions: vec![session("a", &solo), session("b", &home)],
+            all: vec![solo, home],
+        };
+        for organize in [SidebarOrganize::Workspaces, SidebarOrganize::Projects] {
+            let tree = world.tree(organize, "");
+            assert!(
+                tree.nodes
+                    .iter()
+                    .all(|n| matches!(n, Node::Project(_) | Node::Home(_))),
+                "{organize:?}: only projects and Home"
+            );
         }
     }
 }

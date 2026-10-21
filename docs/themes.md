@@ -529,6 +529,7 @@ Generated from `IconId::ALL`; a drift test enforces this list. Offline schema: `
 - `state.stopped`
 - `state.unknown`
 - `state.unread`
+- `state.muted`
 - `state.approval`
 - `status.approvals`
 - `state.question`

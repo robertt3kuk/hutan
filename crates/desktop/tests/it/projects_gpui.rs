@@ -576,40 +576,46 @@ fn sidebar_organize_is_on_the_projects_sidebar_page_and_changes_the_sidebar(
 }
 
 #[gpui::test]
-fn session_rows_show_the_live_folder_and_the_placement_badge(cx: &mut TestAppContext) {
+fn session_rows_are_one_line_and_only_a_checkout_that_is_news_adds_a_second(
+    cx: &mut TestAppContext,
+) {
     let w = World::new();
     let (view, cx) = w.synced(cx, None);
     let panel = panel(&view, cx);
     let listed = rows(&panel, cx);
 
+    // The main checkout is where a project's sessions are: nothing to say.
     let main = row(&listed, "s-main");
-    assert_eq!(main.folder, Some(folder_label(&w.folders.api)));
-    assert_eq!(main.badge.as_deref(), Some("main"));
-    assert!(!main.shared);
-    let wt = row(&listed, "s-wt");
     assert_eq!(
-        wt.folder,
-        Some(folder_label(&w.folders.api_wt)),
-        "the worktree's folder"
+        (main.folder.as_deref(), main.badge.as_deref()),
+        (None, None)
     );
-    assert!(wt.folder.as_deref().unwrap().ends_with("api-wt/topic"));
+    assert!(main.subtitle.is_none(), "one line");
+    assert!(!main.shared);
+    // A linked worktree is news: its badge, and only that (its folder is in the tooltip).
+    let wt = row(&listed, "s-wt");
     assert_eq!(wt.badge.as_deref(), Some("wt topic"));
+    assert_eq!(
+        wt.folder, None,
+        "the folder is inside the checkout it belongs to"
+    );
+    assert!(wt.subtitle.is_some());
+    // A folder outside git has no placement and sits in its project's folder.
     let notes = row(&listed, "s-notes");
-    assert_eq!(notes.folder, Some(folder_label(&w.folders.notes)));
-    assert_eq!(notes.badge, None, "a folder outside git has no placement");
-    // Every session row draws its badge; the tooltip's text comes from the badge.
-    for id in [w.s_main.id, w.s_wt.id] {
-        wait_until(cx, "the row badge", |cx| {
-            view.read_with(cx, |wb, _| {
-                wb.region_bounds(Region::PlacementBadge(BadgeSite::Row, id))
-                    .is_some()
-            })
-        });
+    assert!(notes.subtitle.is_none() && notes.badge.is_none());
+    // Only the worktree draws a badge.
+    wait_until(cx, "the worktree's badge", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::PlacementBadge(BadgeSite::Row, w.s_wt.id))
+                .is_some()
+        })
+    });
+    for id in [w.s_main.id, w.s_notes.id] {
+        assert!(view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::PlacementBadge(BadgeSite::Row, id))
+                .is_none()
+        }));
     }
-    assert!(view.read_with(cx, |wb, _| {
-        wb.region_bounds(Region::PlacementBadge(BadgeSite::Row, w.s_notes.id))
-            .is_none()
-    }));
 
     // Two agents in one checkout: the badge turns into a warning.
     let omp = Reporter::new(w.s_main.id, "omp-extension", "omp");
@@ -627,6 +633,11 @@ fn session_rows_show_the_live_folder_and_the_placement_badge(cx: &mut TestAppCon
     });
     let listed = rows(&panel, cx);
     assert!(row(&listed, "s-other").shared);
+    assert_eq!(
+        row(&listed, "s-main").badge.as_deref(),
+        Some("main"),
+        "a shared main checkout keeps its warning badge"
+    );
     assert!(!row(&listed, "s-wt").shared, "another checkout");
 }
 

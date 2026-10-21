@@ -361,6 +361,44 @@ fn an_empty_panel_shows_the_mascot_and_offers_a_new_task(cx: &mut TestAppContext
     });
 }
 
+fn nav_keys(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<String> {
+    view.read_with(cx, |wb, cx| {
+        wb.nav_entries(cx).into_iter().map(|e| e.key).collect()
+    })
+}
+
+#[gpui::test]
+fn the_tasks_nav_row_appears_with_the_first_task_and_goes_with_the_last(cx: &mut TestAppContext) {
+    let env = Env::new();
+    let (view, cx) = open(cx, &env);
+    draw(cx);
+    assert!(
+        !nav_keys(&view, cx).contains(&"tasks".to_owned()),
+        "no task, no row: {:?}",
+        nav_keys(&view, cx)
+    );
+    assert!(region(&view, cx, Region::Nav("tasks")).is_none());
+
+    let first = env.plain("Build", &[]);
+    wait_until(cx, "the Tasks row to reveal itself", |cx| {
+        nav_keys(&view, cx).first().map(String::as_str) == Some("tasks")
+    });
+    draw(cx);
+    assert!(region(&view, cx, Region::Nav("tasks")).is_some());
+    // Agents is still there, after it.
+    assert_eq!(nav_keys(&view, cx)[..2], ["tasks", "agents"]);
+
+    let _: hutan_protocol::task::TaskDeleted =
+        env.daemon
+            .call(Request::TaskDelete(hutan_protocol::task::TaskDelete {
+                id: first.id,
+                cascade: false,
+            }));
+    wait_until(cx, "the Tasks row to go with the last task", |cx| {
+        !nav_keys(&view, cx).contains(&"tasks".to_owned())
+    });
+}
+
 #[gpui::test]
 fn the_palette_has_the_task_and_review_commands(cx: &mut TestAppContext) {
     let env = Env::new();

@@ -351,6 +351,7 @@ fn the_sort_menu_lists_modes_and_filters_with_their_state(cx: &mut TestAppContex
             "Always Show Where You Are",
             "Organize: Workspaces → Projects",
             "Organize: Projects",
+            "Projects Sidebar Settings…",
         ]
     );
     let checked: Vec<&str> = menu

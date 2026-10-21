@@ -159,11 +159,13 @@ pub fn recovery_chip(
     cx: &App,
 ) -> AnyElement {
     let tokens = UiStyle::get(cx).density.ui();
-    let color = match chip.tone {
-        hutan_client::recovery::ChipTone::Info => theme.accent,
-        hutan_client::recovery::ChipTone::Warn => theme.warning,
-    };
     if compact {
+        // Quiet: a restart that went as planned is a muted glyph; only a session that needs a
+        // look is a warning.
+        let color = match chip.tone {
+            hutan_client::recovery::ChipTone::Info => theme.muted,
+            hutan_client::recovery::ChipTone::Warn => theme.warning,
+        };
         // A glyph instead of a word, so a sidebar full of restarted sessions keeps their titles
         // readable; the tooltip has the word and the sentence.
         let tip = SharedString::from(format!("{}: {}", chip.label, chip.detail));
@@ -182,6 +184,10 @@ pub fn recovery_chip(
             .child(probe(regions, Region::RecoveryChip(site, session)))
             .into_any_element();
     }
+    let color = match chip.tone {
+        hutan_client::recovery::ChipTone::Info => theme.accent,
+        hutan_client::recovery::ChipTone::Warn => theme.warning,
+    };
     let tip = SharedString::from(chip.detail.clone());
     div()
         .id(SharedString::from(format!("recovery-chip-{session}")))
@@ -339,6 +345,27 @@ pub fn panel_header_with(
     let style = UiStyle::get(cx);
     let tokens = style.density.ui();
     let hover = style.theme.surface_hover;
+    let gear = div()
+        .id(SharedString::from(format!("gear-{namespace}")))
+        .flex_none()
+        .px(px(tokens.spacing * 1.5))
+        .rounded(px(tokens.radius))
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(move |_, window, cx| {
+            window.dispatch_action(Box::new(OpenSettingsFor(namespace.to_owned())), cx);
+        })
+        .child(icon(Icon::ActionSettings, 14.0, style.theme.muted))
+        .into_any_element();
+    panel_header_controls(title, extra.into_iter().chain([gear]).collect(), cx)
+}
+
+/// A panel header with exactly the `controls` on its right (the Projects header's `＋ ⋯`: its
+/// settings are an entry of the `⋯` menu, not a ⚙ of their own).
+pub fn panel_header_controls(title: &str, controls: Vec<AnyElement>, cx: &App) -> AnyElement {
+    let style = UiStyle::get(cx);
+    let tokens = style.density.ui();
     div()
         .flex()
         .flex_none()
@@ -361,24 +388,7 @@ pub fn panel_header_with(
                 .min_w_0()
                 .items_center()
                 .gap(px(tokens.spacing))
-                .children(extra)
-                .child(
-                    div()
-                        .id(SharedString::from(format!("gear-{namespace}")))
-                        .flex_none()
-                        .px(px(tokens.spacing * 1.5))
-                        .rounded(px(tokens.radius))
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(hover))
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(move |_, window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenSettingsFor(namespace.to_owned())),
-                                cx,
-                            );
-                        })
-                        .child(icon(Icon::ActionSettings, 14.0, style.theme.muted)),
-                ),
+                .children(controls),
         )
         .into_any_element()
 }

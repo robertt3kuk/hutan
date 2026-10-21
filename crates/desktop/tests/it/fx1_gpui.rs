@@ -198,19 +198,22 @@ fn a_press_on_the_left_dock_edge_at_a_nav_row_does_not_click_the_row(cx: &mut Te
     let (view, cx) = open(cx, &daemon);
     settle(cx);
     let dock = bounds(&view, cx, Region::Dock(DockPosition::Left));
-    let search = bounds(&view, cx, Region::Nav("search"));
-    let edge = point(dock.right() - px(1.5), search.center().y);
+    let agents = bounds(&view, cx, Region::Nav("agents"));
+    let edge = point(dock.right() - px(1.5), agents.center().y);
+    let agents_page = hutan_desktop::workbench::model::ItemRef::panel("agents-dashboard");
     cx.simulate_click(edge, Modifiers::none());
     settle(cx);
     assert!(
-        view.read_with(cx, |wb, _| wb.picker().is_none()),
-        "the Search row was clicked through the dock edge"
+        view.read_with(cx, |wb, _| wb.state().active_center_item()
+            != Some(agents_page.clone())),
+        "the Agents row was clicked through the dock edge"
     );
     let before = size(&view, cx, DockPosition::Left);
     drag(cx, edge, edge + point(px(-35.0), px(0.0)));
     settle(cx);
     assert!((size(&view, cx, DockPosition::Left) - before + 35.0).abs() < 1.0);
-    assert!(view.read_with(cx, |wb, _| wb.picker().is_none()));
+    assert!(view.read_with(cx, |wb, _| wb.state().active_center_item()
+        != Some(agents_page)));
 }
 
 /// The sidebar's list is a cached view: widening the dock must lay its rows out at the new width

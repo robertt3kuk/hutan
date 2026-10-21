@@ -76,6 +76,7 @@ root = true
 "state.stopped" = "stop-circle.svg"
 "state.unknown" = "question.svg"
 "state.unread" = "circle.svg"
+"state.muted" = "bell-slash.svg"
 "state.approval" = "hand-palm.svg"
 "status.approvals" = "hand-palm.svg"
 "state.question" = "question.svg"

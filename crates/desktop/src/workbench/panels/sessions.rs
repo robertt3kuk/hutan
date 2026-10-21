@@ -1,14 +1,15 @@
 //! The `sessions` panel ("Projects"): user workspaces → their projects → sessions, the projects
 //! in no workspace, then Home (or a flat list of projects, `sidebar.organize`); sorted, pinned,
-//! filtered and searched; "Needs you" on top; every session row shows its live folder and its
-//! placement badge. Workspaces and projects are managed here: the "+" menu, drag a project onto a
+//! filtered and searched; "Needs you" on top. A session row is one line (state lane, kind icon,
+//! title, age, hover ×); a second line exists only when it says something new: the placement
+//! badge off the main checkout, the project of a row away from its project row, a folder the
+//! session left its checkout for. Workspaces and projects are managed here: the "+" menu, drag a project onto a
 //! workspace (or out, to "No workspace"), ⌘-click / ⇧-click to select projects, inline rename,
 //! context menus (`workbench/projects.rs` holds the verbs).
 
 use crate::theme::DensityExt as _;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,12 +24,14 @@ use hutan_core::{SessionId, WorkspaceId};
 use hutan_protocol::messages::{SessionInfo, WorkspaceInfo, WorkspaceKind};
 
 use super::common::{
-    age_label, agent_badge, kind_icon, panel_header_with, placement, placement_badge,
-    recovery_chip, state_dot, time_tooltip, tone_color,
+    age_label, agent_badge, kind_icon, panel_header_controls, placement, placement_badge,
+    recovery_chip, state_dot, time_tooltip,
 };
 use crate::icons::{Icon, icon};
 use crate::sessions::StoreChanged;
-use crate::sessions::tree::{self, Node, ProjectNode, folder_label, session_folder};
+use crate::sessions::tree::{
+    self, Node, ProjectNode, Subtitle, SubtitleInputs, folder_label, session_folder,
+};
 use crate::settings::{
     GroupBy, SessionsPanelSettings, SidebarSettings, WorkspaceSort, WorkspacesSettings,
 };
@@ -44,7 +47,7 @@ use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
 use crate::workbench::text_field::FieldRef;
-use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, Mascot, StyledExt as _};
+use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, StyledExt as _};
 use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
 use crate::workbench::{BadgeSite, DragPreview, Region};
 
@@ -53,8 +56,9 @@ const AGE_REFRESH: Duration = Duration::from_secs(30);
 
 /// Indent per level of the tree.
 const INDENT: f32 = 12.0;
-/// Orca's project card: the leading status lane is 20 px wide, titles are 13 px.
-const STATUS_LANE: f32 = 20.0;
+/// A session row's leading state lane is 16 px wide (the alignment spine of the tree), titles
+/// are 13 px.
+const STATUS_LANE: f32 = 16.0;
 const CARD_TITLE: f32 = 13.0;
 
 /// Hover fill of a card: the foreground at 4 % in light, the left sidebar's accent at 40 % in
@@ -103,9 +107,11 @@ pub struct SidebarRow {
     /// The name of a workspace, project or Home; the title of a session; the label of a
     /// section.
     pub title: String,
-    /// A project's root folder, or where a session is now (last two path parts).
+    /// A project's root folder; for a session the live folder (last two path parts), only when
+    /// it has left the checkout the session belongs to.
     pub folder: Option<String>,
-    /// A session's placement badge text (`main`, `wt <branch>`).
+    /// A session's placement badge text (`wt <branch>`), only off the main checkout (or while
+    /// the main checkout is shared).
     pub badge: Option<String>,
     /// The badge is drawn as a warning: another live agent works in the same checkout.
     pub shared: bool,
@@ -118,6 +124,13 @@ pub struct SidebarRow {
     pub active: bool,
     pub selected: bool,
     pub collapsed: bool,
+    /// A session's second line; `None` is a one-line row.
+    pub subtitle: Option<Subtitle>,
+    /// A session's state word when its lane shows a glyph (`None` while idle: the lane is
+    /// empty, the room stays).
+    pub state: Option<String>,
+    /// The session's notifications are muted (it wears the muted marker).
+    pub muted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -139,7 +152,8 @@ struct ContainerRow {
 struct SessionRow {
     info: SessionInfo,
     depth: usize,
-    in_needs_you: bool,
+    /// The row's second line, `None` for the one-line row.
+    subtitle: Option<Subtitle>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -381,6 +395,9 @@ impl SessionsPanel {
                         active: false,
                         selected: false,
                         collapsed: false,
+                        subtitle: None,
+                        state: None,
+                        muted: false,
                     },
                     Entry::NoWorkspace => SidebarRow {
                         kind: RowKind::NoWorkspace,
@@ -395,6 +412,9 @@ impl SessionsPanel {
                         active: false,
                         selected: false,
                         collapsed: false,
+                        subtitle: None,
+                        state: None,
+                        muted: false,
                     },
                     Entry::Container(row) => SidebarRow {
                         kind: match row.info.kind {
@@ -416,22 +436,28 @@ impl SessionsPanel {
                         active: self.is_active(&row.info, active, project),
                         selected: self.selection.contains(&row.info.id),
                         collapsed: self.collapsed.contains(&row.info.id),
+                        subtitle: None,
+                        state: None,
+                        muted: false,
                     },
                     Entry::Session(row) => {
-                        let badge = crate::sessions::placement_badge(&row.info);
+                        let badge = row.subtitle.as_ref().and_then(|s| s.badge.as_ref());
                         SidebarRow {
                             kind: RowKind::Session,
                             depth: row.depth,
                             title: row.info.title.clone(),
-                            folder: session_folder(&row.info).map(folder_label),
-                            shared: badge.as_ref().is_some_and(|b| b.shared),
-                            badge: badge.map(|b| b.text),
+                            folder: row.subtitle.as_ref().and_then(|s| s.folder.clone()),
+                            shared: badge.is_some_and(|b| b.shared),
+                            badge: badge.map(|b| b.text.clone()),
                             pinned: false,
                             count: None,
                             needs: 0,
                             active: false,
                             selected: store.focused() == Some(row.info.id),
                             collapsed: false,
+                            subtitle: row.subtitle.clone(),
+                            state: lane_word(&store.presentation(&row.info)),
+                            muted: row.info.muted,
                         }
                     }
                 })
@@ -729,6 +755,26 @@ impl SessionsPanel {
                             })
                 })
         };
+        // The second line of a row (`tree::subtitle`): `away` is a row that is not under its
+        // project row (Needs you, the flat lists).
+        let has = |field: &str| settings.row.iter().any(|f| f == field);
+        let (show_folder, show_placement) = (has("folder"), has("placement"));
+        let subtitle_of = |info: &SessionInfo, away: bool| {
+            let container = store.workspace(info.workspace_id);
+            tree::subtitle(
+                info,
+                SubtitleInputs {
+                    away_from_parent: away,
+                    container_name: container.map(|w| w.name.as_str()),
+                    project_root: container
+                        .filter(|w| w.kind == WorkspaceKind::Project)
+                        .and_then(crate::workbench::workspaces::project_root_of)
+                        .as_deref(),
+                    show_folder,
+                    show_placement,
+                },
+            )
+        };
         let mut entries = Vec::new();
         let (needing, rest): (Vec<&SessionInfo>, Vec<&SessionInfo>) = if settings.needs_you {
             store
@@ -752,13 +798,13 @@ impl SessionsPanel {
         if !needing.is_empty() {
             entries.push(Entry::Section {
                 key: SectionKey::NeedsYou,
-                title: format!("Needs you · {}", needing.len()),
+                title: "Needs you".to_owned(),
             });
             entries.extend(needing.into_iter().map(|info| {
                 Entry::Session(Box::new(SessionRow {
+                    subtitle: subtitle_of(info, true),
                     info: info.clone(),
                     depth: 0,
-                    in_needs_you: true,
                 }))
             }));
         }
@@ -771,9 +817,9 @@ impl SessionsPanel {
                     });
                     entries.extend(rest.into_iter().map(|info| {
                         Entry::Session(Box::new(SessionRow {
+                            subtitle: subtitle_of(info, true),
                             info: info.clone(),
                             depth: 0,
-                            in_needs_you: false,
                         }))
                     }));
                 }
@@ -797,9 +843,9 @@ impl SessionsPanel {
                     });
                     entries.extend(rows.into_iter().map(|info| {
                         Entry::Session(Box::new(SessionRow {
+                            subtitle: subtitle_of(info, true),
                             info: (*info).clone(),
                             depth: 0,
-                            in_needs_you: false,
                         }))
                     }));
                 }
@@ -818,7 +864,7 @@ impl SessionsPanel {
                     needs: &attention,
                     session_matches: &by_itself,
                 });
-                self.flatten(&built.nodes, &mut entries);
+                self.flatten(&built.nodes, &subtitle_of, &mut entries);
             }
         }
         let only_home = store.sessions().is_empty()
@@ -865,13 +911,18 @@ impl SessionsPanel {
     }
 
     /// The rows of the tree, honouring what the user folded.
-    fn flatten(&self, nodes: &[Node], entries: &mut Vec<Entry>) {
+    fn flatten(
+        &self,
+        nodes: &[Node],
+        subtitle_of: &dyn Fn(&SessionInfo, bool) -> Option<Subtitle>,
+        entries: &mut Vec<Entry>,
+    ) {
         let session = |entries: &mut Vec<Entry>, list: &[SessionInfo], depth: usize| {
             entries.extend(list.iter().map(|info| {
                 Entry::Session(Box::new(SessionRow {
+                    subtitle: subtitle_of(info, false),
                     info: info.clone(),
                     depth,
-                    in_needs_you: false,
                 }))
             }));
         };
@@ -975,6 +1026,29 @@ impl SessionsPanel {
     }
 }
 
+/// The word of a session's state when its lane draws a glyph; an idle session draws nothing
+/// (the hollow circle every idle row used to start with said nothing).
+fn lane_word(presentation: &crate::sessions::Presentation) -> Option<String> {
+    (presentation.label != "idle").then(|| presentation.label.clone())
+}
+
+/// The sidebar's text-only empty state: one muted line and one ghost button.
+fn open_folder_empty(theme: &crate::theme::Theme, tokens: &crate::theme::Tokens) -> gpui::Div {
+    ui::EmptyState::new("No projects yet.")
+        .action(
+            ui::button(
+                "sessions-empty-open",
+                "Open folder…",
+                ButtonKind::Ghost,
+                true,
+                theme,
+                tokens,
+            )
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx)),
+        )
+        .render(theme, tokens)
+}
+
 /// `3`, or `1/3` when only some of a row's sessions are live; nothing for a row without
 /// sessions.
 fn count_text(info: &WorkspaceInfo) -> Option<String> {
@@ -1040,52 +1114,38 @@ impl Render for SessionsPanel {
             .flex()
             .flex_col();
         let list = if entries.is_empty() {
-            list.child(
-                ui::empty_state(
-                    Mascot::Empty,
-                    if hint_query {
-                        "Nothing matches the filter."
-                    } else {
-                        "Nothing here yet. ⌘T starts a terminal."
-                    },
-                    None,
-                    &theme,
-                    &tokens,
-                )
-                .h(px(260.0)),
-            )
+            // A sidebar says it in one muted line (§ Empty states of the clean-aesthetic spike).
+            list.child(if hint_query {
+                ui::EmptyState::new("Nothing matches the filter.")
+                    .render(&theme, &tokens)
+                    .h(px(120.0))
+            } else {
+                open_folder_empty(&theme, &tokens).h(px(120.0))
+            })
         } else {
             // Only the rows in view are built: a frame costs what the window shows, not what the
             // daemon has.
             list.child(gpui::list(self.list.clone(), cx.processor(Self::render_entry)).size_full())
         };
 
-        let sort_button = div()
-            .id("workspaces-sort")
+        // `⋯`: sort, filters, organize and the panel's settings (the sort menu).
+        let more_button = div()
+            .id("sessions-more")
+            .relative()
+            .flex_none()
             .px(px(tokens.spacing * 1.5))
             .rounded(px(tokens.radius))
             .cursor_pointer()
-            .text_size(px(tokens.secondary_font_size))
             .text_color(theme.muted)
-            .hover(move |s| s.bg(hover))
+            .hover(move |s| s.bg(hover).text_color(theme.fg))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(|event, window, cx| {
                 window.dispatch_action(Box::new(ShowSortMenu(event.position())), cx);
             })
-            .flex()
-            .items_center()
-            .gap(px(4.0))
-            .min_w_0()
-            .child(icon(Icon::ActionSort, 12.0, theme.muted))
-            .child(
-                div()
-                    .min_w_0()
-                    .max_w(px(80.0))
-                    .truncate()
-                    .child(ws_settings.sort.label().to_string()),
-            )
-            .child(icon(Icon::ActionExpand, 12.0, theme.muted))
+            .child(icon(Icon::ActionMore, 14.0, theme.muted))
+            .child(probe(&self.env.regions, Region::SidebarControl("more")))
             .into_any_element();
+        // `＋`: Open folder…, New workspace…
         let plus_button = div()
             .id("sessions-plus")
             .relative()
@@ -1101,27 +1161,6 @@ impl Render for SessionsPanel {
             })
             .child(icon(Icon::ActionAdd, 14.0, theme.muted))
             .child(probe(&self.env.regions, Region::SidebarControl("plus")))
-            .into_any_element();
-        let start_button = div()
-            .id("sessions-start")
-            .relative()
-            .flex_none()
-            .whitespace_nowrap()
-            .px(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .text_color(theme.accent)
-            .hover(move |s| s.bg(theme.accent_soft))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(|_, window, cx| {
-                window.dispatch_action(Box::new(OpenLauncher(LauncherOpen::default())), cx);
-            })
-            .flex()
-            .items_center()
-            .gap(px(4.0))
-            .child(crate::icons::glyph(Icon::ActionStart))
-            .child("Start")
-            .child(probe(&self.env.regions, Region::SidebarControl("start")))
             .into_any_element();
 
         let search = div()
@@ -1169,10 +1208,9 @@ impl Render for SessionsPanel {
             .flex_col()
             .text_size(px(tokens.font_size))
             .text_color(theme.fg)
-            .child(panel_header_with(
+            .child(panel_header_controls(
                 "Projects",
-                "panels.sessions",
-                vec![start_button, plus_button, sort_button],
+                vec![plus_button, more_button],
                 cx,
             ))
             .child(search)
@@ -1218,11 +1256,7 @@ impl SessionsPanel {
                 if title.is_empty() {
                     return div().into_any_element();
                 }
-                let color = if *key == SectionKey::NeedsYou {
-                    theme.warning
-                } else {
-                    theme.muted
-                };
+                // A group label: muted, like every section label; the attention is the rows'.
                 div()
                     .id(SharedString::from(format!("section-{key:?}")))
                     .flex()
@@ -1232,7 +1266,7 @@ impl SessionsPanel {
                     .mt(px(tokens.spacing))
                     .text_size(px(tokens.section_font_size))
                     .medium()
-                    .text_color(color)
+                    .text_color(theme.muted)
                     .child(title.clone())
                     .into_any_element()
             }
@@ -1257,26 +1291,9 @@ impl SessionsPanel {
             Entry::Session(row) => {
                 self.render_row(row, &rows.settings, rows.focused == Some(row.info.id), cx)
             }
-            Entry::EmptyHint => ui::empty_state(
-                Mascot::Empty,
-                "No projects yet. Open a folder, or press ⌘T for a terminal.",
-                Some(
-                    ui::button(
-                        "sessions-empty-open",
-                        "Open Folder…",
-                        ButtonKind::Secondary,
-                        true,
-                        &theme,
-                        &tokens,
-                    )
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx))
-                    .into_any_element(),
-                ),
-                &theme,
-                &tokens,
-            )
-            .h(px(260.0))
-            .into_any_element(),
+            Entry::EmptyHint => open_folder_empty(&theme, &tokens)
+                .h(px(120.0))
+                .into_any_element(),
         }
     }
 
@@ -1551,18 +1568,23 @@ impl SessionsPanel {
                 )
             })
             .child(name)
-            .when(row.needs > 0, |s| {
-                s.child(
-                    div()
-                        .flex_none()
-                        .text_color(theme.warning)
-                        .flex()
-                        .items_center()
-                        .gap(px(2.0))
-                        .child(crate::icons::glyph(Icon::StatusAttention))
-                        .child(row.needs.to_string()),
-                )
-            })
+            // The Needs you group above already says which sessions wait: the project row only
+            // repeats it while that group is off.
+            .when(
+                row.needs > 0 && !self.env.settings.get::<SessionsPanelSettings>().needs_you,
+                |s| {
+                    s.child(
+                        div()
+                            .flex_none()
+                            .text_color(theme.warning)
+                            .flex()
+                            .items_center()
+                            .gap(px(2.0))
+                            .child(crate::icons::glyph(Icon::StatusAttention))
+                            .child(row.needs.to_string()),
+                    )
+                },
+            )
             .children(count_text(info).map(|count| ui::counter(count, &theme, &tokens)))
             .when(
                 matches!(kind, WorkspaceKind::Project | WorkspaceKind::Home),
@@ -1577,10 +1599,10 @@ impl SessionsPanel {
                             .rounded(px(tokens.radius))
                             .cursor_pointer()
                             .text_size(px(tokens.secondary_font_size))
-                            .text_color(theme.accent)
-                            .opacity(if current { 1.0 } else { 0.0 })
+                            .text_color(theme.muted)
+                            .opacity(0.0)
                             .group_hover(group.clone(), |s| s.opacity(1.0))
-                            .hover(move |s| s.bg(theme.accent_soft))
+                            .hover(move |s| s.bg(theme.surface_hover).text_color(theme.fg))
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(
@@ -1601,9 +1623,11 @@ impl SessionsPanel {
             .into_any_element()
     }
 
-    /// Two lines: the state dot, kind icon, title, agent badge and age; under them the live
-    /// folder (last two path parts, `muted`, the full path in its tooltip) and the placement
-    /// badge. A session that needs you adds a third line with what it waits for.
+    /// One line: the state lane (a glyph unless the session is idle), kind icon, title, agent
+    /// badge, restart glyph, muted marker, age and the hover ×. A second line (muted, 11 px,
+    /// under the title) only when it says something new ([`Subtitle`]): the project of a row away
+    /// from its project row, a folder the session left its checkout for, and the placement badge
+    /// when the session is not in the main checkout.
     fn render_row(
         &self,
         row: &SessionRow,
@@ -1629,59 +1653,84 @@ impl SessionsPanel {
             &self.env.regions,
             cx,
         );
-        let compact_chips = self.env.sessions.read(cx).large_sidebar();
+        // A restart is a glyph with its sentence in the tooltip, never a word that eats the
+        // title; the summary card has the words (`recovery_summary.rs`).
         let mut recovery = hutan_client::recovery::chip(info).map(|chip| {
             recovery_chip(
                 &theme,
                 &chip,
                 BadgeSite::Row,
                 info.id,
-                compact_chips,
+                true,
                 &self.env.regions,
                 cx,
             )
         });
-        let has = |field: &str| settings.row.iter().any(|f| f == field);
+        // The marker of a session whose notifications are muted (`notify.mute`).
+        let mut muted = info.muted.then(|| {
+            div()
+                .id(SharedString::from(format!("session-muted-{id}")))
+                .relative()
+                .flex_none()
+                .tooltip(|_, cx| cx.new(|_| TextTooltip("Notifications muted".into())).into())
+                .child(icon(Icon::StateMuted, 12.0, theme.muted))
+                .child(probe(&self.env.regions, Region::SessionMuted(info.id)))
+        });
         let renaming = self
             .renaming
             .as_ref()
             .filter(|r| r.target == RenameTarget::Session(info.id))
             .map(|r| r.text.clone());
+        let lane = lane_word(&presentation);
+        let gap = tokens.spacing * 1.5;
 
         let mut line = div()
             .flex()
             .items_center()
-            .gap(px(tokens.spacing * 1.5))
+            .gap(px(gap))
             .h(px(tokens.sidebar_row))
             .w_full()
             .min_w_0();
         for field in &settings.row {
             line = match field.as_str() {
-                "state" => line.child(
-                    // Orca's 20 px status lane: the state dot, and for an unread session an
-                    // amber dot with a ring in the color of the sidebar on top of it.
-                    div()
-                        .relative()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .w(px(STATUS_LANE))
-                        .child(state_dot(&theme, &presentation))
-                        .when(unread, |s| {
-                            s.child(
-                                div()
+                "state" => {
+                    let tip: SharedString = if presentation.detail.is_empty() {
+                        presentation.label.clone().into()
+                    } else {
+                        format!("{} · {}", presentation.label, presentation.detail).into()
+                    };
+                    line.child(
+                        // The 16 px state lane: the state's glyph in its tone, nothing for an
+                        // idle session (the room stays: it is the spine titles align to), and
+                        // for an unread session an amber dot ringed in the sidebar color.
+                        div()
+                            .id(SharedString::from(format!("row-state-{id}")))
+                            .relative()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(STATUS_LANE))
+                            .when(lane.is_some(), |s| {
+                                s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                                    .child(state_dot(&theme, &presentation))
+                            })
+                            .when(unread, |s| {
+                                let dot = div()
                                     .absolute()
-                                    .top(px(-2.0))
-                                    .right(px(1.0))
                                     .size(px(6.0))
                                     .rounded_full()
                                     .bg(theme.warning)
                                     .border_2()
-                                    .border_color(theme.sidebar),
-                            )
-                        }),
-                ),
+                                    .border_color(theme.sidebar);
+                                s.child(if lane.is_some() {
+                                    dot.top(px(-2.0)).right(px(-1.0))
+                                } else {
+                                    dot.top(px(5.0)).left(px(5.0))
+                                })
+                            }),
+                    )
+                }
                 "kind" => line.child(
                     div()
                         .flex_none()
@@ -1716,7 +1765,8 @@ impl SessionsPanel {
                         }
                     })
                     .children(badge.take())
-                    .children(recovery.take()),
+                    .children(recovery.take())
+                    .children(muted.take()),
                 "age" => line.child(
                     div()
                         .id(SharedString::from(format!("row-age-{}", info.id)))
@@ -1745,7 +1795,7 @@ impl SessionsPanel {
                     .text_color(theme.muted)
                     .opacity(0.0)
                     .group_hover(row_group.clone(), |s| s.opacity(1.0))
-                    .hover(move |s| s.bg(theme.accent_soft).text_color(theme.fg))
+                    .hover(move |s| s.bg(theme.surface_hover).text_color(theme.fg))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(move |_, window, cx| {
                         window.dispatch_action(Box::new(CloseSessionById(close_id.clone())), cx);
@@ -1756,43 +1806,41 @@ impl SessionsPanel {
             );
         }
 
-        // Where the session is now, and which checkout it works in.
-        let folder = has("folder")
-            .then(|| session_folder(info).map(|path| (folder_label(path), path.to_path_buf())))
-            .flatten();
-        let placement = has("placement")
-            .then(|| crate::sessions::placement_badge(info))
-            .flatten();
-        let place_line = (folder.is_some() || placement.is_some()).then(|| {
-            let tip: Option<SharedString> = folder
-                .as_ref()
-                .map(|(_, path): &(String, PathBuf)| path.display().to_string().into());
+        // Under the title: the project (a row away from its project row), a folder outside the
+        // session's checkout, and the placement badge off the main checkout.
+        let second = row.subtitle.as_ref().map(|sub| {
+            let text: Vec<&str> = [sub.container.as_deref(), sub.folder.as_deref()]
+                .into_iter()
+                .flatten()
+                .collect();
+            let tip: Option<SharedString> =
+                session_folder(info).map(|path| path.display().to_string().into());
             div()
                 .flex()
                 .items_center()
-                .gap(px(tokens.spacing * 1.5))
-                .pl(px(STATUS_LANE + tokens.spacing * 1.5))
+                .gap(px(gap))
+                .pl(px(STATUS_LANE + 14.0 + gap * 2.0))
                 .pb(px(tokens.spacing))
                 .text_size(px(tokens.secondary_font_size))
-                .children(folder.map(|(label, _)| {
+                .when(!text.is_empty(), |s| {
                     let element = div()
                         .id(SharedString::from(format!("session-folder-{id}")))
                         .flex_1()
                         .min_w_0()
                         .truncate()
                         .text_color(theme.muted)
-                        .child(SharedString::from(label));
-                    match tip {
+                        .child(SharedString::from(text.join(" · ")));
+                    s.child(match tip {
                         Some(tip) => element
                             .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
                             .into_any_element(),
                         None => element.into_any_element(),
-                    }
-                }))
-                .children(placement.map(|badge| {
+                    })
+                })
+                .children(sub.badge.as_ref().map(|badge| {
                     placement_badge(
                         &theme,
-                        &badge,
+                        badge,
                         BadgeSite::Row,
                         info.id,
                         &self.env.regions,
@@ -1801,7 +1849,7 @@ impl SessionsPanel {
                 }))
         });
 
-        let mut element = div()
+        div()
             .id(SharedString::from(format!("session-row-{id}")))
             .group(row_group)
             .relative()
@@ -1809,15 +1857,12 @@ impl SessionsPanel {
             .flex_col()
             .mx(px(tokens.spacing * 1.5))
             .my(px(1.0))
-            .pl(px(tokens.spacing * 1.5 + row.depth as f32 * INDENT))
-            .pr(px(tokens.spacing * 1.5))
+            .pl(px(gap + row.depth as f32 * INDENT))
+            .pr(px(gap))
             .rounded(px(tokens.radius + 4.0))
-            .border_1()
-            .border_color(gpui::transparent_black())
             .cursor_pointer()
-            .when(selected, move |s| {
-                s.bg(theme.sidebar_accent).border_color(theme.border)
-            })
+            // The selected row is the sidebar's selected fill, with no outline.
+            .when(selected, move |s| s.bg(theme.sidebar_accent))
             .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
             .on_click(cx.listener(move |_, _, window, cx| {
                 window.dispatch_action(Box::new(OpenSession(open_id.clone())), cx);
@@ -1835,25 +1880,8 @@ impl SessionsPanel {
                 }),
             )
             .child(line)
-            .children(place_line)
-            .child(probe(&self.env.regions, Region::SessionRow(info.id)));
-        if row.in_needs_you {
-            let subtitle = if presentation.detail.is_empty() {
-                presentation.label.clone()
-            } else {
-                format!("{} · {}", presentation.label, presentation.detail)
-            };
-            element = element.child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .pl(px(STATUS_LANE + tokens.spacing * 1.5))
-                    .pb(px(tokens.spacing))
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(tone_color(&theme, presentation.tone))
-                    .child(SharedString::from(subtitle)),
-            );
-        }
-        element.into_any_element()
+            .children(second)
+            .child(probe(&self.env.regions, Region::SessionRow(info.id)))
+            .into_any_element()
     }
 }

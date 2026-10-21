@@ -53,7 +53,7 @@ hutan ls
 
 Deliberately small (the layout and panels are ADR 0010's business):
 
-- Session rows (the `placement` row field, on by default) and tab tooltips show the badge `main` / `wt <branch>` (`docs/design.md` § session row); a warning border and `⚠` while the checkout is shared; the badge's tooltip names the checkout, branch and the sharing. A session outside git keeps the old folder-name label.
+- Session rows (the `placement` row field, on by default) show the badge only when it is news (CL-SIDEBAR): `wt <branch>` for a linked worktree, or `main` while another live agent shares the main checkout; a session in the main checkout alone shows none (a one-line row). Tab tooltips keep `main` / `wt <branch>` (`docs/design.md` § session row); a warning border and `⚠` while the checkout is shared; the badge's tooltip names the checkout, branch and the sharing. A session outside git keeps the old folder-name label.
 - Palette commands: **Worktree: New Terminal in Worktree…** (asks for a branch, reuses or creates its worktree in the active workspace's repository, opens a terminal there) and **Worktree: Remove…** (a picker of the removable worktrees of the active workspace, then a confirmation with a checkbox for deleting the branch; a worktree with uncommitted changes says so and the confirmation removes it with `force`).
 
 ## Tests

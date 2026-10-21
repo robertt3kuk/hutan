@@ -456,6 +456,29 @@ fn unread_attention_is_read_when_the_session_is_focused(cx: &mut TestAppContext)
     head.sort_unstable();
     assert_eq!(head, ["failing", "finishing"], "{titles:?}");
 
+    // The group is a muted label over the same one-line rows; a row away from its project row
+    // says which project it is in, and the lane has a glyph for every state but idle.
+    let rows = panel.read_with(cx, |p, cx| p.visible_rows(cx));
+    assert_eq!(
+        (rows[0].kind, rows[0].title.as_str()),
+        (
+            hutan_desktop::workbench::panels::RowKind::Section,
+            "Needs you"
+        )
+    );
+    let row = |title: &str| rows.iter().find(|r| r.title == title).unwrap();
+    assert!(
+        row("failing")
+            .subtitle
+            .as_ref()
+            .is_some_and(|s| s.container.is_some()),
+        "a Needs you row names its project"
+    );
+    assert_eq!(row("failing").state.as_deref(), Some("failed"));
+    let calm = row("calm");
+    assert_eq!(calm.state, None, "an idle session has an empty lane");
+    assert!(calm.subtitle.is_none(), "under its project row: one line");
+
     // ⌘⇧J jumps to the first one that needs you; looking at it reads it.
     cx.simulate_keystrokes("cmd-shift-j");
     let first = view

@@ -103,6 +103,7 @@ catalog! {
     StateStopped => ("state.stopped", "stop-circle.svg"),
     StateUnknown => ("state.unknown", "question.svg"),
     StateUnread => ("state.unread", "circle.svg"),
+    StateMuted => ("state.muted", "bell-slash.svg"),
     StateApproval => ("state.approval", "hand-palm.svg"),
     StatusApprovals => ("status.approvals", "hand-palm.svg"),
     StateQuestion => ("state.question", "question.svg"),
@@ -162,6 +163,9 @@ pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
         )),
         "arrows-out.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/arrows-out.svg"
+        )),
+        "bell-slash.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/bell-slash.svg"
         )),
         "bell.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/bell.svg"

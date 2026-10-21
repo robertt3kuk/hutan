@@ -645,6 +645,18 @@ impl Workbench {
             entry.checked = organize == mode;
             entries.push(entry);
         }
+        // The Projects header has no ⚙ of its own any more: its settings are here.
+        entries.push(Self::entry(
+            "Projects Sidebar Settings…",
+            |_, window, cx| {
+                window.dispatch_action(
+                    Box::new(super::actions::OpenSettingsFor(
+                        "panels.sessions".to_owned(),
+                    )),
+                    cx,
+                );
+            },
+        ));
         entries
     }
 

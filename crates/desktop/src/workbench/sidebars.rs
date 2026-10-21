@@ -1,9 +1,9 @@
 //! The chrome of the two sidebars (Orca's layout, `docs/design.md` § Layout):
 //!
-//! - **Left**: a nav list (Search, Tasks, Agents, Mawas when `assistant.enabled`, then any
-//!   other panel the user put in the left dock), the active page below it (Projects by default;
-//!   a nav item replaces the project list with its page and shows a back row), and a bottom
-//!   toolbar (New session, Settings). The pages are the left dock's panels; the active one is
+//! - **Left**: a nav list of two rows (Agents, Mawas while `assistant.enabled`; Tasks joins them
+//!   once a task exists, and any other panel the user put in the left dock), the active page
+//!   below it (Projects by default; a nav item replaces the project list with its page and
+//!   shows a back row), and a bottom toolbar (Start, Settings). The pages are the left dock's panels; the active one is
 //!   the dock's `active`, so presets, restore and `ui` see nothing new. Agents is no page of the
 //!   sidebar: it opens the Agents page (`agents_page.rs`), one tab of the center.
 //!   While compact (`docks.rs`) the sidebar is a 44 pt icon rail of the same nav.
@@ -36,8 +36,6 @@ const NAV_LINE: f32 = 18.0;
 /// What a nav row does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NavTarget {
-    /// Open the jump palette (⌘P / ⌘J): workspaces, sessions, history.
-    Search,
     /// Show Mawas Home, a tab of the center (and put the keyboard in its composer).
     Assistant,
     /// Open (or focus) the Agents page, a tab of the center.
@@ -49,7 +47,7 @@ pub enum NavTarget {
 /// One row of the left sidebar's nav.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NavEntry {
-    /// Stable name of the row (`search`, `tasks`, `agents`, `assistant`, or the panel id).
+    /// Stable name of the row (`tasks`, `agents`, `assistant`, or the panel id).
     pub key: String,
     pub label: SharedString,
     /// Stable semantic id, never a vendor filename or a text fallback.
@@ -122,40 +120,35 @@ impl Workbench {
     // ---- left ------------------------------------------------------------------------------
 
     /// The rows of the left nav, top to bottom, with the page the dock shows marked (and, for
-    /// Agents, the page when it is the tab on screen).
+    /// Agents, the page when it is the tab on screen). Agents is always there and Mawas while
+    /// it is enabled; **Tasks** reveals itself with the first task (or while its page is the one
+    /// showing, so the row of the page you are on never vanishes). Jumping is the filter field
+    /// and ⌘P, not a row.
     pub fn nav_entries(&self, cx: &gpui::App) -> Vec<NavEntry> {
         let dock = &self.state.docks.left;
         let page = dock.active.as_ref();
         let selected = |panel: &str| page.is_some_and(|a| a.as_str() == panel);
-        let mut entries = vec![
-            NavEntry {
-                key: "search".to_owned(),
-                label: "Search".into(),
-                icon: Icon::NavSearch,
-                badge: None,
-                target: NavTarget::Search,
-                selected: false,
-            },
-            NavEntry {
+        let mut entries = Vec::new();
+        if selected("tasks") || !self.sessions.read(cx).tasks().is_empty() {
+            entries.push(NavEntry {
                 key: "tasks".to_owned(),
                 label: "Tasks".into(),
                 icon: Icon::NavTasks,
                 badge: None,
                 target: NavTarget::Page(PanelId::new("tasks")),
                 selected: selected("tasks"),
-            },
-            NavEntry {
-                key: "agents".to_owned(),
-                label: "Agents".into(),
-                icon: Icon::NavAgents,
-                // Agent sessions that need you: the page's own count, not every session's.
-                badge: Some(self.sessions.read(cx).agent_presentation().needs_you())
-                    .filter(|n| *n > 0),
-                target: NavTarget::Agents,
-                selected: self.state.active_center_item().as_ref()
-                    == Some(&ItemRef::panel(super::model::AGENTS_PAGE)),
-            },
-        ];
+            });
+        }
+        entries.extend([NavEntry {
+            key: "agents".to_owned(),
+            label: "Agents".into(),
+            icon: Icon::NavAgents,
+            // Agent sessions that need you: the page's own count, not every session's.
+            badge: Some(self.sessions.read(cx).agent_presentation().needs_you()).filter(|n| *n > 0),
+            target: NavTarget::Agents,
+            selected: self.state.active_center_item().as_ref()
+                == Some(&ItemRef::panel(super::model::AGENTS_PAGE)),
+        }]);
         if self.assistant_enabled() {
             // Home is a tab of the center: the row is selected while that tab is the one shown.
             let home = ItemRef::panel("assistant");
@@ -224,7 +217,6 @@ impl Workbench {
             .into_iter()
             .map(|entry| {
                 let key: &'static str = match entry.key.as_str() {
-                    "search" => "search",
                     "tasks" => "tasks",
                     "agents" => "agents",
                     "assistant" => "assistant",
@@ -233,12 +225,12 @@ impl Workbench {
                 let target = entry.target.clone();
                 let dock_index = match &entry.target {
                     NavTarget::Page(panel) => dock.panels.iter().position(|p| p == panel),
-                    NavTarget::Search | NavTarget::Agents | NavTarget::Assistant => None,
+                    NavTarget::Agents | NavTarget::Assistant => None,
                 };
                 let menu_panel = match &entry.target {
                     NavTarget::Page(panel) => Some(panel.clone()),
                     NavTarget::Assistant => Some(PanelId::new("assistant")),
-                    NavTarget::Search | NavTarget::Agents => None,
+                    NavTarget::Agents => None,
                 };
                 let selected = entry.selected;
                 let color = if selected { theme.fg } else { theme.muted };
@@ -362,7 +354,8 @@ impl Workbench {
         out
     }
 
-    /// The bottom toolbar of the left sidebar: New session and Settings.
+    /// The bottom toolbar of the left sidebar: Start (the Start sheet, ⌘⇧T; a plain terminal is
+    /// ⌘T) and Settings.
     pub(super) fn left_toolbar(&mut self) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -397,9 +390,12 @@ impl Workbench {
             .border_t_1()
             .border_color(theme.border)
             .child(
-                button("toolbar-new", Icon::ActionAdd, "New session", "new").on_click(
+                button("toolbar-start", Icon::ActionAdd, "Start", "start").on_click(
                     |_, window, cx| {
-                        window.dispatch_action(Box::new(actions::NewTerminal), cx);
+                        window.dispatch_action(
+                            Box::new(actions::OpenLauncher(actions::LauncherOpen::default())),
+                            cx,
+                        );
                     },
                 ),
             )
@@ -433,7 +429,6 @@ impl Workbench {
             return;
         }
         match target {
-            NavTarget::Search => window.dispatch_action(Box::new(actions::OpenJump), cx),
             NavTarget::Assistant => self.open_assistant(window, cx),
             NavTarget::Page(panel) => self.toggle_left_page(panel, cx),
             NavTarget::Agents => {}
@@ -442,11 +437,11 @@ impl Workbench {
         cx.notify();
     }
 
-    /// The 44 pt icon rail the left sidebar is down to while compact: Search, Tasks, Agents,
-    /// Mawas (when enabled) and whatever other page the dock holds, then Projects; New session
-    /// and Settings at the bottom. Tooltips name every icon; the Agents badge keeps its count.
-    /// Search, Agents and Mawas open where they always do, without widening the sidebar; Tasks
-    /// and Projects are pages of the sidebar and expand it.
+    /// The 44 pt icon rail the left sidebar is down to while compact: the nav rows (Tasks once
+    /// a task exists, Agents, Mawas when enabled) and whatever other page the dock holds, then
+    /// Projects; Start and Settings at the bottom. Tooltips name every icon; the Agents badge
+    /// keeps its count. Agents and Mawas open where they always do, without widening the
+    /// sidebar; Tasks and Projects are pages of the sidebar and expand it.
     pub(super) fn left_rail(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let hover = theme.fg.opacity(0.08);
@@ -497,17 +492,20 @@ impl Workbench {
         let new_session = rail_button(
             self,
             RailButton {
-                id: SharedString::from("rail-new"),
+                id: SharedString::from("rail-start"),
                 face: icon(Icon::ActionAdd, NAV_ICON, theme.muted).into_any_element(),
-                label: "New session".into(),
+                label: "Start".into(),
                 background: None,
                 badge: None,
-                region: Region::Toolbar("new"),
+                region: Region::Toolbar("start"),
             },
             hover,
         )
         .on_click(|_, window, cx| {
-            window.dispatch_action(Box::new(actions::NewTerminal), cx);
+            window.dispatch_action(
+                Box::new(actions::OpenLauncher(actions::LauncherOpen::default())),
+                cx,
+            );
         });
         let settings = rail_button(
             self,
@@ -974,7 +972,6 @@ fn window_drag_inset() -> AnyElement {
 /// The static name a nav entry's region carries (`Region::Nav` takes a `&'static str`).
 fn nav_region_key(key: &str) -> &'static str {
     match key {
-        "search" => "search",
         "tasks" => "tasks",
         "agents" => "agents",
         "assistant" => "assistant",

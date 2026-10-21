@@ -128,12 +128,12 @@ fn rows_and_tabs_show_main_and_worktree_badges(cx: &mut TestAppContext) {
         Some(("wt topic".into(), false))
     );
 
-    // The rows draw them.
-    for id in [in_main, in_wt] {
-        wait_until(cx, "the row badge", |cx| {
-            drawn(&view, cx, id, BadgeSite::Row)
-        });
-    }
+    // The rows draw the one that is news: a worktree. The main checkout alone is the quiet
+    // default and its row stays one line (CL-SIDEBAR).
+    wait_until(cx, "the worktree's row badge", |cx| {
+        drawn(&view, cx, in_wt, BadgeSite::Row)
+    });
+    assert!(!drawn(&view, cx, in_main, BadgeSite::Row));
 
     // The tab tooltip says it too.
     view.update_in(cx, |wb, window, cx| wb.open_session(in_wt, window, cx));
@@ -178,10 +178,14 @@ fn two_agents_in_one_checkout_turn_the_badge_into_a_warning(cx: &mut TestAppCont
     let first = session_in(&daemon, workspace, &root, "first");
     let second = session_in(&daemon, workspace, &root, "second");
     let (view, cx) = open(cx, &daemon);
-    wait_until(cx, "the rows", |cx| {
-        drawn(&view, cx, first, BadgeSite::Row) && drawn(&view, cx, second, BadgeSite::Row)
+    wait_until(cx, "the sessions to be placed", |cx| {
+        badge_text(&view, cx, first).is_some() && badge_text(&view, cx, second).is_some()
     });
     assert_eq!(badge_text(&view, cx, first), Some(("main".into(), false)));
+    assert!(
+        !drawn(&view, cx, first, BadgeSite::Row),
+        "alone in the main checkout: no badge on the row"
+    );
 
     let omp = Reporter::new(first, "omp-extension", "omp");
     let claude = Reporter::new(second, "claude-hooks", "claude");
@@ -203,12 +207,17 @@ fn two_agents_in_one_checkout_turn_the_badge_into_a_warning(cx: &mut TestAppCont
         tip.ends_with("⚠ Another live agent works in this checkout"),
         "{tip}"
     );
-    assert!(drawn(&view, cx, first, BadgeSite::Row));
+    wait_until(cx, "the warning on the rows", |cx| {
+        drawn(&view, cx, first, BadgeSite::Row) && drawn(&view, cx, second, BadgeSite::Row)
+    });
 
-    // One agent leaves: the warning goes with it.
+    // One agent leaves: the warning goes with it, and the row is one line again.
     claude.release(&daemon, None, None);
     wait_until(cx, "the warning to clear", |cx| {
         badge_text(&view, cx, first) == Some(("main".into(), false))
+    });
+    wait_until(cx, "the badge to leave the row", |cx| {
+        !drawn(&view, cx, first, BadgeSite::Row)
     });
 }
 

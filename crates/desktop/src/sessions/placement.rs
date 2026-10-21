@@ -48,6 +48,15 @@ pub fn placement_badge(session: &SessionInfo) -> Option<PlacementBadge> {
     })
 }
 
+/// What a quiet sidebar row says about where its session works: the badge of
+/// [`placement_badge`] only when that is news, i.e. the session is in a linked worktree (not the
+/// main checkout every row would repeat) or another live agent works in the same checkout.
+pub fn row_placement_badge(session: &SessionInfo) -> Option<PlacementBadge> {
+    let placement = session.placement.as_ref()?;
+    let news = placement.kind == PlacementKind::Worktree || !placement.shared_with.is_empty();
+    news.then(|| placement_badge(session)).flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -107,6 +116,25 @@ mod tests {
             badge(placement(PlacementKind::Worktree, None, 0)).text,
             "wt (detached)"
         );
+    }
+
+    #[test]
+    fn a_row_only_shows_a_placement_that_is_not_the_quiet_default() {
+        let badge = |p| row_placement_badge(&session(Some(p))).map(|b| (b.text, b.shared));
+        assert_eq!(
+            badge(placement(PlacementKind::Main, Some("master"), 0)),
+            None
+        );
+        assert_eq!(
+            badge(placement(PlacementKind::Worktree, Some("x"), 0)),
+            Some(("wt x".to_owned(), false))
+        );
+        assert_eq!(
+            badge(placement(PlacementKind::Main, Some("master"), 1)),
+            Some(("main".to_owned(), true)),
+            "a shared main checkout keeps its warning"
+        );
+        assert_eq!(row_placement_badge(&session(None)), None);
     }
 
     #[test]

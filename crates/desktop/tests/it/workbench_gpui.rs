@@ -808,7 +808,9 @@ fn plain_tabs_cannot_be_dropped_into_docks(cx: &mut TestAppContext) {
 #[gpui::test]
 fn right_click_menus_list_the_documented_entries(cx: &mut TestAppContext) {
     let (view, cx) = open(cx, None);
-    // The Tasks row of the left nav (the dock's panel 1).
+    // The Tasks row of the left nav (the dock's panel 1) is there while its page shows.
+    cx.dispatch_action(actions::OpenPanel("tasks".into()));
+    common::draw(cx);
     let tab = bounds(&view, cx, Region::DockTab(DockPosition::Left, 1));
     let p = center_of(tab);
     cx.simulate_mouse_down(p, MouseButton::Right, Modifiers::none());

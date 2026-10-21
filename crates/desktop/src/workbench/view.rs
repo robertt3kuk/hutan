@@ -271,9 +271,11 @@ pub enum Region {
     SessionClose(hutan_core::SessionId),
     /// A session's row in the Projects sidebar (where its title can be edited in place).
     SessionRow(hutan_core::SessionId),
+    /// The muted marker of a session's row (its notifications are muted, `notify.mute`).
+    SessionMuted(hutan_core::SessionId),
     /// A control of the "Closed … · Undo" toast (`undo`).
     CloseToast(&'static str),
-    /// The ▶ Start button of project row `workspace` in the sidebar.
+    /// The ▷ Start shortcut of project row `workspace` in the sidebar (shown on hover).
     ProjectStart(hutan_core::WorkspaceId),
     /// A control of the Accounts page: harness id (or `*`) and the control (`login`, `logout`, `card`, `refresh`).
     Account(&'static str, &'static str),

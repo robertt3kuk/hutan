@@ -5,14 +5,14 @@
 
 use crate::common;
 
-use common::{offline_connection, open_with, wait_until};
+use common::{draw, offline_connection, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_desktop::workbench::actions::{self, OpenAssistant, OpenPanel};
 use hutan_desktop::workbench::model::{
     Dock, DockPosition, Docks, FocusTarget, ItemRef, PanelDest, PanelId, WorkbenchState,
 };
 use hutan_desktop::workbench::persistence::{STATE_FILE, load_state};
-use hutan_desktop::workbench::{PickerKind, Region, SAVE_DEBOUNCE, Workbench};
+use hutan_desktop::workbench::{Region, SAVE_DEBOUNCE, Workbench};
 use hutan_settings::SettingsStore;
 use std::path::PathBuf;
 
@@ -140,23 +140,23 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     assert!((f32::from(right.origin.y) - f32::from(titlebar.origin.y)).abs() <= 1.0);
 
     // The left nav: Search, Tasks, Agents and Mawas, which is on by default.
-    assert_eq!(
-        nav_keys(&view, cx),
-        ["search", "tasks", "agents", "assistant"]
-    );
+    assert_eq!(nav_keys(&view, cx), ["agents", "assistant"]);
     assert_eq!(
         selected_nav(&view, cx),
         Vec::<String>::new(),
         "Projects shows"
     );
-    for key in ["search", "tasks", "agents", "assistant"] {
+    for key in ["agents", "assistant"] {
         assert!(painted(&view, cx, Region::Nav(key)), "{key}");
+    }
+    for key in ["search", "tasks"] {
+        assert!(!painted(&view, cx, Region::Nav(key)), "no {key} row");
     }
     assert!(
         !painted(&view, cx, Region::Nav("projects")),
         "no back row on Projects"
     );
-    assert!(painted(&view, cx, Region::Toolbar("new")));
+    assert!(painted(&view, cx, Region::Toolbar("start")));
     assert!(painted(&view, cx, Region::Toolbar("settings")));
     // The right rail: three icons and ⋯, 32 pt targets under the title bar row, outside the
     // body; Requests and Resources are in ⋯ (CL-CHROME).
@@ -182,6 +182,12 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
 #[gpui::test]
 fn the_left_nav_toolbar_starts_a_session_and_opens_settings(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
+    click(&view, cx, Region::Toolbar("start"));
+    // Start is the Start sheet (launcher_gpui drives it against a daemon); offline it says so.
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.notice().map(ToString::to_string)),
+        Some("Not connected to hutand".to_owned()),
+    );
     click(&view, cx, Region::Toolbar("settings"));
     assert!(view.read_with(cx, |wb, _| wb.settings_sheet().is_some()));
 }
@@ -194,7 +200,11 @@ fn nav_items_switch_the_left_page_and_the_back_row_returns_to_projects(cx: &mut 
     let page = |cx: &VisualTestContext| state(&view, cx).docks.left.active.unwrap();
     assert_eq!(page(cx).as_str(), "sessions");
 
-    click(&view, cx, Region::Nav("tasks"));
+    // Tasks has no row until a task exists; its page can still be opened (⌘K, Start sheet) and
+    // then the row of the page you are on is there, selected.
+    assert!(!painted(&view, cx, Region::Nav("tasks")));
+    cx.dispatch_action(OpenPanel("tasks".into()));
+    draw(cx);
     assert_eq!(page(cx).as_str(), "tasks");
     assert_eq!(selected_nav(&view, cx), ["tasks"]);
     assert!(
@@ -219,27 +229,17 @@ fn nav_items_switch_the_left_page_and_the_back_row_returns_to_projects(cx: &mut 
     click(&view, cx, Region::Nav("projects"));
     assert_eq!(page(cx).as_str(), "sessions");
     assert!(!painted(&view, cx, Region::Nav("projects")));
-    click(&view, cx, Region::Nav("tasks"));
+    assert!(
+        !painted(&view, cx, Region::Nav("tasks")),
+        "no task and no page: no row"
+    );
+    cx.dispatch_action(OpenPanel("tasks".into()));
+    draw(cx);
     click(&view, cx, Region::Nav("tasks"));
     assert_eq!(page(cx).as_str(), "sessions");
     assert_eq!(
         state(&view, cx).focus,
         FocusTarget::Dock(DockPosition::Left)
-    );
-}
-
-#[gpui::test]
-fn the_search_row_opens_the_jump_palette(cx: &mut TestAppContext) {
-    let (view, cx) = open(cx);
-    click(&view, cx, Region::Nav("search"));
-    assert_eq!(
-        view.read_with(cx, |wb, _| wb.picker().map(|p| p.kind)),
-        Some(PickerKind::Jump)
-    );
-    assert_eq!(
-        state(&view, cx).docks.left.active.unwrap().as_str(),
-        "sessions",
-        "Search is an action, not a page"
     );
 }
 
@@ -255,10 +255,7 @@ fn a_panel_left_in_the_left_dock_gets_its_own_nav_row(cx: &mut TestAppContext) {
             .unwrap();
         });
     });
-    assert_eq!(
-        nav_keys(&view, cx),
-        ["search", "tasks", "agents", "assistant", "resources"]
-    );
+    assert_eq!(nav_keys(&view, cx), ["agents", "assistant", "resources"]);
     assert_eq!(
         selected_nav(&view, cx),
         ["resources"],
@@ -332,10 +329,7 @@ impl LayoutPresetName {
 fn the_enabled_mawas_is_one_center_tab_opened_from_the_nav_and_closable(cx: &mut TestAppContext) {
     let (view, _settings, cx) = open_in(cx, Some(true), None);
     assert!(view.read_with(cx, |wb, _| wb.assistant_enabled()));
-    assert_eq!(
-        nav_keys(&view, cx),
-        ["search", "tasks", "agents", "assistant"]
-    );
+    assert_eq!(nav_keys(&view, cx), ["agents", "assistant"]);
     let labels: Vec<String> = view.read_with(cx, |wb, cx| {
         wb.nav_entries(cx)
             .into_iter()
@@ -430,7 +424,7 @@ fn turning_mawas_off_closes_its_tab_and_its_nav_row(cx: &mut TestAppContext) {
             !wb.assistant_enabled() && !wb.panel_open("assistant")
         })
     });
-    assert_eq!(nav_keys(&view, cx), ["search", "tasks", "agents"]);
+    assert_eq!(nav_keys(&view, cx), ["agents"]);
     assert_eq!(
         state(&view, cx).docks.left.active.unwrap().as_str(),
         "sessions",

@@ -12,7 +12,7 @@ use common::{TestDaemon, open_with, wait_until};
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_client::ConnectionState;
 use hutan_core::SessionId;
-use hutan_desktop::workbench::Workbench;
+use hutan_desktop::workbench::{Region, Workbench};
 use hutan_protocol::chat::{ChatHistory, ChatHistoryRequest, ChatSend, ChatSent};
 use hutan_protocol::messages::{Empty, Request};
 use hutan_protocol::notify::{
@@ -431,6 +431,12 @@ fn the_session_menu_mutes_notifications_and_reading_acknowledges_them(cx: &mut T
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(at, window, cx));
     wait_until(cx, "the session to be muted", |cx| muted(&view, cx));
     assert!(daemon.session(quiet.id).muted);
+    // A muted session wears the muted marker in the sidebar; an unmuted one does not.
+    wait_until(cx, "the muted marker", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::SessionMuted(quiet.id)).is_some()
+        })
+    });
 
     show_session_menu(cx, quiet.id);
     let labels = menu_labels(&view, cx);
@@ -440,6 +446,11 @@ fn the_session_menu_mutes_notifications_and_reading_acknowledges_them(cx: &mut T
         .unwrap_or_else(|| panic!("no unmute entry in {labels:?}"));
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(at, window, cx));
     wait_until(cx, "the session to be unmuted", |cx| !muted(&view, cx));
+    wait_until(cx, "the marker to go", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::SessionMuted(quiet.id)).is_none()
+        })
+    });
 
     // A session nobody looks at fails: its intent is pending until the user reads it.
     let failing = daemon.sh_titled("failing", "exit 3");

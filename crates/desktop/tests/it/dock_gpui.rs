@@ -141,8 +141,6 @@ fn the_compact_rail_has_every_nav_icon_projects_and_the_toolbar(cx: &mut TestApp
     draw(cx);
     let rail = bounds(&view, cx, Region::Rail(Left));
     let order = [
-        Region::Nav("search"),
-        Region::Nav("tasks"),
         Region::Nav("agents"),
         Region::Nav("assistant"),
         Region::Nav("projects"),
@@ -157,8 +155,13 @@ fn the_compact_rail_has_every_nav_icon_projects_and_the_toolbar(cx: &mut TestApp
         assert!(y > last, "{region:?} comes after the one before");
         last = y;
     }
-    // New session and Settings at the bottom of the rail.
-    let new = bounds(&view, cx, Region::Toolbar("new"));
+    // Start and Settings at the bottom of the rail.
+    assert!(!painted(&view, cx, Region::Nav("search")), "no Search icon");
+    assert!(
+        !painted(&view, cx, Region::Nav("tasks")),
+        "no Tasks icon before a task"
+    );
+    let new = bounds(&view, cx, Region::Toolbar("start"));
     let settings = bounds(&view, cx, Region::Toolbar("settings"));
     assert!(new.origin.y > bounds(&view, cx, Region::Nav("projects")).origin.y);
     assert!(settings.origin.y > new.origin.y);
@@ -171,34 +174,21 @@ fn compact_rail_icons_open_their_pages(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-b");
     draw(cx);
 
-    // Tasks is a page of the sidebar: the sidebar opens on it.
-    click(&view, cx, Region::Nav("tasks"));
-    assert_eq!(chosen(&view, cx, Left), Expanded);
-    assert_eq!(
-        state(&view, cx).docks.left.active,
-        Some(PanelId::new("tasks"))
-    );
-    assert!(painted(&view, cx, Region::Dock(Left)));
-
-    // Projects opens the expanded tree.
-    cx.simulate_keystrokes("cmd-b");
-    draw(cx);
+    // Projects is a page of the sidebar: the rail opens the expanded tree.
     click(&view, cx, Region::Nav("projects"));
     assert_eq!(chosen(&view, cx, Left), Expanded);
     assert_eq!(
         state(&view, cx).docks.left.active,
         Some(PanelId::new("sessions"))
     );
-
-    // Search opens the jump palette without widening the rail.
     cx.simulate_keystrokes("cmd-b");
     draw(cx);
-    click(&view, cx, Region::Nav("search"));
-    assert!(view.read_with(cx, |wb, _| wb.picker().is_some()));
     assert_eq!(chosen(&view, cx, Left), Compact);
-    cx.simulate_keystrokes("escape");
-    draw(cx);
-    assert!(view.read_with(cx, |wb, _| wb.picker().is_none()));
+
+    // Start is the Start sheet (offline it says so) and does not widen the rail.
+    click(&view, cx, Region::Toolbar("start"));
+    assert!(view.read_with(cx, |wb, _| wb.notice().is_some()));
+    assert_eq!(chosen(&view, cx, Left), Compact);
 
     // Agents opens the Agents page as a tab of the center, Mawas its Home tab; neither widens it.
     click(&view, cx, Region::Nav("agents"));
@@ -226,7 +216,7 @@ fn the_titlebar_button_always_brings_the_sidebar_back(cx: &mut TestAppContext) {
     assert!(!painted(&view, cx, Region::Dock(Left)));
     assert!(!painted(&view, cx, Region::Rail(Left)));
     assert!(
-        !painted(&view, cx, Region::Nav("search")),
+        !painted(&view, cx, Region::Nav("agents")),
         "no hitboxes of a hidden sidebar"
     );
     // The button is outside the sidebar and after the traffic lights (80 pt).

@@ -28,7 +28,7 @@ use crate::workbench::actions::{
 };
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
-use crate::workbench::ui::{self, Mascot, StyledExt as _};
+use crate::workbench::ui::{self, StyledExt as _};
 use crate::workbench::{Region, style::UiStyle};
 
 /// How often the elapsed times refresh while the panel is drawn and a task runs.
@@ -434,12 +434,12 @@ impl Render for TasksPanel {
                 )
             } else if nothing_at_all {
                 (
-                    "No tasks yet. Plan work as tasks with dependencies; Hutan starts what is ready.",
+                    "No tasks yet.",
                     Some(
                         small_button(
                             "tasks-empty-new",
-                            "+ New task",
-                            ui::ButtonKind::Primary,
+                            "New task…",
+                            ui::ButtonKind::Ghost,
                             true,
                             &theme,
                             &tokens,
@@ -453,12 +453,13 @@ impl Render for TasksPanel {
             } else {
                 ("Nothing matches the filters.", None)
             };
-            let mascot = if nothing_at_all {
-                Mascot::Empty
-            } else {
-                Mascot::Success
+            // A sidebar says it in one muted line (and offers the one action as a ghost button).
+            let empty = ui::EmptyState::new(text);
+            let empty = match action {
+                Some(action) => empty.action(action),
+                None => empty,
             };
-            list = list.child(ui::empty_state(mascot, text, action, &theme, &tokens).h(px(280.0)));
+            list = list.child(empty.render(&theme, &tokens).h(px(140.0)));
         }
         let pulse_dim = !reduce_motion() && (now / 1000) % 2 == 1;
         for (index, row) in rows.iter().enumerate() {
