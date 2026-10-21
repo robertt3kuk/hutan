@@ -825,6 +825,8 @@ pub struct RegistryConfig {
     pub assistant_policy: AssistantPolicy,
     /// `<home>/tmp`: scratch files of chat deliveries (clipboard images for Codex).
     pub tmp_dir: PathBuf,
+    /// Checkpoints of chat turns (ADR 0019).
+    pub checkpoints: Arc<crate::checkpoints::turns::TurnCheckpoints>,
 }
 
 /// Starts the actor from the stored state. It stops when every [`RegistryHandle`] is dropped.
@@ -850,6 +852,7 @@ pub fn spawn(
         config.idle_stop,
         config.assistant_policy,
         config.tmp_dir,
+        config.checkpoints,
     );
     let (workspaces, home, next_position) =
         restored_workspaces(&stored, &config.storage, &config.home_folder);
@@ -3422,13 +3425,23 @@ impl SessionRegistry {
         };
         let id = session.info.id;
         let cwd = session.info.cwd.clone().unwrap_or_default();
+        // The project whose `[checkpoints.projects.*]` apply to the chat's turns.
+        let scope = self
+            .workspaces
+            .iter()
+            .find(|w| w.info.id == session.info.workspace_id)
+            .map(|w| crate::checkpoints::turns::Scope {
+                project_id: w.info.id.to_string(),
+                project_name: w.info.name.clone(),
+            })
+            .unwrap_or_default();
         let chats = self.chats.clone();
         let mailbox = self.mailbox.clone();
         tokio::spawn(async move {
             let outcome = if wake {
                 chats.start_waking(id, cwd, &spec).await
             } else {
-                chats.start(id, cwd, &spec).await
+                chats.start(id, cwd, &spec, scope).await
             };
             let command = Command::ChatStarted {
                 session: id,

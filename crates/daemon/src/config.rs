@@ -86,6 +86,21 @@
 //!
 //! [finish]                       # the user's Finish in Changes / `hutan finish` (protocol 0.35, ADR 0020)
 //! push = true                    # push to the upstream after committing (and merging); false: keep it local
+//!
+//! [checkpoints]                  # a snapshot of an agent chat's checkout per turn (ADR 0019, docs/agents.md § Checkpoints)
+//! mode = "on"                    # "off": no snapshot from the next turn on
+//! max_file_bytes = 10485760      # a larger file is left out (and listed)
+//! snapshot_budget_bytes = 67108864   # new content per snapshot; past it the largest files are left out
+//! max_files = 5000               # changed files per snapshot
+//! max_untracked_files = 20000    # more untracked files and the checkout has no checkpoints
+//! exclude = [".env*", "*.pem", "*.key", "*.p12", "id_rsa*", "id_ed25519*", "*.kdbx", "credentials*"]
+//! keep_turns = 100               # retention: newest turns per session
+//! keep_days = 30                 # retention: a session's checkpoints go after this many days without one
+//! max_repo_bytes = 1073741824    # retention: recorded content per repository
+//! max_repo_refs = 1000           # retention: checkpoint refs per repository
+//!
+//! [checkpoints.projects.hutan]   # per project (name or id): only what differs
+//! mode = "off"
 //! ```
 
 use std::collections::BTreeMap;
@@ -131,6 +146,7 @@ pub struct DaemonSettings {
     pub projects: ProjectsSettings,
     pub control: ControlSettings,
     pub finish: FinishSettings,
+    pub checkpoints: CheckpointSettings,
 }
 
 /// `[projects]` of `daemon.toml`: automatic projects (protocol 0.19).
@@ -544,6 +560,166 @@ impl Default for FinishSettings {
     }
 }
 
+/// `[checkpoints] mode`: whether agent chat turns get checkpoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointMode {
+    #[default]
+    On,
+    Off,
+}
+
+impl CheckpointMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Off => "off",
+        }
+    }
+}
+
+const MIB: u64 = 1024 * 1024;
+
+/// `[checkpoints]` of `daemon.toml`: checkpoints of agent chat turns (ADR 0019,
+/// `docs/agents.md` § Checkpoints). Every value applies from the next snapshot on.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CheckpointSettings {
+    pub mode: CheckpointMode,
+    /// A file larger than this is left out of a snapshot.
+    pub max_file_bytes: u64,
+    /// New content one snapshot may hash; past it the largest files are left out.
+    pub snapshot_budget_bytes: u64,
+    /// Changed files one snapshot may hash; past it the largest files are left out.
+    pub max_files: u64,
+    /// A checkout with more untracked, not ignored files has no checkpoints.
+    pub max_untracked_files: u64,
+    /// File names never captured (`*` matches any run of characters, case ignored).
+    pub exclude: Vec<String>,
+    /// Retention: the newest turns kept per session.
+    pub keep_turns: u64,
+    /// Retention: a session's checkpoints go after this many days without a new one.
+    pub keep_days: u64,
+    /// Retention: new content recorded per repository; past it the oldest turns go.
+    pub max_repo_bytes: u64,
+    /// Retention: checkpoint refs per repository; past it the oldest turns go.
+    pub max_repo_refs: u64,
+    /// `[checkpoints.projects.<name or id>]`: what differs for one project.
+    pub projects: BTreeMap<String, CheckpointOverride>,
+}
+
+impl Default for CheckpointSettings {
+    fn default() -> Self {
+        Self {
+            mode: CheckpointMode::On,
+            max_file_bytes: 10 * MIB,
+            snapshot_budget_bytes: 64 * MIB,
+            max_files: 5_000,
+            max_untracked_files: 20_000,
+            exclude: crate::checkpoints::caps::DEFAULT_EXCLUDE
+                .iter()
+                .map(|p| (*p).to_owned())
+                .collect(),
+            keep_turns: 100,
+            keep_days: 30,
+            max_repo_bytes: 1024 * MIB,
+            max_repo_refs: 1_000,
+            projects: BTreeMap::new(),
+        }
+    }
+}
+
+/// `[checkpoints.projects.<name or id>]`: the checkpoint settings of one project that differ
+/// from `[checkpoints]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CheckpointOverride {
+    pub mode: Option<CheckpointMode>,
+    pub max_file_bytes: Option<u64>,
+    pub snapshot_budget_bytes: Option<u64>,
+    pub max_files: Option<u64>,
+    pub max_untracked_files: Option<u64>,
+}
+
+/// The settings of a project's snapshots: `[checkpoints]` with its override applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectCheckpoints {
+    pub mode: CheckpointMode,
+    pub max_file_bytes: u64,
+    pub snapshot_budget_bytes: u64,
+    pub max_files: u64,
+    pub max_untracked_files: u64,
+}
+
+impl CheckpointSettings {
+    /// The settings of the project with `id` and `name` (either may be empty): the overrides of
+    /// `[checkpoints.projects.<id>]` and then `[checkpoints.projects.<name>]` applied.
+    pub fn for_project(&self, id: &str, name: &str) -> ProjectCheckpoints {
+        let mut project = ProjectCheckpoints {
+            mode: self.mode,
+            max_file_bytes: self.max_file_bytes,
+            snapshot_budget_bytes: self.snapshot_budget_bytes,
+            max_files: self.max_files,
+            max_untracked_files: self.max_untracked_files,
+        };
+        for key in [id, name] {
+            if key.is_empty() {
+                continue;
+            }
+            if let Some(over) = self.projects.get(key) {
+                project.mode = over.mode.unwrap_or(project.mode);
+                project.max_file_bytes = over.max_file_bytes.unwrap_or(project.max_file_bytes);
+                project.snapshot_budget_bytes = over
+                    .snapshot_budget_bytes
+                    .unwrap_or(project.snapshot_budget_bytes);
+                project.max_files = over.max_files.unwrap_or(project.max_files);
+                project.max_untracked_files = over
+                    .max_untracked_files
+                    .unwrap_or(project.max_untracked_files);
+            }
+        }
+        project
+    }
+
+    fn check(&self) -> Result<(), String> {
+        let numbers = [
+            ("max_file_bytes", Some(self.max_file_bytes)),
+            ("snapshot_budget_bytes", Some(self.snapshot_budget_bytes)),
+            ("max_files", Some(self.max_files)),
+            ("max_untracked_files", Some(self.max_untracked_files)),
+            ("keep_turns", Some(self.keep_turns)),
+            ("keep_days", Some(self.keep_days)),
+            ("max_repo_bytes", Some(self.max_repo_bytes)),
+            ("max_repo_refs", Some(self.max_repo_refs)),
+        ];
+        let overrides = self.projects.iter().flat_map(|(project, over)| {
+            [
+                ("max_file_bytes", over.max_file_bytes),
+                ("snapshot_budget_bytes", over.snapshot_budget_bytes),
+                ("max_files", over.max_files),
+                ("max_untracked_files", over.max_untracked_files),
+            ]
+            .map(move |(key, value)| (project.as_str(), key, value))
+        });
+        for (key, value) in numbers {
+            if value == Some(0) {
+                return Err(format!("checkpoints.{key} must be at least 1"));
+            }
+        }
+        for (project, key, value) in overrides {
+            if value == Some(0) {
+                return Err(format!(
+                    "checkpoints.projects.{project}.{key} must be at least 1"
+                ));
+            }
+        }
+        if self.exclude.iter().any(|p| p.trim().is_empty()) {
+            return Err("checkpoints.exclude must not contain an empty name".to_owned());
+        }
+        Ok(())
+    }
+}
+
 /// What an agent-originated connection (one whose client runs in a chat session or in a terminal
 /// session an agent reported itself in, `ClientInfo.origin`) may change (protocol 0.21, ADR 0016).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -616,6 +792,8 @@ struct File {
     control: ControlSettings,
     #[serde(default)]
     finish: FinishSettings,
+    #[serde(default)]
+    checkpoints: CheckpointSettings,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -707,6 +885,7 @@ impl DaemonSettings {
         for (name, server) in &file.mcp {
             check_mcp(name, server)?;
         }
+        file.checkpoints.check().map_err(toml::de::Error::custom)?;
         Ok(Self {
             restore_sessions: file.daemon.restore_sessions,
             home_folder,
@@ -722,6 +901,7 @@ impl DaemonSettings {
             projects: file.projects,
             control: file.control,
             finish: file.finish,
+            checkpoints: file.checkpoints,
         })
     }
 }
@@ -1232,6 +1412,40 @@ transport = "sse"
             "[mcp.x]\nurl = \"ftp://a\"\n",
             "[mcp.x]\nurl = \"https://a\"\ntransport = \"websocket\"\n",
             "[mcp.\"a b\"]\ncommand = \"a\"\n",
+        ] {
+            assert!(DaemonSettings::parse(bad, None).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn checkpoints_default_on_and_a_project_overrides_what_it_names() {
+        let defaults = DaemonSettings::parse("", None).unwrap().checkpoints;
+        assert_eq!(defaults.mode, CheckpointMode::On);
+        assert_eq!(defaults.max_file_bytes, 10 * MIB);
+        assert_eq!(defaults.keep_turns, 100);
+        assert_eq!(defaults.max_repo_refs, 1_000);
+        let settings = DaemonSettings::parse(
+            "[checkpoints]\nmax_files = 7\nkeep_days = 2\n\n\
+             [checkpoints.projects.web]\nmode = \"off\"\n\n\
+             [checkpoints.projects.01WS]\nmax_file_bytes = 5\n",
+            None,
+        )
+        .unwrap()
+        .checkpoints;
+        let web = settings.for_project("01OTHER", "web");
+        assert_eq!(web.mode, CheckpointMode::Off);
+        assert_eq!(web.max_files, 7);
+        let by_id = settings.for_project("01WS", "api");
+        assert_eq!(by_id.mode, CheckpointMode::On);
+        assert_eq!(by_id.max_file_bytes, 5);
+        assert_eq!(settings.for_project("", "").max_file_bytes, 10 * MIB);
+        for bad in [
+            "[checkpoints]\nmode = \"sometimes\"\n",
+            "[checkpoints]\nkeep_turns = 0\n",
+            "[checkpoints]\nexclude = [\"\"]\n",
+            "[checkpoints]\nkeep = 1\n",
+            "[checkpoints.projects.web]\nmax_files = 0\n",
+            "[checkpoints.projects.web]\nkeep_turns = 3\n",
         ] {
             assert!(DaemonSettings::parse(bad, None).is_err(), "{bad}");
         }

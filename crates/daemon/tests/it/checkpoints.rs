@@ -282,15 +282,20 @@ async fn user_state_is_untouched_and_staged_unstaged_untracked_are_captured_unde
             .any(|p| p.ends_with(".log") || p.starts_with("target/"))
     );
     assert!(start.skipped.is_empty(), "{:?}", start.skipped);
+    let start_commit = start.commit.clone().unwrap();
+    assert_eq!(
+        start.reference.as_deref(),
+        Some("refs/hutan/checkpoints/01SESSION/1-start")
+    );
     assert_eq!(
         git(
             root,
             &["rev-parse", "refs/hutan/checkpoints/01SESSION/1-start"]
         )
         .trim(),
-        start.commit
+        start_commit
     );
-    let message = git(root, &["cat-file", "commit", &start.commit]);
+    let message = git(root, &["cat-file", "commit", &start_commit]);
     assert!(
         message.contains("\nauthor Hutan <hutan@localhost> "),
         "{message}"
@@ -302,15 +307,20 @@ async fn user_state_is_untouched_and_staged_unstaged_untracked_are_captured_unde
     write(root, "dir/untracked.txt", "edited by the agent\n");
     let before = user_state(root);
     let end = engine
-        .snapshot(root, label("1", Kind::End).with_parent(&start.commit))
+        .snapshot(root, label("1", Kind::End).with_parent(&start_commit))
         .await
         .unwrap();
     assert_eq!(user_state(root), before);
     assert!(!end.seeded);
     assert_eq!(end.files_hashed, 1);
+    let end_commit = end.commit.clone().unwrap();
     assert_eq!(
-        git(root, &["rev-parse", &format!("{}^", end.commit)]).trim(),
-        start.commit
+        end.reference.as_deref(),
+        Some("refs/hutan/checkpoints/01SESSION/1")
+    );
+    assert_eq!(
+        git(root, &["rev-parse", &format!("{end_commit}^")]).trim(),
+        start_commit
     );
     let files = tree(root, &end.tree);
     assert_eq!(
@@ -596,6 +606,41 @@ async fn a_snapshot_of_an_unchanged_tree_reuses_its_objects() {
     assert_ne!(second.commit, first.commit);
     // Only the new commit object.
     assert_eq!(loose_objects(root), objects + 1);
+
+    // An end that changed nothing since its start, and a warm-up, write no object and no ref.
+    let refs = git(root, &["for-each-ref", "refs/hutan/"]);
+    let third = engine
+        .snapshot(
+            root,
+            label("2", Kind::End)
+                .with_parent(first.commit.as_deref().unwrap())
+                .unless_tree(&first.tree),
+        )
+        .await
+        .unwrap();
+    assert_eq!(third.tree, first.tree);
+    assert_eq!((third.commit, third.reference), (None, None));
+    let warm = engine.snapshot(root, Label::warm("01SESSION")).await.unwrap();
+    assert_eq!((warm.commit, warm.reference), (None, None));
+    assert_eq!(loose_objects(root), objects + 1);
+    assert_eq!(git(root, &["for-each-ref", "refs/hutan/"]), refs);
+
+    // An end that changed something is written as usual.
+    write(root, "new.txt", "changed\n");
+    let fourth = engine
+        .snapshot(
+            root,
+            label("2", Kind::End)
+                .with_parent(first.commit.as_deref().unwrap())
+                .unless_tree(&first.tree),
+        )
+        .await
+        .unwrap();
+    assert_ne!(fourth.tree, first.tree);
+    assert_eq!(
+        fourth.reference.as_deref(),
+        Some("refs/hutan/checkpoints/01SESSION/2")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -779,7 +824,7 @@ async fn hooks_and_hostile_configuration_are_ignored() {
         "a hook ran: {}",
         fs::read_to_string(&marker).unwrap()
     );
-    let commit = git(root, &["cat-file", "commit", &snapshot.commit]);
+    let commit = git(root, &["cat-file", "commit", snapshot.commit.as_deref().unwrap()]);
     assert!(!commit.contains("gpgsig"), "{commit}");
     assert!(
         commit.contains("\ncommitter Hutan <hutan@localhost> "),

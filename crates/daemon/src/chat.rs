@@ -50,6 +50,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::assistant_pick::{CATALOG_TIMEOUT, pick_assistant_model};
 use crate::bus::EventBus;
+use crate::checkpoints::turns::{Scope, TurnCheckpoints};
 use crate::config::AssistantMode;
 use crate::context::Attached;
 use crate::direct::{DirectSession, Target};
@@ -381,6 +382,8 @@ pub struct ChatManager {
     mcp: OnceLock<McpWiring>,
     /// `<home>/tmp`: where clipboard images wait for an agent that reads images from disk.
     tmp_dir: PathBuf,
+    /// A snapshot of the checkout when an agent chat's turn starts and when it ends.
+    checkpoints: Arc<TurnCheckpoints>,
 }
 
 /// Why a subagent thread could not be interrupted.
@@ -471,6 +474,7 @@ impl ChatManager {
         idle_stop: Duration,
         policy: AssistantPolicy,
         tmp_dir: PathBuf,
+        checkpoints: Arc<TurnCheckpoints>,
     ) -> Arc<Self> {
         // A daemon that was killed mid-turn left its images behind: nothing is in flight yet.
         let stale = tmp_dir.clone();
@@ -508,6 +512,7 @@ impl ChatManager {
             memory: Mutex::new(None),
             mcp: OnceLock::new(),
             tmp_dir,
+            checkpoints,
         });
         tokio::spawn(Self::sleeper(Arc::downgrade(&manager)));
         manager
@@ -914,19 +919,33 @@ impl ChatManager {
     }
 
     /// Starts (or resumes, when `spec.thread_id` is set) the agent of a session and begins
-    /// journaling its events.
+    /// journaling its events. An agent chat's turns get checkpoints (`scope` names its project
+    /// for the per-project settings); an assistant's and a direct chat's do not.
     pub async fn start(
         self: &Arc<Self>,
         id: SessionId,
         cwd: PathBuf,
         spec: &ChatSpec,
+        scope: Scope,
     ) -> Result<Started, ErrorBody> {
         if is_gateway_agent(&spec.agent) {
             return self.start_direct(id, spec).await;
         }
-        self.start_agent(id, cwd, spec)
-            .await
-            .map_err(|failure| failure.error)
+        let checkpoints = !spec.assistant;
+        if checkpoints {
+            // Before the agent runs: its first turn may follow at once.
+            self.checkpoints.open(id, cwd.clone(), scope);
+        }
+        let started = self.start_agent(id, cwd, spec).await;
+        if checkpoints && started.is_err() {
+            self.checkpoints.close(id);
+        }
+        started.map_err(|failure| failure.error)
+    }
+
+    /// Checkpoints of chat turns (ADR 0019).
+    pub(crate) fn checkpoints(&self) -> &Arc<TurnCheckpoints> {
+        &self.checkpoints
     }
 
     /// Starts (or resumes) the agent process of a Codex or harness chat.
@@ -1342,6 +1361,9 @@ impl ChatManager {
                 ));
             }
         };
+        // The checkout as it is before the agent hears of this turn (ADR 0019): the prompt
+        // waits at most the start budget for it, then goes, and the turn's checkpoint is late.
+        let checkpoint = self.checkpoints.begin(id).await;
         // Mawas's memory: the first turn of a Claude Code conversation carries it, and any turn
         // carries what changed since the conversation last heard of it.
         let memory = self.turn_memory(&live).await;
@@ -1423,6 +1445,12 @@ impl ChatManager {
                 session.send(text, attached, retry).await
             }
         };
+        if let Some(checkpoint) = checkpoint {
+            match &started {
+                Ok(turn) => self.checkpoints.sent(id, checkpoint, *turn),
+                Err(_) => self.checkpoints.abandoned(id, checkpoint),
+            }
+        }
         if started.is_err() {
             live.busy.store(false, Ordering::Release);
             memory.undo(&live);
@@ -2022,6 +2050,8 @@ impl ChatManager {
         // Text no turn end claimed (the agent died between messages) is kept as it is.
         self.flush_partials(live, Flush::Final);
         lock(&self.live).remove(&live.id);
+        // A turn the agent never started (or never ended) still gets its end.
+        self.checkpoints.close(live.id);
         self.drop_temp_images(live);
         // The idle sleeper stopped it, and nobody else asked: the session sleeps on.
         let slept = live.sleeping.load(Ordering::Acquire) && !live.stopping.load(Ordering::Acquire);
@@ -2116,6 +2146,8 @@ impl ChatManager {
             }
             kind if kind.ends_turn() => {
                 *lock(&live.open_turn) = None;
+                // Before the next turn may start: its start waits for this end.
+                self.checkpoints.turn_ended(live.id, event.turn_id);
                 live.busy.store(false, Ordering::Release);
                 let (status, error) = match kind {
                     AgentEventKind::TurnCompleted { .. } => (ChatTurnStatus::Completed, None),

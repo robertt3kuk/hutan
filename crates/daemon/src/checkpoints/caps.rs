@@ -57,27 +57,9 @@ pub const DEFAULT_EXCLUDE: &[&str] = &[
     "credentials*",
 ];
 
-/// Why a path is not in a snapshot. Every skip is returned with the snapshot.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SkipReason {
-    /// Larger than `max_file_bytes`.
-    TooLarge,
-    /// Past `snapshot_budget_bytes` of this snapshot.
-    OverBudget,
-    /// Past `max_files` of this snapshot.
-    TooManyFiles,
-    /// The name matches the `exclude` list.
-    SecretName,
-    /// A `filter=` attribute (Git LFS and the like): its content would not round-trip as raw
-    /// bytes.
-    Filter { driver: String },
-    /// A nested repository or a submodule: neither the gitlink nor its content is captured.
-    NestedRepository,
-    /// Not a regular file or a symbolic link (a FIFO, socket or device).
-    NotRegular,
-    /// The daemon may not read it.
-    Unreadable,
-}
+/// Why a path is not in a snapshot (the domain type of `hutan-core`). Every skip is returned
+/// with the snapshot.
+pub use hutan_core::checkpoint::SkipReason;
 
 /// A path left out of a snapshot, relative to the checkout.
 #[derive(Debug, Clone, PartialEq, Eq)]

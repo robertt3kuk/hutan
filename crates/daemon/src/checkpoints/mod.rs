@@ -1,27 +1,35 @@
-//! Checkpoints of agent edits (ADR 0019): the snapshot engine.
+//! Checkpoints of agent edits (ADR 0019): the snapshot engine, and the checkpoints of chat
+//! turns built on it.
 //!
 //! A snapshot records the whole working tree of a git checkout (tracked files as they are on
-//! disk, untracked files that are not ignored) as a tree commit under a hidden ref
-//! `refs/hutan/checkpoints/<session>/<turn>-<start|end>` of the user's repository. It goes
-//! through Hutan's own index (`<HUTAN_HOME>/checkpoints/<repo>/<worktree>.index`, seeded once
-//! from the user's index) and git plumbing only, so the user's index, HEAD, branches, stash and
-//! working tree are never written ([`git`] lists the environment of every call).
+//! disk, untracked files that are not ignored) as a tree commit under a hidden ref of the
+//! user's repository: `refs/hutan/checkpoints/<session>/<checkpoint>-start` while a turn runs,
+//! then `refs/hutan/checkpoints/<session>/<turn>`, the end commit, whose parent is the start
+//! commit (one ref per turn). It goes through Hutan's own index
+//! (`<HUTAN_HOME>/checkpoints/<repo>/<worktree>.index`, seeded once from the user's index) and
+//! git plumbing only, so the user's index, HEAD, branches, stash and working tree are never
+//! written ([`git`] lists the environment of every call).
 //!
 //! - [`caps`]: the bounds of a snapshot and the `lstat` filters that apply them before
 //!   anything is hashed; every skipped path is returned with the reason.
 //! - `snapshot`: the algorithm (seed, refresh, candidates, filters, raw hashing, tree, commit,
 //!   ref).
+//! - `refs`: listing, deleting and packing the hidden refs of a repository.
+//! - `retention`: which checkpoints go (count, age, bytes, refs).
+//! - [`turns`]: the checkpoints of chat turns: a snapshot when a turn starts and when it ends,
+//!   their rows in SQLite, the settings, reconcile at start and retention.
 //!
 //! Snapshots of one checkout run one at a time; once started a snapshot runs to its end even
-//! when the caller stops waiting (CK-2 sends the prompt after a budget and marks the turn
-//! `late`). Three failures in a row, or less than 2 GiB free, switch the checkout's checkpoints
-//! off until [`Checkpoints::switch_on`].
-//!
-//! Not wired to sessions yet: CK-2 takes a snapshot at each turn's start and end.
+//! when the caller stops waiting (a turn's prompt goes to the agent after a budget and the
+//! turn is marked `late`). Three failures in a row, or less than 2 GiB free, switch the
+//! checkout's checkpoints off until [`Checkpoints::switch_on`].
 
 pub mod caps;
 mod git;
+mod refs;
+mod retention;
 mod snapshot;
+pub mod turns;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -69,11 +77,16 @@ impl Config {
     }
 }
 
-/// Which end of a turn a snapshot records.
+/// What a snapshot records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
+    /// A turn before its prompt reaches the agent: ref `<name>-start`.
     Start,
+    /// A turn when it ended: ref `<name>`, its parent the start commit.
     End,
+    /// No commit and no ref: the private index and the object store catch up with the
+    /// checkout (the first snapshot of a checkout, taken when a chat opens).
+    Warm,
 }
 
 impl Kind {
@@ -81,6 +94,7 @@ impl Kind {
         match self {
             Self::Start => "start",
             Self::End => "end",
+            Self::Warm => "warm",
         }
     }
 }
@@ -96,20 +110,59 @@ impl fmt::Display for Kind {
 pub struct Label {
     /// The session (a ref name component: ASCII letters, digits, `-`, `_`).
     pub session: String,
-    /// The turn within the session (same characters).
-    pub turn: String,
+    /// The ref's last component (same characters): the turn, or the checkpoint while the
+    /// agent has not named the turn yet.
+    pub name: String,
+    /// The `Hutan-Turn` trailer.
+    pub turn: Option<String>,
+    /// The `Hutan-Checkpoint` trailer (same characters).
+    pub checkpoint: Option<String>,
     pub kind: Kind,
     /// The commit this one follows (an end snapshot's start).
     pub parent: Option<String>,
+    /// An end whose tree is this one changed nothing: no commit and no ref are written.
+    pub unchanged_tree: Option<String>,
 }
 
 impl Label {
+    /// A snapshot of `turn`, named by it.
     pub fn new(session: impl Into<String>, turn: impl Into<String>, kind: Kind) -> Self {
+        let turn = turn.into();
         Self {
             session: session.into(),
-            turn: turn.into(),
+            name: turn.clone(),
+            turn: Some(turn),
+            checkpoint: None,
             kind,
             parent: None,
+            unchanged_tree: None,
+        }
+    }
+
+    /// The start of a turn the agent has not named yet: named by its checkpoint.
+    pub fn before_turn(session: impl Into<String>, checkpoint: impl Into<String>) -> Self {
+        let checkpoint = checkpoint.into();
+        Self {
+            session: session.into(),
+            name: checkpoint.clone(),
+            turn: None,
+            checkpoint: Some(checkpoint),
+            kind: Kind::Start,
+            parent: None,
+            unchanged_tree: None,
+        }
+    }
+
+    /// A [`Kind::Warm`] snapshot for `session`.
+    pub fn warm(session: impl Into<String>) -> Self {
+        Self {
+            session: session.into(),
+            name: "warm".to_owned(),
+            turn: None,
+            checkpoint: None,
+            kind: Kind::Warm,
+            parent: None,
+            unchanged_tree: None,
         }
     }
 
@@ -119,45 +172,86 @@ impl Label {
         self
     }
 
-    /// `refs/hutan/checkpoints/<session>/<turn>-<kind>`.
-    pub fn reference(&self) -> String {
-        format!("{REF_PREFIX}{}/{}-{}", self.session, self.turn, self.kind)
+    #[must_use]
+    pub fn with_checkpoint(mut self, checkpoint: impl Into<String>) -> Self {
+        self.checkpoint = Some(checkpoint.into());
+        self
+    }
+
+    /// An end that writes nothing when its tree is `tree` (the start's).
+    #[must_use]
+    pub fn unless_tree(mut self, tree: impl Into<String>) -> Self {
+        self.unchanged_tree = Some(tree.into());
+        self
+    }
+
+    /// `refs/hutan/checkpoints/<session>/<name>-start` for a start, `.../<name>` for an end,
+    /// none for a warm-up.
+    pub fn reference(&self) -> Option<String> {
+        match self.kind {
+            Kind::Start => Some(format!("{REF_PREFIX}{}/{}-start", self.session, self.name)),
+            Kind::End => Some(format!("{REF_PREFIX}{}/{}", self.session, self.name)),
+            Kind::Warm => None,
+        }
     }
 
     fn validate(&self) -> Result<(), CheckpointError> {
-        for (what, value) in [("session", &self.session), ("turn", &self.turn)] {
-            let ok = !value.is_empty()
-                && value.len() <= 128
-                && value
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-            if !ok {
+        let names = [
+            ("session", Some(&self.session)),
+            ("name", Some(&self.name)),
+            ("turn", self.turn.as_ref()),
+            ("checkpoint", self.checkpoint.as_ref()),
+        ];
+        for (what, value) in names {
+            let Some(value) = value else { continue };
+            if !is_ref_component(value) {
                 return Err(CheckpointError::InvalidLabel(format!(
                     "{what} `{value}` is not 1–128 ASCII letters, digits, `-` or `_`"
                 )));
             }
         }
-        if let Some(parent) = &self.parent
-            && !(matches!(parent.len(), 40 | 64) && parent.bytes().all(|b| b.is_ascii_hexdigit()))
-        {
-            return Err(CheckpointError::InvalidLabel(format!(
-                "parent `{parent}` is not an object id"
-            )));
+        for (what, value) in [
+            ("parent", &self.parent),
+            ("unchanged tree", &self.unchanged_tree),
+        ] {
+            if let Some(oid) = value
+                && !is_object_id(oid)
+            {
+                return Err(CheckpointError::InvalidLabel(format!(
+                    "{what} `{oid}` is not an object id"
+                )));
+            }
         }
         Ok(())
     }
 }
 
-/// A snapshot that was written.
+/// 1–128 ASCII letters, digits, `-` or `_`: safe in a ref name and a trailer.
+fn is_ref_component(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// A SHA-1 or SHA-256 object id in hex.
+pub(crate) fn is_object_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// A snapshot that was taken.
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     /// The checkout's top level.
     pub checkout: PathBuf,
     /// The repository's common git directory (where the objects and refs are).
     pub common_dir: PathBuf,
-    /// `refs/hutan/checkpoints/<session>/<turn>-<kind>`.
-    pub reference: String,
-    pub commit: String,
+    /// The ref written ([`Label::reference`]); `None` for a warm-up and for an end that
+    /// changed nothing.
+    pub reference: Option<String>,
+    /// The commit written, when one was.
+    pub commit: Option<String>,
     pub tree: String,
     pub parent: Option<String>,
     /// Files whose content was hashed into the object store (new or changed since the
@@ -307,7 +401,7 @@ impl Checkpoints {
         }
     }
 
-    /// Snapshots the checkout containing `checkout` under `label`.
+    /// Snapshots the checkout containing `checkout` under `label`, within the engine's caps.
     ///
     /// Runs on its own task: dropping the returned future stops the wait, not the snapshot.
     pub async fn snapshot(
@@ -315,11 +409,29 @@ impl Checkpoints {
         checkout: &Path,
         label: Label,
     ) -> Result<Snapshot, CheckpointError> {
+        let caps = self.inner.config.caps.clone();
+        self.snapshot_with(checkout, label, caps).await
+    }
+
+    /// [`snapshot`](Self::snapshot) within `caps` (the settings of the moment, per project).
+    pub async fn snapshot_with(
+        &self,
+        checkout: &Path,
+        label: Label,
+        caps: Caps,
+    ) -> Result<Snapshot, CheckpointError> {
         let inner = Arc::clone(&self.inner);
         let checkout = checkout.to_owned();
-        tokio::spawn(async move { inner.snapshot(&checkout, &label).await })
+        tokio::spawn(async move { inner.snapshot(&checkout, &label, &caps).await })
             .await
             .map_err(|error| CheckpointError::Internal(error.to_string()))?
+    }
+
+    /// The checkout containing `path`: its top level and the repository's common git
+    /// directory.
+    pub async fn repository(&self, path: &Path) -> Result<(PathBuf, PathBuf), CheckpointError> {
+        let repo = self.inner.resolve(path).await?;
+        Ok((repo.toplevel, repo.common_dir))
     }
 
     /// Why checkpoints of the checkout containing `checkout` are off, if they are.
@@ -415,7 +527,12 @@ impl Inner {
             .join(format!("{}.index", short_hash(&repo.git_dir)))
     }
 
-    async fn snapshot(&self, checkout: &Path, label: &Label) -> Result<Snapshot, CheckpointError> {
+    async fn snapshot(
+        &self,
+        checkout: &Path,
+        label: &Label,
+        caps: &Caps,
+    ) -> Result<Snapshot, CheckpointError> {
         label.validate()?;
         let repo = self.resolve(checkout).await?;
         if self.refused_root(&repo.toplevel) {
@@ -431,7 +548,7 @@ impl Inner {
                 reason: reason.clone(),
             });
         }
-        let result = match self.check_disk(&repo) {
+        let result = match self.check_disk(&repo, caps) {
             Ok(()) => {
                 let index = self.private_index(&repo);
                 let git = self.git(&repo.toplevel);
@@ -439,7 +556,7 @@ impl Inner {
                     &git,
                     &repo,
                     &index,
-                    &self.config.caps,
+                    caps,
                     label,
                     &mut health.memory,
                 )
@@ -457,7 +574,7 @@ impl Inner {
                     health.off = Some(error.to_string());
                 } else if error.counts() {
                     health.failures += 1;
-                    if health.failures >= self.config.caps.max_failures {
+                    if health.failures >= caps.max_failures {
                         health.off = Some(format!(
                             "{} snapshots in a row failed, the last with: {error}",
                             health.failures
@@ -471,8 +588,8 @@ impl Inner {
     }
 
     /// Fails when the repository's or Hutan's volume has less than `min_free_bytes` free.
-    fn check_disk(&self, repo: &Repo) -> Result<(), CheckpointError> {
-        let required = self.config.caps.min_free_bytes;
+    fn check_disk(&self, repo: &Repo, caps: &Caps) -> Result<(), CheckpointError> {
+        let required = caps.min_free_bytes;
         let store = existing_ancestor(&self.config.store);
         for volume in [repo.common_dir.as_path(), store] {
             let stats = rustix::fs::statvfs(volume).map_err(|errno| CheckpointError::Io {
@@ -513,7 +630,15 @@ mod tests {
     #[test]
     fn labels_make_hidden_refs_and_reject_what_a_ref_cannot_hold() {
         let label = Label::new("01JAB", "7", Kind::End);
-        assert_eq!(label.reference(), "refs/hutan/checkpoints/01JAB/7-end");
+        assert_eq!(
+            label.reference().as_deref(),
+            Some("refs/hutan/checkpoints/01JAB/7")
+        );
+        assert_eq!(
+            Label::before_turn("01JAB", "01CP").reference().as_deref(),
+            Some("refs/hutan/checkpoints/01JAB/01CP-start")
+        );
+        assert_eq!(Label::warm("01JAB").reference(), None);
         assert!(label.validate().is_ok());
         for (session, turn) in [
             ("", "1"),
@@ -538,6 +663,18 @@ mod tests {
                 .with_parent("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
                 .validate()
                 .is_ok()
+        );
+        assert!(
+            Label::new("s", "1", Kind::End)
+                .with_checkpoint("a.b")
+                .validate()
+                .is_err()
+        );
+        assert!(
+            Label::new("s", "1", Kind::End)
+                .unless_tree("tree")
+                .validate()
+                .is_err()
         );
     }
 }

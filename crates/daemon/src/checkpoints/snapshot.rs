@@ -50,8 +50,8 @@ const CHECK_IGNORE_PATHS: usize = 256;
 /// What [`take`] wrote.
 #[derive(Debug)]
 pub(crate) struct Parts {
-    reference: String,
-    commit: String,
+    reference: Option<String>,
+    commit: Option<String>,
     tree: String,
     files_hashed: usize,
     bytes_hashed: u64,
@@ -349,11 +349,18 @@ impl<'a> Snapshotter<'a> {
                 .await?
                 .line(),
         };
-        let commit = self.commit(&tree, label).await?;
-        let reference = label.reference();
-        self.private
-            .write_ok(&os_args(&["update-ref", &reference, &commit]), None)
-            .await?;
+        // A warm-up records nothing; an end that changed nothing neither.
+        let unchanged = label.unchanged_tree.as_deref() == Some(tree.as_str());
+        let (commit, reference) = match label.reference() {
+            Some(reference) if !unchanged => {
+                let commit = self.commit(&tree, label).await?;
+                self.private
+                    .write_ok(&os_args(&["update-ref", &reference, &commit]), None)
+                    .await?;
+                (Some(commit), Some(reference))
+            }
+            _ => (None, None),
+        };
         *memory = Memory {
             ignore: Some(rules),
             tree: Some(tree.clone()),
@@ -799,12 +806,18 @@ impl<'a> Snapshotter<'a> {
     }
 
     async fn commit(&self, tree: &str, label: &Label) -> Result<String, CheckpointError> {
-        let message = format!(
-            "Hutan checkpoint ({kind})\n\nHutan-Session: {session}\nHutan-Turn: {turn}\nHutan-Kind: {kind}\n",
-            kind = label.kind,
-            session = label.session,
-            turn = label.turn,
+        let kind = label.kind;
+        let mut message = format!(
+            "Hutan checkpoint ({kind})\n\nHutan-Session: {}\n",
+            label.session
         );
+        if let Some(turn) = &label.turn {
+            message.push_str(&format!("Hutan-Turn: {turn}\n"));
+        }
+        message.push_str(&format!("Hutan-Kind: {kind}\n"));
+        if let Some(checkpoint) = &label.checkpoint {
+            message.push_str(&format!("Hutan-Checkpoint: {checkpoint}\n"));
+        }
         let mut args = vec!["commit-tree", "--no-gpg-sign", "-m", message.as_str()];
         if let Some(parent) = &label.parent {
             args.extend(["-p", parent.as_str()]);

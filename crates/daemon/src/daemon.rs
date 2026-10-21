@@ -24,6 +24,7 @@ use crate::agent;
 use crate::assistant::AssistantService;
 use crate::bus::{EventBus, RingLimits};
 use crate::chat;
+use crate::checkpoints::turns::{self as checkpoint_turns, TurnCheckpoints};
 use crate::config::DaemonSettings;
 use crate::conn::{self, ConnContext};
 use crate::control::ControlService;
@@ -64,6 +65,9 @@ const MENU_BAR_STOP_WAIT: Duration = Duration::from_secs(2);
 /// How long shutdown waits for session processes to end: the SIGHUP grace plus margin for the
 /// SIGKILL and reaping that follow it.
 const SESSION_STOP_WAIT: Duration = registry::STOP_GRACE.saturating_add(Duration::from_secs(5));
+
+/// How long shutdown waits for the checkpoints of the turns the stop cut off.
+const CHECKPOINT_DRAIN_WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
@@ -110,6 +114,9 @@ pub struct DaemonConfig {
     /// The bounds of the file service (protocol 0.33): 500 changes per `fs.changed` event,
     /// 30 s without a chunk before an upload is discarded. Tests lower them.
     pub fs_limits: crate::files::Limits,
+    /// The start budget of a turn's checkpoint (5 s) and the environment of its git calls.
+    /// Tests lower the budget and put a slow fake git first on `PATH`.
+    pub checkpoints: checkpoint_turns::Tuning,
 }
 
 impl DaemonConfig {
@@ -130,6 +137,7 @@ impl DaemonConfig {
             socket_check_interval: SOCKET_CHECK_INTERVAL,
             assistant_idle_stop: None,
             fs_limits: crate::files::Limits::default(),
+            checkpoints: checkpoint_turns::Tuning::default(),
         }
     }
 }
@@ -273,6 +281,16 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         .hutan_bin
         .clone()
         .unwrap_or_else(agent::resolve_hutan_bin);
+    // Checkpoints of chat turns: what earlier daemons left is reconciled in the background
+    // (rows created from now on are this daemon's), then retention runs once a day.
+    let checkpoints = TurnCheckpoints::new(
+        storage.clone(),
+        &paths.base,
+        paths.user_home.clone(),
+        settings.checkpoints.clone(),
+        config.checkpoints.clone(),
+    );
+    tokio::spawn(checkpoints.clone().upkeep(shutdown.clone()));
     let registry = registry::spawn(
         bus.clone(),
         hub.clone(),
@@ -303,6 +321,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
                 max_actions: settings.assistant.max_actions_per_turn,
             },
             tmp_dir: paths.base.join("tmp"),
+            checkpoints: checkpoints.clone(),
         },
         stored,
     );
@@ -496,6 +515,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         shutdown.clone(),
         held,
         storage,
+        checkpoints,
         menu_bar,
         epoch,
     ));
@@ -587,6 +607,7 @@ async fn accept_loop(
     shutdown: CancellationToken,
     held: Held,
     storage: Storage,
+    checkpoints: Arc<TurnCheckpoints>,
     menu_bar: Option<JoinHandle<()>>,
     epoch: Epoch,
 ) {
@@ -637,6 +658,8 @@ async fn accept_loop(
         }
     };
     tokio::join!(stop_sessions, drain_connections);
+    // The turns the stop cut off are recorded (their end snapshots) before the database closes.
+    checkpoints.drain(CHECKPOINT_DRAIN_WAIT).await;
     // The menu bar item leaves with the daemon: its task takes it off at shutdown.
     if let Some(menu_bar) = menu_bar
         && timeout(MENU_BAR_STOP_WAIT, menu_bar).await.is_err()

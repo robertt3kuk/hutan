@@ -107,6 +107,7 @@ enum Group {
     Tasks,
     Gateway,
     Finish,
+    Checkpoints,
 }
 
 struct Spec {
@@ -443,8 +444,122 @@ fn build_specs() -> Vec<Spec> {
         live("finish.push", Kind::Bool, Group::Finish, |c| {
             json!(c.finish.push)
         }),
+        live(
+            "checkpoints.mode",
+            Kind::Enum(&CHECKPOINT_MODES),
+            Group::Checkpoints,
+            |c| json!(c.checkpoints.mode.as_str()),
+        ),
+        live(
+            "checkpoints.max_file_bytes",
+            POSITIVE,
+            Group::Checkpoints,
+            |c| int_value(c.checkpoints.max_file_bytes),
+        ),
+        live(
+            "checkpoints.snapshot_budget_bytes",
+            POSITIVE,
+            Group::Checkpoints,
+            |c| int_value(c.checkpoints.snapshot_budget_bytes),
+        ),
+        live(
+            "checkpoints.max_files",
+            POSITIVE,
+            Group::Checkpoints,
+            |c| int_value(c.checkpoints.max_files),
+        ),
+        live(
+            "checkpoints.max_untracked_files",
+            POSITIVE,
+            Group::Checkpoints,
+            |c| int_value(c.checkpoints.max_untracked_files),
+        ),
+        live(
+            "checkpoints.exclude",
+            Kind::StringList(None),
+            Group::Checkpoints,
+            |c| list_value(&c.checkpoints.exclude),
+        ),
+        live(
+            "checkpoints.keep_turns",
+            POSITIVE,
+            Group::Checkpoints,
+            |c| int_value(c.checkpoints.keep_turns),
+        ),
+        live(
+            "checkpoints.keep_days",
+            POSITIVE,
+            Group::Checkpoints,
+            |c| int_value(c.checkpoints.keep_days),
+        ),
+        live(
+            "checkpoints.max_repo_bytes",
+            POSITIVE,
+            Group::Checkpoints,
+            |c| int_value(c.checkpoints.max_repo_bytes),
+        ),
+        live(
+            "checkpoints.max_repo_refs",
+            POSITIVE,
+            Group::Checkpoints,
+            |c| int_value(c.checkpoints.max_repo_refs),
+        ),
     ]);
     specs
+}
+
+/// `checkpoints.mode` and its per-project override.
+const CHECKPOINT_MODES: [&str; 2] = ["on", "off"];
+
+/// What `[checkpoints.projects.<project>]` may set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckpointField {
+    Mode,
+    MaxFileBytes,
+    SnapshotBudgetBytes,
+    MaxFiles,
+    MaxUntrackedFiles,
+}
+
+impl CheckpointField {
+    const ALL: [Self; 5] = [
+        Self::Mode,
+        Self::MaxFileBytes,
+        Self::SnapshotBudgetBytes,
+        Self::MaxFiles,
+        Self::MaxUntrackedFiles,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Mode => "mode",
+            Self::MaxFileBytes => "max_file_bytes",
+            Self::SnapshotBudgetBytes => "snapshot_budget_bytes",
+            Self::MaxFiles => "max_files",
+            Self::MaxUntrackedFiles => "max_untracked_files",
+        }
+    }
+
+    fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|f| f.name() == name)
+    }
+
+    fn kind(self) -> Kind {
+        match self {
+            Self::Mode => Kind::Enum(&CHECKPOINT_MODES),
+            _ => POSITIVE,
+        }
+    }
+
+    fn value(self, project: &config::ProjectCheckpoints) -> Value {
+        match self {
+            Self::Mode => json!(project.mode.as_str()),
+            Self::MaxFileBytes => int_value(project.max_file_bytes),
+            Self::SnapshotBudgetBytes => int_value(project.snapshot_budget_bytes),
+            Self::MaxFiles => int_value(project.max_files),
+            Self::MaxUntrackedFiles => int_value(project.max_untracked_files),
+        }
+    }
 }
 
 /// The four permissions of `[assistant.context]`, `[assistant.global_context]` and
@@ -500,6 +615,11 @@ enum Target {
         workspace: String,
         permission: Permission,
     },
+    /// `checkpoints.projects.<project>.<field>`: `project` is an id or a name.
+    CheckpointProject {
+        project: String,
+        field: CheckpointField,
+    },
     /// `mcp.<name>`: one `[mcp.<name>]` table, set as a whole from an object.
     Mcp(String),
 }
@@ -526,6 +646,16 @@ fn resolve_key(key: &str) -> Result<Target, ErrorBody> {
             permission,
         });
     }
+    if let Some(rest) = key.strip_prefix("checkpoints.projects.")
+        && let Some((project, field)) = rest.rsplit_once('.')
+        && let Some(field) = CheckpointField::parse(field)
+        && !project.is_empty()
+    {
+        return Ok(Target::CheckpointProject {
+            project: project.to_owned(),
+            field,
+        });
+    }
     if let Some(name) = key.strip_prefix("mcp.")
         && !name.is_empty()
     {
@@ -550,6 +680,12 @@ impl Target {
                 "workspaces".to_owned(),
                 workspace.clone(),
                 permission.name().to_owned(),
+            ],
+            Self::CheckpointProject { project, field } => vec![
+                "checkpoints".to_owned(),
+                "projects".to_owned(),
+                project.clone(),
+                field.name().to_owned(),
             ],
         }
     }
@@ -1073,6 +1209,26 @@ fn entries(fresh: &Config, running: &Config, doc: &DocumentMut) -> Vec<DaemonSet
             });
         }
     }
+    for project in fresh.checkpoints.projects.keys() {
+        for field in CheckpointField::ALL {
+            let effective =
+                |config: &Config| field.value(&config.checkpoints.for_project(project, ""));
+            let target = Target::CheckpointProject {
+                project: project.clone(),
+                field,
+            };
+            let key = format!("checkpoints.projects.{project}.{}", field.name());
+            list.push(DaemonSetting {
+                pending_restart: effective(fresh) != effective(running),
+                value: effective(fresh),
+                default: field.value(&fresh.checkpoints.for_project("", "")),
+                set_in_file: present(doc, &target.segments(&key)),
+                kind: field.kind().wire(),
+                applies: Applies::Live,
+                key,
+            });
+        }
+    }
     for (name, server) in &fresh.mcp {
         let describe = |server: Option<&config::McpSettings>| {
             server.map_or(Value::Null, |server| {
@@ -1192,6 +1348,7 @@ impl SettingsService {
         running.tasks.max_parallel = self.tasks.max_parallel();
         running.gateway.max_context_chars = self.registry.chats().max_context_chars();
         running.finish.push = self.worktrees.finish_push();
+        running.checkpoints = self.registry.chats().checkpoints().settings();
         running
     }
 
@@ -1224,9 +1381,17 @@ impl SettingsService {
         let (kind, group) = match &target {
             Target::Spec(spec) => (Some(spec.kind), spec.group),
             Target::Workspace { .. } => (Some(Kind::Bool), Some(Group::Assistant)),
+            Target::CheckpointProject { field, .. } => {
+                (Some(field.kind()), Some(Group::Checkpoints))
+            }
             Target::Mcp(_) => (None, None),
         };
-        if let Target::Workspace { workspace, .. } = &target
+        let named = match &target {
+            Target::Workspace { workspace, .. } => Some(workspace),
+            Target::CheckpointProject { project, .. } => Some(project),
+            Target::Spec(_) | Target::Mcp(_) => None,
+        };
+        if let Some(workspace) = named
             && req.value.is_some()
         {
             self.require_workspace(workspace).await?;
@@ -1314,6 +1479,11 @@ impl SettingsService {
                 .chats()
                 .set_max_context_chars(fresh.gateway.max_context_chars),
             Group::Finish => self.worktrees.set_finish_push(fresh.finish.push),
+            Group::Checkpoints => self
+                .registry
+                .chats()
+                .checkpoints()
+                .apply_settings(fresh.checkpoints.clone()),
         }
         Ok(())
     }
@@ -1409,6 +1579,7 @@ mod tests {
             projects,
             control,
             finish,
+            checkpoints,
         } = Config::default();
         let config::HistorySettings {
             enabled: _,
@@ -1483,6 +1654,26 @@ mod tests {
             approval_timeout_secs: _,
         } = control;
         let config::FinishSettings { push: _ } = finish;
+        let config::CheckpointSettings {
+            mode: _,
+            max_file_bytes: _,
+            snapshot_budget_bytes: _,
+            max_files: _,
+            max_untracked_files: _,
+            exclude: _,
+            keep_turns: _,
+            keep_days: _,
+            max_repo_bytes: _,
+            max_repo_refs: _,
+            projects: _,
+        } = checkpoints;
+        let config::CheckpointOverride {
+            mode: _,
+            max_file_bytes: _,
+            snapshot_budget_bytes: _,
+            max_files: _,
+            max_untracked_files: _,
+        } = config::CheckpointOverride::default();
 
         let in_table: std::collections::BTreeSet<&str> = SPECS.iter().map(|s| s.key).collect();
         // Every key a field maps to (the permission tables share four names; the harness
@@ -1524,6 +1715,16 @@ mod tests {
             "control.mcp",
             "control.approval_timeout_secs",
             "finish.push",
+            "checkpoints.mode",
+            "checkpoints.max_file_bytes",
+            "checkpoints.snapshot_budget_bytes",
+            "checkpoints.max_files",
+            "checkpoints.max_untracked_files",
+            "checkpoints.exclude",
+            "checkpoints.keep_turns",
+            "checkpoints.keep_days",
+            "checkpoints.max_repo_bytes",
+            "checkpoints.max_repo_refs",
         ]
         .map(str::to_owned)
         .into();
@@ -1549,8 +1750,9 @@ mod tests {
                 .filter(|k| !expected.iter().any(|e| e == **k))
                 .collect::<Vec<_>>()
         );
-        // Left out on purpose: `[mcp.<name>]` (one entry per server, set as a whole) and
-        // `[assistant.workspaces.<workspace>]` (one entry per override, created by `set`).
+        // Left out on purpose: `[mcp.<name>]` (one entry per server, set as a whole),
+        // `[assistant.workspaces.<workspace>]` and `[checkpoints.projects.<project>]` (one entry
+        // per override, created by `set`; `CheckpointField` lists what a project may override).
     }
 
     #[test]
@@ -1739,6 +1941,9 @@ x = 1
             Target::Spec(spec) => validate(key, spec.kind, value, None).unwrap(),
             Target::Mcp(name) => validate_mcp(name, value).unwrap(),
             Target::Workspace { .. } => validate(key, Kind::Bool, value, None).unwrap(),
+            Target::CheckpointProject { field, .. } => {
+                validate(key, field.kind(), value, None).unwrap()
+            }
         };
         let mut doc = doc(text);
         apply_change(&mut doc, &target.segments(key), change).unwrap();
@@ -1810,6 +2015,34 @@ x = 1
             Some(false)
         );
         assert_eq!(edited(&out, key, None), "");
+    }
+
+    #[test]
+    fn checkpoint_project_overrides_are_created_checked_and_removed() {
+        let key = "checkpoints.projects.web.mode";
+        let out = edited("", key, Some(json!("off")));
+        assert_eq!(out, "[checkpoints.projects.web]\nmode = \"off\"\n");
+        let parsed = Config::parse(&out, None).unwrap();
+        assert_eq!(
+            parsed.checkpoints.for_project("01X", "web").mode,
+            config::CheckpointMode::Off
+        );
+        assert_eq!(edited(&out, key, None), "");
+        let out = edited("", "checkpoints.projects.web.max_files", Some(json!(9)));
+        assert_eq!(out, "[checkpoints.projects.web]\nmax_files = 9\n");
+        for (key, value) in [
+            ("checkpoints.projects.web.mode", json!("sometimes")),
+            ("checkpoints.projects.web.max_files", json!(0)),
+        ] {
+            let Target::CheckpointProject { field, .. } = resolve_key(key).unwrap() else {
+                panic!("{key}");
+            };
+            assert!(validate(key, field.kind(), Some(value), None).is_err());
+        }
+        // Retention is not per project, and the project needs a name.
+        assert!(resolve_key("checkpoints.projects.web.keep_turns").is_err());
+        assert!(resolve_key("checkpoints.projects..mode").is_err());
+        assert_eq!(refused("checkpoints.mode", json!("maybe")).contains("on, off"), true);
     }
 
     #[test]
