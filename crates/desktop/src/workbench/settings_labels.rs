@@ -491,6 +491,23 @@ const FIELDS: &[FieldText] = &[
         "Large file threshold (bytes)",
         "Files larger than this open only after you confirm, read-only and without syntax highlighting.",
     ),
+    choice(
+        "editor",
+        "autosave",
+        "Save files automatically",
+        "Off: only ⌘S saves. On focus change: a file tab saves when it loses the keyboard or the window is left. After a delay: it saves a moment after you stop typing. A file that changed on disk meanwhile is never saved by itself; the conflict bar asks.",
+        &[
+            ("off", "Off"),
+            ("on_focus_change", "On focus change"),
+            ("after_delay", "After a delay"),
+        ],
+    ),
+    field(
+        "editor",
+        "autosave_delay_ms",
+        "Autosave delay (ms)",
+        "With Save files automatically set to After a delay: how long after the last change a file tab saves.",
+    ),
     // ---- agents ----
     field(
         "agents",

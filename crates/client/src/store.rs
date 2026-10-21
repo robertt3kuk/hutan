@@ -135,6 +135,15 @@ pub enum Notice {
         action: String,
         args: serde_json::Value,
     },
+    /// Paths this connection watches changed (`fs.changed`, protocol 0.33, capability
+    /// `fs.watch`; [`Connection::fs_watch`](crate::Connection::fs_watch)). `overflow`: more
+    /// happened than is listed — check every watched path again. After a reconnect the
+    /// connection watches its paths again by itself and announces an empty `overflow`, since
+    /// changes made while it was away were never sent. Outside the event sequence.
+    FsChanged {
+        changes: Vec<hutan_protocol::fs::FsChange>,
+        overflow: bool,
+    },
 }
 
 /// Side effects of folding events into the state, for the caller to act on after publishing.
@@ -426,12 +435,15 @@ impl StoreState {
             Event::ResourcesUpdated { sample } => {
                 effects.notices.push(Notice::ResourcesUpdated { sample });
             }
-            // The file service's streams (protocol 0.33) are no state of the sessions list and
-            // not yet a notice: whoever watches files (`Client::fs_watch`) reads them from
-            // `Client::events`, outside the sequence like the resource samples.
-            Event::FsChanged { .. }
-            | Event::FsGeneration { .. }
-            | Event::FsSearchProgress { .. } => {}
+            // A stream for the watching connection, outside the replay ring and the sequence.
+            Event::FsChanged { changes, overflow } => {
+                effects
+                    .notices
+                    .push(Notice::FsChanged { changes, overflow });
+            }
+            // The finder's and the search's streams are no state of the sessions list; whoever
+            // asks for them reads them from `Client::events`.
+            Event::FsGeneration { .. } | Event::FsSearchProgress { .. } => {}
             Event::UiCommand {
                 request_id,
                 window_id,

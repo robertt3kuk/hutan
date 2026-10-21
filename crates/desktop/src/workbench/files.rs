@@ -3,18 +3,21 @@
 //! File…", a session's or a project's "Open File…", a ⌘-click on a path in a terminal
 //! (`terminal.open_files_with = "editor"`), `hutan open` and `ui.run workbench::OpenFile` — and
 //! the views of file tabs. Files are read through the daemon (`fs.stat`, `fs.read`): the one
-//! place that decides what this window may read (ADR 0012, amendment decision 3).
+//! place that decides what this window may read (ADR 0012, amendment decision 3). Saving,
+//! watching the files for changes on disk and the conflict bar's answers are in
+//! `file_sync.rs` (slice E-6).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use gpui::{
-    AnyElement, AppContext as _, ClipboardItem, Context, Entity, PathPromptOptions, Task, Window,
+    AnyElement, AppContext as _, ClipboardItem, Context, Entity, PathPromptOptions, Subscription,
+    Task, Window,
 };
 use hutan_client::ClientError;
 use hutan_code_view::{CodeStyle, FailReason, FileBuffer, LoadState};
 use hutan_protocol::ErrorCode;
-use hutan_protocol::fs::FsKind;
+use hutan_protocol::fs::{FileVersion, FsKind};
 
 use super::file_view::{FileView, FileViewEvent};
 use super::model::{Edge, ItemRef, PaneId};
@@ -46,17 +49,37 @@ impl FileOpen {
     }
 }
 
-struct Stored {
-    buffer: Entity<FileBuffer>,
-    picked: bool,
+pub(crate) struct Stored {
+    pub(crate) buffer: Entity<FileBuffer>,
+    pub(crate) picked: bool,
     load: Option<Task<()>>,
+    /// The version of the file the buffer holds (read or last saved): the precondition of the
+    /// next save.
+    pub(crate) disk: Option<FileVersion>,
+    /// The file's version when the conflict was found: what *Keep mine* overwrites, and no
+    /// newer change.
+    pub(crate) conflict_disk: Option<FileVersion>,
+    /// The file is watched for changes on disk.
+    pub(crate) watched: bool,
+    pub(crate) save: Option<Task<()>>,
+    /// A read of the file after a change on disk.
+    pub(crate) check: Option<Task<()>>,
+    /// The pending `editor.autosave = "after_delay"` save.
+    pub(crate) autosave: Option<Task<()>>,
+    /// Whether the tabs showed the buffer as changed (they are drawn again when it flips).
+    pub(crate) dirty: bool,
+    _subscriptions: Vec<Subscription>,
 }
 
 /// One buffer per open file (by canonical path), alive while a tab shows it (the Agents
 /// overview's stash counts).
 #[derive(Default)]
 pub struct BufferStore {
-    buffers: HashMap<String, Stored>,
+    pub(crate) buffers: HashMap<String, Stored>,
+    /// Takes the connection's `fs.changed` notices while there are buffers.
+    pub(crate) listener: Option<Task<()>>,
+    /// `fs.changed` notices handled so far (tests wait on it).
+    pub(crate) changes_seen: u64,
 }
 
 impl std::fmt::Debug for BufferStore {
@@ -81,10 +104,15 @@ impl BufferStore {
     pub fn is_empty(&self) -> bool {
         self.buffers.is_empty()
     }
+
+    /// The `fs.changed` notices this window has handled (tests).
+    pub fn changes_seen(&self) -> u64 {
+        self.changes_seen
+    }
 }
 
 /// What a failed read means for the tab.
-fn fail_reason(error: &ClientError) -> FailReason {
+pub(crate) fn fail_reason(error: &ClientError) -> FailReason {
     let ClientError::Remote(body) = error else {
         return FailReason::Other;
     };
@@ -104,7 +132,7 @@ fn fail_reason(error: &ClientError) -> FailReason {
     }
 }
 
-fn error_text(error: &ClientError) -> String {
+pub(crate) fn error_text(error: &ClientError) -> String {
     match error {
         ClientError::Remote(body) => body.message.clone(),
         other => other.to_string(),
@@ -226,14 +254,24 @@ impl Workbench {
             return stored.buffer.clone();
         }
         let buffer = cx.new(|cx| FileBuffer::new(PathBuf::from(path), cx));
+        let subscriptions = self.watch_buffer(path, &buffer, cx);
         self.buffers.buffers.insert(
             path.to_owned(),
             Stored {
                 buffer: buffer.clone(),
                 picked,
                 load: None,
+                disk: None,
+                conflict_disk: None,
+                watched: false,
+                save: None,
+                check: None,
+                autosave: None,
+                dirty: false,
+                _subscriptions: subscriptions,
             },
         );
+        self.listen_for_file_changes(cx);
         self.load_buffer(path, size, false, cx);
         buffer
     }
@@ -267,27 +305,37 @@ impl Workbench {
             connection
                 .fs_read_all(&file, picked)
                 .await
-                .map(|text| (size, Some(text.text)))
+                .map(|text| (size, Some(text)))
         });
-        stored.load = Some(cx.spawn(async move |_, cx| {
+        let key = path.to_owned();
+        stored.load = Some(cx.spawn(async move |this, cx| {
             let read = read.await;
-            buffer.update(cx, |b, cx| match read {
+            let loaded = buffer.update(cx, |b, cx| match read {
                 Ok((size, None)) => {
                     b.set_size(size);
                     b.set_state(LoadState::NeedsConfirm { size }, cx);
+                    None
                 }
-                Ok((size, Some(text))) => {
+                Ok((size, Some(read))) => {
                     b.set_size(size);
-                    b.set_loaded(&text, size > limit, cx);
+                    b.set_loaded(&read.text, size > limit, cx);
+                    Some(read.version)
                 }
-                Err(error) => b.set_state(
-                    LoadState::Failed {
-                        reason: fail_reason(&error),
-                        message: error_text(&error),
-                    },
-                    cx,
-                ),
+                Err(error) => {
+                    b.set_state(
+                        LoadState::Failed {
+                            reason: fail_reason(&error),
+                            message: error_text(&error),
+                        },
+                        cx,
+                    );
+                    None
+                }
             });
+            if let Some(version) = loaded {
+                this.update(cx, |this, cx| this.loaded(&key, version, cx))
+                    .ok();
+            }
         }));
     }
 
@@ -319,6 +367,14 @@ impl Workbench {
             FileViewEvent::OpenWithSystem(path) => super::open_link::open_with_system(path, cx),
             FileViewEvent::OpenLarge(path) => this.open_large(path, cx),
             FileViewEvent::Changed => cx.notify(),
+            FileViewEvent::Save(path) => this.save_file(&path.display().to_string(), None, cx),
+            FileViewEvent::Reload(path) => this.reload_file(&path.display().to_string(), cx),
+            FileViewEvent::Overwrite(path) => {
+                this.overwrite_file(&path.display().to_string(), cx);
+            }
+            FileViewEvent::FocusLost(path) => {
+                this.autosave_on_focus_change(&path.display().to_string(), cx);
+            }
         });
         self.file_subscriptions.insert(key.clone(), subscription);
         self.file_views.insert(key, view.clone());
@@ -380,7 +436,22 @@ impl Workbench {
                 self.pruned_files.push(view);
             }
         }
-        self.buffers.buffers.retain(|path, _| wanted.contains(path));
+        let dropped: Vec<(String, bool)> = self
+            .buffers
+            .buffers
+            .iter()
+            .filter(|(path, _)| !wanted.contains(*path))
+            .map(|(path, stored)| (path.clone(), stored.watched))
+            .collect();
+        for (path, watched) in dropped {
+            self.buffers.buffers.remove(&path);
+            if watched {
+                self.unwatch_file(&path, cx);
+            }
+        }
+        if self.buffers.buffers.is_empty() {
+            self.buffers.listener = None;
+        }
         let shown: HashSet<&str> = self
             .state
             .center

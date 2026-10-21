@@ -310,10 +310,8 @@ impl Workbench {
                 }
             }),
         )
-        .on_action(cx.listener(|this, _: &actions::ClosePaneItem, _, cx| {
-            this.mutate(cx, |s| {
-                s.close_active_item();
-            });
+        .on_action(cx.listener(|this, _: &actions::ClosePaneItem, window, cx| {
+            this.close_active_checked(window, cx);
         }))
         .on_action(
             cx.listener(|this, _: &actions::ToggleZoom, _, cx| {
@@ -1892,9 +1890,9 @@ impl Workbench {
                 }
                 this.focus_root(window, cx);
             }))
-            .on_aux_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+            .on_aux_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 if event.is_middle_click() {
-                    this.try_mutate(cx, |s| s.close_item(pane_id, index));
+                    this.close_item_checked(pane_id, index, window, cx);
                 }
             }))
             .on_mouse_down(
@@ -1934,6 +1932,24 @@ impl Workbench {
                     .rounded_full()
                     .bg(super::panels::tone_color(&theme, p.tone))
             }))
+            // A file with unsaved changes: a dot in the text color (not a status hue).
+            .children(
+                item.as_file()
+                    .and_then(|path| self.buffers.get(path))
+                    .filter(|buffer| buffer.read(cx).is_dirty())
+                    .map(|_| {
+                        div()
+                            .id(id(format!("tab-dirty-{pane_id}-{index}")))
+                            .flex_none()
+                            .size(px(7.0))
+                            .rounded_full()
+                            .bg(theme.fg)
+                            .tooltip(|_, cx| {
+                                cx.new(|_| super::style::TextTooltip("Unsaved changes".into()))
+                                    .into()
+                            })
+                    }),
+            )
             .child(
                 div()
                     .id(id(format!("tab-close-{pane_id}-{index}")))
@@ -1961,7 +1977,7 @@ impl Workbench {
                                 this.close_session(session, window, cx);
                             }
                             _ => {
-                                this.try_mutate(cx, |s| s.close_item(pane_id, index));
+                                this.close_item_checked(pane_id, index, window, cx);
                             }
                         }
                         cx.stop_propagation();

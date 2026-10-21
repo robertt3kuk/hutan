@@ -10,6 +10,7 @@ mod closing;
 mod daemon;
 mod daemon_popover;
 mod docks;
+mod file_sync;
 pub mod file_view;
 pub mod files;
 mod harness_install;

@@ -861,9 +861,22 @@ impl Setting for ChatSettings {
     }
 }
 
+/// When file tabs save by themselves (`editor.autosave`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Autosave {
+    /// Only ⌘S saves.
+    #[default]
+    Off,
+    /// When the file's view loses the keyboard or the window stops being the active one.
+    OnFocusChange,
+    /// `editor.autosave_delay_ms` after the last change.
+    AfterDelay,
+}
+
 /// The `editor` namespace: how Hutan's text inputs (the chat composer, the palette, prompts and
-/// the other single-line fields) edit, and how file tabs (the code view) draw. Terminals are not
-/// text inputs: programs there do their own thing.
+/// the other single-line fields) edit, and how file tabs (the code view) draw and save.
+/// Terminals are not text inputs: programs there do their own thing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct EditorSettings {
@@ -880,6 +893,11 @@ pub struct EditorSettings {
     /// Files larger than this (bytes) open only after a confirmation, read-only and without
     /// syntax highlighting (large-file mode).
     pub large_file_bytes: u64,
+    /// File tabs save by themselves: `off`, `on_focus_change` or `after_delay`. A file with a
+    /// conflict on disk is never saved by itself.
+    pub autosave: Autosave,
+    /// For `autosave = "after_delay"`: milliseconds after the last change.
+    pub autosave_delay_ms: u64,
 }
 
 /// `editor.large_file_bytes` by default: 16 MiB.
@@ -893,6 +911,8 @@ impl Default for EditorSettings {
             font_size: 13.0,
             line_height: 1.45,
             large_file_bytes: DEFAULT_LARGE_FILE_BYTES,
+            autosave: Autosave::Off,
+            autosave_delay_ms: 1000,
         }
     }
 }

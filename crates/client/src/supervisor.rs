@@ -660,6 +660,9 @@ impl Supervisor {
         if !self.resubscribe_resources(client).await {
             return Served::Lost { connected: true };
         }
+        if !self.rewatch_files(client).await {
+            return Served::Lost { connected: true };
+        }
         loop {
             tokio::select! {
                 biased;
@@ -686,6 +689,48 @@ impl Supervisor {
             }
         }
         Served::Lost { connected: true }
+    }
+
+    /// Watches belong to their connection too: a reconnect watches the files again
+    /// (`Connection::fs_watch`) and announces an empty `fs.changed` with `overflow`, since what
+    /// changed while the connection was away was never sent. `false` if the connection is gone.
+    async fn rewatch_files(&mut self, client: &Client) -> bool {
+        let watched = self.shared.watched_files();
+        if watched.is_empty() || !client.supports_fs_watch() {
+            return true;
+        }
+        for picked in [false, true] {
+            let paths: Vec<hutan_protocol::fs::FsWatchPath> = watched
+                .iter()
+                .filter(|(_, p)| *p == picked)
+                .map(|(path, _)| hutan_protocol::fs::FsWatchPath {
+                    path: path.clone(),
+                    recursive: false,
+                })
+                .collect();
+            if paths.is_empty() {
+                continue;
+            }
+            match client
+                .fs_watch(hutan_protocol::fs::FsWatch { paths, picked })
+                .await
+            {
+                Ok(_) => {}
+                // A file gone or no longer allowed: the next check of the files says so.
+                Err(ClientError::Remote(error)) => {
+                    warn!(message = %error.message, "fs.watch refused after a reconnect");
+                }
+                Err(error) => {
+                    debug!(%error, "watching the files again failed; connection lost");
+                    return false;
+                }
+            }
+        }
+        let _ = self.shared.notices.send(Notice::FsChanged {
+            changes: Vec::new(),
+            overflow: true,
+        });
+        true
     }
 
     /// A subscription belongs to its connection: a reconnect asks again while somebody wants

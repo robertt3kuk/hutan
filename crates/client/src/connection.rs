@@ -72,6 +72,9 @@ pub(crate) struct Shared {
     /// The interval of the resource samples somebody asked for
     /// ([`Connection::resources_subscribe`]); a reconnect subscribes again while it is set.
     resources: Mutex<Option<u32>>,
+    /// The files somebody watches ([`Connection::fs_watch`]) and whether each was picked; a
+    /// reconnect watches them again.
+    watched: Mutex<std::collections::BTreeMap<PathBuf, bool>>,
 }
 
 impl Shared {
@@ -101,6 +104,16 @@ impl Shared {
             .resources
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = interval;
+    }
+
+    /// The watched files, as `(path, picked)`.
+    pub(crate) fn watched_files(&self) -> Vec<(PathBuf, bool)> {
+        self.watched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|(path, picked)| (path.clone(), *picked))
+            .collect()
     }
 
     pub(crate) fn set_client(&self, client: Option<Client>) {
@@ -189,6 +202,7 @@ impl Connection {
             autostart: AtomicBool::new(autostart),
             kick: Notify::new(),
             resources: Mutex::new(None),
+            watched: Mutex::new(std::collections::BTreeMap::new()),
         });
         let cancel = CancellationToken::new();
         let supervisor = Supervisor::new(opts, shared.clone(), command_rx, cancel.clone());
@@ -338,6 +352,65 @@ impl Connection {
     ) -> Result<crate::FsText, ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;
         client.fs_read_all(path, picked).await
+    }
+
+    /// Writes `text` as a file, chunk by chunk ([`Client::fs_write`]): with
+    /// `req.expect` set, a file that is no longer that version is refused with `conflict`
+    /// (`data.current`: its version now).
+    pub async fn fs_write(
+        &self,
+        req: hutan_protocol::fs::FsWriteBegin,
+        text: &str,
+    ) -> Result<hutan_protocol::fs::FsWritten, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_write(req, text).await
+    }
+
+    /// True while connected to a daemon that advertised capability `fs.watch`
+    /// ([`Client::supports_fs_watch`]); false when disconnected.
+    pub fn supports_fs_watch(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_fs_watch())
+    }
+
+    /// Watches the file `path` (`fs.watch`): its changes arrive as [`Notice::FsChanged`]. The
+    /// wish is remembered: after a reconnect the connection watches it again by itself. Fails
+    /// with [`ClientError::Disconnected`] while disconnected, but the wish stays.
+    pub async fn fs_watch(&self, path: &Path, picked: bool) -> Result<(), ClientError> {
+        self.shared
+            .watched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(path.to_owned(), picked);
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client
+            .fs_watch(hutan_protocol::fs::FsWatch {
+                paths: vec![hutan_protocol::fs::FsWatchPath {
+                    path: path.to_owned(),
+                    recursive: false,
+                }],
+                picked,
+            })
+            .await
+            .map(drop)
+    }
+
+    /// Stops watching `path` ([`fs_watch`](Self::fs_watch)); never fails (the daemon drops the
+    /// watch with the connection anyway).
+    pub async fn fs_unwatch(&self, path: &Path) {
+        self.shared
+            .watched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(path);
+        if let Some(client) = self.shared.client() {
+            let _ = client
+                .fs_unwatch(hutan_protocol::fs::FsUnwatch {
+                    paths: vec![path.to_owned()],
+                })
+                .await;
+        }
     }
 
     /// True while connected to a daemon that advertised capability `history.search`

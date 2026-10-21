@@ -1,8 +1,9 @@
-//! A file tab (`ItemRef::File`, slice E-5): the code view of one file (`hutan-code-view`), its
-//! find bar, and what a file says while it loads, when it is too large to open without asking,
-//! and when it cannot be shown at all (binary, not UTF-8, gone, outside what the daemon lets the
-//! window read). One view per pane; the buffer is shared through the workbench's buffer store
-//! (`files.rs`).
+//! A file tab (`ItemRef::File`, slices E-5 and E-6): the code view of one file
+//! (`hutan-code-view`), its find and replace bar, the conflict bar when the file changed on disk
+//! under unsaved changes (*Reload · Keep Mine · Show Diff*), and what a file says while it loads,
+//! when it is too large to open without asking, and when it cannot be shown at all (binary, not
+//! UTF-8, gone, outside what the daemon lets the window read). One view per pane; the buffer is
+//! shared through the workbench's buffer store (`files.rs`), which saves it (`file_sync.rs`).
 
 use std::path::PathBuf;
 
@@ -12,9 +13,10 @@ use gpui::{
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement,
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
+use hutan_chat_view::diff::DiffLine;
 use hutan_code_view::{
-    CloseFind, CodeStyle, CodeView, CodeViewEvent, FailReason, FileBuffer, Find, FindNext,
-    FindPrevious, FindQuery, LoadState,
+    CloseFind, CodeStyle, CodeView, CodeViewEvent, Conflict, FailReason, FileBuffer, Find,
+    FindNext, FindPrevious, FindQuery, FindReplace, LoadState, Save,
 };
 use hutan_settings::SettingsStore;
 
@@ -41,6 +43,14 @@ pub enum FileViewEvent {
     OpenLarge(PathBuf),
     /// The selection or the find state changed (the status bar's position).
     Changed,
+    /// ⌘S.
+    Save(PathBuf),
+    /// The conflict bar's *Reload*: take the file as it is on disk.
+    Reload(PathBuf),
+    /// The conflict bar's *Keep Mine*: write the buffer over the file.
+    Overwrite(PathBuf),
+    /// The code lost the keyboard (autosave on focus change).
+    FocusLost(PathBuf),
 }
 
 /// One tab of a file.
@@ -55,6 +65,12 @@ pub struct FileView {
     find_focus: FocusHandle,
     case_sensitive: bool,
     regex: bool,
+    replace_open: bool,
+    replace: String,
+    replace_edit: FieldEdit,
+    replace_focus: FocusHandle,
+    /// The conflict's diff (the disk's text to the buffer's), while *Show Diff* is on.
+    diff: Option<Vec<DiffLine>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -85,11 +101,21 @@ impl FileView {
     ) -> Self {
         let code = cx.new(|cx| CodeView::new(buffer.clone(), style, cx));
         let subscriptions = vec![
-            cx.observe(&buffer, |_, _, cx| cx.notify()),
-            cx.subscribe(&code, |_, _, event: &CodeViewEvent, cx| match event {
+            cx.observe(&buffer, |this, buffer, cx| {
+                // The conflict is over (reloaded, saved): its diff goes with it.
+                if buffer.read(cx).conflict().is_none() {
+                    this.diff = None;
+                }
+                cx.notify();
+            }),
+            cx.subscribe(&code, |this, _, event: &CodeViewEvent, cx| match event {
                 CodeViewEvent::Changed => {
                     cx.emit(FileViewEvent::Changed);
                     cx.notify();
+                }
+                CodeViewEvent::FocusLost => {
+                    let path = this.buffer.read(cx).path().to_owned();
+                    cx.emit(FileViewEvent::FocusLost(path));
                 }
             }),
         ];
@@ -104,6 +130,11 @@ impl FileView {
             find_focus: cx.focus_handle(),
             case_sensitive: false,
             regex: false,
+            replace_open: false,
+            replace: String::new(),
+            replace_edit: FieldEdit::new(),
+            replace_focus: cx.focus_handle(),
+            diff: None,
             _subscriptions: subscriptions,
         }
     }
@@ -146,6 +177,72 @@ impl FileView {
         cx.notify();
     }
 
+    /// ⌘⌥F: find with the replace field, which gets the keyboard.
+    pub fn open_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_find(window, cx);
+        self.replace_open = true;
+        self.replace_edit.select_all(&self.replace);
+        window.focus(&self.replace_focus, cx);
+        cx.notify();
+    }
+
+    pub fn replace_open(&self) -> bool {
+        self.replace_open
+    }
+
+    /// Sets the replacement (tests, the field).
+    pub fn set_replacement(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.replace = text.to_owned();
+        self.replace_open = true;
+        cx.notify();
+    }
+
+    /// *Replace*: the current match, then the next one is current.
+    pub fn replace_one(&mut self, cx: &mut Context<Self>) -> bool {
+        let replacement = self.replace.clone();
+        self.code
+            .update(cx, |code, cx| code.replace_current(&replacement, cx))
+    }
+
+    /// *Replace All*: every match, as one undo step. Returns how many.
+    pub fn replace_all(&mut self, cx: &mut Context<Self>) -> usize {
+        let replacement = self.replace.clone();
+        let count = self
+            .code
+            .update(cx, |code, cx| code.replace_all(&replacement, cx));
+        cx.notify();
+        count
+    }
+
+    /// ⌘S: the workbench saves the file.
+    pub fn save(&mut self, cx: &mut Context<Self>) {
+        let path = self.buffer.read(cx).path().to_owned();
+        cx.emit(FileViewEvent::Save(path));
+    }
+
+    /// The conflict's diff, while it is shown.
+    pub fn diff(&self) -> Option<&[DiffLine]> {
+        self.diff.as_deref()
+    }
+
+    /// *Show Diff* / *Hide Diff*: what changed between the file on disk (`-`) and the buffer
+    /// (`+`), as a unified diff.
+    pub fn toggle_diff(&mut self, cx: &mut Context<Self>) {
+        if self.diff.take().is_some() {
+            cx.notify();
+            return;
+        }
+        let buffer = self.buffer.read(cx);
+        let Some(Conflict::Changed { disk: Some(disk) }) = buffer.conflict() else {
+            return;
+        };
+        let disk = normalized(disk);
+        let mine = buffer.text().to_string();
+        let name = buffer.file_name();
+        self.diff = Some(conflict_diff(&name, &disk, &mine));
+        cx.notify();
+    }
+
     /// Sets the query (tests, the field) and searches.
     pub fn set_find(&mut self, text: &str, cx: &mut Context<Self>) {
         self.find = text.to_owned();
@@ -174,6 +271,7 @@ impl FileView {
             return;
         }
         self.find_open = false;
+        self.replace_open = false;
         self.code.update(cx, |code, cx| code.clear_find(cx));
         let focus = self.code.focus_handle(cx);
         window.focus(&focus, cx);
@@ -191,6 +289,56 @@ impl FileView {
             }
             cx.notify();
         })
+    }
+
+    fn replace_field(&self, cx: &Context<Self>) -> FieldRef {
+        FieldRef::new(
+            cx.weak_entity(),
+            self.replace_focus.clone(),
+            |this, cx, f| {
+                let vim_on = VimConfig::of(&this.settings).enabled;
+                let mut text = this.replace.clone();
+                this.replace_edit.with(&mut text, vim_on, false, f);
+                this.replace = text;
+                cx.notify();
+            },
+        )
+    }
+
+    fn on_replace_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let vim = VimConfig::of(&self.settings);
+        let mut text = self.replace.clone();
+        if self.replace_edit.key(&mut text, event, vim, true, cx) == Outcome::Handled {
+            self.replace = text;
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        let ks = &event.keystroke;
+        if ks.modifiers.control || ks.modifiers.function {
+            return;
+        }
+        match ks.key.as_str() {
+            // Return replaces one, ⌘Return all of them.
+            "enter" if ks.modifiers.platform => {
+                self.replace_all(cx);
+                cx.stop_propagation();
+            }
+            "enter" => {
+                self.replace_one(cx);
+                cx.stop_propagation();
+            }
+            "escape" if !ks.modifiers.platform => {
+                self.close_find(window, cx);
+                cx.stop_propagation();
+            }
+            _ => {}
+        }
     }
 
     fn on_find_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -340,6 +488,18 @@ impl FileView {
                     .on_click(cx.listener(|this, _, _, cx| this.toggle(true, cx))),
             )
             .child(
+                toggle("file-find-replace", "⇄", "Replace (⌥⌘F)", self.replace_open).on_click(
+                    cx.listener(|this, _, window, cx| {
+                        if this.replace_open {
+                            this.replace_open = false;
+                            cx.notify();
+                        } else {
+                            this.open_replace(window, cx);
+                        }
+                    }),
+                ),
+            )
+            .child(
                 step(
                     "file-find-prev",
                     crate::icons::Icon::ActionCollapse,
@@ -363,6 +523,245 @@ impl FileView {
                 )
                 .on_click(cx.listener(|this, _, window, cx| this.close_find(window, cx))),
             )
+            .into_any_element()
+    }
+
+    fn render_replace_bar(
+        &mut self,
+        theme: &Theme,
+        tokens: &Tokens,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let focused = self.replace_focus.is_focused(window);
+        div()
+            .id("file-replace")
+            .key_context(FIND_CONTEXT)
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(tokens.spacing))
+            .px(px(tokens.spacing * 2.0))
+            .py(px(tokens.spacing))
+            .border_b_1()
+            .border_color(theme.border)
+            .bg(theme.sidebar)
+            .text_size(px(tokens.secondary_font_size))
+            .child(
+                div()
+                    .id("file-replace-box")
+                    .track_focus(&self.replace_focus)
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                        this.on_replace_key(event, window, cx);
+                    }))
+                    .flex_1()
+                    .min_w(px(120.0))
+                    .max_w(px(420.0))
+                    .flex()
+                    .items_center()
+                    .h(px(tokens.sidebar_row - 4.0))
+                    .px(px(tokens.spacing * 2.0))
+                    .rounded(px(tokens.radius))
+                    .bg(theme.surface)
+                    .border_1()
+                    .border_color(if focused { theme.accent } else { theme.border })
+                    .cursor_text()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, _: &MouseDownEvent, window, cx| {
+                            cx.defer_in(window, |this, window, cx| {
+                                window.focus(&this.replace_focus, cx);
+                            });
+                        }),
+                    )
+                    .children(vim_ui::string_field(
+                        "file-replace-text",
+                        &self.replace_edit,
+                        &self.replace,
+                        VimConfig::of(&self.settings).enabled,
+                        "Replace with",
+                        focused,
+                        false,
+                        self.replace_field(cx),
+                        theme,
+                        tokens,
+                    )),
+            )
+            .child(
+                ui::button(
+                    "file-replace-one",
+                    "Replace",
+                    ButtonKind::Secondary,
+                    true,
+                    theme,
+                    tokens,
+                )
+                .tooltip(|_, cx| {
+                    cx.new(|_| TextTooltip("Replace this match (Return)".into()))
+                        .into()
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.replace_one(cx);
+                })),
+            )
+            .child(
+                ui::button(
+                    "file-replace-all",
+                    "Replace All",
+                    ButtonKind::Secondary,
+                    true,
+                    theme,
+                    tokens,
+                )
+                .tooltip(|_, cx| {
+                    cx.new(|_| {
+                        TextTooltip("Replace every match, as one undo step (⌘Return)".into())
+                    })
+                    .into()
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.replace_all(cx);
+                })),
+            )
+            .into_any_element()
+    }
+
+    /// The bar over a file that changed on disk under unsaved changes (or was deleted): never a
+    /// dialog, and never an overwrite unless *Keep Mine* says so.
+    fn render_conflict_bar(
+        &self,
+        conflict: &Conflict,
+        theme: &Theme,
+        tokens: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let name = self.buffer.read(cx).file_name();
+        let path = self.buffer.read(cx).path().to_owned();
+        let (message, can_diff) = match conflict {
+            Conflict::Changed { disk } => (
+                format!("{name} changed on disk, and your changes are not saved."),
+                disk.is_some(),
+            ),
+            Conflict::Deleted => (
+                format!("{name} was deleted on disk. Your text is still here."),
+                false,
+            ),
+        };
+        let mut actions = div().flex().flex_none().gap(px(tokens.spacing));
+        if matches!(conflict, Conflict::Changed { .. }) {
+            let reload = path.clone();
+            actions = actions.child(
+                ui::button(
+                    "file-conflict-reload",
+                    "Reload",
+                    ButtonKind::Secondary,
+                    true,
+                    theme,
+                    tokens,
+                )
+                .tooltip(|_, cx| {
+                    cx.new(|_| {
+                        TextTooltip("Take the file from disk (⌘Z brings your text back)".into())
+                    })
+                    .into()
+                })
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    cx.emit(FileViewEvent::Reload(reload.clone()));
+                })),
+            );
+        }
+        let keep = path;
+        actions = actions.child(
+            ui::button(
+                "file-conflict-keep",
+                if matches!(conflict, Conflict::Deleted) {
+                    "Keep Mine (Save Again)"
+                } else {
+                    "Keep Mine (Overwrite)"
+                },
+                ButtonKind::Secondary,
+                true,
+                theme,
+                tokens,
+            )
+            .on_click(cx.listener(move |_, _, _, cx| {
+                cx.emit(FileViewEvent::Overwrite(keep.clone()));
+            })),
+        );
+        if can_diff {
+            actions = actions.child(
+                ui::button(
+                    "file-conflict-diff",
+                    if self.diff.is_some() {
+                        "Hide Diff"
+                    } else {
+                        "Show Diff"
+                    },
+                    ButtonKind::Ghost,
+                    true,
+                    theme,
+                    tokens,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_diff(cx))),
+            );
+        }
+        div()
+            .id("file-conflict")
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(tokens.spacing * 2.0))
+            .px(px(tokens.spacing * 2.0))
+            .py(px(tokens.spacing))
+            .border_b_1()
+            .border_color(theme.warning)
+            .bg(theme.warning.opacity(0.14))
+            .text_size(px(tokens.secondary_font_size))
+            .child(crate::icons::icon(
+                crate::icons::Icon::StateWarning,
+                14.0,
+                theme.warning,
+            ))
+            .child(div().flex_1().min_w_0().text_color(theme.fg).child(message))
+            .child(actions)
+            .into_any_element()
+    }
+
+    /// *Show Diff*: the disk's text (−) against yours (+), drawn as chat cards draw diffs.
+    fn render_diff(&self, lines: &[DiffLine], cx: &mut Context<Self>) -> AnyElement {
+        let look = super::chat::Look::of(cx);
+        let border = look.theme.border;
+        let shown = lines.len().min(hutan_chat_view::diff::MAX_LINES);
+        let more = lines.len() - shown;
+        div()
+            .id("file-conflict-diff-lines")
+            .flex_none()
+            .max_h(px(280.0))
+            .overflow_y_scroll()
+            .border_b_1()
+            .border_color(border)
+            .font_family(look.mono.clone())
+            .text_size(px(look.tokens.secondary_font_size))
+            .children(
+                lines[..shown]
+                    .iter()
+                    .map(|line| super::chat::diff_row(line, &look)),
+            )
+            .when(lines.is_empty(), |s| {
+                s.child(
+                    div()
+                        .p(px(look.tokens.spacing))
+                        .child("No difference in the text."),
+                )
+            })
+            .when(more > 0, |s| {
+                s.child(
+                    div()
+                        .p(px(look.tokens.spacing))
+                        .text_color(look.theme.muted)
+                        .child(format!("{more} more lines")),
+                )
+            })
             .into_any_element()
     }
 
@@ -459,6 +858,28 @@ impl FileView {
     }
 }
 
+/// File text as the buffer holds it: no byte-order mark, `\n` line breaks.
+fn normalized(text: &str) -> String {
+    text.strip_prefix('\u{feff}')
+        .unwrap_or(text)
+        .replace("\r\n", "\n")
+}
+
+/// The unified diff of `old` (the disk) to `new` (the buffer), read the way chat cards and the
+/// Changes view read diffs, so it is drawn the same.
+pub fn conflict_diff(name: &str, old: &str, new: &str) -> Vec<DiffLine> {
+    let patch = similar::TextDiff::from_lines(old, new)
+        .unified_diff()
+        .context_radius(3)
+        .header(&format!("{name} (on disk)"), &format!("{name} (yours)"))
+        .to_string();
+    hutan_chat_view::diff::split_patch(&patch)
+        .into_iter()
+        .next()
+        .map(|file| file.lines)
+        .unwrap_or_default()
+}
+
 /// `24.3 MB`, `16.0 MB`, `812 KB`, `90 bytes` (decimal units, as Finder shows sizes).
 pub fn human_size(bytes: u64) -> String {
     const KB: f64 = 1000.0;
@@ -487,6 +908,14 @@ impl Render for FileView {
         }
         let find_bar =
             (ready && self.find_open).then(|| self.render_find_bar(&theme, &tokens, window, cx));
+        let replace_bar = (ready && self.find_open && self.replace_open)
+            .then(|| self.render_replace_bar(&theme, &tokens, window, cx));
+        let conflict = self.buffer.read(cx).conflict().cloned();
+        let conflict_bar = conflict
+            .as_ref()
+            .filter(|_| ready)
+            .map(|c| self.render_conflict_bar(c, &theme, &tokens, cx));
+        let diff = self.diff.clone().map(|lines| self.render_diff(&lines, cx));
         let body = if ready {
             self.code.clone().into_any_element()
         } else {
@@ -503,7 +932,14 @@ impl Render for FileView {
             .on_action(cx.listener(|this, _: &FindNext, _, cx| this.step(true, cx)))
             .on_action(cx.listener(|this, _: &FindPrevious, _, cx| this.step(false, cx)))
             .on_action(cx.listener(|this, _: &CloseFind, window, cx| this.close_find(window, cx)))
+            .on_action(cx.listener(|this, _: &FindReplace, window, cx| {
+                this.open_replace(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &Save, _, cx| this.save(cx)))
+            .children(conflict_bar)
+            .children(diff)
             .children(find_bar)
+            .children(replace_bar)
             .when(ready && large, |s| {
                 s.child(
                     div()

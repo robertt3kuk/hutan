@@ -838,7 +838,9 @@ impl SessionsStore {
             // The desktop lists worktrees when a command asks for them.
             | Notice::WorktreesChanged { .. }
             // `workbench/remote.rs` follows `Connection::notices` itself.
-            | Notice::UiCommand { .. } => {}
+            | Notice::UiCommand { .. }
+            // The buffer store follows the file changes itself (`workbench/file_sync.rs`).
+            | Notice::FsChanged { .. } => {}
             // The resources panel listens for itself too; the sample also says which terminals
             // run an agent that never reported.
             Notice::ResourcesUpdated { sample } => self.apply_sample(sample, cx),

@@ -32,6 +32,8 @@ libc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# The conflict bar's Show Diff (the file on disk against the unsaved buffer).
+similar = { workspace = true, features = ["text"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "signal", "sync"] }
 toml.workspace = true

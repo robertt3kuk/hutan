@@ -1784,8 +1784,8 @@ impl Workbench {
         if let Some(path) = file {
             entries.extend(self.file_tab_entries(pane, &path));
         }
-        entries.push(Self::entry("Close", move |this, _, cx| {
-            this.try_mutate(cx, |s| s.close_item(pane, index));
+        entries.push(Self::entry("Close", move |this, window, cx| {
+            this.close_item_checked(pane, index, window, cx);
         }));
         entries
     }
