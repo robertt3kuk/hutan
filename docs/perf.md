@@ -601,6 +601,20 @@ What the key path does: one transaction on the rope (≈ 1 µs, E-1), the parser
 
 **Miss, not relaxed.** The likely cost beyond the editor's own work is that every keystroke also redraws the workbench: the code view's `Changed` event (the status bar's `Ln, Col`) notifies the workbench, which renders its whole tree around the cached views. Follow-up (E-14 or a fix slice): notify only the status item for a caret move and keep the workbench render off the key path, then measure again on an idle machine.
 
+### B12a after the E-8 key-path fix
+
+A symbolized profile (`sample` during `editor_type`) showed where a keystroke's frame goes: the code element's prepare (the highlights of the *whole* view, asked for again after every edit because shaped lines were keyed by the text version, ≈ 28 % of the draw), Taffy layout of the workbench (≈ 17 %), the workbench's own `render` (≈ 7 %), and painting. It also showed that about one key in five arrives while a frame is pending (the parser's new tree), and GPUI draws that frame inside the key's dispatch, so it counts in the key's handling time. Notifying the workbench on a caret move cost little by itself: GPUI renders every ancestor view of a view that changed, so the workbench's `render` runs on each keystroke whatever it is told.
+
+What E-8 changed: shaped lines are found again by line, displayed text and the tree they were colored from (not the text version), and highlights are asked for only the lines that miss, so a keystroke computes the highlights and runs of the one line it changed; `editor.position` and `editor.mode` are cached views of their own that read the focused code view, and the workbench is no longer notified per keystroke (`FileViewEvent::Changed` is gone). Test: `editor_gpui::vim_in_a_file_tab_normal_keys_never_type_and_the_colon_line_saves` asserts the workbench is not notified by a caret move and that `editor.position` follows it.
+
+| # | Measure (3 runs, 2026-10-21, load average 20–25: other agents building) | Before (E-6) | After (E-8) | Budget | |
+|---|---|---|---|---|---|
+| B12a | key handled → frame submitted, p95 (median of runs) | 3.02 ms (p50 1.51) | **2.80 ms** (runs 2.93, 2.63, 2.80; p50 1.33–1.42) | ≤ 2 ms | **✗ miss by 0.8 ms** |
+| B12a | frame work while typing, p95 | 2.26–2.56 ms | 2.15–2.70 ms (p50 1.14–1.21) | — | |
+| B12b | key → on screen, p95 | 7.97–9.44 ms | 7.68–8.50 ms | 10.3 ms | ✓ |
+
+**Still a miss, not relaxed**, measured under a machine load twice that of the first number. What remains is the workbench shell (layout of its uncached chrome, its `render`) and the parser-publish frame drawn inside a key's dispatch. Next steps (E-14 or a fix slice): make the status bar and title bar cached views of fixed height, and measure again on an idle machine.
+
 ## Editor: the Vim layer (slice E-7a, `hutan-vim`)
 
 E-7a moves the V-1 modal layer out of `desktop` into a GPUI-free crate and changes no behaviour, so
