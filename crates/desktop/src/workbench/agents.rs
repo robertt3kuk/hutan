@@ -426,6 +426,10 @@ impl Workbench {
         self.auto_install_step(cx);
         self.integration_statuses_step(cx);
         self.launcher_on_harnesses_changed(cx);
+        if self.first_run.first_screen {
+            // The first screen's agent row is drawn from the listing.
+            cx.notify();
+        }
         let Some(picker) = &self.agent_picker else {
             return;
         };

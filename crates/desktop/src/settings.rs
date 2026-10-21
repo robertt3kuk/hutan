@@ -1099,9 +1099,20 @@ pub struct AppSettings {
     /// existed with `keep_running = true` (which then meant this) is migrated when it is first
     /// read.
     pub start_at_login: bool,
-    /// The first-run setup has been completed or skipped. Off shows it once; "Run setup
-    /// again" (Settings, the command palette's "Hutan: Run Setup…") opens it whatever this says.
+    /// The first run is over: a folder was opened (or a terminal started) from the first
+    /// screen, or the walk-through was finished or skipped. Off shows the first screen; "Run
+    /// setup again" (Settings, the command palette's "Hutan: Run Setup…") opens the
+    /// walk-through whatever this says.
     pub setup_done: bool,
+    /// Offer notifications once, the first time something needs you (an approval, a finished
+    /// run) while Hutan is not the frontmost app: one line with *Notify me* and *No thanks*.
+    /// Off after you answered or dismissed it, so it is asked once and never repeats; the
+    /// system's own permission prompt only appears when you press *Notify me*.
+    pub ask_notifications: bool,
+    /// Offer to install an agent's hooks the first time that agent runs in a Hutan terminal
+    /// without having reported (the *Track as* strip). Off after the offer was answered or
+    /// dismissed: it is asked once and never repeats; nothing is written unless you accept.
+    pub ask_hooks: bool,
     /// When the last window closes: `quit` (Quit Hutan, like ⌘Q: asks first while sessions run
     /// and keep running is off) or `menu_bar` (keep Hutan in the menu bar, without a Dock icon;
     /// the daemon keeps running until you quit; needs `menu_bar`).
@@ -1122,6 +1133,8 @@ impl Default for AppSettings {
             keep_running: false,
             start_at_login: false,
             setup_done: false,
+            ask_notifications: true,
+            ask_hooks: true,
             on_last_window_close: LastWindowClose::Quit,
             menu_bar: true,
             dock_badge: true,
@@ -1196,63 +1209,33 @@ pub fn migrate_start_at_login(store: &SettingsStore, user_file: &Path) -> bool {
     true
 }
 
-/// `assistant.enabled` used to default to true and is off for new users now. A user who already
-/// had Hutan (a layout saved by the version before the Orca-style relayout, `version` 1 in
-/// `desktop-state.json`) and never named the key keeps what they had: `assistant.enabled = true`
-/// is written. A user file that names the key (whatever the value) is left alone; a user with
-/// no saved layout, or one written by a newer Hutan, is new. Run before the layout is loaded
-/// and saved again. `true` when the key was written.
-pub fn migrate_assistant_default(
-    store: &SettingsStore,
-    user_file: &Path,
-    state_file: &Path,
-) -> bool {
-    let saved_by_old_hutan = std::fs::read_to_string(state_file)
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|value| value.get("version").and_then(serde_json::Value::as_u64))
-        == Some(1);
-    if !saved_by_old_hutan {
-        return false;
-    }
-    let names_key = std::fs::read_to_string(user_file)
-        .ok()
-        .and_then(|text| text.parse::<toml::Table>().ok())
-        .and_then(|table| {
-            table
-                .get("assistant")
-                .and_then(toml::Value::as_table)
-                .map(|assistant| assistant.contains_key("enabled"))
-        })
-        .unwrap_or(false);
-    if names_key {
-        return false;
-    }
-    if let Err(error) = store.write_user("assistant.enabled", toml::Value::Boolean(true)) {
-        tracing::warn!("cannot keep assistant.enabled on for your existing setup: {error}");
-        return false;
-    }
-    true
-}
-
 /// The diagnostics source of [`migrate_start_at_login`]'s note.
 const MIGRATION_NOTE: &str = "app.migration";
 
 /// The `assistant` namespace.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AssistantSettings {
-    /// Whether Hutan has Mawas, the assistant, at all. Off (the default for a new settings file)
-    /// hides Mawas from the left sidebar, removes its commands from the palette and unregisters
-    /// the system-wide shortcut; the daemon keeps its conversations. On adds *Mawas* to the left
-    /// sidebar's nav; Mawas Home opens as a page in the center. A settings file written before
-    /// the default changed keeps it on (see [`migrate_assistant_default`]).
+    /// Whether Hutan has Mawas, the assistant, at all. On (the default; Mawas is a headline
+    /// feature and the first run does not ask for it) adds *Mawas* to the left sidebar's nav;
+    /// Mawas Home opens as a page in the center. Off hides Mawas from the left sidebar,
+    /// removes its commands from the palette and unregisters the system-wide shortcut; the
+    /// daemon keeps its conversations.
     pub enabled: bool,
     /// System-wide shortcut that brings Hutan forward and opens Mawas, for example
     /// `alt-space` or `cmd-shift-space` (modifiers `cmd`, `ctrl`, `alt`, `shift`, at least one
     /// of the first three). Empty (the default) turns it off. If another app already owns the shortcut,
     /// Hutan says so once and leaves the setting alone; the in-app keybinding is separate.
     pub global_shortcut: String,
+}
+
+impl Default for AssistantSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            global_shortcut: String::new(),
+        }
+    }
 }
 
 impl Setting for AssistantSettings {

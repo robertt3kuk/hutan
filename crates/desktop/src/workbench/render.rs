@@ -103,9 +103,11 @@ impl Render for Workbench {
         let left = self.render_dock(DockPosition::Left, window, cx);
         let right = self.render_dock(DockPosition::Right, window, cx);
         let bottom = self.render_dock(DockPosition::Bottom, window, cx);
+        self.drop_stale_composer();
         let center = self.render_center(window, cx);
         let titlebar = self.render_titlebar(window, cx);
         let status = self.render_status_bar(window, cx);
+        let offer = self.render_notify_offer(cx);
         self.rescue_orphaned_focus(window, cx);
         self.sync_assistant_focus(window, cx);
         self.sync_agents_page(cx);
@@ -171,6 +173,7 @@ impl Render for Workbench {
                         .flex_1()
                         .min_w_0()
                         .child(titlebar)
+                        .children(offer)
                         .child(
                             div()
                                 .flex()
@@ -2002,16 +2005,19 @@ impl Workbench {
                 Some(view) => cached_view(&self.regions, view),
                 None => self.placeholder_body(format!("Panel `{panel}` is not registered"), cx),
             },
-            ItemRef::Placeholder { title } => ui::empty_state(
-                Mascot::Empty,
-                format!(
-                    "{title}. Start an agent here, open a session from the sessions panel, or press ⌘T for a new terminal."
-                ),
-                Some(self.empty_start_button(&theme, &tokens)),
-                &theme,
-                &tokens,
-            )
-            .into_any_element(),
+            ItemRef::Placeholder { title } => match self.render_welcome(pane, cx) {
+                Some(welcome) => welcome,
+                None => ui::empty_state(
+                    Mascot::Empty,
+                    format!(
+                        "{title}. Start an agent here, open a session from the sessions panel, or press ⌘T for a new terminal."
+                    ),
+                    Some(self.empty_start_button(&theme, &tokens)),
+                    &theme,
+                    &tokens,
+                )
+                .into_any_element(),
+            },
             ItemRef::Terminal { session } => self.render_terminal_item(pane, session, window, cx),
             ItemRef::Chat { session } => self.render_chat_item(pane, session, cx),
             ItemRef::Changes { path } => {

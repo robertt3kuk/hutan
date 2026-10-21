@@ -280,6 +280,13 @@ pub enum Region {
     /// A control of the first-run setup, by name (`continue`, `back`, `skip`, `appearance-dark`,
     /// `keep-running`, `start-at-login`, `notifications`, `cli-link`, …).
     Setup(&'static str),
+    /// A control of the first screen (`open-folder`, `new-terminal`, `screen`).
+    FirstRun(&'static str),
+    /// A control of an agent on the first screen: harness id and `login`, `install`, `guide`.
+    FirstRunAgent(&'static str, &'static str),
+    /// A control of the one-line offers: `notify-yes`, `notify-no`, `notify-done`, `notify` (the
+    /// line), `hooks-offer`, `hooks-install`, `hooks-not-now`.
+    Offer(&'static str),
     /// A control of the setup's Agents step for harness `id`: `login`, `install-guide`,
     /// `uninstall`, `backend`.
     SetupHarness(&'static str, &'static str),
@@ -539,6 +546,7 @@ pub struct Workbench {
     pub(crate) daemon: DaemonControl,
     pub(crate) mac: MacControl,
     pub(crate) setup: super::setup::SetupControl,
+    pub(crate) first_run: super::first_run::FirstRunControl,
     pub(crate) integrations: super::integrations::IntegrationControl,
     pub(crate) harness_install: super::harness_install::HarnessInstallControl,
     pub(crate) palette: Option<PaletteState>,
@@ -831,6 +839,9 @@ impl Workbench {
                     if change.intersects(StoreChanged::ATTENTION) {
                         this.sync_attention_marks(cx);
                     }
+                    if change.intersects(StoreChanged::ATTENTION | StoreChanged::AGENTS) {
+                        this.maybe_offer_notifications(cx);
+                    }
                     // The layout follows sessions, workspaces, agents and the connection;
                     // attention and tasks only change what the chrome counts and
                     // shows; answers given here and the like are for whoever shows them.
@@ -862,6 +873,9 @@ impl Workbench {
                 this.schedule_publish(cx);
                 if this.window_active {
                     this.sessions.update(cx, |store, cx| store.scan_agents(cx));
+                    if this.first_screen_open(cx) {
+                        this.refresh_first_screen_agents(true, cx);
+                    }
                 }
             }),
             cx.subscribe_in(
@@ -978,6 +992,7 @@ impl Workbench {
             daemon: DaemonControl::new(),
             mac,
             setup: super::setup::SetupControl::new(cx.focus_handle(), options.cli_link),
+            first_run: super::first_run::FirstRunControl::default(),
             integrations: super::integrations::IntegrationControl::new(
                 options.installer,
                 options.custom_home,
@@ -1021,13 +1036,15 @@ impl Workbench {
             _subscriptions: subscriptions,
         };
         this.mac.events_task = events_task;
+        // The first run is a first screen in the centre, not a modal walk-through; "Run setup
+        // again" opens the walk-through.
         if first_run_setup
             && !this
                 .settings
                 .get::<crate::settings::AppSettings>()
                 .setup_done
         {
-            this.open_setup(window, cx);
+            this.begin_first_run();
         }
         if !this.attention_marks.is_empty() {
             let marks = this.attention_marks.clone();

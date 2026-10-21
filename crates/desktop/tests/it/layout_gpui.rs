@@ -18,13 +18,14 @@ use std::path::PathBuf;
 
 fn open_in(
     cx: &mut TestAppContext,
-    assistant: bool,
+    assistant: Option<bool>,
     state_path: Option<PathBuf>,
 ) -> (Entity<Workbench>, SettingsStore, &mut VisualTestContext) {
     let (connection, settings, _) = offline_connection();
-    if assistant {
+    // `None`: the default, which is on.
+    if let Some(enabled) = assistant {
         settings
-            .write_user("assistant.enabled", toml::Value::Boolean(true))
+            .write_user("assistant.enabled", toml::Value::Boolean(enabled))
             .unwrap();
     }
     let (view, cx) = open_with(cx, settings.clone(), connection, state_path);
@@ -32,7 +33,7 @@ fn open_in(
 }
 
 fn open(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) {
-    let (view, _, cx) = open_in(cx, false, None);
+    let (view, _, cx) = open_in(cx, None, None);
     (view, cx)
 }
 
@@ -137,17 +138,19 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     // The right sidebar is a column of its own: its strip is the title bar row of that side.
     assert!((f32::from(right.origin.y) - f32::from(titlebar.origin.y)).abs() <= 1.0);
 
-    // The left nav: Search, Tasks, Agents; no Mawas while it is off.
-    assert_eq!(nav_keys(&view, cx), ["search", "tasks", "agents"]);
+    // The left nav: Search, Tasks, Agents and Mawas, which is on by default.
+    assert_eq!(
+        nav_keys(&view, cx),
+        ["search", "tasks", "agents", "assistant"]
+    );
     assert_eq!(
         selected_nav(&view, cx),
         Vec::<String>::new(),
         "Projects shows"
     );
-    for key in ["search", "tasks", "agents"] {
+    for key in ["search", "tasks", "agents", "assistant"] {
         assert!(painted(&view, cx, Region::Nav(key)), "{key}");
     }
-    assert!(!painted(&view, cx, Region::Nav("assistant")));
     assert!(
         !painted(&view, cx, Region::Nav("projects")),
         "no back row on Projects"
@@ -248,7 +251,7 @@ fn a_panel_left_in_the_left_dock_gets_its_own_nav_row(cx: &mut TestAppContext) {
     });
     assert_eq!(
         nav_keys(&view, cx),
-        ["search", "tasks", "agents", "resources"]
+        ["search", "tasks", "agents", "assistant", "resources"]
     );
     assert_eq!(
         selected_nav(&view, cx),
@@ -262,8 +265,8 @@ fn a_panel_left_in_the_left_dock_gets_its_own_nav_row(cx: &mut TestAppContext) {
 // ---- assistant ---------------------------------------------------------------------------------
 
 #[gpui::test]
-fn mawas_is_off_by_default_and_has_no_place_anywhere(cx: &mut TestAppContext) {
-    let (view, cx) = open(cx);
+fn mawas_turned_off_has_no_place_anywhere(cx: &mut TestAppContext) {
+    let (view, _settings, cx) = open_in(cx, Some(false), None);
     assert!(!view.read_with(cx, |wb, _| wb.assistant_enabled()));
     assert!(!nav_keys(&view, cx).contains(&"assistant".to_owned()));
     let s = state(&view, cx);
@@ -321,7 +324,7 @@ impl LayoutPresetName {
 
 #[gpui::test]
 fn the_enabled_mawas_is_one_center_tab_opened_from_the_nav_and_closable(cx: &mut TestAppContext) {
-    let (view, _settings, cx) = open_in(cx, true, None);
+    let (view, _settings, cx) = open_in(cx, Some(true), None);
     assert!(view.read_with(cx, |wb, _| wb.assistant_enabled()));
     assert_eq!(
         nav_keys(&view, cx),
@@ -410,7 +413,7 @@ fn the_enabled_mawas_is_one_center_tab_opened_from_the_nav_and_closable(cx: &mut
 
 #[gpui::test]
 fn turning_mawas_off_closes_its_tab_and_its_nav_row(cx: &mut TestAppContext) {
-    let (view, settings, cx) = open_in(cx, true, None);
+    let (view, settings, cx) = open_in(cx, Some(true), None);
     click(&view, cx, Region::Nav("assistant"));
     assert!(view.read_with(cx, |wb, _| wb.panel_open("assistant")));
     settings
@@ -618,7 +621,7 @@ fn version_1_file(dir: &std::path::Path) -> PathBuf {
 fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let path = version_1_file(dir.path());
-    let (view, _settings, cx) = open_in(cx, false, Some(path.clone()));
+    let (view, _settings, cx) = open_in(cx, None, Some(path.clone()));
     let s = state(&view, cx);
 
     // History on the right and active; Assistant out; Tasks on the left behind Projects.
@@ -667,7 +670,7 @@ fn a_migrated_layout_keeps_what_the_user_changed(cx: &mut TestAppContext) {
     value["docks"]["bottom"]["visible"] = true.into();
     std::fs::write(&path, serde_json::to_string(&value).unwrap()).unwrap();
 
-    let (view, _settings, cx) = open_in(cx, false, Some(path));
+    let (view, _settings, cx) = open_in(cx, None, Some(path));
     let s = state(&view, cx);
     assert_eq!(s.docks.left.size, 333.0);
     assert_eq!(s.docks.right.size, 350.0, "untouched, so the new default");
@@ -686,50 +689,28 @@ fn a_migrated_layout_keeps_what_the_user_changed(cx: &mut TestAppContext) {
 // ---- settings ----------------------------------------------------------------------------------
 
 #[test]
-fn a_user_who_had_hutan_keeps_the_assistant_on_and_a_new_user_does_not() {
-    use hutan_desktop::settings::{AssistantSettings, migrate_assistant_default, register_all};
+fn mawas_is_on_unless_the_user_turned_it_off() {
+    use hutan_desktop::settings::{AssistantSettings, register_all};
     use hutan_settings::SettingsPaths;
 
-    let check = |state_version: Option<u64>, user_file: Option<&str>| -> (bool, bool) {
+    let enabled = |user_file: Option<&str>| -> bool {
         let dir = tempfile::tempdir().unwrap();
         let paths = SettingsPaths::in_dir(dir.path());
-        let user = paths.user.clone();
-        let state_file = dir.path().join(STATE_FILE);
-        if let Some(version) = state_version {
-            std::fs::write(&state_file, format!(r#"{{ "version": {version} }}"#)).unwrap();
-        }
         if let Some(text) = user_file {
-            std::fs::write(&user, text).unwrap();
+            std::fs::write(&paths.user, text).unwrap();
         }
         let store = SettingsStore::new(paths);
         register_all(&store);
-        let migrated = migrate_assistant_default(&store, &user, &state_file);
-        (migrated, store.get::<AssistantSettings>().enabled)
+        store.get::<AssistantSettings>().enabled
     };
 
-    // A new user: no layout yet, or one saved by this Hutan: off.
-    assert_eq!(check(None, None), (false, false));
-    assert_eq!(check(Some(2), None), (false, false));
-    assert_eq!(
-        check(Some(2), Some("[terminal]\nfont_size = 14\n")),
-        (false, false)
-    );
-    // A layout from before: the assistant they had stays on, once.
-    assert_eq!(check(Some(1), None), (true, true));
-    assert_eq!(
-        check(Some(1), Some("[terminal]\nfont_size = 14\n")),
-        (true, true)
-    );
+    // A new settings file, and one that never names the key: Mawas is on.
+    assert!(enabled(None));
+    assert!(enabled(Some("[terminal]\nfont_size = 14\n")));
     // An explicit value (either way) is theirs.
-    assert_eq!(
-        check(Some(1), Some("[assistant]\nenabled = false\n")),
-        (false, false)
-    );
-    assert_eq!(
-        check(Some(1), Some("[assistant]\nenabled = true\n")),
-        (false, true)
-    );
-    assert!(!AssistantSettings::default().enabled);
+    assert!(!enabled(Some("[assistant]\nenabled = false\n")));
+    assert!(enabled(Some("[assistant]\nenabled = true\n")));
+    assert!(AssistantSettings::default().enabled);
 }
 
 #[gpui::test]
@@ -737,7 +718,7 @@ fn the_very_first_launch_opens_with_the_right_sidebar_on_its_rail(cx: &mut TestA
     // No layout file yet: the right sidebar (History first) waits on its rail.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(STATE_FILE);
-    let (view, _settings, cx) = open_in(cx, false, Some(path.clone()));
+    let (view, _settings, cx) = open_in(cx, None, Some(path.clone()));
     let docks = state(&view, cx).docks;
     assert_eq!(
         docks.right.mode(),
@@ -763,6 +744,6 @@ fn a_saved_layout_keeps_its_right_sidebar_open(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(STATE_FILE);
     std::fs::write(&path, WorkbenchState::default().to_json().unwrap()).unwrap();
-    let (view, _settings, cx) = open_in(cx, false, Some(path));
+    let (view, _settings, cx) = open_in(cx, None, Some(path));
     assert!(state(&view, cx).docks.right.is_expanded());
 }

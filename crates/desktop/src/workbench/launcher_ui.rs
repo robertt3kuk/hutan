@@ -30,12 +30,23 @@ fn id(text: impl Into<SharedString>) -> ElementId {
 }
 
 impl Workbench {
+    /// The sheet over the window (nothing while the launcher is the centre's inline composer).
     pub(crate) fn render_launcher(
         &mut self,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let launcher = self.launcher.as_ref()?;
+        self.build_launcher(false, cx)
+    }
+
+    /// The start composer inside the centre (`LauncherPreset::inline`): the prompt and the
+    /// agent, the other rows folded under Options. Built from the same rows as the sheet.
+    pub(crate) fn render_launcher_inline(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.build_launcher(true, cx)
+    }
+
+    fn build_launcher(&mut self, inline: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let launcher = self.launcher.as_ref().filter(|l| l.inline == inline)?;
         let theme = self.theme;
         let tokens = self.density.ui();
         let vim = VimConfig::of(&self.settings)
@@ -230,7 +241,7 @@ impl Workbench {
             }
             project_body = project_body.child(list);
         }
-        project_body = project_body.child(note(project_detail, theme.faint));
+        project_body = project_body.child(note(project_detail.clone(), theme.faint));
 
         // ---- What ----
         let mut what = div().flex().flex_wrap().gap(px(tokens.spacing));
@@ -1007,10 +1018,12 @@ impl Workbench {
             .items_center()
             .justify_end()
             .gap(px(tokens.spacing * 2.0))
-            .px(px(tokens.spacing * 4.0))
-            .py(px(tokens.spacing * 3.0))
-            .border_t_1()
-            .border_color(theme.border);
+            .when(!inline, |s| {
+                s.px(px(tokens.spacing * 4.0))
+                    .py(px(tokens.spacing * 3.0))
+                    .border_t_1()
+                    .border_color(theme.border)
+            });
         let cancel = |id: &'static str, label: &'static str| {
             ui::button(id, label, ButtonKind::Ghost, true, &theme, &tokens).relative()
         };
@@ -1090,30 +1103,32 @@ impl Workbench {
                         .child(SharedString::from(summary))
                         .child(probe(&self.regions, Region::Launcher("summary"))),
                 })
-                .child(
-                    cancel("launch-cancel", "Cancel")
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.close_launcher(window, cx)),
-                        )
-                        .child(probe(&self.regions, Region::Launcher("cancel"))),
-                )
-                .child(
-                    ui::button(
-                        "launch-start-new",
-                        "Start & new ⌥⌘↩",
-                        ButtonKind::Secondary,
-                        ready,
-                        &theme,
-                        &tokens,
+                .when(!inline, |s| {
+                    s.child(
+                        cancel("launch-cancel", "Cancel")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.close_launcher(window, cx)),
+                            )
+                            .child(probe(&self.regions, Region::Launcher("cancel"))),
                     )
-                    .relative()
-                    .when(ready, |s| {
-                        s.on_click(cx.listener(|this, _, window, cx| {
-                            this.launcher_start(true, window, cx);
-                        }))
-                    })
-                    .child(probe(&self.regions, Region::Launcher("start-new"))),
-                )
+                    .child(
+                        ui::button(
+                            "launch-start-new",
+                            "Start & new ⌥⌘↩",
+                            ButtonKind::Secondary,
+                            ready,
+                            &theme,
+                            &tokens,
+                        )
+                        .relative()
+                        .when(ready, |s| {
+                            s.on_click(cx.listener(|this, _, window, cx| {
+                                this.launcher_start(true, window, cx);
+                            }))
+                        })
+                        .child(probe(&self.regions, Region::Launcher("start-new"))),
+                    )
+                })
                 .child(
                     ui::button(
                         "launch-start",
@@ -1132,6 +1147,113 @@ impl Workbench {
                     .child(probe(&self.regions, Region::Launcher("start"))),
                 )
         };
+
+        if inline {
+            let options_open = launcher.options_open;
+            let options_header = div()
+                .id("launch-options")
+                .relative()
+                .flex()
+                .items_center()
+                .gap(px(tokens.spacing))
+                .cursor_pointer()
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(theme.muted)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.launcher_focus_stop(LauncherStop::Options, window, cx);
+                    this.launcher_toggle_options(cx);
+                }))
+                .child(crate::icons::glyph(if options_open {
+                    crate::icons::Icon::ActionExpand
+                } else {
+                    crate::icons::Icon::ActionDisclose
+                }))
+                .child("Options")
+                .child(
+                    div()
+                        .text_color(theme.faint)
+                        .child("project, where, model, title, queue"),
+                )
+                .child(probe(&self.regions, Region::Launcher("options")));
+            let mut column = div()
+                .flex()
+                .flex_col()
+                .gap(px(tokens.spacing * 3.0))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(tokens.spacing))
+                        .child(ui::headline(SharedString::from(project_name), &theme))
+                        .child(note(
+                            if project_detail.is_empty() {
+                                "Describe the first task, or pick another agent.".to_owned()
+                            } else {
+                                project_detail
+                            },
+                            theme.faint,
+                        )),
+                )
+                .children(self.render_start_send_key_offer(cx))
+                .children(input_rows)
+                .children(agent_rows)
+                .child(row(
+                    "",
+                    ring(LauncherStop::Options, options_header.into_any_element()),
+                ));
+            if options_open {
+                column = column
+                    .child(row("Project", project_body.into_any_element()))
+                    .child(row(
+                        "What",
+                        ring(LauncherStop::What, what.into_any_element()),
+                    ))
+                    .children(model_rows)
+                    .children(where_rows)
+                    .child(title_row)
+                    .children(more_rows)
+                    .child(mode_row);
+            }
+            return Some(
+                div()
+                    .id("launcher-inline")
+                    .key_context("Launcher")
+                    .track_focus(&self.launcher_focus)
+                    .size_full()
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .pt(px(tokens.spacing * 12.0))
+                    .pb(px(tokens.spacing * 6.0))
+                    .px(px(tokens.spacing * 6.0))
+                    .text_size(px(tokens.font_size))
+                    .text_color(theme.fg)
+                    // A click inside keeps the keyboard here: the pane behind must not take it.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.launcher_refocus(window, cx);
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                        this.launcher_key(event, window, cx);
+                    }))
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(680.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(tokens.spacing * 4.0))
+                            .child(column)
+                            .child(footer),
+                    )
+                    .child(probe(&self.regions, Region::Launcher("composer")))
+                    .into_any_element(),
+            );
+        }
 
         let body = div()
             .id("launch-body")

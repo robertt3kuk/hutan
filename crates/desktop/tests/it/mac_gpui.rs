@@ -1095,6 +1095,8 @@ fn the_new_namespaces_and_fields_are_in_the_settings_sheet(cx: &mut TestAppConte
             "keep_running",
             "start_at_login",
             "setup_done",
+            "ask_notifications",
+            "ask_hooks",
             "on_last_window_close",
             "menu_bar",
             "dock_badge"

@@ -1178,6 +1178,7 @@ impl Workbench {
         let found = self.sessions.read(cx).untracked_agent(id)?;
         let theme = self.theme;
         let tokens = self.density.ui();
+        let offer = self.hooks_offer(found.agent, cx);
         let label = gpui::SharedString::from(format!("Track as {}", found.agent));
         let track = ui::button(
             "untracked-track",
@@ -1206,6 +1207,10 @@ impl Workbench {
             &self.regions,
             crate::workbench::Region::Untracked("track"),
         ));
+        let (offer_buttons, offer_detail) = match offer {
+            Some(offer) => (offer.buttons, offer.detail),
+            None => (Vec::new(), None),
+        };
         Some(
             div()
                 .absolute()
@@ -1213,8 +1218,8 @@ impl Workbench {
                 .right(px(tokens.spacing * 3.0))
                 .max_w(px(560.0))
                 .flex()
-                .items_center()
-                .gap(px(tokens.spacing * 2.0))
+                .flex_col()
+                .gap(px(tokens.spacing))
                 .px(px(tokens.spacing * 2.0))
                 .py(px(tokens.spacing))
                 .rounded(px(tokens.radius))
@@ -1225,14 +1230,22 @@ impl Workbench {
                 .text_color(theme.muted)
                 .child(
                     div()
-                        .min_w_0()
-                        .truncate()
-                        .child(gpui::SharedString::from(format!(
-                            "Agent not recognised · looks like {} but never reported to Hutan",
-                            found.agent
-                        ))),
+                        .flex()
+                        .items_center()
+                        .gap(px(tokens.spacing * 2.0))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .child(gpui::SharedString::from(format!(
+                                    "Agent not recognised · looks like {} but never reported to Hutan",
+                                    found.agent
+                                ))),
+                        )
+                        .child(track)
+                        .children(offer_buttons),
                 )
-                .child(track)
+                .children(offer_detail)
                 .child(crate::workbench::render::probe(
                     &self.regions,
                     crate::workbench::Region::Untracked("strip"),

@@ -70,7 +70,7 @@ Code: `crates/daemon/src/notify_native.rs` and `notify_native/`; the wire side i
 
 ## Start at login (M6-C, D-2)
 
-This was "keep running" before D-2. Keep running (`app.keep_running`) now only leaves the daemon running after quit and registers nothing; both are off by default and the first-run setup offers them (`docs/design.md` § First-run setup).
+This was "keep running" before D-2. Keep running (`app.keep_running`) now only leaves the daemon running after quit and registers nothing; both are off by default and only *Run setup again* and Settings → General offer them (`docs/design.md` § First run).
 
 Code: `crates/desktop/src/macos/login_item.rs`, `crates/desktop/src/workbench/mac.rs`; behavior in `docs/design.md` § macOS integration. The desktop registers `Contents/Library/LaunchAgents/dev.hutan.daemon.plist` with `SMAppService.agent(plistName:)` (`register()` / `unregister()`), which adds *Hutan* to System Settings → General → Login Items (macOS shows a notice the first time, and the user may have to allow it: status `requires approval`, button *Open Login Items*). Registration needs the app to run from the bundle; a `cargo run` desktop disables the toggle.
 

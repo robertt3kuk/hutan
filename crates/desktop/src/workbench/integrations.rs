@@ -268,6 +268,18 @@ impl Workbench {
         self.ask_integration_statuses(HARNESSES.iter().map(|h| h.id).collect(), cx);
     }
 
+    /// Asks `hutan integration status` about `harness` once, when something wants to show it
+    /// (the *Install hooks…* offer of a terminal); the answer arrives later and redraws.
+    pub(crate) fn integration_status_wanted(
+        &mut self,
+        harness: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.integrations.asked.contains(harness) {
+            self.ask_integration_statuses(vec![harness], cx);
+        }
+    }
+
     fn ask_integration_statuses(&mut self, targets: Vec<&'static str>, cx: &mut Context<Self>) {
         let Some(installer) = self.integrations.installer.clone() else {
             return;

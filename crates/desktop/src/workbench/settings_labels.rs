@@ -133,8 +133,20 @@ const FIELDS: &[FieldText] = &[
     field(
         "app",
         "setup_done",
-        "First-run setup finished",
-        "Whether the first-run setup was completed or skipped. Turn it off to see the setup again at the next start, or use “Run setup again” below.",
+        "First run finished",
+        "Whether the first run is over: you opened a folder or started a terminal from the first screen, or finished or skipped the walk-through. Turn it off to see the first screen again at the next start, or use “Run setup again” below for the walk-through.",
+    ),
+    field(
+        "app",
+        "ask_notifications",
+        "Offer notifications",
+        "Shows a one-line offer once, the first time something needs you (an approval, a finished run) while Hutan is not the frontmost app. The system's permission prompt only appears when you press “Notify me”. Off after you answered or dismissed it.",
+    ),
+    field(
+        "app",
+        "ask_hooks",
+        "Offer hooks for an agent in a terminal",
+        "Shows an offer once, in the strip under a terminal where Codex, Claude Code or OMP runs without having reported: install that agent's hooks, which says what is written and where first. Off after you answered or dismissed it. Nothing is written unless you accept.",
     ),
     choice(
         "app",
@@ -580,7 +592,7 @@ const FIELDS: &[FieldText] = &[
         "assistant",
         "enabled",
         "Use Mawas",
-        "Off (the default for a new setup) hides Mawas from the left sidebar, removes its commands and shortcuts, and releases the system-wide shortcut. On adds Mawas to the left sidebar's list; it opens as a page in the center. Your earlier Mawas conversations are kept.",
+        "On (the default) adds Mawas to the left sidebar's list; it opens as a page in the center. Off hides Mawas from the left sidebar, removes its commands and shortcuts, and releases the system-wide shortcut. Your earlier Mawas conversations are kept.",
     ),
     field(
         "assistant",

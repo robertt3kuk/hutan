@@ -119,8 +119,8 @@ report as `*_key_total_*`.
   `AnyView::cached` so a frame that only scrolls the transcript re-lays out only it. Not done here:
   a cached view reads window state (focus, activity) that is not an entity, so each view needs
   an audit.
-- **First-run setup** (found while building the harness): a fresh `HUTAN_HOME` shows the setup sheet
-  over the whole window, and it blocks the mouse. The B1–B6 numbers above were measured with it
+- **First-run setup** (found while building the harness): a fresh `HUTAN_HOME` showed the setup sheet
+  over the whole window, and it blocked the mouse (the first run is a first screen in the centre now, `docs/design.md` § First run). The B1–B6 numbers above were measured with it
   showing; B3 above and every scenario of this section seed `[app] setup_done = true` (the way
   a user runs Hutan), which is why B3 reads 0.72 % here and 0.48 % in the table above.
 

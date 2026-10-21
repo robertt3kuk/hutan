@@ -345,7 +345,7 @@ impl Workbench {
         }
     }
 
-    fn mark_setup_done(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn mark_setup_done(&mut self, cx: &mut Context<Self>) {
         if let Err(error) = self
             .settings
             .write_user("app.setup_done", toml::Value::Boolean(true))
@@ -417,7 +417,11 @@ impl Workbench {
                 self.setup_write("appearance.density", density_key(state.density), cx);
             }
             SetupStep::Agents => {
-                self.setup_write_bool("assistant.enabled", state.assistant_enabled, cx);
+                // Mawas is on by default: nothing is written unless the choice changed.
+                let turned_on = state.assistant_enabled && !self.assistant_enabled();
+                if state.assistant_enabled != self.assistant_enabled() {
+                    self.setup_write_bool("assistant.enabled", state.assistant_enabled, cx);
+                }
                 // The send key was offered on this page: the composer need not ask again.
                 if let Err(error) = super::send_key::stop_asking(&self.settings) {
                     tracing::warn!("cannot save chat.ask_send_key: {error}");
@@ -427,7 +431,7 @@ impl Workbench {
                 if !ticked.is_empty() {
                     self.install_integrations(ticked, cx);
                 }
-                if state.assistant_enabled {
+                if state.assistant_enabled && (turned_on || state.assistant_backend.is_some()) {
                     self.setup_configure_assistant(cx);
                 }
             }
@@ -1220,7 +1224,7 @@ impl Workbench {
             ))
             .child(self.setup_row(
                 "Mawas",
-                "Off unless you turn it on. Your assistant: answers questions about your work through one of your logged-in agents, and acts on your behalf only after you approve each change.",
+                "On by default. Your assistant: answers questions about your work through one of your logged-in agents, and acts on your behalf only after you approve each change.",
                 assistant.into_any_element(),
             ))
             .when(state.assistant_enabled, |s| {

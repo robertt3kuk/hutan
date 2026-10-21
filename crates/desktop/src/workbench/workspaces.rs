@@ -456,6 +456,7 @@ impl Workbench {
                     // Its `workspace.updated` may still be on its way.
                     this.pending_workspace = Some(id);
                     this.switch_workspace(id, window, cx);
+                    this.project_opened(id, window, cx);
                 })
                 .ok();
             }

@@ -889,6 +889,8 @@ fn the_settings_sheet_lists_the_app_namespace(cx: &mut TestAppContext) {
             "keep_running",
             "start_at_login",
             "setup_done",
+            "ask_notifications",
+            "ask_hooks",
             "on_last_window_close",
             "menu_bar",
             "dock_badge"

@@ -15,6 +15,7 @@ mod file_ex;
 mod file_sync;
 pub mod file_view;
 pub mod files;
+mod first_run;
 mod harness_install;
 pub(crate) mod harnesses;
 mod history;
@@ -71,6 +72,7 @@ pub use changes::{
 pub use daemon::{DaemonBusy, log_file as daemon_log_file};
 pub use docks::{COLLAPSE_DRAG, RESIZE_CONTEXT};
 pub use files::{BufferStore, FileOpen};
+pub use first_run::NotifyOffer;
 pub use harnesses::{Detection, HARNESSES, Harness, HarnessDirectory, Listing};
 pub use launcher::{
     HarnessChoice, LaunchAgent, LaunchWhere, Launcher, LauncherField, LauncherPreset, LauncherStop,

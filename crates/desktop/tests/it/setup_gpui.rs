@@ -77,8 +77,8 @@ fn store(daemon: &TestDaemon) -> SettingsStore {
     SettingsStore::new(SettingsPaths::in_dir(daemon.home()))
 }
 
-/// A workbench showing the first-run setup, with every seam faked.
-fn open_first_run<'a>(
+/// A workbench with the old walk-through open (*Run setup again*), with every seam faked.
+fn open_walkthrough<'a>(
     cx: &'a mut TestAppContext,
     daemon: &TestDaemon,
     env: &Env,
@@ -91,7 +91,14 @@ fn open_first_run<'a>(
         .with_package_runner(Arc::new(env.runner.clone()));
     let (view, cx) = open_options(cx, options);
     wait_synced(&view, cx);
+    show_walkthrough(&view, cx);
     (view, cx)
+}
+
+/// *Run setup again*: opens the seven-step walk-through.
+fn show_walkthrough(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    view.update_in(cx, |wb, window, cx| wb.open_setup(window, cx));
+    cx.run_until_parked();
 }
 
 /// A workbench without the setup (the integrations and installs are what is tested).
@@ -207,7 +214,7 @@ const CODEX_CHATGPT: &str = r#"{"dir":"out","msg":{"method":"initialize","id":1,
 
 /// A daemon whose OMP is logged in to `anthropic` and whose Claude Code CLI is logged out (its
 /// ACP adapter does not exist); Codex is whatever the harness gives.
-fn daemon_with_harnesses(scripts: &Path) -> TestDaemon {
+pub(crate) fn daemon_with_harnesses(scripts: &Path) -> TestDaemon {
     let omp = script(
         scripts,
         "omp",
@@ -234,7 +241,7 @@ esac"#,
     ))
 }
 
-fn wait_listing(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
+pub(crate) fn wait_listing(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
     wait_until(cx, "the account listing", |cx| {
         view.read_with(cx, |wb, cx| {
             *wb.harness_directory().read(cx).listing() == Listing::Ready
@@ -257,11 +264,11 @@ fn detected(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<&'static st
 // ---- the sheet ---------------------------------------------------------------------------------
 
 #[gpui::test]
-fn the_setup_appears_on_the_first_launch_only(cx: &mut TestAppContext) {
+fn the_walkthrough_opens_on_request_and_skipping_it_ends_the_first_run(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
-    assert!(setup_open(&view, cx), "no app.setup_done yet");
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
+    assert!(setup_open(&view, cx));
     assert_eq!(step(&view, cx), Some(SetupStep::Welcome));
     assert!(drawn(&view, cx, Region::Setup("sheet")), "and it is drawn");
     assert_eq!(saved(&daemon), "", "showing it writes nothing");
@@ -270,13 +277,6 @@ fn the_setup_appears_on_the_first_launch_only(cx: &mut TestAppContext) {
     click(&view, cx, Region::Setup("skip"));
     assert!(!setup_open(&view, cx));
     assert_eq!(saved(&daemon).trim(), "[app]\nsetup_done = true");
-
-    // The next launch does not show it again.
-    close_window(cx);
-    drop(view);
-    let (view, cx) = open_first_run(cx, &daemon, &env);
-    assert!(!setup_open(&view, cx));
-    assert!(!drawn(&view, cx, Region::Setup("sheet")));
 }
 
 #[gpui::test]
@@ -292,7 +292,7 @@ fn a_workbench_not_asked_for_the_setup_never_shows_it(cx: &mut TestAppContext) {
 fn the_setup_is_modal_shortcuts_wait_and_escape_skips_it(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     assert!(setup_open(&view, cx));
     let sessions = |cx: &VisualTestContext| {
         view.read_with(cx, |wb, cx| wb.sessions().read(cx).sessions().len())
@@ -326,7 +326,7 @@ fn the_setup_is_modal_shortcuts_wait_and_escape_skips_it(cx: &mut TestAppContext
 fn back_continue_and_skip_walk_the_seven_steps(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     assert!(
         !drawn(&view, cx, Region::Setup("back")),
         "nothing before Welcome"
@@ -363,7 +363,7 @@ fn the_history_step_names_the_folders_unticked_and_reads_only_what_is_ticked(
     let history = common::history::HistoryEnv::new();
     let daemon = TestDaemon::start_with_config(&history.daemon_toml(false));
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::History);
     let ticked = |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.setup().unwrap().history);
     for id in ["hutan", "claude", "codex", "omp"] {
@@ -407,7 +407,7 @@ fn the_history_step_names_the_folders_unticked_and_reads_only_what_is_ticked(
 fn the_setup_reopens_from_the_palette_and_from_settings(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     click(&view, cx, Region::Setup("skip"));
     assert!(!setup_open(&view, cx));
 
@@ -438,7 +438,7 @@ fn the_setup_reopens_from_the_palette_and_from_settings(cx: &mut TestAppContext)
 fn the_look_step_previews_live_and_writes_when_left(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Look);
 
     click(&view, cx, Region::Setup("appearance-dark"));
@@ -461,7 +461,7 @@ fn the_look_step_previews_live_and_writes_when_left(cx: &mut TestAppContext) {
     // Skipping a later look puts the window back to what is saved.
     close_window(cx);
     drop(view);
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     // (`app.setup_done` is not written yet: the setup is open again.)
     go_to(&view, cx, SetupStep::Look);
     click(&view, cx, Region::Setup("appearance-light"));
@@ -485,12 +485,11 @@ fn the_agents_step_lists_the_harnesses_and_writes_the_assistant_choice(cx: &mut 
     let scripts = tempfile::tempdir().unwrap();
     let daemon = daemon_with_harnesses(scripts.path());
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Agents);
     wait_listing(&view, cx);
-    // The assistant is off until it is turned on (its backends show once it is).
-    assert!(!drawn(&view, cx, Region::Setup("backend-omp")));
-    click(&view, cx, Region::Setup("assistant"));
+    // Mawas is on by default (its backends show with it).
+    assert!(drawn(&view, cx, Region::Setup("backend-omp")));
 
     // OMP is installed and logged in, Claude Code installed and logged out.
     view.read_with(cx, |wb, cx| {
@@ -518,7 +517,10 @@ fn the_agents_step_lists_the_harnesses_and_writes_the_assistant_choice(cx: &mut 
     click(&view, cx, Region::Setup("continue"));
     let text = saved(&daemon);
     assert!(text.contains("auto_install = true"), "{text}");
-    assert!(text.contains("enabled = true"), "{text}");
+    assert!(
+        !text.contains("[assistant]"),
+        "Mawas was left on: nothing about it is written: {text}"
+    );
 
     // The backend reached the daemon: the assistant opens on OMP.
     view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
@@ -550,10 +552,10 @@ fn with_omp_missing_and_codex_logged_in_the_agents_step_preselects_codex(cx: &mu
         env: Vec::new(),
     });
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Agents);
     wait_listing(&view, cx);
-    click(&view, cx, Region::Setup("assistant"));
+    // Mawas is on: the logged-in harness is selected.
 
     view.read_with(cx, |wb, cx| {
         let directory = wb.harness_directory().read(cx);
@@ -571,31 +573,31 @@ fn with_omp_missing_and_codex_logged_in_the_agents_step_preselects_codex(cx: &mu
 }
 
 #[gpui::test]
-fn the_assistant_is_off_in_the_setup_unless_it_is_turned_on(cx: &mut TestAppContext) {
+fn mawas_is_on_in_the_setup_and_leaving_it_writes_nothing_about_it(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Agents);
+    assert!(view.read_with(cx, |wb, _| wb.setup().unwrap().assistant_enabled));
+    click(&view, cx, Region::Setup("continue"));
+    let text = saved(&daemon);
+    assert!(!text.contains("[assistant]"), "{text}");
+    assert!(view.read_with(cx, |wb, _| wb.assistant_enabled()));
+}
+
+#[gpui::test]
+fn turning_mawas_off_in_the_setup_is_written(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let env = Env::new();
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
+    go_to(&view, cx, SetupStep::Agents);
+    click(&view, cx, Region::Setup("assistant"));
     assert!(!view.read_with(cx, |wb, _| wb.setup().unwrap().assistant_enabled));
     click(&view, cx, Region::Setup("continue"));
     let text = saved(&daemon);
     assert!(text.contains("[assistant]\nenabled = false"), "{text}");
+    // Mawas leaves the left sidebar's nav.
     assert!(!view.read_with(cx, |wb, _| wb.assistant_enabled()));
-}
-
-#[gpui::test]
-fn turning_the_assistant_on_in_the_setup_is_written(cx: &mut TestAppContext) {
-    let daemon = TestDaemon::start();
-    let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
-    go_to(&view, cx, SetupStep::Agents);
-    click(&view, cx, Region::Setup("assistant"));
-    assert!(view.read_with(cx, |wb, _| wb.setup().unwrap().assistant_enabled));
-    click(&view, cx, Region::Setup("continue"));
-    let text = saved(&daemon);
-    assert!(text.contains("[assistant]\nenabled = true"), "{text}");
-    // The Assistant is a page of the left sidebar now.
-    assert!(view.read_with(cx, |wb, _| wb.assistant_enabled()));
 }
 
 #[gpui::test]
@@ -603,7 +605,7 @@ fn logging_in_pauses_the_setup_and_the_palette_continues_it(cx: &mut TestAppCont
     let scripts = tempfile::tempdir().unwrap();
     let daemon = daemon_with_harnesses(scripts.path());
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Agents);
     wait_listing(&view, cx);
 
@@ -635,7 +637,7 @@ fn logging_in_pauses_the_setup_and_the_palette_continues_it(cx: &mut TestAppCont
 fn the_background_step_has_both_toggles_off_and_applies_them_when_left(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Background);
     view.read_with(cx, |wb, _| {
         let state = wb.setup().unwrap();
@@ -665,7 +667,7 @@ fn the_background_step_has_both_toggles_off_and_applies_them_when_left(cx: &mut 
 fn keep_running_in_the_setup_does_not_register_the_login_item(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Background);
     click(&view, cx, Region::Setup("keep-running"));
     click(&view, cx, Region::Setup("continue"));
@@ -682,7 +684,7 @@ fn an_unapproved_login_item_is_shown_with_its_status(cx: &mut TestAppContext) {
     env.fakes
         .login
         .set_after_register(LoginItemStatus::RequiresApproval);
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Background);
     click(&view, cx, Region::Setup("start-at-login"));
     click(&view, cx, Region::Setup("continue"));
@@ -700,6 +702,7 @@ fn outside_the_bundle_the_login_choice_is_unavailable(cx: &mut TestAppContext) {
         WorkbenchOptions::builtin(store(&daemon), daemon.connection(), None).with_first_run_setup();
     let (view, cx) = open_options(cx, options);
     wait_synced(&view, cx);
+    show_walkthrough(&view, cx);
     go_to(&view, cx, SetupStep::Background);
     click(&view, cx, Region::Setup("start-at-login"));
     view.read_with(cx, |wb, _| assert!(!wb.setup().unwrap().start_at_login));
@@ -716,7 +719,7 @@ fn outside_the_bundle_the_login_choice_is_unavailable(cx: &mut TestAppContext) {
 fn notifications_are_asked_for_only_when_the_button_is_pressed(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Background);
     draw(cx);
     assert_eq!(
@@ -769,7 +772,7 @@ fn notifications_are_asked_for_only_when_the_button_is_pressed(cx: &mut TestAppC
 fn the_global_shortcut_is_an_optional_choice_written_when_left(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Background);
     click(&view, cx, Region::Setup("shortcut-cmd-shift-space"));
     assert!(!saved(&daemon).contains("global_shortcut"));
@@ -787,7 +790,7 @@ fn the_global_shortcut_is_an_optional_choice_written_when_left(cx: &mut TestAppC
 fn the_command_line_step_links_hutan_only_when_asked_and_only_when_free(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::CommandLine);
     assert_eq!(
         view.read_with(cx, |wb, _| wb.setup_cli_plan()),
@@ -818,7 +821,7 @@ fn a_foreign_hutan_is_left_alone_and_the_command_is_shown(cx: &mut TestAppContex
     let daemon = TestDaemon::start();
     let env = Env::new();
     std::fs::write(env.link_path(), "#!/bin/sh\necho mine\n").unwrap();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::CommandLine);
     let plan = view.read_with(cx, |wb, _| wb.setup_cli_plan()).unwrap();
     let Plan::Manual { why, command } = plan else {
@@ -848,6 +851,7 @@ fn without_a_bundle_the_command_line_step_has_nothing_to_link(cx: &mut TestAppCo
         WorkbenchOptions::builtin(store(&daemon), daemon.connection(), None).with_first_run_setup();
     let (view, cx) = open_options(cx, options);
     wait_synced(&view, cx);
+    show_walkthrough(&view, cx);
     go_to(&view, cx, SetupStep::CommandLine);
     assert_eq!(view.read_with(cx, |wb, _| wb.setup_cli_plan()), None);
     click(&view, cx, Region::Setup("cli-link"));
@@ -860,7 +864,7 @@ fn without_a_bundle_the_command_line_step_has_nothing_to_link(cx: &mut TestAppCo
 fn the_done_step_can_start_a_terminal(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Done);
     assert!(drawn(&view, cx, Region::Setup("open-folder")));
     click(&view, cx, Region::Setup("new-terminal"));
@@ -876,7 +880,7 @@ fn the_daemon_toggles_of_the_settings_sheet_are_the_same_choices(cx: &mut TestAp
     // Settings → app shows both and the setup writes the very keys they read.
     let daemon = TestDaemon::start();
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Background);
     click(&view, cx, Region::Setup("keep-running"));
     click(&view, cx, Region::Setup("continue"));
@@ -1010,7 +1014,7 @@ fn the_agents_step_uninstalls_the_hooks_of_one_harness(cx: &mut TestAppContext) 
         .set_status("claude", IntegrationStatus::Installed);
     env.installer
         .set_status("omp", IntegrationStatus::Installed);
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Agents);
     wait_listing(&view, cx);
     wait_until(cx, "the hook status", |cx| {
@@ -1044,7 +1048,7 @@ fn hooks_are_off_until_ticked_and_only_the_ticked_agents_get_them(cx: &mut TestA
     let scripts = tempfile::tempdir().unwrap();
     let daemon = daemon_with_harnesses(scripts.path());
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     // A fresh start installs nothing by itself, and the setting is off.
     pump_for(cx, Duration::from_millis(400));
     assert!(!view.read_with(cx, |wb, _| wb.integrations_auto_install()));
@@ -1104,6 +1108,7 @@ fn with_a_custom_home_the_agents_step_says_hooks_go_to_the_real_config(cx: &mut 
         .with_custom_home(true);
     let (view, cx) = open_options(cx, options);
     wait_synced(&view, cx);
+    show_walkthrough(&view, cx);
     assert!(view.read_with(cx, |wb, _| wb.integrations_custom_home()));
     go_to(&view, cx, SetupStep::Agents);
     wait_listing(&view, cx);
@@ -1282,7 +1287,7 @@ fn install_buttons_appear_for_missing_harnesses_only_with_a_runner(cx: &mut Test
     let daemon = TestDaemon::start();
     let env = Env::new();
     env.runner.genuine(claude_source(), "0.93.1");
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Agents);
     wait_listing(&view, cx);
     wait_until(cx, "the Install… button", |cx| {
@@ -1305,6 +1310,7 @@ fn install_buttons_appear_for_missing_harnesses_only_with_a_runner(cx: &mut Test
         .with_first_run_setup();
     let (view, cx) = open_options(cx, options);
     wait_synced(&view, cx);
+    show_walkthrough(&view, cx);
     go_to(&view, cx, SetupStep::Agents);
     wait_listing(&view, cx);
     wait_until(cx, "the guide button", |cx| {
@@ -1348,7 +1354,7 @@ fn the_agents_step_offers_the_send_key_and_leaving_it_stops_the_composer_asking(
     let scripts = tempfile::tempdir().unwrap();
     let daemon = daemon_with_harnesses(scripts.path());
     let env = Env::new();
-    let (view, cx) = open_first_run(cx, &daemon, &env);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
     go_to(&view, cx, SetupStep::Agents);
     wait_listing(&view, cx);
     assert!(!saved(&daemon).contains("send_key"));

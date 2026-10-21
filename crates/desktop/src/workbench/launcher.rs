@@ -61,6 +61,8 @@ pub enum LauncherStop {
     System,
     /// Start now / Queue as task.
     Mode,
+    /// The "Options" header of the inline composer: folds every row but the prompt and the agent.
+    Options,
 }
 
 /// A text field of the sheet.
@@ -118,6 +120,9 @@ pub struct LauncherPreset {
     /// The review (comments of a Changes view) whose text is the prompt: its comments count as
     /// sent once the agent has started with it.
     pub handoff: Option<super::review::ReviewHandoff>,
+    /// Open as the centre's start composer (the first run, after a folder was opened) instead
+    /// of the sheet: the prompt and the agent, the other rows folded under Options.
+    pub inline: bool,
 }
 
 /// How ready a harness is for what the sheet is about to start.
@@ -225,6 +230,10 @@ pub struct Launcher {
     pub(crate) confirm: Option<StartConfirm>,
     /// The next start was confirmed: it does not ask again.
     pub(crate) skip_confirm: bool,
+    /// The composer sits in the centre instead of a sheet over the window.
+    pub(crate) inline: bool,
+    /// The inline composer's Options are unfolded.
+    pub(crate) options_open: bool,
 }
 
 impl Launcher {
@@ -294,6 +303,16 @@ impl Launcher {
 
     pub fn more_open(&self) -> bool {
         self.more_open
+    }
+
+    /// The launcher is the centre's start composer (the first run), not the sheet.
+    pub fn inline(&self) -> bool {
+        self.inline
+    }
+
+    /// The inline composer's Options are unfolded.
+    pub fn options_open(&self) -> bool {
+        self.options_open
     }
 
     /// The row whose choices are open.
@@ -821,7 +840,25 @@ impl Workbench {
             }
         }
         stops.push(LauncherStop::Mode);
-        stops
+        if !launcher.inline {
+            return stops;
+        }
+        // The inline composer shows the command or prompt, then the agent, then Options; what
+        // the sheet lists before them follows Options once it is unfolded.
+        let first: Vec<LauncherStop> = [
+            LauncherStop::Command,
+            LauncherStop::Prompt,
+            LauncherStop::Agent,
+        ]
+        .into_iter()
+        .filter(|stop| stops.contains(stop))
+        .collect();
+        let mut inline = first.clone();
+        inline.push(LauncherStop::Options);
+        if launcher.options_open {
+            inline.extend(stops.into_iter().filter(|stop| !first.contains(stop)));
+        }
+        inline
     }
 
     // ---- opening and closing ---------------------------------------------------------------
@@ -861,7 +898,7 @@ impl Workbench {
         let memory = self.launcher_memory.clone();
         // A preset with a prompt, a queue or a direct chat is about an agent. Otherwise the sheet
         // opens on what the last start was, and on a plain terminal before there was one.
-        let agentic = preset.prompt.is_some() || preset.queue || preset.direct;
+        let agentic = preset.prompt.is_some() || preset.queue || preset.direct || preset.inline;
         let kind = preset.kind.unwrap_or_else(|| {
             if agentic {
                 return LaunchKind::Chat;
@@ -934,6 +971,8 @@ impl Workbench {
             remembered_model: memory.model.clone(),
             confirm: None,
             skip_confirm: false,
+            inline: preset.inline,
+            options_open: false,
         };
         if let Some(prompt) = &preset.prompt {
             launcher.prompt.set(prompt);
@@ -1265,6 +1304,21 @@ impl Workbench {
             launcher.after.insert(task);
         }
         cx.notify();
+    }
+
+    /// The inline composer's *Options*: unfolds or folds every row but the prompt and the agent.
+    pub fn launcher_toggle_options(&mut self, cx: &mut Context<Self>) {
+        if let Some(launcher) = &mut self.launcher
+            && launcher.inline
+        {
+            launcher.options_open = !launcher.options_open;
+            launcher.open_row = None;
+            if !launcher.options_open {
+                // A row that folded away cannot keep the keyboard.
+                launcher.stop = LauncherStop::Options;
+            }
+            cx.notify();
+        }
     }
 
     pub fn launcher_toggle_more(&mut self, cx: &mut Context<Self>) {
@@ -2080,7 +2134,14 @@ impl Workbench {
                         return;
                     }
                 }
-                self.close_launcher(window, cx);
+                if self.launcher.as_ref().is_some_and(|l| l.inline) {
+                    // The composer is the centre, not a sheet: Escape only gives the keyboard
+                    // back to the window.
+                    self.focus_root(window, cx);
+                    cx.notify();
+                } else {
+                    self.close_launcher(window, cx);
+                }
             }
             "tab" => {
                 let stops = self.launcher_stops(cx);
@@ -2105,6 +2166,10 @@ impl Workbench {
                 | LauncherStop::Model => self.launcher_row_key(key, stop, cx),
                 LauncherStop::More => match key {
                     "space" | "enter" | "left" | "right" => self.launcher_toggle_more(cx),
+                    _ => return,
+                },
+                LauncherStop::Options => match key {
+                    "space" | "enter" | "left" | "right" => self.launcher_toggle_options(cx),
                     _ => return,
                 },
                 LauncherStop::After => self.launcher_after_key(key, cx),
