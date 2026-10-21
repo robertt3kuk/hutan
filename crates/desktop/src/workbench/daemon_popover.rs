@@ -146,7 +146,7 @@ impl Workbench {
                 .rounded(px(tokens.radius))
                 .border_1()
                 .border_color(if on && available {
-                    theme.accent
+                    gpui::transparent_black()
                 } else {
                     theme.border
                 })

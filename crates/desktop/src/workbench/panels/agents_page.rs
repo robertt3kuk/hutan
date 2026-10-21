@@ -44,7 +44,7 @@ use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::UiStyle;
 use crate::workbench::text_field::FieldRef;
-use crate::workbench::ui::{self, ButtonKind, Mascot};
+use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, Mascot};
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
 
@@ -1130,11 +1130,8 @@ impl AgentsPage {
             .rounded(px(tokens.radius))
             .bg(theme.surface)
             .border_1()
-            .border_color(if searching {
-                theme.accent
-            } else {
-                theme.border
-            })
+            .border_color(theme.border)
+            .focus_ring(searching, &theme, &tokens)
             .cursor_text()
             .track_focus(&self.search_focus)
             .key_context("AgentsSearch")

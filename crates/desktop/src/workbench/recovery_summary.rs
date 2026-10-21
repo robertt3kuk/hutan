@@ -240,7 +240,14 @@ impl Workbench {
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_recovered(session, window, cx);
                             }))
-                            .child(ui::pill(row.chip.label, tone, &tokens))
+                            .child(ui::state_label(
+                                ui::state_glyph(tone, &theme),
+                                row.chip.label,
+                                tone,
+                                false,
+                                &theme,
+                                &tokens,
+                            ))
                             .child(
                                 div()
                                     .flex()

@@ -34,7 +34,7 @@ use super::render::probe;
 use super::settings_labels::words;
 use super::settings_rows::{note, sheet_row, small_button};
 use super::settings_schema::Field;
-use super::ui::{self, ButtonKind};
+use super::ui::{self, ButtonKind, FocusRingExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::integrations::IntegrationStatus;
@@ -994,8 +994,9 @@ impl Workbench {
                     .border_color(if editing.as_ref().is_some_and(|e| e.error.is_some()) {
                         theme.danger
                     } else {
-                        theme.accent
+                        theme.border
                     })
+                    .focus_ring(true, &theme, &tokens)
                     .min_w(px(120.0))
                     .children(self.overlay_parts(OverlayField::SheetValue, "", cx))
                     .into_any_element()
@@ -1064,8 +1065,9 @@ impl Workbench {
                 .border_color(if edit.error.is_some() {
                     theme.danger
                 } else {
-                    theme.accent
+                    theme.border
                 })
+                .focus_ring(true, &theme, &tokens)
                 .min_w(px(180.0))
                 .children(self.overlay_parts(OverlayField::SheetValue, words::ENV_ADD_HINT, cx))
                 .into_any_element(),

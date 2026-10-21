@@ -26,7 +26,7 @@ use super::chat::vim::Outcome;
 use super::regions::Regions;
 use super::style::{TextTooltip, UiStyle};
 use super::text_field::FieldRef;
-use super::ui::{self, ButtonKind, Mascot};
+use super::ui::{self, ButtonKind, FocusRingExt as _, Mascot};
 use super::vim_ui::{self, FieldEdit, VimConfig};
 use crate::theme::{DensityExt as _, Theme, Tokens};
 
@@ -639,8 +639,14 @@ impl FileView {
                 .px(px(5.0))
                 .rounded(px(tokens.radius - 2.0))
                 .border_1()
-                .border_color(if on { theme.accent } else { theme.border })
-                .text_color(if on { theme.accent } else { theme.muted })
+                // An option that is on is the selection's fill, not an accent outline.
+                .border_color(if on {
+                    gpui::transparent_black()
+                } else {
+                    theme.border
+                })
+                .when(on, |s| s.bg(theme.accent_soft))
+                .text_color(if on { theme.fg } else { theme.muted })
                 .cursor_pointer()
                 .hover(move |s| s.bg(hover))
                 .tooltip(move |_, cx| cx.new(|_| TextTooltip(SharedString::from(tip))).into())
@@ -688,7 +694,8 @@ impl FileView {
                     .rounded(px(tokens.radius))
                     .bg(theme.surface)
                     .border_1()
-                    .border_color(if focused { theme.accent } else { theme.border })
+                    .border_color(theme.border)
+                    .focus_ring(focused, theme, tokens)
                     .cursor_text()
                     .on_mouse_down(
                         MouseButton::Left,
@@ -803,7 +810,8 @@ impl FileView {
                     .rounded(px(tokens.radius))
                     .bg(theme.surface)
                     .border_1()
-                    .border_color(if focused { theme.accent } else { theme.border })
+                    .border_color(theme.border)
+                    .focus_ring(focused, theme, tokens)
                     .cursor_text()
                     .on_mouse_down(
                         MouseButton::Left,

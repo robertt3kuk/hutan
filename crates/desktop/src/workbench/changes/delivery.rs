@@ -456,10 +456,17 @@ impl ChangesView {
         let mut controls = Vec::new();
         if let Some((label, tone)) = delivery_pill(task.delivery) {
             controls.push(
-                ui::pill(label, tone_color(theme, tone), tokens)
-                    .relative()
-                    .child(probe(&self.env.regions, Region::Changes("delivery")))
-                    .into_any_element(),
+                ui::state_label(
+                    ui::state_glyph(tone_color(theme, tone), theme),
+                    label,
+                    tone_color(theme, tone),
+                    false,
+                    theme,
+                    tokens,
+                )
+                .relative()
+                .child(probe(&self.env.regions, Region::Changes("delivery")))
+                .into_any_element(),
             );
         }
         if self.can_review(cx) {

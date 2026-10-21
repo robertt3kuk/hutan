@@ -782,9 +782,13 @@ impl MemoryPanel {
             .py(px(tokens.spacing / 2.0))
             .rounded(px(crate::theme::pill_radius()))
             .border_1()
-            .border_color(if selected { theme.accent } else { theme.border })
+            .border_color(if selected {
+                gpui::transparent_black()
+            } else {
+                theme.border
+            })
             .bg(if selected {
-                theme.accent.opacity(0.14)
+                theme.accent_soft
             } else {
                 theme.surface
             })
@@ -918,8 +922,6 @@ impl MemoryPanel {
             .gap(px(tokens.spacing))
             .p(px(tokens.spacing * 3.0))
             .rounded(px(tokens.radius))
-            .border_1()
-            .border_color(theme.accent)
             .bg(theme.surface)
             .child(
                 div()
@@ -1035,8 +1037,6 @@ impl MemoryPanel {
             .gap(px(tokens.spacing * 2.0))
             .p(px(tokens.spacing * 3.0))
             .rounded(px(tokens.radius))
-            .border_1()
-            .border_color(theme.accent)
             .bg(theme.surface)
             .child(
                 div()
@@ -1170,7 +1170,7 @@ impl MemoryPanel {
             .flex_wrap()
             .items_center()
             .gap(px(tokens.spacing))
-            .child(ui::pill(SharedString::from(place), theme.muted, &tokens))
+            .child(ui::pill(SharedString::from(place), &theme, &tokens))
             .child(
                 div()
                     .text_color(theme.faint)
@@ -1178,13 +1178,13 @@ impl MemoryPanel {
                     .child(SharedString::from(format!("r{}", entry.revision))),
             );
         if entry.inferred {
-            meta = meta.child(ui::pill("inferred", theme.warning, &tokens).child(probe(
+            meta = meta.child(ui::pill("inferred", &theme, &tokens).child(probe(
                 &self.env.regions,
                 Region::MemoryItem("inferred", index),
             )));
         }
         if archived {
-            meta = meta.child(ui::pill("archived", theme.faint, &tokens));
+            meta = meta.child(ui::pill("archived", &theme, &tokens));
         }
         meta = meta.child(
             div()

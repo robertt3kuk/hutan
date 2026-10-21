@@ -15,7 +15,7 @@ use super::launcher::{
 use super::panels::field_box;
 use super::render::probe;
 use super::send_key::send_key_control;
-use super::ui::{self, ButtonKind, StyledExt as _};
+use super::ui::{self, ButtonKind, FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::VimConfig;
 use super::workspaces::tilde;
@@ -94,11 +94,8 @@ impl Workbench {
                 .relative()
                 .rounded(px(tokens.radius + 2.0))
                 .border_1()
-                .border_color(if active {
-                    theme.accent
-                } else {
-                    transparent_black()
-                })
+                .border_color(transparent_black())
+                .focus_ring(active, &theme, &tokens)
                 .p(px(1.0))
                 .when(active, |s| s.bg(theme.surface_hover))
                 .when(open, |s| s.bg(theme.accent_soft))
@@ -445,11 +442,8 @@ impl Workbench {
                             .rounded(px(tokens.radius))
                             .bg(theme.bg)
                             .border_1()
-                            .border_color(if stop == LauncherStop::Model {
-                                theme.accent
-                            } else {
-                                theme.border
-                            })
+                            .border_color(theme.border)
+                            .focus_ring(stop == LauncherStop::Model, &theme, &tokens)
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.launcher_focus_stop(LauncherStop::Model, window, cx);
@@ -781,10 +775,17 @@ impl Workbench {
                                 .child(SharedString::from(path)),
                         )
                         .when(dirty, |s| {
-                            s.child(ui::pill("changes", theme.warning, &tokens))
+                            s.child(ui::state_label(
+                                crate::icons::Icon::StateWarning,
+                                "changes",
+                                theme.warning,
+                                false,
+                                &theme,
+                                &tokens,
+                            ))
                         })
                         .when(live > 0, |s| {
-                            s.child(ui::pill(format!("{live} live"), theme.muted, &tokens))
+                            s.child(ui::pill(format!("{live} live"), &theme, &tokens))
                         })
                         .child(probe(&self.regions, Region::LauncherItem("worktree", at))),
                 );

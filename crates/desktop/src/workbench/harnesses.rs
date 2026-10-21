@@ -514,7 +514,14 @@ impl Workbench {
                             .medium()
                             .child(SharedString::from(harness.name)),
                     )
-                    .child(ui::pill(state_text, state_color, &tokens))
+                    .child(ui::state_label(
+                        ui::state_glyph(state_color, &theme),
+                        state_text,
+                        state_color,
+                        false,
+                        &theme,
+                        &tokens,
+                    ))
                     .when(!found && self.harness_install_available(), |s| {
                         s.child(
                             button(
@@ -585,9 +592,16 @@ impl Workbench {
             );
         }
         if let Some(plan) = &account.plan {
-            line = line.child(ui::pill(plan.clone(), theme.muted, &tokens));
+            line = line.child(ui::pill(plan.clone(), &theme, &tokens));
         }
-        line = line.child(ui::pill(status, color, &tokens));
+        line = line.child(ui::state_label(
+            ui::state_glyph(color, &theme),
+            status,
+            color,
+            false,
+            &theme,
+            &tokens,
+        ));
         if per_provider {
             line = line.child(
                 button(

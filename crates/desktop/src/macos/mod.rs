@@ -14,6 +14,7 @@
 //! [`MacEvent`]s on one bounded channel that the workbench drains on the main thread.
 
 pub mod dock;
+pub mod focus;
 pub mod hotkey;
 pub mod login_item;
 pub mod notifications;

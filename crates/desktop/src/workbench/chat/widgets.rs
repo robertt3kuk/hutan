@@ -1,6 +1,6 @@
 //! Small pieces the chat view shares: buttons, chips and number formatting.
 
-use gpui::{Hsla, SharedString};
+use gpui::SharedString;
 use hutan_chat_view::ContextUse;
 
 use super::markdown_view::Look;
@@ -32,9 +32,9 @@ pub fn round_button(
     ui::round_button(id, glyph, primary, enabled, size, &look.theme)
 }
 
-/// A small label in a tone's color ("exit 0", "running").
-pub fn pill(text: impl Into<SharedString>, color: Hsla, look: &Look) -> gpui::Div {
-    ui::pill(text, color, &look.tokens)
+/// A small neutral label ("exit 0", "running"); the state's color is on the glyph beside it.
+pub fn pill(text: impl Into<SharedString>, look: &Look) -> gpui::Div {
+    ui::pill(text, &look.theme, &look.tokens)
 }
 
 /// `12 ms`, `1.2 s`, `2 m 3 s`.

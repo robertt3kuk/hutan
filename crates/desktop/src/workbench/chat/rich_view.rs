@@ -317,6 +317,7 @@ impl ChatView {
     /// The highlight that covers the chat while files are dragged over it.
     pub(super) fn render_drop_overlay(&self, look: &Look) -> AnyElement {
         let (theme, tokens) = (&look.theme, &look.tokens);
+        let accent = theme.accent;
         div()
             .absolute()
             .inset_0()
@@ -326,11 +327,13 @@ impl ChatView {
             .m(px(tokens.spacing * 2.0))
             .rounded(px(tokens.card_radius))
             .border_2()
-            .border_color(theme.accent)
             .bg(theme.accent_soft)
             .text_color(theme.accent)
             .opacity(0.0)
-            .group_drag_over::<ExternalPaths>(DROP_GROUP, |style| style.opacity(1.0))
+            // A drop target: the one place an accent edge is drawn.
+            .group_drag_over::<ExternalPaths>(DROP_GROUP, move |style| {
+                style.opacity(1.0).border_color(accent)
+            })
             .child("Drop files or images to attach")
             .child(probe(&self.regions, Region::Chat("drop-overlay")))
             .into_any_element()

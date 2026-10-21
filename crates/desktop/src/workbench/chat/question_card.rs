@@ -18,7 +18,7 @@ use super::view::ChatView;
 use super::widgets::{ButtonKind, button};
 use crate::workbench::render::probe;
 use crate::workbench::text_field::{EditableText, FieldMut, FieldRef, FieldState, edit_keys};
-use crate::workbench::ui::StyledExt as _;
+use crate::workbench::ui::{FocusRingExt as _, StyledExt as _};
 use crate::workbench::view::Region;
 
 /// How many options one field offers as buttons before the rest are cut (a form with a hundred
@@ -382,7 +382,6 @@ impl ChatView {
                 theme.muted,
             )),
         };
-        let focused = self.question_focus == Some(id);
         let form = self.forms.get(&id).cloned();
         let fields: Vec<AnyElement> = match (&form, pending) {
             (Some(form), true) => question
@@ -429,13 +428,6 @@ impl ChatView {
             .gap(px(tokens.spacing * 2.0))
             .p(px(tokens.spacing * 3.0))
             .card(theme, tokens)
-            .border_color(if pending && focused {
-                theme.accent
-            } else if pending {
-                theme.warning
-            } else {
-                theme.border
-            })
             .child(
                 div()
                     .flex()
@@ -586,7 +578,8 @@ impl ChatView {
                 .px(px(tokens.spacing * 2.0))
                 .py(px(tokens.spacing))
                 .border_1()
-                .border_color(if focused { theme.accent } else { theme.border })
+                .border_color(theme.border)
+                .focus_ring(typing, theme, tokens)
                 .rounded(px(tokens.card_radius))
                 .cursor_text()
                 .flex()

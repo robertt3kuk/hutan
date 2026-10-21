@@ -20,7 +20,7 @@ use crate::workbench::agents_page::primary_action;
 use crate::workbench::panels::common::{now_ms, tone_color};
 use crate::workbench::render::probe;
 use crate::workbench::style::TextTooltip;
-use crate::workbench::ui::{self, ButtonKind};
+use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _};
 use crate::workbench::view::Region;
 
 /// A fixed-width column of the wide layout.
@@ -384,12 +384,8 @@ impl AgentsPage {
             .cursor_pointer()
             .when(selected, |s| s.bg(theme.accent_soft))
             .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
-            .border_l_2()
-            .border_color(match (selected, focused) {
-                (true, true) => theme.accent,
-                (true, false) => theme.muted,
-                _ => gpui::transparent_black(),
-            })
+            // The keyboard on the selected row: the focus ring, not a colored edge.
+            .focus_ring(selected && focused, &theme, &look.tokens)
             .when(record.state.is_finished() && !needs, |s| s.opacity(0.75))
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.select_session_row(session);

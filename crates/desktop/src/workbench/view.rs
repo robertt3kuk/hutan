@@ -382,16 +382,19 @@ pub struct DragPreview {
 impl Render for DragPreview {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.style.theme;
-        div()
+        // A floating chip: the popover's surface and shadow, no accent edge.
+        let mut chip = div()
             .px(px(10.0))
             .py(px(4.0))
             .rounded(px(self.style.density.ui().radius))
             .bg(theme.surface)
             .border_1()
-            .border_color(theme.accent)
+            .border_color(theme.border)
             .text_color(theme.fg)
             .text_size(px(self.style.density.ui().font_size))
-            .child(self.label.clone())
+            .child(self.label.clone());
+        chip.style().box_shadow = Some(theme.shadow());
+        chip
     }
 }
 
@@ -828,8 +831,33 @@ impl Workbench {
                 }
             })
         };
+        // Where focus came from, for the keyboard focus ring (`ui::keyboard_focus`): a key that
+        // walks focus or a selection, or any keystroke after which another element has focus,
+        // makes it the keyboard; a mouse press anywhere (`ui::keyboard_focus_observer`) ends it.
+        // An interceptor sees every keystroke, also those a view's key handler consumes.
+        let focus_modality = {
+            let window_handle = window.window_handle();
+            cx.intercept_keystrokes(move |event, window, cx| {
+                if window.window_handle() != window_handle {
+                    return;
+                }
+                if super::ui::navigates(&event.keystroke) {
+                    if super::ui::set_keyboard_focus(true) {
+                        window.refresh();
+                    }
+                    return;
+                }
+                let before = window.focused(cx);
+                window.defer(cx, move |window, cx| {
+                    if window.focused(cx) != before && super::ui::set_keyboard_focus(true) {
+                        window.refresh();
+                    }
+                });
+            })
+        };
         let subscriptions = vec![
             modal_guard,
+            focus_modality,
             cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
             cx.on_app_quit(|this, cx| this.on_platform_quit(cx)),
             cx.subscribe_in(

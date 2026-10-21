@@ -36,6 +36,7 @@ use super::settings_mcp::McpForm;
 use super::settings_pages::{DataTarget, valid_env_name};
 use super::settings_rows::{note, sheet_row, small_button};
 use super::settings_sheet::{Edit, display_value};
+use super::ui::FocusRingExt as _;
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::theme::{DensityExt as _, Theme, Tokens};
@@ -1266,7 +1267,7 @@ impl Workbench {
             &theme,
             &tokens,
         );
-        self.focus_ring(&format!("d:{key}"), row)
+        self.sheet_row_focus(&format!("d:{key}"), row)
     }
 
     fn render_daemon_control(&self, e: &DaemonSetting, cx: &mut Context<Self>) -> AnyElement {
@@ -1434,13 +1435,8 @@ impl Workbench {
                     .rounded(px(tokens.radius))
                     .bg(theme.bg)
                     .border_1()
-                    .border_color(if failed {
-                        theme.danger
-                    } else if active {
-                        theme.accent
-                    } else {
-                        theme.border
-                    })
+                    .border_color(if failed { theme.danger } else { theme.border })
+                    .focus_ring(active, &theme, &tokens)
                     .cursor_text()
                     .on_click(cx.listener(move |this, _, _, cx| this.daemon_begin_edit(&k, cx)))
                     .children(if active {
@@ -1590,8 +1586,9 @@ impl Workbench {
                     .border_color(if self.daemon_settings.error(&key).is_some() {
                         theme.danger
                     } else {
-                        theme.accent
+                        theme.border
                     })
+                    .focus_ring(true, &theme, &tokens)
                     .min_w(px(80.0))
                     .children(self.overlay_parts(OverlayField::SheetValue, "", cx))
                     .into_any_element(),
@@ -1646,7 +1643,8 @@ impl Workbench {
                 .h(px(tokens.control_height - 2.0))
                 .rounded(px(tokens.radius))
                 .border_1()
-                .border_color(theme.accent)
+                .border_color(theme.border)
+                .focus_ring(true, &theme, &tokens)
                 .min_w(px(160.0))
                 .children(this.overlay_parts(OverlayField::SheetValue, "", cx))
         };

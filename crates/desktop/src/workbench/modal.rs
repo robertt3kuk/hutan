@@ -10,7 +10,7 @@ use gpui::{
 };
 
 use super::actions::modal as modal_actions;
-use super::ui::{self, StyledExt as _};
+use super::ui::{self, FocusRingExt as _, StyledExt as _};
 use super::view::Workbench;
 use super::vim_ui::OverlayField;
 
@@ -397,10 +397,8 @@ impl Workbench {
                                     .items_center()
                                     .h(px(tokens.sidebar_row + 4.0))
                                     .px(px(tokens.spacing * 2.0))
-                                    .rounded(px(tokens.radius))
-                                    .bg(theme.bg)
-                                    .border_1()
-                                    .border_color(theme.accent)
+                                    .outlined(&theme, &tokens)
+                                    .focus_ring(true, &theme, &tokens)
                                     .children(parts),
                             )
                         })

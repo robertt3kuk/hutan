@@ -1400,8 +1400,10 @@ impl ChatView {
             .max_w(px(crate::theme::reading_width()))
             .gap(px(tokens.spacing * 1.5))
             .p(px(tokens.spacing * 3.0))
+            // A card with the inputs' hairline; no accent, focused or not (the caret shows it).
             .card(theme, tokens)
-            .border_color(if focused { theme.accent } else { theme.border })
+            .border_1()
+            .border_color(theme.border)
             .when(!chips.is_empty(), |s| s.child(chip_row))
             .when(!context.is_empty(), |s| s.child(context_row))
             .children(open_pastes)

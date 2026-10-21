@@ -51,8 +51,8 @@ notify = "8.2.0"
 # Native notifications posted by the daemon (ADR 0007): Objective-C bindings, macOS only.
 objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
 # Menu bar status items (the desktop's, M6-C, and the daemon's, M6-D), Dock badge, activation and
-# the daemon's stop confirmation: AppKit, macOS only.
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSAlert", "NSApplication", "NSBitmapImageRep", "NSButton", "NSCell", "NSControl", "NSDockTile", "NSEvent", "NSGraphicsContext", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "objc2-core-foundation"] }
+# the daemon's stop confirmation, the keyboard focus indicator color (`ui.focus`): AppKit, macOS only.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSAlert", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSCell", "NSColor", "NSColorSpace", "NSControl", "NSDockTile", "NSEvent", "NSGraphicsContext", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "objc2-core-foundation"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSBundle", "NSDate", "NSError", "NSObject", "NSObjCRuntime", "NSRunLoop", "NSSet", "NSString", "NSTimer"] }
 objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationAction", "UNNotificationCategory", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 # `SMAppService`, the "keep running" launch agent registration (M6-C), macOS only.

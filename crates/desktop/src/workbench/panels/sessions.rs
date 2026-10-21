@@ -44,7 +44,7 @@ use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
 use crate::workbench::text_field::FieldRef;
-use crate::workbench::ui::{self, ButtonKind, Mascot, StyledExt as _};
+use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, Mascot, StyledExt as _};
 use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
 use crate::workbench::{BadgeSite, DragPreview, Region};
 
@@ -1136,14 +1136,8 @@ impl Render for SessionsPanel {
             .h(px(tokens.sidebar_row))
             .flex()
             .items_center()
-            .rounded(px(tokens.radius))
-            .bg(theme.surface)
-            .border_1()
-            .border_color(if searching {
-                theme.accent
-            } else {
-                theme.border
-            })
+            .outlined(&theme, &tokens)
+            .focus_ring(searching, &theme, &tokens)
             .cursor_text()
             .on_mouse_down(
                 MouseButton::Left,
@@ -1317,7 +1311,6 @@ impl SessionsPanel {
     fn rename_editor(&self, id_text: &str, text: &str, cx: &mut Context<Self>) -> AnyElement {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
-        let accent = theme.accent;
         div()
             .id(SharedString::from(format!("rename-{id_text}")))
             .key_context("SidebarRename")
@@ -1335,7 +1328,8 @@ impl SessionsPanel {
             .rounded(px(tokens.radius))
             .bg(theme.bg)
             .border_1()
-            .border_color(accent)
+            .border_color(theme.border)
+            .focus_ring(true, &theme, &tokens)
             .text_color(theme.fg)
             .children(vim_ui::string_field(
                 SharedString::from(format!("rename-text-{id_text}")),
@@ -1421,8 +1415,10 @@ impl SessionsPanel {
                 theme.muted
             })
             .cursor_pointer()
-            .when(current || selected, move |s| s.bg(theme.sidebar_accent))
-            .when(selected, move |s| s.border_1().border_color(accent))
+            // The current project is the dock's selected fill; a project picked for a bulk action
+            // (⌘- or ⇧-click) is the list selection's `accent_soft` fill. No outline.
+            .when(current && !selected, move |s| s.bg(theme.sidebar_accent))
+            .when(selected, move |s| s.bg(theme.accent_soft))
             .when(!(current || selected), move |s| {
                 s.hover(move |s| s.bg(hover))
             })

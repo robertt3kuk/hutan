@@ -575,7 +575,7 @@ impl TasksPanel {
             .pl(px(12.0 + tokens.spacing * 1.5))
             .text_size(px(tokens.secondary_font_size))
             .text_color(theme.muted)
-            .child(ui::pill(row.placement.clone(), theme.muted, tokens))
+            .child(ui::pill(row.placement.clone(), theme, tokens))
             .child(clipped(row.run.clone()));
         if row.auto_start {
             detail = detail.child("auto");
@@ -639,9 +639,16 @@ impl TasksPanel {
                     )
                     .when_some(row.delivery_label, |s, label| {
                         s.child(
-                            ui::pill(label, tone_color(theme, row.delivery_tone), tokens)
-                                .relative()
-                                .child(probe(&self.env.regions, Region::TaskDelivery(index))),
+                            ui::state_label(
+                                ui::state_glyph(tone_color(theme, row.delivery_tone), theme),
+                                label,
+                                tone_color(theme, row.delivery_tone),
+                                false,
+                                theme,
+                                tokens,
+                            )
+                            .relative()
+                            .child(probe(&self.env.regions, Region::TaskDelivery(index))),
                         )
                     })
                     .child(

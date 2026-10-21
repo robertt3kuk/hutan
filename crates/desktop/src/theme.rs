@@ -250,12 +250,15 @@ pub struct Theme {
     pub fg: Hsla,
     /// Secondary text and icons (`ui.text.muted`).
     pub muted: Hsla,
-    /// Placeholders and disabled text (`ui.text.faint`).
+    /// Disabled text (`ui.text.faint`); placeholders are `muted`.
     pub faint: Hsla,
-    /// Primary buttons, selection, focus, links: the brand color (`ui.accent`).
+    /// Primary buttons, the send button, the working glyph: the brand color (`ui.accent`).
     pub accent: Hsla,
-    /// Selected row, chips, the user message bubble (`ui.accent.soft`).
+    /// The selected row or chip of a list (`ui.accent.soft`).
     pub accent_soft: Hsla,
+    /// The keyboard focus ring (`ui.focus`): the pack's value, else the macOS keyboard focus
+    /// indicator color read at startup ([`set_system_focus`]), else `accent`.
+    pub focus: Hsla,
     pub success: Hsla,
     pub warning: Hsla,
     pub danger: Hsla,
@@ -286,13 +289,37 @@ pub struct Theme {
     shadow_spread: f32,
 }
 
+thread_local! {
+    /// The system's keyboard focus color for light and dark windows, when the app read it
+    /// ([`set_system_focus`]); tests never do, so their ring is `accent`.
+    static SYSTEM_FOCUS: std::cell::Cell<Option<(Hsla, Hsla)>> = const { std::cell::Cell::new(None) };
+}
+
+/// Makes `light` / `dark` the ring color of packs that leave `ui.focus` out. The app calls it
+/// once at startup with `crate::macos::focus::system_colors`.
+pub fn set_system_focus(colors: Option<(Hsla, Hsla)>) {
+    SYSTEM_FOCUS.with(|cell| cell.set(colors));
+}
+
 impl Theme {
     /// The chrome of a resolved pack.
     pub fn from_resolved(theme: &ResolvedTheme) -> Self {
         let color = |token: Color| hsla(theme.color(token));
+        let dark = theme.appearance == SystemAppearance::Dark;
+        let focus = theme
+            .color_if_set(Color::Focus)
+            .map(hsla)
+            .unwrap_or_else(|| {
+                SYSTEM_FOCUS.with(std::cell::Cell::get).map_or(
+                    color(Color::Accent),
+                    |(light, dark_focus)| {
+                        if dark { dark_focus } else { light }
+                    },
+                )
+            });
         let metrics = Metrics::of(theme);
         Self {
-            dark: theme.appearance == SystemAppearance::Dark,
+            dark,
             bg: color(Color::Background),
             sidebar: color(Color::SidebarBackground),
             sidebar_accent: color(Color::SidebarSelected),
@@ -306,6 +333,7 @@ impl Theme {
             faint: color(Color::TextFaint),
             accent: color(Color::Accent),
             accent_soft: color(Color::AccentSoft),
+            focus,
             success: color(Color::StateSuccess),
             warning: color(Color::StateWarning),
             danger: color(Color::StateError),

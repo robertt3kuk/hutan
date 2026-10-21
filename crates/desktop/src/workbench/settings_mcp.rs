@@ -21,6 +21,7 @@ use super::render::probe;
 use super::settings_daemon::{EDIT_PREFIX, MCP_KEYS};
 use super::settings_labels::{daemon_field_help, daemon_field_title, words};
 use super::settings_rows::{note, sheet_row, small_button};
+use super::ui::FocusRingExt as _;
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::theme::DensityExt as _;
@@ -523,7 +524,7 @@ impl Workbench {
                     .py(px(tokens.spacing * 2.0))
                     .child(add)
                     .into_any_element();
-                self.focus_ring(&format!("d:{MCP_KEYS}"), row)
+                self.sheet_row_focus(&format!("d:{MCP_KEYS}"), row)
             }
         });
         rows
@@ -620,7 +621,7 @@ impl Workbench {
             &theme,
             &tokens,
         );
-        self.focus_ring(&format!("d:{key}"), row)
+        self.sheet_row_focus(&format!("d:{key}"), row)
     }
 
     /// The form: its boxes, the kind of server, the error, Save and Cancel.
@@ -661,7 +662,8 @@ impl Workbench {
                 .relative();
             let probed = probe(&this.regions, Region::SettingsItem("mcp-field", index));
             if active == Some(field) {
-                base.border_color(theme.accent)
+                base.border_color(theme.border)
+                    .focus_ring(true, &theme, &tokens)
                     .children(this.overlay_parts(OverlayField::SheetValue, field.hint(), cx))
                     .child(probed)
                     .into_any_element()

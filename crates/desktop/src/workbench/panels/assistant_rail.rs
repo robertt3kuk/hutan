@@ -453,14 +453,13 @@ impl AssistantPanel {
     ) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
         let session = row.session;
-        let (label, mawas) = match &row.kind {
-            NeedsKind::Approval { memory: true, .. } => ("Memory proposal", true),
-            NeedsKind::Approval { mawas, .. } => {
-                (if *mawas { "Mawas asks" } else { "Approval" }, *mawas)
-            }
-            NeedsKind::Question { .. } => ("Question", false),
-            NeedsKind::Blocked => ("Blocked", false),
-            NeedsKind::Failed => ("Failed", false),
+        let label = match &row.kind {
+            NeedsKind::Approval { memory: true, .. } => "Memory proposal",
+            NeedsKind::Approval { mawas: true, .. } => "Mawas asks",
+            NeedsKind::Approval { .. } => "Approval",
+            NeedsKind::Question { .. } => "Question",
+            NeedsKind::Blocked => "Blocked",
+            NeedsKind::Failed => "Failed",
         };
         let mut card = div()
             .id(SharedString::from(format!("today-needs-{row_index}")))
@@ -470,8 +469,6 @@ impl AssistantPanel {
             .gap(px(tokens.spacing))
             .p(px(tokens.spacing * 2.0))
             .rounded(px(tokens.radius))
-            .border_1()
-            .border_color(if mawas { theme.accent } else { theme.border })
             .bg(theme.surface)
             .child(
                 div()

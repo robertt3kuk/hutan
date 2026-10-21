@@ -200,12 +200,19 @@ impl ChatView {
             .flex_wrap()
             .gap(px(tokens.spacing))
             .children(meta.iter().map(|meta| {
-                let color = if meta.truncated {
-                    theme.warning
+                if meta.truncated {
+                    crate::workbench::ui::state_label(
+                        crate::icons::Icon::StateWarning,
+                        meta_text(meta),
+                        theme.warning,
+                        false,
+                        theme,
+                        tokens,
+                    )
+                    .font_family(look.mono.clone())
                 } else {
-                    theme.accent
-                };
-                pill(meta_text(meta), color, look).font_family(look.mono.clone())
+                    pill(meta_text(meta), look).font_family(look.mono.clone())
+                }
             }));
         // No bubble for the agent; the user's message sits in an `accent_soft` bubble on the right.
         let bubble = div()
@@ -442,7 +449,7 @@ impl ChatView {
                             .font_family(look.mono.clone())
                             .child(SharedString::from(header_title)),
                     )
-                    .child(pill(status_text(tool), color, look))
+                    .child(pill(status_text(tool), look))
                     .child(probe(&self.regions, Region::ChatPart(index, PART_BODY))),
             )
             .child(body)

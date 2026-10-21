@@ -343,6 +343,7 @@ fn claim_instance(wake: tokio::sync::mpsc::Sender<()>) -> Startup {
 /// Builds the settings, the macOS services and the connection, and opens the workbench window.
 fn open_main(cx: &mut App) -> gpui::Result<WindowHandle<Workbench>> {
     let settings = settings_store();
+    crate::theme::set_system_focus(crate::macos::focus::system_colors());
     let mut mac = MacServices::system();
     let (connection, launchd) =
         start_connection(connect_options(), &settings, mac.login_item.as_ref());

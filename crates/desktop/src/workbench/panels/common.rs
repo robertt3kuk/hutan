@@ -20,6 +20,7 @@ use crate::workbench::chat::vim::Vim;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
 use crate::workbench::text_field::{EditableText, FieldMut, FieldRef, FieldState, edit_field};
+use crate::workbench::ui::{FocusRingExt as _, StyledExt as _};
 use crate::workbench::vim_ui::{self, VimConfig};
 use crate::workbench::{BadgeSite, Region};
 
@@ -283,10 +284,8 @@ pub fn field_box(
         })
         .px(px(tokens.spacing * 2.0))
         .py(px(tokens.spacing / 2.0))
-        .rounded(px(tokens.radius))
-        .bg(theme.bg)
-        .border_1()
-        .border_color(if focused { theme.accent } else { theme.border })
+        .outlined(theme, tokens)
+        .focus_ring(focused, theme, tokens)
         .text_color(theme.fg)
         .cursor_text();
     match vim {

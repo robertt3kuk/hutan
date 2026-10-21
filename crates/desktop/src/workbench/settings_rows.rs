@@ -4,7 +4,7 @@
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px,
+    SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px, transparent_black,
 };
 use serde_json::Value as Json;
 
@@ -13,6 +13,7 @@ use super::settings_labels::{field_help, field_title, value_label, words};
 use super::settings_schema::{Field, FieldKind, number_range, value_at};
 use super::settings_sheet::display_value;
 use super::style::TextTooltip;
+use super::ui::FocusRingExt as _;
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::macos::LoginItemStatus;
@@ -37,7 +38,7 @@ pub(super) fn small_button(
     tokens: &Tokens,
 ) -> gpui::Stateful<gpui::Div> {
     let hover = theme.surface_hover;
-    let (accent, border, soft) = (theme.accent, theme.border, theme.accent_soft);
+    let (border, soft) = (theme.border, theme.accent_soft);
     div()
         .id(id.into())
         .px(px(tokens.spacing * 2.0))
@@ -48,7 +49,8 @@ pub(super) fn small_button(
         .items_center()
         .rounded(px(tokens.radius))
         .border_1()
-        .border_color(if active { accent } else { border })
+        // The selected one of a group is a fill without the outline.
+        .border_color(if active { transparent_black() } else { border })
         .when(active, move |s| s.bg(soft))
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
@@ -258,11 +260,10 @@ impl Workbench {
                             .border_1()
                             .border_color(if error.is_some() {
                                 theme.danger
-                            } else if active.is_some() {
-                                theme.accent
                             } else {
                                 theme.border
                             })
+                            .focus_ring(active.is_some(), &theme, &tokens)
                             .cursor_text()
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.sheet_begin_edit(&k, cx);
@@ -335,7 +336,7 @@ impl Workbench {
             &theme,
             &tokens,
         );
-        self.focus_ring(&format!("f:{key}"), row)
+        self.sheet_row_focus(&format!("f:{key}"), row)
     }
 
     /// The On/Off toggle of a boolean field; Start at login also shows what the system says
@@ -560,8 +561,9 @@ impl Workbench {
                     .border_color(if edit.error.is_some() {
                         theme.danger
                     } else {
-                        theme.accent
+                        theme.border
                     })
+                    .focus_ring(true, &theme, &tokens)
                     .min_w(px(80.0))
                     .children(self.overlay_parts(OverlayField::SheetValue, "", cx))
                     .into_any_element(),

@@ -190,6 +190,7 @@ impl Render for Workbench {
                 .children(right),
         )
         .child(status)
+        .child(super::ui::keyboard_focus_observer())
         .children(collapse_preview)
         .children(daemon_popover)
         .children(recovery)
@@ -1639,7 +1640,6 @@ impl Workbench {
         let tokens = self.density.ui();
         let accent = theme.accent;
         let pane_id = pane.id;
-        let multiple = self.state.panes().len() > 1;
         let focused = self.state.focus == FocusTarget::Pane(pane_id);
         let dragging = cx.has_active_drag();
 
@@ -1807,15 +1807,6 @@ impl Workbench {
                     .child(div().size_full().child(content))
                     .children(zones),
             )
-            .when(focused && multiple, move |s| {
-                s.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .border_1()
-                        .border_color(accent.opacity(0.5)),
-                )
-            })
             .into_any_element()
     }
 
@@ -1872,15 +1863,15 @@ impl Workbench {
             .h(px(tokens.tab_height - 8.0))
             .rounded(px(tokens.radius))
             .cursor_pointer()
-            .text_color(if active { theme.fg } else { theme.muted })
+            // The focused pane shows as its active tab's `fg` text; the active tab of a pane
+            // without focus is `muted` like the others. No accent outline on the tab or the pane.
+            .text_color(if active && pane_focused {
+                theme.fg
+            } else {
+                theme.muted
+            })
             .when(active, |s| {
-                s.bg(theme.surface)
-                    .border_1()
-                    .border_color(if pane_focused {
-                        accent.opacity(0.55)
-                    } else {
-                        theme.border
-                    })
+                s.bg(theme.surface).border_1().border_color(theme.border)
             })
             .when(!active, |s| s.hover(move |s| s.bg(hover)))
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {

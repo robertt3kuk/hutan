@@ -27,11 +27,11 @@ use crate::workbench::Region;
 use crate::workbench::actions::OpenSettingsFor;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
-use crate::workbench::ui::{self, ButtonKind, Mascot, StyledExt as _};
+use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, Mascot, StyledExt as _};
 use crate::workbench::vim_ui::{self, VimConfig};
 
-/// A chip: a small bordered label that is `active` when chosen (the Tasks and Agents panels use
-/// it too).
+/// A chip: a small outlined label; the chosen one (`active`) is an `accent_soft` fill without
+/// the outline (the Tasks and Agents panels use it too).
 pub(crate) fn pill(
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
@@ -39,7 +39,7 @@ pub(crate) fn pill(
     theme: &Theme,
     tokens: &Tokens,
 ) -> gpui::Stateful<gpui::Div> {
-    let (hover, accent) = (theme.surface_hover, theme.accent);
+    let hover = theme.surface_hover;
     div()
         .id(id.into())
         .flex_none()
@@ -51,7 +51,7 @@ pub(crate) fn pill(
         .rounded(px(crate::theme::pill_radius()))
         .border_1()
         .border_color(if active {
-            accent.opacity(0.45)
+            gpui::transparent_black()
         } else {
             theme.border
         })
@@ -359,7 +359,12 @@ impl HistoryPanel {
                             .justify_center()
                             .rounded(px(3.0))
                             .border_1()
-                            .border_color(if on { theme.accent } else { theme.faint })
+                            // Checked: the fill shows through a transparent edge.
+                            .border_color(if on {
+                                gpui::transparent_black()
+                            } else {
+                                theme.faint
+                            })
                             .when(on, |s| s.bg(theme.accent).text_color(theme.on_accent()))
                             .text_size(px(10.0))
                             .children(
@@ -653,10 +658,8 @@ impl HistoryPanel {
             .flex_none()
             .flex()
             .items_center()
-            .rounded(px(tokens.radius))
-            .bg(theme.surface)
-            .border_1()
-            .border_color(if focused { theme.accent } else { theme.border })
+            .outlined(theme, tokens)
+            .focus_ring(focused, theme, tokens)
             .cursor_text()
             .on_mouse_down(
                 MouseButton::Left,

@@ -43,7 +43,7 @@ use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
 use crate::workbench::text_field::FieldRef;
-use crate::workbench::ui::{self, Mascot, StyledExt as _};
+use crate::workbench::ui::{self, FocusRingExt as _, Mascot, StyledExt as _};
 use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
 
 /// How often the panel checks that it is still drawn; the subscription ends at the first check
@@ -894,10 +894,24 @@ impl ResourcesPanel {
         }
         match process.state {
             ProcessState::Stopped => {
-                name = name.child(ui::pill("stopped", theme.warning, tokens));
+                name = name.child(ui::state_label(
+                    crate::icons::Icon::StateStopped,
+                    "stopped",
+                    theme.warning,
+                    false,
+                    theme,
+                    tokens,
+                ));
             }
             ProcessState::Zombie => {
-                name = name.child(ui::pill("zombie", theme.danger, tokens));
+                name = name.child(ui::state_label(
+                    crate::icons::Icon::StateFailed,
+                    "zombie",
+                    theme.danger,
+                    false,
+                    theme,
+                    tokens,
+                ));
             }
             _ => {}
         }
@@ -1246,11 +1260,8 @@ impl Render for ResourcesPanel {
             .rounded(px(tokens.radius))
             .bg(theme.surface)
             .border_1()
-            .border_color(if filter_focused {
-                theme.accent
-            } else {
-                theme.border
-            })
+            .border_color(theme.border)
+            .focus_ring(filter_focused, &theme, &tokens)
             .cursor_text()
             .on_mouse_down(
                 MouseButton::Left,

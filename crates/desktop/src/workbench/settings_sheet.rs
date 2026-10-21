@@ -30,7 +30,7 @@ use super::settings_schema::{
     CatalogEntry, Field, FieldKind, catalog, number_range, page_fields, refine_kind, search,
     value_at,
 };
-use super::ui::StyledExt as _;
+use super::ui::{FocusRingExt as _, StyledExt as _};
 use super::view::Workbench;
 use super::vim_ui::OverlayField;
 use crate::settings::LayoutSettings;
@@ -912,9 +912,12 @@ impl Workbench {
                     .rounded(px(tokens.radius))
                     .cursor_pointer()
                     .when(ns == selected, move |s| s.bg(theme.accent_soft))
-                    .when(ns == selected && zone == SheetFocus::Categories, move |s| {
-                        s.border_1().border_color(theme.accent)
-                    })
+                    // The keyboard on the category list: the focus ring, not an outline.
+                    .focus_ring(
+                        ns == selected && zone == SheetFocus::Categories,
+                        &theme,
+                        &tokens,
+                    )
                     .hover(move |s| s.bg(hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.select_settings_namespace(ns, cx);
@@ -993,14 +996,12 @@ impl Workbench {
             .mx(px(tokens.spacing * 2.0))
             .mb(px(tokens.spacing * 2.0))
             .px(px(tokens.spacing * 2.0))
-            .rounded(px(tokens.radius))
-            .bg(theme.surface)
-            .border_1()
-            .border_color(if editing.is_none() && zone == SheetFocus::Search {
-                theme.accent
-            } else {
-                theme.border
-            })
+            .outlined(&theme, &tokens)
+            .focus_ring(
+                editing.is_none() && zone == SheetFocus::Search,
+                &theme,
+                &tokens,
+            )
             .on_click(cx.listener(|this, _, _, cx| {
                 if let Some(sheet) = &mut this.sheet {
                     sheet.edit = None;

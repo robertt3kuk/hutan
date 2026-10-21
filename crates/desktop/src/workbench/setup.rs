@@ -1024,6 +1024,10 @@ impl Workbench {
                 .flex_col()
                 .items_center()
                 .gap(px(tokens.spacing * 2.0))
+                // The chosen mode is a fill behind its thumbnail and label, not an outline.
+                .p(px(tokens.spacing))
+                .rounded(px(tokens.card_radius + tokens.spacing))
+                .when(selected, |s| s.bg(theme.accent_soft))
                 .cursor_pointer()
                 .on_click(cx.listener(move |this, _, _, cx| this.setup_set_appearance(mode, cx)))
                 .child(
@@ -1033,7 +1037,7 @@ impl Workbench {
                         .h(px(76.0))
                         .rounded(px(tokens.card_radius))
                         .border_1()
-                        .border_color(if selected { theme.accent } else { theme.border })
+                        .border_color(theme.border)
                         .bg(preview.bg)
                         .overflow_hidden()
                         .child(div().w(px(30.0)).h_full().bg(preview.sidebar))
@@ -1368,7 +1372,14 @@ impl Workbench {
                             .child(SharedString::from(subtitle)),
                     ),
             )
-            .child(ui::pill(state_text, state_color, &tokens))
+            .child(ui::state_label(
+                ui::state_glyph(state_color, &theme),
+                state_text,
+                state_color,
+                false,
+                &theme,
+                &tokens,
+            ))
             .child(buttons)
             .into_any_element()
     }

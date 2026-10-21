@@ -138,12 +138,7 @@ impl CaretShape {
 
 /// The `NORMAL` / `INSERT` / `VISUAL` pill.
 pub fn mode_pill(mode: Mode, theme: &Theme, tokens: &Tokens) -> gpui::Div {
-    let color = match mode {
-        Mode::Insert => theme.muted,
-        Mode::Normal => theme.accent,
-        Mode::Visual => theme.warning,
-    };
-    ui::pill(mode.label(), color, tokens)
+    ui::pill(mode.label(), theme, tokens)
 }
 
 /// The state of one plain-`String` field: the text as a [`TextInput`] (caret, selection, the text

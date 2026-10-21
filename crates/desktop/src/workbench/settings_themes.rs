@@ -36,6 +36,7 @@ use super::settings_rows::{note, sheet_row, small_button};
 use super::settings_schema::Field;
 use super::settings_theme_preview as sample;
 use super::style::TextTooltip;
+use super::ui::{FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::theme::{DensityExt as _, Theme, Tokens};
 
@@ -750,7 +751,7 @@ impl Workbench {
             .child(row)
             .children(open.then(|| self.render_pack_picker(pack_field, &current, cx)))
             .into_any_element();
-        self.focus_ring(&format!("f:{key}"), row)
+        self.sheet_row_focus(&format!("f:{key}"), row)
     }
 
     fn render_pack_picker(
@@ -785,14 +786,13 @@ impl Workbench {
             .gap(px(tokens.spacing))
             .h(px(tokens.control_height - 4.0))
             .px(px(tokens.spacing * 2.0))
-            .rounded(px(tokens.radius))
-            .bg(theme.bg)
-            .border_1()
-            .border_color(theme.accent)
+            .outlined(&theme, &tokens)
+            // The picker's field has the keyboard while the picker is open.
+            .focus_ring(true, &theme, &tokens)
             .child(crate::icons::glyph(crate::icons::Icon::ActionSearch).text_color(theme.muted))
             .child(if filter.is_empty() {
                 div()
-                    .text_color(theme.faint)
+                    .text_color(theme.muted)
                     .child("Type to search by name, id or author")
             } else {
                 div().child(SharedString::from(filter.clone()))
@@ -943,13 +943,9 @@ impl Workbench {
             .px(px(tokens.spacing * 2.0))
             .py(px(tokens.spacing))
             .rounded(px(tokens.radius))
-            .border_1()
-            .border_color(if is_current {
-                theme.accent
-            } else {
-                theme.surface
-            })
-            .when(pointed, |s| s.bg(theme.surface_hover))
+            // The highlighted pack is the list selection's fill; the current one says so with a
+            // check, not an outline.
+            .when(pointed, |s| s.bg(theme.accent_soft))
             .child(
                 div()
                     .flex()
@@ -971,8 +967,12 @@ impl Workbench {
                             div()
                                 .ml_auto()
                                 .flex_none()
+                                .flex()
+                                .items_center()
+                                .gap(px(tokens.spacing))
                                 .text_size(px(tokens.secondary_font_size))
-                                .text_color(theme.accent)
+                                .text_color(theme.fg)
+                                .child(crate::icons::glyph(crate::icons::Icon::StateCompleted))
                                 .child("Current"),
                         )
                     }),
@@ -987,13 +987,11 @@ impl Workbench {
                         .text_size(px(tokens.secondary_font_size))
                         .text_color(theme.muted)
                         .child(SharedString::from(id_text))
-                        .children(badges.into_iter().map(|badge| {
-                            div()
-                                .px(px(tokens.spacing * 2.0))
-                                .rounded(px(tokens.radius))
-                                .bg(theme.accent_soft)
-                                .child(badge)
-                        })),
+                        .children(
+                            badges
+                                .into_iter()
+                                .map(|badge| super::ui::pill(badge, &theme, &tokens)),
+                        ),
                 )
             })
             .child(

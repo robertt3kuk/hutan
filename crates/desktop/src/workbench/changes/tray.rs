@@ -1754,7 +1754,14 @@ impl ChangesView {
                                 .child(SharedString::from(comment.anchor())),
                         )
                         .when_some(state, |s, (label, color)| {
-                            s.child(ui::pill(label, color(theme), tokens))
+                            s.child(ui::state_label(
+                                ui::state_glyph(color(theme), theme),
+                                label,
+                                color(theme),
+                                false,
+                                theme,
+                                tokens,
+                            ))
                         })
                         .child(div().flex_1())
                         .child(action("edit", "Edit").on_click(cx.listener(

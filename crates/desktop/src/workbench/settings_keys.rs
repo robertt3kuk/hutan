@@ -16,6 +16,7 @@ use hutan_protocol::daemon_settings::DaemonSettingKind;
 use super::settings_daemon::{MCP_KEYS, choice_text, choices_of, sections};
 use super::settings_labels::{value_label, words};
 use super::settings_schema::FieldKind;
+use super::ui::FocusRingExt as _;
 use super::view::Workbench;
 use super::vim_ui::OverlayField;
 use crate::theme::DensityExt as _;
@@ -134,17 +135,13 @@ impl Workbench {
         }
     }
 
-    /// `el` with a mark when the keyboard is on the row `row`.
-    pub(super) fn focus_ring(&self, row: &str, el: AnyElement) -> AnyElement {
-        let theme = self.theme;
-        let tokens = self.density.ui();
+    /// `el` inside the keyboard focus ring while the keyboard is on the row `row`.
+    pub(super) fn sheet_row_focus(&self, row: &str, el: AnyElement) -> AnyElement {
         if self.sheet_focused_row() != Some(row) {
             return el;
         }
         div()
-            .border_l_2()
-            .border_color(theme.accent)
-            .pl(px(tokens.spacing))
+            .focus_ring(true, &self.theme, &self.density.ui())
             .child(el)
             .into_any_element()
     }
