@@ -153,13 +153,16 @@ fn key(key: Key) -> KeyInput {
     }
 }
 
-const ECHO: &str = "stty -echo; cat -v";
+/// Turns the tty's echo off, then switches the modes on (the test waits for them, so echo is off
+/// by the time it sends a byte: the tty echoes what arrives while it is on, which would add a
+/// second copy of the typed bytes to the screen), then echoes the input with `cat -v`.
+const SCRIPT: &str =
+    "stty -echo; printf '\\033[?2004h\\033[?1000h\\033[?1006h\\033[?1h\\033[>1u'; cat -v";
 
 #[tokio::test(flavor = "multi_thread")]
 async fn keys_mouse_and_paste_bytes_arrive_as_the_terminal_expects() {
     let (_dir, running, paths) = daemon().await;
-    let script = format!("printf '\\033[?2004h\\033[?1000h\\033[?1006h\\033[?1h\\033[>1u'; {ECHO}");
-    let mut t = Attached::start(&paths, &script).await;
+    let mut t = Attached::start(&paths, SCRIPT).await;
     // The modes the program switched on reach the model.
     t.until("modes", |m| {
         let modes = m.modes();
