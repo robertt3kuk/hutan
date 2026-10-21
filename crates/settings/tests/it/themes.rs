@@ -289,7 +289,7 @@ fn the_builtins_contrast_baseline_is_reviewed() {
             .collect();
         let expected: &[&str] = match builtin {
             Builtin::HutanDark => &[],
-            Builtin::HutanLight => &["terminal.cursor.foreground on terminal.cursor"],
+            Builtin::HutanLight => &[],
         };
         assert_eq!(pairs, expected, "{}", builtin.id());
     }

@@ -40,6 +40,8 @@ root = true
 "terminal.foreground" = "#1f1e1d"
 "terminal.background" = "#faf9f5"
 "terminal.cursor" = "#e0692e"
+# Dark ink under a block cursor: 4.94:1 on the orange (the paper-colored default was 3.2:1).
+"terminal.cursor.foreground" = "#1f1e1d"
 "terminal.selection.background" = "#f3d5c3"
 "terminal.ansi.black" = "#1f1e1d"
 "terminal.ansi.red" = "#b93a26"
