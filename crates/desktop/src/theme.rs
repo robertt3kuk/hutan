@@ -24,9 +24,9 @@ pub struct Tokens {
     pub pane_header: f32,
     pub status_bar: f32,
     pub spacing: f32,
-    /// Corner radius of controls (buttons, rows, inputs): 6 px compact, 8 px comfortable.
+    /// Corner radius of controls (buttons, rows, inputs): 6 px in both densities.
     pub radius: f32,
-    /// Corner radius of cards, the composer, popovers and the palette: 10 px / 12 px.
+    /// Corner radius of cards, the composer, popovers and the palette: 10 px in both densities.
     pub card_radius: f32,
     /// UI body text: 12 pt compact, 13 pt comfortable.
     pub font_size: f32,
@@ -535,8 +535,8 @@ mod tests {
         assert_eq!(
             table(&Theme::light()),
             [
-                0xFAF9F5, 0xF3F1EA, 0xFFFFFF, 0xF0EEE6, 0xE6E3D9, 0x1F1E1D, 0x6F6D66, 0xA8A59C,
-                0xE0692E, 0xFBE9DF, 0x3F8F5A, 0xC98A12, 0xC8452F
+                0xFAF9F5, 0xF3F1EA, 0xFFFFFF, 0xF0EEE6, 0xE6E3D9, 0x1F1E1D, 0x66645D, 0xA8A59C,
+                0xE0692E, 0xFBE9DF, 0x2F7A48, 0x8A6300, 0xB93A26
             ]
         );
         // The dark hairline is white at 7 % (Orca's `--border`), so its hex is the blend-less
@@ -544,8 +544,8 @@ mod tests {
         assert_eq!(
             table(&Theme::dark()),
             [
-                0x262624, 0x1F1E1D, 0x30302E, 0x3A3936, 0xFFFFFF, 0xF5F4EF, 0xA6A49C, 0x6F6D66,
-                0xEA7A43, 0x3E2C23, 0x6BBF85, 0xE2AE45, 0xE87562
+                0x262624, 0x1F1E1D, 0x30302E, 0x3A3936, 0xFFFFFF, 0xF5F4EF, 0xAEACA4, 0x6F6D66,
+                0xEA7A43, 0x3E2C23, 0x6BBF85, 0xE2AE45, 0xF08C7A
             ]
         );
         assert!(Theme::dark().dark && !Theme::light().dark);
@@ -558,7 +558,11 @@ mod tests {
     fn effects_and_derived_roles_keep_the_old_values() {
         let (dark, light) = (Theme::dark(), Theme::light());
         let near = |got: f32, want: f32| (got - want).abs() < 0.5 / 255.0 + 1e-6;
-        assert_eq!(hex(dark.on_accent()), 0xFFFFFF);
+        // Dark ink on the brand orange in both packs (CL-TOKENS, D-C1).
+        assert_eq!(
+            (hex(dark.on_accent()), hex(light.on_accent())),
+            (0x1F1E1D, 0x1F1E1D)
+        );
         assert!(near(rgba_of(dark.scrim()).a, 0.50) && near(rgba_of(light.scrim()).a, 0.28));
         let shadow = dark.shadow();
         assert!(near(rgba_of(shadow[0].color).a, 0.40));
@@ -588,13 +592,15 @@ mod tests {
             (hex(dark.link), hex(dark.code_bg)),
             (hex(dark.accent), hex(dark.surface_hover))
         );
+        // Light links are their own, darker orange: the accent is 3.2:1 on `bg` (as text, a fail).
+        assert_eq!(hex(light.link), 0xB04818);
     }
 
     #[test]
-    fn the_sidebars_have_their_own_surfaces() {
-        // Orca's structure: the right panel is not the left one; selected left rows step away
-        // from the left surface (up in dark, down in light); the right panel is darker than the
-        // left in dark and lighter in light.
+    fn the_sidebars_share_one_chrome_tone() {
+        // Two chrome tones (CL-TOKENS, D-C2): the window and one sidebar tone. The right
+        // sidebar has its own tokens but the built-ins give them the left sidebar's values;
+        // selected rows step away from the surface (up in dark, down in light).
         for theme in [Theme::dark(), Theme::light()] {
             let (left, accent, right, right_accent) = (
                 hex(theme.sidebar),
@@ -602,24 +608,14 @@ mod tests {
                 hex(theme.right_sidebar),
                 hex(theme.right_sidebar_accent),
             );
-            assert!(left != right && left != accent && right != right_accent);
+            assert_eq!((left, accent), (right, right_accent));
+            assert!(left != accent);
             assert_eq!(accent > left, theme.dark, "dark={}", theme.dark);
-            assert_eq!(right < left, theme.dark, "dark={}", theme.dark);
             for ground in [theme.sidebar, theme.sidebar_accent, theme.right_sidebar] {
                 assert!(contrast(theme.fg, ground) >= 7.0);
-                // Selected rows: like `accent_soft`, large-text AA for secondary labels.
-                let floor = if hex(ground) == hex(theme.sidebar_accent) {
-                    4.0
-                } else {
-                    4.5
-                };
-                assert!(
-                    contrast(theme.muted, ground) >= floor,
-                    "{:06x}",
-                    hex(ground)
-                );
+                assert!(contrast(theme.muted, ground) >= 4.5, "{:06x}", hex(ground));
             }
-            assert!(contrast(theme.muted, theme.right_sidebar_accent) >= 4.0);
+            assert!(contrast(theme.muted, theme.right_sidebar_accent) >= 4.5);
         }
         // The shared metrics of the built-ins: title bar and right strip 36 px.
         assert_eq!(metrics().titlebar_height, 36.0);
@@ -711,9 +707,9 @@ mod tests {
             true,
         );
         assert_eq!(dark.success, hutan_terminal_view::Rgb(0x6b, 0xbf, 0x85));
-        assert_eq!(dark.error, hutan_terminal_view::Rgb(0xe8, 0x75, 0x62));
+        assert_eq!(dark.error, hutan_terminal_view::Rgb(0xf0, 0x8c, 0x7a));
         assert_eq!(dark.accent, hutan_terminal_view::Rgb(0xea, 0x7a, 0x43));
-        assert_eq!(dark.neutral, hutan_terminal_view::Rgb(0xa6, 0xa4, 0x9c));
+        assert_eq!(dark.neutral, hutan_terminal_view::Rgb(0xae, 0xac, 0xa4));
         assert_eq!(dark.gutter_width, 3.0);
         assert!(dark.enabled && dark.animate);
         assert_eq!(
@@ -726,7 +722,7 @@ mod tests {
             false,
             false,
         );
-        assert_eq!(light.success, hutan_terminal_view::Rgb(0x3f, 0x8f, 0x5a));
+        assert_eq!(light.success, hutan_terminal_view::Rgb(0x2f, 0x7a, 0x48));
         assert_eq!(light.gutter_width, 4.0);
         assert!(!light.enabled && !light.animate);
     }
@@ -757,7 +753,7 @@ mod tests {
                 m.radius,
                 m.card_radius
             ),
-            (30.0, 34.0, 36.0, 24.0, 6.0, 8.0, 12.0)
+            (30.0, 34.0, 36.0, 24.0, 6.0, 6.0, 10.0)
         );
         assert_eq!((c.font_size, m.font_size), (12.0, 13.0));
         assert_eq!((c.secondary_font_size, m.secondary_font_size), (11.0, 12.0));

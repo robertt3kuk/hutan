@@ -71,6 +71,17 @@ fn crowded_sidebar(
             wb.sessions().read(cx).sessions().len() >= SESSIONS
         })
     });
+    // The sessions end at once; their exits are real daemon events and would otherwise land
+    // between two samples of a render count.
+    wait_until(cx, "every session to have exited", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .sessions()
+                .iter()
+                .all(|s| matches!(s.state, hutan_core::SessionState::Exited { .. }))
+        })
+    });
     (daemon, view, cx)
 }
 

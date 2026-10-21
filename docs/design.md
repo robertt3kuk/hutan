@@ -199,28 +199,31 @@ Rollups: session → workspace header → sidebar "Needs you" → status bar `at
 | Token | Light | Dark | Use |
 |---|---|---|---|
 | `bg` | `#FAF9F5` | `#262624` | window and center panes |
-| `sidebar` | `#F3F1EA` | `#1F1E1D` | left sidebar, titlebar strip, status bar |
+| `sidebar` | `#F3F1EA` | `#1F1E1D` | both sidebars, titlebar strip, status bar: the chrome has two tones, `bg` and this one (CL-TOKENS, D-C2) |
 | `sidebar_accent` | `#E9E6DC` | `#2E2D2B` | selected nav row and active project card of the left sidebar (Orca's `worktree-sidebar-accent`) |
-| `right_sidebar` | `#F8F7F2` | `#1A1918` | the right sidebar and its strip (Orca's `sidebar`) |
-| `right_sidebar_accent` | `#F0EEE6` | `#2A2927` | active strip icon and hover rows of the right sidebar |
+| `right_sidebar` | `#F3F1EA` | `#1F1E1D` | the right sidebar and its strip: the same value as `sidebar`; the tokens (`ui.sidebar-right.*`) stay so a pack can split them again |
+| `right_sidebar_accent` | `#E9E6DC` | `#2E2D2B` | active strip icon and hover rows of the right sidebar |
 | `surface` | `#FFFFFF` | `#30302E` | cards, composer, popovers, palette |
 | `surface_hover` | `#F0EEE6` | `#3A3936` | row and button hover |
-| `border` | `#E6E3D9` | white at 7 % | hairlines (1 px; dark follows Orca's `--border`), focus rings use `accent` |
+| `border` | `#E6E3D9` | white at 7 % | hairlines (1 px; dark follows Orca's `--border`) at dock edges, the tab strip, a pane header, around inputs and secondary buttons; a boundary, not a contrast element (1.22:1 / 1.24:1) |
 | `fg` | `#1F1E1D` | `#F5F4EF` | primary text |
-| `muted` | `#6F6D66` | `#A6A49C` | secondary text, icons |
-| `faint` | `#A8A59C` | `#6F6D66` | placeholders, disabled |
-| `accent` | `#E0692E` | `#EA7A43` | primary buttons, selection, focus, links |
-| `accent_soft` | `#FBE9DF` | `#3E2C23` | selected row, chips, user message bubble |
-| `success` / `warning` / `danger` | `#3F8F5A` / `#C98A12` / `#C8452F` | `#6BBF85` / `#E2AE45` / `#E87562` | states |
+| `muted` | `#66645D` | `#AEACA4` | secondary text, icons, placeholders; AA on every ground it is drawn on (4.74:1 on the light selected row, 5.08:1 on the dark hover fill) |
+| `faint` | `#A8A59C` | `#6F6D66` | disabled text only (exempt from the contrast rule; placeholders use `muted`) |
+| `accent` | `#E0692E` | `#EA7A43` | the brand orange: primary buttons, the round send button, the working glyph, links (see `link`); never a border, a state word or a count |
+| `on_accent` | `#1F1E1D` | `#1F1E1D` | text on an accent fill: dark ink, 4.94:1 light / 5.84:1 dark (white was 3.37:1 / 2.85:1) |
+| `accent_soft` | `#FBE9DF` | `#3E2C23` | selected row and chips |
+| `link` (`markdown.link`) | `#B04818` | `#EA7A43` (= `accent`) | links, the only accent text; 5.26:1 on `bg` in light |
+| `focus` (`ui.focus`, optional) | the macOS keyboard focus indicator color | same | the 2 px keyboard focus ring, drawn only while focus came from the keyboard; a pack may set a hex |
+| `success` / `warning` / `danger` | `#2F7A48` / `#8A6300` / `#B93A26` | `#6BBF85` / `#E2AE45` / `#F08C7A` | states; the light values are the terminal's own green, yellow and red, and every state word is AA on `bg`, `surface`, `sidebar` and hover (on a selected row the word is `fg` and the glyph keeps the color) |
 
   The terminal section of a pack has its own palette (`terminal.*` tokens); in the built-ins its background matches `bg` so panes do not look like holes. Nothing in the desktop or the terminal view holds a color literal: every value above lives in `assets/themes/<id>/theme.toml` and reaches the views as a resolved token (`docs/themes.md`). The dark hairline is `#ffffff12` (alpha 18/255 = 0.0706) and the dark and light shadow and scrim are 8-bit alphas of black (0.40, 0.12 and 0.50, 0.28 become 0.40, 0.1216 and 0.5020, 0.2784): the only places where the packs are not bit-for-bit the old literals.
-- **Shape and depth**: radius 8 px (controls), 12 px (cards, composer, popovers, palette), 999 px (pills, badges); no drop shadows inside the window except popovers/palette (one soft shadow, 0 8 24 rgba(0,0,0,.12) light / .4 dark); separators are 1 px `border` hairlines, used sparingly.
+- **Shape and depth**: one shape scale in both densities (density changes space, not shape; D-C4): radius 6 px (controls, rows), 10 px (cards, composer, popovers, palette), 999 px (pills, badges); no drop shadows inside the window except popovers/palette (one soft shadow, 0 8 24 rgba(0,0,0,.12) light / .4 dark); separators are 1 px `border` hairlines, used sparingly.
 - **Components**
-  - *Sidebar rows* (the Projects tree; the left nav uses Orca's 8 × 6 px rows, 13 px medium): 30 px (comfortable), 8 px horizontal padding, rounded 8 px hover/selected (`surface_hover` / `accent_soft`), icon 16 px `muted`, title `fg`, second line or right side `muted`; counters as small pills.
-  - *Buttons*: primary = `accent` fill, white text; secondary = `surface` with `border`; ghost = text only with hover fill; all 28 px high, 8 px radius.
-  - *Chat*: no bubbles for agent messages (prose in serif on `bg`, max width 720 px centered in the pane); user messages in an `accent_soft` rounded bubble aligned right; tool calls as quiet collapsible cards (`surface`, 12 px radius, mono summary line, status dot); approvals as a card with the offered options as buttons in the agent's order; only *allow once* and *reject once* are primary, "Always" options are secondary and say what they set (`docs/agents.md` § The desktop chat view), and no key but a deliberate click or `1`–`4` answers.
-  - *Composer*: a `surface` card with 12 px radius and hairline border at the bottom of the chat, multi-line field, a row below with attach (+), context chips, model/harness picker, and a round send button (`accent`) that turns into stop while streaming.
-  - *Palette, popovers, menus*: `surface`, 12 px radius, soft shadow, 6 px inner padding, rows like sidebar rows.
+  - *Sidebar rows* (the Projects tree; the left nav uses Orca's 8 × 6 px rows, 13 px medium): 30 px (comfortable), 8 px horizontal padding, rounded 6 px hover/selected (`surface_hover` / `accent_soft`), icon 16 px `muted`, title `fg`, second line or right side `muted`; counters as small pills.
+  - *Buttons*: primary = `accent` fill, `on_accent` (dark ink) text; secondary = `surface` with `border`; ghost = text only with hover fill; all 28 px high, 6 px radius.
+  - *Chat*: no bubbles for agent messages (prose in serif on `bg`, max width 720 px centered in the pane); user messages in a neutral `surface` rounded bubble aligned right (until CL-CHAT lands it is still `accent_soft`); tool calls as quiet collapsible cards (`surface`, 10 px radius, mono summary line, status dot); approvals as a card with the offered options as buttons in the agent's order; only *allow once* and *reject once* are primary, "Always" options are secondary and say what they set (`docs/agents.md` § The desktop chat view), and no key but a deliberate click or `1`–`4` answers.
+  - *Composer*: a `surface` card with 10 px radius and hairline border at the bottom of the chat, multi-line field, a row below with attach (+), context chips, model/harness picker, and a round send button (`accent`) that turns into stop while streaming.
+  - *Palette, popovers, menus*: `surface`, 10 px radius, soft shadow, 6 px inner padding, rows like sidebar rows.
   - *Empty states*: the mascot state image (`assets/brand/05-mascot`) at 96 px, one serif sentence, one action button.
 - **Density tokens**:
 
@@ -231,8 +234,8 @@ Rollups: session → workspace header → sidebar "Needs you" → status bar `at
 | pane header | 30 px | 36 px |
 | status bar | 24 px | 24 px (the old 22 / 26 table in `hutan-settings` was never drawn and is gone) |
 | base spacing | 4 px | 6 px |
-| control radius | 6 px | 8 px |
-| card radius | 10 px | 12 px |
+| control radius | 6 px | 6 px |
+| card radius | 10 px | 10 px |
 | terminal padding (all sides) | 8 px | 12 px |
 | block gutter bar | 3 px | 4 px |
 
@@ -550,7 +553,7 @@ The daemon indexes OSC 133 marks into blocks (protocol 0.5); the desktop draws t
 
 ## First-run setup (D-2)
 
-A centered sheet in the v2 style (surface card, 12 px radius, serif headline, sans body, a mascot image per step, step dots, Back / Continue / Skip setup) shown once, until `app.setup_done`; reopened from ⌘K **Hutan: Run Setup…** and Settings → app → **Run setup again**. Code: `workbench/setup.rs`; the controls are `ui.rs` components on theme tokens.
+A centered sheet in the v2 style (surface card, 10 px radius, serif headline, sans body, a mascot image per step, step dots, Back / Continue / Skip setup) shown once, until `app.setup_done`; reopened from ⌘K **Hutan: Run Setup…** and Settings → app → **Run setup again**. Code: `workbench/setup.rs`; the controls are `ui.rs` components on theme tokens.
 
 1. **Welcome** — mascot (`angle-front`), "Code from the canopy".
 2. **Look** — appearance System / Light / Dark (a mini preview of each) and density Compact / Comfortable; the window previews the pending choice live and returns to the settings when the setup is skipped.

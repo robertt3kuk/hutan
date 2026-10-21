@@ -144,16 +144,16 @@ fn the_builtins_keep_every_value_the_old_literals_had() {
     chrome(
         &light,
         [
-            0xFAF9F5, 0xF3F1EA, 0xE9E6DC, 0xF8F7F2, 0xF0EEE6, 0xFFFFFF, 0xF0EEE6, 0xE6E3D9,
-            0x1F1E1D, 0x6F6D66, 0xA8A59C, 0xE0692E, 0xFBE9DF, 0x3F8F5A, 0xC98A12, 0xC8452F,
+            0xFAF9F5, 0xF3F1EA, 0xE9E6DC, 0xF3F1EA, 0xE9E6DC, 0xFFFFFF, 0xF0EEE6, 0xE6E3D9,
+            0x1F1E1D, 0x66645D, 0xA8A59C, 0xE0692E, 0xFBE9DF, 0x2F7A48, 0x8A6300, 0xB93A26,
         ],
     );
     // The dark hairline is white; its alpha is checked below.
     chrome(
         &dark,
         [
-            0x262624, 0x1F1E1D, 0x2E2D2B, 0x1A1918, 0x2A2927, 0x30302E, 0x3A3936, 0xFFFFFF,
-            0xF5F4EF, 0xA6A49C, 0x6F6D66, 0xEA7A43, 0x3E2C23, 0x6BBF85, 0xE2AE45, 0xE87562,
+            0x262624, 0x1F1E1D, 0x2E2D2B, 0x1F1E1D, 0x2E2D2B, 0x30302E, 0x3A3936, 0xFFFFFF,
+            0xF5F4EF, 0xAEACA4, 0x6F6D66, 0xEA7A43, 0x3E2C23, 0x6BBF85, 0xE2AE45, 0xF08C7A,
         ],
     );
     // Alpha quantized to 8 bits: within half a step of the old 0.07 / 0.40 / 0.50 / 0.12 / 0.28.
@@ -166,7 +166,11 @@ fn the_builtins_keep_every_value_the_old_literals_had() {
     assert_eq!(light.color(Color::Border).a, 1.0);
     assert_eq!(
         dark.color(Color::OnAccent).rgb(),
-        themes::Rgb::new(255, 255, 255)
+        themes::Rgb::new(0x1f, 0x1e, 0x1d)
+    );
+    assert_eq!(
+        light.color(Color::OnAccent).rgb(),
+        themes::Rgb::new(0x1f, 0x1e, 0x1d)
     );
     for (theme, shadow) in [(&dark, Color::Shadow), (&light, Color::Shadow)] {
         let c = theme.color(shadow);
@@ -245,7 +249,7 @@ fn the_builtins_carry_today_s_density_metrics_and_fonts() {
                 26.0, 30.0, 30.0, 24.0, 4.0, 6.0, 10.0, 12.0, 11.0, 11.0, 15.0, 1.6, 28.0, 8.0, 3.0,
             ],
             Density::Comfortable => [
-                30.0, 34.0, 36.0, 24.0, 6.0, 8.0, 12.0, 13.0, 12.0, 11.0, 15.0, 1.6, 28.0, 12.0,
+                30.0, 34.0, 36.0, 24.0, 6.0, 6.0, 10.0, 13.0, 12.0, 11.0, 15.0, 1.6, 28.0, 12.0,
                 4.0,
             ],
         };
@@ -284,28 +288,8 @@ fn the_builtins_contrast_baseline_is_reviewed() {
             .map(|i| format!("{} on {}", i.foreground, i.background))
             .collect();
         let expected: &[&str] = match builtin {
-            Builtin::HutanDark => &[
-                "ui.text.faint on ui.background",
-                "ui.text.faint on ui.surface",
-                "ui.text.faint on ui.surface.hover",
-                "ui.on-accent on ui.accent",
-            ],
-            Builtin::HutanLight => &[
-                "ui.text.faint on ui.background",
-                "ui.text.faint on ui.sidebar.background",
-                "ui.text.faint on ui.sidebar-right.background",
-                "ui.text.faint on ui.surface",
-                "ui.text.muted on ui.surface.hover",
-                "ui.text.faint on ui.surface.hover",
-                "ui.text.muted on ui.sidebar.selected",
-                "ui.text.muted on ui.sidebar-right.selected",
-                "ui.text.muted on ui.accent.soft",
-                "ui.on-accent on ui.accent",
-                "state.warning on ui.background",
-                "state.warning on ui.surface",
-                "diff.hunk.foreground on diff.hunk.background",
-                "terminal.cursor.foreground on terminal.cursor",
-            ],
+            Builtin::HutanDark => &[],
+            Builtin::HutanLight => &["terminal.cursor.foreground on terminal.cursor"],
         };
         assert_eq!(pairs, expected, "{}", builtin.id());
     }
@@ -543,7 +527,11 @@ fn sparse_packs_extend_a_builtin_and_override_single_tokens() {
     write_pack(
         dir.path(),
         "canopy-night",
-        &sparse("canopy-night", "dark", "\"ui.accent\" = \"#d99a58\""),
+        &sparse(
+            "canopy-night",
+            "dark",
+            "\"ui.accent\" = \"#d99a58\"\n\"ui.on-accent\" = \"#ffffff\"",
+        ),
     );
     assert!(registry.rescan());
     let snapshot = registry.snapshot();
@@ -559,8 +547,8 @@ fn sparse_packs_extend_a_builtin_and_override_single_tokens() {
     assert_eq!(theme.terminal().ansi, dark.terminal().ansi);
     assert_eq!(theme.provenance(Color::Accent), Provenance::Declared);
     assert!(matches!(pack.descriptor.source, PackSource::User(_)));
-    // The only thing to say: this accent makes the white text on it harder to read than the
-    // built-in's already is.
+    // The only thing to say: this pack keeps white text on that accent, which the built-in's
+    // dark ink does not.
     let diagnostics = snapshot.diagnostics();
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     assert!(!diagnostics[0].is_error());
@@ -738,14 +726,14 @@ fn a_user_pack_may_shadow_a_builtin_and_still_extend_the_embedded_one() {
     write_pack(
         dir.path(),
         "hutan-dark",
-        &sparse("hutan-dark", "dark", "\"ui.accent\" = \"#ff00ff\""),
+        &sparse("hutan-dark", "dark", "\"ui.accent\" = \"#ffa0ff\""),
     );
     registry.rescan();
     let snapshot = registry.snapshot();
     assert_eq!(ids(&snapshot), ["hutan-dark", "hutan-light"]);
     let pack = snapshot.pack("hutan-dark").unwrap();
     assert!(pack.descriptor.overrides_builtin);
-    assert_eq!(hex(pack.resolved(), Color::Accent), "#ff00ff");
+    assert_eq!(hex(pack.resolved(), Color::Accent), "#ffa0ff");
     // `builtin:` always means the immutable embedded content: no cycle, no recursion.
     assert_eq!(
         hex(pack.resolved(), Color::Background),

@@ -186,9 +186,22 @@ Paths (`license_file` and icon assets) are normalized relative UTF-8 paths with 
 
 ## Problems and contrast
 
-Pack and selection problems appear in the Settings Problems list (the same list as settings errors), one line each, with the file, the key (`colors.ui.border`, `icons.action.close`, `appearance.dark_theme`) and the reason, for color and icon packs alike (`hutan theme validate` prints the same lines). A change that only adds, fixes or removes a problem (an unused pack, a bad icon file) updates the list without restyling anything. Contrast is advice only (key `contrast`, WCAG 2.2 ratios, translucent colors composed over what they are drawn on): a user pack is reported for the pairs it makes worse than its base (a root pack is judged against the built-in of its polarity, so an exported flat copy reports what its source did). The built-ins' own known shortfalls (for example white on the orange accent) are a reviewed baseline in `crates/settings/tests/it/themes.rs`; they are reported nowhere else and nothing is repaired. A `license` that is not an SPDX expression (`MIT OR Apache-2.0`) or a `LicenseRef-<name>` marker, or is `LicenseRef-Unknown`, is a warning (key `license`; a syntax check, not legal advice).
+Pack and selection problems appear in the Settings Problems list (the same list as settings errors), one line each, with the file, the key (`colors.ui.border`, `icons.action.close`, `appearance.dark_theme`) and the reason, for color and icon packs alike (`hutan theme validate` prints the same lines). A change that only adds, fixes or removes a problem (an unused pack, a bad icon file) updates the list without restyling anything. Contrast is advice only (key `contrast`, WCAG 2.2 ratios, translucent colors composed over what they are drawn on): a user pack is reported for the pairs it makes worse than its base (a root pack is judged against the built-in of its polarity, so an exported flat copy reports what its source did). The built-ins' own known shortfalls (today only the glyph under the block cursor of `hutan-light`) are a reviewed baseline in `crates/settings/tests/it/themes.rs`; they are reported nowhere else and nothing is repaired. A `license` that is not an SPDX expression (`MIT OR Apache-2.0`) or a `LicenseRef-<name>` marker, or is `LicenseRef-Unknown`, is a warning (key `license`; a syntax check, not legal advice).
 
 The pairs checked are the chrome text on its surfaces, the terminal palette on the terminal background and the editor: `editor.foreground` and every `syntax.*` color on `editor.background` (4.5:1).
+
+The chrome pairs are the workbench's (design direction `docs/spikes/2026-10-21-clean-aesthetic.md` §3.2.3), and a unit test in `crates/settings/src/themes/contrast.rs` fails when `hutan-dark` or `hutan-light` stops passing one (`cargo nextest run -p hutan-settings --no-capture -E 'test(workbench_pairs)'` prints each pair with its ratio):
+
+| Pair | Needs |
+|---|---|
+| `ui.foreground`, `ui.text.muted` on `ui.background`, both sidebars, `ui.surface`, `ui.surface.hover`, both selected rows, `ui.accent.soft` | 4.5:1 |
+| `ui.on-accent` on `ui.accent` (dark ink on the brand orange) | 4.5:1 |
+| `state.success`, `state.warning`, `state.error` as words on `ui.background`, `ui.surface`, `ui.sidebar.background`, `ui.surface.hover` | 4.5:1 |
+| the same three as glyphs on `ui.sidebar.selected` (the word there is `ui.foreground`) | 3:1 |
+| `markdown.link` on `ui.background`, `ui.surface`, `ui.sidebar.background` (links are the only accent text) | 4.5:1 |
+| `ui.accent` as a fill on `ui.background` and `ui.surface` | 3:1 |
+
+`ui.text.faint` is disabled text only and is not checked; placeholders are `ui.text.muted`. `ui.focus` is the optional keyboard focus ring color (2 px, drawn only while focus came from the keyboard); a pack that leaves it out gets the macOS keyboard focus indicator color, which the desktop reads at runtime.
 
 ## Differences from the hard-coded look
 
@@ -216,9 +229,9 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | `ui.border` | may be translucent | required in a root pack | Hairlines (1 px). Usually translucent in dark packs. |
 | `ui.foreground` | opaque | required in a root pack | Primary text. |
 | `ui.text.muted` | opaque | required in a root pack | Secondary text and icons. |
-| `ui.text.faint` | opaque | required in a root pack | Placeholders and disabled text. |
+| `ui.text.faint` | opaque | required in a root pack | Disabled text. |
 | `ui.accent` | opaque | required in a root pack | Primary buttons, selection, focus, links: the brand color. |
-| `ui.accent.soft` | may be translucent | required in a root pack | Selected row, chips, the user message bubble. |
+| `ui.accent.soft` | may be translucent | required in a root pack | Selected row and chips. |
 | `ui.on-accent` | opaque | required in a root pack | Text on an accent fill (primary buttons, the send button). |
 | `state.success` | opaque | required in a root pack | Success: completed work, added lines, a connected daemon. |
 | `state.warning` | opaque | required in a root pack | Warning: blocked agents, pending approvals, renamed files. |
@@ -247,6 +260,7 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | `terminal.ansi.bright-white` | opaque | required in a root pack | ANSI color 15. |
 | `ui.sidebar.hover` | may be translucent | `ui.foreground` at alpha 0.08 | Hover fill of the left nav rows. |
 | `ui.drop-target` | may be translucent | `ui.accent` at alpha 0.28 (dark) / 0.22 (light) | Drag-and-drop target highlight. |
+| `ui.focus` | opaque | none: not drawn | The 2 px keyboard focus ring, drawn only while focus came from the keyboard; absent: the macOS keyboard focus indicator color, read by the desktop at runtime. |
 | `state.working` | opaque | `ui.accent` | A working or starting session. |
 | `state.starting` | opaque | `ui.accent` | A session that is starting. |
 | `state.idle` | opaque | `ui.text.muted` | An idle session. |
@@ -333,8 +347,8 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | `pane.header-height` | 1 to 1200 | 30 | 36 | Height of a pane header. |
 | `status-bar.height` | 1 to 1200 | 24 | 24 | Height of the status bar. |
 | `spacing` | 0 to 1200 | 4 | 6 | Base spacing unit. |
-| `radius.control` | 0 to 1000 | 6 | 8 | Corner radius of controls (buttons, rows, inputs). |
-| `radius.card` | 0 to 1000 | 10 | 12 | Corner radius of cards, the composer, popovers and the palette. |
+| `radius.control` | 0 to 1000 | 6 | 6 | Corner radius of controls (buttons, rows, inputs). |
+| `radius.card` | 0 to 1000 | 10 | 10 | Corner radius of cards, the composer, popovers and the palette. |
 | `text.body.size` | 8 to 40 | 12 | 13 | UI body text size. |
 | `text.secondary.size` | 8 to 40 | 11 | 12 | Secondary UI text size (subtitles, chips, hints). |
 | `text.section.size` | 8 to 40 | 11 | 11 | Section label size. |

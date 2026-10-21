@@ -92,9 +92,9 @@ colors! {
     Border = "ui.border", false, Declared, "Hairlines (1 px). Usually translucent in dark packs.";
     Foreground = "ui.foreground", true, Declared, "Primary text.";
     TextMuted = "ui.text.muted", true, Declared, "Secondary text and icons.";
-    TextFaint = "ui.text.faint", true, Declared, "Placeholders and disabled text.";
+    TextFaint = "ui.text.faint", true, Declared, "Disabled text.";
     Accent = "ui.accent", true, Declared, "Primary buttons, selection, focus, links: the brand color.";
-    AccentSoft = "ui.accent.soft", false, Declared, "Selected row, chips, the user message bubble.";
+    AccentSoft = "ui.accent.soft", false, Declared, "Selected row and chips.";
     OnAccent = "ui.on-accent", true, Declared, "Text on an accent fill (primary buttons, the send button).";
     StateSuccess = "state.success", true, Declared, "Success: completed work, added lines, a connected daemon.";
     StateWarning = "state.warning", true, Declared, "Warning: blocked agents, pending approvals, renamed files.";
@@ -127,6 +127,7 @@ colors! {
     // ---- optional roles; each falls back to something above ----
     SidebarHover = "ui.sidebar.hover", false, Alpha(Color::Foreground, 0.08), "Hover fill of the left nav rows.";
     DropTarget = "ui.drop-target", false, AlphaByPolarity { of: Color::Accent, dark: 0.28, light: 0.22 }, "Drag-and-drop target highlight.";
+    Focus = "ui.focus", true, Absent, "The 2 px keyboard focus ring, drawn only while focus came from the keyboard; absent: the macOS keyboard focus indicator color, read by the desktop at runtime.";
     StateWorking = "state.working", true, Alias(Color::Accent), "A working or starting session.";
     StateStarting = "state.starting", true, Alias(Color::Accent), "A session that is starting.";
     StateIdle = "state.idle", true, Alias(Color::TextMuted), "An idle session.";

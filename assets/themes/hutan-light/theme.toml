@@ -15,20 +15,25 @@ root = true
 "ui.background" = "#faf9f5"
 "ui.sidebar.background" = "#f3f1ea"
 "ui.sidebar.selected" = "#e9e6dc"
-"ui.sidebar-right.background" = "#f8f7f2"
-"ui.sidebar-right.selected" = "#f0eee6"
+# Two chrome tones: the right sidebar is the left sidebar's (CL-TOKENS, D-C2).
+"ui.sidebar-right.background" = "#f3f1ea"
+"ui.sidebar-right.selected" = "#e9e6dc"
 "ui.surface" = "#ffffff"
 "ui.surface.hover" = "#f0eee6"
 "ui.border" = "#e6e3d9"
 "ui.foreground" = "#1f1e1d"
-"ui.text.muted" = "#6f6d66"
+"ui.text.muted" = "#66645d"
 "ui.text.faint" = "#a8a59c"
 "ui.accent" = "#e0692e"
 "ui.accent.soft" = "#fbe9df"
-"ui.on-accent" = "#ffffff"
-"state.success" = "#3f8f5a"
-"state.warning" = "#c98a12"
-"state.error" = "#c8452f"
+# Dark ink on the brand orange: 4.94:1 (white was 3.37:1; D-C1).
+"ui.on-accent" = "#1f1e1d"
+# State words are text: each is the terminal's own ANSI color, 4.5:1 or better on bg, surface, sidebar and hover.
+"state.success" = "#2f7a48"
+"state.warning" = "#8a6300"
+"state.error" = "#b93a26"
+# Links are the only accent text; the brand orange itself is 3.20:1 on bg.
+"markdown.link" = "#b04818"
 # Black at 12 % (31/255 = 0.1216) and 28 % (71/255 = 0.2784).
 "ui.shadow" = "#0000001f"
 "ui.scrim" = "#00000047"
@@ -106,8 +111,8 @@ spacing = 4
 "pane.header-height" = 36
 "status-bar.height" = 24
 spacing = 6
-"radius.control" = 8
-"radius.card" = 12
+"radius.control" = 6
+"radius.card" = 10
 "text.body.size" = 13
 "text.secondary.size" = 12
 "text.section.size" = 11
