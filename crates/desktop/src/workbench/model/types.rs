@@ -307,8 +307,14 @@ impl Docks {
 }
 
 /// Something that can be a tab in a pane.
+///
+/// Written to `desktop-state.json` through [`ItemRepr`]: a file tab is stored as a placeholder
+/// that also names the file, so a binary from before file tabs (which knows no `file` kind and
+/// would otherwise refuse the whole layout) restores it as a placeholder titled with the file's
+/// name; and a kind this binary does not know (a newer binary's) becomes a placeholder instead
+/// of costing the user their layout.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(into = "ItemRepr", from = "ItemOnDisk")]
 pub enum ItemRef {
     Terminal {
         session: String,
@@ -326,6 +332,78 @@ pub enum ItemRef {
     Changes {
         path: String,
     },
+    /// A file in the code view, by its canonical absolute path.
+    File {
+        path: String,
+    },
+}
+
+/// How an [`ItemRef`] is stored.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ItemRepr {
+    Terminal {
+        session: String,
+    },
+    Chat {
+        session: String,
+    },
+    Panel {
+        panel: PanelId,
+    },
+    /// With `file`, a file tab (see [`ItemRef`]).
+    Placeholder {
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file: Option<String>,
+    },
+    Changes {
+        path: String,
+    },
+}
+
+/// A stored item, or one of a kind this binary does not know.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ItemOnDisk {
+    Known(ItemRepr),
+    Unknown(serde::de::IgnoredAny),
+}
+
+impl From<ItemRef> for ItemRepr {
+    fn from(item: ItemRef) -> Self {
+        match item {
+            ItemRef::Terminal { session } => ItemRepr::Terminal { session },
+            ItemRef::Chat { session } => ItemRepr::Chat { session },
+            ItemRef::Panel { panel } => ItemRepr::Panel { panel },
+            ItemRef::Placeholder { title } => ItemRepr::Placeholder { title, file: None },
+            ItemRef::Changes { path } => ItemRepr::Changes { path },
+            ItemRef::File { path } => ItemRepr::Placeholder {
+                title: std::path::Path::new(&path)
+                    .file_name()
+                    .map_or_else(|| path.clone(), |n| n.to_string_lossy().into_owned()),
+                file: Some(path),
+            },
+        }
+    }
+}
+
+impl From<ItemOnDisk> for ItemRef {
+    fn from(stored: ItemOnDisk) -> Self {
+        match stored {
+            ItemOnDisk::Known(ItemRepr::Terminal { session }) => ItemRef::Terminal { session },
+            ItemOnDisk::Known(ItemRepr::Chat { session }) => ItemRef::Chat { session },
+            ItemOnDisk::Known(ItemRepr::Panel { panel }) => ItemRef::Panel { panel },
+            ItemOnDisk::Known(ItemRepr::Placeholder {
+                file: Some(path), ..
+            }) => ItemRef::File { path },
+            ItemOnDisk::Known(ItemRepr::Placeholder { title, file: None }) => {
+                ItemRef::Placeholder { title }
+            }
+            ItemOnDisk::Known(ItemRepr::Changes { path }) => ItemRef::Changes { path },
+            ItemOnDisk::Unknown(_) => ItemRef::placeholder("A tab of a newer Hutan"),
+        }
+    }
 }
 
 impl ItemRef {
@@ -339,6 +417,10 @@ impl ItemRef {
         ItemRef::Changes { path: path.into() }
     }
 
+    pub fn file(path: impl Into<String>) -> Self {
+        ItemRef::File { path: path.into() }
+    }
+
     pub fn panel(id: &str) -> Self {
         ItemRef::Panel {
             panel: PanelId::new(id),
@@ -348,6 +430,14 @@ impl ItemRef {
     pub fn as_panel(&self) -> Option<&PanelId> {
         match self {
             ItemRef::Panel { panel } => Some(panel),
+            _ => None,
+        }
+    }
+
+    /// The path of a file tab.
+    pub fn as_file(&self) -> Option<&str> {
+        match self {
+            ItemRef::File { path } => Some(path),
             _ => None,
         }
     }

@@ -144,6 +144,7 @@ impl Workbench {
             self.ensure_held(session, cx);
         }
         self.sync_chats(cx);
+        self.sync_files(cx);
     }
 
     fn ensure_held(
@@ -263,7 +264,7 @@ impl Workbench {
                 TerminalViewEvent::SendBlockToAgent { block } => {
                     this.send_block_to_agent(session, *block, window, cx);
                 }
-                TerminalViewEvent::OpenLink(target) => this.open_terminal_link(target, cx),
+                TerminalViewEvent::OpenLink(target) => this.open_terminal_link(target, window, cx),
                 TerminalViewEvent::Notice(text) => this.set_notice(text.clone(), cx),
                 TerminalViewEvent::TitleChanged(_) => {}
             },
@@ -309,6 +310,12 @@ impl Workbench {
             return;
         }
         if let FocusTarget::Pane(_) = self.state.focus
+            && let Some(view) = self.focused_file_view()
+        {
+            window.focus(&view.focus_handle(cx), cx);
+            return;
+        }
+        if let FocusTarget::Pane(_) = self.state.focus
             && let Some(session) = self.focused_session()
         {
             let pane = self.state.active_pane_id();
@@ -342,9 +349,17 @@ impl Workbench {
             || self
                 .pruned_chats
                 .iter()
+                .any(|view| view.focus_handle(cx) == focused)
+            || self.file_views.iter().any(|(key, view)| {
+                !self.rendered_files.contains(key) && view.focus_handle(cx) == focused
+            })
+            || self
+                .pruned_files
+                .iter()
                 .any(|view| view.focus_handle(cx) == focused);
         self.pruned.clear();
         self.pruned_chats.clear();
+        self.pruned_files.clear();
         if orphaned {
             self.focus_root(window, cx);
         }
@@ -851,6 +866,7 @@ impl Workbench {
         if let Some(review) = self.review_entry(session, cx) {
             entries.insert(entries.len() - 1, review);
         }
+        entries.insert(entries.len() - 1, Self::open_file_entry());
         // After the openers, before Rename…: what the user can do to the queue.
         for (at, entry) in self.attention_entries(session, cx).into_iter().enumerate() {
             entries.insert(3 + at, entry);
@@ -1344,6 +1360,8 @@ impl Workbench {
         self.apply_terminal_style(&frame.terminal, terminal, cx);
         // An open picker's preview reads the catalog and the user's overrides: keep it current.
         self.sync_pack_preview();
+        // File tabs take the new pack's editor colors (no reparse).
+        self.refresh_code_style(cx);
     }
 
     /// Same as [`refresh_theme`](Self::refresh_theme): the terminal's colors and fonts come
@@ -1415,6 +1433,9 @@ impl Workbench {
         }
         if changes.contains("app") {
             self.sync_daemon_menu(cx);
+        }
+        if changes.contains("editor") {
+            self.refresh_code_style(cx);
         }
         if changes.contains("integrations") {
             self.on_integrations_setting_changed(cx);

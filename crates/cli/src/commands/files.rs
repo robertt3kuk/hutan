@@ -28,8 +28,9 @@ impl Ctx {
     }
 
     /// `hutan open path[:line[:col]]`: the daemon looks the file up (so the same confinement
-    /// applies as everywhere) and the command prints where it is. No window is asked to show
-    /// it: the desktop has no editor to open it in yet.
+    /// applies as everywhere), then the window that was active last shows it in a file tab at
+    /// the line (`ui.run workbench::OpenFile`). Without a window the command only prints where
+    /// the file is.
     pub(super) async fn open(&self, args: OpenArgs) -> Result<(), CliError> {
         let client = self.fs_client().await?;
         let target = parse_target(&args.target);
@@ -49,14 +50,45 @@ impl Ctx {
             (Some(line), None) => format!("{}:{line}", entry.path.display()),
             _ => entry.path.display().to_string(),
         };
+        let mut opened = false;
+        if entry.kind == FsKind::File && client.supports_control() {
+            let mut run_args = json!({ "path": entry.path });
+            if let Some(line) = target.line {
+                run_args["line"] = json!(line);
+            }
+            if let Some(column) = target.column {
+                run_args["column"] = json!(column);
+            }
+            match client
+                .ui_run(hutan_protocol::ui::UiRun {
+                    window_id: None,
+                    action: "workbench::OpenFile".to_owned(),
+                    args: Some(run_args),
+                })
+                .await
+            {
+                Ok(_) => opened = true,
+                // No window is open: say where the file is, as before.
+                Err(hutan_client::ClientError::Remote(body))
+                    if body.code == hutan_protocol::ErrorCode::InvalidState => {}
+                Err(error) => return Err(self.fail(error)),
+            }
+        }
         self.print(
             &json!({
                 "path": entry.path,
                 "kind": entry.kind,
                 "line": target.line,
                 "column": target.column,
+                "opened": opened,
             }),
-            || shown.clone(),
+            || {
+                if opened {
+                    format!("opened {shown} in Hutan")
+                } else {
+                    shown.clone()
+                }
+            },
         )
     }
 

@@ -117,6 +117,7 @@ actions!(
         ShowTasksPanel,
         ReviewChanges,
         RunSetup,
+        OpenFileDialog,
     ]
 );
 
@@ -342,6 +343,20 @@ data_actions! {
     /// Open the Memory page with the editor of this memory proposal (its id) open: "Edit &
     /// approve" of a card in Today.
     EditMemoryProposal(String);
+    /// Open a file in a tab (or focus its tab) at a line: `ui.run workbench::OpenFile`, `hutan
+    /// open`. The daemon reads it only below the workspace roots (an agent may ask for this).
+    OpenFile(FileTarget);
+}
+
+/// A file to open, and where in it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FileTarget {
+    /// Absolute.
+    pub path: String,
+    /// 1-based.
+    pub line: Option<u32>,
+    /// 1-based, in characters.
+    pub column: Option<u32>,
 }
 
 /// Where to open the context menu of a workspace.
@@ -543,6 +558,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Workspace: Open Folder…", OpenFolder),
         command("Workspace: Jump to Workspace or Session…", OpenJump),
         command("Workspace: Go to Home", GoHome),
+        command("File: Open File…", OpenFileDialog),
         command(
             "Workspace: Pin / Unpin Active Workspace",
             PinActiveWorkspace,
@@ -828,6 +844,21 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<setup::Continue>("enter", Some("Setup")),
         bind::<setup::Skip>("escape", Some("Setup")),
         bind::<CancelDockResize>("escape", Some(super::docks::RESIZE_CONTEXT)),
+        bind::<hutan_code_view::Copy>("cmd-c", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::SelectAll>("cmd-a", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::LineUp>("up", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::LineDown>("down", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::PageUp>("pageup", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::PageDown>("pagedown", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::PageDown>("space", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::PageUp>("shift-space", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::Top>("cmd-up", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::Bottom>("cmd-down", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::Top>("home", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::Bottom>("end", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::Find>("cmd-f", Some(super::file_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::FindNext>("cmd-g", Some(super::file_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::FindPrevious>("cmd-shift-g", Some(super::file_view::KEY_CONTEXT)),
     ]
 }
 

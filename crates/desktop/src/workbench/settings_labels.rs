@@ -473,6 +473,24 @@ const FIELDS: &[FieldText] = &[
         "Vim uses the system clipboard",
         "Copies and deletes in Vim mode also go to the system clipboard, and p pastes from it. Off, they use a private register in each field.",
     ),
+    field(
+        "editor",
+        "font_size",
+        "Code font size",
+        "Font size of code in file tabs, in points. The font is the color pack's monospace family.",
+    ),
+    field(
+        "editor",
+        "line_height",
+        "Code line height",
+        "Line height of code in file tabs, as a multiple of the font size.",
+    ),
+    field(
+        "editor",
+        "large_file_bytes",
+        "Large file threshold (bytes)",
+        "Files larger than this open only after you confirm, read-only and without syntax highlighting.",
+    ),
     // ---- agents ----
     field(
         "agents",

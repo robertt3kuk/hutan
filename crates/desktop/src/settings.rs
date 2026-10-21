@@ -863,9 +863,9 @@ impl Setting for ChatSettings {
 }
 
 /// The `editor` namespace: how Hutan's text inputs (the chat composer, the palette, prompts and
-/// the other single-line fields) edit. Terminals are not text inputs: programs there do their
-/// own thing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// the other single-line fields) edit, and how file tabs (the code view) draw. Terminals are not
+/// text inputs: programs there do their own thing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct EditorSettings {
     /// Vim's modal editing (Normal, Insert, Visual) in text inputs. Fields open in Insert; Escape
@@ -874,13 +874,26 @@ pub struct EditorSettings {
     /// Yanks and deletes in Vim mode also go to the system clipboard, and `p` pastes from it.
     /// Off, they use a register private to the field.
     pub vim_use_system_clipboard: bool,
+    /// Font size of code in file tabs, in points (the family is the color pack's monospace).
+    pub font_size: f64,
+    /// Line height of code in file tabs, as a multiple of the font size.
+    pub line_height: f64,
+    /// Files larger than this (bytes) open only after a confirmation, read-only and without
+    /// syntax highlighting (large-file mode).
+    pub large_file_bytes: u64,
 }
+
+/// `editor.large_file_bytes` by default: 16 MiB.
+pub const DEFAULT_LARGE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 impl Default for EditorSettings {
     fn default() -> Self {
         Self {
             vim_mode: false,
             vim_use_system_clipboard: true,
+            font_size: 13.0,
+            line_height: 1.45,
+            large_file_bytes: DEFAULT_LARGE_FILE_BYTES,
         }
     }
 }

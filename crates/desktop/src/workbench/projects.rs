@@ -631,6 +631,7 @@ impl Workbench {
                 "Remove from Workspace (in no workspace)",
             )),
         }
+        entries.push(Self::open_file_entry());
         entries.push(Self::entry("Reveal in Finder", move |this, _, cx| {
             this.reveal_workspace(project, cx);
         }));

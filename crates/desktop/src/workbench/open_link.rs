@@ -2,15 +2,17 @@
 //!
 //! A terminal view finds the link (an OSC 8 hyperlink, a URL or an existing `path[:line[:col]]`
 //! in the text) and emits [`TerminalViewEvent::OpenLink`]; the workbench hands it to
-//! [`open_link`]. When the built-in editor arrives (`ItemRef::File`), this is the function that
-//! opens a file at its line in a tab instead of the system.
+//! [`Workbench::open_terminal_link`]. A URL opens in the browser; a file opens in Hutan's own
+//! code view at its line (`terminal.open_files_with = "editor"`) or with its default application
+//! (`system`, the default).
 
 use std::path::Path;
 use std::rc::Rc;
 
-use gpui::{App, Context, Global};
+use gpui::{App, Context, Global, Window};
 use hutan_terminal_view::LinkTarget;
 
+use super::files::FileOpen;
 use super::view::Workbench;
 use crate::settings::OpenFilesWith;
 
@@ -28,49 +30,45 @@ impl std::fmt::Debug for FileOpener {
 
 impl Global for FileOpener {}
 
-/// Opens `target`: URLs in the browser, files as `with` says. The line and column a file link
-/// carries are for the built-in editor; the system cannot be told a line.
-pub fn open_link(target: &LinkTarget, with: OpenFilesWith, cx: &mut App) {
-    match target {
-        LinkTarget::Url(url) => cx.open_url(url),
-        LinkTarget::File { path, .. } => {
-            if let Some(opener) = cx.try_global::<FileOpener>() {
-                let opener = opener.0.clone();
-                opener(path, with);
-                return;
-            }
-            match with {
-                OpenFilesWith::System => cx.open_with_system(path),
-                OpenFilesWith::Editor => open_in_text_editor(path),
-            }
-        }
+/// Hands `path` to its default application (through the [`FileOpener`] when one is set).
+pub fn open_with_system(path: &Path, cx: &mut App) {
+    if let Some(opener) = cx.try_global::<FileOpener>() {
+        let opener = opener.0.clone();
+        opener(path, OpenFilesWith::System);
+        return;
     }
-}
-
-/// `open -t`: the system's default text editor. The result is not waited for on this thread.
-fn open_in_text_editor(path: &Path) {
-    match std::process::Command::new("open")
-        .arg("-t")
-        .arg("--")
-        .arg(path)
-        .spawn()
-    {
-        Ok(mut child) => {
-            std::thread::spawn(move || child.wait().ok());
-        }
-        Err(error) => tracing::warn!("cannot open {}: {error}", path.display()),
-    }
+    cx.open_with_system(path);
 }
 
 impl Workbench {
     /// A ⌘-click in a terminal asked to open `target`.
-    pub fn open_terminal_link(&mut self, target: &LinkTarget, cx: &mut Context<Self>) {
-        if let LinkTarget::File { path, .. } = target
-            && !path.exists()
-        {
-            self.set_notice(format!("{} no longer exists", path.display()), cx);
-            return;
+    pub fn open_terminal_link(
+        &mut self,
+        target: &LinkTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match target {
+            LinkTarget::Url(url) => cx.open_url(url),
+            LinkTarget::File { path, .. } if !path.exists() => {
+                self.set_notice(format!("{} no longer exists", path.display()), cx);
+            }
+            LinkTarget::File { path, line, column } => {
+                match self.terminal_settings.open_files_with {
+                    OpenFilesWith::System => open_with_system(path, cx),
+                    // The user clicked it: read it wherever it is.
+                    OpenFilesWith::Editor => self.open_file(
+                        FileOpen {
+                            path: path.clone(),
+                            line: *line,
+                            column: *column,
+                            picked: true,
+                        },
+                        window,
+                        cx,
+                    ),
+                }
+            }
         }
-        open_link(target, self.terminal_settings.open_files_with, cx);
     }
 }

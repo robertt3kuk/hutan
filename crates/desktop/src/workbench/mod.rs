@@ -10,6 +10,8 @@ mod closing;
 mod daemon;
 mod daemon_popover;
 mod docks;
+pub mod file_view;
+pub mod files;
 mod harness_install;
 pub(crate) mod harnesses;
 mod history;
@@ -65,6 +67,7 @@ pub use changes::{
 };
 pub use daemon::{DaemonBusy, log_file as daemon_log_file};
 pub use docks::{COLLAPSE_DRAG, RESIZE_CONTEXT};
+pub use files::{BufferStore, FileOpen};
 pub use harnesses::{Detection, HARNESSES, Harness, HarnessDirectory, Listing};
 pub use launcher::{
     HarnessChoice, LaunchAgent, LaunchWhere, Launcher, LauncherField, LauncherPreset, LauncherStop,

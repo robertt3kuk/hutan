@@ -97,6 +97,7 @@ impl Render for Workbench {
         self.regions.begin_frame();
         self.rendered_terminals.clear();
         self.rendered_chats.clear();
+        self.rendered_files.clear();
 
         self.sync_docks(window, cx);
         let left = self.render_dock(DockPosition::Left, window, cx);
@@ -862,6 +863,21 @@ impl Workbench {
         }))
         .on_action(cx.listener(|this, _: &actions::OpenFolder, window, cx| {
             this.open_folder_dialog(window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::OpenFileDialog, window, cx| {
+                this.open_file_dialog(window, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, a: &actions::OpenFile, window, cx| {
+            let target = super::files::FileOpen {
+                path: a.0.path.clone().into(),
+                line: a.0.line,
+                column: a.0.column,
+                // `ui.run` and `hutan open` may come from an agent: the roots apply.
+                picked: false,
+            };
+            this.open_file(target, window, cx);
         }))
         .on_action(cx.listener(|this, _: &actions::OpenJump, window, cx| {
             if this.picker().is_some_and(|p| p.kind == PickerKind::Jump) {
@@ -1976,6 +1992,7 @@ impl Workbench {
                 let view = self.changes_view(path, window, cx);
                 cached_view(&self.regions, view)
             }
+            ItemRef::File { path } => self.render_file_item(pane, path, cx),
         }
     }
 
@@ -2047,6 +2064,7 @@ impl Workbench {
                         bottom: state(DockPosition::Bottom),
                     }
                 },
+                editor: self.editor_status(cx),
             }
         };
         let hint = |action: &dyn Action| key_hint(window, action).unwrap_or_default();

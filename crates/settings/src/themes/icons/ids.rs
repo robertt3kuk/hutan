@@ -143,6 +143,7 @@ catalog! {
     ActionAddContext => ("action.add-context", "plus.svg"),
     BrandHutan => ("brand.hutan", "hutan.svg"),
     BrandMawas => ("brand.mawas", "sparkle.svg"),
+    ItemFile => ("item.file", "file-code.svg"),
 }
 
 pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
@@ -206,6 +207,9 @@ pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
         )),
         "eye.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/eye.svg"
+        )),
+        "file-code.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-code.svg"
         )),
         "folder-open.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/folder-open.svg"

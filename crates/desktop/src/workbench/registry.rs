@@ -150,6 +150,17 @@ pub struct StatusData {
     pub terminal_theme: String,
     /// Visibility and content of the three docks.
     pub docks: PerDock<DockState>,
+    /// The focused file tab's position and language; `None` when no file tab has focus.
+    pub editor: Option<EditorStatus>,
+}
+
+/// What the `editor.position` and `editor.language` items show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorStatus {
+    /// `Ln 12, Col 5`.
+    pub position: String,
+    /// `Rust`, `Plain Text · large file`.
+    pub language: String,
 }
 
 pub type StatusRender = Rc<dyn Fn(&StatusContext<'_>) -> AnyElement>;
@@ -217,6 +228,8 @@ impl Default for StatusBarLayout {
             .map(str::to_owned)
             .to_vec(),
             right: [
+                "editor.position",
+                "editor.language",
                 "density",
                 "theme",
                 "palette_hint",

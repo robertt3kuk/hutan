@@ -2586,6 +2586,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hutan-code-view"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "gpui",
+ "hutan-buffer",
+ "hutan-settings",
+ "hutan-syntax",
+ "tracing",
+ "unicode-width",
+]
+
+[[package]]
 name = "hutan-core"
 version = "0.1.0"
 dependencies = [
@@ -2650,6 +2663,7 @@ dependencies = [
  "hutan-agents",
  "hutan-chat-view",
  "hutan-client",
+ "hutan-code-view",
  "hutan-core",
  "hutan-daemon",
  "hutan-gateway",

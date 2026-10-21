@@ -340,6 +340,10 @@ impl Workbench {
         <actions::OpenSession as Action>::name_for_type()
     }
 
+    fn open_file_id() -> &'static str {
+        <actions::OpenFile as Action>::name_for_type()
+    }
+
     fn open_workspace_id() -> &'static str {
         <actions::OpenWorkspace as Action>::name_for_type()
     }
@@ -420,6 +424,20 @@ impl Workbench {
             title: "Workspace: Show".to_owned(),
             args_schema: Some(free_schema("id", "the workspace id (`hutan workspace ls`)")),
         });
+        out.push(UiAction {
+            id: Self::open_file_id().to_owned(),
+            title: "File: Open".to_owned(),
+            args_schema: Some(json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "absolute path of the file (below a workspace root)" },
+                    "line": { "type": "integer", "minimum": 1, "description": "1-based line to show" },
+                    "column": { "type": "integer", "minimum": 1, "description": "1-based column" },
+                },
+                "required": ["path"],
+                "additionalProperties": false,
+            })),
+        });
         out
     }
 
@@ -473,6 +491,7 @@ impl Workbench {
                 ItemRef::Panel { panel } => ("panel", None, Some(panel.to_string())),
                 ItemRef::Placeholder { .. } => ("placeholder", None, None),
                 ItemRef::Changes { .. } => ("changes", None, None),
+                ItemRef::File { .. } => ("file", None, None),
             };
             PaneItem {
                 kind: kind.to_owned(),
@@ -649,6 +668,27 @@ impl Workbench {
                 return Err(not_found(format!("no workspace {id}")));
             }
             Box::new(actions::OpenWorkspace(id.to_owned()))
+        } else if action == Self::open_file_id() {
+            let path = arg_str(args, "path", action)?;
+            if !std::path::Path::new(path).is_absolute() {
+                return Err(bad_request(format!("`{path}` is not an absolute path")));
+            }
+            let number = |key: &str| -> Result<Option<u32>, ErrorBody> {
+                match args.get(key) {
+                    None | Some(Value::Null) => Ok(None),
+                    Some(value) => value
+                        .as_u64()
+                        .filter(|n| *n >= 1)
+                        .and_then(|n| u32::try_from(n).ok())
+                        .map(Some)
+                        .ok_or_else(|| bad_request(format!("`{key}` must be a positive integer"))),
+                }
+            };
+            Box::new(actions::OpenFile(actions::FileTarget {
+                path: path.to_owned(),
+                line: number("line")?,
+                column: number("column")?,
+            }))
         } else {
             let variants: Vec<&Command> = self
                 .commands

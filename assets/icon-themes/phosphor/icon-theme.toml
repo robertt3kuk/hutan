@@ -116,3 +116,4 @@ root = true
 "action.add-context" = "plus.svg"
 "brand.hutan" = "hutan.svg"
 "brand.mawas" = "sparkle.svg"
+"item.file" = "file-code.svg"

@@ -194,6 +194,37 @@ pub fn builtin_status_items() -> StatusItemRegistry {
         }),
     });
     registry.register(StatusItemSpec {
+        id: "editor.position",
+        default_side: StatusSide::Right,
+        render: Rc::new(|ctx: &StatusContext<'_>| -> AnyElement {
+            match &ctx.data.editor {
+                Some(editor) => div()
+                    .id("status-editor-position")
+                    .text_color(ctx.theme.muted)
+                    .tooltip(tooltip(
+                        "Line and column of the selection (or of the top line)".to_owned(),
+                    ))
+                    .child(SharedString::from(editor.position.clone()))
+                    .into_any_element(),
+                None => div().into_any_element(),
+            }
+        }),
+    });
+    registry.register(StatusItemSpec {
+        id: "editor.language",
+        default_side: StatusSide::Right,
+        render: Rc::new(|ctx: &StatusContext<'_>| -> AnyElement {
+            match &ctx.data.editor {
+                Some(editor) => div()
+                    .id("status-editor-language")
+                    .text_color(ctx.theme.muted)
+                    .child(SharedString::from(editor.language.clone()))
+                    .into_any_element(),
+                None => div().into_any_element(),
+            }
+        }),
+    });
+    registry.register(StatusItemSpec {
         id: "density",
         default_side: StatusSide::Right,
         render: Rc::new(|ctx: &StatusContext<'_>| {

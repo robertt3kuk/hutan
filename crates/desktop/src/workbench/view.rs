@@ -564,6 +564,13 @@ pub struct Workbench {
     /// The Changes view of every checkout a tab shows (see `review.rs`), by directory.
     pub(crate) changes_views: HashMap<String, Entity<super::changes::ChangesView>>,
     pub(crate) changes_subscriptions: Vec<Subscription>,
+    /// The buffers of the files tabs show (see `files.rs`).
+    pub(crate) buffers: super::files::BufferStore,
+    /// The view of every file tab, by pane and path.
+    pub(crate) file_views: HashMap<(PaneId, String), Entity<super::file_view::FileView>>,
+    pub(crate) file_subscriptions: HashMap<(PaneId, String), Subscription>,
+    pub(crate) rendered_files: std::collections::HashSet<(PaneId, String)>,
+    pub(crate) pruned_files: Vec<Entity<super::file_view::FileView>>,
     pub(crate) notice: Option<SharedString>,
     /// "Closed … · Undo" (`closing.rs`).
     pub(crate) close_toast: Option<super::closing::CloseToast>,
@@ -990,6 +997,11 @@ impl Workbench {
             panel_views: HashMap::new(),
             changes_views: HashMap::new(),
             changes_subscriptions: Vec::new(),
+            buffers: super::files::BufferStore::default(),
+            file_views: HashMap::new(),
+            file_subscriptions: HashMap::new(),
+            rendered_files: std::collections::HashSet::new(),
+            pruned_files: Vec::new(),
             notice: None,
             close_toast: None,
             toast_rev: 0,
@@ -1184,12 +1196,19 @@ impl Workbench {
                     .into(),
                 },
             ),
+            ItemRef::File { path } => (
+                crate::icons::Icon::ItemFile,
+                hutan_code_view::file_name(std::path::Path::new(path)).into(),
+            ),
         }
     }
 
     /// What hovering the tab of `item` says: the session's title with its placement badge
     /// (`main` / `wt <branch>`) and the checkout. `None` for panels and for sessions outside git.
     pub fn item_tooltip(&self, item: &ItemRef, cx: &App) -> Option<String> {
+        if let ItemRef::File { path } = item {
+            return Some(path.clone());
+        }
         let (ItemRef::Terminal { session } | ItemRef::Chat { session }) = item else {
             return None;
         };
@@ -1320,6 +1339,7 @@ impl Workbench {
             .map(AnyView::entity_id)
             .chain(self.chats.values().map(Entity::entity_id))
             .chain(self.changes_views.values().map(Entity::entity_id))
+            .chain(self.file_views.values().map(Entity::entity_id))
             .chain(self.terminals.values().map(|item| item.view.entity_id()));
         for id in ids {
             gpui::App::notify(cx, id);
@@ -1755,6 +1775,14 @@ impl Workbench {
                     },
                 ));
             }
+        }
+        let file = self
+            .state
+            .pane(pane)
+            .and_then(|p| p.items.get(index))
+            .and_then(|i| i.as_file().map(str::to_owned));
+        if let Some(path) = file {
+            entries.extend(self.file_tab_entries(pane, &path));
         }
         entries.push(Self::entry("Close", move |this, _, cx| {
             this.try_mutate(cx, |s| s.close_item(pane, index));

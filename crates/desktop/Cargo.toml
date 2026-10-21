@@ -22,6 +22,7 @@ gpui.workspace = true
 gpui_platform.workspace = true
 hutan-chat-view.workspace = true
 hutan-client.workspace = true
+hutan-code-view.workspace = true
 hutan-core.workspace = true
 hutan-protocol.workspace = true
 hutan-settings.workspace = true

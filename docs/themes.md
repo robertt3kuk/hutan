@@ -555,4 +555,5 @@ Generated from `IconId::ALL`; a drift test enforces this list. Offline schema: `
 - `action.add-context`
 - `brand.hutan`
 - `brand.mawas`
+- `item.file`
 <!-- icons:end -->

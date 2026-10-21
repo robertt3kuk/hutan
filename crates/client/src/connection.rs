@@ -312,6 +312,34 @@ impl Connection {
         .await
     }
 
+    /// True while connected to a daemon that advertised capability `fs` ([`Client::supports_fs`],
+    /// protocol 0.33); false when disconnected.
+    pub fn supports_fs(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_fs())
+    }
+
+    /// `fs.stat` (see [`Client::fs_stat`]): the canonical path, kind and size of `path`.
+    pub async fn fs_stat(
+        &self,
+        path: &Path,
+        picked: bool,
+    ) -> Result<hutan_protocol::fs::FsEntry, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_stat(path, picked).await
+    }
+
+    /// The whole file, read chunk by chunk (see [`Client::fs_read_all`]).
+    pub async fn fs_read_all(
+        &self,
+        path: &Path,
+        picked: bool,
+    ) -> Result<crate::FsText, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_read_all(path, picked).await
+    }
+
     /// True while connected to a daemon that advertised capability `history.search`
     /// ([`Client::supports_history`]); false when disconnected.
     pub fn supports_history(&self) -> bool {
