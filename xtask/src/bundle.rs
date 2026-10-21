@@ -84,7 +84,8 @@ pub fn workspace_root() -> PathBuf {
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
 }
 
-fn target_dir(root: &Path) -> PathBuf {
+/// Cargo's target directory: `CARGO_TARGET_DIR`, else `target/` of the workspace.
+pub fn target_dir(root: &Path) -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from)
 }
 

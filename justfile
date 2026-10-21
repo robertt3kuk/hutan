@@ -20,9 +20,11 @@ fmt-check:
 clippy:
     nice -n 10 cargo clippy --workspace --all-targets --locked -- -D warnings
 
+# The suite runs under `xtask watch-daemons`: it fails when a test daemon (a `hutand` of this
+# checkout's target dir started during the run) is still running afterwards, and stops it.
 test:
     nice -n 10 cargo build --workspace --bins --locked
-    nice -n 10 cargo nextest run --workspace --locked --no-tests=pass
+    nice -n 10 cargo run -q -p xtask --locked -- watch-daemons -- cargo nextest run --workspace --locked --no-tests=pass
 
 deny:
     cargo deny --locked check

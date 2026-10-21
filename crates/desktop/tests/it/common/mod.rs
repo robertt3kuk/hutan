@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_client::{Client, ConnectOptions, Connection};
 use hutan_core::{SessionId, WorkspaceId};
+use hutan_daemon::testing::DaemonReaper;
 use hutan_daemon::{DaemonConfig, Paths, RunningDaemon};
 use hutan_desktop::workbench::{Workbench, WorkbenchOptions};
 use hutan_protocol::messages::{
@@ -594,11 +595,15 @@ pub fn screen_text(model: &hutan_terminal_view::model::TerminalModel) -> String 
 }
 
 /// A real `hutand` process on its own temporary home, started by the connection's autostart
-/// (and again by `Connection::set_autostart`). Stopped through the protocol on drop.
+/// (and again by `Connection::set_autostart`). Stopped on drop, however the test ended: the
+/// launcher script refuses to start another daemon from then on (a window's connection that
+/// outlives this guard would otherwise autostart a new one on a deleted home), and every daemon
+/// it started is SIGTERMed, then SIGKILLed ([`DaemonReaper`]).
 pub struct ProcessDaemon {
     pub dir: TempDir,
     wrapper: PathBuf,
     runtime: tokio::runtime::Runtime,
+    reaper: DaemonReaper,
 }
 
 impl ProcessDaemon {
@@ -614,11 +619,18 @@ impl ProcessDaemon {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         // `ConnectOptions` cannot carry environment, so a wrapper pins the daemon to the home.
+        // It notes its pid (the daemon's, after `exec`) before it looks for `closed`: a daemon
+        // started after the guard closed the wrapper exits at once, one started before is in
+        // `pids` by the time the guard reads it.
         let wrapper = dir.path().join("hutand-wrapper.sh");
+        let pids = dir.path().join("pids");
+        let closed = dir.path().join("closed");
         std::fs::write(
             &wrapper,
             format!(
-                "#!/bin/sh\nexport HUTAN_HOME='{}'\nexec '{}'\n",
+                "#!/bin/sh\necho $$ >> '{}'\n[ -e '{}' ] && exit 75\nexport HUTAN_HOME='{}'\nexec '{}'\n",
+                pids.display(),
+                closed.display(),
                 home.display(),
                 hutand.display()
             ),
@@ -631,6 +643,7 @@ impl ProcessDaemon {
             .build()
             .unwrap();
         Self {
+            reaper: DaemonReaper::new(&home).with_pid_file(pids),
             dir,
             wrapper,
             runtime,
@@ -677,26 +690,9 @@ impl ProcessDaemon {
 
 impl Drop for ProcessDaemon {
     fn drop(&mut self) {
-        // Ask whichever daemon runs now to stop; none running is fine (no autostart here).
-        let mut options = self.options();
-        options.autostart = None;
-        let socket = self.socket();
-        self.runtime.block_on(async move {
-            if let Ok(client) = Client::connect(options).await {
-                let _ = client
-                    .call::<serde_json::Value>(Request::DaemonShutdown(
-                        hutan_protocol::messages::DaemonShutdown {
-                            stop_sessions: true,
-                            forget: false,
-                        },
-                    ))
-                    .await;
-                let deadline = Instant::now() + WAIT;
-                while socket.exists() && Instant::now() < deadline {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-            }
-        });
+        // From now on the wrapper starts nothing (ignored error: then the reaper still runs).
+        let _ = std::fs::write(self.dir.path().join("closed"), "");
+        self.reaper.reap();
     }
 }
 

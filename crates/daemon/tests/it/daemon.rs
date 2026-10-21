@@ -758,6 +758,8 @@ async fn client_autostarts_hutand_when_the_socket_is_absent() {
 
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::in_home(dir.path().join("home"));
+    // Stops the autostarted daemon if the test fails before it shuts it down.
+    let _reaper = hutan_daemon::testing::DaemonReaper::new(&paths.base);
     // `ConnectOptions` cannot carry environment, so a wrapper pins the daemon to the temp home.
     let wrapper = dir.path().join("hutand-wrapper.sh");
     std::fs::write(

@@ -641,6 +641,8 @@ async fn a_hutand_that_was_killed_is_told_from_one_that_was_stopped() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let paths = Paths::in_home(&home);
+    // Stops the process below if the test fails before it is killed (dropped once it is).
+    let reaper = hutan_daemon::testing::DaemonReaper::new(&home);
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_hutand"))
         .env("HUTAN_HOME", &home)
         .env_remove("HUTAN_SOCKET")
@@ -691,6 +693,8 @@ async fn a_hutand_that_was_killed_is_told_from_one_that_was_stopped() {
     })
     .await
     .expect("hutand died");
+    // The home's next daemon runs in this process.
+    drop(reaper);
 
     let t = start_on(dir, paths).await;
     let client = t.connect().await;

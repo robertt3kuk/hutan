@@ -464,6 +464,8 @@ async fn attach_follows_a_restart_to_the_new_terminal() {
 async fn losing_the_daemon_ends_attach_with_exit_3() {
     let bin_dir = common::hutand_dir();
     let home = tempfile::tempdir().unwrap();
+    // Stopped also when an assertion below fails before the test kills it.
+    let _guard = hutan_daemon::testing::DaemonReaper::new(home.path());
     let socket = home.path().join("hutand.sock");
     let run = |args: &[&str]| {
         let mut cmd = std::process::Command::new(bin_dir.join("hutan"));

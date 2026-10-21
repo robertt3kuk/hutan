@@ -89,6 +89,8 @@ pub mod session_names;
 pub mod tasks;
 pub mod terminals;
 pub mod tree;
+#[cfg(feature = "test-support")]
+pub mod testing;
 pub mod uihub;
 pub mod worktrees;
 

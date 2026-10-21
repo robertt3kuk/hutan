@@ -23,7 +23,7 @@ tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-hutan-daemon.workspace = true
+hutan-daemon = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tracing-subscriber.workspace = true

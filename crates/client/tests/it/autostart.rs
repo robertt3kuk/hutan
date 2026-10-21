@@ -35,6 +35,8 @@ fn hutand() -> PathBuf {
 async fn autostarts_a_missing_daemon_at_most_once_per_interval() {
     let binary = hutand();
     let home = tempfile::tempdir().unwrap();
+    // Stops the daemons the connection starts, also when the test fails half-way.
+    let _reaper = hutan_daemon::testing::DaemonReaper::new(home.path());
     // SAFETY: this binary has a single test, so nothing else reads or writes the environment
     // while it is changed; the daemon inherits it.
     unsafe { std::env::set_var("HUTAN_HOME", home.path()) };

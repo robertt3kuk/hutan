@@ -64,7 +64,8 @@ path = "tests/main_thread_loop.rs"
 harness = false
 
 [features]
-# `notify_native::fake::FakePoster` for tests (this crate's own and its integration tests).
+# `notify_native::fake::FakePoster` for tests (this crate's own and its integration tests), and
+# `testing::DaemonReaper` for the tests of every crate that runs `hutand` as a process.
 test-support = []
 
 [dev-dependencies]

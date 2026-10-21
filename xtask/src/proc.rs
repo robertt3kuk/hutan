@@ -75,8 +75,10 @@ pub fn alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
-fn signal(pid: u32, sig: libc::c_int) {
-    // SAFETY: plain `kill(2)` on a pid we spawned or found as a descendant of one.
+/// Sends `sig` to `pid`.
+pub fn signal(pid: u32, sig: libc::c_int) {
+    // SAFETY: plain `kill(2)` on a pid we spawned, found as a descendant of one, or found as a
+    // leaked `hutand` of this checkout.
     unsafe {
         libc::kill(pid as libc::pid_t, sig);
     }

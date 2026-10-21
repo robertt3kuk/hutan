@@ -1,11 +1,13 @@
 //! Developer tasks. `cargo run -p xtask --release -- bench` measures the performance budgets;
 //! `cargo run -p xtask -- bundle` assembles and ad-hoc signs `Hutan.app`, `-- install` puts a
 //! release build into /Applications, `-- icon` renders its icon and `-- menubar-icon` the menu
-//! bar glyph (`docs/packaging.md`).
+//! bar glyph (`docs/packaging.md`); `-- watch-daemons -- <command>` runs the test suite and fails
+//! when a test daemon outlives it (`just test`).
 
 mod bench;
 mod bench_ui;
 mod bundle;
+mod daemons;
 mod fake_codex;
 mod icon;
 mod install;
@@ -87,6 +89,12 @@ enum Command {
         #[arg(long, value_name = "DIR")]
         dest: Option<std::path::PathBuf>,
     },
+    /// Run COMMAND (the test suite), then fail when a `hutand` of this target directory that
+    /// started during it is still running, and stop it (SIGTERM, then SIGKILL).
+    WatchDaemons {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        command: Vec<String>,
+    },
 }
 
 #[tokio::main]
@@ -122,5 +130,6 @@ async fn main() -> anyhow::Result<()> {
         Command::Icon => icon::run(&bundle::workspace_root()),
         Command::MenubarIcon => menubar::run(&bundle::workspace_root()),
         Command::Install { debug, dest } => install::run(install::Options { debug, dest }),
+        Command::WatchDaemons { command } => std::process::exit(daemons::run(&command)?),
     }
 }

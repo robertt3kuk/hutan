@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use common::{HUTAN, TestDaemon, WAIT, command, finish, hutan, hutand_dir};
+use hutan_daemon::testing::DaemonReaper;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -372,55 +373,11 @@ async fn usage_errors_exit_2() {
 
 // daemon start (real hutand process) -------------------------------------------------------
 
-/// Stops a spawned daemon even when the test fails — also one that never got as far as
-/// accepting connections, which `daemon stop` cannot reach: the pid in `hutand.lock` gets a
-/// SIGTERM, then a SIGKILL if it is still there.
-struct DaemonGuard {
-    home: PathBuf,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = std::process::Command::new(HUTAN)
-            .args(["daemon", "stop", "--stop-sessions"])
-            .env("HUTAN_HOME", &self.home)
-            .env_remove("HUTAN_SOCKET")
-            .output();
-        let Some(pid) = std::fs::read_to_string(self.home.join("hutand.lock"))
-            .ok()
-            .and_then(|text| text.trim().parse::<u32>().ok())
-        else {
-            return;
-        };
-        let alive = || {
-            std::process::Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success())
-        };
-        for signal in ["-TERM", "-KILL"] {
-            if !alive() {
-                return;
-            }
-            let _ = std::process::Command::new("kill")
-                .args([signal, &pid.to_string()])
-                .status();
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            while alive() && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-        }
-    }
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn daemon_start_status_stop_with_hutand_beside_hutan() {
     hutand_dir();
     let home = tempfile::tempdir().unwrap();
-    let _guard = DaemonGuard {
-        home: home.path().to_owned(),
-    };
+    let _guard = DaemonReaper::new(home.path());
     let run = |args: &'static [&'static str]| {
         let mut cmd = command(Path::new(HUTAN), None, args);
         cmd.env("HUTAN_HOME", home.path());
@@ -461,9 +418,7 @@ async fn daemon_start_status_stop_with_hutand_beside_hutan() {
 async fn daemon_start_finds_hutand_on_path() {
     let bin_dir = hutand_dir();
     let home = tempfile::tempdir().unwrap();
-    let _guard = DaemonGuard {
-        home: home.path().to_owned(),
-    };
+    let _guard = DaemonReaper::new(home.path());
     // A copy of `hutan` somewhere without a sibling hutand.
     let lonely = tempfile::tempdir().unwrap();
     let copy = lonely.path().join("hutan");
@@ -493,9 +448,7 @@ async fn daemon_start_finds_hutand_on_path() {
 async fn daemon_restart_without_sessions_gives_a_new_daemon() {
     hutand_dir();
     let home = tempfile::tempdir().unwrap();
-    let _guard = DaemonGuard {
-        home: home.path().to_owned(),
-    };
+    let _guard = DaemonReaper::new(home.path());
     let run = |args: &'static [&'static str]| {
         let mut cmd = command(Path::new(HUTAN), None, args);
         cmd.env("HUTAN_HOME", home.path());
@@ -555,9 +508,7 @@ async fn daemon_restart_without_sessions_gives_a_new_daemon() {
 async fn daemon_restart_refuses_live_sessions_unless_asked_to_stop_them() {
     hutand_dir();
     let home = tempfile::tempdir().unwrap();
-    let _guard = DaemonGuard {
-        home: home.path().to_owned(),
-    };
+    let _guard = DaemonReaper::new(home.path());
     let run = |args: &'static [&'static str]| {
         let mut cmd = command(Path::new(HUTAN), None, args);
         cmd.env("HUTAN_HOME", home.path());

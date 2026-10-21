@@ -814,6 +814,8 @@ async fn sigterm_stops_sessions_and_removes_the_socket() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let socket = home.join("hutand.sock");
+    // Stops the process below if the test fails before its SIGTERM.
+    let _reaper = hutan_daemon::testing::DaemonReaper::new(&home);
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_hutand"))
         .env("HUTAN_HOME", &home)
         .env_remove("HUTAN_SOCKET")
