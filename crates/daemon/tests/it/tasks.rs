@@ -169,7 +169,12 @@ impl Env {
     }
 
     async fn start_in(toml: &str, scratch: TempDir, config: Option<CodexConfig>) -> Self {
-        let daemon = TestDaemon::start_with(toml, move |c| c.codex = config).await;
+        let daemon = TestDaemon::start_with(toml, move |c| {
+            c.codex = config;
+            // The checkpoints of chat turns judge what they leave for review; no user config.
+            c.checkpoints.git_env = crate::checkpoint_turns::git_env();
+        })
+        .await;
         let repo = Repo::new();
         let (client, events) = daemon.connect_subscribed().await;
         let workspace = open(&client, &repo.root).await;
@@ -1750,34 +1755,14 @@ async fn a_merge_marks_the_task_merged_with_its_commit_and_a_removal_discards_it
     t.stop().await;
 }
 
-/// The recorded plain turn of Codex, followed by a second turn that answers `turn/start`.
-fn two_turn_transcript(dir: &Path) -> PathBuf {
-    let recorded = fs::read_to_string(fixtures().join("plain-turn.jsonl")).unwrap();
-    let lines: Vec<&str> = recorded.lines().collect();
-    let mut out: Vec<String> = lines.iter().map(|l| (*l).to_owned()).collect();
-    // turn/start, its response and the events of the turn (not the thread's start).
-    for index in [9, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23] {
-        out.push(
-            lines[index]
-                .replace(
-                    "01a00000-0000-7000-8000-000000000002",
-                    "01a00000-0000-7000-8000-000000000012",
-                )
-                .replace(
-                    "01a00000-0000-7000-8000-000000000003",
-                    "01a00000-0000-7000-8000-000000000013",
-                )
-                .replace("msg_fixture_1", "msg_fixture_2"),
-        );
-    }
-    let path = dir.join("two-turns.jsonl");
-    fs::write(&path, out.join("\n") + "\n").unwrap();
-    path
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn changes_requested_on_a_chat_task_reach_the_chat_and_the_task_runs_again() {
-    let t = Env::start_with_transcript(two_turn_transcript).await;
+    // Two turns, each held until the test made the agent's edit.
+    let t = Env::start_with_transcript(|dir| {
+        crate::checkpoint_turns::held_turns(dir, &[dir.join("gate-0"), dir.join("gate-1")])
+    })
+    .await;
+    let release = |n: usize| fs::write(t.scratch.path().join(format!("gate-{n}")), "").unwrap();
     let a = t
         .create(TaskCreate {
             prompt: Some("Reply with the single word pong and nothing else.".into()),
@@ -1789,9 +1774,15 @@ async fn changes_requested_on_a_chat_task_reach_the_chat_and_the_task_runs_again
         })
         .await;
     let started = t.client.task_start(a.id).await.unwrap();
-    let done = t.wait_state(a.id, TaskState::Done).await;
-    // The main checkout, but an agent did the work: it awaits review.
-    assert_eq!(done.delivery, DeliveryState::AwaitingReview);
+    fs::write(t.repo.root.join("pong.txt"), "pong\n").unwrap();
+    release(0);
+    // The main checkout, but the agent's turn changed a file: it awaits review.
+    let done = t
+        .wait(a.id, "never awaited review", |task| {
+            task.state == TaskState::Done && task.delivery == DeliveryState::AwaitingReview
+        })
+        .await;
+    assert_eq!(deliveries(&done), [DeliveryState::AwaitingReview]);
 
     let asked = t
         .review(
@@ -1818,7 +1809,10 @@ async fn changes_requested_on_a_chat_task_reach_the_chat_and_the_task_runs_again
         "the note reached the agent as a user message"
     );
 
-    // The second turn ends: awaiting review again, and the history says what happened.
+    // The second turn changes the file again and ends: awaiting review again, and the history
+    // says what happened.
+    fs::write(t.repo.root.join("pong.txt"), "pong\nping\n").unwrap();
+    release(1);
     let again = t
         .wait(a.id, "never awaited review again", |task| {
             task.state == TaskState::Done

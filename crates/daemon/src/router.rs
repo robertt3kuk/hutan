@@ -307,33 +307,37 @@ impl Router {
             }),
             Request::ChatSend(req) => {
                 self.live_chat(req.session_id).await?;
+                let by = self.actor(conn).await;
                 // Resolved before anything is journaled or sent: a refused attachment fails
                 // the whole message.
-                let origin =
-                    if !req.attachments.is_empty() && self.agent_origin(conn).await.is_some() {
-                        Origin::Agent
-                    } else {
-                        Origin::User
-                    };
+                let origin = if !req.attachments.is_empty() && by == DeliveryActor::Agent {
+                    Origin::Agent
+                } else {
+                    Origin::User
+                };
                 let attached = self
                     .assistant
                     .prepare(req.session_id, &req.attachments, origin)
                     .await?;
+                // The turn this starts re-opens the work of a done task in the sender's name.
+                self.tasks.note_sender(req.session_id, by);
                 let turn_id = self
                     .registry
                     .chats()
                     .send(req.session_id, req.text, attached)
                     .await?;
                 // The user went on with the conversation: what a restart did to it is old news.
-                if self.agent_origin(conn).await.is_none() {
+                if by != DeliveryActor::Agent {
                     self.registry.note_user_action(req.session_id);
                 }
                 ok(&ChatSent { turn_id })
             }
             Request::ChatRetry(req) => {
                 self.live_chat(req.session_id).await?;
+                let by = self.actor(conn).await;
+                self.tasks.note_sender(req.session_id, by);
                 let turn_id = self.registry.chats().retry(req.session_id).await?;
-                if self.agent_origin(conn).await.is_none() {
+                if by != DeliveryActor::Agent {
                     self.registry.note_user_action(req.session_id);
                 }
                 ok(&ChatSent { turn_id })
@@ -348,6 +352,8 @@ impl Router {
             }
             Request::ChatQueueAdd(req) => {
                 self.live_chat(req.session_id).await?;
+                let by = self.actor(conn).await;
+                self.tasks.note_sender(req.session_id, by);
                 let item = self
                     .registry
                     .chats()
@@ -383,12 +389,14 @@ impl Router {
             }
             Request::ChatSendNow(req) => {
                 self.live_chat(req.session_id).await?;
+                let by = self.actor(conn).await;
+                self.tasks.note_sender(req.session_id, by);
                 let sent = self
                     .registry
                     .chats()
                     .send_now(req.session_id, req.text, req.item_id)
                     .await?;
-                if self.agent_origin(conn).await.is_none() {
+                if by != DeliveryActor::Agent {
                     self.registry.note_user_action(req.session_id);
                 }
                 ok(&sent)
@@ -489,12 +497,17 @@ impl Router {
             }
             Request::WorktreeCommit(req) => ok(&self.worktrees.commit(req).await?),
             Request::WorktreeFinish(req) => {
-                let (finished, merged) = self.worktrees.finish(req).await?;
-                if let Some((merged, workspaces)) = merged {
-                    self.tasks
-                        .worktree_merged(&merged, &workspaces, self.actor(conn).await);
+                let finished = self.worktrees.finish(req).await?;
+                let by = self.actor(conn).await;
+                if let Some((merged, workspaces)) = &finished.merged {
+                    self.tasks.worktree_merged(merged, workspaces, by);
                 }
-                ok(&finished)
+                if let Some(commit) = finished.landed() {
+                    self.tasks
+                        .checkout_finished(&finished.checkout, commit, by)
+                        .await;
+                }
+                ok(&finished.result)
             }
             Request::TaskCreate(req) => ok(&TaskResult {
                 task: self.tasks.create(req).await?,

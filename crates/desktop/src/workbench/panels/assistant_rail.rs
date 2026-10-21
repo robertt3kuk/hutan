@@ -1,13 +1,15 @@
 //! The **Today** rail of Mawas Home (`docs/assistant.md` § Home): what needs the user, what is
-//! working, what is coming. It is a view of the sessions store — the approvals, questions and
-//! agents the daemon already tells every window about — so it needs no polling and no request of
-//! its own, and a hidden Home does not draw it at all.
+//! working, what is coming. It is a view of the sessions store — the agent presentation every
+//! surface reads — so it needs no polling and no request of its own, and a hidden Home does not
+//! draw it at all.
 //!
-//! *Needs you* lists Mawas's approvals first (each with the options the daemon offered, answered
-//! in place), then other agents' approvals, questions and blocked agents. *Working* lists the
-//! agents that are running; a memory proposal is a card with its own *Edit & approve*. *Memory*
-//! links to the Memory page; *Upcoming* says there are no schedules yet: Skills, Schedules and
-//! Traces have no link here until those services exist.
+//! *Needs you* lists what the Agents page lists in its *Needs you* group, in its order (the one
+//! reducer, `sessions::presentation`): each permission request with the options the daemon
+//! offered (answered in place; Mawas's own first), each question, and one row for every other
+//! session that needs the user (blocked, failed, work to review, unread). *Working* lists the
+//! agents that are running — never Mawas itself; a memory proposal is a card with its own
+//! *Edit & approve*. *Memory* links to the Memory page; *Upcoming* says there are no schedules
+//! yet: Skills, Schedules and Traces have no link here until those services exist.
 
 use gpui::{
     AnyElement, App, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
@@ -19,7 +21,7 @@ use hutan_core::{ApprovalId, QuestionId, SessionId};
 use super::assistant::AssistantPanel;
 use super::common::{agent_lead_glyph, agent_state_word, agent_title_line};
 use crate::icons::{Icon, icon};
-use crate::sessions::{AgentRecord, AttentionKind, SessionsStore, agents_text};
+use crate::sessions::{AgentRecord, Group, ReasonKind, Role, SessionsStore, agents_text};
 use crate::workbench::actions::{
     EditMemoryProposal, JumpToNextAttention, OpenMawasMemory, OpenSession,
 };
@@ -65,6 +67,10 @@ pub enum NeedsKind {
     Blocked,
     /// A session failed and nobody has looked.
     Failed,
+    /// Work an agent left waits for review, and the user has not seen it.
+    Review,
+    /// A session finished, or the user marked it unread, and nobody has looked.
+    Unread,
 }
 
 /// One row of *Needs you*.
@@ -117,101 +123,101 @@ impl Today {
     }
 }
 
-/// The rail's content as of now, from the sessions store alone.
+/// The rail's content as of now, from the sessions store alone: the Agents page's records.
 pub fn today(store: &SessionsStore) -> Today {
-    let is_mawas = |session: SessionId| {
-        store
-            .session(session)
-            .and_then(|info| info.chat.as_ref())
-            .is_some_and(|chat| chat.is_assistant())
-    };
-    let title_of = |session: SessionId| {
-        store
-            .session(session)
-            .map_or_else(|| "a session".to_owned(), |info| info.title.clone())
-    };
-    let mut approvals: Vec<NeedsRow> = store
-        .approvals()
-        .iter()
-        // An answer given here and not yet confirmed by the daemon is not asked again.
-        .filter(|approval| store.answered_here(approval.id).is_none())
-        .map(|approval| NeedsRow {
-            session: approval.session_id,
-            title: approval.title.clone(),
-            detail: title_of(approval.session_id),
-            kind: NeedsKind::Approval {
-                approval: approval.id,
-                options: approval
-                    .options
-                    .iter()
-                    .map(|o| RailOption {
-                        id: o.id.clone(),
-                        label: o.label.clone(),
-                        kind: o.kind,
-                    })
-                    .collect(),
-                mawas: is_mawas(approval.session_id),
-                control: approval.kind == hutan_core::agent::PermissionKind::Control,
-                memory: approval.kind == hutan_core::agent::PermissionKind::Control
-                    && approval
-                        .title
-                        .starts_with(hutan_protocol::memory::PROPOSAL_TITLE_PREFIX),
-            },
-        })
-        .collect();
-    // Mawas's first; each group keeps the daemon's order (oldest first).
-    approvals.sort_by_key(|row| !matches!(row.kind, NeedsKind::Approval { mawas: true, .. }));
-    let questions = store
-        .questions()
-        .iter()
-        .filter(|question| !store.question_answered_here(question.id))
-        .map(|question| NeedsRow {
-            session: question.session_id,
-            title: question.spec.title.clone(),
-            detail: title_of(question.session_id),
-            kind: NeedsKind::Question {
-                question: question.id,
-            },
-        });
-    let stuck = store
-        .attention_entries()
-        .into_iter()
-        .filter_map(|entry| match entry.kind {
-            AttentionKind::Blocked => Some(NeedsRow {
-                session: entry.session,
-                title: entry.title,
-                detail: entry.detail,
-                kind: NeedsKind::Blocked,
-            }),
-            AttentionKind::Failed => Some(NeedsRow {
-                session: entry.session,
-                title: entry.title,
-                detail: entry.detail,
-                kind: NeedsKind::Failed,
-            }),
-            AttentionKind::Approval | AttentionKind::Question => None,
-        });
-    let needs_you: Vec<NeedsRow> = approvals
-        .into_iter()
-        .chain(questions)
-        .chain(stuck)
-        .collect();
-
-    // Working is what the Agents page calls Working: confirmed, and not waiting for the user.
     let presentation = store.agent_presentation();
-    let working = presentation
+    let mut needs_you: Vec<NeedsRow> = Vec::new();
+    for record in presentation
         .records
         .iter()
-        .filter(|record| record.group == crate::sessions::Group::Working)
+        .filter(|record| record.group == Group::NeedsYou)
+    {
+        let mawas = record.role == Role::Assistant;
+        for request in &record.requests {
+            let kind = store
+                .approvals()
+                .iter()
+                .find(|approval| approval.id == request.id)
+                .map(|approval| approval.kind);
+            let control = kind == Some(hutan_core::agent::PermissionKind::Control);
+            needs_you.push(NeedsRow {
+                session: record.session,
+                title: request.title.clone(),
+                detail: record.title.clone(),
+                kind: NeedsKind::Approval {
+                    approval: request.id,
+                    options: request
+                        .options
+                        .iter()
+                        .map(|o| RailOption {
+                            id: o.id.clone(),
+                            label: o.label.clone(),
+                            kind: o.kind,
+                        })
+                        .collect(),
+                    mawas,
+                    control,
+                    memory: control
+                        && request
+                            .title
+                            .starts_with(hutan_protocol::memory::PROPOSAL_TITLE_PREFIX),
+                },
+            });
+        }
+        for question in &record.questions {
+            needs_you.push(NeedsRow {
+                session: record.session,
+                title: question.title.clone(),
+                detail: record.title.clone(),
+                kind: NeedsKind::Question {
+                    question: question.id,
+                },
+            });
+        }
+        if !record.requests.is_empty() || !record.questions.is_empty() {
+            continue;
+        }
+        // Answers given here and not confirmed yet leave a session with nothing to ask.
+        let Some(reason) = record
+            .reasons
+            .iter()
+            .find(|r| !matches!(r.kind, ReasonKind::Approval | ReasonKind::Question))
+        else {
+            continue;
+        };
+        let kind = match reason.kind {
+            ReasonKind::Approval | ReasonKind::Question | ReasonKind::Blocked => NeedsKind::Blocked,
+            ReasonKind::Failed => NeedsKind::Failed,
+            ReasonKind::Review => NeedsKind::Review,
+            ReasonKind::CompletedUnread | ReasonKind::MarkedUnread => NeedsKind::Unread,
+        };
+        needs_you.push(NeedsRow {
+            session: record.session,
+            title: record.title.clone(),
+            detail: reason.text.clone(),
+            kind,
+        });
+    }
+    // Mawas's requests first; everything else keeps the page's order.
+    needs_you.sort_by_key(|row| !matches!(row.kind, NeedsKind::Approval { mawas: true, .. }));
+
+    // Working is what the Agents page calls Working: confirmed, and not waiting for the user.
+    // Mawas is the one asking, not an agent at work.
+    let agents = || {
+        presentation
+            .records
+            .iter()
+            .filter(|record| record.role != Role::Assistant)
+    };
+    let working = agents()
+        .filter(|record| record.group == Group::Working)
         .map(|record| WorkingRow {
             session: record.session,
             record: record.clone(),
         })
         .collect();
-    let unconfirmed = presentation
-        .records
-        .iter()
-        .filter(|record| record.group == crate::sessions::Group::Unconfirmed)
+    let unconfirmed = agents()
+        .filter(|record| record.group == Group::Unconfirmed)
         .count();
     Today {
         needs_you,
@@ -505,6 +511,8 @@ impl AssistantPanel {
             NeedsKind::Question { .. } => "Question",
             NeedsKind::Blocked => "Blocked",
             NeedsKind::Failed => "Failed",
+            NeedsKind::Review => "Review",
+            NeedsKind::Unread => "Unread",
         };
         // In the rail a request is a flat item of the card that is the rail itself; above the
         // conversation it is a card of its own. Never a card in a card.
@@ -596,7 +604,11 @@ impl AssistantPanel {
                         .children(edit),
                 );
             }
-            NeedsKind::Question { .. } | NeedsKind::Blocked | NeedsKind::Failed => {
+            NeedsKind::Question { .. }
+            | NeedsKind::Blocked
+            | NeedsKind::Failed
+            | NeedsKind::Review
+            | NeedsKind::Unread => {
                 card = card.child(
                     button(
                         SharedString::from(format!("today-open-{row_index}")),

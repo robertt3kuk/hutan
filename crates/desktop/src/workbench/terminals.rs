@@ -110,6 +110,17 @@ impl Workbench {
         }
     }
 
+    /// The checkout of the Changes view in the focused pane's active tab, if that is one.
+    fn focused_changes_path(&self) -> Option<std::path::PathBuf> {
+        match self.state.focus {
+            FocusTarget::Pane(_) => match self.state.active_pane()?.active_item()? {
+                ItemRef::Changes { path } => Some(std::path::PathBuf::from(path)),
+                _ => None,
+            },
+            FocusTarget::Dock(_) => None,
+        }
+    }
+
     /// Attaches every open terminal item whose session exists and is not attached yet (restoring
     /// a layout re-attaches all of them), and detaches the ones no tab shows anymore.
     pub(crate) fn attach_open_items(&mut self, cx: &mut Context<Self>) {
@@ -898,6 +909,11 @@ impl Workbench {
         } else {
             None
         };
+        // A Changes view on screen shows the work of the sessions of its checkout.
+        let changes = self
+            .window_active
+            .then(|| self.focused_changes_path())
+            .flatten();
         self.note_focused_chat(cx);
         self.sessions.update(cx, |store, cx| {
             if !self.window_active {
@@ -907,6 +923,9 @@ impl Workbench {
             store.set_focused(focused, cx);
             if let Some(session) = focused {
                 store.mark_looked_at(session, cx);
+            }
+            if let Some(root) = &changes {
+                store.mark_checkout_looked_at(root, cx);
             }
         });
         self.sync_workspace(cx);

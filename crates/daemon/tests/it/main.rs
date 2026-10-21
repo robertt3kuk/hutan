@@ -31,6 +31,7 @@ mod restore;
 mod session_env;
 mod session_names;
 mod sessions;
+mod task_delivery;
 mod tasks;
 mod workspaces;
 mod worktree_review;

@@ -27,7 +27,7 @@ use crate::sessions::agents::{
 };
 use crate::sessions::agents_text;
 use crate::sessions::{
-    AgentPresentation, AgentRecord, Counts, Group, Scope, SessionsStore, State, Tone,
+    AgentPresentation, AgentRecord, Counts, Group, Role, Scope, SessionsStore, State, Tone,
 };
 use crate::settings::{AgentsScope, AgentsSettings};
 use crate::theme::{DensityExt as _, reduce_motion};
@@ -193,14 +193,15 @@ impl AgentsPanel {
     }
 
     /// The records this panel lists: the settings' scope over the one presentation, in the page's
-    /// order. `Session` follows the focused session, never the panel's own focus.
+    /// order. `Session` follows the focused session, never the panel's own focus. Mawas is not
+    /// an agent at work here: its own page and Today show it.
     fn scoped<'a>(
         &self,
         presentation: &'a AgentPresentation,
         store: &SessionsStore,
     ) -> Vec<&'a AgentRecord> {
         let settings = self.env.settings.get::<AgentsSettings>();
-        match settings.scope {
+        let records: Vec<&AgentRecord> = match settings.scope {
             AgentsScope::All => presentation.in_scope(Scope::All).collect(),
             AgentsScope::ActiveWorkspace => presentation
                 .in_scope(
@@ -214,7 +215,11 @@ impl AgentsPanel {
                 .and_then(|focused| presentation.get(focused))
                 .into_iter()
                 .collect(),
-        }
+        };
+        records
+            .into_iter()
+            .filter(|record| record.role != Role::Assistant)
+            .collect()
     }
 
     /// The totals of what the scope lists, in the page's words (`5 agent sessions · 3 subagents`).

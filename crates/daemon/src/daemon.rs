@@ -378,6 +378,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
     let tasks = TaskService::open(
         registry.clone(),
         worktrees.clone(),
+        checkpoints.clone(),
         storage.clone(),
         bus.clone(),
         &settings.tasks,

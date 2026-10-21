@@ -912,6 +912,11 @@ impl Workbench {
                     } else if change.intersects(
                         StoreChanged::ATTENTION | StoreChanged::TASKS | StoreChanged::UNTRACKED,
                     ) {
+                        if change.intersects(StoreChanged::TASKS) {
+                            // Work that starts waiting for review while its chat or Changes
+                            // view is on screen is seen at once.
+                            this.sync_session_focus(cx);
+                        }
                         cx.notify();
                     } else {
                         return;

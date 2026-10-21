@@ -80,13 +80,46 @@ impl TaskBook {
     }
 
     /// Whether the finished run of `session` waits for a reviewer: its task is `done` and
-    /// `awaiting_review`. Such a session counts as a soft *Needs you* item.
+    /// `awaiting_review`. Such a session counts as a soft *Needs you* item until the user has
+    /// seen it (see [`review_key`](Self::review_key)).
     pub fn awaits_review(&self, session: SessionId) -> bool {
-        self.tasks.values().any(|task| {
-            task.state == TaskState::Done
-                && task.delivery == DeliveryState::AwaitingReview
-                && task.sessions.last() == Some(&session)
-        })
+        self.review_key(session).is_some()
+    }
+
+    /// What identifies the wait for review of `session`'s task: when its work last became
+    /// `awaiting_review`. A later change that needs review again has another key, so having
+    /// seen one wait is not having seen the next. `None` while nothing waits.
+    pub fn review_key(&self, session: SessionId) -> Option<u64> {
+        self.tasks
+            .values()
+            .filter(|task| {
+                task.state == TaskState::Done
+                    && task.delivery == DeliveryState::AwaitingReview
+                    && task.sessions.last() == Some(&session)
+            })
+            .map(|task| awaited_at(task).unwrap_or(0))
+            .max()
+    }
+
+    /// The tasks `here` accepts whose work is still open (`awaiting_review`, `accepted`,
+    /// `changes_requested`), the most recent change first: what a Finish delivers.
+    pub fn open_work(&self, here: impl Fn(&Task) -> bool) -> Vec<&Task> {
+        let mut open: Vec<&Task> = self
+            .tasks
+            .values()
+            .filter(|task| task.delivery.is_open() && here(task))
+            .collect();
+        open.sort_by_key(|task| {
+            std::cmp::Reverse((awaited_at(task).unwrap_or(0), task.created_at_ms))
+        });
+        open
+    }
+
+    /// Whether `session` ran a task (its delivery says what the session's turns changed).
+    pub fn ran_a_task(&self, session: SessionId) -> bool {
+        self.tasks
+            .values()
+            .any(|task| task.sessions.contains(&session))
     }
 
     pub fn len(&self) -> usize {
@@ -175,6 +208,15 @@ pub fn state_glyph(state: TaskState) -> (crate::icons::Icon, Tone) {
         TaskState::Failed => (Icon::StateFailed, Tone::Error),
         TaskState::Cancelled => (Icon::StateCancelled, Tone::Muted),
     }
+}
+
+/// When the task's work last became `awaiting_review`: when a turn last changed files.
+fn awaited_at(task: &Task) -> Option<u64> {
+    task.delivery_history
+        .iter()
+        .rev()
+        .find(|r| r.state == DeliveryState::AwaitingReview)
+        .map(|r| r.at_ms)
 }
 
 /// The delivery pill of a task, as `hutan task ls` words it; none while there is nothing to

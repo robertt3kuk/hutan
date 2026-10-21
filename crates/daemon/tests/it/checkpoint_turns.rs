@@ -34,7 +34,7 @@ use tokio::time::{sleep, timeout};
 // Git ----------------------------------------------------------------------------------------
 
 /// Git without the user's configuration.
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -59,7 +59,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 /// The environment of the daemon's git calls: no user configuration either.
-fn git_env() -> BTreeMap<String, String> {
+pub(crate) fn git_env() -> BTreeMap<String, String> {
     BTreeMap::from([
         ("GIT_CONFIG_GLOBAL".to_owned(), "/dev/null".to_owned()),
         ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
@@ -67,7 +67,7 @@ fn git_env() -> BTreeMap<String, String> {
 }
 
 /// `<dir>/repo`: a repository on `main` with one commit of `a.txt`.
-fn repository(dir: &Path) -> PathBuf {
+pub(crate) fn repository(dir: &Path) -> PathBuf {
     let base = fs::canonicalize(dir).unwrap();
     git(&base, &["init", "-q", "-b", "main", "repo"]);
     let root = base.join("repo");
@@ -597,7 +597,7 @@ fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../agents/tests/fixtures/codex-0.162")
 }
 
-fn codex(transcript: &Path, received: &Path) -> CodexConfig {
+pub(crate) fn codex(transcript: &Path, received: &Path) -> CodexConfig {
     let exe = std::env::current_exe().unwrap();
     let bin = exe
         .parent()
@@ -628,7 +628,7 @@ fn hold(gate: &Path) -> String {
 /// `plain-turn` with its turn repeated once per gate, each held after `turn/started` until its
 /// gate exists (the test edits files meanwhile, as the agent would). Each turn has ids of its
 /// own.
-fn held_turns(dir: &Path, gates: &[PathBuf]) -> PathBuf {
+pub(crate) fn held_turns(dir: &Path, gates: &[PathBuf]) -> PathBuf {
     let real = fs::read_to_string(fixtures().join("plain-turn.jsonl")).unwrap();
     let lines: Vec<&str> = real.lines().collect();
     let at = lines

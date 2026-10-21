@@ -44,8 +44,8 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::agents::{self, AgentAttentionChanged, AgentBadge};
 use super::attention::{
-    AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread, classify,
-    present,
+    AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, READY_FOR_REVIEW, Tone,
+    Unread, classify, present,
 };
 use super::presentation::{self, AgentPresentation, Facts};
 use super::tasks::TaskBook;
@@ -387,6 +387,10 @@ pub struct SessionsStore {
     /// The session marked unread while it was on screen: reading it is held off until the focus
     /// has been elsewhere.
     hold_unread: Option<SessionId>,
+    /// The wait for review the user has seen, by session ([`TaskBook::review_key`]): the
+    /// chat or its Changes view was looked at after the work became `awaiting_review`. A seen
+    /// wait is *Ready for review*, no longer *Needs you*.
+    reviews_seen: HashMap<SessionId, u64>,
     /// The notification intents raised for each session (`notify.intent`) since it was last
     /// read: *Mark as read* acknowledges them, so their banners leave the notification centre.
     /// At most [`MAX_SURFACED`] ids; the daemon forgets intents too.
@@ -505,6 +509,7 @@ impl SessionsStore {
             focus_task: None,
             assistant_focused: None,
             hold_unread: None,
+            reviews_seen: HashMap::new(),
             surfaced: HashMap::new(),
             untracked: HashMap::new(),
             scan_task: None,
@@ -996,7 +1001,8 @@ impl SessionsStore {
     /// How `info` shows up: its own state, except that a live session in which an agent of the
     /// observation tree is blocked always needs the user, whatever the session summary says, and
     /// that the session of a task waiting for review is a soft *Needs you* item (accent, never
-    /// a badge: [`classify`] leaves accent alone).
+    /// a badge: [`classify`] leaves accent alone) until the user has seen it, then a quiet
+    /// `ready for review`. A turn that runs (or is stopping) is *working*, whatever waits.
     pub fn presentation(&self, info: &SessionInfo) -> Presentation {
         let presentation = self.raw_presentation(info);
         if presentation.needs_you && self.attention.snoozed_key(info.id).is_some() {
@@ -1027,16 +1033,81 @@ impl SessionsStore {
                 return agents::blocked_presentation(&blocked);
             }
         }
-        if !presentation.needs_you && self.tasks.awaits_review(info.id) {
-            return Presentation {
-                label: "review".into(),
-                detail: "awaiting review".into(),
-                tone: Tone::Accent,
-                filled: true,
-                needs_you: true,
+        let working = presentation.label == "working"
+            || info.chat.as_ref().is_some_and(|chat| chat.turn_active);
+        if !presentation.needs_you
+            && !working
+            && let Some(seen) = self.review_seen(info.id)
+        {
+            return if seen {
+                Presentation {
+                    label: READY_FOR_REVIEW.into(),
+                    detail: String::new(),
+                    tone: Tone::Muted,
+                    filled: false,
+                    needs_you: false,
+                }
+            } else {
+                Presentation {
+                    label: "review".into(),
+                    detail: "awaiting review".into(),
+                    tone: Tone::Accent,
+                    filled: true,
+                    needs_you: true,
+                }
             };
         }
         presentation
+    }
+
+    /// Whether the user has seen the work of `session` that waits for review; `None` while
+    /// nothing waits.
+    fn review_seen(&self, session: SessionId) -> Option<bool> {
+        let key = self.tasks.review_key(session)?;
+        Some(self.reviews_seen.get(&session) == Some(&key))
+    }
+
+    /// The user has seen the work of `session` that waits for review (its chat or its Changes
+    /// view is on screen): it stays *Ready for review* without needing them. Whether that
+    /// changed anything.
+    fn see_review(&mut self, session: SessionId) -> bool {
+        let Some(key) = self.tasks.review_key(session) else {
+            return false;
+        };
+        if self.reviews_seen.get(&session) == Some(&key) {
+            return false;
+        }
+        // Waits that are over are forgotten: what is left is bounded by the tasks.
+        let tasks = &self.tasks;
+        self.reviews_seen
+            .retain(|id, _| tasks.review_key(*id).is_some());
+        self.reviews_seen.insert(session, key);
+        true
+    }
+
+    /// The Changes view of the checkout at `root` is on screen: the work waiting for review
+    /// of every session that works there is seen.
+    pub fn mark_checkout_looked_at(&mut self, root: &std::path::Path, cx: &mut Context<Self>) {
+        let unseen: Vec<(SessionId, PathBuf)> = self
+            .state
+            .sessions
+            .iter()
+            .filter(|s| self.review_seen(s.id) == Some(false))
+            .filter_map(|s| s.placement.as_ref().map(|p| (s.id, p.root.clone())))
+            .collect();
+        if unseen.is_empty() {
+            return;
+        }
+        let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned());
+        let mut changed = false;
+        for (session, at) in unseen {
+            if at == canonical || at == root {
+                changed |= self.see_review(session);
+            }
+        }
+        if changed {
+            self.changed(StoreChanged::ATTENTION, cx);
+        }
     }
 
     /// The observation tree of `session` (capability `agent.tree`), when it has agents.
@@ -1068,18 +1139,25 @@ impl SessionsStore {
             return cached.clone();
         }
         let unread = self.attention.unread_map();
-        let reviews: HashSet<SessionId> = self
-            .state
-            .sessions
-            .iter()
-            .map(|s| s.id)
-            .filter(|id| self.tasks.awaits_review(*id))
-            .collect();
+        let mut reviews: HashSet<SessionId> = HashSet::new();
+        let mut ready: HashSet<SessionId> = HashSet::new();
+        for session in &self.state.sessions {
+            match self.review_seen(session.id) {
+                Some(false) => {
+                    reviews.insert(session.id);
+                }
+                Some(true) => {
+                    ready.insert(session.id);
+                }
+                None => {}
+            }
+        }
         let snoozed: HashSet<SessionId> = self.attention.snoozed_map().keys().copied().collect();
         let built = Arc::new(presentation::build(&Facts {
             state: &self.state,
             unread,
             reviews: &reviews,
+            ready_for_review: &ready,
             snoozed: &snoozed,
             answered_approvals: &self.answered,
             answered_questions: &self.answered_questions,
@@ -1368,13 +1446,15 @@ impl SessionsStore {
         self.mark_read(session, cx);
     }
 
-    /// *Mark as read*: what is unread about `session` is read, whether or not it is on screen.
-    /// The notification intents raised for it are acknowledged: their banners go.
+    /// *Mark as read*: what is unread about `session` is read, whether or not it is on screen,
+    /// and the work it left for review is seen. The notification intents raised for it are
+    /// acknowledged: their banners go.
     pub fn mark_read(&mut self, session: SessionId, cx: &mut Context<Self>) {
         if self.hold_unread == Some(session) {
             self.hold_unread = None;
         }
-        if self.attention.mark_read(session) {
+        let read = self.attention.mark_read(session);
+        if self.see_review(session) || read {
             self.changed(StoreChanged::ATTENTION, cx);
         }
         self.ack_surfaced(session, cx);

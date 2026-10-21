@@ -139,9 +139,13 @@ pub fn reason_detail(record: &AgentRecord) -> Option<String> {
 
 /// The state word of a row, one per record: attention wins over the working state the agent
 /// is in (reducer precedence, chrome v3 § 2.2), so a session that waits for a decision says
-/// `Needs you · approval` and never also `Working`; every other record says its state.
+/// `Needs you · approval` and never also `Working`; work waiting for review the user has seen
+/// says `Ready for review`; every other record says its state.
 pub fn state_word(record: &AgentRecord) -> String {
     if !record.needs_you() {
+        if record.ready_for_review {
+            return "Ready for review".to_owned();
+        }
         return record.state.label().to_owned();
     }
     let kind = match record.headline().map(|reason| reason.kind) {
@@ -450,6 +454,7 @@ mod tests {
             live: true,
             managed: false,
             turn_active: false,
+            ready_for_review: false,
             report_source: None,
         }
     }

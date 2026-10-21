@@ -2,7 +2,8 @@
 //! action for both placements. A main checkout is committed (everything listed, untracked files
 //! included) and its branch pushed to its upstream; a worktree is committed, merged into the
 //! main checkout's branch with one of the three merge modes, and that branch pushed. The message
-//! starts as the task's title (else the title of the agent session working in the checkout) and
+//! starts as the title of the task whose turn changed files in the checkout most recently, with
+//! one line naming the others the commit delivers (never a chat that changed nothing), and
 //! stays editable; *Push* starts as `[finish] push` of `daemon.toml`.
 //!
 //! The daemon does the work (`worktree.finish`) and answers step by step; the view shows one
@@ -15,6 +16,7 @@ use gpui::{
     MouseDownEvent, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div,
     prelude::*, px,
 };
+use hutan_core::{DeliveryState, SessionId, TaskRun};
 use hutan_protocol::worktree::{
     FinishCommit, FinishMerge, FinishPush, MergeStrategy, StepReason, StepStatus, WorktreeFinish,
     WorktreeFinished, WorktreeMerged,
@@ -40,6 +42,8 @@ pub(super) struct FinishForm {
     /// How a worktree's branch is merged (ignored for a main checkout).
     strategy: MergeStrategy,
     message: TextInput,
+    /// The other work the commit delivers besides the one the message names.
+    hint: Option<String>,
     /// Vim's modal state over the message (`editor.vim_mode`).
     vim: Vim,
     /// Push after committing (and merging).
@@ -221,24 +225,57 @@ impl ChangesView {
         self.finished.as_ref()
     }
 
-    /// What the message starts as: the title of the task whose work this is, else of the agent
-    /// session working in this checkout.
-    fn finish_prefill(&self, cx: &App) -> String {
-        if let Some(task) = self.task(cx) {
-            return task.title;
-        }
+    /// What the message starts as, and the line naming the other work the commit delivers.
+    /// The message is the title of the task whose turn changed files here most recently (a
+    /// task's work is open only after a turn that changed files, FX-REVIEW): the task the view
+    /// was opened for or the worktree's branch names, or one whose chat ran in this checkout.
+    /// Never a chat that changed nothing. Without any, the title of an agent session working
+    /// here that ran no task (there is no evidence either way for it).
+    fn finish_prefill(&self, cx: &App) -> (String, Option<String>) {
         let store = self.env.sessions.read(cx);
-        store
+        let here = |session: SessionId| {
+            store
+                .session(session)
+                .and_then(|s| s.placement.as_ref())
+                .is_some_and(|p| p.root == self.canonical || p.root == self.path)
+        };
+        let named = self.task(cx).map(|task| task.id);
+        let open = store.tasks().open_work(|task| {
+            Some(task.id) == named || task.sessions.iter().any(|session| here(*session))
+        });
+        if let Some((newest, others)) = open.split_first() {
+            let hint = (!others.is_empty()).then(|| {
+                let titles: Vec<&str> = others.iter().map(|task| task.title.as_str()).collect();
+                format!("Also changed here: {}", titles.join(", "))
+            });
+            return (newest.title.clone(), hint);
+        }
+        // The task of the view (a worktree's) whose work was delivered already, or a run that
+        // never says what it changed; a chat that changed nothing has nothing to name.
+        if let Some(task) = self.task(cx).filter(|task| {
+            task.delivery != DeliveryState::None || !matches!(task.run, Some(TaskRun::Chat { .. }))
+        }) {
+            return (task.title, None);
+        }
+        let untasked = store
             .sessions()
             .iter()
-            .filter(|s| s.chat.is_some() || s.agent.is_some())
-            .find(|s| {
-                s.placement
-                    .as_ref()
-                    .is_some_and(|p| p.root == self.canonical || p.root == self.path)
+            .filter(|s| {
+                s.agent.is_some()
+                    || s.chat
+                        .as_ref()
+                        .is_some_and(|chat| !chat.is_assistant())
             })
-            .map(|s| s.title.clone())
-            .unwrap_or_default()
+            .filter(|s| here(s.id) && !store.tasks().ran_a_task(s.id))
+            .max_by_key(|s| s.created_at_ms)
+            .map(|s| s.title.clone());
+        (untasked.unwrap_or_default(), None)
+    }
+
+    /// The line under the message naming the other work the commit delivers, while the form
+    /// is open.
+    pub fn finish_hint(&self) -> Option<&str> {
+        self.finish.as_ref().and_then(|f| f.hint.as_deref())
     }
 
     // ---- actions --------------------------------------------------------------------------
@@ -251,10 +288,12 @@ impl ChangesView {
         self.delivery.close();
         if self.finish.is_none() {
             let mut message = TextInput::new();
-            message.set(&self.finish_prefill(cx));
+            let (prefill, hint) = self.finish_prefill(cx);
+            message.set(&prefill);
             self.finish = Some(FinishForm {
                 strategy: MergeStrategy::Merge,
                 message,
+                hint,
                 vim: Vim::new(),
                 push: true,
                 push_chosen: false,
@@ -564,6 +603,17 @@ impl ChangesView {
             )
             .child(probe(&self.env.regions, Region::Changes("finish-message"))),
         );
+        if let Some(also) = &form.hint {
+            body = body.child(
+                div()
+                    .relative()
+                    .text_color(theme.muted)
+                    .text_size(px(tokens.secondary_font_size))
+                    .truncate()
+                    .child(SharedString::from(also.clone()))
+                    .child(probe(&self.env.regions, Region::Changes("finish-hint"))),
+            );
+        }
         let push_target = if worktree { &target } else { &branch };
         body = body.child(
             div()

@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use hutan_core::WorkspaceId;
@@ -35,9 +35,49 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(90);
 /// A push of a branch, through the user's network and credential helper.
 const PUSH_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// What `worktree.finish` did, and the merge it made (the task service marks the work of a task
-/// on that branch `merged`).
-pub type Finished = (WorktreeFinished, Option<(WorktreeMerged, Vec<WorkspaceId>)>);
+/// What `worktree.finish` did, the merge it made (the task service marks the work of a task
+/// on that branch `merged`) and the checkout it finished (the work of the tasks that ran there
+/// is `merged` once the Finish landed: [`Finished::landed`]).
+#[derive(Debug)]
+pub struct Finished {
+    pub result: WorktreeFinished,
+    pub merged: Option<(WorktreeMerged, Vec<WorkspaceId>)>,
+    /// The checkout's top level, canonical.
+    pub checkout: PathBuf,
+}
+
+impl Finished {
+    /// The commit the work landed in when no step failed: the merge's, else the new commit's,
+    /// else what the push sent; `None` when nothing landed or a step failed.
+    pub fn landed(&self) -> Option<&str> {
+        fn ok(status: StepStatus, commit: Option<&String>) -> Option<&String> {
+            (status == StepStatus::Ok).then_some(commit).flatten()
+        }
+        let done = &self.result;
+        let failed = done.commit.status == StepStatus::Failed
+            || done
+                .merge
+                .as_ref()
+                .is_some_and(|m| m.status == StepStatus::Failed)
+            || done
+                .push
+                .as_ref()
+                .is_some_and(|p| p.status == StepStatus::Failed);
+        if failed {
+            return None;
+        }
+        done.merge
+            .as_ref()
+            .and_then(|m| ok(m.status, m.commit.as_ref()))
+            .or_else(|| ok(done.commit.status, done.commit.commit.as_ref()))
+            .or_else(|| {
+                done.push
+                    .as_ref()
+                    .and_then(|p| ok(p.status, p.commit.as_ref()))
+            })
+            .map(String::as_str)
+    }
+}
 
 impl WorktreeService {
     /// `worktree.finish`.
@@ -160,14 +200,16 @@ impl WorktreeService {
         } else {
             Some(self.push(&push_dir, &push_branch).await)
         };
-        Ok((
-            WorktreeFinished {
+        let checkout = std::fs::canonicalize(&entry.path).unwrap_or(entry.path);
+        Ok(Finished {
+            result: WorktreeFinished {
                 commit,
                 merge,
                 push,
             },
             merged,
-        ))
+            checkout,
+        })
     }
 
     /// The merge step: skipped when the target already has the branch, else `worktree.merge`

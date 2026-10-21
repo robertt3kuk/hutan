@@ -1298,13 +1298,12 @@ fn a_finished_task_shows_its_delivery_pill_and_needs_you_without_a_badge(cx: &mu
         (DeliveryState::AwaitingReview, Some("Awaiting review"))
     );
 
-    // The session is looked at and ended long ago; it still needs the user, softly: the
-    // sidebar's Needs you lists it, the menu bar and the Dock do not count it.
+    // The session ended before the window came; it needs the user, softly: the sidebar's
+    // Needs you lists it, the menu bar and the Dock do not count it.
     let sessions = view.read_with(cx, |wb, _| wb.sessions().clone());
     wait_until(cx, "the session", |cx| {
         sessions.read_with(cx, |s, _| s.session(session).is_some())
     });
-    sessions.update(cx, |s, cx| s.mark_read(session, cx));
     sessions.read_with(cx, |s, _| {
         let presentation = s.presentation(s.session(session).unwrap());
         assert_eq!(
@@ -1315,6 +1314,23 @@ fn a_finished_task_shows_its_delivery_pill_and_needs_you_without_a_badge(cx: &mu
         assert_eq!(s.needs_you(), [session]);
         assert!(s.attention_entries().is_empty(), "a soft item has no badge");
     });
+    // Looking is not accepting, but it is seeing: read, it leaves Needs you and says it is
+    // ready for review, quietly; the pill stays.
+    sessions.update(cx, |s, cx| s.mark_read(session, cx));
+    sessions.read_with(cx, |s, _| {
+        let presentation = s.presentation(s.session(session).unwrap());
+        assert_eq!(
+            (presentation.label.as_str(), presentation.needs_you),
+            ("ready for review", false)
+        );
+        assert_eq!(presentation.tone, Tone::Muted);
+        assert!(s.needs_you().is_empty());
+    });
+    assert_eq!(
+        rows(&panel, cx)[0].delivery_label,
+        Some("Awaiting review"),
+        "seen work still awaits its review"
+    );
 
     // A task that waits for review stays listed when finished tasks are hidden …
     settings(&view, cx)

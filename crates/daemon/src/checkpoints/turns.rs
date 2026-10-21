@@ -671,6 +671,34 @@ impl TurnCheckpoints {
         });
     }
 
+    /// How many files turn `turn` of `session` changed (`None`: its latest turn), once the
+    /// turn's end is recorded. `None` when no checkpoint of the turn can say: the session has
+    /// none (not an agent chat), they were off, the folder cannot have them, or a snapshot
+    /// failed. The task service judges what a turn left for review by it (FX-REVIEW).
+    pub async fn files_changed(&self, session: SessionId, turn: Option<TurnId>) -> Option<u64> {
+        let slot = self.slot(session)?;
+        let ending = slot.state.lock().ending.clone();
+        if let Some(mut ending) = ending {
+            // Gone without saying so: the end was recorded or never will be; the row says.
+            let _ = ending.wait_for(|done| *done).await;
+        }
+        let rows = self
+            .store("reading the checkpoints of a turn", move |s| {
+                s.checkpoints().list(CheckpointFilter::Session(session))
+            })
+            .await?;
+        let row = rows
+            .iter()
+            .rev()
+            .filter(|row| row.kind == CheckpointKind::Turn)
+            .find(|row| turn.is_none() || row.turn_id == turn)?;
+        matches!(
+            row.state,
+            CheckpointState::Ok | CheckpointState::Late | CheckpointState::Unchanged
+        )
+        .then_some(row.files_changed)
+    }
+
     /// Takes the pending turn that `which` accepts, marking its end as in flight.
     fn take_pending(
         &self,

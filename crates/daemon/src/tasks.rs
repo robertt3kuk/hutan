@@ -31,9 +31,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use hutan_core::{
-    AgentEventKind, AgentNode, Delivery, DeliveryActor, DeliveryRecord, DeliveryState, NodeKind,
-    NodeOutcome, NodeState, ReviewDecision, SessionId, SessionState, Task, TaskEvent, TaskId,
-    TaskPlacement, TaskPlacementKind, TaskRun, TaskState, WorkspaceId, task as model,
+    AgentEvent, AgentEventKind, AgentNode, Delivery, DeliveryActor, DeliveryRecord,
+    DeliveryState, NodeKind, NodeOutcome, NodeState, ReviewDecision, SessionId, SessionState,
+    Task, TaskEvent, TaskId, TaskPlacement, TaskPlacementKind, TaskRun, TaskState, TurnId,
+    WorkspaceId, task as model,
 };
 use hutan_protocol::chat::ChatCreate;
 use hutan_protocol::control::{ErrorBody, ErrorCode};
@@ -58,6 +59,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::bus::EventBus;
+use crate::checkpoints::turns::TurnCheckpoints;
 use crate::chat::{AGENT_CODEX, is_gateway_agent};
 use crate::config::TasksSettings;
 use crate::harness::is_harness_agent;
@@ -85,6 +87,24 @@ struct Slot {
     blocked: bool,
     /// The main agent of the session was seen working since the task started.
     working_seen: bool,
+    /// Chat turns of the task's session that started since the daemon did: a judgement of a
+    /// turn that ended is dropped when another one started meanwhile.
+    turns: u64,
+    /// The turn running in the task's chat sent a `file_diff` (what a turn changed when no
+    /// checkpoint can say).
+    turn_diffs: bool,
+}
+
+impl Slot {
+    fn new(task: Task) -> Self {
+        Self {
+            task,
+            blocked: false,
+            working_seen: false,
+            turns: 0,
+            turn_diffs: false,
+        }
+    }
 }
 
 /// Everything in memory, behind one lock that is never held across an `await`.
@@ -93,6 +113,9 @@ struct State {
     tasks: HashMap<TaskId, Slot>,
     /// The session of every running task.
     by_session: HashMap<SessionId, TaskId>,
+    /// Who last gave each task's chat a message to send (`chat.send`, `chat.queue.add`, …):
+    /// the actor of the record when that message's turn re-opens the task's delivery.
+    senders: HashMap<SessionId, DeliveryActor>,
     scheduler: model::Scheduler,
     /// What clients were last told about each task.
     published: HashMap<TaskId, Task>,
@@ -106,16 +129,7 @@ impl State {
         let mut state = Self {
             tasks: tasks
                 .into_iter()
-                .map(|task| {
-                    (
-                        task.id,
-                        Slot {
-                            task,
-                            blocked: false,
-                            working_seen: false,
-                        },
-                    )
-                })
+                .map(|task| (task.id, Slot::new(task)))
                 .collect(),
             last_created_ms,
             ..Self::default()
@@ -175,6 +189,33 @@ impl State {
         self.tasks
             .get(&id)
             .map_or_else(|| id.to_string(), |slot| format!("`{}`", slot.task.title))
+    }
+
+    /// The chat task whose session is `session`: the running one it works on, else a chat
+    /// task that ran in it last and is `done` (the user goes on with the conversation).
+    fn chat_task(&self, session: SessionId) -> Option<TaskId> {
+        if let Some(id) = self.by_session.get(&session) {
+            return Some(*id);
+        }
+        self.tasks
+            .values()
+            .filter(|slot| {
+                slot.task.state == TaskState::Done
+                    && matches!(slot.task.run, Some(TaskRun::Chat { .. }))
+                    && slot.task.sessions.last() == Some(&session)
+            })
+            .max_by_key(|slot| slot.task.created_at_ms)
+            .map(|slot| slot.task.id)
+    }
+
+    /// Forgets who sent to sessions no task ran in any more.
+    fn prune_senders(&mut self) {
+        let Self { tasks, senders, .. } = self;
+        senders.retain(|session, _| {
+            tasks
+                .values()
+                .any(|slot| slot.task.sessions.contains(session))
+        });
     }
 
     /// The tasks that depend on `id`, directly or not, dependencies first.
@@ -323,6 +364,8 @@ impl State {
 pub struct TaskService {
     registry: RegistryHandle,
     worktrees: Arc<WorktreeService>,
+    /// What each chat turn changed (ADR 0019): whether it left work to review.
+    checkpoints: Arc<TurnCheckpoints>,
     storage: Storage,
     bus: Arc<EventBus>,
     /// `[tasks] max_parallel`; changed live by `daemon.settings.set`.
@@ -337,6 +380,7 @@ impl TaskService {
     pub async fn open(
         registry: RegistryHandle,
         worktrees: Arc<WorktreeService>,
+        checkpoints: Arc<TurnCheckpoints>,
         storage: Storage,
         bus: Arc<EventBus>,
         settings: &TasksSettings,
@@ -345,6 +389,7 @@ impl TaskService {
         let this = Arc::new(Self {
             registry,
             worktrees,
+            checkpoints,
             storage,
             bus,
             max_parallel: AtomicUsize::new(settings.max_parallel),
@@ -489,14 +534,7 @@ impl TaskService {
                 after_policy: req.after_policy,
                 delivery_history: Vec::new(),
             };
-            st.tasks.insert(
-                id,
-                Slot {
-                    task,
-                    blocked: false,
-                    working_seen: false,
-                },
-            );
+            st.tasks.insert(id, Slot::new(task));
             self.commit(&mut st, id);
             st.view(id)
         };
@@ -998,12 +1036,7 @@ impl TaskService {
                     ..
                 } => self.observe_tree(&mut st, session_id, &nodes_changed),
                 Event::ChatEvent { session_id, event } if event.delivery == Delivery::Live => {
-                    match chat_outcome(&event.kind) {
-                        Some((event, outcome)) => {
-                            self.finish_session(&mut st, session_id, event, outcome)
-                        }
-                        None => false,
-                    }
+                    self.observe_chat(&mut st, session_id, &event)
                 }
                 Event::WorkspaceClosed { workspace_id } => {
                     self.forget_workspace(&mut st, workspace_id);
@@ -1109,16 +1142,112 @@ impl TaskService {
         }
     }
 
-    fn finish_session(
-        &self,
-        st: &mut State,
-        session: SessionId,
-        event: TaskEvent,
-        outcome: String,
-    ) -> bool {
-        match st.by_session.get(&session).copied() {
-            Some(id) => self.apply_run(st, id, event, outcome, true),
-            None => false,
+    /// A live event of a task's chat. A turn that starts in the chat of a `done` task re-opens
+    /// its work (`awaiting_review` → `none`, in the name of whoever sent the message); a
+    /// `file_diff` is remembered for the turn; the end of a turn finishes a running task and
+    /// has the turn judged for review ([`judge_turn`](Self::judge_turn)).
+    fn observe_chat(self: &Arc<Self>, st: &mut State, session: SessionId, event: &AgentEvent) -> bool {
+        let Some(id) = st.chat_task(session) else {
+            return false;
+        };
+        let running = st.by_session.contains_key(&session);
+        match &event.kind {
+            AgentEventKind::TurnStarted => {
+                let by = st
+                    .senders
+                    .get(&session)
+                    .copied()
+                    .unwrap_or(DeliveryActor::Daemon);
+                let Some(slot) = st.tasks.get_mut(&id) else {
+                    return false;
+                };
+                slot.turns += 1;
+                slot.turn_diffs = false;
+                if running || slot.task.delivery != DeliveryState::AwaitingReview {
+                    return false;
+                }
+                // The user went on with the conversation: what waited is not the work any
+                // more; the next turn that changes files has it judged again.
+                slot.task
+                    .record_delivery(DeliveryRecord::new(DeliveryState::None, by, now_ms()));
+                self.commit(st, id);
+                true
+            }
+            AgentEventKind::FileDiff { changes, patch } => {
+                let changed =
+                    !changes.is_empty() || patch.as_deref().is_some_and(|p| !p.trim().is_empty());
+                if changed && let Some(slot) = st.tasks.get_mut(&id) {
+                    slot.turn_diffs = true;
+                }
+                false
+            }
+            kind => {
+                let Some((task_event, outcome)) = chat_outcome(kind) else {
+                    return false;
+                };
+                let moved = running && self.apply_run(st, id, task_event, outcome, true);
+                // The run that finished `done`, or a later turn of a done task's chat.
+                if (moved || !running)
+                    && st
+                        .tasks
+                        .get(&id)
+                        .is_some_and(|slot| slot.task.state == TaskState::Done)
+                {
+                    self.judge_turn(st, id, session, event.turn_id);
+                }
+                moved
+            }
+        }
+    }
+
+    /// The turn of task `id` that just ended in `session` left work for review when its
+    /// checkpoint (else, without one, its `file_diff` events) shows a change: the delivery
+    /// becomes `awaiting_review`. A turn that changed nothing leaves the delivery as it was.
+    /// The checkpoint's end is recorded in the background, so the judgement is too; it is
+    /// dropped when another turn started meanwhile (that turn re-opened the work).
+    fn judge_turn(self: &Arc<Self>, st: &State, id: TaskId, session: SessionId, turn: Option<TurnId>) {
+        let Some(slot) = st.tasks.get(&id) else {
+            return;
+        };
+        let (generation, diffs) = (slot.turns, slot.turn_diffs);
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            let files = this.checkpoints.files_changed(session, turn).await;
+            if !left_work(files, diffs) {
+                return;
+            }
+            {
+                let mut st = this.state.lock();
+                let Some(slot) = st.tasks.get_mut(&id) else {
+                    return;
+                };
+                if slot.turns != generation
+                    || slot.task.state != TaskState::Done
+                    || slot.task.delivery == DeliveryState::AwaitingReview
+                {
+                    return;
+                }
+                slot.task.record_delivery(DeliveryRecord::new(
+                    DeliveryState::AwaitingReview,
+                    DeliveryActor::Daemon,
+                    now_ms(),
+                ));
+                this.commit(&mut st, id);
+            }
+            this.schedule();
+        });
+    }
+
+    /// A client gave the chat of `session` a message (`chat.send`, `chat.queue.add`, …): the
+    /// turn it starts re-opens a done task's work in that client's name.
+    pub fn note_sender(&self, session: SessionId, by: DeliveryActor) {
+        let mut st = self.state.lock();
+        if st
+            .tasks
+            .values()
+            .any(|slot| slot.task.sessions.contains(&session))
+        {
+            st.senders.insert(session, by);
         }
     }
 
@@ -1128,8 +1257,10 @@ impl TaskService {
     }
 
     /// [`apply`](Self::apply) for the end of a run (the session's exit, the agent going idle,
-    /// the end of a chat turn): a `done` run leaves work for review when the task has a
-    /// worktree or an agent did it (`by_agent`: an agent, not just a process, finished).
+    /// the end of a chat turn): a terminal run that finished `done` leaves work for review
+    /// when the task has a worktree or an agent did it (`by_agent`: an agent, not just a
+    /// process, finished). A chat's turns are judged by what they changed instead
+    /// ([`judge_turn`](Self::judge_turn)).
     fn apply_run(
         &self,
         st: &mut State,
@@ -1360,6 +1491,54 @@ impl TaskService {
         self.schedule();
     }
 
+    /// `worktree.finish` committed (and pushed) the checkout `checkout` (canonical) into
+    /// `commit`: the open work (`awaiting_review`, `accepted`, `changes_requested`) of every
+    /// task whose sessions ran in that checkout is `merged` with the commit.
+    pub async fn checkout_finished(
+        self: &Arc<Self>,
+        checkout: &std::path::Path,
+        commit: &str,
+        by: DeliveryActor,
+    ) {
+        let Ok(list) = self
+            .registry
+            .list_sessions(SessionListFilter::default())
+            .await
+        else {
+            return;
+        };
+        let ran_there: HashSet<SessionId> = list
+            .sessions
+            .iter()
+            .filter(|s| match &s.placement {
+                Some(placement) => placement.root == checkout,
+                None => s.cwd.as_deref().is_some_and(|cwd| cwd.starts_with(checkout)),
+            })
+            .map(|s| s.id)
+            .collect();
+        {
+            let mut st = self.state.lock();
+            let ids: Vec<TaskId> = st
+                .tasks
+                .values()
+                .filter(|slot| {
+                    slot.task.delivery.is_open()
+                        && slot.task.sessions.iter().any(|s| ran_there.contains(s))
+                })
+                .map(|slot| slot.task.id)
+                .collect();
+            for id in ids {
+                if let Some(slot) = st.tasks.get_mut(&id) {
+                    let mut record = DeliveryRecord::new(DeliveryState::Merged, by, now_ms());
+                    record.commit = Some(commit.to_owned());
+                    slot.task.record_delivery(record);
+                }
+                self.commit(&mut st, id);
+            }
+        }
+        self.schedule();
+    }
+
     // ---- state changes --------------------------------------------------------------------
 
     /// Writes the task down and tells the clients what changed.
@@ -1390,6 +1569,7 @@ impl TaskService {
     fn remove(&self, st: &mut State, id: TaskId) {
         st.tasks.remove(&id);
         st.by_session.retain(|_, task| *task != id);
+        st.prune_senders();
         st.scheduler.remove(id);
         st.published.remove(&id);
         log_write(self.storage.tasks().delete(id), "a task");
@@ -1418,6 +1598,7 @@ impl TaskService {
                 warn!(%error, task = %id, "could not publish task.removed");
             }
         }
+        st.prune_senders();
     }
 }
 
@@ -1435,13 +1616,20 @@ fn invalid_state(message: impl Into<String>) -> ErrorBody {
     ErrorBody::new(ErrorCode::InvalidState, message)
 }
 
-/// Whether a run that finished `done` left work for a person to look at: the task has a
-/// worktree, or an agent (a chat, or an agent in a terminal) did the work in the main checkout.
-/// A plain command that exits 0 in the main checkout has nothing to review.
+/// Whether a terminal run that finished `done` left work for a person to look at: the task
+/// has a worktree, or an agent in the terminal did the work in the main checkout. A plain
+/// command that exits 0 in the main checkout has nothing to review. A chat is judged turn by
+/// turn by what it changed ([`left_work`]), never here.
 fn reviewable(task: &Task, by_agent: bool) -> bool {
-    task.placement.kind == TaskPlacementKind::Worktree
-        || by_agent
-        || matches!(task.run, Some(TaskRun::Chat { .. }))
+    !matches!(task.run, Some(TaskRun::Chat { .. }))
+        && (task.placement.kind == TaskPlacementKind::Worktree || by_agent)
+}
+
+/// Whether a chat turn left work to review: the files its checkpoint says it changed, else
+/// (no checkpoint: not in git, checkpoints off, a failed snapshot) whether it sent a
+/// `file_diff`.
+fn left_work(files_changed: Option<u64>, diffs: bool) -> bool {
+    files_changed.map_or(diffs, |files| files > 0)
 }
 
 /// The branch a worktree task works on: the one it names, else `task/<slug of the title>`.
@@ -1877,14 +2065,27 @@ mod tests {
         let mut t = task("x", 1, &[], TaskState::Done);
         assert!(!reviewable(&t, false), "a command in the main checkout");
         assert!(reviewable(&t, true), "an agent in the main checkout");
+        t.placement.kind = TaskPlacementKind::Worktree;
+        assert!(reviewable(&t, false), "a worktree holds work");
         t.run = Some(TaskRun::Chat {
             agent: "codex".into(),
             model: None,
         });
-        assert!(reviewable(&t, false), "a chat is an agent");
-        t.run = None;
-        t.placement.kind = TaskPlacementKind::Worktree;
-        assert!(reviewable(&t, false), "a worktree holds work");
+        assert!(
+            !reviewable(&t, true),
+            "a chat is judged turn by turn, by what it changed"
+        );
+    }
+
+    #[test]
+    fn a_turn_left_work_when_its_checkpoint_says_so_else_when_it_sent_a_diff() {
+        assert!(left_work(Some(2), false));
+        assert!(!left_work(Some(0), false));
+        // The checkpoint wins: a diff the agent proposed and the user declined changed nothing.
+        assert!(!left_work(Some(0), true));
+        // No checkpoint (not in git, checkpoints off, a failed snapshot): the diffs say.
+        assert!(left_work(None, true));
+        assert!(!left_work(None, false));
     }
 
     #[test]
