@@ -49,6 +49,7 @@ mod text_input_gpui;
 mod theme_gpui;
 mod theme_picker_gpui;
 mod ux_chat_gpui;
+mod vim_file_gpui;
 mod vim_gpui;
 mod workbench_gpui;
 mod workspaces_gpui;

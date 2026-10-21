@@ -99,6 +99,8 @@ pub struct FileView {
     /// The `:` line opened and takes the keyboard at the next frame (the event that opens it
     /// comes without a window).
     focus_command_on_render: bool,
+    /// What the line under the code showed in the last frame (tests).
+    shown_bar: Option<String>,
     /// *Follow agent*: the view scrolls to the agent's newest change at every write.
     follow: bool,
     /// The agent's write that Follow scrolled to last.
@@ -170,6 +172,7 @@ impl FileView {
             command_focus: cx.focus_handle(),
             history: Vec::new(),
             focus_command_on_render: false,
+            shown_bar: None,
             follow: false,
             followed_epoch: 0,
             _subscriptions: subscriptions,
@@ -593,6 +596,7 @@ impl FileView {
                 theme,
                 tokens,
             );
+            self.shown_bar = Some(format!(":{}", command.text));
             return Some(
                 bar.child(div().text_color(theme.fg).child(":"))
                     .child(
@@ -612,7 +616,31 @@ impl FileView {
                     .into_any_element(),
             );
         }
+        // The `/` or `?` line being typed: Vim's state holds it, this shows it with a caret.
+        if let Some(line) = self.code.read(cx).vim_command_line() {
+            self.shown_bar = Some(line.clone());
+            return Some(
+                bar.text_color(theme.fg)
+                    .child(
+                        div()
+                            .id("file-search-line")
+                            .flex()
+                            .items_center()
+                            .min_w_0()
+                            .child(div().min_w_0().truncate().child(line))
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .w(px(2.0))
+                                    .h(px(tokens.secondary_font_size + 2.0))
+                                    .bg(theme.fg),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        }
         let message = self.code.read(cx).vim_message().cloned()?;
+        self.shown_bar = Some(message.text.clone());
         Some(
             bar.text_color(if message.error {
                 theme.danger
@@ -622,6 +650,12 @@ impl FileView {
             .child(div().min_w_0().truncate().child(message.text))
             .into_any_element(),
         )
+    }
+
+    /// What the line under the code showed in the last frame: the `:` line (`:w`), the `/` or
+    /// `?` line (`/foo`), or the answer of a command; `None` when it was not drawn (tests).
+    pub fn command_bar_text(&self) -> Option<&str> {
+        self.shown_bar.as_deref()
     }
 
     pub fn code(&self) -> &Entity<CodeView> {
@@ -1424,6 +1458,7 @@ impl Render for FileView {
                 }
             });
         }
+        self.shown_bar = None;
         let command_bar = ready
             .then(|| self.render_command_bar(&theme, &tokens, window, cx))
             .flatten();

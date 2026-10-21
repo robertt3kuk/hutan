@@ -10,6 +10,7 @@
 use gpui::{
     AnyElement, App, ClipboardItem, Context, IntoElement, KeyDownEvent, ParentElement, Styled, div,
 };
+use hutan_code_view::vim_key_of;
 use hutan_settings::SettingsStore;
 
 use super::chat::TextInput;
@@ -48,46 +49,6 @@ impl VimConfig {
     }
 }
 
-/// The key the modal layer sees for `event`; `None` for ⌘ and fn combinations (shortcuts, not
-/// typing) and for keys it has no name for.
-pub fn key_of(event: &KeyDownEvent) -> Option<Key> {
-    let ks = &event.keystroke;
-    let mods = &ks.modifiers;
-    if mods.platform || mods.function {
-        return None;
-    }
-    let named = match ks.key.as_str() {
-        "escape" => Some(Key::Escape),
-        "enter" => Some(Key::Enter),
-        "tab" => Some(Key::Tab),
-        "backspace" => Some(Key::Backspace),
-        "delete" => Some(Key::Delete),
-        "left" => Some(Key::Left),
-        "right" => Some(Key::Right),
-        "up" => Some(Key::Up),
-        "down" => Some(Key::Down),
-        "home" => Some(Key::Home),
-        "end" => Some(Key::End),
-        _ => None,
-    };
-    if let Some(key) = named {
-        return (!mods.control && !mods.alt).then_some(key);
-    }
-    if mods.control {
-        let mut chars = ks.key.chars();
-        return match (chars.next(), chars.next()) {
-            (Some(c), None) if c.is_ascii_alphabetic() && !mods.alt => Some(Key::Ctrl(c)),
-            _ => None,
-        };
-    }
-    let text = ks.key_char.as_deref()?;
-    let mut chars = text.chars();
-    match (chars.next(), chars.next()) {
-        (Some(c), None) if !c.is_control() => Some(Key::Char(c)),
-        _ => None,
-    }
-}
-
 struct AppClipboard<'a>(&'a mut App);
 
 impl Clipboard for AppClipboard<'_> {
@@ -103,7 +64,8 @@ impl Clipboard for AppClipboard<'_> {
 
 /// Feeds `event` to the modal layer over `input`. Typed characters in Insert mode are not keys
 /// to it: they reach the field through the platform's text input (`text_field`), like every
-/// other text.
+/// other text. Keys are read as in a file tab ([`vim_key_of`]: a Cyrillic layout's keys are
+/// commands by their place on the keyboard).
 pub fn apply(
     vim: &mut Vim,
     input: &mut TextInput,
@@ -111,7 +73,7 @@ pub fn apply(
     options: Options,
     cx: &mut App,
 ) -> Outcome {
-    match key_of(event) {
+    match vim_key_of(event, |c| vim.takes_text(c)) {
         Some(Key::Char(_)) if vim.mode() == Mode::Insert => Outcome::Ignored,
         Some(key) => vim.key(input, key, options, &mut AppClipboard(cx)),
         None => Outcome::Ignored,
@@ -363,11 +325,12 @@ impl Workbench {
                 if sheet.edit.is_some() {
                     return None;
                 }
-                Some((&mut edits.sheet_query, &mut sheet.query, true))
+                Some((&mut edits.sheet_query, &mut sheet.query, sheet.vim))
             }
             OverlayField::SheetValue => {
-                let edit = self.sheet.as_mut()?.edit.as_mut()?;
-                Some((&mut edits.sheet_value, &mut edit.text, true))
+                let sheet = self.sheet.as_mut()?;
+                let vim = sheet.vim;
+                Some((&mut edits.sheet_value, &mut sheet.edit.as_mut()?.text, vim))
             }
         }
     }
@@ -390,11 +353,11 @@ impl Workbench {
                 if sheet.edit.is_some() {
                     return None;
                 }
-                Some((&edits.sheet_query, &sheet.query, true))
+                Some((&edits.sheet_query, &sheet.query, sheet.vim))
             }
             OverlayField::SheetValue => {
-                let edit = self.sheet.as_ref()?.edit.as_ref()?;
-                Some((&edits.sheet_value, &edit.text, true))
+                let sheet = self.sheet.as_ref()?;
+                Some((&edits.sheet_value, &sheet.edit.as_ref()?.text, sheet.vim))
             }
         }
     }

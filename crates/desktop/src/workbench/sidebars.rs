@@ -390,6 +390,10 @@ impl Workbench {
             .py(px(4.0))
             .border_t_1()
             .border_color(theme.border)
+            // Start and Settings act; they do not take the keyboard to the dock (the dock's own
+            // mouse-down does), so the sheet or the launcher hands it back to the editor or the
+            // terminal it came from.
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 button("toolbar-start", Icon::ActionAdd, "Start", "start").on_click(
                     |_, window, cx| {

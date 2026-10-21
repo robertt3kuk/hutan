@@ -497,13 +497,13 @@ const FIELDS: &[FieldText] = &[
         "editor",
         "vim_mode",
         "Vim mode",
-        "Vim-style editing (Normal, Insert and Visual modes) in Hutan's text fields. Fields start in Insert mode; Escape switches to Normal, and Escape again does what it always did, such as closing a dialog. Terminals are not affected.",
+        "Vim-style editing (Normal, Insert and Visual modes) in file tabs and Hutan's text fields. File tabs open in Normal mode. Fields start in Insert mode; Escape switches to Normal, and Escape again does what it always did, such as closing a dialog. Terminals are not affected.",
     ),
     field(
         "editor",
         "vim_use_system_clipboard",
         "Vim uses the system clipboard",
-        "Copies and deletes in Vim mode also go to the system clipboard, and p pastes from it. Off, they use a private register in each field.",
+        "On by default, as in Zed: copies and deletes in Vim mode also go to the system clipboard, and p pastes from it. Off, as in Vim itself, they use Vim's own registers (a private one in each field).",
     ),
     field(
         "editor",
@@ -1296,6 +1296,7 @@ pub mod words {
         SOURCE_DEFAULT = "Default";
         SOURCE_DEFAULT_TIP = "Built in: nothing sets this";
         SOURCE_YOU = "You";
+        SOURCE_YOU_LINE = "Set by you";
         LAYER_WORKSPACE = "Workspace";
         LAYER_PROJECT = "Project";
         EDIT_IN = "Edit in";

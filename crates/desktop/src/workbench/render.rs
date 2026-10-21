@@ -2168,10 +2168,10 @@ impl Workbench {
             }
         };
         let hint = |action: &dyn Action| key_hint(window, action).unwrap_or_default();
-        let weak = cx.weak_entity();
+        let workbench = cx.entity();
         let editor_items = self
             .editor_items
-            .get_or_insert_with(|| super::editor_status::EditorItems::new(weak, cx))
+            .get_or_insert_with(|| super::editor_status::EditorItems::new(&workbench, cx))
             .clone();
         let ctx = StatusContext {
             theme: &theme,

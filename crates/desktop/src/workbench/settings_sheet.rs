@@ -73,6 +73,10 @@ pub struct SettingsSheet {
     pub(super) pack_preview: Option<super::settings_themes::PackPreview>,
     /// The scroll of the page's rows: an opened picker scrolls its row into view.
     pub(super) scroll: gpui::ScrollHandle,
+    /// `editor.vim_mode` as it was when the sheet opened: its search and value fields keep the
+    /// way they type while the sheet is open, so turning Vim on in it does not make its own
+    /// Escape leave Insert instead of closing it.
+    pub(super) vim: bool,
 }
 
 impl SettingsSheet {
@@ -178,6 +182,7 @@ impl Workbench {
             pack_filter: String::new(),
             pack_preview: None,
             scroll: gpui::ScrollHandle::new(),
+            vim: self.vim_config().enabled,
         });
         window.focus(&self.sheet_focus, cx);
         self.edits.sheet_query.reset();
@@ -244,14 +249,15 @@ impl Workbench {
         }
     }
 
-    /// Escape in the sheet's text fields under Vim mode: `true` when Vim used it.
+    /// Escape in the sheet's text fields under Vim mode (as it was when the sheet opened):
+    /// `true` when Vim used it.
     fn sheet_vim_escape(&mut self, cx: &mut Context<Self>) -> bool {
-        if !self.vim_config().enabled {
-            return false;
-        }
         let Some(sheet) = &self.sheet else {
             return false;
         };
+        if !sheet.vim || !self.vim_config().enabled {
+            return false;
+        }
         if sheet.dropdown.is_some() {
             return false;
         }

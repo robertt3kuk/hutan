@@ -645,6 +645,9 @@ impl Workbench {
     }
 
     /// The file of `path` in a new split of `pane` at `edge`: a second view of the same buffer.
+    /// The new view starts at the caret and the scroll of the view it was split from, as Vim's
+    /// `:sp` does, and is made now rather than at its first frame, so it has the keyboard at
+    /// once (its `:` line, its `:q`).
     pub fn open_file_in_split(
         &mut self,
         pane: PaneId,
@@ -653,8 +656,19 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let from = self
+            .file_view_of(pane, path)
+            .map(|view| view.read(cx).code().clone());
         let item = ItemRef::file(path);
-        self.try_mutate(cx, |s| s.split_pane(pane, edge, item));
+        if let Some(split) = self.try_mutate(cx, |s| s.split_pane(pane, edge, item)) {
+            let view = self.file_view(split, path, window, cx);
+            if let Some(from) = from {
+                let code = view.read(cx).code().clone();
+                code.update(cx, |code, cx| code.start_like(&from, cx));
+                // The view split from is smaller now: its caret stays in view too.
+                from.update(cx, |code, cx| code.reveal_caret_next_frame(cx));
+            }
+        }
         self.focus_root(window, cx);
     }
 

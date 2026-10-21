@@ -930,7 +930,8 @@ pub struct EditorSettings {
     /// goes to Normal, and a second Escape does what it always did (closes the palette, …).
     pub vim_mode: bool,
     /// Yanks and deletes in Vim mode also go to the system clipboard, and `p` pastes from it.
-    /// Off, they use a register private to the field.
+    /// On by default, as Zed's `use_system_clipboard = "always"`; off, as in Vim itself, they
+    /// use a register private to the field.
     pub vim_use_system_clipboard: bool,
     /// Font size of code in file tabs, in points (the family is the color pack's monospace).
     pub font_size: f64,

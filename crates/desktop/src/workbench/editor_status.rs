@@ -3,17 +3,20 @@
 //! views of their own (B12a fix, slice E-8).
 //!
 //! Each is drawn as a cached view of a fixed width that reads the focused code view when it
-//! renders, so GPUI redraws it when that code view changes. A caret move, a typed character or
-//! a Vim key therefore re-renders these two items; the workbench is not notified for them.
+//! renders. A cached view is drawn again only when it is notified itself (GPUI replays its last
+//! frame otherwise, even when an entity it read changed), so each item observes the code view
+//! it read and the workbench (another tab focused): a caret move, a typed character or a Vim
+//! key re-renders these two items, and the workbench is not notified for them (FX-VIM-1).
 //! (GPUI still renders every ancestor view of a view that changed, the workbench's own `render`
 //! included, but the panels, the other status items and the tabs it holds come from cache.)
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, Context, Entity, IntoElement, ParentElement, Render,
-    SharedString, StyleRefinement, Styled, WeakEntity, Window, div, px,
+    AnyElement, AnyView, App, AppContext as _, Context, Entity, EntityId, IntoElement,
+    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity,
+    Window, div, px,
 };
-use hutan_code_view::VimMode;
+use hutan_code_view::{CodeView, VimMode};
 
 use super::style::UiStyle;
 use super::view::Workbench;
@@ -35,6 +38,11 @@ enum Kind {
 pub struct EditorItem {
     workbench: WeakEntity<Workbench>,
     kind: Kind,
+    /// The code view the item read last, observed: it draws again when that view changes.
+    watched: Option<(EntityId, Subscription)>,
+    /// What the item drew last (tests).
+    shown: Option<String>,
+    _workbench: Subscription,
 }
 
 /// The two item views of a window, made at its first status bar.
@@ -45,10 +53,15 @@ pub struct EditorItems {
 }
 
 impl EditorItems {
-    pub fn new(workbench: WeakEntity<Workbench>, cx: &mut App) -> Self {
+    pub fn new(workbench: &Entity<Workbench>, cx: &mut App) -> Self {
         let item = |kind, cx: &mut App| {
-            let workbench = workbench.clone();
-            cx.new(|_| EditorItem { workbench, kind })
+            cx.new(|cx| EditorItem {
+                workbench: workbench.downgrade(),
+                kind,
+                watched: None,
+                shown: None,
+                _workbench: cx.observe(workbench, |_, _, cx| cx.notify()),
+            })
         };
         Self {
             position: item(Kind::Position, cx),
@@ -66,14 +79,15 @@ impl EditorItems {
         cached(&self.mode, MODE_WIDTH, height)
     }
 
-    /// What `editor.position` shows now (tests).
+    /// What `editor.position` showed in the last frame (tests).
     pub fn position_text(&self, cx: &App) -> Option<String> {
-        self.position.read(cx).text(cx)
+        self.position.read(cx).shown.clone()
     }
 
-    /// What `editor.mode` shows now: the mode's word and the pending keys (tests).
+    /// What `editor.mode` showed in the last frame: the mode's word and the pending keys
+    /// (tests).
     pub fn mode_text(&self, cx: &App) -> Option<String> {
-        self.mode.read(cx).text(cx)
+        self.mode.read(cx).shown.clone()
     }
 }
 
@@ -84,15 +98,19 @@ fn cached(view: &Entity<EditorItem>, width: f32, height: f32) -> AnyElement {
 }
 
 impl EditorItem {
-    /// The focused file tab's line and column, or its Vim mode and pending keys.
-    fn read(&self, cx: &App) -> Option<(Option<VimMode>, String)> {
+    /// The focused file tab's code view, once its file is in.
+    fn code_view(&self, cx: &App) -> Option<Entity<CodeView>> {
         let workbench = self.workbench.upgrade()?;
         let view = workbench.read(cx).focused_file_view()?;
         let view = view.read(cx);
-        if !view.buffer().read(cx).is_ready() {
-            return None;
-        }
-        let code = view.code().read(cx);
+        view.buffer()
+            .read(cx)
+            .is_ready()
+            .then(|| view.code().clone())
+    }
+
+    /// The line and column of `code`'s caret, or its Vim mode and pending keys.
+    fn read(&self, code: &CodeView, cx: &App) -> Option<(Option<VimMode>, String)> {
         match self.kind {
             Kind::Position => {
                 let (line, column) = code.position(cx);
@@ -105,13 +123,22 @@ impl EditorItem {
         }
     }
 
-    fn text(&self, cx: &App) -> Option<String> {
-        let (mode, text) = self.read(cx)?;
-        Some(match mode {
-            Some(mode) if text.is_empty() => mode.label().to_owned(),
-            Some(mode) => format!("{} {text}", mode.label()),
-            None => text,
-        })
+    /// Observes `code` (the view this frame reads) instead of the one before.
+    fn watch(&mut self, code: Option<&Entity<CodeView>>, cx: &mut Context<Self>) {
+        let id = code.map(Entity::entity_id);
+        if self.watched.as_ref().map(|(id, _)| *id) == id {
+            return;
+        }
+        self.watched =
+            code.map(|code| (code.entity_id(), cx.observe(code, |_, _, cx| cx.notify())));
+    }
+}
+
+fn text_of(mode: Option<VimMode>, text: &str) -> String {
+    match mode {
+        Some(mode) if text.is_empty() => mode.label().to_owned(),
+        Some(mode) => format!("{} {text}", mode.label()),
+        None => text.to_owned(),
     }
 }
 
@@ -125,7 +152,11 @@ impl Render for EditorItem {
             .items_center()
             .overflow_hidden()
             .text_color(theme.muted);
-        match (self.kind, self.read(cx)) {
+        let code = self.code_view(cx);
+        self.watch(code.as_ref(), cx);
+        let read = code.and_then(|code| self.read(code.read(cx), cx));
+        self.shown = read.as_ref().map(|(mode, text)| text_of(*mode, text));
+        match (self.kind, read) {
             (_, None) => root,
             (Kind::Position, Some((_, text))) => root.justify_end().child(SharedString::from(text)),
             (Kind::Mode, Some((mode, pending))) => root

@@ -116,7 +116,12 @@ impl Workbench {
         let tokens = self.density.ui();
         let source = self.source_of_field(field, cx);
         let edit = self.edit_layer_of(field);
-        let mut text = source.label.clone();
+        // A row says who set the value in words ("You" alone reads like a cut-off line).
+        let mut text = if source.layer == Some(hutan_settings::SettingsLayer::User) {
+            words::SOURCE_YOU_LINE.to_owned()
+        } else {
+            source.label.clone()
+        };
         // A value hidden by another layer, or not set where a change goes: say where it goes.
         // A built-in default with changes going to your own settings is the plain case and
         // says nothing more.
