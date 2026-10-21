@@ -216,6 +216,7 @@ fn prepare(
     };
     let line_count = if ready { text.line_count() } else { 0 };
     let digits = line_count.max(1).to_string().len().max(3);
+    let previous_top = view.layout.map(|l| l.bounds.top());
     // `:set nonumber`: a narrow gutter without numbers.
     let numbers = view.show_numbers;
     let gutter_w = if numbers {
@@ -232,6 +233,15 @@ fn prepare(
         line_height: line_h,
         rows,
     });
+    if std::mem::take(&mut view.keep_in_place)
+        && let Some(previous) = previous_top
+    {
+        let moved_up = f32::from(previous - bounds.top());
+        if moved_up > 0.0 {
+            view.inset += moved_up;
+            view.scroll_y -= moved_up;
+        }
+    }
     view.apply_reveal(cx);
     if view.autoscroll {
         view.reveal_head(cx);

@@ -51,6 +51,13 @@ pub const MAX_HINTS: usize = 256;
 pub const HINT_TTL_MS: u64 = 10 * 60 * 1000;
 const FORMAT_VERSION: u32 = 1;
 
+/// Who wrote a file: the session's name and the harness behind it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Author {
+    pub title: Option<String>,
+    pub agent: Option<String>,
+}
+
 /// One file the agent changed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LedgerEntry {
@@ -62,6 +69,9 @@ pub struct LedgerEntry {
     /// The session's title when it wrote.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The harness that wrote ("Claude Code"), when it is one Hutan knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
     /// The file before the turn changed it (normalized).
     pub base: String,
     /// The file as the agent left it.
@@ -80,6 +90,7 @@ impl LedgerEntry {
             label: AgentLabel {
                 session: self.session_id.to_string(),
                 title: self.title.clone(),
+                agent: self.harness.clone(),
             },
         }
     }
@@ -225,7 +236,7 @@ impl Ledger {
         &mut self,
         path: &str,
         session: SessionId,
-        title: Option<String>,
+        author: Option<Author>,
         before: Option<String>,
         after: &str,
         now_ms: u64,
@@ -250,8 +261,13 @@ impl Ledger {
                 entry.agent = after.clone();
                 entry.disk = after;
                 entry.updated_ms = now_ms;
-                if title.is_some() {
-                    entry.title = title;
+                if let Some(author) = author {
+                    if author.title.is_some() {
+                        entry.title = author.title;
+                    }
+                    if author.agent.is_some() {
+                        entry.harness = author.agent;
+                    }
                 }
                 entry
             }
@@ -265,7 +281,8 @@ impl Ledger {
                 LedgerEntry {
                     session_id: session,
                     turn_id: turn.or_else(|| self.hint_turn(path, session)),
-                    title,
+                    title: author.as_ref().and_then(|a| a.title.clone()),
+                    harness: author.and_then(|a| a.agent),
                     base,
                     agent: after.clone(),
                     disk: after,
@@ -601,6 +618,23 @@ impl Workbench {
         }
     }
 
+    /// The name of the harness behind `session` (`Claude Code`), when it is one of the known
+    /// harnesses; `None` for a terminal, a direct chat or a session that is gone.
+    pub(crate) fn agent_name_of(&self, session: SessionId, cx: &Context<Self>) -> Option<String> {
+        let agent = self
+            .sessions
+            .read(cx)
+            .session(session)?
+            .chat
+            .as_ref()?
+            .agent
+            .clone();
+        super::harnesses::HARNESSES
+            .iter()
+            .any(|h| h.id == agent)
+            .then(|| super::harnesses::harness_name(&agent))
+    }
+
     /// The session `session` wrote `path` (its text was `before`, when the caller knows it,
     /// and is `after` now). Returns the file's changes for its buffer.
     pub(crate) fn ledger_agent_wrote(
@@ -617,11 +651,19 @@ impl Workbench {
             .session(session)
             .map(|s| s.title.clone())
             .filter(|t| !t.is_empty());
+        let author = Author {
+            title,
+            agent: self.agent_name_of(session, cx),
+        };
         let before = before.map(str::to_owned);
-        let changes =
-            self.agent_ledger
-                .ledger
-                .agent_wrote(path, session, title, before, after, now_ms());
+        let changes = self.agent_ledger.ledger.agent_wrote(
+            path,
+            session,
+            Some(author),
+            before,
+            after,
+            now_ms(),
+        );
         self.agent_ledger.writes_seen += 1;
         if changes.is_some() {
             self.ledger_watch(path, cx);
@@ -849,7 +891,10 @@ mod tests {
         ledger.agent_wrote(
             "/w/a.rs",
             session(),
-            Some("Codex".into()),
+            Some(Author {
+                title: Some("Codex".into()),
+                agent: Some("Codex".into()),
+            }),
             Some("a\r\nb\r\n".into()),
             "a\nB\n",
             1,
@@ -864,6 +909,7 @@ mod tests {
         let entry = loaded.entry("/w/a.rs").unwrap();
         assert_eq!(entry.base, "a\nb\n", "normalized");
         assert_eq!(entry.title.as_deref(), Some("Codex"));
+        assert_eq!(entry.harness.as_deref(), Some("Codex"));
         assert_eq!(loaded.entry("/w/a.rs"), ledger.entry("/w/a.rs"));
     }
 }

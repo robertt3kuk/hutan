@@ -310,7 +310,13 @@ impl Workbench {
             return;
         }
         buffer.update(cx, |b, cx| {
-            b.set_conflict(Some(Conflict::Changed { disk: None }), cx);
+            b.set_conflict(
+                Some(Conflict::Changed {
+                    disk: None,
+                    by: None,
+                }),
+                cx,
+            );
         });
         let picked = stored.picked;
         let connection = self.sessions.read(cx).connection().clone();
@@ -328,9 +334,19 @@ impl Workbench {
                     Ok(read) => {
                         stored.conflict_disk = Some(read.version);
                         buffer.update(cx, |b, cx| {
-                            if b.conflict().is_some() {
+                            if let Some(conflict) = b.conflict() {
+                                let by = match conflict {
+                                    Conflict::Changed { by, .. } => by.clone(),
+                                    Conflict::Deleted => None,
+                                };
                                 let disk: Arc<str> = read.text.into();
-                                b.set_conflict(Some(Conflict::Changed { disk: Some(disk) }), cx);
+                                b.set_conflict(
+                                    Some(Conflict::Changed {
+                                        disk: Some(disk),
+                                        by,
+                                    }),
+                                    cx,
+                                );
                             }
                         });
                     }
@@ -354,13 +370,21 @@ impl Workbench {
             return;
         };
         let buffer = stored.buffer.clone();
-        if let Some(Conflict::Changed { disk: Some(text) }) = buffer.read(cx).conflict().cloned()
+        if let Some(Conflict::Changed {
+            disk: Some(text), ..
+        }) = buffer.read(cx).conflict().cloned()
             && let Some(version) = stored.conflict_disk
         {
+            let name = buffer.read(cx).file_name();
             buffer.update(cx, |b, cx| {
                 b.reload(&text, cx);
             });
             self.loaded(path, version, Some(&text), cx);
+            // Said here, once, rather than on the button: the text is not lost.
+            self.set_notice(
+                format!("Reloaded {name} from disk. ⌘Z brings your text back."),
+                cx,
+            );
             return;
         }
         self.read_into(path, true, None, cx);
@@ -430,8 +454,15 @@ impl Workbench {
             // the ledger; its hunks show once the buffer takes the file (*Reload*).
             stored.conflict_disk = Some(read.version);
             let disk: Arc<str> = read.text.as_str().into();
+            let by = agent.and_then(|session| self.agent_name_of(session, cx));
             buffer.update(cx, |b, cx| {
-                b.set_conflict(Some(Conflict::Changed { disk: Some(disk) }), cx);
+                b.set_conflict(
+                    Some(Conflict::Changed {
+                        disk: Some(disk),
+                        by: by.map(Arc::from),
+                    }),
+                    cx,
+                );
             });
             if let Some(session) = agent {
                 let changes =

@@ -105,6 +105,9 @@ pub struct FileView {
     follow: bool,
     /// The agent's write that Follow scrolled to last.
     followed_epoch: u64,
+    /// A bar (agent or conflict) showed in the last frame: when it goes, the text stays where
+    /// it is on screen instead of jumping up by the bar's height.
+    had_bar: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -175,6 +178,7 @@ impl FileView {
             shown_bar: None,
             follow: false,
             followed_epoch: 0,
+            had_bar: false,
             _subscriptions: subscriptions,
         };
         this.sync_vim(cx);
@@ -242,6 +246,23 @@ impl FileView {
         cx.emit(FileViewEvent::AcceptAgentChanges(path));
     }
 
+    /// What the bar over a file an agent's turn changed says: the agent's name (its harness,
+    /// not the chat's title, which the bar shows beside it) and how many places it changed;
+    /// `None` while no bar shows.
+    pub fn agent_bar_text(&self, cx: &App) -> Option<String> {
+        let buffer = self.buffer.read(cx);
+        let changes = buffer.agent_changes()?;
+        let count = buffer.agent_hunks().len();
+        if count == 0 {
+            return None;
+        }
+        let who = changes.label.agent.as_deref().unwrap_or("An agent");
+        Some(format!(
+            "{who} changed {count} {} in this file, on disk",
+            if count == 1 { "place" } else { "places" }
+        ))
+    }
+
     /// The bar over a file an agent's turn changed: who, how many changes, ↑ ↓ between them,
     /// *Reject* (the change at the caret), *Accept All*, *Follow*. The agent wrote the file
     /// itself; the bar says so.
@@ -251,28 +272,14 @@ impl FileView {
         tokens: &Tokens,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let (who, count, at_caret) = {
-            let buffer = self.buffer.read(cx);
-            let changes = buffer.agent_changes()?;
-            let count = buffer.agent_hunks().len();
-            if count == 0 {
-                return None;
-            }
-            let who = changes
-                .label
-                .title
-                .clone()
-                .unwrap_or_else(|| "An agent".to_owned());
-            (
-                who,
-                count,
-                self.code.read(cx).agent_hunk_at_caret(cx).is_some(),
-            )
-        };
-        let message = format!(
-            "{who} changed {count} {} in this file, on disk",
-            if count == 1 { "place" } else { "places" }
-        );
+        let message = self.agent_bar_text(cx)?;
+        let session_name = self
+            .buffer
+            .read(cx)
+            .agent_changes()
+            .and_then(|changes| changes.label.title.clone())
+            .filter(|title| !title.is_empty());
+        let at_caret = self.code.read(cx).agent_hunk_at_caret(cx).is_some();
         let icon_button = |id: &'static str, glyph, tip: &'static str| {
             div()
                 .id(id)
@@ -381,11 +388,26 @@ impl FileView {
                 ))
                 .child(
                     div()
-                        .flex_1()
-                        .min_w_0()
+                        .flex_none()
+                        .max_w_full()
                         .truncate()
                         .text_color(theme.fg)
                         .child(message),
+                )
+                // The session's name beside it, quieter; it gives way first.
+                .child(
+                    div()
+                        .id("file-agent-session")
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.muted)
+                        .when_some(session_name, |s, name| {
+                            let tip = name.clone();
+                            s.child(format!("· {name}")).tooltip(move |_, cx| {
+                                cx.new(|_| TextTooltip(tip.clone().into())).into()
+                            })
+                        }),
                 )
                 .child(
                     icon_button(
@@ -752,7 +774,10 @@ impl FileView {
             return;
         }
         let buffer = self.buffer.read(cx);
-        let Some(Conflict::Changed { disk: Some(disk) }) = buffer.conflict() else {
+        let Some(Conflict::Changed {
+            disk: Some(disk), ..
+        }) = buffer.conflict()
+        else {
             return;
         };
         let disk = normalized(disk);
@@ -1165,8 +1190,13 @@ impl FileView {
         let name = self.buffer.read(cx).file_name();
         let path = self.buffer.read(cx).path().to_owned();
         let (message, can_diff) = match conflict {
-            Conflict::Changed { disk } => (
-                format!("{name} changed on disk, and your changes are not saved."),
+            Conflict::Changed { disk, by } => (
+                match by {
+                    Some(by) => {
+                        format!("{by} changed {name} on disk, and your changes are not saved.")
+                    }
+                    None => format!("{name} changed on disk, and your changes are not saved."),
+                },
                 disk.is_some(),
             ),
             Conflict::Deleted => (
@@ -1187,10 +1217,8 @@ impl FileView {
                     tokens,
                 )
                 .tooltip(|_, cx| {
-                    cx.new(|_| {
-                        TextTooltip("Take the file from disk (⌘Z brings your text back)".into())
-                    })
-                    .into()
+                    cx.new(|_| TextTooltip("Take the file from disk".into()))
+                        .into()
                 })
                 .on_click(cx.listener(move |_, _, _, cx| {
                     cx.emit(FileViewEvent::Reload(reload.clone()));
@@ -1260,19 +1288,58 @@ impl FileView {
         let border = look.theme.border;
         let shown = lines.len().min(hutan_chat_view::diff::MAX_LINES);
         let more = lines.len() - shown;
+        let legend = |mark: &'static str, color: gpui::Hsla, what: &'static str| {
+            div()
+                .flex()
+                .gap(px(look.tokens.spacing))
+                .child(div().text_color(color).child(mark))
+                .child(what)
+        };
+        let theme = &look.theme;
+        div()
+            .id("file-conflict-diff")
+            .flex_none()
+            .flex()
+            .flex_col()
+            .border_b_1()
+            .border_color(border)
+            .child(
+                div()
+                    .id("file-conflict-diff-legend")
+                    .flex_none()
+                    .flex()
+                    .gap(px(look.tokens.spacing * 3.0))
+                    .px(px(look.tokens.spacing * 2.0))
+                    .py(px(look.tokens.spacing / 2.0))
+                    .border_b_1()
+                    .border_color(border)
+                    .text_size(px(look.tokens.secondary_font_size))
+                    .text_color(theme.muted)
+                    .child(legend("−", theme.diff_removed, "on disk"))
+                    .child(legend("+", theme.diff_added, "yours, not saved")),
+            )
+            .child(self.render_diff_lines(lines, shown, more, &look))
+            .into_any_element()
+    }
+
+    fn render_diff_lines(
+        &self,
+        lines: &[DiffLine],
+        shown: usize,
+        more: usize,
+        look: &super::chat::Look,
+    ) -> gpui::Stateful<gpui::Div> {
         div()
             .id("file-conflict-diff-lines")
             .flex_none()
             .max_h(px(280.0))
             .overflow_y_scroll()
-            .border_b_1()
-            .border_color(border)
             .font_family(look.mono.clone())
             .text_size(px(look.tokens.secondary_font_size))
             .children(
                 lines[..shown]
                     .iter()
-                    .map(|line| super::chat::diff_row(line, &look)),
+                    .map(|line| super::chat::diff_row(line, look)),
             )
             .when(lines.is_empty(), |s| {
                 s.child(
@@ -1289,7 +1356,6 @@ impl FileView {
                         .child(format!("{more} more lines")),
                 )
             })
-            .into_any_element()
     }
 
     fn render_state(
@@ -1445,6 +1511,11 @@ impl Render for FileView {
         let agent_bar = ready
             .then(|| self.render_agent_bar(&theme, &tokens, cx))
             .flatten();
+        let has_bar = conflict_bar.is_some() || agent_bar.is_some();
+        if self.had_bar && !has_bar {
+            self.code.update(cx, |code, _| code.keep_text_in_place());
+        }
+        self.had_bar = has_bar;
         let diff = self.diff.clone().map(|lines| self.render_diff(&lines, cx));
         let body = if ready {
             self.code.clone().into_any_element()

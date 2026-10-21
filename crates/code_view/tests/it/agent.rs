@@ -23,6 +23,7 @@ fn changes(base: &str, agent_text: &str) -> AgentChanges {
         label: AgentLabel {
             session: "01K7F3B5N2Q9W8E4R6T1Y0V3KM".to_owned(),
             title: Some("Codex".to_owned()),
+            agent: Some("Codex".to_owned()),
         },
     }
 }

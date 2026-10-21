@@ -40,6 +40,8 @@ pub struct AgentLabel {
     pub session: String,
     /// What the session is called (its title), when it is known.
     pub title: Option<String>,
+    /// The agent's own name (`OMP`, `Claude Code`), when it is one Hutan knows.
+    pub agent: Option<String>,
 }
 
 /// The two texts that define an agent's changes to one file. Both are normalized.

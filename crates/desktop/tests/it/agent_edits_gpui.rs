@@ -9,8 +9,8 @@ use crate::common;
 use common::chat::ChatEnv;
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::TestAppContext;
-use hutan_desktop::workbench::FileOpen;
 use hutan_desktop::workbench::agent_edits::{LEDGER_FILE, Ledger};
+use hutan_desktop::workbench::{FileOpen, Region};
 use hutan_protocol::chat::{ChatSend, ChatSent};
 use hutan_protocol::messages::Request;
 use hutan_settings::{SettingsPaths, SettingsStore};
@@ -89,6 +89,33 @@ fn a_shell_write_of_an_agent_turn_reaches_the_open_file_and_the_ledger(cx: &mut 
     view.update(cx, |wb, _| wb.flush_save());
     let restored = Ledger::load(&state.with_file_name(LEDGER_FILE));
     assert_eq!(restored.entry(&key), Some(&entry));
+
+    // The bar names the agent (its harness), not the chat's title.
+    let file_view = view.read_with(cx, |wb, _| wb.focused_file_view().unwrap());
+    draw(cx);
+    assert_eq!(
+        file_view
+            .read_with(cx, |v, cx| v.agent_bar_text(cx))
+            .as_deref(),
+        Some("Codex changed 1 place in this file, on disk")
+    );
+    // Accept All takes the bar away without moving the text on the screen.
+    let code = file_view.read_with(cx, |v, _| v.code().clone());
+    let line_one = code.read_with(cx, |c, cx| c.point_of(0, cx)).unwrap();
+    let accept = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::FileAgent("accept")))
+        .expect("the bar's Accept All is drawn");
+    cx.simulate_click(accept.center(), gpui::Modifiers::none());
+    wait_until(cx, "the bar to go", |cx| {
+        draw(cx);
+        file_view.read_with(cx, |v, cx| v.agent_bar_text(cx).is_none())
+    });
+    draw(cx);
+    assert_eq!(
+        code.read_with(cx, |c, cx| c.point_of(0, cx)).unwrap(),
+        line_one,
+        "the text stayed where it was"
+    );
 
     // One undo step takes the agent's write back.
     let code = view.read_with(cx, |wb, _| wb.focused_file_view().unwrap());

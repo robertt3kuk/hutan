@@ -309,7 +309,7 @@ fn saving_keeps_crlf_and_never_overwrites_a_change_on_disk(cx: &mut TestAppConte
     std::fs::write(&file, "theirs\r\n").unwrap();
     wait_until(cx, "the conflict bar", |cx| {
         buffer.read_with(cx, |b, _| {
-            matches!(b.conflict(), Some(Conflict::Changed { disk: Some(_) }))
+            matches!(b.conflict(), Some(Conflict::Changed { disk: Some(_), .. }))
         })
     });
     cx.simulate_keystrokes("cmd-s");

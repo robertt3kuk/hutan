@@ -82,8 +82,12 @@ pub enum LoadState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Conflict {
     /// Somebody else changed the file. `disk` is its text now, when it could be read (for
-    /// *Show diff* and *Reload*).
-    Changed { disk: Option<Arc<str>> },
+    /// *Show diff* and *Reload*); `by` names the agent that wrote it when the daemon said so
+    /// (`None`: not known).
+    Changed {
+        disk: Option<Arc<str>>,
+        by: Option<Arc<str>>,
+    },
     /// The file was deleted (or moved away).
     Deleted,
 }

@@ -157,6 +157,13 @@ pub struct CodeView {
     focus: FocusHandle,
     /// Pixels of content above the top of the view.
     pub(crate) scroll_y: f32,
+    /// Blank pixels the view keeps above its first line (the scroll is negative by this much):
+    /// what is left of the room a bar above the view gave up. Scrolling up to the top of the
+    /// file takes it back.
+    pub(crate) inset: f32,
+    /// Keep the text where it is on screen when the view's top moves at the next frame
+    /// ([`keep_text_in_place`](CodeView::keep_text_in_place)).
+    pub(crate) keep_in_place: bool,
     /// Pixels of content left of the text area's edge.
     pub(crate) scroll_x: f32,
     /// The carets and selections; always at least one.
@@ -243,6 +250,8 @@ impl CodeView {
             style_generation: 0,
             focus: cx.focus_handle(),
             scroll_y: 0.0,
+            inset: 0.0,
+            keep_in_place: false,
             scroll_x: 0.0,
             selections: Selections::cursor(0),
             marked: Vec::new(),
@@ -446,10 +455,18 @@ impl CodeView {
         };
         let line_h = f32::from(layout.line_height);
         let max_y = (self.line_count(cx).saturating_sub(1)) as f32 * line_h;
-        self.scroll_y = self.scroll_y.clamp(0.0, max_y.max(0.0));
+        self.scroll_y = self.scroll_y.clamp(-self.inset, max_y.max(0.0));
+        self.inset = (-self.scroll_y).max(0.0);
         let visible_w = f32::from(layout.bounds.right() - layout.text_left).max(0.0);
         let max_x = (self.widest as f32 * f32::from(layout.cell_width) - visible_w * 0.5).max(0.0);
         self.scroll_x = self.scroll_x.clamp(0.0, max_x);
+    }
+
+    /// Asks the view to keep its text where it is on the screen if its top moves up at the
+    /// next frame (a bar above it went away): the scroll follows, and when the file is already
+    /// at its top the first line stays put under a blank band that the next scroll takes back.
+    pub fn keep_text_in_place(&mut self) {
+        self.keep_in_place = true;
     }
 
     /// Scrolls by `lines` (negative: up).
@@ -613,7 +630,7 @@ impl CodeView {
     }
 
     /// The window position of the top left corner of the cell where byte `offset` is drawn.
-    pub(crate) fn point_of(&self, offset: usize, cx: &App) -> Option<Point<Pixels>> {
+    pub fn point_of(&self, offset: usize, cx: &App) -> Option<Point<Pixels>> {
         let layout = self.layout?;
         let text = self.buffer.read(cx).text();
         let offset = text.floor_char_boundary(offset.min(text.len()));
