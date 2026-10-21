@@ -6,8 +6,11 @@
 //!   input methods); Visual (charwise, linewise, blockwise) draws its selection from the Vim
 //!   state, one range per line for a block. In Normal and Visual the view refuses text input
 //!   (`accepts_text_input` is false), so printable keys arrive as key presses and are matched by
-//!   the character they produce (a Dvorak or Cyrillic layout types its own letters as
-//!   commands), and never insert text, an input method or not.
+//!   the character they produce (a Dvorak layout types its own letters as commands), a
+//!   character that is not ASCII by the key's place on the keyboard (a Russian layout's `в` key
+//!   is `d`; the character itself after `f`, `t`, `r` and on the search line: [`vim_key_of`]),
+//!   and never insert text, an input method or not. A click in Normal mode puts the caret on a
+//!   character, never past the end of a line.
 //! - **Escape** in Insert first ends an input method's composition (the marked text stays);
 //!   only the next Escape leaves Insert.
 //! - **Keys.** The view's key context carries `vim_mode = normal | insert | visual` (all three
@@ -18,8 +21,8 @@
 //!   ([`CodeViewEvent::CommandLine`]); [`CodeView::run_command_line`] parses it with
 //!   `hutan_vim::ex`, runs `:s` and `:g` (with `d`, `s` or `normal`) on a background thread,
 //!   every other text command through the Vim state, and hands the rest (files, windows,
-//!   terminals, `:noh`) back. `/` and `?` are typed into the Vim state itself; the keys typed so
-//!   far show in the `editor.mode` status item ([`CodeView::vim_pending`]).
+//!   terminals, `:noh`) back. `/` and `?` are typed into the Vim state itself; the owner shows
+//!   the line being typed under the code ([`CodeView::vim_command_line`]).
 //! - **Indentation.** `'tabstop'` is the view's tab width and `'shiftwidth'` / `'expandtab'`
 //!   follow the file's indentation, until a `:set` of one of them.
 //! - **Undo.** A Normal command, and an Insert session with the command that started it, is one
@@ -84,8 +87,12 @@ pub enum ExRun {
 
 /// The key the modal layer sees for `event`; `None` for ⌘ and fn combinations (shortcuts, not
 /// typing) and for keys it has no name for. Printable keys are matched by the character they
-/// produce.
-pub fn vim_key_of(event: &KeyDownEvent) -> Option<Key> {
+/// produce (a Dvorak layout types its own letters as commands). A character that is not ASCII
+/// (a Russian or Greek layout) is matched by the key's place on the keyboard instead, the way
+/// macOS names the key (`d` for the key that types `в`), unless `takes_text` says the
+/// character itself is wanted there (Insert mode, the search line, the character after `f` or
+/// `r`: [`hutan_vim::Vim::takes_text`]).
+pub fn vim_key_of(event: &KeyDownEvent, takes_text: impl FnOnce(char) -> bool) -> Option<Key> {
     let ks = &event.keystroke;
     let mods = &ks.modifiers;
     if mods.platform || mods.function {
@@ -117,8 +124,32 @@ pub fn vim_key_of(event: &KeyDownEvent) -> Option<Key> {
     }
     let text = ks.key_char.as_deref()?;
     let mut chars = text.chars();
+    let c = match (chars.next(), chars.next()) {
+        (Some(c), None) if !c.is_control() => c,
+        _ => return None,
+    };
+    // ⌥ types its own characters (`å`); those are not a key's place.
+    if !c.is_ascii()
+        && !mods.alt
+        && let Some(place) = key_place(&ks.key, mods.shift)
+        && !takes_text(c)
+    {
+        return Some(Key::Char(place));
+    }
+    Some(Key::Char(c))
+}
+
+/// The ASCII character macOS names a printable key by (its character on the layout ⌘ uses, a
+/// US one for a Cyrillic layout); a letter with ⇧ is the capital. `None` when the name is not a
+/// single ASCII character.
+fn key_place(key: &str, shift: bool) -> Option<char> {
+    let mut chars = key.chars();
     match (chars.next(), chars.next()) {
-        (Some(c), None) if !c.is_control() => Some(Key::Char(c)),
+        (Some(c), None) if c.is_ascii_graphic() => Some(if shift {
+            c.to_ascii_uppercase()
+        } else {
+            c
+        }),
         _ => None,
     }
 }
@@ -229,18 +260,30 @@ impl CodeView {
     }
 
     /// What the `editor.mode` status item shows beside the mode: `recording @a` while a macro
-    /// is recorded, and the keys of a command in progress (`2d`) or the `/` / `?` line being
-    /// typed (`/foo`).
+    /// is recorded, and the keys of a command in progress (`2d`). The `/` / `?` line being
+    /// typed is not among them: it shows under the code ([`vim_command_line`]).
+    ///
+    /// [`vim_command_line`]: Self::vim_command_line
     pub fn vim_pending(&self) -> String {
         let Some(state) = &self.vim else {
             return String::new();
         };
-        let pending = state.vim.pending_keys();
+        let pending = if state.vim.command_line().is_some() {
+            String::new()
+        } else {
+            state.vim.pending_keys()
+        };
         match state.vim.recording() {
             Some(name) if pending.is_empty() => format!("recording @{name}"),
             Some(name) => format!("recording @{name} {pending}"),
             None => pending,
         }
+    }
+
+    /// The `/` or `?` line being typed, with its leading character (`/foo`), for the owner to
+    /// show under the code as Vim does; Escape or Backspace on an empty line ends it.
+    pub fn vim_command_line(&self) -> Option<String> {
+        self.vim.as_ref().and_then(|v| v.vim.command_line())
     }
 
     /// The answer of the last `:` command, until the next key.
@@ -298,6 +341,22 @@ impl CodeView {
         self.vim_mode().is_none_or(|m| m == Mode::Insert)
     }
 
+    /// Where a click at byte `at` puts the caret: in Normal mode on a character, so a click past
+    /// the end of a line lands on its last character, as in Vim.
+    pub(crate) fn vim_click_target(&self, text: &Text, at: usize) -> usize {
+        if self.vim_mode() != Some(Mode::Normal) {
+            return at;
+        }
+        let Ok(content) = text.line_content_range(line_of(text, at)) else {
+            return at;
+        };
+        if at < content.end || content.is_empty() {
+            return at;
+        }
+        text.char_before(content.end)
+            .map_or(at, |c| content.end - c.len_utf8())
+    }
+
     // ---- keys --------------------------------------------------------------------------------
 
     /// A key press that no binding took. Returns whether the view used it.
@@ -305,7 +364,8 @@ impl CodeView {
         let Some(mode) = self.vim_mode() else {
             return false;
         };
-        let Some(key) = vim_key_of(event) else {
+        let takes_text = |c| self.vim.as_ref().is_some_and(|v| v.vim.takes_text(c));
+        let Some(key) = vim_key_of(event, takes_text) else {
             return false;
         };
         if mode == Mode::Insert {

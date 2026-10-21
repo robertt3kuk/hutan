@@ -471,6 +471,31 @@ impl CodeView {
         self.scroll_y
     }
 
+    /// Starts where `other` (a view of the same file) is: its primary caret and its scroll; the
+    /// caret is brought into view at the first frame, at the size this view is drawn. Vim's
+    /// `:sp`, a file opened in a split.
+    pub fn start_like(&mut self, other: &Entity<CodeView>, cx: &mut Context<Self>) {
+        let (head, scroll_y) = {
+            let other = other.read(cx);
+            (other.selections.primary().head, other.scroll_y)
+        };
+        let text = self.buffer.read(cx).text().clone();
+        self.selections = Selections::cursor(head).clamp(&text);
+        self.marked.clear();
+        self.goal = None;
+        self.scroll_y = scroll_y;
+        self.autoscroll = true;
+        cx.emit(CodeViewEvent::Changed);
+        cx.notify();
+    }
+
+    /// Brings the primary caret into view at the next frame, at the size the view is drawn then
+    /// (a split that just made the view smaller).
+    pub fn reveal_caret_next_frame(&mut self, cx: &mut Context<Self>) {
+        self.autoscroll = true;
+        cx.notify();
+    }
+
     pub(crate) fn scroll_wheel(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
         let Some(layout) = self.layout else {
             return;
@@ -666,10 +691,11 @@ impl CodeView {
                     });
                 }
                 _ => {
-                    let anchor = if modifiers.shift {
-                        self.selections.primary().anchor
+                    let (anchor, at) = if modifiers.shift {
+                        (self.selections.primary().anchor, at)
                     } else {
-                        at
+                        let at = self.vim_click_target(&text, at);
+                        (at, at)
                     };
                     self.selections = Selections::single(Selection::new(anchor, at));
                     self.drag = Some(Drag::Chars {
