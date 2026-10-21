@@ -45,6 +45,8 @@
 //! - [`files`]: the file service: confined `fs.read`/`fs.list`/`fs.stat`, atomic chunked
 //!   `fs.write.*`, `fs.find`, `fs.search`, `fs.watch` with `fs.changed` and who made a change
 //!   (protocol 0.33).
+//! - [`lsp`]: language servers: the `LspHub` (one server per (server, root), shared by every client),
+//!   `doc.*` mirrors, `lsp.*`, folder trust, idle stop, `max_servers` (protocol 0.39).
 //! - [`mcp_wiring`]: how `hutan mcp` is registered with the agents Hutan starts.
 //! - [`daemon_settings`]: `daemon.toml` as a list of settings: `daemon.settings.get` / `.set`
 //!   validate, edit the file in place and apply what can change live (protocol 0.28).
@@ -70,6 +72,7 @@ pub mod files;
 pub mod harness;
 pub mod history;
 pub mod history_catalog;
+pub mod lsp;
 pub mod mcp_wiring;
 pub mod memory;
 pub mod menu_bar;

@@ -24,7 +24,7 @@ use hutan_protocol::resources::{
     AgentInterrupt, AgentInterrupted, AgentProcess, DEFAULT_INTERVAL_MS, InterruptVia,
     MAX_COMMAND_CHARS, MAX_PROCESSES_PER_SESSION, MAX_PROCESSES_TOTAL, MIN_INTERVAL_MS,
     ProcessInfo, ProcessSignal, ProcessSignaled, ProcessState, ResourceSample, ResourceTotals,
-    ResourcesSubscribed, SessionResources, SignalName,
+    ResourcesSubscribed, ServiceResources, SessionResources, SignalName,
 };
 use hutan_protocol::{ControlMessage, Frame, MAX_PAYLOAD};
 use hutan_terminal::procs::{self, ProcSignal, ProcState, ProcessSnapshot};
@@ -223,6 +223,36 @@ impl Marks {
     }
 }
 
+// Services ------------------------------------------------------------------------------------
+
+/// A process the daemon runs for itself (not for a session) whose tree Resources shows: a
+/// language server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceTarget {
+    /// `lsp:` and the server's id.
+    pub service_id: String,
+    /// What runs: `lsp`.
+    pub kind: String,
+    pub label: String,
+    pub root_pid: u32,
+}
+
+/// Where the services of the daemon are listed (the `LspHub`); `ResourceService` samples them
+/// next to the sessions.
+pub trait ServiceTargets: Send + Sync + fmt::Debug + 'static {
+    fn service_targets(&self) -> Vec<ServiceTarget>;
+}
+
+/// No services: what tests of the sampler use.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoServices;
+
+impl ServiceTargets for NoServices {
+    fn service_targets(&self) -> Vec<ServiceTarget> {
+        Vec::new()
+    }
+}
+
 // Assembly ------------------------------------------------------------------------------------
 
 fn state_of(state: ProcState) -> ProcessState {
@@ -299,17 +329,16 @@ fn tree_order(root: u32, mut processes: Vec<ProcessSnapshot>) -> Vec<ProcessSnap
         .collect()
 }
 
-/// One session: its process and everything below it, at most `limit` processes. `None` when the
-/// session has no process.
-fn session_resources(
+/// `root` and everything below it, at most `limit` processes, parents before children; whether
+/// processes were left out.
+fn process_tree(
     source: &dyn ProcessSource,
-    target: &ProcessTarget,
+    root: u32,
     limit: usize,
     marks: &Marks,
     now: Instant,
     next: &mut HashMap<u32, Mark>,
-) -> Option<(SessionResources, bool)> {
-    let root = target.root_pid?;
+) -> (Vec<ProcessInfo>, bool) {
     let mut snapshots: Vec<ProcessSnapshot> = Vec::new();
     // `limit` slots in all, one of them the root.
     let below = limit.saturating_sub(1);
@@ -322,10 +351,33 @@ fn session_resources(
             .take(below)
             .filter_map(|pid| source.inspect(pid)),
     );
-    let mut processes: Vec<ProcessInfo> = tree_order(root, snapshots)
+    let processes = tree_order(root, snapshots)
         .iter()
         .map(|snapshot| info_of(source, snapshot, marks, now, next))
         .collect();
+    (processes, cut)
+}
+
+fn totals_of(processes: &[ProcessInfo]) -> ResourceTotals {
+    ResourceTotals {
+        processes: u32::try_from(processes.len()).unwrap_or(u32::MAX),
+        cpu_percent: processes.iter().filter_map(|p| p.cpu_percent).sum(),
+        rss_bytes: processes.iter().map(|p| p.rss_bytes).sum(),
+    }
+}
+
+/// One session: its process and everything below it, at most `limit` processes. `None` when the
+/// session has no process.
+fn session_resources(
+    source: &dyn ProcessSource,
+    target: &ProcessTarget,
+    limit: usize,
+    marks: &Marks,
+    now: Instant,
+    next: &mut HashMap<u32, Mark>,
+) -> Option<(SessionResources, bool)> {
+    let root = target.root_pid?;
+    let (mut processes, cut) = process_tree(source, root, limit, marks, now, next);
     let mut agents = Vec::new();
     let mut nodes: Vec<&AgentNode> = target.agents.iter().collect();
     // The main agent first, then by start; the tree's own order is by id.
@@ -357,11 +409,7 @@ fn session_resources(
             pid,
         });
     }
-    let totals = ResourceTotals {
-        processes: u32::try_from(processes.len()).unwrap_or(u32::MAX),
-        cpu_percent: processes.iter().filter_map(|p| p.cpu_percent).sum(),
-        rss_bytes: processes.iter().map(|p| p.rss_bytes).sum(),
-    };
+    let totals = totals_of(&processes);
     Some((
         SessionResources {
             session_id: target.session_id,
@@ -374,12 +422,14 @@ fn session_resources(
     ))
 }
 
-/// One sample of every target and of `daemon_pid`, from `source`. `marks` is the previous full
-/// sample; the new marks (of the processes seen now) come back with the sample. At most
-/// [`MAX_PROCESSES_PER_SESSION`] processes per session and [`MAX_PROCESSES_TOTAL`] in all.
+/// One sample of every target, every service and `daemon_pid`, from `source`. `marks` is the
+/// previous full sample; the new marks (of the processes seen now) come back with the sample. At
+/// most [`MAX_PROCESSES_PER_SESSION`] processes per session or service and
+/// [`MAX_PROCESSES_TOTAL`] in all.
 pub fn collect(
     source: &dyn ProcessSource,
     targets: &[ProcessTarget],
+    services: &[ServiceTarget],
     daemon_pid: u32,
     marks: &Marks,
     now: Instant,
@@ -415,6 +465,25 @@ pub fn collect(
         remaining = remaining.saturating_sub(resources.processes.len());
         sessions.push(resources);
     }
+    let mut service_nodes = Vec::new();
+    for service in services {
+        let limit = MAX_PROCESSES_PER_SESSION.min(remaining);
+        let (processes, cut) = if limit == 0 {
+            (Vec::new(), true)
+        } else {
+            process_tree(source, service.root_pid, limit, marks, now, &mut next)
+        };
+        truncated |= cut && limit < MAX_PROCESSES_PER_SESSION;
+        remaining = remaining.saturating_sub(processes.len());
+        service_nodes.push(ServiceResources {
+            service_id: service.service_id.clone(),
+            kind: service.kind.clone(),
+            label: service.label.clone(),
+            totals: totals_of(&processes),
+            processes,
+            truncated: cut,
+        });
+    }
     let daemon = source
         .inspect(daemon_pid)
         .map(|snapshot| info_of(source, &snapshot, marks, now, &mut next))
@@ -434,6 +503,7 @@ pub fn collect(
         ResourceSample {
             at_ms,
             sessions,
+            services: service_nodes,
             daemon,
             truncated,
         },
@@ -573,6 +643,7 @@ pub struct ResourceService {
     hub: Arc<TerminalHub>,
     bus: Arc<EventBus>,
     source: Arc<dyn ProcessSource>,
+    services: Arc<dyn ServiceTargets>,
     daemon_pid: u32,
     state: Mutex<State>,
     /// The previous full sample; held for the whole of one sample so they never overlap.
@@ -593,12 +664,14 @@ impl ResourceService {
         hub: Arc<TerminalHub>,
         bus: Arc<EventBus>,
         source: Arc<dyn ProcessSource>,
+        services: Arc<dyn ServiceTargets>,
     ) -> Arc<Self> {
         Arc::new(Self {
             registry,
             hub,
             bus,
             source,
+            services,
             daemon_pid: std::process::id(),
             state: Mutex::new(State::default()),
             marks: AsyncMutex::new(Marks::default()),
@@ -615,11 +688,13 @@ impl ResourceService {
         marks: Marks,
     ) -> Result<(ResourceSample, Marks), ErrorBody> {
         let source = self.source.clone();
+        let services = self.services.service_targets();
         let daemon_pid = self.daemon_pid;
         tokio::task::spawn_blocking(move || {
             collect(
                 &*source,
                 &targets,
+                &services,
                 daemon_pid,
                 &marks,
                 Instant::now(),
@@ -774,6 +849,11 @@ impl ResourceService {
         {
             for session in &mut sample.sessions {
                 for process in &mut session.processes {
+                    process.command = clipped(&process.command, SHORT_COMMAND_CHARS);
+                }
+            }
+            for service in &mut sample.services {
+                for process in &mut service.processes {
                     process.command = clipped(&process.command, SHORT_COMMAND_CHARS);
                 }
             }
@@ -1240,6 +1320,7 @@ mod tests {
         let (sample, _) = collect(
             &fake,
             &[target(session, 100)],
+            &[],
             999,
             &Marks::default(),
             Instant::now(),
@@ -1267,13 +1348,14 @@ mod tests {
         let session = SessionId::new();
         let targets = [target(session, 100)];
         let start = Instant::now();
-        let (_, marks) = collect(&fake, &targets, 1, &Marks::default(), start, 0);
+        let (_, marks) = collect(&fake, &targets, &[], 1, &Marks::default(), start, 0);
         // `yes` used 500 ms of CPU in 1 s of wall time; the shell 10 ms.
         fake.set(110, 100, "yes", 1_500);
         fake.set(100, 1, "sh", 1_010);
         let (sample, again) = collect(
             &fake,
             &targets,
+            &[],
             1,
             &marks,
             start + Duration::from_secs(1),
@@ -1295,6 +1377,7 @@ mod tests {
         let (soon, kept) = collect(
             &fake,
             &targets,
+            &[],
             1,
             &again,
             start + Duration::from_millis(1_050),
@@ -1313,6 +1396,7 @@ mod tests {
         let (fresh, _) = collect(
             &reused,
             &targets,
+            &[],
             1,
             &marks,
             start + Duration::from_secs(2),
@@ -1333,6 +1417,7 @@ mod tests {
         let (sample, _) = collect(
             &fake,
             &[target(session, 100)],
+            &[],
             1,
             &Marks::default(),
             Instant::now(),
@@ -1347,11 +1432,46 @@ mod tests {
         assert!(!sample.truncated, "cut by the session limit, not the total");
         // Nine such sessions would need more than the total allows.
         let many: Vec<ProcessTarget> = (0..9).map(|_| target(SessionId::new(), 100)).collect();
-        let (sample, _) = collect(&fake, &many, 1, &Marks::default(), Instant::now(), 0);
+        let (sample, _) = collect(&fake, &many, &[], 1, &Marks::default(), Instant::now(), 0);
         let total: usize = sample.sessions.iter().map(|s| s.processes.len()).sum();
         assert_eq!(total, MAX_PROCESSES_TOTAL);
         assert!(sample.truncated);
         assert!(sample.sessions[8].truncated && sample.sessions[8].processes.is_empty());
+    }
+
+    #[test]
+    fn a_service_is_a_tree_of_its_own_next_to_the_sessions() {
+        let fake = Fake::with(&[
+            (100, 1, "-zsh", 1),
+            (300, 1, "rust-analyzer", 50),
+            (310, 300, "rust-analyzer-proc-macro-srv", 20),
+            (400, 1, "unrelated", 1),
+        ]);
+        let service = ServiceTarget {
+            service_id: "lsp:rust-analyzer:/repo".to_owned(),
+            kind: "lsp".to_owned(),
+            label: "rust-analyzer /repo".to_owned(),
+            root_pid: 300,
+        };
+        let (sample, _) = collect(
+            &fake,
+            &[target(SessionId::new(), 100)],
+            std::slice::from_ref(&service),
+            999,
+            &Marks::default(),
+            Instant::now(),
+            0,
+        );
+        assert_eq!(sample.sessions.len(), 1);
+        let node = &sample.services[0];
+        assert_eq!(node.service_id, service.service_id);
+        assert_eq!(
+            node.processes.iter().map(|p| p.pid).collect::<Vec<_>>(),
+            [300, 310]
+        );
+        assert_eq!(node.totals.processes, 2);
+        assert_eq!(node.totals.rss_bytes, 2 * 1024 * 1024);
+        assert!(!node.truncated && !sample.truncated);
     }
 
     #[test]
@@ -1370,7 +1490,15 @@ mod tests {
             node("liar", NodeKind::Sub, Some(500)),
             node("thread", NodeKind::Sub, None),
         ];
-        let (sample, _) = collect(&fake, &[target], 1, &Marks::default(), Instant::now(), 0);
+        let (sample, _) = collect(
+            &fake,
+            &[target],
+            &[],
+            1,
+            &Marks::default(),
+            Instant::now(),
+            0,
+        );
         let resources = &sample.sessions[0];
         let pid_of = |id: &str| {
             resources

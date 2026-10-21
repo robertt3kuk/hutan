@@ -101,6 +101,30 @@
 //!
 //! [checkpoints.projects.hutan]   # per project (name or id): only what differs
 //! mode = "off"
+//!
+//! [lsp]                          # language servers (protocol 0.39, docs/lsp.md); read at start
+//! enabled = true
+//! trust = "ask"                  # "ask": a folder needs the user's decision first; "always"; "never"
+//! idle_stop_secs = 300           # a server with no open document stops after this long; 0 = never
+//! max_servers = 4                # servers running at once; the least recently used idle one makes room
+//!
+//! [lsp.servers.rust-analyzer]    # a built-in server (only what differs) or one of your own
+//! command = "/Users/me/.cargo/bin/rust-analyzer"   # default: `rust-analyzer` on the login PATH
+//! args = []
+//! env = { RA_LOG = "warn" }
+//! languages = ["rust"]
+//! root_markers = ["Cargo.toml", "rust-project.json"]   # the topmost folder with one is the root
+//! initialization_options = { cargo = { allTargets = false } }
+//! settings = {}                  # what `workspace/configuration` answers
+//! idle_stop_secs = 600           # this server only
+//! install = "rustup component add rust-analyzer"       # shown when the binary is missing
+//! max_failures = 5               # crashes within `failure_window_secs` make it `failed`
+//! failure_window_secs = 180
+//!
+//! [lsp.projects.hutan]           # per project (name or id): only what differs
+//! enabled = false                # no server starts for this project's files
+//! [lsp.projects.hutan.roots]
+//! rust-analyzer = "crates/core"  # this server's root for the project's files (relative to the project's folder)
 //! ```
 
 use std::collections::BTreeMap;
@@ -147,6 +171,7 @@ pub struct DaemonSettings {
     pub control: ControlSettings,
     pub finish: FinishSettings,
     pub checkpoints: CheckpointSettings,
+    pub lsp: LspSettings,
 }
 
 /// `[projects]` of `daemon.toml`: automatic projects (protocol 0.19).
@@ -720,6 +745,157 @@ impl CheckpointSettings {
     }
 }
 
+/// `lsp.idle_stop_secs` when the setting is absent.
+pub const DEFAULT_LSP_IDLE_STOP_SECS: u64 = 300;
+/// `lsp.max_servers` when the setting is absent.
+pub const DEFAULT_LSP_MAX_SERVERS: u32 = 4;
+/// The most `lsp.max_servers` accepts.
+pub const MAX_LSP_MAX_SERVERS: u32 = 32;
+
+/// `[lsp] trust`: what decides a folder the user has not decided about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LspTrustMode {
+    /// A server does not start until the user trusts the folder.
+    #[default]
+    Ask,
+    /// Every folder is trusted.
+    Always,
+    /// No folder is trusted: servers never start.
+    Never,
+}
+
+/// `[lsp]` of `daemon.toml`: language servers (protocol 0.39, `docs/lsp.md`). Read when the
+/// daemon starts.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LspSettings {
+    pub enabled: bool,
+    pub trust: LspTrustMode,
+    /// A server with no open document stops after this many seconds; `0` = never.
+    pub idle_stop_secs: u64,
+    /// Servers running at once.
+    pub max_servers: u32,
+    /// `[lsp.servers.<id>]`.
+    pub servers: BTreeMap<String, LspServerSettings>,
+    /// `[lsp.projects.<name or id>]`.
+    pub projects: BTreeMap<String, LspProjectSettings>,
+}
+
+impl Default for LspSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            trust: LspTrustMode::Ask,
+            idle_stop_secs: DEFAULT_LSP_IDLE_STOP_SECS,
+            max_servers: DEFAULT_LSP_MAX_SERVERS,
+            servers: BTreeMap::new(),
+            projects: BTreeMap::new(),
+        }
+    }
+}
+
+/// `[lsp.servers.<id>]`: how to run one language server. For a built-in server (`docs/lsp.md`)
+/// only what differs is needed; a server of your own needs `command` and `languages`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LspServerSettings {
+    /// `false`: the server is never used.
+    pub enabled: Option<bool>,
+    /// A program name looked up on the login `PATH`, or an absolute path.
+    pub command: Option<String>,
+    pub args: Option<Vec<String>>,
+    /// Added to the login environment the server starts from.
+    pub env: BTreeMap<String, String>,
+    /// LSP language ids the server serves.
+    pub languages: Option<Vec<String>>,
+    /// Files and folders whose topmost occurrence above a document is the server's root.
+    pub root_markers: Option<Vec<String>>,
+    /// `initializationOptions` of `initialize`.
+    pub initialization_options: Option<serde_json::Value>,
+    /// What `workspace/configuration` answers.
+    pub settings: Option<serde_json::Value>,
+    /// Overrides `[lsp] idle_stop_secs` for this server; `0` = never.
+    pub idle_stop_secs: Option<u64>,
+    /// The command shown (never run) when the binary is missing.
+    pub install: Option<String>,
+    /// Crashes within `failure_window_secs` after which the server stays `failed`.
+    pub max_failures: Option<u32>,
+    pub failure_window_secs: Option<u64>,
+    /// Documents open in the server at once.
+    pub max_documents: Option<usize>,
+}
+
+/// `[lsp.projects.<name or id>]`: what differs for the files of one project.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LspProjectSettings {
+    /// `false`: no server starts for the project's files.
+    pub enabled: Option<bool>,
+    /// `<server id> = <folder>`: the server's root for the project's files, absolute or
+    /// relative to the project's folder, instead of the topmost marker.
+    pub roots: BTreeMap<String, String>,
+}
+
+impl LspSettings {
+    fn check(&self) -> Result<(), String> {
+        if self.max_servers == 0 || self.max_servers > MAX_LSP_MAX_SERVERS {
+            return Err(format!(
+                "lsp.max_servers must be between 1 and {MAX_LSP_MAX_SERVERS}, not {}",
+                self.max_servers
+            ));
+        }
+        for (id, server) in &self.servers {
+            let bad = |what: &str| Err(format!("[lsp.servers.{id}]: {what}"));
+            if id.is_empty() || id.contains(':') || id.contains('/') {
+                return Err(format!(
+                    "[lsp.servers.{id}]: a server id has no `:` or `/` in it"
+                ));
+            }
+            if server
+                .command
+                .as_deref()
+                .is_some_and(|c| c.trim().is_empty())
+            {
+                return bad("`command` must not be empty");
+            }
+            if server
+                .languages
+                .as_ref()
+                .is_some_and(|l| l.iter().any(|l| l.trim().is_empty()))
+            {
+                return bad("`languages` must not contain an empty name");
+            }
+            if server
+                .root_markers
+                .as_ref()
+                .is_some_and(|m| m.iter().any(|m| m.trim().is_empty() || m.contains('/')))
+            {
+                return bad("`root_markers` are names of files or folders, without a `/`");
+            }
+            if server.max_failures == Some(0) {
+                return bad("`max_failures` must be at least 1");
+            }
+            if server.failure_window_secs == Some(0) {
+                return bad("`failure_window_secs` must be at least 1");
+            }
+            if server.max_documents == Some(0) {
+                return bad("`max_documents` must be at least 1");
+            }
+        }
+        for (project, over) in &self.projects {
+            for (server, folder) in &over.roots {
+                if folder.trim().is_empty() {
+                    return Err(format!(
+                        "[lsp.projects.{project}.roots]: the root of `{server}` must not be empty"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// What an agent-originated connection (one whose client runs in a chat session or in a terminal
 /// session an agent reported itself in, `ClientInfo.origin`) may change (protocol 0.21, ADR 0016).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -794,6 +970,8 @@ struct File {
     finish: FinishSettings,
     #[serde(default)]
     checkpoints: CheckpointSettings,
+    #[serde(default)]
+    lsp: LspSettings,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -886,6 +1064,7 @@ impl DaemonSettings {
             check_mcp(name, server)?;
         }
         file.checkpoints.check().map_err(toml::de::Error::custom)?;
+        file.lsp.check().map_err(toml::de::Error::custom)?;
         Ok(Self {
             restore_sessions: file.daemon.restore_sessions,
             home_folder,
@@ -902,6 +1081,7 @@ impl DaemonSettings {
             control: file.control,
             finish: file.finish,
             checkpoints: file.checkpoints,
+            lsp: file.lsp,
         })
     }
 }
@@ -1446,6 +1626,75 @@ transport = "sse"
             "[checkpoints]\nkeep = 1\n",
             "[checkpoints.projects.web]\nmax_files = 0\n",
             "[checkpoints.projects.web]\nkeep_turns = 3\n",
+        ] {
+            assert!(DaemonSettings::parse(bad, None).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn lsp_defaults_ask_for_trust_and_servers_and_projects_are_read_and_checked() {
+        let defaults = DaemonSettings::parse("", None).unwrap().lsp;
+        assert_eq!(defaults, LspSettings::default());
+        assert!(defaults.enabled);
+        assert_eq!(defaults.trust, LspTrustMode::Ask);
+        assert_eq!(defaults.idle_stop_secs, 300);
+        assert_eq!(defaults.max_servers, 4);
+        let lsp = DaemonSettings::parse(
+            r#"
+[lsp]
+trust = "always"
+idle_stop_secs = 0
+max_servers = 2
+
+[lsp.servers.rust-analyzer]
+command = "/opt/ra"
+env = { RA_LOG = "warn" }
+initialization_options = { cargo = { allTargets = false } }
+max_failures = 2
+
+[lsp.servers.my-lang]
+command = "my-lsp"
+args = ["--stdio"]
+languages = ["mylang"]
+root_markers = ["my.toml"]
+
+[lsp.projects.hutan]
+enabled = false
+[lsp.projects.hutan.roots]
+rust-analyzer = "crates/core"
+"#,
+            None,
+        )
+        .unwrap()
+        .lsp;
+        assert_eq!(lsp.trust, LspTrustMode::Always);
+        assert_eq!(lsp.max_servers, 2);
+        let ra = &lsp.servers["rust-analyzer"];
+        assert_eq!(ra.command.as_deref(), Some("/opt/ra"));
+        assert_eq!(ra.env["RA_LOG"], "warn");
+        assert_eq!(
+            ra.initialization_options,
+            Some(serde_json::json!({"cargo": {"allTargets": false}}))
+        );
+        assert_eq!(ra.max_failures, Some(2));
+        assert_eq!(
+            lsp.servers["my-lang"].languages,
+            Some(vec!["mylang".to_owned()])
+        );
+        assert_eq!(lsp.projects["hutan"].enabled, Some(false));
+        assert_eq!(lsp.projects["hutan"].roots["rust-analyzer"], "crates/core");
+        for bad in [
+            "[lsp]\ntrust = \"sometimes\"\n",
+            "[lsp]\nmax_servers = 0\n",
+            "[lsp]\nmax_servers = 33\n",
+            "[lsp]\nmystery = 1\n",
+            "[lsp.servers.x]\ncommand = \"\"\n",
+            "[lsp.servers.x]\nmystery = 1\n",
+            "[lsp.servers.\"a:b\"]\ncommand = \"x\"\n",
+            "[lsp.servers.x]\nroot_markers = [\"a/b\"]\n",
+            "[lsp.servers.x]\nmax_failures = 0\n",
+            "[lsp.projects.p.roots]\nx = \"\"\n",
+            "[lsp.projects.p]\nmystery = 1\n",
         ] {
             assert!(DaemonSettings::parse(bad, None).is_err(), "{bad}");
         }

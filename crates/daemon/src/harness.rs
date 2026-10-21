@@ -229,19 +229,7 @@ impl Harnesses {
         candidates: &[&str],
         env: &BTreeMap<String, String>,
     ) -> Result<PathBuf, ErrorBody> {
-        // The login environment's `PATH` first, then the daemon's own (inherited from whoever
-        // started it: a terminal's full `PATH` when `hutan` autostarted it from a shell).
-        let own = std::env::var("PATH").ok();
-        let path = match (env.get("PATH"), own) {
-            (Some(login), Some(own)) if *login != own => Some(format!("{login}:{own}")),
-            (Some(login), _) => Some(login.clone()),
-            (None, own) => own,
-        };
-        let home = env
-            .get("HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(PathBuf::from));
-        let fallback = home.as_deref().map(install_dirs).unwrap_or_default();
+        let (path, fallback) = program_dirs(env);
         let names: Vec<String> = match configured {
             Some(p) => vec![p.to_string_lossy().into_owned()],
             None => candidates.iter().map(|c| (*c).to_owned()).collect(),
@@ -399,6 +387,25 @@ fn mcp_server(name: &str, server: &McpSettings) -> Value {
     }
 }
 
+/// Where a tool is looked for: the `PATH` to search (the login environment's first, then the
+/// daemon's own, inherited from whoever started it: a terminal's full `PATH` when `hutan`
+/// autostarted it from a shell) and the folders installers use as a fallback
+/// ([`install_dirs`] of the login `HOME`).
+pub(crate) fn program_dirs(env: &BTreeMap<String, String>) -> (Option<String>, Vec<PathBuf>) {
+    let own = std::env::var("PATH").ok();
+    let path = match (env.get("PATH"), own) {
+        (Some(login), Some(own)) if *login != own => Some(format!("{login}:{own}")),
+        (Some(login), _) => Some(login.clone()),
+        (None, own) => own,
+    };
+    let home = env
+        .get("HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from));
+    let fallback = home.as_deref().map(install_dirs).unwrap_or_default();
+    (path, fallback)
+}
+
 /// `name` as an executable: a path as it is, a bare name searched along `path`.
 pub fn find_program(name: &str, path: Option<&str>) -> Option<PathBuf> {
     let executable = |candidate: &Path| {
@@ -489,7 +496,7 @@ fn node_version(path: &Path) -> (u32, u32, u32) {
 }
 
 /// A bare `name` in one of `dirs`.
-fn find_in(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
+pub(crate) fn find_in(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
     if name.contains('/') {
         return None;
     }
@@ -500,7 +507,7 @@ fn find_in(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
 /// Puts `program`'s folder at the front of `env`'s `PATH` (the daemon's own when `env` has
 /// none) unless it is there: a tool found outside `PATH` is often a script whose interpreter
 /// (`#!/usr/bin/env node`, `bun`) lives next to it.
-fn with_program_dir(env: &mut BTreeMap<String, String>, program: &Path) {
+pub(crate) fn with_program_dir(env: &mut BTreeMap<String, String>, program: &Path) {
     let Some(dir) = program.parent().filter(|d| !d.as_os_str().is_empty()) else {
         return;
     };

@@ -30,6 +30,7 @@ use crate::control::{Access, ControlService};
 use crate::daemon_settings::SettingsService;
 use crate::files::FileService;
 use crate::history::HistoryService;
+use crate::lsp::LspHub;
 use crate::memory::MemoryService;
 use crate::notify::NotifyService;
 use crate::providers::ProviderService;
@@ -54,6 +55,7 @@ pub struct Services {
     pub control: Arc<ControlService>,
     pub memory: Arc<MemoryService>,
     pub files: Arc<FileService>,
+    pub lsp: Arc<LspHub>,
     pub ui: Arc<UiHub>,
     pub settings: Arc<SettingsService>,
 }
@@ -76,6 +78,7 @@ pub struct Router {
     control: Arc<ControlService>,
     memory: Arc<MemoryService>,
     files: Arc<FileService>,
+    lsp: Arc<LspHub>,
     ui: Arc<UiHub>,
     settings: Arc<SettingsService>,
     /// The shutdown in progress asked to drop the stopped sessions from the restore set.
@@ -108,6 +111,7 @@ impl Router {
             control: services.control,
             memory: services.memory,
             files: services.files,
+            lsp: services.lsp,
             ui: services.ui,
             settings: services.settings,
             forget: AtomicBool::new(false),
@@ -628,6 +632,42 @@ impl Router {
                 audit(Actor::of(conn), "checkpoint.restore", &target, &restored);
                 ok(&restored?)
             }
+            Request::DocOpen(req) => {
+                let agent = self.agent_origin(conn).await.is_some();
+                ok(&self.lsp.doc_open(conn, agent, req).await?)
+            }
+            Request::DocChange(req) => {
+                self.lsp.doc_change(conn.id(), req)?;
+                ok(&Empty {})
+            }
+            Request::DocSave(req) => {
+                self.lsp.doc_save(conn.id(), &req.doc_id)?;
+                ok(&Empty {})
+            }
+            Request::DocClose(req) => {
+                self.lsp.doc_close(conn.id(), &req.doc_id)?;
+                ok(&Empty {})
+            }
+            Request::LspStatus(req) => ok(&self.lsp.status(req).await?),
+            Request::LspDiagnostics(req) => ok(&self.lsp.diagnostics(req).await?),
+            Request::LspHover(req) => ok(&self.lsp.hover(req).await?),
+            Request::LspDefinition(req) => ok(&self.lsp.definition(req).await?),
+            Request::LspRestart(req) => {
+                let restarted = self.lsp.restart(&req.server_id).await;
+                audit(Actor::of(conn), "lsp.restart", &req.server_id, &restarted);
+                ok(&restarted?)
+            }
+            Request::LspStop(req) => {
+                let stopped = self.lsp.stop(&req.server_id).await;
+                audit(Actor::of(conn), "lsp.stop", &req.server_id, &stopped);
+                ok(&stopped?)
+            }
+            Request::LspTrust(req) => {
+                let folder = req.folder.display().to_string();
+                let decided = self.lsp.set_trust(client_label(conn), req).await;
+                audit(Actor::of(conn), "lsp.trust", &folder, &decided);
+                ok(&decided?)
+            }
         }
     }
 
@@ -772,6 +812,12 @@ impl Router {
         self.resources.unsubscribe(conn);
         self.ui.connection_closed(conn);
         self.files.connection_closed(conn);
+        self.lsp.connection_closed(conn);
+    }
+
+    /// Stops the language servers: the daemon is ending.
+    pub async fn stop_lsp(&self) {
+        self.lsp.shutdown().await;
     }
 
     /// Stops the history indexer, applying what it has queued; the index stays on disk.
@@ -786,6 +832,16 @@ impl Router {
         self.registry
             .stop_all(self.forget.load(Ordering::Acquire))
             .await
+    }
+}
+
+/// The client kind as a decision records it (`lsp.trust`): `desktop`, `cli`, ….
+fn client_label(conn: &ConnHandle) -> &'static str {
+    match conn.client_kind() {
+        Some(ClientKind::Desktop) => "desktop",
+        Some(ClientKind::Cli) => "cli",
+        Some(ClientKind::Notifier) => "notifier",
+        _ => "client",
     }
 }
 
@@ -970,6 +1026,23 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::FsWriteCommit(_) => ("fs.write.commit", Mutate),
         // Throwing away an upload of its own connection changes nothing on disk.
         Request::FsWriteAbort(_) => ("fs.write.abort", Read),
+        // Language servers (protocol 0.39): a document mirror holds what its sender sends and
+        // changes nothing on disk, so opening, editing and closing one is no mutation; an
+        // agent may only open documents inside the workspace folders. Looking is free.
+        // Starting or stopping a server uses the user's memory: an agent asks. Trusting a
+        // folder lets a server run the project's build scripts: the user's alone, whatever
+        // `[control]` says (ADR 0012 amendment 5).
+        Request::DocOpen(_) => ("doc.open", Read),
+        Request::DocChange(_) => ("doc.change", Read),
+        Request::DocSave(_) => ("doc.save", Read),
+        Request::DocClose(_) => ("doc.close", Read),
+        Request::LspStatus(_) => ("lsp.status", Read),
+        Request::LspDiagnostics(_) => ("lsp.diagnostics", Read),
+        Request::LspHover(_) => ("lsp.hover", Read),
+        Request::LspDefinition(_) => ("lsp.definition", Read),
+        Request::LspRestart(_) => ("lsp.restart", Mutate),
+        Request::LspStop(_) => ("lsp.stop", Mutate),
+        Request::LspTrust(_) => ("lsp.trust", UserOnly),
     }
 }
 

@@ -1574,6 +1574,10 @@ mod tests {
             control,
             finish,
             checkpoints,
+            // Language servers are read when the daemon starts and take tables of their own
+            // (`[lsp.servers.<id>]`, `[lsp.projects.<p>]`); `daemon.toml` is where they are set
+            // (`docs/lsp.md`).
+            lsp: _,
         } = Config::default();
         let config::HistorySettings {
             enabled: _,

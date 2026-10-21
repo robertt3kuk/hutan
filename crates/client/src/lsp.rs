@@ -33,7 +33,9 @@ impl Client {
 
     /// `doc.change`: the owner's edits of an open document.
     pub async fn doc_change(&self, req: DocChange) -> Result<(), ClientError> {
-        self.call::<Empty>(Request::DocChange(req)).await.map(|_| ())
+        self.call::<Empty>(Request::DocChange(req))
+            .await
+            .map(|_| ())
     }
 
     /// `doc.save`: the document was written to disk.

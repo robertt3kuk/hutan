@@ -33,6 +33,7 @@ use crate::error::{DaemonError, MAX_SOCKET_PATH_BYTES};
 use crate::files::FileService;
 use crate::harness::Harnesses;
 use crate::history::HistoryService;
+use crate::lsp::{Inputs as LspInputs, LspHub, LspTuning};
 use crate::mcp_wiring::McpWiring;
 use crate::memory::MemoryService;
 use crate::menu_bar::{self, MenuBar};
@@ -117,6 +118,8 @@ pub struct DaemonConfig {
     /// The start budget of a turn's checkpoint (5 s) and the environment of its git calls.
     /// Tests lower the budget and put a slow fake git first on `PATH`.
     pub checkpoints: checkpoint_turns::Tuning,
+    /// What tests change of the language servers' timing (idle stop, coalescing, restarts).
+    pub lsp: LspTuning,
 }
 
 impl DaemonConfig {
@@ -138,6 +141,7 @@ impl DaemonConfig {
             assistant_idle_stop: None,
             fs_limits: crate::files::Limits::default(),
             checkpoints: checkpoint_turns::Tuning::default(),
+            lsp: LspTuning::default(),
         }
     }
 }
@@ -370,7 +374,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         registry.clone(),
         storage.clone(),
         bus.clone(),
-        harnesses,
+        harnesses.clone(),
         settings.finish,
     );
     // After the registry restored its sessions and the notifier listens: a task whose session
@@ -387,11 +391,24 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
     .await
     .map_err(|error| DaemonError::Tasks(error.message))?;
     drop(tasks.run(shutdown.clone()));
+    let processes = Arc::new(SystemProcesses);
+    let lsp = LspHub::new(LspInputs {
+        settings: settings.lsp.clone(),
+        registry: registry.clone(),
+        bus: bus.clone(),
+        storage: storage.clone(),
+        source: processes.clone(),
+        harnesses,
+        tuning: config.lsp.clone(),
+        shutdown: shutdown.clone(),
+    })
+    .map_err(DaemonError::Lsp)?;
     let resources = ResourceService::new(
         registry.clone(),
         hub.clone(),
         bus.clone(),
-        Arc::new(SystemProcesses),
+        processes,
+        lsp.clone(),
     );
     let control = ControlService::new(
         settings.control,
@@ -457,6 +474,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             control,
             memory,
             files,
+            lsp,
             ui,
             settings: settings_service,
         },
@@ -659,7 +677,9 @@ async fn accept_loop(
             conns.abort_all();
         }
     };
-    tokio::join!(stop_sessions, drain_connections);
+    // Language servers die with the daemon too: asked to stop, their groups killed after a grace.
+    let stop_servers = ctx.router.stop_lsp();
+    tokio::join!(stop_sessions, drain_connections, stop_servers);
     // The turns the stop cut off are recorded (their end snapshots) before the database closes.
     checkpoints.drain(CHECKPOINT_DRAIN_WAIT).await;
     // The menu bar item leaves with the daemon: its task takes it off at shutdown.

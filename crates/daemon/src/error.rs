@@ -42,6 +42,8 @@ pub enum DaemonError {
     Gateway(String),
     #[error("cannot restore the tasks: {0}")]
     Tasks(String),
+    #[error("invalid language server settings: {0}")]
+    Lsp(String),
     #[error("daemon task failed: {0}")]
     Task(#[from] tokio::task::JoinError),
 }

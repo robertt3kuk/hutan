@@ -73,6 +73,8 @@ pub const CAPABILITIES: &[&str] = &[
     "chat.queue",
     "checkpoint",
     "checkpoint.restore",
+    "doc.sync",
+    "lsp",
 ];
 
 /// How long a closing connection may take to flush already queued messages.
