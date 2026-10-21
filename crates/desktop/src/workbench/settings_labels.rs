@@ -253,6 +253,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "terminal",
+        "confirm_multiline_paste",
+        "Confirm multi-line pastes",
+        "Ask before a paste of several lines into a program that did not turn on bracketed paste, because a shell would run every line at once. Choose Paste, Paste as one line or Cancel. Programs that handle bracketed paste (most editors and agents) are never asked about.",
+    ),
+    field(
+        "terminal",
         "blocks",
         "Command blocks",
         "Groups each command and its output into a block with a marker bar, a status chip, and actions on hover such as copy and fold. Off, the terminal looks like a plain terminal.",

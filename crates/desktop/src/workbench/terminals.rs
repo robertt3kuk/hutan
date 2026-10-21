@@ -264,6 +264,7 @@ impl Workbench {
                     this.send_block_to_agent(session, *block, window, cx);
                 }
                 TerminalViewEvent::OpenLink(target) => this.open_terminal_link(target, cx),
+                TerminalViewEvent::Notice(text) => this.set_notice(text.clone(), cx),
                 TerminalViewEvent::TitleChanged(_) => {}
             },
         );

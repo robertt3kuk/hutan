@@ -276,6 +276,7 @@ option_as_meta = "left"        # none | left | right | both
 copy_on_select = false
 blocks = true                  # prompt blocks over the terminal (see Terminal blocks)
 open_files_with = "system"     # system | editor — what ⌘-click on a file path in output opens (see Terminal links)
+confirm_multiline_paste = true # ask before a multi-line paste into a program without bracketed paste (see Terminal drops and pastes)
 
 [layout]
 preset = "default"
@@ -485,6 +486,14 @@ Hold **⌘** over terminal text: a URL or a file path that is really there is un
 - **Where it opens** (`terminal.open_files_with`, default `system`). A URL opens in the browser. A file opens with its default application (`system`, like a double click in Finder) or with the default text editor (`editor`, `open -t`; the built-in editor of E-5/E-10 takes this value over and will open the file at the line, which the system cannot be told). A file that is gone by the time of the click says so in a notice. One function, `workbench::open_link::open_link`, decides; the terminal view only emits `TerminalViewEvent::OpenLink(LinkTarget)`.
 
 Parity: OSC 8 ⌘-click kept (it now goes through the same event and opener); nothing removed.
+
+### Terminal drops and pastes (UX-TERM-DROP-PASTE)
+
+- **Drop files on a terminal.** While files are dragged over a terminal that takes input, the whole view shows an accent outline and **Drop to insert path** (the chat's overlay pattern: invisible until a drag of files is over it, in the theme's `terminal.cursor` colors, no literals); the drop types each path at the cursor, shell-quoted only where a shell would care (`'/tmp/my dir/it'\''s.txt'`), separated and followed by one space, inside the bracketed-paste markers when the program turned that on. Nothing is run. A path that is not UTF-8 or holds a control character is left out (a shell's line editor would act on it). A terminal whose session ended takes no drops and shows no overlay. ⌘V of files copied in Finder does the same.
+- **Image paste.** A clipboard that holds only an image types nothing and the workbench says **Images can't be pasted into a terminal — attach them in a chat** (a notice, `TerminalViewEvent::Notice`). Text on the clipboard always wins over an image; files win over text (Finder puts the file name there too).
+- **Multi-line paste.** `terminal.confirm_multiline_paste` (default on). When the program did **not** enable bracketed paste (a plain shell: a pasted newline is an Enter, so each line would run at once) and the text has a line break that is not just its last character, ⌘V opens a card over the terminal: *Paste N lines into the terminal?*, the first six lines, **Cancel** (Esc), **Paste** (⌘↩, as it is) and **Paste as one line** (↩, the default: line breaks and the blanks around them become one space, so nothing runs until the user presses Enter). While the card is open no key reaches the program (⌘ shortcuts of the app still work) and the mouse does not click through. A single line with its trailing newline is typed at once; a bracketed-paste program (editors, agent TUIs) is never asked about and gets the text inside the markers as before. The card closes when the session ends. Daemon-driven pastes (*Send to agent*, `session.send_text`) are not the user's clipboard and are not asked about.
+
+Parity: ⌘V of a multi-line text into a plain shell used to run it at once; it now asks (turn off with `terminal.confirm_multiline_paste = false`). Nothing is removed.
 
 ## Terminal blocks (M10-C)
 

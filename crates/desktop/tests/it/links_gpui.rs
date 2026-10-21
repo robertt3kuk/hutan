@@ -135,3 +135,20 @@ fn a_url_opens_in_the_browser_and_a_vanished_file_says_so(cx: &mut TestAppContex
         )
     );
 }
+
+#[gpui::test]
+fn a_notice_from_the_terminal_view_is_shown(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, terminal, _opened) = open_terminal(cx, &daemon, "");
+    terminal.update(cx, |_, cx| {
+        cx.emit(TerminalViewEvent::Notice(
+            hutan_terminal_view::IMAGE_PASTE_NOTICE.to_owned(),
+        ));
+    });
+    cx.run_until_parked();
+    let notice = view.read_with(cx, |wb, _| wb.notice().map(ToString::to_string));
+    assert_eq!(
+        notice.as_deref(),
+        Some("Images can't be pasted into a terminal — attach them in a chat")
+    );
+}

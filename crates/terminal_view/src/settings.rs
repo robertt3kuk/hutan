@@ -140,6 +140,9 @@ pub struct TerminalViewSettings {
     pub option_as_meta: OptionAsMeta,
     pub copy_on_select: bool,
     pub scroll_to_bottom_on_input: bool,
+    /// Ask before pasting several lines into an application that did not turn on bracketed
+    /// paste (a shell that would run every line at once).
+    pub confirm_multiline_paste: bool,
     /// Space between the view's edge and the grid, on all four sides, in logical pixels. The
     /// grid (columns and rows, mouse hit-testing) is laid out in the padded content box.
     pub padding: f32,
@@ -157,6 +160,7 @@ impl Default for TerminalViewSettings {
             option_as_meta: OptionAsMeta::Left,
             copy_on_select: false,
             scroll_to_bottom_on_input: true,
+            confirm_multiline_paste: true,
             padding: 0.0,
             blocks: BlockSettings::default(),
         }

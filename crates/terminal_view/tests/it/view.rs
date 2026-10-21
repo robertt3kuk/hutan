@@ -16,7 +16,7 @@ use hutan_protocol::render::{
     TerminalRender, TerminalSnapshot,
 };
 use hutan_terminal_view::{
-    DefaultColors, TerminalBackend, TerminalSize, TerminalView, TerminalViewEvent,
+    DefaultColors, PasteChoice, TerminalBackend, TerminalSize, TerminalView, TerminalViewEvent,
     TerminalViewSettings, ViewStatus,
 };
 
@@ -660,7 +660,230 @@ fn paste_is_bracketed_and_sanitized(cx: &mut TestAppContext) {
     draw(cx);
     cx.write_to_clipboard(gpui::ClipboardItem::new_string("a\nb".into()));
     cx.simulate_keystrokes("cmd-v");
+    view.update(cx, |v, cx| v.answer_paste(PasteChoice::Paste, cx));
     assert_eq!(recorder.inputs().concat(), b"a\rb");
+}
+
+/// A focused view over a one-line screen, with `modes`.
+fn pasting(
+    cx: &mut TestAppContext,
+    settings: TerminalViewSettings,
+    modes: Modes,
+) -> (Entity<TerminalView>, &mut VisualTestContext, Rc<Recorder>) {
+    let (view, cx, recorder) = setup(cx, settings);
+    apply(&view, cx, snapshot(1, &["$"], modes, 0));
+    draw(cx);
+    cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+    recorder.take();
+    (view, cx, recorder)
+}
+
+fn events(
+    cx: &mut VisualTestContext,
+    view: &Entity<TerminalView>,
+) -> Rc<RefCell<Vec<TerminalViewEvent>>> {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    cx.update(|_, cx| {
+        cx.subscribe(view, move |_, event: &TerminalViewEvent, _| {
+            sink.borrow_mut().push(event.clone());
+        })
+        .detach();
+    });
+    seen
+}
+
+#[gpui::test]
+fn a_multiline_paste_to_a_plain_shell_asks_first(cx: &mut TestAppContext) {
+    let (view, cx, recorder) = pasting(cx, TerminalViewSettings::default(), Modes::default());
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+        "echo a\necho b\necho c\n".into(),
+    ));
+    cx.simulate_keystrokes("cmd-v");
+    assert!(
+        recorder.inputs().is_empty(),
+        "nothing runs before the answer"
+    );
+    assert_eq!(
+        view.read_with(cx, |v, _| v.pending_paste().map(str::to_owned))
+            .as_deref(),
+        Some("echo a\necho b\necho c\n")
+    );
+
+    // The card is drawn (its buttons are clickable elements).
+    draw(cx);
+
+    // Typing is held back while the question is open.
+    cx.simulate_input("x");
+    assert!(recorder.inputs().is_empty());
+
+    // Enter: as one line, nothing runs until the user presses Enter themselves.
+    cx.simulate_keystrokes("enter");
+    assert_eq!(recorder.inputs().concat(), b"echo a echo b echo c");
+    assert!(view.read_with(cx, |v, _| v.pending_paste().is_none()));
+
+    // Typing works again.
+    cx.simulate_input("y");
+    assert_eq!(recorder.inputs().concat(), b"y");
+}
+
+#[gpui::test]
+fn the_three_answers_to_a_multiline_paste(cx: &mut TestAppContext) {
+    let (view, cx, recorder) = pasting(cx, TerminalViewSettings::default(), Modes::default());
+    let text = "one\ntwo\nthree";
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.into()));
+
+    cx.simulate_keystrokes("cmd-v");
+    cx.simulate_keystrokes("cmd-enter");
+    assert_eq!(
+        recorder.inputs().concat(),
+        b"one\rtwo\rthree",
+        "Paste: as it is"
+    );
+
+    cx.simulate_keystrokes("cmd-v");
+    cx.simulate_keystrokes("escape");
+    assert!(recorder.inputs().is_empty(), "Cancel: nothing");
+    assert!(view.read_with(cx, |v, _| v.pending_paste().is_none()));
+
+    cx.simulate_keystrokes("cmd-v");
+    view.update(cx, |v, cx| v.answer_paste(PasteChoice::OneLine, cx));
+    assert_eq!(recorder.inputs().concat(), b"one two three");
+}
+
+#[gpui::test]
+fn bracketed_paste_and_single_lines_are_never_asked_about(cx: &mut TestAppContext) {
+    let bracketed = Modes {
+        bracketed_paste: true,
+        ..Modes::default()
+    };
+    let (view, cx, recorder) = pasting(cx, TerminalViewSettings::default(), bracketed);
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("a\nb\nc".into()));
+    cx.simulate_keystrokes("cmd-v");
+    assert_eq!(recorder.inputs().concat(), b"\x1b[200~a\nb\nc\x1b[201~");
+    assert!(view.read_with(cx, |v, _| v.pending_paste().is_none()));
+
+    // A plain shell: one line, even with its trailing newline, is typed at once.
+    apply(&view, cx, snapshot(2, &["$"], Modes::default(), 0));
+    draw(cx);
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("ls -l\n".into()));
+    cx.simulate_keystrokes("cmd-v");
+    assert_eq!(recorder.inputs().concat(), b"ls -l\r");
+    assert!(view.read_with(cx, |v, _| v.pending_paste().is_none()));
+}
+
+#[gpui::test]
+fn the_confirmation_can_be_turned_off(cx: &mut TestAppContext) {
+    let settings = TerminalViewSettings {
+        confirm_multiline_paste: false,
+        ..TerminalViewSettings::default()
+    };
+    let (_view, cx, recorder) = pasting(cx, settings, Modes::default());
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("a\nb\nc".into()));
+    cx.simulate_keystrokes("cmd-v");
+    assert_eq!(recorder.inputs().concat(), b"a\rb\rc");
+}
+
+#[gpui::test]
+fn dropping_files_types_their_quoted_paths(cx: &mut TestAppContext) {
+    let (view, cx, recorder) = pasting(cx, TerminalViewSettings::default(), Modes::default());
+    let at = point(px(40.0), px(30.0));
+    let paths = || {
+        gpui::ExternalPaths(
+            ["/tmp/a.rs", "/tmp/my dir/it's.txt"]
+                .map(Into::into)
+                .into_iter()
+                .collect(),
+        )
+    };
+    cx.simulate_event(gpui::FileDropEvent::Entered {
+        position: at,
+        paths: paths(),
+    });
+    cx.simulate_event(gpui::FileDropEvent::Submit { position: at });
+    cx.simulate_event(gpui::FileDropEvent::Exited);
+    cx.simulate_event(gpui::FileDropEvent::Ended);
+    draw(cx);
+    assert_eq!(
+        recorder.inputs().concat(),
+        b"/tmp/a.rs '/tmp/my dir/it'\\''s.txt' "
+    );
+    assert!(
+        view.read_with(cx, |v, _| v.pending_paste().is_none()),
+        "a drop is not a paste to confirm"
+    );
+
+    // An application with bracketed paste gets them inside the markers.
+    apply(
+        &view,
+        cx,
+        snapshot(
+            2,
+            &["$"],
+            Modes {
+                bracketed_paste: true,
+                ..Modes::default()
+            },
+            0,
+        ),
+    );
+    draw(cx);
+    cx.simulate_event(gpui::FileDropEvent::Entered {
+        position: at,
+        paths: paths(),
+    });
+    cx.simulate_event(gpui::FileDropEvent::Submit { position: at });
+    cx.simulate_event(gpui::FileDropEvent::Exited);
+    cx.simulate_event(gpui::FileDropEvent::Ended);
+    assert_eq!(
+        recorder.inputs().concat(),
+        b"\x1b[200~/tmp/a.rs '/tmp/my dir/it'\\''s.txt' \x1b[201~"
+    );
+}
+
+#[gpui::test]
+fn a_session_that_ended_takes_no_drops(cx: &mut TestAppContext) {
+    let (view, cx, recorder) = pasting(cx, TerminalViewSettings::default(), Modes::default());
+    view.update(cx, |v, cx| {
+        v.set_status(ViewStatus::Ended("exited".into()), cx)
+    });
+    draw(cx);
+    let at = point(px(40.0), px(30.0));
+    let dropped = gpui::ExternalPaths(["/tmp/a.rs"].map(Into::into).into_iter().collect());
+    cx.simulate_event(gpui::FileDropEvent::Entered {
+        position: at,
+        paths: dropped,
+    });
+    cx.simulate_event(gpui::FileDropEvent::Submit { position: at });
+    cx.simulate_event(gpui::FileDropEvent::Exited);
+    cx.simulate_event(gpui::FileDropEvent::Ended);
+    assert!(recorder.inputs().is_empty());
+}
+
+#[gpui::test]
+fn files_copied_in_finder_paste_as_paths_and_an_image_says_it_cannot(cx: &mut TestAppContext) {
+    let (view, cx, recorder) = pasting(cx, TerminalViewSettings::default(), Modes::default());
+    let seen = events(cx, &view);
+    cx.write_to_clipboard(gpui::ClipboardItem {
+        entries: vec![gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths(
+            ["/tmp/a b.txt"].map(Into::into).into_iter().collect(),
+        ))],
+    });
+    cx.simulate_keystrokes("cmd-v");
+    assert_eq!(recorder.inputs().concat(), b"'/tmp/a b.txt' ");
+
+    cx.write_to_clipboard(gpui::ClipboardItem::from(gpui::Image::from_bytes(
+        gpui::ImageFormat::Png,
+        vec![1, 2, 3],
+    )));
+    cx.simulate_keystrokes("cmd-v");
+    assert!(recorder.inputs().is_empty(), "an image types nothing");
+    assert_eq!(
+        *seen.borrow(),
+        [TerminalViewEvent::Notice(
+            "Images can't be pasted into a terminal — attach them in a chat".into()
+        )]
+    );
 }
 
 #[gpui::test]

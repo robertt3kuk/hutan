@@ -119,6 +119,10 @@ pub struct TerminalSettings {
     /// What ⌘-click on a file path in terminal output opens it with: `system` (the file's
     /// default application) or `editor`.
     pub open_files_with: OpenFilesWith,
+    /// Ask before a multi-line paste into a program that did not turn on bracketed paste (a
+    /// shell would run every line at once). Programs that handle bracketed paste are never
+    /// asked about.
+    pub confirm_multiline_paste: bool,
 }
 
 impl Default for TerminalSettings {
@@ -137,6 +141,7 @@ impl Default for TerminalSettings {
             env: BTreeMap::new(),
             tab_close: TabClose::Detach,
             open_files_with: OpenFilesWith::System,
+            confirm_multiline_paste: true,
         }
     }
 }
@@ -268,6 +273,7 @@ impl TerminalSettings {
             },
             copy_on_select: self.copy_on_select,
             scroll_to_bottom_on_input: self.scroll_to_bottom_on_input,
+            confirm_multiline_paste: self.confirm_multiline_paste,
             // Padding follows the density; the workbench fills it in.
             padding: 0.0,
             // The gutter width, colors and motion follow the density and the chrome theme; the
@@ -1504,6 +1510,31 @@ mod tests {
                 .font_size,
             72.0
         );
+    }
+
+    #[test]
+    fn paste_and_link_rules_reach_the_view_and_the_opener() {
+        let (terminal, _) = builtin_terminal(themes::Builtin::HutanDark);
+        let pack = TerminalPackDefaults {
+            font_family: "Menlo".to_owned(),
+            font_size: 13.0,
+            line_height: 1.2,
+        };
+        let on = TerminalSettings::default();
+        assert!(on.confirm_multiline_paste, "the question is on by default");
+        assert_eq!(on.open_files_with, OpenFilesWith::System);
+        assert!(
+            on.view_settings(&terminal, &pack, TerminalExplicit::ALL)
+                .confirm_multiline_paste
+        );
+        let off: TerminalSettings =
+            toml::from_str("confirm_multiline_paste = false\nopen_files_with = \"editor\"")
+                .unwrap();
+        assert!(
+            !off.view_settings(&terminal, &pack, TerminalExplicit::ALL)
+                .confirm_multiline_paste
+        );
+        assert_eq!(off.open_files_with, OpenFilesWith::Editor);
     }
 
     #[test]

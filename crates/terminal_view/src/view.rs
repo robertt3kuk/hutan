@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    App, AppContext as _, Bounds, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, ModifiersChangedEvent,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render,
-    ScrollDelta, ScrollWheelEvent, SharedString, Size, StatefulInteractiveElement, Styled,
-    Subscription, Task, UTF16Selection, Window, actions, div, point, px,
+    App, AppContext as _, Bounds, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding,
+    KeyDownEvent, ModifiersChangedEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, SharedString, Size,
+    StatefulInteractiveElement, Styled, Subscription, Task, UTF16Selection, Window, actions, div,
+    point, px,
 };
 use hutan_protocol::blocks::{Block, BlockPart, BlockState};
 use hutan_protocol::messages::TerminalSize;
@@ -28,7 +29,7 @@ use crate::model::{Applied, HISTORY_PAGE, TerminalModel, row_cells, row_width};
 use crate::mouse::{
     Button, MouseAction, MouseEvent, WheelDirection, alternate_scroll, encode_mouse,
 };
-use crate::paste::paste_bytes;
+use crate::paste::{self, paste_bytes};
 use crate::selection::{Point as GridPoint, Selection, SelectionKind, selected_text};
 use crate::settings::{CursorStyle, TerminalViewSettings};
 use crate::shape::{RowCache, hsla};
@@ -96,6 +97,13 @@ pub(crate) const ANIMATION_PHASES: u8 = 8;
 pub(crate) const JUMP_PILL_HEIGHT: f32 = 24.0;
 /// Lines one wheel event may scroll.
 const MAX_WHEEL_LINES: f32 = 64.0;
+/// Group name of the drop overlay (`group_drag_over`).
+const DROP_GROUP: &str = "hutan-terminal-drop";
+/// What a pasted image says: a terminal takes text.
+pub const IMAGE_PASTE_NOTICE: &str =
+    "Images can't be pasted into a terminal — attach them in a chat";
+/// Lines of a pending paste the confirmation previews.
+const PASTE_PREVIEW_LINES: usize = 6;
 /// Hyperlink schemes ⌘-click opens; anything else in an OSC 8 target is untrusted.
 const OPENABLE_SCHEMES: &[&str] = &["http://", "https://", "mailto:"];
 
@@ -120,6 +128,20 @@ pub enum TerminalViewEvent {
     /// existing `path[:line[:col]]` found in the text. The view opens nothing itself: its owner
     /// decides what opens it (the browser, the system, an editor).
     OpenLink(LinkTarget),
+    /// Something the user should be told that the view cannot show itself (a paste of an image):
+    /// the owner shows it as a notice.
+    Notice(String),
+}
+
+/// How the user answered the multi-line paste confirmation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasteChoice {
+    /// Paste the text as it is: every line runs as soon as it arrives.
+    Paste,
+    /// Paste it as one line (line breaks become spaces): nothing runs until Enter.
+    OneLine,
+    /// Paste nothing.
+    Cancel,
 }
 
 /// Rows of one soft-wrapped line the link detector reads on each side of the hovered row.
@@ -221,6 +243,8 @@ pub struct TerminalView {
     /// The link in plain text under the pointer while ⌘ is held (found on hover, never per
     /// frame; dropped when the output changes).
     pub(crate) hover_detected: Option<Detected>,
+    /// A multi-line paste waiting for the user's answer (the clipboard text as it was).
+    pending_paste: Option<String>,
 
     marked: Option<Marked>,
 
@@ -348,6 +372,7 @@ impl TerminalView {
             hover_cell: None,
             cmd_held: false,
             hover_detected: None,
+            pending_paste: None,
             marked: None,
             layout: None,
             reported_size: None,
@@ -468,6 +493,9 @@ impl TerminalView {
                     self.wanted_size = None;
                 }
                 self.status = status;
+                if self.status != ViewStatus::Live {
+                    self.pending_paste = None;
+                }
                 self.reporting = None;
                 self.selecting = false;
             }
@@ -1103,7 +1131,7 @@ impl TerminalView {
 
     /// Sends bytes the user produced (typing, paste) to the application.
     fn send_input(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
-        if !self.accepts_input() || bytes.is_empty() {
+        if !self.accepts_input() || bytes.is_empty() || self.pending_paste.is_some() {
             self.latency.key_unsent();
             return;
         }
@@ -1127,6 +1155,10 @@ impl TerminalView {
         let key_at = crate::trace::enabled().then(std::time::Instant::now);
         let ks = &event.keystroke;
         let m = ks.modifiers;
+        if self.pending_paste.is_some() && self.answer_paste_with_key(ks, cx) {
+            cx.stop_propagation();
+            return;
+        }
         if m.platform {
             if !m.control && !m.alt {
                 match ks.key.as_str() {
@@ -1208,13 +1240,102 @@ impl TerminalView {
         }
     }
 
-    /// Pastes the clipboard text, bracketed when the application enabled it.
+    /// ⌘V. Files copied in Finder type their quoted paths (as a drop does); text is pasted,
+    /// bracketed when the application enabled it, and a multi-line text for an application
+    /// that did not asks first (`terminal.confirm_multiline_paste`); an image cannot be pasted
+    /// into a terminal and says so.
     pub fn paste(&mut self, cx: &mut Context<Self>) {
-        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+        if self.pending_paste.is_some() {
+            return;
+        }
+        let Some(item) = cx.read_from_clipboard() else {
             return;
         };
-        let bytes = paste_bytes(&text, self.model.get().modes().bracketed_paste);
-        self.send_input(bytes, cx);
+        let paths: Vec<std::path::PathBuf> = item
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                ClipboardEntry::ExternalPaths(paths) => Some(paths.paths().to_vec()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        if !paths.is_empty() {
+            self.insert_paths(&paths, cx);
+        } else if let Some(text) = item.text() {
+            self.paste_text(text, cx);
+        } else if item
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry, ClipboardEntry::Image(_)))
+        {
+            cx.emit(TerminalViewEvent::Notice(IMAGE_PASTE_NOTICE.to_owned()));
+        }
+    }
+
+    fn paste_text(&mut self, text: String, cx: &mut Context<Self>) {
+        let bracketed = self.model.get().modes().bracketed_paste;
+        if !bracketed
+            && self.settings.confirm_multiline_paste
+            && self.accepts_input()
+            && paste::is_multiline(&text)
+        {
+            self.pending_paste = Some(text);
+            cx.notify();
+            return;
+        }
+        self.send_input(paste_bytes(&text, bracketed), cx);
+    }
+
+    /// Types `paths` at the cursor, quoted for the shell (a drop, or ⌘V of files copied in
+    /// Finder).
+    pub fn insert_paths<P: AsRef<std::path::Path>>(&mut self, paths: &[P], cx: &mut Context<Self>) {
+        let Some(text) = paste::dropped_paths_text(paths) else {
+            return;
+        };
+        let bracketed = self.model.get().modes().bracketed_paste;
+        self.send_input(paste_bytes(&text, bracketed), cx);
+    }
+
+    /// The multi-line paste waiting for an answer, if any.
+    pub fn pending_paste(&self) -> Option<&str> {
+        self.pending_paste.as_deref()
+    }
+
+    /// Answers the multi-line paste confirmation; does nothing when none is open.
+    pub fn answer_paste(&mut self, choice: PasteChoice, cx: &mut Context<Self>) {
+        let Some(text) = self.pending_paste.take() else {
+            return;
+        };
+        let bracketed = self.model.get().modes().bracketed_paste;
+        match choice {
+            PasteChoice::Paste => self.send_input(paste_bytes(&text, bracketed), cx),
+            PasteChoice::OneLine => {
+                self.send_input(paste_bytes(&paste::as_one_line(&text), bracketed), cx);
+            }
+            PasteChoice::Cancel => {}
+        }
+        cx.notify();
+    }
+
+    /// Enter pastes as one line, ⌘Enter as it is, Escape cancels; every other key is held back
+    /// while the question is open (nothing may type into the prompt behind it). Returns whether
+    /// the key was consumed: ⌘ shortcuts of the app still work.
+    fn answer_paste_with_key(&mut self, ks: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
+        let m = ks.modifiers;
+        let choice = match ks.key.as_str() {
+            "enter" if m.platform => Some(PasteChoice::Paste),
+            "enter" if !m.control && !m.alt && !m.shift => Some(PasteChoice::OneLine),
+            "escape" => Some(PasteChoice::Cancel),
+            _ => None,
+        };
+        match choice {
+            Some(choice) => {
+                self.answer_paste(choice, cx);
+                true
+            }
+            None => !m.platform,
+        }
     }
 
     // ---- scrollback ------------------------------------------------------------------------
@@ -1271,6 +1392,9 @@ impl TerminalView {
     // ---- mouse -----------------------------------------------------------------------------
 
     fn report_mouse(&mut self, action: MouseAction, mods: Mods, row: u16, col: u16) -> bool {
+        if self.pending_paste.is_some() {
+            return false;
+        }
         let modes = self.model.get().modes();
         let event = MouseEvent {
             action,
@@ -1299,6 +1423,9 @@ impl TerminalView {
     ) {
         let Some(layout) = self.layout else { return };
         window.focus(&self.focus_handle, cx);
+        if self.pending_paste.is_some() {
+            return;
+        }
         let (row, col) = layout.cell_at(event.position);
         self.highlight = None;
         if event.button == gpui::MouseButton::Left && event.modifiers.platform {
@@ -2190,6 +2317,178 @@ impl TerminalView {
     }
 }
 
+impl TerminalView {
+    /// The highlight that covers the view while files are dragged over it. Always present, and
+    /// invisible until a drag of files is over the view (the chat's drop overlay does the same).
+    fn drop_overlay(&self) -> Option<gpui::AnyElement> {
+        if !self.accepts_input() {
+            return None;
+        }
+        let accent = hsla(self.theme.cursor());
+        let size = (self.settings.font_size * 1.1).max(11.0);
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .m(px(6.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(10.))
+                .border_2()
+                .border_color(accent)
+                .bg(accent.opacity(0.14))
+                .text_color(accent)
+                .text_size(px(size))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .opacity(0.0)
+                .group_drag_over::<ExternalPaths>(DROP_GROUP, |style| style.opacity(1.0))
+                .child("Drop to insert path")
+                .into_any_element(),
+        )
+    }
+
+    /// The question a multi-line paste asks: what will happen, the first lines, and three
+    /// answers. Enter pastes as one line (nothing runs), ⌘Enter as it is, Escape cancels.
+    fn paste_card(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let text = self.pending_paste.as_deref()?;
+        let theme = &self.theme;
+        let (background, foreground) = (theme.background(), theme.foreground());
+        let card = hsla(background.mix(foreground, 0.08));
+        let border = hsla(background.mix(foreground, 0.28));
+        let muted = hsla(foreground.mix(background, 0.35));
+        let text_color = hsla(foreground);
+        let accent = hsla(theme.cursor());
+        let on_accent = hsla(theme.cursor_foreground());
+        let size = (self.settings.font_size * 0.95).max(10.0);
+
+        let all = paste::lines(text);
+        let count = all.len();
+        let preview: Vec<gpui::AnyElement> = all
+            .iter()
+            .take(PASTE_PREVIEW_LINES)
+            .map(|line| {
+                div()
+                    .truncate()
+                    .child(SharedString::from(if line.is_empty() {
+                        " ".to_owned()
+                    } else {
+                        (*line).to_owned()
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        let more = count.saturating_sub(PASTE_PREVIEW_LINES);
+        let button =
+            |id: &'static str, label: &'static str, hint: &'static str, choice, primary: bool| {
+                let (fill, ink) = if primary {
+                    (accent, on_accent)
+                } else {
+                    (
+                        hsla(background.mix(foreground, 0.0)).opacity(0.0),
+                        text_color,
+                    )
+                };
+                div()
+                    .id(id)
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .h(px(28.))
+                    .px(px(12.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(if primary { accent } else { border })
+                    .bg(fill)
+                    .text_color(ink)
+                    .text_size(px(size))
+                    .cursor_pointer()
+                    .hover(move |s| {
+                        s.bg(if primary {
+                            accent.opacity(0.88)
+                        } else {
+                            hsla(foreground).opacity(0.10)
+                        })
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| this.answer_paste(choice, cx)))
+                    .child(label)
+                    .child(div().text_size(px(size * 0.85)).opacity(0.7).child(hint))
+            };
+        Some(
+            div()
+                .id("hutan-terminal-paste-confirm")
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(hsla(background).opacity(0.6))
+                .occlude()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(10.))
+                        .w_full()
+                        .max_w(px(560.))
+                        .m(px(16.))
+                        .p(px(16.))
+                        .rounded(px(10.))
+                        .border_1()
+                        .border_color(border)
+                        .bg(card)
+                        .text_color(text_color)
+                        .text_size(px(size))
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(SharedString::from(format!("Paste {count} lines into the terminal?"))),
+                        )
+                        .child(div().text_color(muted).child(
+                            "This program did not turn on bracketed paste, so a shell runs every line as soon as it arrives.",
+                        ))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .p(px(8.))
+                                .rounded(px(6.))
+                                .border_1()
+                                .border_color(border)
+                                .bg(hsla(background))
+                                .font_family(self.settings.font_family.clone())
+                                .text_size(px(size * 0.92))
+                                .overflow_hidden()
+                                .children(preview)
+                                .when(more > 0, |d| {
+                                    d.child(div().text_color(muted).child(SharedString::from(format!(
+                                        "… and {more} more line{}",
+                                        if more == 1 { "" } else { "s" }
+                                    ))))
+                                }),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .gap(px(8.))
+                                .child(button("hutan-paste-cancel", "Cancel", "esc", PasteChoice::Cancel, false))
+                                .child(button("hutan-paste-all", "Paste", "⌘↩", PasteChoice::Paste, false))
+                                .child(button(
+                                    "hutan-paste-one-line",
+                                    "Paste as one line",
+                                    "↩",
+                                    PasteChoice::OneLine,
+                                    true,
+                                )),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+}
+
 impl Render for TerminalView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let background = hsla(self.theme.background());
@@ -2210,6 +2509,8 @@ impl Render for TerminalView {
         };
         let bar = self.actions_bar(cx);
         let pill = self.jump_pill(cx);
+        let drop_overlay = self.drop_overlay();
+        let paste_card = self.paste_card(cx);
         let root = div()
             .id("hutan-terminal")
             .key_context(KEY_CONTEXT)
@@ -2266,13 +2567,22 @@ impl Render for TerminalView {
                     cx.propagate();
                 }
             }))
+            .group(DROP_GROUP)
+            .on_drop::<ExternalPaths>(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                if this.accepts_input() {
+                    window.focus(&this.focus_handle, cx);
+                    this.insert_paths(paths.paths(), cx);
+                }
+            }))
             .relative()
             .size_full()
             .overflow_hidden()
             .bg(background)
             .child(TerminalElement::new(cx.entity()))
             .children(bar)
-            .children(pill);
+            .children(pill)
+            .children(drop_overlay)
+            .children(paste_card);
         match banner {
             None => root.into_any_element(),
             Some(text) => root

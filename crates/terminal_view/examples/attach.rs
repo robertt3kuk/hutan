@@ -184,6 +184,7 @@ fn main() -> ExitCode {
                 TerminalViewEvent::SendBlockToAgent { block } => {
                     eprintln!("attach: send block {block} to an agent (no chat here)");
                 }
+                TerminalViewEvent::Notice(text) => eprintln!("attach: {text}"),
                 TerminalViewEvent::OpenLink(target) => {
                     eprintln!("attach: open {target:?} (nothing opens links here)");
                 }
