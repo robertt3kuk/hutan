@@ -13,8 +13,8 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, Context, Entity, EntityId, IntoElement,
-    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity,
-    Window, div, px,
+    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window,
+    div, px,
 };
 use hutan_code_view::{CodeView, VimMode};
 

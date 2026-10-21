@@ -59,8 +59,7 @@ fn open_text(
         view.read_with(cx, |wb, cx| {
             wb.focused_file_view().is_some_and(|v| {
                 let buffer = v.read(cx).buffer().read(cx);
-                buffer.path().display().to_string() == path
-                    && *buffer.state() == LoadState::Ready
+                buffer.path().display().to_string() == path && *buffer.state() == LoadState::Ready
             })
         })
     });
@@ -242,9 +241,7 @@ fn a_cyrillic_layout_types_commands_by_their_place_and_text_as_typed(cx: &mut Te
 }
 
 #[gpui::test]
-fn split_keeps_the_caret_line_and_the_lower_pane_runs_its_own_colon_line(
-    cx: &mut TestAppContext,
-) {
+fn split_keeps_the_caret_line_and_the_lower_pane_runs_its_own_colon_line(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
     let dir = tempfile::tempdir().unwrap();
@@ -273,7 +270,10 @@ fn split_keeps_the_caret_line_and_the_lower_pane_runs_its_own_colon_line(
         code.read_with(cx, |c, cx| {
             let line = c.position(cx).0 - 1;
             let rows = c.layout().unwrap().rows;
-            (c.position(cx), c.top_line() <= line && line + 1 < c.top_line() + rows)
+            (
+                c.position(cx),
+                c.top_line() <= line && line + 1 < c.top_line() + rows,
+            )
         })
     };
     assert_eq!(in_view(&lower_code, cx), ((60, 1), true), "the lower pane");

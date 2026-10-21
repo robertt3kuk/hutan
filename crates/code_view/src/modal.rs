@@ -145,11 +145,9 @@ pub fn vim_key_of(event: &KeyDownEvent, takes_text: impl FnOnce(char) -> bool) -
 fn key_place(key: &str, shift: bool) -> Option<char> {
     let mut chars = key.chars();
     match (chars.next(), chars.next()) {
-        (Some(c), None) if c.is_ascii_graphic() => Some(if shift {
-            c.to_ascii_uppercase()
-        } else {
-            c
-        }),
+        (Some(c), None) if c.is_ascii_graphic() => {
+            Some(if shift { c.to_ascii_uppercase() } else { c })
+        }
         _ => None,
     }
 }
