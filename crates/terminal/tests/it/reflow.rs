@@ -540,3 +540,23 @@ fn a_two_line_prompt_with_a_right_prompt_equals_a_fresh_render_after_each_width_
         );
     }
 }
+
+#[test]
+fn with_scrollback_behind_the_screen_a_narrow_and_widen_round_trip_returns_the_same_screen() {
+    // 100 lines of old output scrolled into history, then the user clears the screen (`clear`
+    // scrolls it away) and runs one command: blank rows below, scrollback above. The engine
+    // pulls older lines into view when rows unwrap, so the rows a narrowing pushed up come
+    // back, and nothing else changes.
+    let mut emulator = Emulator::new(size(100, 24), 1000).expect("emulator");
+    for i in 0..100 {
+        emulator.feed(format!("old output line {i}\r\n").as_bytes());
+    }
+    emulator.feed(b"\x1b[H\x1b[2J");
+    emulator.feed(format!("{PROMPT}echo hello\r\nhello\r\n{PROMPT}").as_bytes());
+    let (screen, history) = (emulator.grid_text(), emulator.history_len());
+    for (cols, rows) in [(60, 24), (44, 24), (100, 24), (30, 24), (100, 24)] {
+        emulator.resize(size(cols, rows)).expect("resize");
+    }
+    assert_eq!(emulator.grid_text(), screen);
+    assert_eq!(emulator.history_len(), history);
+}

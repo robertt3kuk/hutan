@@ -442,22 +442,16 @@ impl Emulator {
         let wraps_before =
             (reflowed && !on_alt && self.blocks.reaches(first_hot)).then(|| self.region_wraps());
         // Only the hot margin reflows (it already is the only history in the engine).
-        let blank = if reflowed && !on_alt {
+        let blank = if reflowed && !on_alt && self.term.history_size() == 0 {
             self.trailing_blank_rows()
         } else {
             0
         };
         if blank > 0 {
-            // Blank rows below the cursor are not content: reflowing with them would push the
-            // top rows of a short screen into scrollback although there is room, and a fresh
-            // render at the new width would not. Drop them, reflow, then give the rows back
-            // (growing takes back what the reflow pushed up, and nothing else matters here).
-            self.term.resize(Dims {
-                cols: dims.cols,
-                rows: usize::from(self.size.rows) - blank,
-            });
+            self.resize_without_blank_rows(dims, blank);
+        } else {
+            self.term.resize(dims);
         }
-        self.term.resize(dims);
         self.size = size;
         self.generation += 1;
         if on_alt {
@@ -489,6 +483,22 @@ impl Emulator {
         }
         self.flush_blocks();
         Ok(())
+    }
+
+    /// Resizes the engine to `dims` for a width change with `blank` blank rows at the bottom of
+    /// the screen and no hot scrollback. Reflowing with the blank rows would push the top rows
+    /// of a short screen into scrollback although there is room, and a fresh render at the new
+    /// width would not: so the blank rows are dropped, the screen reflows, and the rows come
+    /// back (growing the screen takes back exactly the rows the reflow pushed: there is no
+    /// other history to pull). With scrollback behind the screen the engine's own
+    /// behavior stays: it pulls older lines into view when rows unwrap, which is what makes a
+    /// narrow-and-widen round trip return the same screen.
+    fn resize_without_blank_rows(&mut self, dims: Dims, blank: usize) {
+        self.term.resize(Dims {
+            cols: dims.cols,
+            rows: usize::from(self.size.rows) - blank,
+        });
+        self.term.resize(dims);
     }
 
     /// Fully blank rows at the bottom of the screen, below the cursor's row (always fewer than
