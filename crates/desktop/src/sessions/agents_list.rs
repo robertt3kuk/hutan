@@ -293,6 +293,7 @@ mod tests {
                 Group::Working => State::Working,
                 Group::Unconfirmed => State::Unconfirmed,
                 Group::Idle => State::Idle,
+                Group::Snoozed => State::Blocked,
                 Group::Finished => State::Completed,
             },
             group,
@@ -325,6 +326,7 @@ mod tests {
             live: true,
             managed: false,
             turn_active: false,
+            report_source: None,
         }
     }
 

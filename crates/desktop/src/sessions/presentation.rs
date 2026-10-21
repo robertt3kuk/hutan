@@ -150,15 +150,18 @@ pub enum Group {
     Working,
     Unconfirmed,
     Idle,
+    /// Needs the user, but snoozed: left out until its attention changes.
+    Snoozed,
     Finished,
 }
 
 impl Group {
-    pub const ALL: [Group; 5] = [
+    pub const ALL: [Group; 6] = [
         Group::NeedsYou,
         Group::Working,
         Group::Unconfirmed,
         Group::Idle,
+        Group::Snoozed,
         Group::Finished,
     ];
 
@@ -168,6 +171,7 @@ impl Group {
             Group::Working => "Working",
             Group::Unconfirmed => "Unconfirmed",
             Group::Idle => "Idle",
+            Group::Snoozed => "Snoozed",
             Group::Finished => "Finished",
         }
     }
@@ -179,6 +183,7 @@ impl Group {
             Group::Working => "working",
             Group::Unconfirmed => "unconfirmed",
             Group::Idle => "idle",
+            Group::Snoozed => "snoozed",
             Group::Finished => "finished",
         }
     }
@@ -198,6 +203,8 @@ pub enum ReasonKind {
     Failed,
     Review,
     CompletedUnread,
+    /// The user marked the session unread.
+    MarkedUnread,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -319,6 +326,8 @@ pub struct AgentRecord {
     /// The daemon runs the agent (a chat), so it can interrupt a turn.
     pub managed: bool,
     pub turn_active: bool,
+    /// Who reported the agent's state (`claude-hooks`), when something did.
+    pub report_source: Option<String>,
 }
 
 impl AgentRecord {
@@ -415,6 +424,8 @@ pub struct Counts {
     pub working: usize,
     pub unconfirmed: usize,
     pub idle: usize,
+    /// Sessions that need the user but were snoozed until their attention changes.
+    pub snoozed: usize,
     pub finished: usize,
     /// Permission requests waiting, over the sessions counted.
     pub requests: usize,
@@ -433,6 +444,7 @@ impl Counts {
                 Group::Working => counts.working += 1,
                 Group::Unconfirmed => counts.unconfirmed += 1,
                 Group::Idle => counts.idle += 1,
+                Group::Snoozed => counts.snoozed += 1,
                 Group::Finished => counts.finished += 1,
             }
         }
@@ -513,6 +525,9 @@ pub struct Facts<'a> {
     pub unread: &'a BTreeMap<SessionId, Unread>,
     /// Sessions whose finished task waits for a reviewer.
     pub reviews: &'a HashSet<SessionId>,
+    /// Sessions the user snoozed whose attention is still the one they were snoozed at (the
+    /// store decides: a snooze lapses when it changes).
+    pub snoozed: &'a HashSet<SessionId>,
     /// Approvals this window answered; the daemon has not confirmed them yet.
     pub answered_approvals: &'a HashMap<ApprovalId, String>,
     pub answered_questions: &'a HashSet<QuestionId>,
@@ -791,9 +806,19 @@ impl Ctx<'_> {
                 since_ms: None,
             });
         }
+        if unread == Some(Unread::Marked) {
+            reasons.push(Reason {
+                kind: ReasonKind::MarkedUnread,
+                text: "Marked unread".to_owned(),
+                since_ms: None,
+            });
+        }
         reasons.sort_by_key(|r| r.kind);
 
-        let group = if !reasons.is_empty() || reduced.state == State::Blocked {
+        let snoozed = self.facts.snoozed.contains(&info.id);
+        let group = if snoozed {
+            Group::Snoozed
+        } else if !reasons.is_empty() || reduced.state == State::Blocked {
             Group::NeedsYou
         } else {
             match reduced.state {
@@ -908,6 +933,7 @@ impl Ctx<'_> {
             live,
             managed: chat.is_some(),
             turn_active,
+            report_source: info.agent.as_ref().map(|r| r.source.clone()),
         })
     }
 
@@ -1253,6 +1279,7 @@ mod tests {
         state: StoreState,
         unread: BTreeMap<SessionId, Unread>,
         reviews: HashSet<SessionId>,
+        snoozed: HashSet<SessionId>,
         answered: HashMap<ApprovalId, String>,
     }
 
@@ -1270,6 +1297,7 @@ mod tests {
                 },
                 unread: BTreeMap::new(),
                 reviews: HashSet::new(),
+                snoozed: HashSet::new(),
                 answered: HashMap::new(),
             }
         }
@@ -1285,6 +1313,7 @@ mod tests {
                 state: &self.state,
                 unread: &self.unread,
                 reviews: &self.reviews,
+                snoozed: &self.snoozed,
                 answered_approvals: &self.answered,
                 answered_questions: &HashSet::new(),
                 last_confirmed_ms: Some(NOW),

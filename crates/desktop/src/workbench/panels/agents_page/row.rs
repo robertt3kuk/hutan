@@ -113,6 +113,7 @@ impl AgentsPage {
                     .child(Role::Assistant.label()),
             );
         }
+        let reason_tip = agents_text::reason_tooltip(record, now).map(SharedString::from);
         title_line = title_line.child(
             div()
                 .flex_none()
@@ -128,13 +129,17 @@ impl AgentsPage {
             .text_size(px(tokens.secondary_font_size))
             .child(
                 div()
+                    .id(SharedString::from(format!("agents-reason-{session}")))
                     .min_w_0()
                     .truncate()
-                    .when(reason.is_some(), |s| {
+                    .when(reason.is_some() && needs, |s| {
                         s.text_color(theme.warning)
                             .font_weight(gpui::FontWeight::MEDIUM)
                     })
-                    .when(reason.is_none(), |s| s.text_color(theme.muted))
+                    .when(reason.is_none() || !needs, |s| s.text_color(theme.muted))
+                    .when_some(reason_tip, |s, tip| {
+                        s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                    })
                     .child(SharedString::from(status)),
             );
         if let Some(tail) = tail {

@@ -13,11 +13,12 @@ mod store;
 pub mod tasks;
 mod terminal;
 pub mod tree;
+pub mod untracked;
 pub mod workspaces;
 
 pub use agents::{AgentAttentionChanged, AgentBadge, BlockedNode};
 pub use attention::{
-    AttentionEntry, AttentionKind, AttentionTracker, Presentation, Tone, Unread, classify,
+    AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread, classify,
     ended_text, present,
 };
 pub use placement::{PlacementBadge, placement_badge};
@@ -30,3 +31,4 @@ pub use store::{
     UiOpenRequested,
 };
 pub use terminal::TerminalSession;
+pub use untracked::Untracked;

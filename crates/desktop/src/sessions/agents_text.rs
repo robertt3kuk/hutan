@@ -104,6 +104,44 @@ pub fn reason_text(record: &AgentRecord) -> Option<String> {
     if requests > 1 {
         text.push_str(&format!(" · {requests} requests"));
     }
+    if record.group == Group::Snoozed {
+        text.insert_str(0, "Snoozed · ");
+    }
+    Some(text)
+}
+
+/// What a row's reason says on hover, `UX-ATTENTION-CONTROLS`: every reason, then who said so
+/// and when — `Permission: run cargo test · reported by claude-hooks · 2m ago`. `None` when the
+/// session has no reason.
+pub fn reason_tooltip(record: &AgentRecord, now_ms: u64) -> Option<String> {
+    if record.reasons.is_empty() {
+        return None;
+    }
+    let source = if let Some(source) = &record.report_source {
+        Some(format!("reported by {source}"))
+    } else if record.managed {
+        Some("known to the daemon, which runs this chat".to_owned())
+    } else if record.provenance.iter().any(|p| p.contains("observation")) {
+        Some("seen in the observation tree".to_owned())
+    } else {
+        None
+    };
+    let lines: Vec<String> = record
+        .reasons
+        .iter()
+        .map(|reason| {
+            let mut parts = vec![reason.text.clone()];
+            parts.extend(source.clone());
+            if let Some(at) = reason.since_ms.or(record.reported_at_ms) {
+                parts.push(age_text(now_ms, at));
+            }
+            parts.join(" · ")
+        })
+        .collect();
+    let mut text = lines.join("\n");
+    if record.group == Group::Snoozed {
+        text.push_str("\nSnoozed until this changes");
+    }
     Some(text)
 }
 
@@ -353,6 +391,7 @@ mod tests {
             live: true,
             managed: false,
             turn_active: false,
+            report_source: None,
         }
     }
 
@@ -529,5 +568,48 @@ mod tests {
         r.subagents_live = 0;
         r.subagents_finished = 1;
         assert_eq!(children_text(&r).unwrap(), "1 finished subagent");
+    }
+
+    #[test]
+    fn a_reason_says_who_reported_it_and_how_long_ago_on_hover() {
+        use crate::sessions::presentation::{Reason, ReasonKind};
+        let mut r = record();
+        assert_eq!(reason_tooltip(&r, 1_000_000), None, "nothing to explain");
+        r.group = Group::NeedsYou;
+        r.reasons = vec![
+            Reason {
+                kind: ReasonKind::Approval,
+                text: "Permission: run cargo test".into(),
+                since_ms: Some(1_000_000 - 120_000),
+            },
+            Reason {
+                kind: ReasonKind::CompletedUnread,
+                text: "Completed · unread".into(),
+                since_ms: None,
+            },
+        ];
+        r.report_source = Some("claude-hooks".into());
+        r.reported_at_ms = Some(1_000_000 - 30_000);
+        assert_eq!(
+            reason_tooltip(&r, 1_000_000).unwrap(),
+            "Permission: run cargo test · reported by claude-hooks · 2m ago\n\
+             Completed · unread · reported by claude-hooks · 30s ago"
+        );
+        // A chat the daemon runs says so; a snoozed session says that too.
+        r.report_source = None;
+        r.managed = true;
+        r.group = Group::Snoozed;
+        let text = reason_tooltip(&r, 1_000_000).unwrap();
+        assert!(
+            text.starts_with(
+                "Permission: run cargo test · known to the daemon, which runs this chat · 2m ago"
+            ),
+            "{text}"
+        );
+        assert!(text.ends_with("Snoozed until this changes"), "{text}");
+        assert_eq!(
+            reason_text(&r).unwrap(),
+            "Snoozed · Permission: run cargo test +1"
+        );
     }
 }

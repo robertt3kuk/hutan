@@ -21,13 +21,14 @@ use hutan_core::{
 };
 use hutan_protocol::chat::{ApprovalInfo, ChatCreate};
 use hutan_protocol::messages::{
-    RecentProject, RecentProjects, Request, SessionCreate, SessionInfo, SessionRef, SessionRename,
-    SessionResult, SessionSpec, TerminalSpec, WorkspaceCreate, WorkspaceInfo, WorkspaceKind,
-    WorkspaceMove, WorkspaceOpen, WorkspaceOpened, WorkspacePin, WorkspaceRecent, WorkspaceRef,
-    WorkspaceRename, WorkspaceRoot,
+    AgentReportRequest, RecentProject, RecentProjects, Request, SessionCreate, SessionInfo,
+    SessionRef, SessionRename, SessionResult, SessionSpec, TerminalSpec, WorkspaceCreate,
+    WorkspaceInfo, WorkspaceKind, WorkspaceMove, WorkspaceOpen, WorkspaceOpened, WorkspacePin,
+    WorkspaceRecent, WorkspaceRef, WorkspaceRename, WorkspaceRoot,
 };
 use hutan_protocol::project::{WorkspaceAssign, WorkspaceDelete};
 use hutan_protocol::recovery::{RecoveryAck, RecoveryAcked};
+use hutan_protocol::resources::{ResourceSample, ResourcesListRequest};
 use hutan_protocol::task::{
     TaskCreate, TaskDelete, TaskDeleted, TaskList, TaskListRequest, TaskRef, TaskResult,
     TaskReview, TaskReviewed, TaskStarted, TaskUpdate,
@@ -42,11 +43,16 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::agents::{self, AgentAttentionChanged, AgentBadge};
 use super::attention::{
-    AttentionEntry, AttentionKind, AttentionTracker, Presentation, Tone, Unread, classify, present,
+    AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread, classify,
+    present,
 };
 use super::presentation::{self, AgentPresentation, Facts};
 use super::tasks::TaskBook;
 use super::terminal::TerminalSession;
+use super::untracked::{self, Untracked};
+
+/// Who reports an agent that the user chose to track (`agent.report` `source`).
+pub const TRACK_SOURCE: &str = "hutan-desktop";
 
 /// Notifications that arrive this soon after (re)connecting are replays of what happened before
 /// the desktop was there; they must not flag attention.
@@ -83,6 +89,8 @@ impl StoreChanged {
     pub const FOCUS: Self = Self(1 << 8);
     /// Answers given here, remembered choices and flags nothing lists.
     pub const OTHER: Self = Self(1 << 9);
+    /// Which terminals run an agent that never reported.
+    pub const UNTRACKED: Self = Self(1 << 10);
     /// Everything a list of the sessions and workspaces is made of.
     pub const LISTED: Self = Self(
         Self::CONNECTION.0
@@ -371,6 +379,16 @@ pub struct SessionsStore {
     focus_task: Option<(u64, Task<()>)>,
     /// The session of the Assistant panel while the panel has the focus.
     assistant_focused: Option<SessionId>,
+    /// The session marked unread while it was on screen: reading it is held off until the focus
+    /// has been elsewhere.
+    hold_unread: Option<SessionId>,
+    /// Terminals in which a known agent program runs that never reported, as the last process
+    /// listing showed (`UX-ATTENTION-CONTROLS`); see [`SessionsStore::untracked_agent`].
+    untracked: HashMap<SessionId, Untracked>,
+    /// The `resources.list` in flight; one at a time, a trigger that arrives meanwhile asks for
+    /// one more afterwards.
+    scan_task: Option<Task<()>>,
+    scan_again: bool,
     /// The restart whose summary was already put up (`restarted_at_ms`): it is not shown again,
     /// whatever the user did with it.
     recovery_shown: Option<u64>,
@@ -477,6 +495,10 @@ impl SessionsStore {
             focus_sent: None,
             focus_task: None,
             assistant_focused: None,
+            hold_unread: None,
+            untracked: HashMap::new(),
+            scan_task: None,
+            scan_again: false,
             recovery_shown: None,
             tasks: TaskBook::default(),
             tasks_loading: None,
@@ -519,18 +541,24 @@ impl SessionsStore {
         }
         if connected && !was_connected {
             self.load_tasks(cx);
+            self.scan_agents(cx);
         }
         if connected {
             let unread = self.attention.unread_map().clone();
+            let snoozes = self.attention.snoozed_map().clone();
             self.attention
                 .observe(self.state.epoch, &self.state.sessions);
-            if *self.attention.unread_map() != unread {
+            self.lapse_snoozes();
+            if *self.attention.unread_map() != unread || *self.attention.snoozed_map() != snoozes {
                 changed |= StoreChanged::ATTENTION;
             }
             self.observe_blocked_nodes(cx);
             self.observe_recovery(cx);
             if was_connected && before.epoch == self.state.epoch {
                 self.observe_turn_ends(&before, cx);
+            }
+            if changed.intersects(StoreChanged::SESSIONS) {
+                self.scan_agents(cx);
             }
             let known: Vec<SessionId> = self.state.sessions.iter().map(|s| s.id).collect();
             self.recent.retain(|id, _| !known.contains(id));
@@ -732,6 +760,13 @@ impl SessionsStore {
             }
             // Blocks go to the attachment that shows the terminal, if there is one.
             Notice::TerminalBlock { terminal, block } => {
+                // A command that starts an agent: look at the process tree for one that never
+                // reported.
+                if block.state == hutan_protocol::blocks::BlockState::Running
+                    && block.command.as_deref().is_some_and(untracked::is_agent_command)
+                {
+                    self.scan_agents(cx);
+                }
                 if block.state == hutan_protocol::blocks::BlockState::Finished
                     && let Some(info) = self.state.sessions.iter().find(|s| s.terminal_id == Some(*terminal))
                 {
@@ -783,17 +818,34 @@ impl SessionsStore {
             | Notice::NotifyIntent { .. }
             // The desktop lists worktrees when a command asks for them.
             | Notice::WorktreesChanged { .. }
-            // The resources panel listens for itself.
-            | Notice::ResourcesUpdated { .. }
             // `workbench/remote.rs` follows `Connection::notices` itself.
             | Notice::UiCommand { .. } => {}
+            // The resources panel listens for itself too; the sample also says which terminals
+            // run an agent that never reported.
+            Notice::ResourcesUpdated { sample } => self.apply_sample(sample, cx),
             Notice::TaskUpdated { task } => {
                 self.tasks.updated((**task).clone());
-                self.changed(StoreChanged::TASKS, cx);
+                let lapsed = self.lapse_snoozes();
+                self.changed(
+                    if lapsed {
+                        StoreChanged::TASKS | StoreChanged::ATTENTION
+                    } else {
+                        StoreChanged::TASKS
+                    },
+                    cx,
+                );
             }
             Notice::TaskRemoved { id } => {
                 self.tasks.removed(*id);
-                self.changed(StoreChanged::TASKS, cx);
+                let lapsed = self.lapse_snoozes();
+                self.changed(
+                    if lapsed {
+                        StoreChanged::TASKS | StoreChanged::ATTENTION
+                    } else {
+                        StoreChanged::TASKS
+                    },
+                    cx,
+                );
             }
             // A login or logout session of a harness ended: whoever lists the accounts asks
             // again.
@@ -925,6 +977,25 @@ impl SessionsStore {
     /// that the session of a task waiting for review is a soft *Needs you* item (accent, never
     /// a badge: [`classify`] leaves accent alone).
     pub fn presentation(&self, info: &SessionInfo) -> Presentation {
+        let presentation = self.raw_presentation(info);
+        if presentation.needs_you && self.attention.snoozed_key(info.id).is_some() {
+            return Presentation {
+                detail: if presentation.detail.is_empty() {
+                    "snoozed".to_owned()
+                } else {
+                    format!("{} · snoozed", presentation.detail)
+                },
+                tone: Tone::Muted,
+                filled: false,
+                needs_you: false,
+                ..presentation
+            };
+        }
+        presentation
+    }
+
+    /// [`presentation`](Self::presentation) before a snooze is applied.
+    fn raw_presentation(&self, info: &SessionInfo) -> Presentation {
         let presentation = present(info, self.attention.unread(info.id));
         if !presentation.needs_you
             && info.state.is_live()
@@ -983,10 +1054,12 @@ impl SessionsStore {
             .map(|s| s.id)
             .filter(|id| self.tasks.awaits_review(*id))
             .collect();
+        let snoozed: HashSet<SessionId> = self.attention.snoozed_map().keys().copied().collect();
         let built = Arc::new(presentation::build(&Facts {
             state: &self.state,
             unread,
             reviews: &reviews,
+            snoozed: &snoozed,
             answered_approvals: &self.answered,
             answered_questions: &self.answered_questions,
             last_confirmed_ms: self.last_confirmed_ms,
@@ -1055,16 +1128,42 @@ impl SessionsStore {
             .collect()
     }
 
-    /// The session after `current` that needs the user (wrapping).
+    /// The session after `current` that needs the user, most urgent first: a request or a
+    /// question that waits, then a blocked agent, a failure, a review, and last what is only
+    /// done or marked unread; sessions of the same urgency in list order. Wraps around.
     pub fn next_needing_attention(&self, current: Option<SessionId>) -> Option<SessionId> {
-        let needing = self.needs_you();
-        let order: Vec<SessionId> = self.state.sessions.iter().map(|s| s.id).collect();
-        let start = current
-            .and_then(|c| order.iter().position(|id| *id == c))
-            .map_or(0, |i| i + 1);
-        (0..order.len())
-            .map(|offset| order[(start + offset) % order.len()])
-            .find(|id| needing.contains(id))
+        let mut needing: Vec<(u8, usize, SessionId)> = self
+            .state
+            .sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| self.presentation(s).needs_you)
+            .map(|(at, s)| (self.urgency(s), at, s.id))
+            .collect();
+        needing.sort_unstable();
+        let at = current.and_then(|c| needing.iter().position(|(_, _, id)| *id == c));
+        let next = match at {
+            Some(at) => needing.get((at + 1) % needing.len()),
+            None => needing.first(),
+        };
+        next.map(|(_, _, id)| *id)
+    }
+
+    /// How urgently `info` wants the user: 0 a request or question waits, 1 an agent is
+    /// blocked, 2 it failed, 3 its work waits for review, 4 it is done or marked unread.
+    fn urgency(&self, info: &SessionInfo) -> u8 {
+        let waits = self.state.approvals.iter().any(|a| a.session_id == info.id)
+            || self.state.questions.iter().any(|q| q.session_id == info.id);
+        if waits {
+            return 0;
+        }
+        let presentation = self.presentation(info);
+        match presentation.tone {
+            Tone::Warning => 1,
+            Tone::Error => 2,
+            _ if presentation.label == "review" => 3,
+            _ => 4,
+        }
     }
 
     pub fn focused(&self) -> Option<SessionId> {
@@ -1184,6 +1283,9 @@ impl SessionsStore {
     pub fn set_focused(&mut self, session: Option<SessionId>, cx: &mut Context<Self>) {
         if self.focused != session {
             self.focused = session;
+            if self.hold_unread != session {
+                self.hold_unread = None;
+            }
             if session.is_some() {
                 self.last_focused = session;
             }
@@ -1231,11 +1333,242 @@ impl SessionsStore {
         self.focus_task = Some((generation, task));
     }
 
-    /// The user looked at `session`.
+    /// The user looked at `session` (it is the one on screen): what is unread about it is read.
+    /// A session just marked unread while it is the one on screen stays marked until the focus
+    /// has gone elsewhere and come back.
+    pub fn mark_looked_at(&mut self, session: SessionId, cx: &mut Context<Self>) {
+        if self.hold_unread == Some(session) {
+            return;
+        }
+        self.mark_read(session, cx);
+    }
+
+    /// *Mark as read*: what is unread about `session` is read, whether or not it is on screen.
     pub fn mark_read(&mut self, session: SessionId, cx: &mut Context<Self>) {
+        if self.hold_unread == Some(session) {
+            self.hold_unread = None;
+        }
         if self.attention.mark_read(session) {
             self.changed(StoreChanged::ATTENTION, cx);
         }
+    }
+
+    /// *Mark as unread*: `session` needs the user again until it is looked at. Ends a snooze.
+    /// False when there is no such session.
+    pub fn mark_unread(&mut self, session: SessionId, cx: &mut Context<Self>) -> bool {
+        if self.session(session).is_none() {
+            return false;
+        }
+        let marked = self.attention.mark_unread(session);
+        let woken = self.attention.unsnooze(session);
+        if self.focused == Some(session) {
+            self.hold_unread = Some(session);
+        }
+        if marked || woken {
+            self.changed(StoreChanged::ATTENTION, cx);
+        }
+        true
+    }
+
+    /// *Snooze until it changes*: `session` leaves what needs the user (the list, the counts,
+    /// the next-attention jump) until its attention is something else — another request, a
+    /// failure, a turn that ended. False when it does not need the user now.
+    pub fn snooze(&mut self, session: SessionId, cx: &mut Context<Self>) -> bool {
+        let Some(info) = self.session(session).cloned() else {
+            return false;
+        };
+        if !self.raw_presentation(&info).needs_you {
+            return false;
+        }
+        let key = self.attention_key(&info);
+        if self.attention.snooze(session, key) {
+            self.changed(StoreChanged::ATTENTION, cx);
+        }
+        true
+    }
+
+    /// Ends a snooze: the session needs the user again.
+    pub fn unsnooze(&mut self, session: SessionId, cx: &mut Context<Self>) {
+        if self.attention.unsnooze(session) {
+            self.changed(StoreChanged::ATTENTION, cx);
+        }
+    }
+
+    /// Whether `session` is marked unread by the user.
+    pub fn is_marked_unread(&self, session: SessionId) -> bool {
+        self.attention.is_marked(session)
+    }
+
+    /// Whether `session` is snoozed.
+    pub fn is_snoozed(&self, session: SessionId) -> bool {
+        self.attention.snoozed_key(session).is_some()
+    }
+
+    /// What the desktop keeps across restarts (`desktop-state.json`).
+    pub fn marks(&self) -> Marks {
+        self.attention.marks()
+    }
+
+    /// Takes the marks of an earlier run back.
+    pub fn restore_marks(&mut self, marks: &Marks, cx: &mut Context<Self>) {
+        self.attention.restore(marks);
+        self.changed(StoreChanged::ATTENTION, cx);
+    }
+
+    // ---- agents nobody reported ----------------------------------------------------------
+
+    /// The known agent that appears to run in terminal `session` without ever having reported
+    /// there (`UX-ATTENTION-CONTROLS`): the daemon counts a terminal as an agent only once an
+    /// integration reported, so this one is invisible to the attention queue. `None` for a
+    /// session that has reported, is tracked, runs a chat or is not running.
+    pub fn untracked_agent(&self, session: SessionId) -> Option<Untracked> {
+        let info = self.session(session)?;
+        let plain_terminal = info.kind == hutan_core::SessionKind::Terminal
+            && info.state.is_live()
+            && info.agent.is_none()
+            && info.chat.is_none()
+            && !self.state.trees.contains_key(&session);
+        if plain_terminal {
+            self.untracked.get(&session).copied()
+        } else {
+            None
+        }
+    }
+
+    /// Looks at the processes of the live sessions for agents that never reported: when the
+    /// connection comes up, when a session appears, when a command that starts an agent runs,
+    /// and whenever the window comes back. One listing at a time; a trigger that arrives while
+    /// it is in flight asks for one more.
+    pub fn scan_agents(&mut self, cx: &mut Context<Self>) {
+        if self.state.connection != ConnectionState::Connected
+            || !self.connection.supports_resources()
+        {
+            return;
+        }
+        if self.scan_task.is_some() {
+            self.scan_again = true;
+            return;
+        }
+        let connection = self.connection.clone();
+        self.scan_task = Some(cx.spawn(async move |this, cx| {
+            let sample = connection
+                .call::<ResourceSample>(Request::ResourcesList(ResourcesListRequest {
+                    session_id: None,
+                }))
+                .await;
+            this.update(cx, |this, cx| {
+                this.scan_task = None;
+                if let Ok(sample) = sample {
+                    this.apply_sample(&sample, cx);
+                }
+                if std::mem::take(&mut this.scan_again) {
+                    this.scan_agents(cx);
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// Takes the agents a process sample shows (a scan of ours, or the Resources panel's).
+    fn apply_sample(&mut self, sample: &ResourceSample, cx: &mut Context<Self>) {
+        let found = untracked::scan(sample);
+        if found != self.untracked {
+            self.untracked = found;
+            self.changed(StoreChanged::UNTRACKED, cx);
+        }
+    }
+
+    /// *Track as <agent>*: reports the agent found in terminal `session` (`agent.report`, source
+    /// `hutan-desktop`, with the pid, without a state: the agent shows as *State unavailable*
+    /// until a hook or an extension says more, never as idle). From then on the session is an
+    /// agent session: it is in the Agents page and a blocked report puts it in *Needs you*.
+    pub fn track_agent(
+        &mut self,
+        session: SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), String>> {
+        let found = self.untracked_agent(session);
+        let connection = self.connection.clone();
+        cx.spawn(async move |this, cx| {
+            let found = found.ok_or_else(|| "No agent was found in this terminal".to_owned())?;
+            connection
+                .agent_report(AgentReportRequest {
+                    session_id: session,
+                    source: TRACK_SOURCE.to_owned(),
+                    agent: found.agent.to_owned(),
+                    state: None,
+                    message: Some(
+                        "Tracked from Hutan: no integration reports what this agent does"
+                            .to_owned(),
+                    ),
+                    // Increases per source and session across restarts of the desktop.
+                    seq: unix_ms(),
+                    agent_session_id: None,
+                    resume_argv: None,
+                    node: None,
+                    pid: Some(found.pid),
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            this.update(cx, |this, cx| {
+                this.untracked.remove(&session);
+                this.changed(StoreChanged::UNTRACKED, cx);
+            })
+            .ok();
+            Ok(())
+        })
+    }
+
+    /// What `info`'s attention is made of, for [`snooze`](Self::snooze): the state it shows, the
+    /// requests and questions that wait, the agents that are blocked and what is unread. A
+    /// snooze lasts while this stays the same.
+    fn attention_key(&self, info: &SessionInfo) -> String {
+        let presentation = self.raw_presentation(info);
+        let mut parts = vec![
+            presentation.label,
+            presentation.detail,
+            format!("{:?}", self.attention.unread(info.id)),
+        ];
+        parts.extend(
+            self.state
+                .approvals
+                .iter()
+                .filter(|a| a.session_id == info.id)
+                .map(|a| format!("approval:{}", a.id)),
+        );
+        parts.extend(
+            self.state
+                .questions
+                .iter()
+                .filter(|q| q.session_id == info.id)
+                .map(|q| format!("question:{}", q.id)),
+        );
+        if let Some(tree) = self.state.trees.get(&info.id) {
+            parts.extend(
+                agents::blocked_nodes(tree)
+                    .into_iter()
+                    .map(|n| format!("blocked:{}", n.node_id)),
+            );
+        }
+        parts.join("|")
+    }
+
+    /// Ends the snoozes whose session is gone or whose attention changed. True when any ended.
+    fn lapse_snoozes(&mut self) -> bool {
+        let lapsed: Vec<SessionId> = self
+            .attention
+            .snoozed_map()
+            .iter()
+            .filter(|(id, key)| {
+                self.session(**id)
+                    .is_none_or(|info| self.attention_key(info) != **key)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &lapsed {
+            self.attention.unsnooze(*id);
+        }
+        !lapsed.is_empty()
     }
 
     // ---- terminals -------------------------------------------------------------------------

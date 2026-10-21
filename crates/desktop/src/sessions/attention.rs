@@ -21,6 +21,8 @@ pub enum Unread {
     Done,
     /// Exited non-zero, was killed by a signal, or failed to start.
     Failed,
+    /// The user marked it unread (*Mark as unread*): it stays until the session is looked at.
+    Marked,
 }
 
 /// Color role of a state chip (mapped to theme colors by the UI).
@@ -151,8 +153,31 @@ fn unread_for_end(state: &SessionState) -> Option<Unread> {
     }
 }
 
-/// Presentation of `info` given its unread flag.
+/// Presentation of `info` given its unread flag. A session the user *marked unread* shows as
+/// needing a look whatever it does (an accent state, never a badge: [`classify`] leaves accent
+/// alone) until it is read again.
 pub fn present(info: &SessionInfo, unread: Option<Unread>) -> Presentation {
+    if unread != Some(Unread::Marked) {
+        return present_state(info, unread);
+    }
+    let base = present_state(info, None);
+    if base.needs_you {
+        return base;
+    }
+    Presentation {
+        detail: if base.detail.is_empty() {
+            "marked unread".to_owned()
+        } else {
+            format!("{} · marked unread", base.detail)
+        },
+        tone: Tone::Accent,
+        filled: true,
+        needs_you: true,
+        ..base
+    }
+}
+
+fn present_state(info: &SessionInfo, unread: Option<Unread>) -> Presentation {
     let exit_detail = |code: Option<i32>, signal: Option<i32>| match (code, signal) {
         (_, Some(sig)) => format!("signal {sig}"),
         (Some(code), None) => format!("exit {code}"),
@@ -237,7 +262,8 @@ pub fn present(info: &SessionInfo, unread: Option<Unread>) -> Presentation {
                     filled: true,
                     needs_you: true,
                 },
-                None => Presentation {
+                // A mark is applied over this in `present`, which never passes it down.
+                None | Some(Unread::Marked) => Presentation {
                     label: "exited".into(),
                     detail,
                     tone: if matches!((code, signal), (Some(0), None)) {
@@ -309,6 +335,8 @@ pub fn ended_text(state: &SessionState) -> Option<String> {
 #[derive(Debug, Default)]
 pub struct AttentionTracker {
     unread: BTreeMap<SessionId, Unread>,
+    /// Sessions the user snoozed, with the attention they had (`Self::snooze`).
+    snoozed: BTreeMap<SessionId, String>,
     /// Whether each known session was live in the last list; `None` until the first synchronised
     /// list of the current daemon epoch has been taken as the baseline.
     baseline: Option<HashMap<SessionId, bool>>,
@@ -341,7 +369,8 @@ impl AttentionTracker {
         if self.epoch != epoch {
             self.epoch = epoch;
             self.baseline = None;
-            self.unread.clear();
+            // What the daemon flagged belongs to its epoch; what the user marked does not.
+            self.unread.retain(|_, kind| *kind == Unread::Marked);
         }
         let now: HashMap<SessionId, bool> =
             sessions.iter().map(|s| (s.id, s.state.is_live())).collect();
@@ -362,6 +391,7 @@ impl AttentionTracker {
             }
         }
         self.unread.retain(|id, _| now.contains_key(id));
+        self.snoozed.retain(|id, _| now.contains_key(id));
         self.baseline = Some(now);
     }
 
@@ -380,6 +410,89 @@ impl AttentionTracker {
     /// The user looked at `session`.
     pub fn mark_read(&mut self, session: SessionId) -> bool {
         self.unread.remove(&session).is_some()
+    }
+
+    /// *Mark as unread*: `session` needs a look again until it is looked at. What is already
+    /// flagged (a finished session, a failure) stays as it is. False when nothing changed.
+    pub fn mark_unread(&mut self, session: SessionId) -> bool {
+        if self.unread.contains_key(&session) {
+            return false;
+        }
+        self.unread.insert(session, Unread::Marked);
+        true
+    }
+
+    /// Whether `session` is marked unread by the user.
+    pub fn is_marked(&self, session: SessionId) -> bool {
+        self.unread.get(&session) == Some(&Unread::Marked)
+    }
+
+    /// *Snooze until it changes*: `session` is left out of what needs the user while its
+    /// attention stays what `key` says (see `SessionsStore::attention_key`).
+    pub fn snooze(&mut self, session: SessionId, key: String) -> bool {
+        self.snoozed.insert(session, key.clone()).as_deref() != Some(key.as_str())
+    }
+
+    /// Ends a snooze. False when there was none.
+    pub fn unsnooze(&mut self, session: SessionId) -> bool {
+        self.snoozed.remove(&session).is_some()
+    }
+
+    /// The attention `session` was snoozed at, while it is snoozed.
+    pub fn snoozed_key(&self, session: SessionId) -> Option<&str> {
+        self.snoozed.get(&session).map(String::as_str)
+    }
+
+    /// Every snooze, for comparing before and after a change.
+    pub fn snoozed_map(&self) -> &BTreeMap<SessionId, String> {
+        &self.snoozed
+    }
+
+    /// What the desktop keeps across restarts: the sessions marked unread and the snoozes.
+    pub fn marks(&self) -> Marks {
+        Marks {
+            unread: self
+                .unread
+                .iter()
+                .filter(|(_, kind)| **kind == Unread::Marked)
+                .map(|(id, _)| id.to_string())
+                .collect(),
+            snoozed: self
+                .snoozed
+                .iter()
+                .map(|(id, key)| (id.to_string(), key.clone()))
+                .collect(),
+        }
+    }
+
+    /// Takes the marks of an earlier run back (before the first list is observed; sessions that
+    /// no longer exist are dropped by it).
+    pub fn restore(&mut self, marks: &Marks) {
+        for id in marks.unread.iter().filter_map(|id| id.parse().ok()) {
+            self.unread.entry(id).or_insert(Unread::Marked);
+        }
+        for (id, key) in &marks.snoozed {
+            if let Ok(id) = id.parse() {
+                self.snoozed.insert(id, key.clone());
+            }
+        }
+    }
+}
+
+/// What the user did to the queue, kept in `desktop-state.json` (`attention`): client read
+/// state the daemon does not know (`docs/spikes/2026-10-20-chrome-v3.md` § 2.7).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Marks {
+    /// Session ids marked unread.
+    pub unread: Vec<String>,
+    /// Session id → the attention it was snoozed at.
+    pub snoozed: BTreeMap<String, String>,
+}
+
+impl Marks {
+    pub fn is_empty(&self) -> bool {
+        self.unread.is_empty() && self.snoozed.is_empty()
     }
 }
 
@@ -741,5 +854,88 @@ mod tests {
             ("idle", "omp", Tone::Muted)
         );
         assert!(!idle.filled && !idle.needs_you);
+    }
+
+    #[test]
+    fn a_session_marked_unread_stays_until_it_is_read_and_survives_a_new_epoch_and_a_restart() {
+        let (a, gone) = (SessionId::new(), SessionId::new());
+        let mut tracker = AttentionTracker::new();
+        let epoch = Some(Epoch::new());
+        tracker.observe(epoch, &[info(a, SessionState::Running)]);
+        assert!(tracker.mark_unread(a));
+        assert!(!tracker.mark_unread(a), "already marked");
+        assert!(tracker.is_marked(a));
+
+        // What is marked is not what the daemon flagged: a new epoch keeps it.
+        tracker.observe(Some(Epoch::new()), &[info(a, SessionState::Running)]);
+        assert!(tracker.is_marked(a));
+
+        // It travels in the marks, and a restart (a fresh tracker) takes it back; a session
+        // that no longer exists is dropped by the first list.
+        let mut marks = tracker.marks();
+        marks.unread.push(gone.to_string());
+        let mut again = AttentionTracker::new();
+        again.restore(&marks);
+        again.observe(Some(Epoch::new()), &[info(a, SessionState::Running)]);
+        assert!(again.is_marked(a));
+        assert!(!again.is_marked(gone));
+
+        // Reading ends it.
+        assert!(again.mark_read(a));
+        assert!(again.marks().is_empty());
+    }
+
+    #[test]
+    fn marking_leaves_what_the_daemon_flagged_alone_and_shows_as_a_quiet_need() {
+        let a = SessionId::new();
+        let mut tracker = AttentionTracker::new();
+        let epoch = Some(Epoch::new());
+        tracker.observe(epoch, &[info(a, SessionState::Running)]);
+        tracker.observe(epoch, &[info(a, exited(1))]);
+        assert_eq!(tracker.unread(a), Some(Unread::Failed));
+        assert!(!tracker.mark_unread(a), "a failure is stronger");
+
+        let idle = info(SessionId::new(), SessionState::Idle);
+        let marked = present(&idle, Some(Unread::Marked));
+        assert!(marked.needs_you && marked.filled);
+        assert_eq!(marked.tone, Tone::Accent, "no badge for a mark");
+        assert!(marked.detail.ends_with("marked unread"));
+        assert_eq!(classify(&marked, 0, 0), None);
+        // A session that needs the user anyway keeps saying why.
+        let blocked = present(
+            &chat(SessionState::WaitingApproval, false, 1),
+            Some(Unread::Marked),
+        );
+        assert_eq!(blocked.label, "blocked");
+    }
+
+    #[test]
+    fn a_snooze_is_remembered_with_its_attention_and_dropped_with_its_session() {
+        let (a, b) = (SessionId::new(), SessionId::new());
+        let mut tracker = AttentionTracker::new();
+        let epoch = Some(Epoch::new());
+        tracker.observe(
+            epoch,
+            &[
+                info(a, SessionState::Running),
+                info(b, SessionState::Running),
+            ],
+        );
+        assert!(tracker.snooze(a, "blocked|approval".into()));
+        assert!(
+            !tracker.snooze(a, "blocked|approval".into()),
+            "the same snooze"
+        );
+        assert!(tracker.snooze(b, "x".into()));
+        assert_eq!(tracker.snoozed_key(a), Some("blocked|approval"));
+
+        tracker.observe(epoch, &[info(a, SessionState::Running)]);
+        assert_eq!(tracker.snoozed_key(b), None, "its session is gone");
+
+        let mut again = AttentionTracker::new();
+        again.restore(&tracker.marks());
+        assert_eq!(again.snoozed_key(a), Some("blocked|approval"));
+        assert!(again.unsnooze(a));
+        assert!(!again.unsnooze(a));
     }
 }

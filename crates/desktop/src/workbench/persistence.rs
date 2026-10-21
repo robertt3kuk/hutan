@@ -2,6 +2,7 @@
 
 use super::changes::ReviewComment;
 use super::model::{ModelError, WorkbenchState};
+use crate::sessions::Marks;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -135,6 +136,12 @@ pub fn load_chat_drafts(path: &Path) -> ChatDrafts {
     drafts
 }
 
+/// What the user did to the attention queue (`attention` in the state file): the sessions marked
+/// unread and the snoozes. Client read state like the layout; never sent to the daemon.
+pub fn load_marks(path: &Path) -> Marks {
+    load_key(path, "attention")
+}
+
 /// What the state file holds besides the layout, read from top-level key `key`.
 fn load_key<T: serde::de::DeserializeOwned + Default>(path: &Path, key: &str) -> T {
     std::fs::read_to_string(path)
@@ -146,16 +153,23 @@ fn load_key<T: serde::de::DeserializeOwned + Default>(path: &Path, key: &str) ->
 }
 
 /// The state file's JSON: the layout plus, when there are any, the folded blocks, the review
-/// comments, the launcher memory and the chat drafts.
+/// comments, the launcher memory, the chat drafts and what the user did to the attention queue
+/// (`attention`: marked unread, snoozed).
 pub fn state_json(
     state: &WorkbenchState,
     collapsed: &CollapsedBlocks,
     comments: &ReviewComments,
     launcher: &LauncherMemory,
     drafts: &ChatDrafts,
+    marks: &Marks,
 ) -> Result<String, ModelError> {
     let json = state.to_json()?;
-    if collapsed.is_empty() && comments.is_empty() && launcher.is_empty() && drafts.is_empty() {
+    if collapsed.is_empty()
+        && comments.is_empty()
+        && launcher.is_empty()
+        && drafts.is_empty()
+        && marks.is_empty()
+    {
         return Ok(json);
     }
     let invalid = |err: serde_json::Error| ModelError::Invalid(err.to_string());
@@ -177,6 +191,12 @@ pub fn state_json(
             map.insert(
                 "launcher".to_owned(),
                 serde_json::to_value(launcher).map_err(invalid)?,
+            );
+        }
+        if !marks.is_empty() {
+            map.insert(
+                "attention".to_owned(),
+                serde_json::to_value(marks).map_err(invalid)?,
             );
         }
         if !drafts.is_empty() {
@@ -238,7 +258,8 @@ mod tests {
                 &CollapsedBlocks::new(),
                 &ReviewComments::new(),
                 &none,
-                &ChatDrafts::new()
+                &ChatDrafts::new(),
+                &Marks::default()
             )
             .unwrap(),
             state.to_json().unwrap()
@@ -253,6 +274,7 @@ mod tests {
                 &ReviewComments::new(),
                 &none,
                 &ChatDrafts::new(),
+                &Marks::default(),
             )
             .unwrap(),
         )
@@ -286,6 +308,7 @@ mod tests {
                 &ReviewComments::new(),
                 &memory,
                 &ChatDrafts::new(),
+                &Marks::default(),
             )
             .unwrap(),
         )
@@ -317,6 +340,7 @@ mod tests {
                 &ReviewComments::new(),
                 &LauncherMemory::default(),
                 &drafts,
+                &Marks::default(),
             )
             .unwrap(),
         )

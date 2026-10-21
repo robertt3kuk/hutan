@@ -143,6 +143,7 @@ impl Workbench {
         entries.push(Self::entry("Copy session ID", move |this, _, cx| {
             this.copy_session_id(session, cx);
         }));
+        entries.extend(self.attention_entries(session, cx));
         entries.push(gated(
             "Interrupt turn",
             agents_text::interrupt(record, caps),

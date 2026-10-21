@@ -308,6 +308,8 @@ pub enum Region {
     RecoveryChip(BadgeSite, SessionId),
     /// A control of the restart summary, by name (`sheet`, `close`, `dismiss-all`).
     Recovery(&'static str),
+    /// A control of the "agent not recognised" strip of a terminal (`strip`, `track`).
+    Untracked(&'static str),
     /// A control of row `index` of the restart summary: `open`, `action` (Retry last message or
     /// Restart), `dismiss`.
     RecoveryRow(usize, &'static str),
@@ -494,6 +496,10 @@ pub struct Workbench {
     /// What each chat's composer holds, saved with the layout (see
     /// [`persistence::ChatDrafts`]).
     pub(crate) chat_drafts: persistence::ChatDrafts,
+    /// What the user did to the attention queue (marked unread, snoozed): kept in the state file
+    /// so it survives a restart, and told to the store at start. The store owns the truth; this
+    /// is its last saved copy.
+    pub(crate) attention_marks: crate::sessions::Marks,
     /// What tells the workbench a chat's composer changed, per chat model.
     pub(crate) chat_draft_watch: HashMap<SessionId, Subscription>,
     /// What tells the workbench a terminal's folds changed, per held session.
@@ -813,6 +819,9 @@ impl Workbench {
                 &sessions,
                 window,
                 |this, _, change: &StoreChanged, window, cx| {
+                    if change.intersects(StoreChanged::ATTENTION) {
+                        this.sync_attention_marks(cx);
+                    }
                     // The layout follows sessions, workspaces, agents and the connection;
                     // attention and tasks only change what the chrome counts and
                     // shows; answers given here and the like are for whoever shows them.
@@ -826,7 +835,9 @@ impl Workbench {
                             | StoreChanged::FOCUS,
                     ) {
                         this.on_sessions_changed(window, cx);
-                    } else if change.intersects(StoreChanged::ATTENTION | StoreChanged::TASKS) {
+                    } else if change.intersects(
+                        StoreChanged::ATTENTION | StoreChanged::TASKS | StoreChanged::UNTRACKED,
+                    ) {
                         cx.notify();
                     } else {
                         return;
@@ -840,6 +851,9 @@ impl Workbench {
                 this.sync_session_focus(cx);
                 this.refresh_login_status(cx);
                 this.schedule_publish(cx);
+                if this.window_active {
+                    this.sessions.update(cx, |store, cx| store.scan_agents(cx));
+                }
             }),
             cx.subscribe_in(
                 &sessions,
@@ -921,6 +935,11 @@ impl Workbench {
                 .as_deref()
                 .map(persistence::load_launcher)
                 .unwrap_or_default(),
+            attention_marks: options
+                .state_path
+                .as_deref()
+                .map(persistence::load_marks)
+                .unwrap_or_default(),
             chat_drafts: options
                 .state_path
                 .as_deref()
@@ -994,6 +1013,11 @@ impl Workbench {
                 .setup_done
         {
             this.open_setup(window, cx);
+        }
+        if !this.attention_marks.is_empty() {
+            let marks = this.attention_marks.clone();
+            this.sessions
+                .update(cx, |store, cx| store.restore_marks(&marks, cx));
         }
         this.schedule_publish(cx);
         this.rebind_keys(cx);
@@ -1249,6 +1273,7 @@ impl Workbench {
             &self.review_comments,
             &self.launcher_memory,
             &self.chat_drafts,
+            &self.attention_marks,
         ) {
             Ok(json) => json,
             Err(err) => {

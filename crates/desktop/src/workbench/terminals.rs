@@ -728,6 +728,59 @@ impl Workbench {
         }
     }
 
+    /// *Mark as unread* / *Mark as read* and *Snooze until it changes* / *Unsnooze*, the two
+    /// entries of the row `More` menu and the sidebar context menu (`UX-ATTENTION-CONTROLS`).
+    /// A session that does not need the user cannot be snoozed, and the entry says so.
+    pub(crate) fn attention_entries(&self, session: SessionId, cx: &gpui::App) -> Vec<MenuEntry> {
+        let store = self.sessions.read(cx);
+        let unread = store.unread(session).is_some();
+        let snoozed = store.is_snoozed(session);
+        let needs_you = store
+            .session(session)
+            .is_some_and(|info| store.presentation(info).needs_you);
+        let read = if unread {
+            Self::entry("Mark as read", move |this, _, cx| {
+                this.sessions
+                    .update(cx, |store, cx| store.mark_read(session, cx));
+            })
+        } else {
+            Self::entry("Mark as unread", move |this, _, cx| {
+                this.sessions.update(cx, |store, cx| {
+                    store.mark_unread(session, cx);
+                });
+            })
+        };
+        let snooze = if snoozed {
+            Self::entry("Unsnooze", move |this, _, cx| {
+                this.sessions
+                    .update(cx, |store, cx| store.unsnooze(session, cx));
+            })
+        } else if needs_you {
+            Self::entry("Snooze until it changes", move |this, _, cx| {
+                this.sessions.update(cx, |store, cx| {
+                    store.snooze(session, cx);
+                });
+            })
+        } else {
+            MenuEntry {
+                label: "Snooze until it changes (nothing needs you here)".into(),
+                disabled: true,
+                ..Self::entry("Snooze until it changes", |_, _, _| {})
+            }
+        };
+        vec![read, snooze]
+    }
+
+    /// Saves what the store holds of the attention marks (`attention` in the state file) when it
+    /// differs from the last saved copy.
+    pub(crate) fn sync_attention_marks(&mut self, cx: &mut Context<Self>) {
+        let marks = self.sessions.read(cx).marks();
+        if marks != self.attention_marks {
+            self.attention_marks = marks;
+            self.schedule_save(cx);
+        }
+    }
+
     /// Context menu of a session (sessions panel, overview card, tab).
     pub(crate) fn session_menu(&self, session: SessionId, cx: &gpui::App) -> Vec<MenuEntry> {
         let mut entries = vec![
@@ -762,6 +815,10 @@ impl Workbench {
         if let Some(review) = self.review_entry(session, cx) {
             entries.insert(entries.len() - 1, review);
         }
+        // After the openers, before Rename…: what the user can do to the queue.
+        for (at, entry) in self.attention_entries(session, cx).into_iter().enumerate() {
+            entries.insert(3 + at, entry);
+        }
         entries
     }
 
@@ -784,7 +841,7 @@ impl Workbench {
             }
             store.set_focused(focused, cx);
             if let Some(session) = focused {
-                store.mark_read(session, cx);
+                store.mark_looked_at(session, cx);
             }
         });
         self.sync_workspace(cx);
@@ -962,6 +1019,11 @@ impl Workbench {
         {
             root = root.child(bar);
         }
+        if !self.daemon.stopped
+            && let Some(strip) = self.render_terminal_untracked(id, cx)
+        {
+            root = root.child(strip);
+        }
         root.into_any_element()
     }
 
@@ -1035,6 +1097,80 @@ impl Workbench {
                 .child(crate::workbench::render::probe(
                     &self.regions,
                     crate::workbench::Region::Recovery("terminal"),
+                ))
+                .into_any_element(),
+        )
+    }
+
+    /// A quiet line at the foot of a terminal in which a known agent (`claude`, `codex`, `omp`)
+    /// runs without having reported: Hutan cannot tell what it does, so it is not in *Needs you*.
+    /// *Track as <agent>* reports it through `agent.report` (`UX-ATTENTION-CONTROLS`).
+    fn render_terminal_untracked(
+        &mut self,
+        id: SessionId,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let found = self.sessions.read(cx).untracked_agent(id)?;
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let label = gpui::SharedString::from(format!("Track as {}", found.agent));
+        let track = ui::button(
+            "untracked-track",
+            label,
+            ui::ButtonKind::Ghost,
+            true,
+            &theme,
+            &tokens,
+        )
+        .relative()
+        .on_click(cx.listener(move |this, _, _, cx| {
+            let tracking = this
+                .sessions
+                .update(cx, |store, cx| store.track_agent(id, cx));
+            cx.spawn(async move |this, cx| {
+                if let Err(error) = tracking.await {
+                    this.update(cx, |this, cx| {
+                        this.set_notice(format!("Could not track the agent: {error}"), cx);
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+        }))
+        .child(crate::workbench::render::probe(
+            &self.regions,
+            crate::workbench::Region::Untracked("track"),
+        ));
+        Some(
+            div()
+                .absolute()
+                .bottom(px(tokens.spacing * 2.0))
+                .right(px(tokens.spacing * 3.0))
+                .max_w(px(560.0))
+                .flex()
+                .items_center()
+                .gap(px(tokens.spacing * 2.0))
+                .px(px(tokens.spacing * 2.0))
+                .py(px(tokens.spacing))
+                .rounded(px(tokens.radius))
+                .bg(theme.surface)
+                .border_1()
+                .border_color(theme.border)
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(theme.muted)
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .child(gpui::SharedString::from(format!(
+                            "Agent not recognised · looks like {} but never reported to Hutan",
+                            found.agent
+                        ))),
+                )
+                .child(track)
+                .child(crate::workbench::render::probe(
+                    &self.regions,
+                    crate::workbench::Region::Untracked("strip"),
                 ))
                 .into_any_element(),
         )
