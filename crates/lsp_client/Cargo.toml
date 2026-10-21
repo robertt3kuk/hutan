@@ -1,0 +1,44 @@
+[package]
+name = "hutan-lsp-client"
+description = "Hutan's LSP client: Content-Length framing, request correlation with timeouts and cancellation, bounded queues, lifecycle and restart supervision of one language server, coalescing document sync, position encodings (GPUI-free, no daemon types)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+autotests = false
+
+[lib]
+name = "hutan_lsp_client"
+
+# The scripted stand-in for a language server the tests drive (never shipped in the bundle).
+[[bin]]
+name = "hutan-fake-lsp"
+path = "src/bin/fake_lsp.rs"
+
+[dependencies]
+bytes.workspace = true
+futures.workspace = true
+hutan-buffer.workspace = true
+ls-types.workspace = true
+rustix = { workspace = true, features = ["process"] }
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "process", "io-util", "sync", "time", "macros"] }
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# Reads the process tree (pids, RSS) the way the daemon's Resources do.
+hutan-terminal.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+
+[lints]
+workspace = true

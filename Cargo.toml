@@ -20,6 +20,7 @@ hutan-core = { path = "crates/core" }
 hutan-daemon = { path = "crates/daemon" }
 hutan-gateway = { path = "crates/gateway" }
 hutan-index = { path = "crates/index" }
+hutan-lsp-client = { path = "crates/lsp_client" }
 hutan-protocol = { path = "crates/protocol" }
 hutan-settings = { path = "crates/settings" }
 hutan-storage = { path = "crates/storage" }
@@ -47,6 +48,10 @@ futures = "0.3.34"
 # folder (hutan-daemon `fs`, E-3); the same rules ripgrep applies.
 ignore = "0.4.33"
 libc = "0.2.190"
+# LSP types for hutan-lsp-client (E-11a): the maintained fork of `lsp-types 0.97` (same API but
+# `ReferencesOptions` → `ReferenceOptions`, `NotebookCellKind` as a constant struct, no `proposed`
+# feature, `fluent-uri` 0.4, `Uri::from_file_path`).
+ls-types = "0.0.6"
 notify = "8.2.0"
 # Native notifications posted by the daemon (ADR 0007): Objective-C bindings, macOS only.
 objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
