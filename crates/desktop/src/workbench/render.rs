@@ -77,6 +77,11 @@ fn palette_key(window: &Window) -> SharedString {
     key_hint(window, &actions::TogglePalette).unwrap_or_else(|| "the command palette".into())
 }
 
+/// The line under the empty centre's sentence: the two ways to put something in it.
+fn empty_centre_hint(quick_open: &str, new_terminal: &str) -> String {
+    format!("{quick_open} opens a file or a session · {new_terminal} a new terminal")
+}
+
 /// An invisible child that records its parent's painted bounds under `region`.
 pub(super) fn probe(regions: &Regions, region: Region) -> impl IntoElement {
     let regions = regions.clone();
@@ -116,7 +121,10 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::frames::begin();
         self.sync_appearance(window, cx);
-        let title = format!("{} — Hutan", self.active_title(cx));
+        let title = match self.state.active_center_item() {
+            Some(_) => format!("{} — Hutan", self.active_title(cx)),
+            None => "Hutan".to_owned(),
+        };
         if title != self.last_title {
             window.set_window_title(&title);
             self.last_title = title;
@@ -1769,17 +1777,20 @@ impl Workbench {
 
         let content = match pane.active_item() {
             Some(item) => self.render_item(pane_id, item, window, cx),
-            None => ui::empty_state(
-                Mascot::Empty,
-                format!(
-                    "No open items — ⌘T for a new tab, {} for commands",
-                    palette_key(window)
-                ),
-                Some(self.empty_start_button(&theme, &tokens)),
-                &theme,
-                &tokens,
-            )
-            .into_any_element(),
+            None => {
+                let hint = empty_centre_hint(
+                    &key_hint(window, &actions::QuickOpen).unwrap_or_else(|| "⌘P".into()),
+                    &key_hint(window, &actions::NewTerminal).unwrap_or_else(|| "⌘T".into()),
+                );
+                ui::EmptyState::new("Nothing is open here.")
+                    .mascot(Mascot::Empty)
+                    .action(self.empty_start_button(&theme, &tokens))
+                    .hint(hint)
+                    .render(&theme, &tokens)
+                    .relative()
+                    .child(probe(&self.regions, Region::Launcher("empty-centre")))
+                    .into_any_element()
+            }
         };
 
         let zones: Vec<AnyElement> = if dragging {
@@ -2434,6 +2445,17 @@ mod titlebar_tests {
         assert_eq!(
             super::TITLEBAR_HEIGHT,
             crate::theme::metrics().titlebar_height
+        );
+    }
+}
+
+#[cfg(test)]
+mod empty_centre_tests {
+    #[test]
+    fn the_hint_names_quick_open_and_new_terminal() {
+        assert_eq!(
+            super::empty_centre_hint("⌘P", "⌘T"),
+            "⌘P opens a file or a session · ⌘T a new terminal"
         );
     }
 }
