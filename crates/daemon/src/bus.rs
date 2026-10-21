@@ -352,8 +352,16 @@ fn feeds_tasks(event: &Event) -> bool {
         Event::SessionUpdated { .. }
         | Event::AgentTreeUpdated { .. }
         | Event::WorkspaceClosed { .. } => true,
+        // A turn's start re-opens a done task's work, its `file_diff`s say whether it changed
+        // files without a checkpoint, and its end finishes the task (FX-REVIEW).
         Event::ChatEvent { event, .. } => {
-            event.delivery == Delivery::Live && event.kind.ends_turn()
+            event.delivery == Delivery::Live
+                && (event.kind.ends_turn()
+                    || matches!(
+                        event.kind,
+                        hutan_core::AgentEventKind::TurnStarted
+                            | hutan_core::AgentEventKind::FileDiff { .. }
+                    ))
         }
         _ => false,
     }

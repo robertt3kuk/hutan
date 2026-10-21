@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::{
-    AfterPolicy, DeliveryActor, DeliveryState, ReviewDecision, Task, TaskId, TaskPlacement,
-    TaskPlacementKind, TaskRun, TaskState, WorkspaceId,
+    AfterPolicy, DeliveryActor, DeliveryState, ReviewDecision, SessionId, Task, TaskId,
+    TaskPlacement, TaskPlacementKind, TaskRun, TaskState, WorkspaceId,
 };
 use hutan_desktop::sessions::attention::Tone;
 use hutan_desktop::sessions::launch::LaunchKind;
@@ -1874,4 +1874,165 @@ fn a_finish_whose_push_fails_says_why_and_keeps_the_commit(cx: &mut TestAppConte
         view.read_with(cx, |wb, _| wb.notice().map(|n| n.to_string()))
             .is_some_and(|n| n.starts_with("Not pushed — no upstream")),
     );
+}
+
+// Review that clears (FX-REVIEW) ---------------------------------------------------------------
+
+/// `plain-turn` with its turn repeated `turns` times, each held after `turn/started` until the
+/// file `gate-<n>` exists in `dir` (the test edits the checkout meanwhile, as the agent would).
+fn held_turns(dir: &Path, turns: usize) -> PathBuf {
+    let real = fs::read_to_string(common::chat::fixtures().join("plain-turn.jsonl")).unwrap();
+    let lines: Vec<&str> = real.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains("\"method\":\"turn/start\""))
+        .unwrap();
+    let mut out: Vec<String> = lines[..at].iter().map(|l| (*l).to_owned()).collect();
+    for n in 0..turns {
+        for line in &lines[at..] {
+            let line = line
+                .replace(
+                    "01a00000-0000-7000-8000-000000000002",
+                    &format!("01a00000-0000-7000-8000-0000000010{n:02}"),
+                )
+                .replace(
+                    "01a00000-0000-7000-8000-000000000003",
+                    &format!("01a00000-0000-7000-8000-0000000020{n:02}"),
+                )
+                .replace("msg_fixture_1", &format!("msg_fixture_t{n}"));
+            let started = line.contains("\"method\":\"turn/started\"");
+            out.push(line);
+            if started {
+                let gate = dir.join(format!("gate-{n}"));
+                out.push(serde_json::json!({"dir": "hold", "file": gate}).to_string());
+            }
+        }
+    }
+    let path = dir.join("held-turns.jsonl");
+    fs::write(&path, out.join("\n") + "\n").unwrap();
+    path
+}
+
+#[gpui::test]
+fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAppContext) {
+    use hutan_desktop::sessions::{Group, agents_text};
+    use hutan_protocol::chat::{ChatSend, ChatSent};
+
+    let chat = common::chat::ChatEnv::new();
+    let transcript = held_turns(chat.work.path(), 3);
+    let env = Env::with_daemon(TestDaemon::start_with_codex(chat.replay(&transcript)));
+    let release = |n: usize| fs::write(chat.work.path().join(format!("gate-{n}")), "").unwrap();
+    let start_chat = |title: &str| {
+        let task = env.create(title, &[], |request| {
+            request.prompt = Some(format!("{title}."));
+            request.run = Some(TaskRun::Chat {
+                agent: "codex".into(),
+                model: None,
+            });
+        });
+        let started: TaskStarted = env.daemon.call(Request::TaskStart(TaskRef { id: task.id }));
+        (task, started.session.id)
+    };
+    let done = |id: TaskId| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while env.task(id).is_none_or(|t| t.state != TaskState::Done) {
+            assert!(Instant::now() < deadline, "the chat task never finished");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let send = |session: SessionId, text: &str| {
+        let _: ChatSent = env.daemon.call(Request::ChatSend(ChatSend {
+            session_id: session,
+            text: text.to_owned(),
+            attachments: Vec::new(),
+        }));
+    };
+    // A chat that only looks around, first in the list; then the one that edits.
+    let (look, _) = start_chat("Look around the project");
+    release(0);
+    done(look.id);
+    // Each chat replays its transcript from the start: this first turn is not held any more.
+    let (edit, session) = start_chat("Change the greeting");
+    done(edit.id);
+    assert_eq!(env.task(look.id).unwrap().delivery, DeliveryState::None);
+    let (view, cx) = open(cx, &env);
+    let sessions = view.read_with(cx, |wb, _| wb.sessions().clone());
+    let label = |cx: &VisualTestContext| {
+        sessions.read_with(cx, |s, _| {
+            s.session(session)
+                .map(|info| s.presentation(info).label)
+                .unwrap_or_default()
+        })
+    };
+    let group = |cx: &VisualTestContext| {
+        sessions.read_with(cx, |s, _| {
+            s.agent_presentation().get(session).map(|r| r.group)
+        })
+    };
+
+    // The user's next message changes a file: the work needs the user, here and in Today alike.
+    send(session, "Change the greeting.");
+    fs::write(env.root.join("a.txt"), "hello\n").unwrap();
+    release(1);
+    wait_until(cx, "the change to await review", |cx| label(cx) == "review");
+    sessions.read_with(cx, |s, _| {
+        assert_eq!(s.needs_you(), [session]);
+        let page: Vec<SessionId> = s
+            .agent_presentation()
+            .records
+            .iter()
+            .filter(|r| r.group == Group::NeedsYou)
+            .map(|r| r.session)
+            .collect();
+        let today: Vec<SessionId> = hutan_desktop::workbench::panels::today(s)
+            .needs_you
+            .iter()
+            .map(|row| row.session)
+            .collect();
+        assert_eq!(page, [session]);
+        assert_eq!(today, page, "Today lists what the Agents page lists");
+    });
+
+    // A second turn runs: the session is working, not under review.
+    send(session, "Simplify total().");
+    wait_until(cx, "the second turn to work", |cx| label(cx) == "working");
+    assert_eq!(group(cx), Some(Group::Working));
+    assert!(sessions.read_with(cx, |s, _| s.needs_you().is_empty()));
+    fs::write(env.root.join("b.txt"), "total\n").unwrap();
+    release(2);
+    wait_until(cx, "the second change to await review", |cx| {
+        label(cx) == "review"
+    });
+
+    // The user looks at the chat: it leaves Needs you, the status bar's count drops, the row
+    // says it is ready for review.
+    cx.dispatch_action(actions::OpenSession(session.to_string()));
+    wait_until(cx, "the chat to be seen", |cx| {
+        label(cx) == "ready for review"
+    });
+    sessions.read_with(cx, |s, _| {
+        assert!(s.needs_you().is_empty(), "the status bar counts nothing");
+        let record = s.agent_presentation().get(session).cloned().unwrap();
+        assert_eq!(agents_text::state_word(&record), "Ready for review");
+    });
+
+    // Finish: the message is the chat that edited files; the work is merged and nothing waits.
+    let changes = open_changes(&view, cx, &env.root);
+    click(&view, cx, Region::Changes("finish"));
+    assert_eq!(
+        changes.read_with(cx, |c, _| c.finish_message()),
+        Some("Change the greeting".to_owned())
+    );
+    assert_eq!(changes.read_with(cx, |c, _| c.finish_hint().map(str::to_owned)), None);
+    changes.update(cx, |c, cx| {
+        c.set_finish_push(false, cx);
+        c.confirm_finish(cx);
+    });
+    wait_until(cx, "the work to be merged", |_| {
+        env.task(edit.id)
+            .is_some_and(|t| t.delivery == DeliveryState::Merged)
+    });
+    wait_until(cx, "the review to go", |cx| label(cx) != "ready for review");
+    assert!(sessions.read_with(cx, |s, _| s.needs_you().is_empty()));
+    assert_eq!(env.task(look.id).unwrap().delivery, DeliveryState::None);
 }
