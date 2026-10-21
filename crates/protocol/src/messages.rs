@@ -23,7 +23,10 @@ use crate::chat::{
     ChatRetry, ChatSend, ChatSendNow, QuestionAnswer, QuestionInfo, QuestionListRequest,
     QueueChange,
 };
-use crate::checkpoint::{CheckpointDiffRequest, CheckpointListRequest, CheckpointRemove};
+use crate::checkpoint::{
+    CheckpointDiffRequest, CheckpointListRequest, CheckpointPreviewRequest, CheckpointRemove,
+    CheckpointRestore,
+};
 use crate::control::{ErrorBody, ErrorCode};
 use crate::daemon_settings::DaemonSettingSet;
 use crate::error::ProtocolError;
@@ -516,6 +519,15 @@ pub enum Request {
     /// answered with `CheckpointRemoved`. A mutation: an agent asks per `[control]`.
     #[serde(rename = "checkpoint.remove")]
     CheckpointRemove(CheckpointRemove),
+    /// Capability `checkpoint.restore` (protocol 0.38): what restoring the checkout to before a
+    /// checkpoint's turn would do, file by file; answered with `CheckpointPreview`. Read-only.
+    #[serde(rename = "checkpoint.preview")]
+    CheckpointPreview(CheckpointPreviewRequest),
+    /// Capability `checkpoint.restore`: restore the files a preview listed, confirmed by its
+    /// digest; answered with `CheckpointRestored` (the restore is a checkpoint itself: restoring
+    /// it is Undo). User-only: an agent-originated connection gets `forbidden`.
+    #[serde(rename = "checkpoint.restore")]
+    CheckpointRestore(CheckpointRestore),
 }
 
 impl Request {

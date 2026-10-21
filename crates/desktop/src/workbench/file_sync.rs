@@ -470,7 +470,8 @@ impl Workbench {
             let agent = match change.origin {
                 Some(FsOrigin::Own { .. }) => continue,
                 Some(FsOrigin::Agent { session_id, .. }) => Some(session_id),
-                Some(FsOrigin::External) | None => None,
+                // A restore of files (protocol 0.38) is nobody's agent: like an outside change.
+                Some(FsOrigin::External | FsOrigin::Restore { .. }) | None => None,
             };
             let key = change.path.display().to_string();
             let Some(stored) = self.buffers.buffers.get(&key) else {

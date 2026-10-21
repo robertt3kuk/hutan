@@ -26,7 +26,7 @@
 
 use std::path::PathBuf;
 
-use hutan_core::{ItemId, SessionId};
+use hutan_core::{CheckpointId, ItemId, SessionId};
 use serde::{Deserialize, Serialize};
 
 /// Most bytes of text in one `fs.read` answer and one `fs.write.chunk`.
@@ -427,7 +427,8 @@ pub enum AgentConfidence {
 }
 
 /// Who made a change. A heuristic, and the daemon says so: the user's own save is exact
-/// (`self`), the rest is inferred. A terminal agent without a Hutan integration is `external`.
+/// (`self`), and so is a restore of files (`restore`); the rest is inferred. A terminal agent
+/// without a Hutan integration is `external`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FsOrigin {
@@ -442,6 +443,12 @@ pub enum FsOrigin {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_call_id: Option<ItemId>,
         confidence: AgentConfidence,
+    },
+    /// Protocol 0.38 (capability `checkpoint.restore`): the daemon restored the file
+    /// (`checkpoint.restore`); `checkpoint_id` is the restore's own checkpoint, whose restore
+    /// is Undo.
+    Restore {
+        checkpoint_id: CheckpointId,
     },
     External,
 }

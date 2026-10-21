@@ -2,7 +2,9 @@
 //!
 //! - [`checkpoint`]: checkpoints of agent edits on the wire — `checkpoint.list|diff|remove`, the
 //!   events `checkpoint.created|removed|state` and `ChatInfo.checkpoints` (protocol 0.37,
-//!   capability `checkpoint`, ADR 0019).
+//!   capability `checkpoint`, ADR 0019); restoring files to before turns —
+//!   `checkpoint.preview|restore` and `fs.changed` origin `restore` (protocol 0.38, capability
+//!   `checkpoint.restore`).
 //! - [`chat`] also carries the daemon-owned queue of a chat: `chat.queue.add|edit|remove|clear|list`,
 //!   the `chat.queue` event, `chat.send_now` (steer where the agent can, else interrupt and send)
 //!   and `chat.interrupt`'s `keep_queue` (protocol 0.36, capability `chat.queue`).
@@ -92,7 +94,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 37,
+    minor: 38,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

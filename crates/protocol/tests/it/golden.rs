@@ -2844,11 +2844,101 @@ fn requests() -> Vec<(&'static str, Request)> {
                 session_id: Some(sid()),
             }),
         ),
+        (
+            "checkpoint_preview",
+            Request::CheckpointPreview(CheckpointPreviewRequest {
+                checkpoint_id: checkpoint_id(1),
+                through: None,
+                paths: vec![],
+            }),
+        ),
+        (
+            "checkpoint_preview_through_paths",
+            Request::CheckpointPreview(CheckpointPreviewRequest {
+                checkpoint_id: checkpoint_id(1),
+                through: Some(checkpoint_id(2)),
+                paths: vec!["src".into(), "README.md".into()],
+            }),
+        ),
+        (
+            "checkpoint_restore",
+            Request::CheckpointRestore(CheckpointRestore {
+                checkpoint_id: checkpoint_id(1),
+                through: None,
+                paths: vec![],
+                accept_conflicts: vec![],
+                plan_digest: plan_digest().into(),
+            }),
+        ),
+        (
+            "checkpoint_restore_accept",
+            Request::CheckpointRestore(CheckpointRestore {
+                checkpoint_id: checkpoint_id(1),
+                through: Some(checkpoint_id(2)),
+                paths: vec!["src".into()],
+                accept_conflicts: vec!["src/lib.rs".into()],
+                plan_digest: plan_digest().into(),
+            }),
+        ),
     ]
 }
 
 fn checkpoint_id(n: u8) -> CheckpointId {
     format!("01K7F3B5N2Q9W8E4R6T1Y0V3C{n}").parse().unwrap()
+}
+
+fn plan_digest() -> &'static str {
+    "5b0c1e9f3a7d2e48c6f19a0b3d5e7f2146a8c9d0e1f2a3b4c5d6e7f8091a2b3c"
+}
+
+fn restore_entries() -> Vec<RestoreEntry> {
+    vec![
+        RestoreEntry {
+            path: "assets/big.psd".into(),
+            action: RestoreAction::Skip,
+            state: RestoreState::Uncaptured,
+            reason: Some("not captured: too large".into()),
+            accept: None,
+        },
+        RestoreEntry {
+            path: "src/lib.rs".into(),
+            action: RestoreAction::Skip,
+            state: RestoreState::After,
+            reason: Some("changed since the turn".into()),
+            accept: Some(RestoreAction::Write),
+        },
+        RestoreEntry {
+            path: "src/main.rs".into(),
+            action: RestoreAction::Write,
+            state: RestoreState::Clean,
+            reason: None,
+            accept: None,
+        },
+        RestoreEntry {
+            path: "src/new.rs".into(),
+            action: RestoreAction::Delete,
+            state: RestoreState::Clean,
+            reason: None,
+            accept: None,
+        },
+    ]
+}
+
+fn checkpoint_preview() -> CheckpointPreview {
+    CheckpointPreview {
+        plan_digest: plan_digest().into(),
+        entries: restore_entries(),
+        session_id: sid(),
+        agent: Some("codex".into()),
+        checkout: PathBuf::from("/Users/me/repo"),
+        checkpoints: vec![checkpoint_id(1), checkpoint_id(2)],
+        head_moved: Some(HeadMoved {
+            from: Some("3f786850e387550fdab836ed7e6dc881de23001b".into()),
+            to: Some("89e6c98d92887913cadf06b2adb97f26cde4849b".into()),
+        }),
+        shared_with: vec![SessionId::from_ulid(checkpoint_id(3).as_ulid())],
+        busy: vec![],
+    }
 }
 
 fn checkpoint_fixture() -> CheckpointInfo {
@@ -3828,6 +3918,32 @@ fn events() -> Vec<(&'static str, Event)> {
                 session_id: sid(),
                 state: CheckpointAvailability::On,
                 reason: None,
+            },
+        ),
+        (
+            "fs_changed_restore",
+            Event::FsChanged {
+                changes: vec![
+                    FsChange {
+                        path: "/repo/src/main.rs".into(),
+                        kind: ChangeKind::Modified,
+                        from: None,
+                        version: Some(file_version()),
+                        origin: Some(FsOrigin::Restore {
+                            checkpoint_id: checkpoint_id(3),
+                        }),
+                    },
+                    FsChange {
+                        path: "/repo/src/new.rs".into(),
+                        kind: ChangeKind::Removed,
+                        from: None,
+                        version: None,
+                        origin: Some(FsOrigin::Restore {
+                            checkpoint_id: checkpoint_id(3),
+                        }),
+                    },
+                ],
+                overflow: false,
             },
         ),
     ]
@@ -5816,6 +5932,45 @@ fn responses_match_fixtures() {
                 },
             )
             .unwrap(),
+        ),
+        (
+            "checkpoint_preview",
+            ControlMessage::ok(52, &checkpoint_preview()).unwrap(),
+        ),
+        (
+            "checkpoint_restored",
+            ControlMessage::ok(
+                53,
+                &CheckpointRestored {
+                    checkpoint: CheckpointInfo {
+                        id: checkpoint_id(3),
+                        turn_id: None,
+                        kind: CheckpointKind::Restore,
+                        files_changed: 2,
+                        added: 4,
+                        removed: 9,
+                        bytes: 0,
+                        skipped: vec![],
+                        ..checkpoint_fixture()
+                    },
+                    written: vec!["src/main.rs".into()],
+                    deleted: vec!["src/new.rs".into()],
+                    skipped: restore_entries()[..2].to_vec(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "error_checkpoint_restore_stale",
+            ControlMessage::err(54, {
+                let mut error = ErrorBody::new(
+                    ErrorCode::Conflict,
+                    "the checkout changed since the preview: nothing was restored; review the new \
+                     plan",
+                );
+                error.data = Some(serde_json::to_value(checkpoint_preview()).unwrap());
+                error
+            }),
         ),
     ];
     for (name, message) in cases {

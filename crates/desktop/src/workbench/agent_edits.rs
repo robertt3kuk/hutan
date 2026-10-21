@@ -562,7 +562,7 @@ impl Workbench {
             let agent = match &change.origin {
                 Some(FsOrigin::Own { .. }) => continue,
                 Some(FsOrigin::Agent { session_id, .. }) => Some(*session_id),
-                Some(FsOrigin::External) | None => None,
+                Some(FsOrigin::External | FsOrigin::Restore { .. }) | None => None,
             };
             let known = self.agent_ledger.ledger.entry(&key).is_some();
             if !known && !(agent.is_some() && self.agent_ledger.ledger.has_hint(&key, now_ms())) {

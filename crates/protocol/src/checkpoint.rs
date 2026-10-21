@@ -1,19 +1,24 @@
 //! Checkpoints of agent edits on the wire (protocol 0.37, capability `checkpoint`, ADR 0019):
 //! `checkpoint.list`, `checkpoint.diff`, `checkpoint.remove`, the events `checkpoint.created`,
-//! `checkpoint.removed` and `checkpoint.state`, and `ChatInfo.checkpoints`.
+//! `checkpoint.removed` and `checkpoint.state`, and `ChatInfo.checkpoints`; and restoring
+//! files to before turns (protocol 0.38, capability `checkpoint.restore`): `checkpoint.preview`
+//! and `checkpoint.restore`, and `fs.changed` changes with `origin: {kind: "restore"}`.
 //!
 //! The daemon takes a snapshot of an agent chat's git checkout when a turn starts and when it
-//! ends ([`CheckpointInfo`]); these requests read them and remove them. Nothing here restores
-//! files (that is CK-4's `checkpoint.preview` / `checkpoint.restore`, user-only).
+//! ends ([`CheckpointInfo`]); `list`, `diff` and `remove` read them and remove them. A preview
+//! says file by file what a restore would do ([`RestoreEntry`]); a restore confirms the preview
+//! by its digest, is the user's alone (an agent gets `forbidden`), and is itself a checkpoint
+//! (kind `restore`), so restoring that one is Undo.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use hutan_core::{CheckpointId, SessionId, WorkspaceId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub use hutan_core::{
     CheckpointAvailability, CheckpointInfo, CheckpointKind, CheckpointState, CheckpointStatus,
-    SkipReason, SkippedFile,
+    RestoreAction, RestoreEntry, RestoreState, SkipReason, SkippedFile,
 };
 
 /// `checkpoint.list`'s largest page.
@@ -185,6 +190,148 @@ pub struct CheckpointRemoved {
     pub removed: Vec<CheckpointId>,
 }
 
+// Restore (protocol 0.38, capability `checkpoint.restore`) -------------------------------------
+
+/// `checkpoint.preview`: what restoring the checkout to before a checkpoint's turn (through
+/// `through`'s turn, every checkpoint of the session in between included) would do, file by
+/// file. Nothing is written: the checkout now is read through a fresh snapshot of Hutan's own
+/// index, never the user's. A read: an agent may ask for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointPreviewRequest {
+    pub checkpoint_id: CheckpointId,
+    /// A later checkpoint of the same session: rewind its turn and every one in between too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through: Option<CheckpointId>,
+    /// Only these files or directories, relative to the checkout.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+}
+
+/// HEAD moved during the turns: a restore puts files back, never HEAD, branches or the stash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeadMoved {
+    /// The commit at the start of the first turn (absent: no commit yet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// The commit at the end of the last turn (absent: no commit, a branch without one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+}
+
+/// The answer to `checkpoint.preview`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointPreview {
+    /// What `checkpoint.restore` confirms: it changes with any file of the plan.
+    pub plan_digest: String,
+    /// Sorted by path. A file already as it was is left out; conflicts (`after`, `gap`,
+    /// `during`) are `skip` until named in `accept_conflicts` (`accept` says what that does);
+    /// `uncaptured` files, symbolic links and submodules are never written.
+    pub entries: Vec<RestoreEntry>,
+    pub session_id: SessionId,
+    /// The chat's agent (`codex`, `omp`, `claude`), while the session is known: it still
+    /// remembers the turns ([`restore_label`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// The checkout's top level.
+    pub checkout: PathBuf,
+    /// The checkpoints rewound, oldest first (turns and earlier restores of the session).
+    pub checkpoints: Vec<CheckpointId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_moved: Option<HeadMoved>,
+    /// Other live sessions with an agent in the checkout: a restore never touches a file the
+    /// turns did not change, and what they changed since shows as `after`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared_with: Vec<SessionId>,
+    /// Agent sessions with a turn running in the checkout: a restore is refused
+    /// (`invalid_state`) until they end or are interrupted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub busy: Vec<SessionId>,
+}
+
+/// `checkpoint.restore`: the preview of the same `checkpoint_id`, `through` and `paths`,
+/// confirmed by its `plan_digest`, plus the conflicts the user accepts. User-only: an
+/// agent-originated connection gets `forbidden` whatever `[control]` says.
+///
+/// Before writing, the daemon takes a snapshot of the checkout (the restore's start) and plans
+/// again from it: a different digest answers `conflict` with the new preview as `data`, and
+/// nothing is written. Then clean files are written back (confined to the checkout, never
+/// under `.git`, atomically, raw bytes, the mode of the tree entry) or deleted (with the
+/// folders that deleting emptied), each announced in `fs.changed` with `origin: {kind:
+/// "restore"}`, and a second snapshot ends the restore. `invalid_state` while an agent session
+/// in the checkout has a turn running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointRestore {
+    pub checkpoint_id: CheckpointId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through: Option<CheckpointId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+    /// Conflicts to overwrite anyway, by path (each must be a conflict of the plan).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accept_conflicts: Vec<String>,
+    /// The preview's `plan_digest`.
+    pub plan_digest: String,
+}
+
+/// The answer to `checkpoint.restore`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointRestored {
+    /// The restore's own checkpoint (kind `restore`): its start is the checkout before, its end
+    /// the checkout after. Restoring it is Undo.
+    pub checkpoint: CheckpointInfo,
+    /// Files written back, sorted.
+    pub written: Vec<String>,
+    /// Files deleted, sorted.
+    pub deleted: Vec<String>,
+    /// Files left alone with the reason: conflicts not accepted, uncaptured files, links, and
+    /// files that changed or could not be written while the restore ran.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<RestoreEntry>,
+}
+
+/// The display name of a chat's agent, for the label.
+fn harness_name(agent: &str) -> &str {
+    match agent {
+        "codex" => "Codex",
+        "omp" => "OMP",
+        "claude" => "Claude Code",
+        other => other,
+    }
+}
+
+/// The words every preview of a restore shows (ADR 0019 Decision 9): it restores files only,
+/// the agent still remembers, and git history and what lies outside the checkout stay.
+pub fn restore_label(
+    agent: Option<&str>,
+    checkout: &Path,
+    head_moved: Option<&HeadMoved>,
+) -> String {
+    let harness = agent.map_or("The agent", harness_name);
+    let short = |commit: &Option<String>| {
+        commit
+            .as_deref()
+            .map_or_else(|| "no commit".to_owned(), |c| c.chars().take(10).collect())
+    };
+    let git = match head_moved {
+        Some(moved) => format!(
+            "HEAD moved from {} to {} during the turns and stays at {}: git history (commits, \
+             branches, stash) and anything outside {} are not rewound.",
+            short(&moved.from),
+            short(&moved.to),
+            short(&moved.to),
+            checkout.display()
+        ),
+        None => format!(
+            "Git history (commits, branches, stash) and anything outside {} are not rewound.",
+            checkout.display()
+        ),
+    };
+    format!(
+        "Restores files only. {harness} still remembers this turn and may mention or redo the \
+         changes. {git}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,5 +352,26 @@ mod tests {
         let request: CheckpointDiffRequest =
             serde_json::from_value(serde_json::json!({"checkpoint_id": id})).unwrap();
         assert_eq!(request.against, DiffAgainst::End);
+    }
+
+    #[test]
+    fn the_label_says_files_only_who_remembers_and_what_stays() {
+        let checkout = Path::new("/work/repo");
+        assert_eq!(
+            restore_label(Some("claude"), checkout, None),
+            "Restores files only. Claude Code still remembers this turn and may mention or redo \
+             the changes. Git history (commits, branches, stash) and anything outside /work/repo \
+             are not rewound."
+        );
+        let moved = HeadMoved {
+            from: Some("0123456789abcdef".to_owned()),
+            to: Some("fedcba9876543210".to_owned()),
+        };
+        let text = restore_label(None, checkout, Some(&moved));
+        assert!(text.contains("The agent still remembers"), "{text}");
+        assert!(
+            text.contains("HEAD moved from 0123456789 to fedcba9876 during the turns"),
+            "{text}"
+        );
     }
 }

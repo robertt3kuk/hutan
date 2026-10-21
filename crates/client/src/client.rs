@@ -29,8 +29,9 @@ use hutan_protocol::chat::{
     QuestionListRequest, QueuedMessage,
 };
 use hutan_protocol::checkpoint::{
-    CheckpointDiff, CheckpointDiffRequest, CheckpointList, CheckpointListRequest, CheckpointRemove,
-    CheckpointRemoved,
+    CheckpointDiff, CheckpointDiffRequest, CheckpointList, CheckpointListRequest,
+    CheckpointPreview, CheckpointPreviewRequest, CheckpointRemove, CheckpointRemoved,
+    CheckpointRestore, CheckpointRestored,
 };
 use hutan_protocol::daemon_settings::{DaemonSettingSet, DaemonSettings};
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
@@ -175,6 +176,9 @@ pub(crate) const CHAT_QUEUE_CAPABILITY: &str = "chat.queue";
 /// Capability for `checkpoint.list|diff|remove`, the `checkpoint.*` events and
 /// `ChatInfo.checkpoints` (protocol 0.37).
 pub(crate) const CHECKPOINT_CAPABILITY: &str = "checkpoint";
+/// Capability for `checkpoint.preview|restore` and `fs.changed` origin `restore` (protocol
+/// 0.38).
+pub(crate) const CHECKPOINT_RESTORE_CAPABILITY: &str = "checkpoint.restore";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -216,6 +220,7 @@ const CAPABILITIES: &[&str] = &[
     FINISH_CAPABILITY,
     CHAT_QUEUE_CAPABILITY,
     CHECKPOINT_CAPABILITY,
+    CHECKPOINT_RESTORE_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -573,6 +578,16 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == CHECKPOINT_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `checkpoint.restore` (protocol 0.38): files
+    /// can be restored to before a checkpoint's turn (`checkpoint.preview|restore`), and a
+    /// restore's writes show in `fs.changed` with origin `restore`.
+    pub fn supports_checkpoint_restore(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == CHECKPOINT_RESTORE_CAPABILITY)
     }
 
     /// True when the daemon advertised capability `worktree.index` (protocol 0.34): the files
@@ -1388,6 +1403,25 @@ impl Client {
         request: CheckpointRemove,
     ) -> Result<CheckpointRemoved, ClientError> {
         self.call(Request::CheckpointRemove(request)).await
+    }
+
+    /// `checkpoint.preview` (protocol 0.38): what restoring the checkout to before a
+    /// checkpoint's turn would do, file by file, with the digest a restore confirms.
+    pub async fn checkpoint_preview(
+        &self,
+        request: CheckpointPreviewRequest,
+    ) -> Result<CheckpointPreview, ClientError> {
+        self.call(Request::CheckpointPreview(request)).await
+    }
+
+    /// `checkpoint.restore` (protocol 0.38): restores what the preview of `plan_digest` listed
+    /// (and the conflicts named); a changed checkout answers `conflict` with the new preview as
+    /// the error's `data`. User-only.
+    pub async fn checkpoint_restore(
+        &self,
+        request: CheckpointRestore,
+    ) -> Result<CheckpointRestored, ClientError> {
+        self.call(Request::CheckpointRestore(request)).await
     }
 
     /// One page of a chat's journal, oldest first (see [`ChatHistoryRequest`]).
