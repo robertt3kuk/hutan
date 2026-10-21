@@ -29,7 +29,9 @@ use parking_lot::Mutex;
 use rusqlite::Connection;
 use tracing::{debug, error};
 
-pub use checkpoints::{CheckpointFilter, CheckpointRow, Checkpoints};
+pub use checkpoints::{
+    CheckpointFilter, CheckpointPage, CheckpointRow, CheckpointScope, Checkpoints,
+};
 pub use error::{Result, StorageError};
 pub use memory::{
     Action, Author, Category, Change, EntryRow, EntryState, EntryView, Memory, MemoryError,

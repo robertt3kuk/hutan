@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use hutan_core::{
     CheckpointId, CheckpointInfo, CheckpointKind, CheckpointState, SessionId, SkippedFile, TurnId,
+    WorkspaceId,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
@@ -109,6 +110,27 @@ pub enum CheckpointFilter {
     Repository(Option<PathBuf>),
 }
 
+/// Whose checkpoints a page covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckpointScope {
+    All,
+    Session(SessionId),
+    /// The sessions of a workspace, and of the projects whose workspace it is (sessions that
+    /// were closed included, as long as their row is kept).
+    Workspace(WorkspaceId),
+}
+
+/// One page of [`Checkpoints::page`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckpointPage<'a> {
+    pub scope: CheckpointScope,
+    /// Only checkpoints in these states.
+    pub states: &'a [CheckpointState],
+    /// Older than this one (by creation, then id).
+    pub before: Option<CheckpointId>,
+    pub limit: usize,
+}
+
 /// The checkpoints of chat sessions.
 #[derive(Debug, Clone, Copy)]
 pub struct Checkpoints<'a>(pub(crate) &'a Storage);
@@ -167,6 +189,65 @@ impl Checkpoints<'_> {
                 .map_err(StorageError::sqlite(context))?;
             rows.map(|r| r.map(PathBuf::from).map_err(StorageError::sqlite(context)))
                 .collect()
+        })
+    }
+
+    /// Newest first: at most `page.limit` of the checkpoints of `page.scope` in `page.states`
+    /// that are older than `page.before` (none when `before` names no checkpoint).
+    pub fn page(&self, page: CheckpointPage<'_>) -> Result<Vec<CheckpointRow>> {
+        let states: Vec<&'static str> = page.states.iter().map(|s| s.as_str()).collect();
+        let scope = page.scope;
+        let before = page.before.map(|id| id.to_string());
+        let limit = i64::try_from(page.limit).unwrap_or(i64::MAX);
+        self.0.read(move |conn| {
+            let context = "reading checkpoints";
+            let mut sql = format!("{SELECT} WHERE 1 = 1");
+            let mut args: Vec<rusqlite::types::Value> = Vec::new();
+            let arg = |value: rusqlite::types::Value, args: &mut Vec<_>| {
+                args.push(value);
+                format!("?{}", args.len())
+            };
+            match scope {
+                CheckpointScope::All => {}
+                CheckpointScope::Session(session) => {
+                    let p = arg(session.to_string().into(), &mut args);
+                    sql.push_str(&format!(" AND session_id = {p}"));
+                }
+                CheckpointScope::Workspace(workspace) => {
+                    let p = arg(workspace.to_string().into(), &mut args);
+                    sql.push_str(&format!(
+                        " AND session_id IN (SELECT s.id FROM sessions s \
+                         LEFT JOIN workspaces w ON w.id = s.workspace_id \
+                         WHERE s.workspace_id = {p} OR w.parent_id = {p})"
+                    ));
+                }
+            }
+            if !states.is_empty() {
+                let list: Vec<String> = states
+                    .iter()
+                    .map(|state| arg((*state).to_owned().into(), &mut args))
+                    .collect();
+                sql.push_str(&format!(" AND state IN ({})", list.join(", ")));
+            }
+            if let Some(before) = before {
+                let p = arg(before.into(), &mut args);
+                sql.push_str(&format!(
+                    " AND (created_ms, id) < (SELECT created_ms, id FROM checkpoints WHERE id = {p})"
+                ));
+            }
+            let p = arg(limit.into(), &mut args);
+            sql.push_str(&format!(" ORDER BY created_ms DESC, id DESC LIMIT {p}"));
+            let mut stmt = conn.prepare(&sql).map_err(StorageError::sqlite(context))?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(args.iter()), |row| {
+                    Ok(from_row(row))
+                })
+                .map_err(StorageError::sqlite(context))?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row.map_err(StorageError::sqlite(context))??);
+            }
+            Ok(out)
         })
     }
 }
@@ -392,5 +473,108 @@ mod tests {
             vec![elsewhere]
         );
         assert_eq!(full.info().added, 4);
+    }
+
+    #[test]
+    fn a_page_is_newest_first_per_scope_and_state_and_continues_before_a_checkpoint() {
+        use crate::{CreatedBy, SessionRow, WorkspaceKind, WorkspaceRow};
+        use hutan_core::{SessionKind, SessionState};
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path().join("hutan.sqlite")).unwrap();
+        let workspace = |kind, parent| WorkspaceRow {
+            id: WorkspaceId::new(),
+            name: "w".to_owned(),
+            roots: Vec::new(),
+            kind,
+            pinned: false,
+            created_by: CreatedBy::User,
+            created_at_ms: 1,
+            last_active_ms: 1,
+            position: 0,
+            common_dir: None,
+            parent_id: parent,
+        };
+        let container = workspace(WorkspaceKind::Workspace, None);
+        let project = workspace(WorkspaceKind::Project, Some(container.id));
+        let elsewhere = workspace(WorkspaceKind::Project, None);
+        for w in [&container, &project, &elsewhere] {
+            storage.workspaces().insert(w.clone()).unwrap();
+        }
+        let session = |workspace: WorkspaceId| SessionRow {
+            id: SessionId::new(),
+            workspace_id: workspace,
+            kind: SessionKind::Harness,
+            title: "chat".to_owned(),
+            title_locked: false,
+            spec_json: "{}".to_owned(),
+            cwd: None,
+            state: SessionState::Idle,
+            created_at_ms: 1,
+            ended_at_ms: None,
+            resume_ref_json: None,
+        };
+        let (a, b) = (session(project.id), session(elsewhere.id));
+        storage.sessions().upsert(a.clone()).unwrap();
+        storage.sessions().upsert(b.clone()).unwrap();
+        storage.flush().unwrap();
+
+        let mut rows = Vec::new();
+        for (n, state) in [
+            CheckpointState::Ok,
+            CheckpointState::Unchanged,
+            CheckpointState::Late,
+            CheckpointState::Failed,
+            CheckpointState::Ok,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut r = row(a.id, 10 * (n as u64 + 1), Some("/r/.git"));
+            r.state = state;
+            rows.push(r);
+        }
+        rows.push(row(b.id, 100, None));
+        for r in &rows {
+            storage.checkpoints().upsert(r.clone()).unwrap();
+        }
+        let listed = [
+            CheckpointState::Ok,
+            CheckpointState::Late,
+            CheckpointState::Failed,
+        ];
+        let page = |scope, before, limit| {
+            storage
+                .checkpoints()
+                .page(CheckpointPage {
+                    scope,
+                    states: &listed,
+                    before,
+                    limit,
+                })
+                .unwrap()
+                .into_iter()
+                .map(|r| r.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            page(CheckpointScope::All, None, 10),
+            [rows[5].id, rows[4].id, rows[3].id, rows[2].id, rows[0].id]
+        );
+        assert_eq!(
+            page(CheckpointScope::Session(a.id), None, 2),
+            [rows[4].id, rows[3].id]
+        );
+        assert_eq!(
+            page(CheckpointScope::Session(a.id), Some(rows[3].id), 2),
+            [rows[2].id, rows[0].id],
+            "the next page starts below the cursor"
+        );
+        // The workspace takes the sessions of its projects.
+        assert_eq!(page(CheckpointScope::Workspace(container.id), None, 10).len(), 4);
+        assert_eq!(
+            page(CheckpointScope::Workspace(elsewhere.id), None, 10),
+            [rows[5].id]
+        );
+        assert!(page(CheckpointScope::All, Some(CheckpointId::new()), 10).is_empty());
     }
 }
