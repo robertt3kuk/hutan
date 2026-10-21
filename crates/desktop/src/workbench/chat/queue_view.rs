@@ -40,18 +40,14 @@ impl ChatView {
     /// The queued messages as chips above the composer; `None` while nothing is queued.
     pub(super) fn render_queue(&self, look: &Look, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (theme, tokens) = (&look.theme, &look.tokens);
-        let (items, held, steer, editing) = {
+        let now_label = self.send_now_label(cx);
+        let (items, held, editing) = {
             let model = self.model.read(cx);
             let queue = model.queue()?;
             if queue.items.is_empty() {
                 return None;
             }
-            (
-                queue.items.clone(),
-                queue.held,
-                queue.steer,
-                model.editing(),
-            )
+            (queue.items.clone(), queue.held, model.editing())
         };
         let header = div()
             .flex()
@@ -87,7 +83,7 @@ impl ChatView {
             let id = item.id;
             let open = editing == Some(id);
             let hover = theme.surface_hover;
-            let small = |name: &'static str, label: &'static str| {
+            let small = |name: &'static str, label: Option<&'static str>| {
                 div()
                     .id(SharedString::from(format!("chat-queue-{name}-{index}")))
                     .px(px(tokens.spacing))
@@ -96,7 +92,7 @@ impl ChatView {
                     .text_color(theme.muted)
                     .hover(move |s| s.bg(hover))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(SharedString::from(label))
+                    .children(label.map(SharedString::from))
             };
             div()
                 .id(SharedString::from(format!("chat-queue-item-{index}")))
@@ -108,12 +104,9 @@ impl ChatView {
                 .pr(px(tokens.spacing))
                 .h(px(tokens.sidebar_row - 4.0))
                 .rounded(px(crate::theme::pill_radius()))
-                // The chip open in the composer is the plain surface; the others are tinted.
-                .bg(if open {
-                    theme.surface_hover
-                } else {
-                    theme.accent_soft
-                })
+                // The neutral surface; the chip open in the composer is only outlined.
+                .when(open, |s| s.border_1().border_color(theme.border))
+                .when(!open, |s| s.bg(theme.surface_hover))
                 .text_size(px(tokens.secondary_font_size))
                 .child(
                     div()
@@ -128,29 +121,25 @@ impl ChatView {
                         })),
                 )
                 .child(
-                    small("edit", "Edit")
+                    small("edit", Some("Edit"))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.model.update(cx, |model, cx| model.edit_queued(id, cx));
                         }))
                         .child(probe(&self.regions, Region::ChatQueue("edit", index))),
                 )
                 .child(
-                    small(
-                        "now",
-                        if steer {
-                            "Send now"
-                        } else {
-                            "Interrupt & send"
-                        },
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.model
-                            .update(cx, |model, cx| model.send_queued_now(id, cx));
-                    }))
-                    .child(probe(&self.regions, Region::ChatQueue("now", index))),
+                    small("now", Some(now_label))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.model
+                                .update(cx, |model, cx| model.send_queued_now(id, cx));
+                        }))
+                        .child(probe(&self.regions, Region::ChatQueue("now", index))),
                 )
                 .child(
-                    small("remove", "")
+                    // Only the glyph: an empty text child would add a line box under it.
+                    small("remove", None)
+                        .flex()
+                        .items_center()
                         .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.model

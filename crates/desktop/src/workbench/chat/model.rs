@@ -747,6 +747,7 @@ impl ChatModel {
         let Some(message) = self.take_text_draft(cx) else {
             return false;
         };
+        self.note_interrupting_send(cx);
         let connection = self.connection.clone();
         let session = self.session;
         cx.spawn(async move |this, cx| {
@@ -756,6 +757,7 @@ impl ChatModel {
                 match sent {
                     Ok(_) => this.unsent = None,
                     Err(error) => {
+                        this.stopping = false;
                         this.put_back_unsent();
                         this.error = Some(format!("Could not send now: {error}").into());
                     }
@@ -790,10 +792,30 @@ impl ChatModel {
 
     /// A queued message's Send now.
     pub fn send_queued_now(&mut self, item: u64, cx: &mut Context<Self>) {
+        self.note_interrupting_send(cx);
         let session = self.session;
-        self.queue_request("send it now", cx, async move |connection| {
-            connection.chat_send_now(session, None, Some(item)).await
-        });
+        let connection = self.connection.clone();
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = connection.chat_send_now(session, None, Some(item)).await {
+                this.update(cx, |this, cx| {
+                    this.stopping = false;
+                    this.error = Some(format!("Could not send it now: {error}").into());
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// A Send now that has to interrupt the running turn (the agent cannot take a message
+    /// while it works) shows "Stopping…" like Stop does, until the turn has ended.
+    fn note_interrupting_send(&mut self, cx: &mut Context<Self>) {
+        let steers = self.queue.as_ref().is_some_and(|queue| queue.steer);
+        if !steers && self.transcript.turn_active() {
+            self.stopping = true;
+            cx.notify();
+        }
     }
 
     /// A queued message's ×.

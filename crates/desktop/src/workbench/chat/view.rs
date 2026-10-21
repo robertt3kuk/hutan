@@ -394,6 +394,18 @@ impl ChatView {
         self.model.read(cx).queue().is_some_and(|queue| queue.steer)
     }
 
+    /// The label of Send now, on the composer's button and on the queue's chips: it only
+    /// says "Interrupt & send" when a turn runs that has to be interrupted for it. With no turn
+    /// running (after Stop, while the queue holds) the message simply goes.
+    pub fn send_now_label(&self, cx: &App) -> &'static str {
+        let running = self.gate(self.info(cx).as_ref(), cx).running;
+        if self.send_now_steers(cx) || !running {
+            "Send now"
+        } else {
+            "Interrupt & send"
+        }
+    }
+
     /// The text of the header's context chip (`context 61 % · 122k / 200k`); `None` while the
     /// agent has reported no context use, when the header shows no chip.
     pub fn context_meter(&self, cx: &App) -> Option<String> {
@@ -1363,6 +1375,7 @@ impl ChatView {
         };
         let can_queue = self.can_queue(cx);
         let steers = self.send_now_steers(cx);
+        let send_now_label = self.send_now_label(cx);
         let queue_strip = self.render_queue(look, cx);
         let mention_hint = self.render_mention_hint(look, cx);
         let attach_button = self.render_attach_button(look, cx);
@@ -1517,11 +1530,7 @@ impl ChatView {
         .child(probe(&self.regions, Region::Chat("queue")));
         let send_now = button(
             "chat-send-now",
-            if steers {
-                "Send now"
-            } else {
-                "Interrupt & send"
-            },
+            send_now_label,
             ButtonKind::Ghost,
             can_queue,
             look,

@@ -136,3 +136,161 @@ fn the_send_key_queues_during_a_turn_chips_edit_and_stop_clears_them(cx: &mut Te
         "nothing queued started after Stop"
     );
 }
+
+// ---- Send now on an agent that takes no message during a turn (FX-POLISH-1) -------------------
+
+/// A daemon whose OMP replays `cancel` (a turn that runs until it is cancelled), then one more
+/// turn that ends by itself. `dir` holds the transcript.
+fn omp_cancellable(dir: &std::path::Path) -> TestDaemon {
+    use std::fmt::Write as _;
+    let exe = std::env::current_exe().unwrap();
+    let bin = exe
+        .parent()
+        .and_then(std::path::Path::parent)
+        .unwrap()
+        .join("hutan-acp-fixture");
+    assert!(bin.is_file(), "run `cargo build -p hutan-agents --bins`");
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../agents/tests/fixtures/acp-omp-18.11/cancel.jsonl");
+    let mut text = std::fs::read_to_string(fixtures).unwrap();
+    let done = [
+        serde_json::json!({"dir": "out", "msg": {"jsonrpc": "2.0", "method": "session/prompt", "id": 1}}),
+        serde_json::json!({"dir": "in", "msg": {"jsonrpc": "2.0", "method": "session/update", "params": {
+            "sessionId": "sess_fixture_1",
+            "update": {"sessionUpdate": "agent_message_chunk", "messageId": "msg-done",
+                "content": {"type": "text", "text": "Done."}}}}}),
+        serde_json::json!({"dir": "in", "msg": {"jsonrpc": "2.0", "id": 0, "result": {"stopReason": "end_turn"}}}),
+    ];
+    for entry in done {
+        writeln!(text, "{entry}").unwrap();
+    }
+    let transcript = dir.join("cancellable.jsonl");
+    std::fs::write(&transcript, text).unwrap();
+    TestDaemon::start_with_config(&format!(
+        "[terminal]\nenv_inherit = \"daemon\"\n\n[harness.omp]\nbin = {bin:?}\nargs = [\"replay\", {transcript:?}, \"acp\"]\n"
+    ))
+}
+
+fn omp_chat(daemon: &TestDaemon, cwd: &std::path::Path) -> hutan_core::SessionId {
+    let created: hutan_protocol::messages::SessionResult = daemon.call(
+        hutan_protocol::messages::Request::ChatCreate(hutan_protocol::chat::ChatCreate {
+            workspace_id: None,
+            cwd: cwd.to_path_buf(),
+            agent: "omp".into(),
+            model: None,
+            approval_policy: None,
+            sandbox: None,
+            title: None,
+            mode: None,
+            provider_id: None,
+            system_prompt: None,
+        }),
+    );
+    created.session.id
+}
+
+fn open_omp_chat<'a>(
+    cx: &'a mut TestAppContext,
+    daemon: &TestDaemon,
+    session: hutan_core::SessionId,
+) -> (
+    Entity<Workbench>,
+    &'a mut VisualTestContext,
+    Entity<hutan_desktop::workbench::chat::ChatView>,
+    Entity<ChatModel>,
+) {
+    let (view, cx) = open_with(
+        cx,
+        SettingsStore::new(SettingsPaths::in_dir(daemon.home())),
+        daemon.connection(),
+        None,
+    );
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    view.update_in(cx, |wb, window, cx| wb.open_session(session, window, cx));
+    wait_until(cx, "the chat to load", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.chat_model_of(session)
+                .is_some_and(|m| *m.read(cx).status() == LoadStatus::Ready)
+                && wb.chat_view_of(session).is_some()
+        })
+    });
+    let chat = view
+        .read_with(cx, |wb, _| wb.chat_view_of(session))
+        .unwrap();
+    let model = view
+        .read_with(cx, |wb, _| wb.chat_model_of(session))
+        .unwrap();
+    (view, cx, chat, model)
+}
+
+#[gpui::test]
+fn send_now_says_interrupt_and_send_only_while_a_turn_runs_that_it_interrupts(
+    cx: &mut TestAppContext,
+) {
+    let work = tempfile::tempdir().unwrap();
+    let daemon = omp_cancellable(work.path());
+    let id = omp_chat(&daemon, work.path());
+    let (view, cx, chat, model) = open_omp_chat(cx, &daemon, id);
+    cx.simulate_input("long task");
+    cx.simulate_keystrokes("cmd-enter");
+    pump(cx, "the turn to run", |cx| {
+        model.read_with(cx, |m, _| m.transcript().turn_active())
+    });
+    cx.simulate_input("later");
+    cx.simulate_keystrokes("cmd-enter");
+    pump(cx, "the chip", |cx| queued(&model, cx) == ["later"]);
+    pump(cx, "the queue to say OMP does not steer", |cx| {
+        model.read_with(cx, |m, _| m.queue().is_some_and(|q| !q.steer))
+    });
+    // A turn runs that Send now has to interrupt: the chip and the composer say so.
+    assert_eq!(
+        chat.read_with(cx, |chat, cx| chat.send_now_label(cx)),
+        "Interrupt & send"
+    );
+
+    // Stop, keep the queue: no turn runs and the queue holds; Send now just sends.
+    click(&view, cx, Region::Chat("interrupt"));
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(1, window, cx));
+    pump(cx, "the queue to hold", |cx| {
+        model.read_with(cx, |m, _| {
+            !m.transcript().turn_active() && m.queue().is_some_and(|q| q.held.is_some())
+        })
+    });
+    assert_eq!(
+        chat.read_with(cx, |chat, cx| chat.send_now_label(cx)),
+        "Send now"
+    );
+    click(&view, cx, Region::ChatQueue("now", 0));
+    pump(cx, "the held message to go", |cx| {
+        model.read_with(cx, |m, _| m.queued().is_empty())
+    });
+}
+
+#[gpui::test]
+fn ctrl_enter_that_interrupts_the_turn_shows_stopping_like_stop_does(cx: &mut TestAppContext) {
+    let work = tempfile::tempdir().unwrap();
+    let daemon = omp_cancellable(work.path());
+    let id = omp_chat(&daemon, work.path());
+    let (_view, cx, _chat, model) = open_omp_chat(cx, &daemon, id);
+    cx.simulate_input("long task");
+    cx.simulate_keystrokes("cmd-enter");
+    pump(cx, "the turn to run", |cx| {
+        model.read_with(cx, |m, _| m.transcript().turn_active())
+    });
+    pump(cx, "the queue to say OMP does not steer", |cx| {
+        model.read_with(cx, |m, _| m.queue().is_some_and(|q| !q.steer))
+    });
+    cx.simulate_input("stop and do this");
+    cx.simulate_keystrokes("ctrl-enter");
+    assert!(
+        model.read_with(cx, |m, _| m.stopping()),
+        "Stopping… as with Stop"
+    );
+    pump(cx, "the turn to end and the message to go", |cx| {
+        model.read_with(cx, |m, _| !m.stopping() && !m.transcript().turn_active())
+    });
+}
