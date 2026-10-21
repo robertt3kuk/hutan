@@ -442,6 +442,21 @@ impl Emulator {
         let wraps_before =
             (reflowed && !on_alt && self.blocks.reaches(first_hot)).then(|| self.region_wraps());
         // Only the hot margin reflows (it already is the only history in the engine).
+        let blank = if reflowed && !on_alt {
+            self.trailing_blank_rows()
+        } else {
+            0
+        };
+        if blank > 0 {
+            // Blank rows below the cursor are not content: reflowing with them would push the
+            // top rows of a short screen into scrollback although there is room, and a fresh
+            // render at the new width would not. Drop them, reflow, then give the rows back
+            // (growing takes back what the reflow pushed up, and nothing else matters here).
+            self.term.resize(Dims {
+                cols: dims.cols,
+                rows: usize::from(self.size.rows) - blank,
+            });
+        }
         self.term.resize(dims);
         self.size = size;
         self.generation += 1;
@@ -474,6 +489,18 @@ impl Emulator {
         }
         self.flush_blocks();
         Ok(())
+    }
+
+    /// Fully blank rows at the bottom of the screen, below the cursor's row (always fewer than
+    /// the rows of the screen).
+    fn trailing_blank_rows(&self) -> usize {
+        let grid = self.term.grid();
+        let lines = self.term.screen_lines();
+        let cursor = usize::try_from(grid.cursor.point.line.0).unwrap_or(0);
+        (cursor + 1..lines)
+            .rev()
+            .take_while(|line| i32::try_from(*line).is_ok_and(|line| grid[Line(line)].is_clear()))
+            .count()
     }
 
     /// A width change while the shell sits at a prompt (`OSC 133;A` seen, no command started):

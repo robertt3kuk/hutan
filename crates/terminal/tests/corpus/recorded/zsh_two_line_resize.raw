@@ -1,0 +1,13 @@
+[1m[7m%[27m[1m[0m                                                                                                    ]7;file://devbox/tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo[0m[27m[24m[J]133;Adev@devbox /tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo on main
+❯ ]133;B[K[87C[12:00:00][97D[?2004heecho hello[?2004l
+]133;Chello
+[1m[7m%[27m[1m[0m                                                                                                    ]133;D;0]7;file://devbox/tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo[0m[27m[24m[J]133;Adev@devbox /tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo on main
+❯ ]133;B[K[87C[12:00:00][97D[?2004hpprintf "%s\n" $(printf "abcdefghij%.0s" 1 2 3 4 5 6 7 8)[?2004l
+]133;Cabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij
+[1m[7m%[27m[1m[0m                                                                                                    ]133;D;0]7;file://devbox/tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo[0m[27m[24m[J]133;Adev@devbox /tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo on main
+❯ ]133;B[K[87C[12:00:00][97D[?2004h[A[0m[27m[24m[J]133;Adev@devbox /tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo on main
+❯ ]133;B[K[47C[12:00:00][57D[A[A[0m[27m[24m[J]133;Adev@devbox /tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo on main
+❯ ]133;B[K[31C[12:00:00][41D[A[A[0m[27m[24m[J]133;Adev@devbox /tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo on main
+❯ ]133;B[K[87C[12:00:00][97D[A[0m[27m[24m[J]133;Adev@devbox /tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo on main
+❯ ]133;B[K[31C[12:00:00][41D[A[A[0m[27m[24m[J]133;Adev@devbox /tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo on main
+❯ ]133;B[K[57C[12:00:00][67D

@@ -1,0 +1,11 @@
+dev@devbox /tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo on main
+❯ echo hello
+                   [12:00:00]
+hello
+dev@devbox /tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo on main
+❯ printf "%s\n" $(printf "abcdefghij%.0s" 1 2 3 4 5 6 7 8)
+                   [12:00:00]
+abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij
+abcdefghij
+dev@devbox /tmp/hutan-rec2/aaaa/bbbb/cccc/dddd/project-demo on main
+❯                                                          [12:00:00]

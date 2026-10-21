@@ -1,0 +1,11 @@
+dev@devbox /t/h/a/b/c/d/e/a-long-project-folder-name-demo on main
+❯ echo hello
+                    [12:00:00]
+hello
+dev@devbox /t/h/a/b/c/d/e/a-long-project-folder-name-demo on main
+❯ printf "%s\n" (string repeat -n 8 abcdefghij)
+                    [12:00:00]
+abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij
+abcdefghij
+dev@devbox /t/h/a/b/c/d/e/a-long-project-folder-name-demo on main
+❯                                                           [12:00:00]

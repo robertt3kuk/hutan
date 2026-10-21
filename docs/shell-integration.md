@@ -16,7 +16,7 @@ Code: `crates/terminal/src/shell_integration.rs` (install + injection), scripts 
 
 Sequences from the scripts end with BEL. An empty Enter produces `A B` with no `D` (no command ran). Programs started inside the shell are unaffected: the marks are printed by the shell, never by children.
 
-The marks also decide how the daemon treats a width change: between `A` and `C` (the shell is at its prompt) the prompt is erased instead of reflowed so the shell's own repaint after SIGWINCH starts from clean rows (`Emulator::resize`, `docs/design.md` § Resize and reflow). A shell that sends no marks keeps the plain reflow.
+The marks also decide how the daemon treats a width change: between `A` and `C` (the shell is at its prompt) the prompt is erased instead of reflowed so the shell's own repaint after SIGWINCH starts from clean rows (`Emulator::resize`, `docs/design.md` § Resize and reflow). A shell that sends no marks keeps the plain reflow. Two-line prompts and right prompts (starship, `RPROMPT`, `fish_right_prompt`) go through the same rule, and a block's rows follow the reflow (zsh and fish streams in the corpus check it; UX-TERM-RESIZE phase B).
 
 ## Where it applies
 

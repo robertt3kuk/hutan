@@ -21,14 +21,32 @@ $R zsh_seq_scroll -- zsh -f -c 'seq 1 60'
 $R vim_edit_inserted --send 800:'ihello hutan\e' --timeout-ms 2000 -- vim -u NONE -n   # frozen mid-edit, alternate screen active
 $R vim_edit_quit --send 800:'ihello hutan\e' --send 400:':q!\r' -- vim -u NONE -n     # full round trip, primary screen restored
 # fish_prompt_resize (UX-TERM-RESIZE, audit F2): fish 4 with a long prompt, seven width changes. The
-# recording is made at HOME=<scratch> holding a copy of a fish config that sources `zoxide` and
-# `fzf` (under `fish --no-config` fish repainted nothing after the resizes, so no stack) plus a fake prompt
-# (`function fish_prompt; echo -n -s "developer@dev-workstation " (prompt_pwd) "> "; end`) and
-# `USER=dev`; run from a deep temporary directory (`--cwd`) so the prompt is wider than 60 columns.
-# Afterwards replace the machine's own host name in the OSC 7 URLs with a same-length one.
+# recording is made at HOME=/tmp/fish-home holding `.config/fish/config.fish`:
+#   if status is-interactive; command -q zoxide; and zoxide init fish | source;
+#     command -q fzf; and fzf --fish | source; end
+#   function fish_prompt; echo -n -s "developer@dev-workstation " (prompt_pwd) "> "; end
+# (under `fish --no-config` fish repainted nothing after the resizes, so no stack) and `USER=dev`; run from a
+# deep temporary directory (`--cwd`, e.g. /tmp/x/aaaa/bbbb/cccc/dddd/eeee/a-long-project-folder-name-demo)
+# so the prompt is wider than 60 columns. Afterwards replace the machine's own host name in the OSC 7 URLs
+# with a same-length one (`dev-workstation-host.lan`).
 $R fish_prompt_resize --size 100x24 --cwd "$DEEP_DIR" --env HOME=/tmp/fish-home --env USER=dev --timeout-ms 20000 \
   --send 1500:'echo hello\r' --resize 900:60x24 --resize 900:44x24 --resize 900:60x24 --resize 900:100x24 \
   --resize 900:44x24 --resize 900:100x24 --resize 900:60x24 -- /opt/homebrew/bin/fish -l
+# zsh_two_line_resize (UX-TERM-RESIZE phase B): zsh 5.9 with Hutan's injected marks (ZDOTDIR shim and
+# HUTAN_SHELL_INTEGRATION_DIR from crates/terminal/shell-integration, laid out as the daemon installs it:
+# $ROOT/zsh/.zshenv + hutan-integration.zsh), a two-line prompt and a right prompt. $ZDOT/.zshrc:
+#   HOST=devbox; USER=dev; PROMPT=$'dev@devbox %~ on main\n❯ '; RPROMPT='[12:00:00]'; HISTFILE=/dev/null
+$R zsh_two_line_resize --size 100x24 --cwd "$DEEP_DIR" --env HOME=$ZDOT --env USER=dev --env ZDOTDIR=$ROOT/zsh \
+  --env HUTAN_SHELL_INTEGRATION_DIR=$ROOT --env HUTAN_ORIG_ZDOTDIR=$ZDOT --timeout-ms 20000 \
+  --send 1500:'echo hello\r' --send 700:'printf "%s\n" $(printf "abcdefghij%.0s" 1 2 3 4 5 6 7 8)\r' \
+  --resize 900:60x24 --resize 900:44x24 --resize 900:100x24 --resize 900:44x24 --resize 900:70x24 -- /bin/zsh -i
+# fish_two_line_resize: fish 4.9.3 (its own OSC 133 marks), HOME=/tmp/fish-home2 with the config above plus
+#   set -g fish_greeting
+#   function fish_prompt; echo -s "dev@devbox " (prompt_pwd) " on main"; echo -n "❯ "; end
+#   function fish_right_prompt; echo -n "[12:00:00]"; end
+$R fish_two_line_resize --size 100x24 --cwd "$DEEP_DIR" --env HOME=/tmp/fish-home2 --env USER=dev --timeout-ms 20000 \
+  --send 1500:'echo hello\r' --send 700:'printf "%s\n" (string repeat -n 8 abcdefghij)\r' \
+  --resize 900:60x24 --resize 900:44x24 --resize 900:100x24 --resize 900:44x24 --resize 900:70x24 -- /opt/homebrew/bin/fish -l
 # Agent TUI startup screens: nothing submitted, capture frozen after the timeout, then hung up.
 # Run from a neutral directory (the cwd shows in the title/prompt), after building the example.
 mkdir -p /tmp/hutan-rec && cd /tmp/hutan-rec
@@ -41,6 +59,12 @@ The agent recordings were scanned for account emails, tokens, keys and home path
 were committed (the stream holds only the program's own output: banner, tip, prompt line, and
 for codex the "Hooks need review" screen). Re-scan after every re-recording; the `omp` tip line
 is random, so a new recording differs.
+
+## `zsh_two_line_resize`, `fish_two_line_resize`
+Real zsh (injected marks) and fish 4 with a two-line prompt, a right prompt, two commands (the second
+prints a line wider than 60 columns) and five width changes at a prompt. `tests/it/reflow.rs` replays them
+and checks after every resize that each block starts on the first row of its line and its output on the
+row of the output's first line. Recorded with the engine that trims blank rows before a reflow.
 
 ## `fish_prompt_resize`
 Seven width changes while fish 4 sits at a prompt wider than the terminal (it truncates its own
