@@ -219,6 +219,8 @@ fn a_character_is_text_only_where_vim_waits_for_one() {
         r.keys("<Esc>").keys(waits);
         assert!(r.vim.takes_text('в'), "{waits} waits for a character");
     }
+    // A file tab has a line for `/` (a field answers "Not supported here").
+    r.opts.command_line = true;
     r.keys("<Esc>/");
     assert!(r.vim.takes_text('в'), "the search line is text");
     r.keys("<Esc>vr");
