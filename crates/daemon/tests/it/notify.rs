@@ -452,12 +452,18 @@ async fn a_finished_chat_turn_raises_an_intent_unless_a_client_has_the_session_f
     let mut raised = Vec::new();
     for _ in 0..3 {
         raised.push(
-            wait_event(&mut intents, "a chat_turn_finished intent", |event| match event {
-                Event::NotifyIntent { intent } if intent.kind == IntentKind::ChatTurnFinished => {
-                    Some(intent.clone())
-                }
-                _ => None,
-            })
+            wait_event(
+                &mut intents,
+                "a chat_turn_finished intent",
+                |event| match event {
+                    Event::NotifyIntent { intent }
+                        if intent.kind == IntentKind::ChatTurnFinished =>
+                    {
+                        Some(intent.clone())
+                    }
+                    _ => None,
+                },
+            )
             .await,
         );
     }

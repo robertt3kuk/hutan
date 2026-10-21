@@ -620,7 +620,10 @@ async fn a_snapshot_of_an_unchanged_tree_reuses_its_objects() {
         .unwrap();
     assert_eq!(third.tree, first.tree);
     assert_eq!((third.commit, third.reference), (None, None));
-    let warm = engine.snapshot(root, Label::warm("01SESSION")).await.unwrap();
+    let warm = engine
+        .snapshot(root, Label::warm("01SESSION"))
+        .await
+        .unwrap();
     assert_eq!((warm.commit, warm.reference), (None, None));
     assert_eq!(loose_objects(root), objects + 1);
     assert_eq!(git(root, &["for-each-ref", "refs/hutan/"]), refs);
@@ -824,7 +827,10 @@ async fn hooks_and_hostile_configuration_are_ignored() {
         "a hook ran: {}",
         fs::read_to_string(&marker).unwrap()
     );
-    let commit = git(root, &["cat-file", "commit", snapshot.commit.as_deref().unwrap()]);
+    let commit = git(
+        root,
+        &["cat-file", "commit", snapshot.commit.as_deref().unwrap()],
+    );
     assert!(!commit.contains("gpgsig"), "{commit}");
     assert!(
         commit.contains("\ncommitter Hutan <hutan@localhost> "),

@@ -36,8 +36,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hutan_core::{
-    CheckpointId, CheckpointKind, CheckpointState, CheckpointStatus, SessionId, SkippedFile,
-    TurnId,
+    CheckpointId, CheckpointKind, CheckpointState, CheckpointStatus, SessionId, SkippedFile, TurnId,
 };
 use hutan_storage::{CheckpointFilter, CheckpointRow, Storage, StorageError};
 use tokio::sync::watch;
@@ -136,7 +135,7 @@ type Started = (CheckpointRow, Result<Snapshot, CheckpointError>);
 #[derive(Debug)]
 enum Start {
     /// Taken within the budget; the pending row is the one written.
-    Taken(Result<Snapshot, CheckpointError>),
+    Taken(Box<Snapshot>),
     /// Still running after the budget.
     Late(JoinHandle<Started>),
 }
@@ -145,7 +144,7 @@ impl Start {
     /// The start, waited for when it is late; `row` is the pending row.
     async fn outcome(self, row: CheckpointRow) -> Started {
         match self {
-            Self::Taken(result) => (row, result),
+            Self::Taken(snapshot) => (row, Ok(*snapshot)),
             Self::Late(handle) => settled(&row, handle.await),
         }
     }
@@ -198,7 +197,11 @@ fn settled(row: &CheckpointRow, result: Result<Started, tokio::task::JoinError>)
 /// The start's and the end's skipped paths, the end's winning, at most [`SKIPPED_KEPT`].
 fn skipped(start: &Snapshot, end: Option<&Snapshot>) -> Vec<SkippedFile> {
     let mut by_path: BTreeMap<PathBuf, &caps::Skipped> = BTreeMap::new();
-    for skip in start.skipped.iter().chain(end.into_iter().flat_map(|e| &e.skipped)) {
+    for skip in start
+        .skipped
+        .iter()
+        .chain(end.into_iter().flat_map(|e| &e.skipped))
+    {
         by_path.insert(skip.path.clone(), skip);
     }
     by_path
@@ -288,7 +291,9 @@ impl TurnCheckpoints {
     pub fn status(&self, session: SessionId) -> Option<CheckpointStatus> {
         let slot = self.slot(session)?;
         if self.project(&slot).mode == CheckpointMode::Off {
-            return Some(CheckpointStatus::off("checkpoints are turned off in the settings"));
+            return Some(CheckpointStatus::off(
+                "checkpoints are turned off in the settings",
+            ));
         }
         Some(
             slot.state
@@ -315,8 +320,7 @@ impl TurnCheckpoints {
             max_file_bytes: project.max_file_bytes,
             snapshot_budget_bytes: project.snapshot_budget_bytes,
             max_files: usize::try_from(project.max_files).unwrap_or(usize::MAX),
-            max_untracked_files: usize::try_from(project.max_untracked_files)
-                .unwrap_or(usize::MAX),
+            max_untracked_files: usize::try_from(project.max_untracked_files).unwrap_or(usize::MAX),
             exclude: self.settings.read().exclude.clone(),
             ..Caps::default()
         }
@@ -450,40 +454,36 @@ impl TurnCheckpoints {
             // Without its row no ref may be written (reconcile would take it for a leftover).
             if !this.write(row.clone()).await {
                 row.reference = None;
-                let error = CheckpointError::Internal("the checkpoint could not be recorded".into());
+                let error =
+                    CheckpointError::Internal("the checkpoint could not be recorded".into());
                 return (row, Err(error));
             }
             let snapshot = this.engine.snapshot_with(&cwd, label, caps).await;
             (row, snapshot)
         });
         let start = match tokio::time::timeout_at(deadline, &mut handle).await {
-            Ok(result) => {
-                let (written, snapshot) = settled(&row, result);
-                row = written;
-                Start::Taken(snapshot)
-            }
+            Ok(result) => match settled(&row, result) {
+                (written, Ok(snapshot)) => {
+                    row = written;
+                    Self::set_status(&slot, None);
+                    Start::Taken(Box::new(snapshot))
+                }
+                (written, Err(error)) => {
+                    self.record_failure(&slot, written, &error).await;
+                    return None;
+                }
+            },
             Err(_) => {
                 info!(%session, checkpoint = %id, budget_ms = self.start_budget.as_millis(), "the start snapshot is late; the prompt goes first");
                 Start::Late(handle)
             }
         };
-        match start {
-            Start::Taken(Err(error)) => {
-                self.record_failure(&slot, row, &error).await;
-                None
-            }
-            start => {
-                if let Start::Taken(Ok(_)) = &start {
-                    Self::set_status(&slot, None);
-                }
-                slot.state.lock().pending = Some(Pending {
-                    row,
-                    turn: None,
-                    start,
-                });
-                Some(id)
-            }
-        }
+        slot.state.lock().pending = Some(Pending {
+            row,
+            turn: None,
+            start,
+        });
+        Some(id)
     }
 
     /// The turn of checkpoint `id` was sent; the agent calls it `turn`.
@@ -512,7 +512,7 @@ impl TurnCheckpoints {
                 && let Some(reference) = &start.reference
                 && let Err(error) = this
                     .engine
-                    .delete_refs(&start.common_dir, &[reference.clone()])
+                    .delete_refs(&start.common_dir, std::slice::from_ref(reference))
                     .await
             {
                 warn!(%error, "checkpoints: removing the start of a turn that was not sent");
@@ -866,10 +866,7 @@ impl TurnCheckpoints {
             row.turn_id = end.turn.as_deref().and_then(|t| t.parse().ok());
         }
         if let Some(parent) = &end.parent
-            && let Ok(stat) = self
-                .engine
-                .diff_stat(repository, parent, &end.commit)
-                .await
+            && let Ok(stat) = self.engine.diff_stat(repository, parent, &end.commit).await
         {
             row.files_changed = stat.files;
             row.lines_added = stat.added;
@@ -886,7 +883,11 @@ impl TurnCheckpoints {
             .as_deref()
             .and_then(|c| c.parse().ok())
             .unwrap_or_default();
-        let kind = if info.kind.as_deref().is_some_and(|k| k.starts_with("restore")) {
+        let kind = if info
+            .kind
+            .as_deref()
+            .is_some_and(|k| k.starts_with("restore"))
+        {
             CheckpointKind::Restore
         } else {
             CheckpointKind::Turn

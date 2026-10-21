@@ -102,10 +102,7 @@ impl Checkpoints {
             return Ok(false);
         }
         self.repo_git(common_dir)
-            .write_ok(
-                &os_args(&["pack-refs", "--include", "refs/hutan/*"]),
-                None,
-            )
+            .write_ok(&os_args(&["pack-refs", "--include", "refs/hutan/*"]), None)
             .await?;
         tracing::info!(repository = %common_dir.display(), loose, "packed the checkpoint refs");
         Ok(true)
@@ -120,7 +117,15 @@ impl Checkpoints {
     ) -> Result<DiffStat, CheckpointError> {
         let output = self
             .repo_git(common_dir)
-            .read_ok(&["diff-tree", "-r", "-z", "--numstat", "--no-renames", from, to])
+            .read_ok(&[
+                "diff-tree",
+                "-r",
+                "-z",
+                "--numstat",
+                "--no-renames",
+                from,
+                to,
+            ])
             .await?;
         Ok(parse_numstat(&output.stdout))
     }
@@ -134,8 +139,17 @@ fn parse_refs(text: &str) -> Vec<RefInfo> {
     text.lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split('\0').collect();
-            let [name, commit, tree, parents, date, session, turn, kind, checkpoint] =
-                parts.as_slice()
+            let [
+                name,
+                commit,
+                tree,
+                parents,
+                date,
+                session,
+                turn,
+                kind,
+                checkpoint,
+            ] = parts.as_slice()
             else {
                 return None;
             };
@@ -160,7 +174,8 @@ fn parse_numstat(bytes: &[u8]) -> DiffStat {
     for record in git::nul_records(bytes) {
         let text = String::from_utf8_lossy(record);
         let mut fields = text.splitn(3, '\t');
-        let (Some(added), Some(removed), Some(_path)) = (fields.next(), fields.next(), fields.next())
+        let (Some(added), Some(removed), Some(_path)) =
+            (fields.next(), fields.next(), fields.next())
         else {
             continue;
         };
@@ -192,8 +207,8 @@ mod tests {
 
     #[test]
     fn refs_parse_with_their_trailers() {
-        let text = "refs/hutan/checkpoints/S/T\0c1\0t1\0p1 p2\01700000000\0S\0T\0end\0CP\n\
-                    refs/hutan/checkpoints/S/CP-start\0c2\0t2\0\01700000001\0S\0\0start\0CP\n\
+        let text = "refs/hutan/checkpoints/S/T\0c1\0t1\0p1 p2\x001700000000\0S\0T\0end\0CP\n\
+                    refs/hutan/checkpoints/S/CP-start\0c2\0t2\0\x001700000001\0S\0\0start\0CP\n\
                     garbage\n";
         let refs = parse_refs(text);
         assert_eq!(refs.len(), 2);

@@ -601,6 +601,7 @@ impl Drop for SocketGuard {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // What the daemon's last task owns until it stops.
 async fn accept_loop(
     listener: UnixListener,
     ctx: Arc<ConnContext>,

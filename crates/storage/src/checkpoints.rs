@@ -257,7 +257,8 @@ fn from_row(row: &Row<'_>) -> Result<CheckpointRow> {
     let required = |index: usize, what: &str| -> Result<String> {
         text(index)?.ok_or_else(|| StorageError::corrupt(format!("checkpoints.{what}"), "null"))
     };
-    let id = |what: &str, value: String| StorageError::corrupt(format!("checkpoints.{what}"), value);
+    let id =
+        |what: &str, value: String| StorageError::corrupt(format!("checkpoints.{what}"), value);
     let kind = required(3, "kind")?;
     let state = required(4, "state")?;
     let skipped = required(19, "skipped_json")?;
@@ -269,7 +270,10 @@ fn from_row(row: &Row<'_>) -> Result<CheckpointRow> {
             .parse()
             .map_err(|e| StorageError::corrupt("checkpoints.session_id", e))?,
         turn_id: text(2)?
-            .map(|t| t.parse().map_err(|e| StorageError::corrupt("checkpoints.turn_id", e)))
+            .map(|t| {
+                t.parse()
+                    .map_err(|e| StorageError::corrupt("checkpoints.turn_id", e))
+            })
             .transpose()?,
         kind: CheckpointKind::parse(&kind).ok_or_else(|| id("kind", kind.clone()))?,
         state: CheckpointState::parse(&state).ok_or_else(|| id("state", state.clone()))?,

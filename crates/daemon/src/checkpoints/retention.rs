@@ -110,7 +110,8 @@ mod tests {
     }
 
     fn row(session: SessionId, kind: CheckpointKind, at: u64, bytes: u64) -> CheckpointRow {
-        let mut row = CheckpointRow::new(CheckpointId::new(), session, kind, CheckpointState::Ok, at);
+        let mut row =
+            CheckpointRow::new(CheckpointId::new(), session, kind, CheckpointState::Ok, at);
         row.reference = Some(format!("refs/hutan/checkpoints/{session}/{at}"));
         row.bytes = bytes;
         row

@@ -552,15 +552,7 @@ impl Inner {
             Ok(()) => {
                 let index = self.private_index(&repo);
                 let git = self.git(&repo.toplevel);
-                snapshot::take(
-                    &git,
-                    &repo,
-                    &index,
-                    caps,
-                    label,
-                    &mut health.memory,
-                )
-                .await
+                snapshot::take(&git, &repo, &index, caps, label, &mut health.memory).await
             }
             Err(error) => Err(error),
         };

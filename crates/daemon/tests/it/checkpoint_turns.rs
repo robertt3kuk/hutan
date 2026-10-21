@@ -21,7 +21,7 @@ use hutan_client::Client;
 use hutan_core::{
     AgentEventKind, CheckpointId, CheckpointKind, CheckpointState, Seq, SessionId, TurnId,
 };
-use hutan_daemon::checkpoints::turns::{STOPPED_REASON, Scope, TurnCheckpoints, Tuning};
+use hutan_daemon::checkpoints::turns::{STOPPED_REASON, Scope, Tuning, TurnCheckpoints};
 use hutan_daemon::config::{CheckpointMode, CheckpointSettings};
 use hutan_protocol::chat::{ChatCreate, ChatSend, ChatSent};
 use hutan_protocol::daemon_settings::DaemonSettingSet;
@@ -39,7 +39,12 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .arg("-C")
         .arg(dir)
         .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
-        .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"])
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
         .args(args)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -220,10 +225,7 @@ async fn a_slow_start_snapshot_never_holds_the_prompt_past_its_budget() {
         std::env::var("PATH").unwrap_or_default()
     );
     env.insert("PATH".to_owned(), path);
-    env.insert(
-        "HUTAN_TEST_GIT_GATE".to_owned(),
-        gate.display().to_string(),
-    );
+    env.insert("HUTAN_TEST_GIT_GATE".to_owned(), gate.display().to_string());
     let s = Service::new(
         CheckpointSettings::default(),
         Tuning {
@@ -317,8 +319,10 @@ async fn a_turn_keeps_one_ref_whose_parent_is_its_start_and_an_unchanged_turn_ke
 #[tokio::test(flavor = "multi_thread")]
 async fn the_off_switch_applies_to_the_next_snapshot_and_to_a_running_turn() {
     let s = Service::quick();
-    let mut off = CheckpointSettings::default();
-    off.mode = CheckpointMode::Off;
+    let off = CheckpointSettings {
+        mode: CheckpointMode::Off,
+        ..CheckpointSettings::default()
+    };
 
     // Off before the turn: no snapshot, no row.
     s.turns.apply_settings(off.clone());
@@ -413,8 +417,10 @@ async fn a_folder_outside_git_and_the_home_directory_are_recorded_as_unsupported
 
 #[tokio::test(flavor = "multi_thread")]
 async fn retention_drops_the_oldest_turns_and_keeps_the_pre_restore_checkpoint() {
-    let mut settings = CheckpointSettings::default();
-    settings.keep_turns = 2;
+    let mut settings = CheckpointSettings {
+        keep_turns: 2,
+        ..CheckpointSettings::default()
+    };
     let s = Service::new(
         settings.clone(),
         Tuning {
@@ -424,7 +430,11 @@ async fn retention_drops_the_oldest_turns_and_keeps_the_pre_restore_checkpoint()
     );
     let first = s.turn(|s| s.write("a.txt", "1\n")).await;
     // A restore (CK-4) of the first turn, older than every turn after it.
-    let restore_ref = format!("refs/hutan/checkpoints/{}/{}-r1", s.session, first.turn_id.unwrap());
+    let restore_ref = format!(
+        "refs/hutan/checkpoints/{}/{}-r1",
+        s.session,
+        first.turn_id.unwrap()
+    );
     git(
         &s.root,
         &["update-ref", &restore_ref, first.commit.as_deref().unwrap()],
@@ -487,7 +497,10 @@ async fn many_loose_checkpoint_refs_are_packed_and_the_users_refs_are_left_loose
         .unwrap();
     std::io::Write::write_all(child.stdin.as_mut().unwrap(), input.as_bytes()).unwrap();
     assert!(child.wait().unwrap().success());
-    let loose = s.common_dir().join("refs/hutan/checkpoints").join(s.session.to_string());
+    let loose = s
+        .common_dir()
+        .join("refs/hutan/checkpoints")
+        .join(s.session.to_string());
     assert_eq!(fs::read_dir(&loose).unwrap().count(), 201);
 
     s.turns.retain(Some(s.common_dir())).await;
@@ -516,7 +529,10 @@ async fn the_next_daemon_reconciles_rows_and_refs() {
     // A turn whose end ref was deleted behind Hutan's back: its row goes.
     let lost = s.turn(|s| s.write("a.txt", "lost\n")).await;
     backdate(&lost);
-    git(&s.root, &["update-ref", "-d", lost.reference.as_deref().unwrap()]);
+    git(
+        &s.root,
+        &["update-ref", "-d", lost.reference.as_deref().unwrap()],
+    );
 
     // A turn whose row was lost: its ref is adopted from the trailers.
     let orphan = s.turn(|s| s.write("a.txt", "orphan\n")).await;
@@ -540,7 +556,11 @@ async fn the_next_daemon_reconciles_rows_and_refs() {
     assert!(refs(&s.root).contains(&cut_start));
     // And a start ref nobody knows.
     let head = git(&s.root, &["rev-parse", "HEAD"]).trim().to_owned();
-    let stray = format!("refs/hutan/checkpoints/{}/{}-start", s.session, CheckpointId::new());
+    let stray = format!(
+        "refs/hutan/checkpoints/{}/{}-start",
+        s.session,
+        CheckpointId::new()
+    );
     git(&s.root, &["update-ref", &stray, &head]);
 
     let next = s.next_daemon(CheckpointSettings::default());
@@ -688,7 +708,10 @@ impl Chat {
     ) -> Self {
         let work = tempfile::tempdir().unwrap();
         let root = repository(work.path());
-        let config = codex(&transcript(work.path()), &work.path().join("received.jsonl"));
+        let config = codex(
+            &transcript(work.path()),
+            &work.path().join("received.jsonl"),
+        );
         let daemon = TestDaemon::start_with("", |c| {
             c.codex = Some(config);
             c.checkpoints.git_env = git_env();
@@ -858,7 +881,10 @@ async fn a_fixture_chat_gets_one_ref_per_turn_that_changed_files_and_none_for_a_
     want.sort();
     let mut have = refs(&t.root);
     have.sort();
-    assert_eq!(have, want, "one ref per turn that changed files, no start ref left");
+    assert_eq!(
+        have, want,
+        "one ref per turn that changed files, no start ref left"
+    );
     for n in [0, 2] {
         let commit = rows[n].commit.clone().unwrap();
         assert_eq!(
@@ -874,7 +900,10 @@ async fn a_fixture_chat_gets_one_ref_per_turn_that_changed_files_and_none_for_a_
     );
     assert_eq!(git(&t.root, &["show", &format!("{end}^:a.txt")]), "alpha\n");
     // The user's history is untouched: the branch has its one commit.
-    assert_eq!(git(&t.root, &["rev-list", "--count", "--branches"]).trim(), "1");
+    assert_eq!(
+        git(&t.root, &["rev-list", "--count", "--branches"]).trim(),
+        "1"
+    );
     t.daemon.stop().await;
 }
 
@@ -958,9 +987,15 @@ async fn a_restarted_daemon_reconciles_rows_and_refs() {
     } = t;
 
     // While no daemon runs: one turn's ref is deleted, a stray start ref appears.
-    git(&root, &["update-ref", "-d", lost.reference.as_deref().unwrap()]);
+    git(
+        &root,
+        &["update-ref", "-d", lost.reference.as_deref().unwrap()],
+    );
     let head = git(&root, &["rev-parse", "HEAD"]).trim().to_owned();
-    let stray = format!("refs/hutan/checkpoints/{session}/{}-start", CheckpointId::new());
+    let stray = format!(
+        "refs/hutan/checkpoints/{session}/{}-start",
+        CheckpointId::new()
+    );
     git(&root, &["update-ref", &stray, &head]);
 
     // The restored chat gets a replay that refuses to resume (it exits): never a real Codex.

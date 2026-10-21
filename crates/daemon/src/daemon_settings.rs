@@ -462,12 +462,9 @@ fn build_specs() -> Vec<Spec> {
             Group::Checkpoints,
             |c| int_value(c.checkpoints.snapshot_budget_bytes),
         ),
-        live(
-            "checkpoints.max_files",
-            POSITIVE,
-            Group::Checkpoints,
-            |c| int_value(c.checkpoints.max_files),
-        ),
+        live("checkpoints.max_files", POSITIVE, Group::Checkpoints, |c| {
+            int_value(c.checkpoints.max_files)
+        }),
         live(
             "checkpoints.max_untracked_files",
             POSITIVE,
@@ -486,12 +483,9 @@ fn build_specs() -> Vec<Spec> {
             Group::Checkpoints,
             |c| int_value(c.checkpoints.keep_turns),
         ),
-        live(
-            "checkpoints.keep_days",
-            POSITIVE,
-            Group::Checkpoints,
-            |c| int_value(c.checkpoints.keep_days),
-        ),
+        live("checkpoints.keep_days", POSITIVE, Group::Checkpoints, |c| {
+            int_value(c.checkpoints.keep_days)
+        }),
         live(
             "checkpoints.max_repo_bytes",
             POSITIVE,
@@ -2042,7 +2036,7 @@ x = 1
         // Retention is not per project, and the project needs a name.
         assert!(resolve_key("checkpoints.projects.web.keep_turns").is_err());
         assert!(resolve_key("checkpoints.projects..mode").is_err());
-        assert_eq!(refused("checkpoints.mode", json!("maybe")).contains("on, off"), true);
+        assert!(refused("checkpoints.mode", json!("maybe")).contains("on, off"));
     }
 
     #[test]
