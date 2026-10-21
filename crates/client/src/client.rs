@@ -23,8 +23,10 @@ use hutan_protocol::blocks::{
 };
 use hutan_protocol::chat::{
     ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatHistory,
-    ChatHistoryRequest, ChatModels, ChatModelsRequest, ChatRetry, ChatSend, ChatSent,
-    HISTORY_MAX_LIMIT, QuestionAnswer, QuestionInfo, QuestionList, QuestionListRequest,
+    ChatHistoryRequest, ChatInterrupt, ChatModels, ChatModelsRequest, ChatQueue, ChatQueueAdd,
+    ChatQueueEdit, ChatQueueItemRef, ChatQueued, ChatRetry, ChatSend, ChatSendNow, ChatSent,
+    ChatSentNow, HISTORY_MAX_LIMIT, QuestionAnswer, QuestionInfo, QuestionList,
+    QuestionListRequest, QueuedMessage,
 };
 use hutan_protocol::daemon_settings::{DaemonSettingSet, DaemonSettings};
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
@@ -163,6 +165,9 @@ pub(crate) const WORKTREE_INDEX_CAPABILITY: &str = "worktree.index";
 pub(crate) const CHAT_MODE_CAPABILITY: &str = "chat.mode";
 /// Capability for `worktree.finish` and `PaneItem.path` (protocol 0.35).
 pub(crate) const FINISH_CAPABILITY: &str = "finish";
+/// Capability for the chat queue: `chat.queue.*`, `chat.send_now`, the `chat.queue` event and
+/// `chat.interrupt`'s `keep_queue` (protocol 0.36).
+pub(crate) const CHAT_QUEUE_CAPABILITY: &str = "chat.queue";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -202,6 +207,7 @@ const CAPABILITIES: &[&str] = &[
     WORKTREE_INDEX_CAPABILITY,
     CHAT_MODE_CAPABILITY,
     FINISH_CAPABILITY,
+    CHAT_QUEUE_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -541,6 +547,14 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == CHAT_RETRY_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `chat.queue` (protocol 0.36).
+    pub fn supports_chat_queue(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == CHAT_QUEUE_CAPABILITY)
     }
 
     /// True when the daemon advertised capability `worktree.index` (protocol 0.34): the files
@@ -1239,11 +1253,96 @@ impl Client {
         .await
     }
 
-    /// Stops the turn in progress.
+    /// Stops the turn in progress (and, since protocol 0.36, clears the chat's queue).
     pub async fn chat_interrupt(&self, session_id: SessionId) -> Result<(), ClientError> {
-        self.call::<Empty>(Request::ChatInterrupt(SessionRef { session_id }))
+        self.chat_stop(session_id, false).await
+    }
+
+    /// `chat.interrupt` with `keep_queue` (protocol 0.36): stops the turn; the queue is cleared,
+    /// or kept and held.
+    pub async fn chat_stop(
+        &self,
+        session_id: SessionId,
+        keep_queue: bool,
+    ) -> Result<(), ClientError> {
+        self.call::<Empty>(Request::ChatInterrupt(ChatInterrupt {
+            session_id,
+            keep_queue,
+        }))
+        .await
+        .map(|_| ())
+    }
+
+    /// `chat.queue.list`.
+    pub async fn chat_queue(&self, session_id: SessionId) -> Result<ChatQueue, ClientError> {
+        self.call(Request::ChatQueueList(SessionRef { session_id }))
+            .await
+    }
+
+    /// `chat.queue.add`: queues `text` after the turn (sent at once when no turn runs).
+    pub async fn chat_queue_add(
+        &self,
+        session_id: SessionId,
+        text: impl Into<String>,
+    ) -> Result<QueuedMessage, ClientError> {
+        self.call::<ChatQueued>(Request::ChatQueueAdd(ChatQueueAdd {
+            session_id,
+            text: text.into(),
+        }))
+        .await
+        .map(|queued| queued.item)
+    }
+
+    /// `chat.queue.edit`.
+    pub async fn chat_queue_edit(
+        &self,
+        session_id: SessionId,
+        item_id: u64,
+        text: impl Into<String>,
+    ) -> Result<QueuedMessage, ClientError> {
+        self.call::<ChatQueued>(Request::ChatQueueEdit(ChatQueueEdit {
+            session_id,
+            item_id,
+            text: text.into(),
+        }))
+        .await
+        .map(|queued| queued.item)
+    }
+
+    /// `chat.queue.remove`.
+    pub async fn chat_queue_remove(
+        &self,
+        session_id: SessionId,
+        item_id: u64,
+    ) -> Result<(), ClientError> {
+        self.call::<Empty>(Request::ChatQueueRemove(ChatQueueItemRef {
+            session_id,
+            item_id,
+        }))
+        .await
+        .map(|_| ())
+    }
+
+    /// `chat.queue.clear`.
+    pub async fn chat_queue_clear(&self, session_id: SessionId) -> Result<(), ClientError> {
+        self.call::<Empty>(Request::ChatQueueClear(SessionRef { session_id }))
             .await
             .map(|_| ())
+    }
+
+    /// `chat.send_now`: `text`, or the queued message `item_id`, without waiting for the turn.
+    pub async fn chat_send_now(
+        &self,
+        session_id: SessionId,
+        text: Option<String>,
+        item_id: Option<u64>,
+    ) -> Result<ChatSentNow, ClientError> {
+        self.call(Request::ChatSendNow(ChatSendNow {
+            session_id,
+            text,
+            item_id,
+        }))
+        .await
     }
 
     /// One page of a chat's journal, oldest first (see [`ChatHistoryRequest`]).

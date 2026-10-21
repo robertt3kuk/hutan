@@ -374,6 +374,26 @@ impl ChatView {
             && self.refused_attachment(cx).is_none()
     }
 
+    /// Whether the send key would queue the draft now: a turn runs, the daemon keeps a queue,
+    /// and the draft has text and no attachments (those cannot wait in a queue).
+    pub fn can_queue(&self, cx: &App) -> bool {
+        let info = self.info(cx);
+        let gate = self.gate(info.as_ref(), cx);
+        let model = self.model.read(cx);
+        gate.blocked.is_none()
+            && gate.running
+            && model.supports_queue()
+            && !model.sending()
+            && !model.draft_message().trim().is_empty()
+            && !model.has_context()
+    }
+
+    /// Whether Send now steers the running turn (`ChatQueue::steer`); `false` means it
+    /// interrupts the turn first.
+    pub fn send_now_steers(&self, cx: &App) -> bool {
+        self.model.read(cx).queue().is_some_and(|queue| queue.steer)
+    }
+
     /// The text of the header's context chip (`context 61 % · 122k / 200k`); `None` while the
     /// agent has reported no context use, when the header shows no chip.
     pub fn context_meter(&self, cx: &App) -> Option<String> {
@@ -392,6 +412,15 @@ impl ChatView {
             self.submit_question(question, cx);
             return false;
         }
+        // A queued message open in the composer: the send key saves it.
+        if self.model.read(cx).editing().is_some() {
+            return self.model.update(cx, |model, cx| model.save_edit(cx));
+        }
+        // While a turn runs the send key queues (D1): the message goes when the turn ends.
+        if self.can_queue(cx) {
+            self.list.set_follow_mode(FollowMode::Tail);
+            return self.model.update(cx, |model, cx| model.queue_draft(cx));
+        }
         if !self.can_send(cx) {
             return false;
         }
@@ -401,10 +430,46 @@ impl ChatView {
         self.model.update(cx, |model, cx| model.send(cx))
     }
 
-    pub fn interrupt(&mut self, cx: &mut Context<Self>) {
+    /// ⌃↩ Send now: while a turn runs the draft goes without waiting (the turn takes it at its
+    /// next step, or is interrupted for it); otherwise it is the ordinary Send.
+    pub fn send_now(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.model.read(cx).editing().is_some() {
+            return false;
+        }
+        if !self.can_queue(cx) {
+            return self.send(cx);
+        }
+        self.list.set_follow_mode(FollowMode::Tail);
+        self.model.update(cx, |model, cx| model.send_draft_now(cx))
+    }
+
+    /// Stop (⌘.): ends the turn and clears the queue; `keep_queue` keeps it waiting.
+    pub fn interrupt(&mut self, keep_queue: bool, cx: &mut Context<Self>) {
         let info = self.info(cx);
         if self.gate(info.as_ref(), cx).running {
-            self.model.update(cx, |model, cx| model.interrupt(cx));
+            self.model
+                .update(cx, |model, cx| model.interrupt(keep_queue, cx));
+        }
+    }
+
+    /// The Stop button: with messages queued it asks what becomes of them (a menu at
+    /// `position`), else it stops.
+    fn stop_clicked(
+        &mut self,
+        position: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.model.read(cx).queued().is_empty() {
+            self.interrupt(false, cx);
+        } else {
+            window.dispatch_action(
+                Box::new(actions::ShowStopMenu(actions::SessionMenuAt {
+                    session: self.session.to_string(),
+                    position,
+                })),
+                cx,
+            );
         }
     }
 
@@ -534,6 +599,11 @@ impl ChatView {
         // ⌘V looks for files and images on the clipboard (R-1) before it types the text.
         if mods.platform && key == "v" {
             self.paste(cx);
+            cx.stop_propagation();
+            return;
+        }
+        // Escape leaves a queued message being edited as it was.
+        if key == "escape" && self.model.update(cx, |model, cx| model.cancel_edit(cx)) {
             cx.stop_propagation();
             return;
         }
@@ -1305,6 +1375,17 @@ impl ChatView {
                 self.can_send(cx),
             )
         };
+        let (editing, stopping, queues) = {
+            let model = self.model.read(cx);
+            (
+                model.editing().is_some(),
+                model.stopping(),
+                model.supports_queue(),
+            )
+        };
+        let can_queue = self.can_queue(cx);
+        let steers = self.send_now_steers(cx);
+        let queue_strip = self.render_queue(look, cx);
         let mention_hint = self.render_mention_hint(look, cx);
         let attach_button = self.render_attach_button(look, cx);
         let vim_pill = VimConfig::of(&self.settings).enabled.then(|| {
@@ -1314,8 +1395,27 @@ impl ChatView {
                 .child(probe(&self.regions, Region::Chat("vim-mode")))
         });
         // What the footer says in place of the send-key control.
+        let send_symbol = match send_key {
+            SendKey::CmdEnter => "⌘↩",
+            SendKey::Enter => "↩",
+        };
         let plain_hint: Option<String> = if let Some(blocked) = &gate.blocked {
             Some(blocked.to_string())
+        } else if editing {
+            Some(format!(
+                "Editing a queued message · {send_symbol} saves · esc keeps it as it was"
+            ))
+        } else if gate.running && stopping {
+            Some("Stopping…".to_owned())
+        } else if gate.running && queues {
+            Some(format!(
+                "{send_symbol} queues · ⌃↩ {} · ⌘. stops",
+                if steers {
+                    "sends now"
+                } else {
+                    "interrupts and sends"
+                }
+            ))
         } else if gate.running {
             Some("⌘. interrupts the turn".to_owned())
         } else if self.refused_attachment(cx).is_some() {
@@ -1411,12 +1511,59 @@ impl ChatView {
             "chat-interrupt",
             crate::icons::Icon::ActionInterrupt,
             true,
-            true,
+            !stopping,
             SEND_SIZE,
             look,
         )
-        .on_click(cx.listener(|this, _, _, cx| this.interrupt(cx)))
+        .when(!stopping, |s| {
+            s.on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
+                this.stop_clicked(event.position(), window, cx);
+            }))
+        })
         .child(probe(&self.regions, Region::Chat("interrupt")));
+        // While a turn runs: the send key's button queues, Send now does not wait (it says
+        // when it interrupts the turn).
+        let queue_button = round_button(
+            "chat-queue",
+            crate::icons::Icon::ActionForward,
+            false,
+            can_queue,
+            SEND_SIZE,
+            look,
+        )
+        .when(can_queue, |s| {
+            s.on_click(cx.listener(|this, _, _, cx| {
+                this.send(cx);
+            }))
+        })
+        .child(probe(&self.regions, Region::Chat("queue")));
+        let send_now = button(
+            "chat-send-now",
+            if steers {
+                "Send now"
+            } else {
+                "Interrupt & send"
+            },
+            ButtonKind::Ghost,
+            can_queue,
+            look,
+        )
+        .when(can_queue, |s| {
+            s.on_click(cx.listener(|this, _, _, cx| {
+                this.send_now(cx);
+            }))
+        })
+        .child(probe(&self.regions, Region::Chat("send-now")));
+        let save = button("chat-edit-save", "Save", ButtonKind::Primary, true, look)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.send(cx);
+            }))
+            .child(probe(&self.regions, Region::Chat("edit-save")));
+        let cancel = button("chat-edit-cancel", "Cancel", ButtonKind::Ghost, true, look)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.model.update(cx, |model, cx| model.cancel_edit(cx));
+            }))
+            .child(probe(&self.regions, Region::Chat("edit-cancel")));
         let restart = button("chat-restart", "Restart", ButtonKind::Secondary, true, look)
             .on_click(move |_, window, cx| {
                 window.dispatch_action(Box::new(RestartSessionById(session.to_string())), cx);
@@ -1435,6 +1582,7 @@ impl ChatView {
             .card(theme, tokens)
             .border_1()
             .border_color(theme.border)
+            .children(queue_strip)
             .when(!chips.is_empty(), |s| s.child(chip_row))
             .when(!context.is_empty(), |s| s.child(context_row))
             .children(open_pastes)
@@ -1461,10 +1609,15 @@ impl ChatView {
                     .child(
                         div()
                             .flex()
+                            .items_center()
                             .gap(px(tokens.spacing * 2.0))
                             .when(gate.restartable, |s| s.child(restart))
+                            .when(editing, |s| s.child(cancel).child(save))
+                            .when(!editing && gate.running && queues, |s| {
+                                s.child(send_now).child(queue_button)
+                            })
                             .when(gate.running, |s| s.child(interrupt))
-                            .when(!gate.running && !gate.restartable, |s| {
+                            .when(!editing && !gate.running && !gate.restartable, |s| {
                                 s.child(send.opacity(if sending { 0.6 } else { 1.0 }))
                             }),
                     ),
@@ -1542,9 +1695,12 @@ impl Render for ChatView {
             }))
             .on_action(
                 cx.listener(|this, _: &actions::chat::InterruptTurn, _, cx| {
-                    this.interrupt(cx);
+                    this.interrupt(false, cx);
                 }),
             )
+            .on_action(cx.listener(|this, _: &actions::chat::SendNow, _, cx| {
+                this.send_now(cx);
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {

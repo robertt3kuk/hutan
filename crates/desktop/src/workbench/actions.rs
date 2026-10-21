@@ -139,7 +139,7 @@ pub mod modal {
 /// Actions of the agent chat view (`HutanChat` key context).
 pub mod chat {
     use gpui::actions;
-    actions!(chat, [SendMessage, InterruptTurn]);
+    actions!(chat, [SendMessage, InterruptTurn, SendNow]);
 }
 
 /// Actions of the settings sheet (`SettingsSheet` key context).
@@ -330,6 +330,9 @@ data_actions! {
     ReviewTaskChanges(String);
     /// Show the menu of a session's placement badge (Review Changes…, Copy checkout path).
     ShowPlacementMenu(SessionMenuAt);
+    /// Show the Stop menu of a chat whose queue holds messages (Stop and clear the queue / Stop,
+    /// keep the queue).
+    ShowStopMenu(SessionMenuAt);
     /// Open the Changes view of the checkout at this path (a worktree or a main checkout).
     ReviewChangesAt(String);
     /// Show the menu of the Assistant page's scope dropdown (Global / the workspace) at this
@@ -635,6 +638,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Agent: Review Approvals…", ReviewApprovals),
         command("Agent: Send Message", chat::SendMessage),
         command("Agent: Interrupt Turn", chat::InterruptTurn),
+        command("Agent: Send Now", chat::SendNow),
         command("Agents: Show Monitor", ShowAgentMonitor),
         command("Agents: Show Only Blocked", ShowOnlyBlockedAgents),
         command("Resources: Show Panel", ShowResources),
@@ -854,6 +858,8 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<palette::Dismiss>("escape", Some("DaemonPopover")),
         bind::<chat::SendMessage>("cmd-enter", Some(super::chat::KEY_CONTEXT)),
         bind::<chat::InterruptTurn>("cmd-.", Some(super::chat::KEY_CONTEXT)),
+        // Send now (UX-QUEUE-STEER): the send key queues while a turn runs; ⌃↩ does not wait.
+        bind::<chat::SendNow>("ctrl-enter", Some(super::chat::KEY_CONTEXT)),
         bind::<palette::SelectNext>("down", Some("AgentPicker")),
         bind::<palette::SelectNext>("ctrl-n", Some("AgentPicker")),
         bind::<palette::SelectPrev>("up", Some("AgentPicker")),
@@ -1266,6 +1272,7 @@ mod tests {
             "escape | palette::Dismiss | DaemonPopover",
             "cmd-enter | chat::SendMessage | HutanChat",
             "cmd-. | chat::InterruptTurn | HutanChat",
+            "ctrl-enter | chat::SendNow | HutanChat",
             "down | palette::SelectNext | AgentPicker",
             "ctrl-n | palette::SelectNext | AgentPicker",
             "up | palette::SelectPrev | AgentPicker",

@@ -6,7 +6,7 @@ use hutan_client::Client;
 use hutan_core::question::{FieldKind, QuestionField, QuestionResponse, Values};
 use hutan_core::{AgentEvent, ApprovalId, QuestionId, SessionKind};
 use hutan_protocol::chat::{
-    ApprovalInfo, ApprovalList, ChatCreate, ChatHistory, QuestionInfo, QuestionList,
+    ApprovalInfo, ApprovalList, ChatCreate, ChatHistory, ChatSentNow, QuestionInfo, QuestionList,
 };
 use hutan_protocol::messages::{Empty, Event, Request, SessionInfo, SessionResult, Subscribed};
 use hutan_protocol::provider::AGENT_DIRECT;
@@ -15,7 +15,8 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::{Ctx, print_line};
 use crate::args::{
-    AnswerArgs, ApproveArgs, ChatCommand, ChatModelArgs, ChatNewArgs, ChatSendArgs, TargetArgs,
+    AnswerArgs, ApproveArgs, ChatCommand, ChatInterruptArgs, ChatModelArgs, ChatNewArgs,
+    ChatSendArgs, TargetArgs,
 };
 use crate::error::CliError;
 use hutan_cli::chat_render::ChatPrinter;
@@ -32,7 +33,7 @@ impl Ctx {
             ChatCommand::Send(args) => self.chat_send(args).await,
             ChatCommand::Log(TargetArgs { target }) => self.chat_log(&target).await,
             ChatCommand::Attach(TargetArgs { target }) => self.chat_attach(&target).await,
-            ChatCommand::Interrupt(TargetArgs { target }) => self.chat_interrupt(&target).await,
+            ChatCommand::Interrupt(args) => self.chat_interrupt(args).await,
             ChatCommand::Retry(TargetArgs { target }) => self.chat_retry(&target).await,
             ChatCommand::Models(args) => self.chat_models(&args.agent).await,
             ChatCommand::Model(args) => self.chat_model(args).await,
@@ -133,6 +134,9 @@ impl Ctx {
     async fn chat_send(&self, args: ChatSendArgs) -> Result<(), CliError> {
         let client = self.connect().await?;
         let session = self.resolve_chat(&client, &args.target).await?;
+        if args.queue || args.now {
+            return self.chat_send_later_or_now(&client, &session, args).await;
+        }
         // Subscribed before sending, so no event of the turn is missed.
         let mut events = client.events();
         if args.wait {
@@ -152,6 +156,55 @@ impl Ctx {
         }
         self.follow_turn(&mut events, session.id, sent.turn_id)
             .await
+    }
+
+    /// `hutan chat send --queue|--now` (protocol 0.36): `chat.queue.add` or `chat.send_now`.
+    async fn chat_send_later_or_now(
+        &self,
+        client: &Client,
+        session: &SessionInfo,
+        args: ChatSendArgs,
+    ) -> Result<(), CliError> {
+        if !client.supports_chat_queue() {
+            return Err(CliError::Failed(
+                "this daemon keeps no message queue (it predates protocol 0.36); restart it with \
+                 `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        if args.queue {
+            let item = client
+                .chat_queue_add(session.id, args.text)
+                .await
+                .map_err(|e| self.fail(e))?;
+            return self.print(&json!({"session_id": session.id, "queued": item}), || {
+                format!(
+                    "queued for {} (message {}); it goes when the turn ends",
+                    session.id, item.id
+                )
+            });
+        }
+        let sent = client
+            .chat_send_now(session.id, Some(args.text), None)
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(
+            &json!({"session_id": session.id, "sent": sent}),
+            || match sent {
+                ChatSentNow::Started { turn_id } => {
+                    format!("sent to {} (turn {turn_id})", session.id)
+                }
+                ChatSentNow::Steered { turn_id } => format!(
+                    "sent to {} during turn {turn_id}: the agent reads it at its next step",
+                    session.id
+                ),
+                ChatSentNow::Interrupting => format!(
+                    "interrupting the turn of {}: this agent takes no message while it works; \
+                     yours goes next",
+                    session.id
+                ),
+            },
+        )
     }
 
     /// Prints the events of one turn as they stream, until it ends: `Ok` when it completed,
@@ -290,11 +343,16 @@ impl Ctx {
         ))
     }
 
-    async fn chat_interrupt(&self, target: &str) -> Result<(), CliError> {
+    async fn chat_interrupt(&self, args: ChatInterruptArgs) -> Result<(), CliError> {
         let client = self.connect().await?;
-        let session = self.resolve_chat(&client, target).await?;
+        let session = self.resolve_chat(&client, &args.target).await?;
+        if args.keep_queue && !client.supports_chat_queue() {
+            return Err(CliError::Failed(
+                "this daemon keeps no message queue (it predates protocol 0.36)".to_owned(),
+            ));
+        }
         client
-            .chat_interrupt(session.id)
+            .chat_stop(session.id, args.keep_queue)
             .await
             .map_err(|e| self.fail(e))?;
         self.print(&json!({"session_id": session.id}), || {

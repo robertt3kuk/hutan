@@ -161,6 +161,26 @@ pub trait AgentAdapter: Send + Sync + std::fmt::Debug {
     /// Asks the agent to stop the turn in progress.
     fn interrupt(&self) -> BoxFuture<'_, Result<(), AgentError>>;
 
+    /// Whether the agent takes a message while its turn runs ([`steer`](Self::steer)).
+    fn can_steer(&self) -> bool {
+        false
+    }
+
+    /// Gives the turn in progress more of the user's input, which the agent reads at its next
+    /// step (Codex `turn/steer`): no new turn starts, and the turn's events say when the agent
+    /// took it (its echo of the user message). Returns the running turn. Fails with
+    /// [`AgentError::NoTurn`] when no turn runs and [`AgentError::Unsupported`] for agents that
+    /// cannot take a message during a turn.
+    fn steer(&self, text: String) -> BoxFuture<'_, Result<TurnId, AgentError>> {
+        Box::pin(async move {
+            let _ = text;
+            Err(AgentError::Unsupported(format!(
+                "{} takes no message while its turn runs",
+                self.agent()
+            )))
+        })
+    }
+
     /// Answers a pending permission request with one of the options it offered.
     fn respond(
         &self,

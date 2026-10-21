@@ -20,7 +20,8 @@ use hutan_protocol::blocks::{
     BlockPart, TerminalBlockText, TerminalBlockTextResult, TerminalBlocks, TerminalBlocksResult,
 };
 use hutan_protocol::chat::{
-    ApprovalInfo, ChatCreate, ChatHistory, ChatModels, ChatSent, QuestionInfo,
+    ApprovalInfo, ChatCreate, ChatHistory, ChatModels, ChatQueue, ChatSent, ChatSentNow,
+    QuestionInfo, QueuedMessage,
 };
 use hutan_protocol::daemon_settings::DaemonSettings;
 use hutan_protocol::history::{HistoryHits, HistorySearch, HistorySetEnabled, HistoryStatusInfo};
@@ -981,10 +982,77 @@ impl Connection {
         client.chat_set_model(session, provider_id, model).await
     }
 
-    /// `chat.interrupt`: stops the turn in progress.
+    /// `chat.interrupt`: stops the turn in progress (and clears the queue).
     pub async fn chat_interrupt(&self, session: SessionId) -> Result<(), ClientError> {
+        self.chat_stop(session, false).await
+    }
+
+    /// True while connected to a daemon that advertised capability `chat.queue`
+    /// ([`Client::supports_chat_queue`]); false when disconnected.
+    pub fn supports_chat_queue(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_chat_queue())
+    }
+
+    /// `chat.interrupt` with `keep_queue` ([`Client::chat_stop`]).
+    pub async fn chat_stop(&self, session: SessionId, keep_queue: bool) -> Result<(), ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;
-        client.chat_interrupt(session).await
+        client.chat_stop(session, keep_queue).await
+    }
+
+    /// `chat.queue.list` ([`Client::chat_queue`]).
+    pub async fn chat_queue(&self, session: SessionId) -> Result<ChatQueue, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.chat_queue(session).await
+    }
+
+    /// `chat.queue.add` ([`Client::chat_queue_add`]).
+    pub async fn chat_queue_add(
+        &self,
+        session: SessionId,
+        text: String,
+    ) -> Result<QueuedMessage, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.chat_queue_add(session, text).await
+    }
+
+    /// `chat.queue.edit` ([`Client::chat_queue_edit`]).
+    pub async fn chat_queue_edit(
+        &self,
+        session: SessionId,
+        item: u64,
+        text: String,
+    ) -> Result<QueuedMessage, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.chat_queue_edit(session, item, text).await
+    }
+
+    /// `chat.queue.remove` ([`Client::chat_queue_remove`]).
+    pub async fn chat_queue_remove(
+        &self,
+        session: SessionId,
+        item: u64,
+    ) -> Result<(), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.chat_queue_remove(session, item).await
+    }
+
+    /// `chat.queue.clear` ([`Client::chat_queue_clear`]).
+    pub async fn chat_queue_clear(&self, session: SessionId) -> Result<(), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.chat_queue_clear(session).await
+    }
+
+    /// `chat.send_now` ([`Client::chat_send_now`]).
+    pub async fn chat_send_now(
+        &self,
+        session: SessionId,
+        text: Option<String>,
+        item: Option<u64>,
+    ) -> Result<ChatSentNow, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.chat_send_now(session, text, item).await
     }
 
     /// One page of a chat's journal, oldest first ([`Client::chat_history`]).

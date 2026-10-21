@@ -273,9 +273,8 @@ fn the_interrupt_button_stops_a_turn_that_streams(cx: &mut TestAppContext) {
     );
     assert!(transcript(&model, cx, |t| t.turn_active()));
     assert!(!chat.read_with(cx, |c, cx| c.can_send(cx)));
-    // Typing is still possible; ⌘↩ does nothing while the turn runs.
+    // Typing is still possible while the turn runs (⌘↩ would queue it: `queue_gpui`).
     cx.simulate_input("next");
-    cx.simulate_keystrokes("cmd-enter");
     assert_eq!(
         model.read_with(cx, |m, _| m.input().text().to_owned()),
         "next"

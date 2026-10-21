@@ -15,7 +15,7 @@ use crate::error::{Result, StorageError};
 use crate::rows::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
     CreatedBy, EpochEnd, EpochRecord, GrantRow, ProviderRow, QuestionOutcome, QuestionRow,
-    RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
+    QueuedRow, RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
 };
 
 pub const EPOCH_HISTORY_KEY: &str = "epoch_history";
@@ -112,6 +112,11 @@ pub enum Write {
     DeleteChatItem {
         session_id: SessionId,
         seq: u64,
+    },
+    /// Replaces the whole queue of a chat session with `items`, in their order.
+    SetChatQueue {
+        session_id: SessionId,
+        items: Vec<QueuedRow>,
     },
     /// Inserts a chat turn or replaces its status, end time and error.
     UpsertChatTurn(ChatTurnRow),
@@ -311,6 +316,7 @@ pub fn apply(conn: &Connection, write: &Write) -> Result<()> {
             )
             .map_err(StorageError::sqlite("removing a chat event"))?;
         }
+        Write::SetChatQueue { session_id, items } => set_chat_queue(conn, *session_id, items)?,
         Write::UpsertChatTurn(row) => upsert_chat_turn(conn, row)?,
         Write::UpsertApproval(row) => upsert_approval(conn, row)?,
         Write::UpsertQuestion(row) => upsert_question(conn, row)?,
@@ -821,6 +827,65 @@ pub fn chat_last_seq(conn: &Connection, session: SessionId) -> Result<u64> {
         )
         .map_err(StorageError::sqlite("reading the last chat seq"))?;
     Ok(last.map_or(0, unms))
+}
+
+/// Deletes and inserts in one savepoint: a crash leaves the old queue or the new one.
+fn set_chat_queue(conn: &Connection, session: SessionId, items: &[QueuedRow]) -> Result<()> {
+    let context = "writing a chat queue";
+    conn.execute_batch("SAVEPOINT chat_queue")
+        .map_err(StorageError::sqlite(context))?;
+    let written = (|| {
+        conn.execute(
+            "DELETE FROM chat_queue WHERE session_id = ?1",
+            [session.to_string()],
+        )?;
+        let mut insert = conn.prepare_cached(
+            "INSERT INTO chat_queue (session_id, item_id, position, text, queued_at_ms) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for (position, item) in items.iter().enumerate() {
+            insert.execute(params![
+                session.to_string(),
+                ms(item.item_id),
+                i64::try_from(position).unwrap_or(i64::MAX),
+                item.text,
+                ms(item.queued_at_ms)
+            ])?;
+        }
+        Ok::<(), rusqlite::Error>(())
+    })();
+    match written {
+        Ok(()) => conn
+            .execute_batch("RELEASE chat_queue")
+            .map_err(StorageError::sqlite(context)),
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK TO chat_queue; RELEASE chat_queue");
+            Err(StorageError::sqlite(context)(error))
+        }
+    }
+}
+
+/// The queue of a chat session, in order.
+pub fn chat_queue(conn: &Connection, session: SessionId) -> Result<Vec<QueuedRow>> {
+    let context = "reading a chat queue";
+    let mut stmt = conn
+        .prepare(
+            "SELECT item_id, text, queued_at_ms FROM chat_queue WHERE session_id = ?1 \
+             ORDER BY position",
+        )
+        .map_err(StorageError::sqlite(context))?;
+    let rows = stmt
+        .query_map([session.to_string()], |row| {
+            Ok(QueuedRow {
+                session_id: session,
+                item_id: unms(row.get(0)?),
+                text: row.get(1)?,
+                queued_at_ms: unms(row.get(2)?),
+            })
+        })
+        .map_err(StorageError::sqlite(context))?;
+    rows.collect::<std::result::Result<_, _>>()
+        .map_err(StorageError::sqlite(context))
 }
 
 fn upsert_chat_turn(conn: &Connection, row: &ChatTurnRow) -> Result<()> {

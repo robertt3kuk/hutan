@@ -1181,6 +1181,48 @@ fn chat_turns_are_updated_in_place() {
 }
 
 #[test]
+fn a_chat_queue_is_replaced_whole_kept_in_order_and_removed_with_its_session() {
+    use crate::QueuedRow;
+    let dir = tempfile::tempdir().unwrap();
+    let item = |session, item_id: u64, text: &str| QueuedRow {
+        session_id: session,
+        item_id,
+        text: text.to_owned(),
+        queued_at_ms: 100 + item_id,
+    };
+    let id;
+    {
+        let storage = Storage::open(db(&dir)).unwrap();
+        id = chat_session(&storage);
+        assert!(storage.chat().queue(id).unwrap().is_empty());
+        storage
+            .chat()
+            .set_queue(id, vec![item(id, 1, "a"), item(id, 2, "b")])
+            .unwrap();
+        // The order is the list's, not the ids'.
+        storage
+            .chat()
+            .set_queue(id, vec![item(id, 3, "c"), item(id, 1, "a, edited")])
+            .unwrap();
+        storage.close();
+    }
+    let storage = Storage::open(db(&dir)).unwrap();
+    assert_eq!(
+        storage.chat().queue(id).unwrap(),
+        [item(id, 3, "c"), item(id, 1, "a, edited")]
+    );
+    storage.chat().set_queue(id, Vec::new()).unwrap();
+    assert!(storage.chat().queue(id).unwrap().is_empty());
+    storage
+        .chat()
+        .set_queue(id, vec![item(id, 4, "d")])
+        .unwrap();
+    storage.sessions().delete(id).unwrap();
+    assert!(storage.chat().queue(id).unwrap().is_empty());
+    storage.close();
+}
+
+#[test]
 fn questions_record_the_request_and_how_it_ended_never_the_answer() {
     use crate::{QuestionOutcome, QuestionRow};
     use hutan_core::QuestionId;

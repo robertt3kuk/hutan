@@ -98,6 +98,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "checkpoints",
         sql: include_str!("../migrations/0014_checkpoints.sql"),
     },
+    Migration {
+        version: 15,
+        name: "chat_queue",
+        sql: include_str!("../migrations/0015_chat_queue.sql"),
+    },
 ];
 
 /// Schema version recorded in the database; 0 for a database without `app_meta`.

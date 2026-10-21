@@ -610,6 +610,34 @@ impl AgentAdapter for CodexAppServerAdapter {
         })
     }
 
+    fn can_steer(&self) -> bool {
+        true
+    }
+
+    fn steer(&self, text: String) -> BoxFuture<'_, Result<TurnId, AgentError>> {
+        Box::pin(async move {
+            let shared = &self.shared;
+            let turn = lock(&shared.turn)
+                .current
+                .clone()
+                .ok_or(AgentError::NoTurn)?;
+            let steered: wire::TurnSteerResult = call(
+                &shared.transport,
+                "turn/steer",
+                &wire::TurnSteerParams {
+                    thread_id: &shared.thread_id,
+                    input: vec![wire::UserInput::Text {
+                        text: &text,
+                        text_elements: Vec::new(),
+                    }],
+                    expected_turn_id: &turn,
+                },
+            )
+            .await?;
+            Ok(lock(&shared.mapper).turn_id(&steered.turn_id))
+        })
+    }
+
     fn respond(
         &self,
         approval: ApprovalId,

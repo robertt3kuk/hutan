@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`chat`] also carries the daemon-owned queue of a chat: `chat.queue.add|edit|remove|clear|list`,
+//!   the `chat.queue` event, `chat.send_now` (steer where the agent can, else interrupt and send)
+//!   and `chat.interrupt`'s `keep_queue` (protocol 0.36, capability `chat.queue`).
 //! - [`worktree`] also carries `worktree.finish`: the user's Finish — commit, merge a worktree,
 //!   push to the upstream, step by step, user-only — and [`ui`]'s `PaneItem.path` names a file
 //!   tab's file (protocol 0.35, capability `finish`).
@@ -85,7 +88,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 35,
+    minor: 36,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

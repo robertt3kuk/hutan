@@ -1538,7 +1538,10 @@ fn requests() -> Vec<(&'static str, Request)> {
         ),
         (
             "chat_interrupt",
-            Request::ChatInterrupt(SessionRef { session_id: sid() }),
+            Request::ChatInterrupt(ChatInterrupt {
+                session_id: sid(),
+                keep_queue: false,
+            }),
         ),
         (
             "chat_history",
@@ -2723,7 +2726,80 @@ fn requests() -> Vec<(&'static str, Request)> {
                 strategy: MergeStrategy::Merge,
             }),
         ),
+        (
+            "chat_interrupt_keep_queue",
+            Request::ChatInterrupt(ChatInterrupt {
+                session_id: sid(),
+                keep_queue: true,
+            }),
+        ),
+        (
+            "chat_queue_add",
+            Request::ChatQueueAdd(ChatQueueAdd {
+                session_id: sid(),
+                text: "Then run the tests".into(),
+            }),
+        ),
+        (
+            "chat_queue_edit",
+            Request::ChatQueueEdit(ChatQueueEdit {
+                session_id: sid(),
+                item_id: 2,
+                text: "Then run only the unit tests".into(),
+            }),
+        ),
+        (
+            "chat_queue_remove",
+            Request::ChatQueueRemove(ChatQueueItemRef {
+                session_id: sid(),
+                item_id: 2,
+            }),
+        ),
+        (
+            "chat_queue_clear",
+            Request::ChatQueueClear(SessionRef { session_id: sid() }),
+        ),
+        (
+            "chat_queue_list",
+            Request::ChatQueueList(SessionRef { session_id: sid() }),
+        ),
+        (
+            "chat_send_now_text",
+            Request::ChatSendNow(ChatSendNow {
+                session_id: sid(),
+                text: Some("Stop editing the lockfile".into()),
+                item_id: None,
+            }),
+        ),
+        (
+            "chat_send_now_item",
+            Request::ChatSendNow(ChatSendNow {
+                session_id: sid(),
+                text: None,
+                item_id: Some(2),
+            }),
+        ),
     ]
+}
+
+fn chat_queue_fixture(held: Option<QueueHold>, steer: bool) -> ChatQueue {
+    ChatQueue {
+        session_id: sid(),
+        items: vec![
+            QueuedMessage {
+                id: 1,
+                text: "Then run the tests".into(),
+                queued_at_ms: 1_760_000_000_000,
+            },
+            QueuedMessage {
+                id: 2,
+                text: "And update the changelog".into(),
+                queued_at_ms: 1_760_000_001_000,
+            },
+        ],
+        held,
+        steer,
+    }
 }
 
 fn events() -> Vec<(&'static str, Event)> {
@@ -3593,6 +3669,46 @@ fn events() -> Vec<(&'static str, Event)> {
                 search_id: "s2".into(),
                 files_searched: 1_280,
                 hits: 37,
+            },
+        ),
+        (
+            "chat_queue_added",
+            Event::ChatQueueChanged {
+                queue: chat_queue_fixture(None, true),
+                change: QueueChange::Added { item_id: 2 },
+            },
+        ),
+        (
+            "chat_queue_delivered",
+            Event::ChatQueueChanged {
+                queue: ChatQueue {
+                    items: vec![],
+                    ..chat_queue_fixture(None, false)
+                },
+                change: QueueChange::Delivered {
+                    item_id: 1,
+                    turn_id: turn(),
+                },
+            },
+        ),
+        (
+            "chat_queue_cleared_by_stop",
+            Event::ChatQueueChanged {
+                queue: ChatQueue {
+                    items: vec![],
+                    ..chat_queue_fixture(None, false)
+                },
+                change: QueueChange::Cleared {
+                    count: 2,
+                    stopped: true,
+                },
+            },
+        ),
+        (
+            "chat_queue_held",
+            Event::ChatQueueChanged {
+                queue: chat_queue_fixture(Some(QueueHold::Stopped), false),
+                change: QueueChange::Held,
             },
         ),
     ]
@@ -5458,6 +5574,36 @@ fn responses_match_fixtures() {
                 },
             })
             .unwrap(),
+        ),
+        (
+            "chat_queue",
+            ControlMessage::ok(42, &chat_queue_fixture(Some(QueueHold::AgentGone), false)).unwrap(),
+        ),
+        (
+            "chat_queued",
+            ControlMessage::ok(
+                43,
+                &ChatQueued {
+                    item: QueuedMessage {
+                        id: 3,
+                        text: "Then run the tests".into(),
+                        queued_at_ms: 1_760_000_002_000,
+                    },
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "chat_sent_now_steered",
+            ControlMessage::ok(44, &ChatSentNow::Steered { turn_id: turn() }).unwrap(),
+        ),
+        (
+            "chat_sent_now_interrupting",
+            ControlMessage::ok(45, &ChatSentNow::Interrupting).unwrap(),
+        ),
+        (
+            "chat_sent_now_started",
+            ControlMessage::ok(46, &ChatSentNow::Started { turn_id: turn() }).unwrap(),
         ),
     ];
     for (name, message) in cases {

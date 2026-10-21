@@ -92,6 +92,16 @@ pub struct TurnInterruptParams<'a> {
     pub turn_id: &'a str,
 }
 
+/// `turn/steer`: more user input for the turn in progress, taken at its next step; fails when
+/// `expected_turn_id` is not the active turn.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnSteerParams<'a> {
+    pub thread_id: &'a str,
+    pub input: Vec<UserInput<'a>>,
+    pub expected_turn_id: &'a str,
+}
+
 // Responses ------------------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -151,6 +161,12 @@ pub struct ThreadRef {
 #[derive(Debug, Deserialize)]
 pub struct TurnStartResult {
     pub turn: TurnRefWire,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnSteerResult {
+    pub turn_id: String,
 }
 
 #[derive(Debug, Deserialize)]

@@ -70,6 +70,7 @@ pub const CAPABILITIES: &[&str] = &[
     "worktree.index",
     "chat.mode",
     "finish",
+    "chat.queue",
 ];
 
 /// How long a closing connection may take to flush already queued messages.

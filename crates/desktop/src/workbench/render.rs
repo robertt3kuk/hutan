@@ -825,6 +825,12 @@ impl Workbench {
                 }
             }),
         )
+        .on_action(cx.listener(|this, a: &actions::ShowStopMenu, window, cx| {
+            if let Ok(id) = a.0.session.parse() {
+                let entries = this.stop_menu(id, cx);
+                this.open_menu(a.0.position, entries, window, cx);
+            }
+        }))
         .on_action(cx.listener(|this, a: &actions::MoveActivePanel, _, cx| {
             this.move_focused_panel(a.0, cx);
         }))

@@ -40,7 +40,7 @@ pub use migrate::{BACKUPS_KEPT, MIGRATIONS, Migration};
 pub use rows::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
     CreatedBy, EpochEnd, EpochRecord, GrantRow, ProviderRow, QuestionOutcome, QuestionRow,
-    RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
+    QueuedRow, RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
 };
 pub use sql::{EPOCH_HISTORY_KEPT, RECENT_PROJECTS_KEPT, Write};
 
@@ -514,6 +514,20 @@ impl Chat<'_> {
     /// Oldest first.
     pub fn turns(&self, session: SessionId) -> Result<Vec<ChatTurnRow>> {
         self.0.read(move |conn| sql::chat_turns(conn, session))
+    }
+
+    /// Replaces the session's queue with `items`, in their order (an empty list clears it). The
+    /// session's row must have been written before.
+    pub fn set_queue(&self, session: SessionId, items: Vec<QueuedRow>) -> Result<()> {
+        self.0.write(Write::SetChatQueue {
+            session_id: session,
+            items,
+        })
+    }
+
+    /// The session's queue, in order.
+    pub fn queue(&self, session: SessionId) -> Result<Vec<QueuedRow>> {
+        self.0.read(move |conn| sql::chat_queue(conn, session))
     }
 }
 

@@ -220,6 +220,9 @@ pub enum Region {
     ChatChip(usize),
     /// Structured context chip `index` of the composer (assistant chats).
     ChatContextChip(usize),
+    /// A control of queued message `index` above the composer (protocol 0.36): `chip`, `edit`,
+    /// `now`, `remove`.
+    ChatQueue(&'static str, usize),
     /// A control of the attach form of an assistant chat, by name (`button`, `close`, `field`,
     /// `confirm`, `mention`, `shell`, `agent`, `file`, `search`, …).
     Attach(&'static str),

@@ -35,8 +35,9 @@ use hutan_core::{
 };
 use hutan_protocol::assistant::{ATTACHMENTS_META_KEY, AttachmentMeta};
 use hutan_protocol::chat::{
-    ApprovalInfo, ApprovalList, ChatHistory, ChatHistoryRequest, ChatModels, HISTORY_MAX_LIMIT,
-    QuestionInfo, QuestionList, SEND_MAX_BYTES,
+    ApprovalInfo, ApprovalList, ChatHistory, ChatHistoryRequest, ChatModels, ChatQueue,
+    ChatSentNow, HISTORY_MAX_LIMIT, QuestionInfo, QuestionList, QueueHold, QueuedMessage,
+    SEND_MAX_BYTES,
 };
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{ClientKind, Event};
@@ -50,6 +51,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::assistant_pick::{CATALOG_TIMEOUT, pick_assistant_model};
 use crate::bus::EventBus;
+use crate::chat_queue::{Changed, Queues};
 use crate::checkpoints::turns::{Scope, TurnCheckpoints};
 use crate::config::AssistantMode;
 use crate::context::Attached;
@@ -202,6 +204,50 @@ impl StartFailure {
             resume_refused,
         }
     }
+}
+
+/// Why a turn could not be started now.
+#[derive(Debug)]
+enum Acquire {
+    /// A turn runs.
+    Busy(Arc<Live>),
+    Failed(ErrorBody),
+}
+
+/// What `chat.send_now` sends.
+#[derive(Debug)]
+enum Now {
+    Text(String),
+    /// A queued message.
+    Item(u64),
+}
+
+fn turn_in_progress() -> ErrorBody {
+    ErrorBody::new(
+        ErrorCode::InvalidState,
+        "a turn is already in progress; wait for it, queue the message (`chat.queue.add`) or \
+         interrupt the turn",
+    )
+}
+
+/// A message's text is not empty (unless it has attachments) and not too long.
+fn check_message(text: &str, attached: bool) -> Result<(), ErrorBody> {
+    if text.trim().is_empty() && !attached {
+        return Err(ErrorBody::new(
+            ErrorCode::BadRequest,
+            "the message is empty",
+        ));
+    }
+    if text.len() > SEND_MAX_BYTES {
+        return Err(ErrorBody::new(
+            ErrorCode::BadRequest,
+            format!(
+                "the message is {} bytes; at most {SEND_MAX_BYTES} are allowed",
+                text.len()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 impl From<ErrorBody> for StartFailure {
@@ -384,6 +430,8 @@ pub struct ChatManager {
     tmp_dir: PathBuf,
     /// A snapshot of the checkout when an agent chat's turn starts and when it ends.
     checkpoints: Arc<TurnCheckpoints>,
+    /// The queue of each chat session (protocol 0.36).
+    queues: Queues,
 }
 
 /// Why a subagent thread could not be interrupted.
@@ -494,6 +542,7 @@ impl ChatManager {
         });
         let manager = Arc::new(Self {
             bus,
+            queues: Queues::new(storage.clone()),
             storage,
             notifier,
             codex,
@@ -1088,6 +1137,11 @@ impl ChatManager {
 
     /// Makes `live` the session's running backend; a sleeping session wakes.
     fn adopt(&self, live: &Arc<Live>) {
+        let steer = match &live.backend {
+            Backend::Agent(adapter) => adapter.can_steer(),
+            Backend::Direct(_) => false,
+        };
+        self.queues.set_steer(live.id, steer);
         let mut running = lock(&self.live);
         running.insert(live.id, live.clone());
         lock(&self.asleep).remove(&live.id);
@@ -1281,14 +1335,17 @@ impl ChatManager {
         }
     }
 
-    /// Sends the user's message; the turn's events follow on the bus.
+    /// Sends the user's message; the turn's events follow on the bus. A queue that held starts
+    /// again: the user went on with the conversation.
     pub async fn send(
         &self,
         id: SessionId,
         text: String,
         attached: Option<Attached>,
     ) -> Result<TurnId, ErrorBody> {
-        self.start_turn(id, text, attached, false).await
+        let turn = self.start_turn(id, text, attached, false).await?;
+        self.release_queue(id);
+        Ok(turn)
     }
 
     /// `chat.retry`: the conversation's last user message again, as a new turn that does not
@@ -1321,7 +1378,9 @@ impl ChatManager {
                     "there is nothing to retry: the chat has no message of the user yet",
                 )
             })?;
-        self.start_turn(id, text, None, true).await
+        let turn = self.start_turn(id, text, None, true).await?;
+        self.release_queue(id);
+        Ok(turn)
     }
 
     /// A turn with `text`; `retry`: the message is the journal's last user message, which the
@@ -1333,34 +1392,39 @@ impl ChatManager {
         attached: Option<Attached>,
         retry: bool,
     ) -> Result<TurnId, ErrorBody> {
-        if text.trim().is_empty() && attached.is_none() {
-            return Err(ErrorBody::new(
-                ErrorCode::BadRequest,
-                "the message is empty",
-            ));
-        }
-        if text.len() > SEND_MAX_BYTES {
-            return Err(ErrorBody::new(
-                ErrorCode::BadRequest,
-                format!(
-                    "the message is {} bytes; at most {SEND_MAX_BYTES} are allowed",
-                    text.len()
-                ),
-            ));
-        }
-        let live = loop {
-            let live = self.awake(id).await?;
+        check_message(&text, attached.is_some())?;
+        let live = match self.acquire(id).await {
+            Ok(live) => live,
+            Err(Acquire::Busy(_)) => return Err(turn_in_progress()),
+            Err(Acquire::Failed(error)) => return Err(error),
+        };
+        self.run_turn(&live, text, attached, retry).await
+    }
+
+    /// The session's backend, awake, with `busy` taken for a turn that is about to start.
+    async fn acquire(&self, id: SessionId) -> Result<Arc<Live>, Acquire> {
+        loop {
+            let live = self.awake(id).await.map_err(Acquire::Failed)?;
             if !live.busy.swap(true, Ordering::AcqRel) {
-                break live;
+                return Ok(live);
             }
             // Held by the idle sleeper, not by a turn: the agent is going away, wake it.
             if !live.sleeping.load(Ordering::Acquire) {
-                return Err(ErrorBody::new(
-                    ErrorCode::InvalidState,
-                    "a turn is already in progress; wait for it or interrupt it",
-                ));
+                return Err(Acquire::Busy(live));
             }
-        };
+        }
+    }
+
+    /// Starts a turn with `text` on `live`, whose `busy` the caller took ([`Self::acquire`]); a
+    /// turn that does not start gives it back.
+    async fn run_turn(
+        &self,
+        live: &Arc<Live>,
+        text: String,
+        attached: Option<Attached>,
+        retry: bool,
+    ) -> Result<TurnId, ErrorBody> {
+        let id = live.id;
         // The checkout as it is before the agent hears of this turn (ADR 0019): the prompt
         // waits at most the start budget for it, then goes, and the turn's checkpoint is late.
         let checkpoint = self.checkpoints.begin(id).await;
@@ -1421,10 +1485,7 @@ impl ChatManager {
                                 AgentError::Unsupported(_) => {
                                     ErrorBody::new(ErrorCode::Unsupported, error.to_string())
                                 }
-                                AgentError::TurnInProgress => ErrorBody::new(
-                                    ErrorCode::InvalidState,
-                                    "a turn is already in progress; wait for it or interrupt it",
-                                ),
+                                AgentError::TurnInProgress => turn_in_progress(),
                                 error => {
                                     ErrorBody::new(ErrorCode::ProviderError, error.to_string())
                                 }
@@ -1506,7 +1567,9 @@ impl ChatManager {
         }
     }
 
-    pub async fn interrupt(&self, id: SessionId) -> Result<(), ErrorBody> {
+    /// Stop: interrupts the turn in progress, and clears the queue (protocol 0.36) so that
+    /// nothing queued starts after it, unless `keep_queue`, which keeps the queue and holds it.
+    pub async fn interrupt(&self, id: SessionId, keep_queue: bool) -> Result<(), ErrorBody> {
         if !self.is_running(id) && self.is_asleep(id) {
             return Err(ErrorBody::new(
                 ErrorCode::InvalidState,
@@ -1514,6 +1577,19 @@ impl ChatManager {
             ));
         }
         let live = self.live(id)?;
+        // Before the turn can end: its end must find the queue cleared or holding.
+        self.queues.load(id).await?;
+        let changed = if keep_queue {
+            self.queues.hold(id, QueueHold::Stopped)
+        } else {
+            self.queues.clear(id, true)
+        };
+        self.emit_queue(changed);
+        self.interrupt_turn(&live).await
+    }
+
+    /// Asks the backend of `live` to stop its turn.
+    async fn interrupt_turn(&self, live: &Live) -> Result<(), ErrorBody> {
         let adapter = match &live.backend {
             Backend::Agent(adapter) => adapter,
             Backend::Direct(session) => {
@@ -1534,6 +1610,304 @@ impl ChatManager {
                 "no turn is in progress",
             )),
             Err(error) => Err(ErrorBody::new(ErrorCode::ProviderError, error.to_string())),
+        }
+    }
+
+    // Queue -------------------------------------------------------------------------------------
+
+    fn emit_queue(&self, changed: Option<Changed>) {
+        if let Some((queue, change)) = changed {
+            self.emit(&Event::ChatQueueChanged { queue, change });
+        }
+    }
+
+    /// A queue that held starts again (the user sent something).
+    fn release_queue(&self, id: SessionId) {
+        let released = self.queues.release(id);
+        self.emit_queue(released);
+    }
+
+    /// `chat.queue.list`.
+    pub async fn queue_list(&self, id: SessionId) -> Result<ChatQueue, ErrorBody> {
+        self.queues.load(id).await?;
+        Ok(self.queues.list(id))
+    }
+
+    /// `chat.queue.add`: at the end of the queue; sent at once when no turn runs and the queue
+    /// does not hold.
+    pub async fn queue_add(
+        self: &Arc<Self>,
+        id: SessionId,
+        text: String,
+    ) -> Result<QueuedMessage, ErrorBody> {
+        check_message(&text, false)?;
+        self.queues.load(id).await?;
+        let (item, changed) = self.queues.add(id, text, false)?;
+        self.emit_queue(Some(changed));
+        self.deliver_soon(id);
+        Ok(item)
+    }
+
+    /// `chat.queue.edit`.
+    pub async fn queue_edit(
+        &self,
+        id: SessionId,
+        item: u64,
+        text: String,
+    ) -> Result<QueuedMessage, ErrorBody> {
+        check_message(&text, false)?;
+        self.queues.load(id).await?;
+        let (edited, changed) = self.queues.edit(id, item, text)?;
+        self.emit_queue(Some(changed));
+        Ok(edited)
+    }
+
+    /// `chat.queue.remove`.
+    pub async fn queue_remove(&self, id: SessionId, item: u64) -> Result<(), ErrorBody> {
+        self.queues.load(id).await?;
+        let (_, queue) = self.queues.take(id, item)?;
+        self.emit_queue(Some((
+            queue,
+            hutan_protocol::chat::QueueChange::Removed { item_id: item },
+        )));
+        Ok(())
+    }
+
+    /// `chat.queue.clear`.
+    pub async fn queue_clear(&self, id: SessionId) -> Result<(), ErrorBody> {
+        self.queues.load(id).await?;
+        let changed = self.queues.clear(id, false);
+        self.emit_queue(changed);
+        Ok(())
+    }
+
+    /// `chat.send_now`: `text`, or the queued message `item`, without waiting for the turn.
+    /// With no turn running it starts one (and the queue goes on after it); a running turn of
+    /// an agent that steers takes it at its next tool boundary; any other running turn is
+    /// interrupted, and the message goes first once it has ended.
+    pub async fn send_now(
+        self: &Arc<Self>,
+        id: SessionId,
+        text: Option<String>,
+        item: Option<u64>,
+    ) -> Result<ChatSentNow, ErrorBody> {
+        let what = match (text, item) {
+            (Some(text), None) => {
+                check_message(&text, false)?;
+                Now::Text(text)
+            }
+            (None, Some(item)) => Now::Item(item),
+            _ => {
+                return Err(ErrorBody::new(
+                    ErrorCode::BadRequest,
+                    "send either `text` or a queued message's `item_id`",
+                ));
+            }
+        };
+        self.queues.load(id).await?;
+        if let Now::Item(item) = &what {
+            // Gone already (sent, removed): say so before anything happens.
+            let changed = self.queues.to_front(id, *item)?;
+            self.emit_queue(Some(changed));
+        }
+        let live = match self.acquire(id).await {
+            Ok(live) => live,
+            Err(Acquire::Busy(live)) => return self.send_during_turn(&live, what).await,
+            Err(Acquire::Failed(error)) => return Err(error),
+        };
+        // No turn runs: this is the next turn.
+        let (text, taken) = match what {
+            Now::Text(text) => (text, None),
+            Now::Item(item) => match self.queues.take(id, item) {
+                Ok((taken, _)) => (taken.text.clone(), Some(taken)),
+                Err(error) => {
+                    live.busy.store(false, Ordering::Release);
+                    return Err(error);
+                }
+            },
+        };
+        match self.run_turn(&live, text, None, false).await {
+            Ok(turn_id) => {
+                if let Some(taken) = taken {
+                    self.emit_queue(Some((
+                        self.queues.list(id),
+                        hutan_protocol::chat::QueueChange::Delivered {
+                            item_id: taken.id,
+                            turn_id,
+                        },
+                    )));
+                }
+                self.release_queue(id);
+                Ok(ChatSentNow::Started { turn_id })
+            }
+            Err(error) => {
+                if let Some(taken) = taken {
+                    let changed = self.queues.put_back(id, taken, QueueHold::SendFailed);
+                    self.emit_queue(Some(changed));
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// [`send_now`](Self::send_now) while `live` runs a turn.
+    async fn send_during_turn(
+        self: &Arc<Self>,
+        live: &Arc<Live>,
+        what: Now,
+    ) -> Result<ChatSentNow, ErrorBody> {
+        let id = live.id;
+        if let Backend::Agent(adapter) = &live.backend
+            && adapter.can_steer()
+        {
+            let (text, taken) = match what {
+                Now::Text(text) => (text, None),
+                Now::Item(item) => {
+                    let (taken, _) = self.queues.take(id, item)?;
+                    (taken.text.clone(), Some(taken))
+                }
+            };
+            return match adapter.steer(text.clone()).await {
+                Ok(turn_id) => {
+                    if let Some(taken) = taken {
+                        self.emit_queue(Some((
+                            self.queues.list(id),
+                            hutan_protocol::chat::QueueChange::Delivered {
+                                item_id: taken.id,
+                                turn_id,
+                            },
+                        )));
+                    }
+                    self.notice(
+                        live,
+                        NoticeLevel::Info,
+                        "Sent now: the agent reads your message at its next step, without \
+                         stopping the turn.",
+                    )
+                    .await;
+                    Ok(ChatSentNow::Steered { turn_id })
+                }
+                // The turn ended meanwhile: the message goes first, as the next turn.
+                Err(AgentError::NoTurn) => {
+                    let item = match taken {
+                        Some(taken) => {
+                            let changed = self.queues.put_back(id, taken, QueueHold::SendFailed);
+                            self.emit_queue(Some(changed));
+                            None
+                        }
+                        None => Some(text),
+                    };
+                    if let Some(text) = item {
+                        let (_, changed) = self.queues.add(id, text, true)?;
+                        self.emit_queue(Some(changed));
+                    }
+                    self.release_queue(id);
+                    self.deliver_soon(id);
+                    Ok(ChatSentNow::Interrupting)
+                }
+                Err(error) => {
+                    if let Some(taken) = taken {
+                        let changed = self.queues.put_back(id, taken, QueueHold::SendFailed);
+                        self.emit_queue(Some(changed));
+                    }
+                    Err(ErrorBody::new(ErrorCode::ProviderError, error.to_string()))
+                }
+            };
+        }
+        // The agent takes nothing while it works: the message goes first, the turn is stopped,
+        // and its end sends it. The journal says the turn was interrupted for it.
+        if let Now::Text(text) = what {
+            let (_, changed) = self.queues.add(id, text, true)?;
+            self.emit_queue(Some(changed));
+        }
+        self.release_queue(id);
+        self.notice(
+            live,
+            NoticeLevel::Warning,
+            "Send now interrupts the turn: this agent cannot take a message while it works. \
+             Your message goes next.",
+        )
+        .await;
+        match self.interrupt_turn(live).await {
+            // The turn ended on its own meanwhile: its end may have found the queue holding.
+            Ok(())
+            | Err(ErrorBody {
+                code: ErrorCode::InvalidState,
+                ..
+            }) => {}
+            Err(error) => return Err(error),
+        }
+        self.deliver_soon(id);
+        Ok(ChatSentNow::Interrupting)
+    }
+
+    /// Journals and shows a notice of Hutan's in the conversation.
+    async fn notice(&self, live: &Live, level: NoticeLevel, message: &str) {
+        let notice = AgentEventDraft::new(AgentEventKind::Notice {
+            level,
+            message: message.to_owned(),
+        });
+        self.handle(live, notice).await;
+    }
+
+    /// Sends the next queued message once nothing else runs (on a task of its own: a turn end
+    /// is handled on the session's event pump, which the next turn's start must not wait on).
+    fn deliver_soon(self: &Arc<Self>, id: SessionId) {
+        if self.queues.has_next(id) {
+            tokio::spawn(self.clone().deliver_next(id));
+        }
+    }
+
+    /// Starts the next queued message as a turn, when no turn runs and the queue does not hold.
+    /// A turn that runs now sends it when it ends.
+    async fn deliver_next(self: Arc<Self>, id: SessionId) {
+        if !self.queues.has_next(id) {
+            return;
+        }
+        let Ok(live) = self.acquire(id).await else {
+            return;
+        };
+        let Some((item, _)) = self.queues.take_next(id) else {
+            live.busy.store(false, Ordering::Release);
+            return;
+        };
+        match self.run_turn(&live, item.text.clone(), None, false).await {
+            Ok(turn_id) => self.emit_queue(Some((
+                self.queues.list(id),
+                hutan_protocol::chat::QueueChange::Delivered {
+                    item_id: item.id,
+                    turn_id,
+                },
+            ))),
+            Err(error) => {
+                warn!(session = %id, error = %error.message, "a queued message could not be sent");
+                let changed = self.queues.put_back(id, item, QueueHold::SendFailed);
+                self.emit_queue(Some(changed));
+                self.notice(
+                    &live,
+                    NoticeLevel::Warning,
+                    &format!(
+                        "The queued message could not be sent ({}). It waits first in the \
+                         queue: send it again or edit it.",
+                        error.message
+                    ),
+                )
+                .await;
+            }
+        }
+    }
+
+    /// What follows a turn's end: a failed turn holds the queue, any other end sends the next
+    /// queued message.
+    fn after_turn(self: &Arc<Self>, live: &Live, failed: bool) {
+        if live.stopping.load(Ordering::Acquire) {
+            return;
+        }
+        if failed {
+            let changed = self.queues.hold(live.id, QueueHold::TurnFailed);
+            self.emit_queue(changed);
+        } else {
+            self.deliver_soon(live.id);
         }
     }
 
@@ -1908,7 +2282,15 @@ impl ChatManager {
                 message = events.recv() => {
                     let Some(message) = message else { break };
                     match message {
-                        AdapterMessage::Event(draft) => self.handle(&live, *draft).await,
+                        AdapterMessage::Event(draft) => {
+                            let ended = draft.kind.ends_turn().then(|| {
+                                matches!(draft.kind, AgentEventKind::TurnFailed { .. })
+                            });
+                            self.handle(&live, *draft).await;
+                            if let Some(failed) = ended {
+                                self.after_turn(&live, failed);
+                            }
+                        }
                         AdapterMessage::Node(update) => self.notifier.node(live.id, *update).await,
                         AdapterMessage::Mode(mode) => self.notifier.mode(live.id, mode).await,
                         AdapterMessage::Exited(info) => {
@@ -2061,6 +2443,9 @@ impl ChatManager {
             return;
         }
         lock(&self.asleep).remove(&live.id);
+        // Nothing is sent to an agent that is gone: what waits, waits for the user.
+        let held = self.queues.hold(live.id, QueueHold::AgentGone);
+        self.emit_queue(held);
         info!(session = %live.id, code = ?exit.code, signal = ?exit.signal, "chat agent exited");
         self.notifier.exited(live.id, exit).await;
     }

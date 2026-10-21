@@ -18,7 +18,9 @@ use crate::assistant::{AssistantConfigure, AssistantListRequest, AssistantOpen, 
 use crate::blocks::{Block, TerminalBlockText, TerminalBlocks};
 use crate::chat::{
     ApprovalInfo, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatHistoryRequest, ChatInfo,
-    ChatModelsRequest, ChatRetry, ChatSend, QuestionAnswer, QuestionInfo, QuestionListRequest,
+    ChatInterrupt, ChatModelsRequest, ChatQueue, ChatQueueAdd, ChatQueueEdit, ChatQueueItemRef,
+    ChatRetry, ChatSend, ChatSendNow, QuestionAnswer, QuestionInfo, QuestionListRequest,
+    QueueChange,
 };
 use crate::control::{ErrorBody, ErrorCode};
 use crate::daemon_settings::DaemonSettingSet;
@@ -190,9 +192,30 @@ pub enum Request {
     /// journaling it again; answered with `ChatSent`.
     #[serde(rename = "chat.retry")]
     ChatRetry(ChatRetry),
-    /// Capability `chat.codex`: stop the turn in progress.
+    /// Capability `chat.codex`: stop the turn in progress. Protocol 0.36 (capability
+    /// `chat.queue`): also clears the queue unless `keep_queue`.
     #[serde(rename = "chat.interrupt")]
-    ChatInterrupt(SessionRef),
+    ChatInterrupt(ChatInterrupt),
+    /// Capability `chat.queue` (protocol 0.36): put a message at the end of the chat's queue;
+    /// answered with `ChatQueued`.
+    #[serde(rename = "chat.queue.add")]
+    ChatQueueAdd(ChatQueueAdd),
+    /// Capability `chat.queue`: change the text of a queued message; answered with `ChatQueued`.
+    #[serde(rename = "chat.queue.edit")]
+    ChatQueueEdit(ChatQueueEdit),
+    /// Capability `chat.queue`: take a message out of the queue unsent.
+    #[serde(rename = "chat.queue.remove")]
+    ChatQueueRemove(ChatQueueItemRef),
+    /// Capability `chat.queue`: take every message out of the queue unsent.
+    #[serde(rename = "chat.queue.clear")]
+    ChatQueueClear(SessionRef),
+    /// Capability `chat.queue`: the chat's queue; answered with `ChatQueue`.
+    #[serde(rename = "chat.queue.list")]
+    ChatQueueList(SessionRef),
+    /// Capability `chat.queue`: a message that does not wait for the turn (steers it, or
+    /// interrupts it and goes next); answered with `ChatSentNow`.
+    #[serde(rename = "chat.send_now")]
+    ChatSendNow(ChatSendNow),
     /// Capability `chat.codex`: the journal of a session; answered with `ChatHistory`.
     #[serde(rename = "chat.history")]
     ChatHistory(ChatHistoryRequest),
@@ -1106,6 +1129,12 @@ pub enum Event {
         session_id: SessionId,
         event: Box<AgentEvent>,
     },
+    /// Capability `chat.queue` (protocol 0.36): a chat's queue changed; it is carried whole.
+    #[serde(rename = "chat.queue")]
+    ChatQueueChanged {
+        queue: ChatQueue,
+        change: QueueChange,
+    },
     /// Capability `chat.codex`: an agent asks for permission.
     #[serde(rename = "approval.required")]
     ApprovalRequired { approval: Box<ApprovalInfo> },
@@ -1294,6 +1323,7 @@ impl Event {
         "fs.changed",
         "fs.generation",
         "fs.search.progress",
+        "chat.queue",
     ];
 }
 

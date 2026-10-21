@@ -1,1 +1,1 @@
-{"id":1,"method":"hello","params":{"capabilities":["terminal.render.v1"],"client":{"kind":"desktop","version":"0.1.0"},"protocol":{"major":0,"minor":35},"resume":{"epoch":"01K7F3B5N2Q9W8E4R6T1Y0V3PQ","seq":1042}}}
+{"id":1,"method":"hello","params":{"capabilities":["terminal.render.v1"],"client":{"kind":"desktop","version":"0.1.0"},"protocol":{"major":0,"minor":36},"resume":{"epoch":"01K7F3B5N2Q9W8E4R6T1Y0V3PQ","seq":1042}}}

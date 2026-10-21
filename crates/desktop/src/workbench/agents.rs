@@ -250,6 +250,33 @@ impl Workbench {
         self.chat_models.get(&session).cloned()
     }
 
+    /// The Stop menu of a chat with messages queued: Stop drops them (the default, ⌘.), or keeps
+    /// them waiting until the user sends again.
+    pub(crate) fn stop_menu(
+        &self,
+        session: SessionId,
+        cx: &gpui::App,
+    ) -> Vec<super::view::MenuEntry> {
+        let Some(model) = self.chat_model_of(session) else {
+            return Vec::new();
+        };
+        let queued = model.read(cx).queued().len();
+        let stop = model.clone();
+        let keep = model;
+        vec![
+            Self::entry(
+                format!(
+                    "Stop and clear the queue ({queued} message{})",
+                    if queued == 1 { "" } else { "s" }
+                ),
+                move |_, _, cx| stop.update(cx, |model, cx| model.interrupt(false, cx)),
+            ),
+            Self::entry("Stop, keep the queue", move |_, _, cx| {
+                keep.update(cx, |model, cx| model.interrupt(true, cx));
+            }),
+        ]
+    }
+
     /// The view of the focused pane's active tab, if it is a chat.
     pub fn focused_chat_view(&self) -> Option<Entity<ChatView>> {
         let FocusTarget::Pane(_) = self.state.focus else {

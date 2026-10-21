@@ -927,7 +927,8 @@ impl ResourceService {
             .is_none_or(|node| target.root_node.as_deref() == Some(node.node_id.as_str()));
         if is_main {
             if target.chat {
-                self.registry.chats().interrupt(session).await?;
+                // A Stop: the queue goes too, as for `chat.interrupt`.
+                self.registry.chats().interrupt(session, false).await?;
                 return Ok(done(InterruptVia::Turn, None));
             }
             let terminal = target.terminal.ok_or_else(|| {

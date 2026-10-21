@@ -160,6 +160,9 @@ pub(crate) struct Effects {
     /// Chat events folded, in order (not part of [`StoreState`]; they go to
     /// [`Connection::chat_updates`](crate::Connection::chat_updates)).
     pub chat: Vec<AgentEvent>,
+    /// Chat queues that changed, in order (protocol 0.36; they go to
+    /// [`Connection::chat_updates`](crate::Connection::chat_updates) too).
+    pub queues: Vec<hutan_protocol::chat::ChatQueue>,
 }
 
 impl Effects {
@@ -168,6 +171,7 @@ impl Effects {
         self.session_terminals.extend(other.session_terminals);
         self.removed.extend(other.removed);
         self.chat.extend(other.chat);
+        self.queues.extend(other.queues);
     }
 }
 
@@ -393,6 +397,7 @@ impl StoreState {
             // Chat events are not state of the sessions list: they go to whoever renders the
             // chat (`Connection::chat_updates`).
             Event::ChatEvent { event, .. } => effects.chat.push(*event),
+            Event::ChatQueueChanged { queue, .. } => effects.queues.push(queue),
             Event::AgentTreeUpdated {
                 session_id,
                 nodes_changed,

@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use hutan_core::{DeliveryActor, TerminalId};
-use hutan_protocol::chat::ChatSent;
+use hutan_protocol::chat::{ChatQueued, ChatSent};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::grants::ControlGrants;
 use hutan_protocol::messages::{
@@ -339,8 +339,58 @@ impl Router {
             }
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
-                self.registry.chats().interrupt(req.session_id).await?;
+                self.registry
+                    .chats()
+                    .interrupt(req.session_id, req.keep_queue)
+                    .await?;
                 ok(&Empty {})
+            }
+            Request::ChatQueueAdd(req) => {
+                self.live_chat(req.session_id).await?;
+                let item = self
+                    .registry
+                    .chats()
+                    .queue_add(req.session_id, req.text)
+                    .await?;
+                ok(&ChatQueued { item })
+            }
+            Request::ChatQueueEdit(req) => {
+                self.registry.chat_target(req.session_id).await?;
+                let item = self
+                    .registry
+                    .chats()
+                    .queue_edit(req.session_id, req.item_id, req.text)
+                    .await?;
+                ok(&ChatQueued { item })
+            }
+            Request::ChatQueueRemove(req) => {
+                self.registry.chat_target(req.session_id).await?;
+                self.registry
+                    .chats()
+                    .queue_remove(req.session_id, req.item_id)
+                    .await?;
+                ok(&Empty {})
+            }
+            Request::ChatQueueClear(req) => {
+                self.registry.chat_target(req.session_id).await?;
+                self.registry.chats().queue_clear(req.session_id).await?;
+                ok(&Empty {})
+            }
+            Request::ChatQueueList(req) => {
+                self.registry.chat_target(req.session_id).await?;
+                ok(&self.registry.chats().queue_list(req.session_id).await?)
+            }
+            Request::ChatSendNow(req) => {
+                self.live_chat(req.session_id).await?;
+                let sent = self
+                    .registry
+                    .chats()
+                    .send_now(req.session_id, req.text, req.item_id)
+                    .await?;
+                if self.agent_origin(conn).await.is_none() {
+                    self.registry.note_user_action(req.session_id);
+                }
+                ok(&sent)
             }
             Request::ChatHistory(req) => {
                 self.registry.chat_target(req.session_id).await?;
@@ -732,6 +782,13 @@ fn classification(request: &Request) -> (&'static str, Access) {
         // Sends the same message again: what `chat.send` would do.
         Request::ChatRetry(_) => ("chat.retry", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),
+        // The queue (protocol 0.36): what `chat.send` would do, later or now.
+        Request::ChatQueueAdd(_) => ("chat.queue.add", Mutate),
+        Request::ChatQueueEdit(_) => ("chat.queue.edit", Mutate),
+        Request::ChatQueueRemove(_) => ("chat.queue.remove", Mutate),
+        Request::ChatQueueClear(_) => ("chat.queue.clear", Mutate),
+        Request::ChatQueueList(_) => ("chat.queue.list", Read),
+        Request::ChatSendNow(_) => ("chat.send_now", Mutate),
         Request::ChatHistory(_) => ("chat.history", Read),
         Request::ChatModels(_) => ("chat.models", Read),
         Request::ApprovalList(_) => ("approval.list", Read),

@@ -15,7 +15,7 @@ use hutan_client::{ChatUpdate, ClientError, Connection};
 use hutan_core::{AgentEvent, ApprovalId, Epoch, ItemId, SessionId};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::assistant::{AttachmentKind, AttachmentMeta, attachments_meta};
-use hutan_protocol::chat::{HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT};
+use hutan_protocol::chat::{ChatQueue, HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT, QueuedMessage};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::chip::{Chip, compose};
@@ -78,7 +78,22 @@ pub struct ChatModel {
     error: Option<SharedString>,
     /// What was taken out of the composer by a send that has not been answered yet.
     unsent: Option<(String, Vec<Chip>, Vec<ContextChip>)>,
+    /// The chat's queue as the daemon last said it (protocol 0.36); `None` before the first
+    /// read and with a daemon that has no queue.
+    queue: Option<ChatQueue>,
+    /// Stop was asked for and the turn has not ended yet ("Stopping…").
+    stopping: bool,
+    /// A queued message is open in the composer: the send key saves it.
+    editing: Option<Editing>,
     _task: Task<()>,
+}
+
+/// A queued message being edited in the composer.
+#[derive(Debug, Clone)]
+struct Editing {
+    item: u64,
+    /// What the composer held before, put back when the edit ends.
+    draft: String,
 }
 
 impl std::fmt::Debug for ChatModel {
@@ -117,8 +132,18 @@ impl ChatModel {
                         Ok(_) => reader.questions(Some(session)).await.ok(),
                         Err(_) => None,
                     };
+                    // The daemon keeps the queue: a reconnect reads it again.
+                    let queue = match &history {
+                        Ok(_) if reader.supports_chat_queue() => {
+                            reader.chat_queue(session).await.ok()
+                        }
+                        _ => None,
+                    };
                     let alive = this.update(cx, |this, cx| {
                         this.installed(history, pending, asked, cx);
+                        if let Some(queue) = queue {
+                            this.set_queue(queue, cx);
+                        }
                     });
                     if alive.is_err() {
                         return;
@@ -132,9 +157,24 @@ impl ChatModel {
                         }
                         let alive = this.update(cx, |this, cx| {
                             this.note_attachments(&event);
+                            if event.kind.ends_turn() && this.stopping {
+                                this.stopping = false;
+                                cx.notify();
+                            }
                             if this.transcript.apply(&event) {
                                 cx.notify();
                             }
+                        });
+                        if alive.is_err() {
+                            return;
+                        }
+                    }
+                    Ok(ChatUpdate::Queue(queue)) => {
+                        if queue.session_id != session {
+                            continue;
+                        }
+                        let alive = this.update(cx, |this, cx| {
+                            this.set_queue((*queue).clone(), cx);
                         });
                         if alive.is_err() {
                             return;
@@ -177,6 +217,9 @@ impl ChatModel {
             sending: false,
             error: None,
             unsent: None,
+            queue: None,
+            stopping: false,
+            editing: None,
             _task: task,
         }
     }
@@ -208,6 +251,10 @@ impl ChatModel {
                     self.transcript.expire_missing_questions(&ids);
                 }
                 self.status = LoadStatus::Ready;
+                // A Stop whose turn ended while this was not listening is over.
+                if !self.transcript.turn_active() {
+                    self.stopping = false;
+                }
             }
             Err(error) => {
                 // Offline: what is shown stays; a reconnect reads again.
@@ -544,13 +591,22 @@ impl ChatModel {
 
     // ---- commands --------------------------------------------------------------------------
 
-    /// `chat.interrupt`.
-    pub fn interrupt(&mut self, cx: &mut Context<Self>) {
+    /// `chat.interrupt` (Stop): the turn ends, and the queue is cleared unless `keep_queue`,
+    /// which keeps it waiting. "Stopping…" until the turn has ended.
+    pub fn interrupt(&mut self, keep_queue: bool, cx: &mut Context<Self>) {
+        self.stopping = true;
+        cx.notify();
         let connection = self.connection.clone();
         let session = self.session;
         cx.spawn(async move |this, cx| {
-            if let Err(error) = connection.chat_interrupt(session).await {
+            let stopped = if connection.supports_chat_queue() {
+                connection.chat_stop(session, keep_queue).await
+            } else {
+                connection.chat_interrupt(session).await
+            };
+            if let Err(error) = stopped {
                 this.update(cx, |this, cx| {
+                    this.stopping = false;
                     this.error = Some(format!("Could not interrupt: {error}").into());
                     cx.notify();
                 })
@@ -558,6 +614,263 @@ impl ChatModel {
             }
         })
         .detach();
+    }
+
+    /// Stop was asked for and the turn has not ended yet.
+    pub fn stopping(&self) -> bool {
+        self.stopping
+    }
+
+    // ---- queue (protocol 0.36) ---------------------------------------------------------------
+
+    /// Whether the daemon keeps a queue for chats (capability `chat.queue`).
+    pub fn supports_queue(&self) -> bool {
+        self.connection.supports_chat_queue()
+    }
+
+    /// The chat's queue as the daemon last said it.
+    pub fn queue(&self) -> Option<&ChatQueue> {
+        self.queue.as_ref()
+    }
+
+    /// The queued messages, in the order they are sent.
+    pub fn queued(&self) -> &[QueuedMessage] {
+        self.queue
+            .as_ref()
+            .map_or(&[], |queue| queue.items.as_slice())
+    }
+
+    /// The queued message open in the composer.
+    pub fn editing(&self) -> Option<u64> {
+        self.editing.as_ref().map(|editing| editing.item)
+    }
+
+    fn set_queue(&mut self, queue: ChatQueue, cx: &mut Context<Self>) {
+        if let Some(editing) = &self.editing
+            && !queue.items.iter().any(|item| item.id == editing.item)
+        {
+            // Sent or removed meanwhile: the edited text stays in the composer, ahead of what
+            // was there before.
+            if let Some(editing) = self.editing.take() {
+                let mut text = self.input.take();
+                if !editing.draft.is_empty() {
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    text.push_str(&editing.draft);
+                }
+                self.input.reset_to(&text);
+            }
+            self.error = Some("The queued message was sent before the edit was saved".into());
+        }
+        self.queue = Some(queue);
+        cx.notify();
+    }
+
+    /// Takes the draft out of the composer for the queue or for Send now: its text with the
+    /// terminal chips; `None` (with the reason shown) when it has nothing or carries
+    /// attachments, which cannot wait in a queue.
+    fn take_text_draft(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        if self.sending {
+            return None;
+        }
+        if !self.context.is_empty() {
+            self.error =
+                Some("Attachments cannot wait in the queue: send them once the turn ends".into());
+            cx.notify();
+            return None;
+        }
+        let message = self.draft_message();
+        if message.trim().is_empty() {
+            return None;
+        }
+        let draft = self.input.take();
+        self.vim.reset();
+        let chips = std::mem::take(&mut self.chips);
+        self.unsent = Some((draft, chips, Vec::new()));
+        self.sending = true;
+        self.error = None;
+        cx.notify();
+        Some(message)
+    }
+
+    /// A send that failed: the draft goes back in front of what was typed meanwhile.
+    fn put_back_unsent(&mut self) {
+        let Some((draft, chips, context)) = self.unsent.take() else {
+            return;
+        };
+        let rest = self.input.take();
+        let mut restored = draft;
+        if !restored.is_empty() && !rest.is_empty() {
+            restored.push('\n');
+        }
+        restored.push_str(&rest);
+        self.input.set(&restored);
+        let mut all = chips;
+        all.append(&mut self.chips);
+        self.chips = all;
+        let mut all = context;
+        all.append(&mut self.context);
+        self.context = all;
+    }
+
+    /// The send key while a turn runs: the draft waits at the end of the queue and goes when
+    /// the turn has ended.
+    pub fn queue_draft(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(message) = self.take_text_draft(cx) else {
+            return false;
+        };
+        let connection = self.connection.clone();
+        let session = self.session;
+        cx.spawn(async move |this, cx| {
+            let queued = connection.chat_queue_add(session, message).await;
+            this.update(cx, |this, cx| {
+                this.sending = false;
+                match queued {
+                    Ok(_) => this.unsent = None,
+                    Err(error) => {
+                        this.put_back_unsent();
+                        this.error = Some(format!("Could not queue: {error}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        true
+    }
+
+    /// Send now: the draft goes without waiting for the turn (it steers the turn, or interrupts
+    /// it and goes next; the transcript says which).
+    pub fn send_draft_now(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(message) = self.take_text_draft(cx) else {
+            return false;
+        };
+        let connection = self.connection.clone();
+        let session = self.session;
+        cx.spawn(async move |this, cx| {
+            let sent = connection.chat_send_now(session, Some(message), None).await;
+            this.update(cx, |this, cx| {
+                this.sending = false;
+                match sent {
+                    Ok(_) => this.unsent = None,
+                    Err(error) => {
+                        this.put_back_unsent();
+                        this.error = Some(format!("Could not send now: {error}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        true
+    }
+
+    /// Runs a queue request; a failure is shown as the last thing that went wrong.
+    fn queue_request<T: 'static>(
+        &mut self,
+        what: &'static str,
+        cx: &mut Context<Self>,
+        request: impl AsyncFnOnce(Connection) -> Result<T, ClientError> + 'static,
+    ) {
+        let connection = self.connection.clone();
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = request(connection).await {
+                this.update(cx, |this, cx| {
+                    this.error = Some(format!("Could not {what}: {error}").into());
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// A queued message's Send now.
+    pub fn send_queued_now(&mut self, item: u64, cx: &mut Context<Self>) {
+        let session = self.session;
+        self.queue_request("send it now", cx, async move |connection| {
+            connection.chat_send_now(session, None, Some(item)).await
+        });
+    }
+
+    /// A queued message's ×.
+    pub fn remove_queued(&mut self, item: u64, cx: &mut Context<Self>) {
+        if self.editing() == Some(item) {
+            self.cancel_edit(cx);
+        }
+        let session = self.session;
+        self.queue_request("remove it", cx, async move |connection| {
+            connection.chat_queue_remove(session, item).await
+        });
+    }
+
+    /// The queue's Clear.
+    pub fn clear_queue(&mut self, cx: &mut Context<Self>) {
+        self.cancel_edit(cx);
+        let session = self.session;
+        self.queue_request("clear the queue", cx, async move |connection| {
+            connection.chat_queue_clear(session).await
+        });
+    }
+
+    /// A queued message's Edit: its text goes into the composer, where the send key saves it
+    /// and Escape leaves it as it was. What the composer held comes back afterwards.
+    pub fn edit_queued(&mut self, item: u64, cx: &mut Context<Self>) {
+        let Some(text) = self
+            .queued()
+            .iter()
+            .find(|queued| queued.id == item)
+            .map(|queued| queued.text.clone())
+        else {
+            return;
+        };
+        let draft = match self.editing.take() {
+            // Another edit was open: its draft is the one to come back.
+            Some(open) => open.draft,
+            None => self.input.text().to_owned(),
+        };
+        self.input.reset_to(&text);
+        self.vim.reset();
+        self.editing = Some(Editing { item, draft });
+        self.error = None;
+        cx.notify();
+    }
+
+    /// Saves the queued message open in the composer (an empty text removes it).
+    pub fn save_edit(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(editing) = self.editing.take() else {
+            return false;
+        };
+        let text = self.input.text().to_owned();
+        self.input.reset_to(&editing.draft);
+        self.vim.reset();
+        cx.notify();
+        let session = self.session;
+        let item = editing.item;
+        if text.trim().is_empty() {
+            self.queue_request("remove it", cx, async move |connection| {
+                connection.chat_queue_remove(session, item).await
+            });
+        } else {
+            self.queue_request("save the edit", cx, async move |connection| {
+                connection.chat_queue_edit(session, item, text).await
+            });
+        }
+        true
+    }
+
+    /// Leaves the queued message as it was; the composer gets its draft back.
+    pub fn cancel_edit(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(editing) = self.editing.take() else {
+            return false;
+        };
+        self.input.reset_to(&editing.draft);
+        self.vim.reset();
+        cx.notify();
+        true
     }
 
     /// Shows `message` as the last thing that went wrong.

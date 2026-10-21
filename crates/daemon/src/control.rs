@@ -953,9 +953,15 @@ fn names_session(request: &Request) -> bool {
 /// The session a request acts on, when it names one.
 fn target_session(request: &Request) -> Option<SessionId> {
     match request {
-        Request::SessionStop(r) | Request::SessionRestart(r) | Request::ChatInterrupt(r) => {
-            Some(r.session_id)
-        }
+        Request::SessionStop(r)
+        | Request::SessionRestart(r)
+        | Request::ChatQueueClear(r)
+        | Request::ChatQueueList(r) => Some(r.session_id),
+        Request::ChatInterrupt(r) => Some(r.session_id),
+        Request::ChatQueueAdd(r) => Some(r.session_id),
+        Request::ChatQueueEdit(r) => Some(r.session_id),
+        Request::ChatQueueRemove(r) => Some(r.session_id),
+        Request::ChatSendNow(r) => Some(r.session_id),
         Request::SessionRename(r) => Some(r.session_id),
         Request::SessionKill(r) => Some(r.session_id),
         Request::SessionClose(r) => Some(r.session_id),
@@ -1110,7 +1116,38 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
             "send the last message of the chat {} again",
             session(r.session_id)
         ),
-        Request::ChatInterrupt(r) => format!("interrupt the turn of {}", session(r.session_id)),
+        Request::ChatInterrupt(r) => format!(
+            "interrupt the turn of {}{}",
+            session(r.session_id),
+            if r.keep_queue {
+                " and keep its queued messages"
+            } else {
+                " and drop its queued messages"
+            }
+        ),
+        Request::ChatQueueAdd(r) => format!(
+            "queue a message ({} characters) for the chat {}",
+            r.text.chars().count(),
+            session(r.session_id)
+        ),
+        Request::ChatQueueEdit(r) => format!(
+            "change queued message {} of the chat {}",
+            r.item_id,
+            session(r.session_id)
+        ),
+        Request::ChatQueueRemove(r) => format!(
+            "remove queued message {} of the chat {}",
+            r.item_id,
+            session(r.session_id)
+        ),
+        Request::ChatQueueClear(r) => format!(
+            "remove every queued message of the chat {}",
+            session(r.session_id)
+        ),
+        Request::ChatSendNow(r) => format!(
+            "send a message to the chat {} now, during its turn (it may interrupt the turn)",
+            session(r.session_id)
+        ),
         Request::ChatSetModel(r) => {
             format!("switch {} to the model {}", session(r.session_id), r.model)
         }

@@ -25,7 +25,7 @@ use hutan_daemon::checkpoints::turns::{STOPPED_REASON, Scope, Tuning, TurnCheckp
 use hutan_daemon::config::{CheckpointMode, CheckpointSettings};
 use hutan_protocol::chat::{ChatCreate, ChatSend, ChatSent};
 use hutan_protocol::daemon_settings::DaemonSettingSet;
-use hutan_protocol::messages::{Empty, Event, Request, SessionInfo, SessionRef, SessionResult};
+use hutan_protocol::messages::{Event, Request, SessionInfo, SessionResult};
 use hutan_storage::{CheckpointFilter, CheckpointRow, Storage};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
@@ -930,12 +930,7 @@ async fn a_failed_and_an_interrupted_turn_still_get_their_end() {
     let session = t.create().await.id;
     t.send(session, "Write the numbers from 1 to 300").await;
     fs::write(t.root.join("b.txt"), "written before the interrupt\n").unwrap();
-    t.client
-        .call::<Empty>(Request::ChatInterrupt(SessionRef {
-            session_id: session,
-        }))
-        .await
-        .unwrap();
+    t.client.chat_interrupt(session).await.unwrap();
     assert!(matches!(t.turn_end().await, AgentEventKind::TurnCancelled));
     let rows = t.rows_when(session, |rows| settled(rows, 1)).await;
     assert_eq!(rows[0].state, "ok", "{rows:?}");

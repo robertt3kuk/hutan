@@ -5,6 +5,7 @@
 //! describes the structured attachments of a message and the `@` mentions that offer them, and
 //! `attach` is the Attach menu and form that turn a choice into one. `rich` is the rich input of
 //! every chat (protocol 0.23): dropped, picked and pasted files, images and long pastes.
+//! `queue_view` draws the chat's queue above the composer (protocol 0.36).
 
 mod attach;
 mod cards;
@@ -15,6 +16,7 @@ mod markdown_view;
 mod model;
 mod question;
 mod question_card;
+mod queue_view;
 mod retry;
 mod rich;
 mod rich_view;

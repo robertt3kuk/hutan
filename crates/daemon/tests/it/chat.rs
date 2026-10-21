@@ -624,12 +624,7 @@ async fn a_pending_approval_expires_when_its_turn_ends() {
     t.wait_state(created.id, SessionState::WaitingApproval)
         .await;
 
-    t.client
-        .call::<Empty>(Request::ChatInterrupt(SessionRef {
-            session_id: created.id,
-        }))
-        .await
-        .unwrap();
+    t.client.chat_interrupt(created.id).await.unwrap();
     let (outcome, decided_by) =
         wait_event(&mut t.events, "approval.resolved", |event| match event {
             Event::ApprovalResolved {
@@ -1277,12 +1272,7 @@ async fn sending_is_validated() {
         }))
         .await;
     assert_eq!(remote_code(not_chat), ErrorCode::BadRequest);
-    let no_turn = t
-        .client
-        .call::<Empty>(Request::ChatInterrupt(SessionRef {
-            session_id: created.id,
-        }))
-        .await;
+    let no_turn = t.client.chat_interrupt(created.id).await;
     assert_eq!(remote_code(no_turn), ErrorCode::InvalidState);
 
     // One turn at a time.
@@ -1296,12 +1286,7 @@ async fn sending_is_validated() {
         }))
         .await;
     assert_eq!(remote_code(second), ErrorCode::InvalidState);
-    t.client
-        .call::<Empty>(Request::ChatInterrupt(SessionRef {
-            session_id: created.id,
-        }))
-        .await
-        .unwrap();
+    t.client.chat_interrupt(created.id).await.unwrap();
     next_chat_event(&mut t.events, "turn_cancelled", |e| {
         matches!(e.kind, AgentEventKind::TurnCancelled)
     })
@@ -2056,12 +2041,7 @@ async fn a_pending_question_expires_when_its_turn_ends() {
     let info = t.asked().await;
     t.wait_state(created.id, SessionState::WaitingApproval)
         .await;
-    t.client
-        .call::<Empty>(Request::ChatInterrupt(SessionRef {
-            session_id: created.id,
-        }))
-        .await
-        .unwrap();
+    t.client.chat_interrupt(created.id).await.unwrap();
     let (outcome, decided_by) = t.resolved(info.id).await;
     assert_eq!(outcome, QuestionOutcome::Expired);
     assert_eq!(decided_by, None, "nobody answered");

@@ -23,6 +23,7 @@ mod memory;
 mod menu_bar;
 mod notify;
 mod projects;
+mod queue;
 mod recovery;
 mod resources;
 mod restore;

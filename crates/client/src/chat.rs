@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use hutan_core::{AgentEvent, Epoch};
+use hutan_protocol::chat::ChatQueue;
 
 /// One step of the chat event stream of a [`Connection`](crate::Connection).
 ///
@@ -19,8 +20,12 @@ use hutan_core::{AgentEvent, Epoch};
 /// * `RecvError::Lagged` on the receiver means the same.
 ///
 /// Streaming deltas are not journaled: a gap in them heals when the item's `*_end` event arrives.
+///
+/// [`Queue`](Self::Queue) (protocol 0.36) is a chat's whole queue after it changed: a consumer
+/// keeps the newest one, and reads it again (`chat.queue.list`) after a resync.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatUpdate {
     Event(Arc<AgentEvent>),
     Resync { epoch: Epoch },
+    Queue(Arc<ChatQueue>),
 }

@@ -105,6 +105,161 @@ pub struct ChatSent {
     pub turn_id: TurnId,
 }
 
+/// `chat.interrupt`: stops the turn in progress.
+///
+/// Protocol 0.36 (capability `chat.queue`): Stop also clears the chat's queue, so nothing queued
+/// starts after it, unless `keep_queue`: the queued messages stay and the queue holds
+/// ([`QueueHold::Stopped`]) until the user sends again. Older peers send `{session_id}` only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatInterrupt {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep_queue: bool,
+}
+
+/// Most messages one chat's queue holds (protocol 0.36, capability `chat.queue`).
+pub const QUEUE_MAX_ITEMS: usize = 20;
+/// Most bytes of text the queued messages of one chat hold together: a whole queue always fits
+/// in one `chat.queue` event.
+pub const QUEUE_MAX_BYTES: usize = 1024 * 1024;
+
+/// One message waiting in a chat's queue (protocol 0.36, capability `chat.queue`). Queued
+/// messages are text only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedMessage {
+    /// Unique within the session's queue; never reused while the daemon runs.
+    pub id: u64,
+    pub text: String,
+    pub queued_at_ms: u64,
+}
+
+/// Why a queue waits instead of sending its next message once no turn runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueHold {
+    /// The user stopped the turn and kept the queue (`chat.interrupt` with `keep_queue`).
+    Stopped,
+    /// The last turn failed: the next message would most likely fail the same way.
+    TurnFailed,
+    /// A queued message could not be sent; it is back at the front.
+    SendFailed,
+    /// The agent went away (the session stopped, or the daemon restarted) with messages queued.
+    AgentGone,
+}
+
+/// A chat's queue (protocol 0.36, capability `chat.queue`): the answer of `chat.queue.list`, and
+/// what every `chat.queue` event carries, whole.
+///
+/// The daemon owns it (bounded: [`QUEUE_MAX_ITEMS`], [`QUEUE_MAX_BYTES`]) and keeps it with the
+/// journal, so it survives client reconnects and daemon restarts. When a turn ends and the queue
+/// is not held, its first message is sent as the next turn. A turn that fails, a send that
+/// fails, a Stop with `keep_queue` and an agent that goes away hold the queue; the next
+/// `chat.send` or `chat.send_now` releases it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatQueue {
+    pub session_id: SessionId,
+    /// In the order they are sent.
+    pub items: Vec<QueuedMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<QueueHold>,
+    /// The agent takes a message while its turn runs (Codex `turn/steer`): `chat.send_now`
+    /// steers the turn at its next tool boundary. `false`: `chat.send_now` interrupts the turn
+    /// and sends the message when it has ended.
+    #[serde(default)]
+    pub steer: bool,
+}
+
+/// `chat.queue.add`: puts a message at the end of the chat's queue; answered with
+/// [`ChatQueued`]. When no turn runs and the queue is not held, it is sent at once.
+/// `bad_request` for an empty or too long text ([`SEND_MAX_BYTES`]), `invalid_state` when the
+/// queue is full or the session is not running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatQueueAdd {
+    pub session_id: SessionId,
+    pub text: String,
+}
+
+/// `chat.queue.edit`: replaces the text of a queued message; answered with [`ChatQueued`].
+/// `not_found` when it is no longer queued (sent, removed or cleared meanwhile).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatQueueEdit {
+    pub session_id: SessionId,
+    pub item_id: u64,
+    pub text: String,
+}
+
+/// `chat.queue.remove`: takes a message out of the queue unsent. `not_found` when it is no
+/// longer queued.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatQueueItemRef {
+    pub session_id: SessionId,
+    pub item_id: u64,
+}
+
+/// Result of `chat.queue.add` and `chat.queue.edit`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatQueued {
+    pub item: QueuedMessage,
+}
+
+/// `chat.send_now` (protocol 0.36, capability `chat.queue`): a message that should not wait for
+/// the turn: `text`, or the queued message `item_id` (exactly one of them). Answered with
+/// [`ChatSentNow`]: with no turn running it starts one (and releases a held queue); while a turn
+/// runs, an agent that steers ([`ChatQueue::steer`]) gets it at its next tool boundary, any
+/// other has its turn interrupted (the journal says so) and gets it right after, ahead of the
+/// rest of the queue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatSendNow {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_id: Option<u64>,
+}
+
+/// Result of `chat.send_now`: how the message went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "delivery", rename_all = "snake_case")]
+pub enum ChatSentNow {
+    /// No turn was running: it started one.
+    Started { turn_id: TurnId },
+    /// The running turn takes it at its next tool boundary.
+    Steered { turn_id: TurnId },
+    /// The agent cannot take a message during a turn: the turn is being interrupted, and the
+    /// message is first in the queue, sent when the turn has ended.
+    Interrupting,
+}
+
+/// What changed in a chat's queue (the `chat.queue` event).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "change", rename_all = "snake_case")]
+pub enum QueueChange {
+    Added {
+        item_id: u64,
+    },
+    Edited {
+        item_id: u64,
+    },
+    Removed {
+        item_id: u64,
+    },
+    /// `chat.queue.clear`, or a Stop (`stopped`) took every message out unsent.
+    Cleared {
+        count: u32,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stopped: bool,
+    },
+    /// The message left the queue as the turn `turn_id`.
+    Delivered {
+        item_id: u64,
+        turn_id: TurnId,
+    },
+    /// The queue holds (see [`ChatQueue::held`]).
+    Held,
+    /// The queue no longer holds.
+    Released,
+}
+
 /// `chat.history`: the journal of a session. Events come oldest first; to page back pass the
 /// first `seq` of the previous page as `before_seq`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

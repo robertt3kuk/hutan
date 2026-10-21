@@ -55,6 +55,7 @@ pub mod assistant;
 pub mod assistant_pick;
 pub mod bus;
 pub mod chat;
+pub mod chat_queue;
 pub mod checkpoints;
 pub mod config;
 pub mod conn;

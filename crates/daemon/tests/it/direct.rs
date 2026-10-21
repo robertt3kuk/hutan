@@ -19,10 +19,10 @@ use hutan_gateway::testing::{MockServer, Reply};
 use hutan_gateway::{CredentialStore, HttpConfig, MemoryStore, ProbeTarget, ProviderKind};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::chat::{
-    ChatCreate, ChatHistory, ChatHistoryRequest, ChatRetry, ChatSend, ChatSent,
+    ChatCreate, ChatHistory, ChatHistoryRequest, ChatInterrupt, ChatRetry, ChatSend, ChatSent,
 };
 use hutan_protocol::messages::{
-    Empty, Event, Request, SessionInfo, SessionList, SessionListFilter, SessionRef, SessionResult,
+    Empty, Event, Request, SessionInfo, SessionList, SessionListFilter, SessionResult,
 };
 use hutan_protocol::provider::{
     AGENT_DIRECT, ChatSetModel, ProviderAdd, ProviderDiscovery, ProviderInfo, ProviderList,
@@ -1068,8 +1068,9 @@ async fn interrupting_cancels_the_http_stream_and_keeps_what_was_said() {
     .await;
     t.wait_state(created.id, SessionState::Running).await;
 
-    t.call::<Empty>(Request::ChatInterrupt(SessionRef {
+    t.call::<Empty>(Request::ChatInterrupt(ChatInterrupt {
         session_id: created.id,
+        keep_queue: false,
     }))
     .await;
     let events = t.turn_events(created.id).await;
@@ -1085,8 +1086,9 @@ async fn interrupting_cancels_the_http_stream_and_keeps_what_was_said() {
 
     // Nothing to interrupt now.
     let again = t
-        .try_call::<Empty>(Request::ChatInterrupt(SessionRef {
+        .try_call::<Empty>(Request::ChatInterrupt(ChatInterrupt {
             session_id: created.id,
+            keep_queue: false,
         }))
         .await;
     assert_eq!(remote_code(again), ErrorCode::InvalidState);

@@ -570,8 +570,8 @@ pub enum ChatCommand {
     Log(TargetArgs),
     /// Follow a chat session live: its recent history, then new events as they happen
     Attach(TargetArgs),
-    /// Stop the turn in progress
-    Interrupt(TargetArgs),
+    /// Stop the turn in progress; messages queued for the chat are dropped unless --keep-queue
+    Interrupt(ChatInterruptArgs),
     /// Send the chat's last message again (after a failed turn); it is not journaled twice
     Retry(TargetArgs),
     /// List the models the agent offers
@@ -740,6 +740,23 @@ pub struct ChatSendArgs {
         value_parser = crate::attach_spec::parse_attachment
     )]
     pub attach: Vec<hutan_protocol::assistant::Attachment>,
+    /// While a turn runs, wait in the chat's queue and go when it ends (at once when no turn
+    /// runs); text only. Prints the queued message's id
+    #[arg(long, conflicts_with_all = ["now", "wait", "attach"])]
+    pub queue: bool,
+    /// Do not wait for the turn: the agent takes the message at its next step where it can
+    /// (Codex); any other agent's turn is interrupted and the message goes next. Text only
+    #[arg(long, conflicts_with_all = ["queue", "wait", "attach"])]
+    pub now: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ChatInterruptArgs {
+    #[arg(help = TARGET_HELP)]
+    pub target: String,
+    /// Keep the messages queued for the chat; they wait until you send again
+    #[arg(long)]
+    pub keep_queue: bool,
 }
 
 #[derive(Debug, Args)]

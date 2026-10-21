@@ -141,6 +141,15 @@ pub struct ChatTurnRow {
     pub error: Option<String>,
 }
 
+/// One message of a chat session's queue (`chat_queue`), in its place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedRow {
+    pub session_id: SessionId,
+    pub item_id: u64,
+    pub text: String,
+    pub queued_at_ms: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalOutcome {
