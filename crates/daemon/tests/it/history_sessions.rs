@@ -315,7 +315,17 @@ async fn fixture() -> Fixture {
 #[tokio::test(flavor = "multi_thread")]
 async fn rows_carry_the_summary_attribution_and_resume_commands() {
     let f = fixture().await;
-    let all = sessions(&f.client, req()).await;
+    // The scan counts come from a stat pass: the one at startup may have run before the
+    // fixture wrote its files (the watcher reads them in without counting them), so ask for
+    // another and have it answered when done.
+    let all = sessions(
+        &f.client,
+        HistorySessionsRequest {
+            refresh: true,
+            ..req()
+        },
+    )
+    .await;
     assert_eq!((all.matched, all.loaded), (5, 5));
     // Newest update first.
     assert_eq!(
