@@ -1388,7 +1388,10 @@ mod wire {
             })
             .await;
         assert_eq!(remote_code(again), ErrorCode::NotFound);
-        let neither = t.client.checkpoint_remove(CheckpointRemove::default()).await;
+        let neither = t
+            .client
+            .checkpoint_remove(CheckpointRemove::default())
+            .await;
         assert_eq!(remote_code(neither), ErrorCode::BadRequest);
         t.daemon.stop().await;
     }
@@ -1475,7 +1478,11 @@ mod wire {
             "{}",
             approval.title
         );
-        assert_eq!(refs(&t.root).len(), 1, "nothing is removed before the answer");
+        assert_eq!(
+            refs(&t.root).len(),
+            1,
+            "nothing is removed before the answer"
+        );
         let options: Vec<&str> = approval.options.iter().map(|o| o.id.as_str()).collect();
         assert!(options.contains(&"allow_once"), "{options:?}");
         user.call::<Empty>(Request::ApprovalRespond(ApprovalRespond {

@@ -211,7 +211,9 @@ enum Command {
         mode: SessionMode,
     },
     /// From the checkpoint service: whether a chat's turns get checkpoints may have changed.
-    ChatCheckpoints { session: SessionId },
+    ChatCheckpoints {
+        session: SessionId,
+    },
     /// Whether the session is a chat session, and live.
     ChatTarget(SessionId, Reply<bool>),
     /// `chat.set_model`: answered once the switch is journaled.

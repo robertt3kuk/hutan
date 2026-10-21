@@ -9,8 +9,8 @@ use std::path::{Component, Path, PathBuf};
 
 use hutan_core::{CheckpointId, CheckpointState};
 use hutan_protocol::checkpoint::{
-    CheckpointDiff, CheckpointDiffRequest, CheckpointList, CheckpointListRequest,
-    CheckpointRemove, CheckpointRemoved, DiffAgainst, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT,
+    CheckpointDiff, CheckpointDiffRequest, CheckpointList, CheckpointListRequest, CheckpointRemove,
+    CheckpointRemoved, DiffAgainst, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT,
 };
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_storage::{CheckpointFilter, CheckpointPage, CheckpointRow, CheckpointScope, Storage};
@@ -126,9 +126,7 @@ impl TurnCheckpoints {
     pub async fn list(&self, req: CheckpointListRequest) -> Result<CheckpointList, ErrorBody> {
         let scope = match (req.session_id, req.workspace_id) {
             (Some(_), Some(_)) => {
-                return Err(bad_request(
-                    "name a session or a workspace, not both",
-                ));
+                return Err(bad_request("name a session or a workspace, not both"));
             }
             (Some(session), None) => CheckpointScope::Session(session),
             (None, Some(workspace)) => CheckpointScope::Workspace(workspace),
@@ -211,9 +209,10 @@ impl TurnCheckpoints {
     /// The tree of `row`'s checkout as it is now: a warm-up snapshot through Hutan's private
     /// index (it writes objects, never a commit, a ref or the user's index).
     async fn tree_now(&self, row: &CheckpointRow, common_dir: &Path) -> Result<String, ErrorBody> {
-        let checkout = row.checkout.clone().ok_or_else(|| {
-            invalid_state(format!("checkpoint {} names no checkout", row.id))
-        })?;
+        let checkout = row
+            .checkout
+            .clone()
+            .ok_or_else(|| invalid_state(format!("checkpoint {} names no checkout", row.id)))?;
         if !checkout.is_dir() {
             return Err(invalid_state(format!(
                 "the checkout of checkpoint {} ({}) is gone",
@@ -301,8 +300,10 @@ impl TurnCheckpoints {
         }
         let ids: Vec<CheckpointId> = rows.iter().map(|row| row.id).collect();
         let gone = ids.clone();
-        self.query("removing checkpoints", move |s| s.checkpoints().delete(gone))
-            .await?;
+        self.query("removing checkpoints", move |s| {
+            s.checkpoints().delete(gone)
+        })
+        .await?;
         tracing::info!(count = ids.len(), "checkpoints removed");
         self.announce_removed(ids.clone());
         Ok(CheckpointRemoved { removed: ids })

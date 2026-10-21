@@ -29,8 +29,8 @@ use hutan_protocol::chat::{
     QuestionListRequest, QueuedMessage,
 };
 use hutan_protocol::checkpoint::{
-    CheckpointDiff, CheckpointDiffRequest, CheckpointList, CheckpointListRequest,
-    CheckpointRemove, CheckpointRemoved,
+    CheckpointDiff, CheckpointDiffRequest, CheckpointList, CheckpointListRequest, CheckpointRemove,
+    CheckpointRemoved,
 };
 use hutan_protocol::daemon_settings::{DaemonSettingSet, DaemonSettings};
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};

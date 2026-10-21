@@ -179,7 +179,11 @@ impl Ctx {
     }
 
     /// The session `target` names among the listed ones; a closed session by its full id.
-    async fn checkpoint_session(&self, client: &Client, target: &str) -> Result<SessionId, CliError> {
+    async fn checkpoint_session(
+        &self,
+        client: &Client,
+        target: &str,
+    ) -> Result<SessionId, CliError> {
         match self.resolve(client, target).await {
             Ok(session) => Ok(session.id),
             Err(error) => target.parse::<SessionId>().map_err(|_| error),
@@ -387,14 +391,18 @@ mod tests {
         assert!(lines[0].starts_with("CHECKPOINT") && !lines[0].contains("SESSION"));
         assert!(lines[1].contains("1m") && lines[1].contains("+3 -1") && lines[1].contains("ok"));
         assert!(
-            lines[2].contains("late") && lines[2].contains("the start was recorded late; big.bin not captured"),
+            lines[2].contains("late")
+                && lines[2].contains("the start was recorded late; big.bin not captured"),
             "{text}"
         );
         assert_eq!(lines[3], format!("more: --before {}", late.id));
         let titles = HashMap::from([(ok.session_id, "fix bug".to_owned())]);
         let text = ls_text(&list, Some(&titles), 120_000);
         assert!(text.contains("SESSION") && text.contains("fix bug"));
-        assert!(text.contains(&late.session_id.to_string()), "an unknown session by id");
+        assert!(
+            text.contains(&late.session_id.to_string()),
+            "an unknown session by id"
+        );
         assert_eq!(
             ls_text(
                 &CheckpointList {

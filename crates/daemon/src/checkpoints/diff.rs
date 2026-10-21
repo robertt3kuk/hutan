@@ -87,10 +87,8 @@ impl Checkpoints {
             to,
             pathspec,
         );
-        let (names, stats, patch) = tokio::join!(
-            git.read_ok(&names_refs),
-            git.read_ok(&stat_refs),
-            async {
+        let (names, stats, patch) =
+            tokio::join!(git.read_ok(&names_refs), git.read_ok(&stat_refs), async {
                 if stat {
                     Ok(None)
                 } else {
@@ -98,8 +96,7 @@ impl Checkpoints {
                         .await
                         .map(Some)
                 }
-            },
-        );
+            },);
         Ok(assemble(
             &names?.stdout,
             &stats?.stdout,
@@ -207,7 +204,8 @@ fn parse_numstat(bytes: &[u8]) -> HashMap<String, (u64, u64, bool)> {
     let mut out = HashMap::new();
     for record in nul_records(bytes) {
         let mut fields = record.splitn(3, |b| *b == b'\t');
-        let (Some(added), Some(removed), Some(path)) = (fields.next(), fields.next(), fields.next())
+        let (Some(added), Some(removed), Some(path)) =
+            (fields.next(), fields.next(), fields.next())
         else {
             continue;
         };
@@ -252,7 +250,8 @@ mod tests {
     use super::*;
 
     fn part(path: &str, lines: usize) -> String {
-        let mut text = format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n");
+        let mut text =
+            format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n");
         for n in 0..lines {
             text.push_str(&format!("+line {n}\n"));
         }

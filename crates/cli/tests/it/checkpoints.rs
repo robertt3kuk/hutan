@@ -23,7 +23,12 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .arg("-C")
         .arg(dir)
         .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
-        .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"])
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
         .args(args)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -156,12 +161,11 @@ impl Repo {
 async fn ls_diff_and_rm_work_on_the_checkpoints_of_a_fixture_chat() {
     let r = Repo::start(2).await;
     let root = r.root.display().to_string();
-    let created = r
-        .t
-        .hutan(&["chat", "new", "--json", "--cwd", &root])
-        .await
-        .ok()
-        .json();
+    let created =
+        r.t.hutan(&["chat", "new", "--json", "--cwd", &root])
+            .await
+            .ok()
+            .json();
     let session = created["session"]["id"].as_str().unwrap().to_owned();
 
     // Turn 0 edits a tracked file; turn 1 adds a file.
@@ -186,47 +190,51 @@ async fn ls_diff_and_rm_work_on_the_checkpoints_of_a_fixture_chat() {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 3, "{text}");
     assert!(lines[0].starts_with("CHECKPOINT") && lines[0].contains("STATE"));
-    assert!(lines[1].starts_with(&second) && lines[1].contains("+2 -0"), "{text}");
-    assert!(lines[2].starts_with(&first) && lines[2].contains("+1 -1"), "{text}");
+    assert!(
+        lines[1].starts_with(&second) && lines[1].contains("+2 -0"),
+        "{text}"
+    );
+    assert!(
+        lines[2].starts_with(&first) && lines[2].contains("+1 -1"),
+        "{text}"
+    );
     // Without a session: every checkpoint, with the session's title.
     let all = r.t.hutan(&["checkpoint", "ls"]).await.ok().stdout;
     assert!(all.lines().next().unwrap().contains("SESSION"), "{all}");
 
     // What turn 0 changed, as a stat and as a patch; an id prefix is enough.
-    let stat = r
-        .t
-        .hutan(&["checkpoint", "diff", &first, "--stat"])
-        .await
-        .ok()
-        .stdout;
+    let stat =
+        r.t.hutan(&["checkpoint", "diff", &first, "--stat"])
+            .await
+            .ok()
+            .stdout;
     assert_eq!(stat.trim_end(), "M a.txt  +1 -1\n1 file changed, +1 -1");
-    let patch = r
-        .t
-        .hutan(&["checkpoint", "diff", &first[..20]])
-        .await
-        .ok()
-        .stdout;
+    let patch =
+        r.t.hutan(&["checkpoint", "diff", &first[..20]])
+            .await
+            .ok()
+            .stdout;
     assert!(patch.contains("-alpha\n+edited by the agent"), "{patch}");
 
     // A later edit of the user shows against the checkout now.
     fs::write(r.root.join("a.txt"), "edited by the user\n").unwrap();
-    let now = r
-        .t
-        .hutan(&["checkpoint", "diff", &first, "--against", "now", "--stat"])
-        .await
-        .ok()
-        .stdout;
-    assert!(now.contains("M a.txt") && now.contains("A new.txt"), "{now}");
-    let now = r
-        .t
-        .hutan(&["checkpoint", "diff", &first, "a.txt", "--against", "now"])
-        .await
-        .ok()
-        .stdout;
+    let now =
+        r.t.hutan(&["checkpoint", "diff", &first, "--against", "now", "--stat"])
+            .await
+            .ok()
+            .stdout;
+    assert!(
+        now.contains("M a.txt") && now.contains("A new.txt"),
+        "{now}"
+    );
+    let now =
+        r.t.hutan(&["checkpoint", "diff", &first, "a.txt", "--against", "now"])
+            .await
+            .ok()
+            .stdout;
     assert!(now.contains("+edited by the user"), "{now}");
-    let through = r
-        .t
-        .hutan(&[
+    let through =
+        r.t.hutan(&[
             "--json",
             "checkpoint",
             "diff",

@@ -33,6 +33,7 @@ use hutan_protocol::blocks::{
     TerminalBlocksResult,
 };
 use hutan_protocol::chat::*;
+use hutan_protocol::checkpoint::*;
 use hutan_protocol::control::ControlMessage;
 use hutan_protocol::fs::*;
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
@@ -51,7 +52,6 @@ use hutan_protocol::resources::*;
 use hutan_protocol::task::*;
 use hutan_protocol::tree::*;
 use hutan_protocol::worktree::*;
-use hutan_protocol::checkpoint::*;
 use hutan_protocol::{ErrorBody, ErrorCode, Frame, PROTOCOL_VERSION};
 fn daemon_setting_entries() -> Vec<hutan_protocol::daemon_settings::DaemonSetting> {
     use hutan_protocol::daemon_settings::{Applies, DaemonSetting, DaemonSettingKind};

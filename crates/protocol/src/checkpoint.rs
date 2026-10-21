@@ -92,9 +92,10 @@ impl std::str::FromStr for DiffAgainst {
         match s {
             "end" => Ok(Self::End),
             "now" => Ok(Self::Now),
-            other => other.parse().map(Self::Checkpoint).map_err(|_| {
-                format!("`{other}` is neither `end`, `now` nor a checkpoint id")
-            }),
+            other => other
+                .parse()
+                .map(Self::Checkpoint)
+                .map_err(|_| format!("`{other}` is neither `end`, `now` nor a checkpoint id")),
         }
     }
 }

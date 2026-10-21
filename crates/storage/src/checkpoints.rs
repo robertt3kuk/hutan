@@ -570,7 +570,10 @@ mod tests {
             "the next page starts below the cursor"
         );
         // The workspace takes the sessions of its projects.
-        assert_eq!(page(CheckpointScope::Workspace(container.id), None, 10).len(), 4);
+        assert_eq!(
+            page(CheckpointScope::Workspace(container.id), None, 10).len(),
+            4
+        );
         assert_eq!(
             page(CheckpointScope::Workspace(elsewhere.id), None, 10),
             [rows[5].id]
