@@ -31,10 +31,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use hutan_core::{
-    AgentEvent, AgentEventKind, AgentNode, Delivery, DeliveryActor, DeliveryRecord,
-    DeliveryState, NodeKind, NodeOutcome, NodeState, ReviewDecision, SessionId, SessionState,
-    Task, TaskEvent, TaskId, TaskPlacement, TaskPlacementKind, TaskRun, TaskState, TurnId,
-    WorkspaceId, task as model,
+    AgentEvent, AgentEventKind, AgentNode, Delivery, DeliveryActor, DeliveryRecord, DeliveryState,
+    NodeKind, NodeOutcome, NodeState, ReviewDecision, SessionId, SessionState, Task, TaskEvent,
+    TaskId, TaskPlacement, TaskPlacementKind, TaskRun, TaskState, TurnId, WorkspaceId,
+    task as model,
 };
 use hutan_protocol::chat::ChatCreate;
 use hutan_protocol::control::{ErrorBody, ErrorCode};
@@ -59,8 +59,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::bus::EventBus;
-use crate::checkpoints::turns::TurnCheckpoints;
 use crate::chat::{AGENT_CODEX, is_gateway_agent};
+use crate::checkpoints::turns::TurnCheckpoints;
 use crate::config::TasksSettings;
 use crate::harness::is_harness_agent;
 use crate::placement::PlacementCache;
@@ -1146,7 +1146,12 @@ impl TaskService {
     /// its work (`awaiting_review` → `none`, in the name of whoever sent the message); a
     /// `file_diff` is remembered for the turn; the end of a turn finishes a running task and
     /// has the turn judged for review ([`judge_turn`](Self::judge_turn)).
-    fn observe_chat(self: &Arc<Self>, st: &mut State, session: SessionId, event: &AgentEvent) -> bool {
+    fn observe_chat(
+        self: &Arc<Self>,
+        st: &mut State,
+        session: SessionId,
+        event: &AgentEvent,
+    ) -> bool {
         let Some(id) = st.chat_task(session) else {
             return false;
         };
@@ -1205,7 +1210,13 @@ impl TaskService {
     /// becomes `awaiting_review`. A turn that changed nothing leaves the delivery as it was.
     /// The checkpoint's end is recorded in the background, so the judgement is too; it is
     /// dropped when another turn started meanwhile (that turn re-opened the work).
-    fn judge_turn(self: &Arc<Self>, st: &State, id: TaskId, session: SessionId, turn: Option<TurnId>) {
+    fn judge_turn(
+        self: &Arc<Self>,
+        st: &State,
+        id: TaskId,
+        session: SessionId,
+        turn: Option<TurnId>,
+    ) {
         let Some(slot) = st.tasks.get(&id) else {
             return;
         };
@@ -1512,7 +1523,10 @@ impl TaskService {
             .iter()
             .filter(|s| match &s.placement {
                 Some(placement) => placement.root == checkout,
-                None => s.cwd.as_deref().is_some_and(|cwd| cwd.starts_with(checkout)),
+                None => s
+                    .cwd
+                    .as_deref()
+                    .is_some_and(|cwd| cwd.starts_with(checkout)),
             })
             .map(|s| s.id)
             .collect();

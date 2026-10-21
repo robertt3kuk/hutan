@@ -134,14 +134,18 @@ impl Env {
 
     /// The next turn of `session` that starts.
     async fn turn_started(&mut self, session: SessionId) {
-        wait_event(&mut self.events, "a turn that starts", |event| match event {
-            Event::ChatEvent { session_id, event }
-                if *session_id == session && event.kind == AgentEventKind::TurnStarted =>
-            {
-                Some(())
-            }
-            _ => None,
-        })
+        wait_event(
+            &mut self.events,
+            "a turn that starts",
+            |event| match event {
+                Event::ChatEvent { session_id, event }
+                    if *session_id == session && event.kind == AgentEventKind::TurnStarted =>
+                {
+                    Some(())
+                }
+                _ => None,
+            },
+        )
         .await;
     }
 
@@ -168,7 +172,10 @@ impl Env {
             }
         })
         .await;
-        assert!(settled.is_ok(), "the checkpoint of turn {turns} never settled");
+        assert!(
+            settled.is_ok(),
+            "the checkpoint of turn {turns} never settled"
+        );
     }
 }
 
@@ -206,10 +213,17 @@ async fn only_a_turn_that_changed_files_awaits_review_and_the_next_message_reope
     assert!(read_only.delivery_history.is_empty(), "{read_only:?}");
 
     // The user goes on; turn 2 edits a file: its work awaits review.
-    t.user.chat_send(session, "Change the greeting.").await.unwrap();
+    t.user
+        .chat_send(session, "Change the greeting.")
+        .await
+        .unwrap();
     t.turn_started(session).await;
     let running = t.task(task.id).await;
-    assert_eq!(running.delivery, DeliveryState::None, "nothing was re-opened");
+    assert_eq!(
+        running.delivery,
+        DeliveryState::None,
+        "nothing was re-opened"
+    );
     assert!(running.delivery_history.is_empty(), "{running:?}");
     fs::write(t.root.join("a.txt"), "hello from the agent\n").unwrap();
     t.release(1);
@@ -218,7 +232,11 @@ async fn only_a_turn_that_changed_files_awaits_review_and_the_next_message_reope
             task.delivery == DeliveryState::AwaitingReview
         })
         .await;
-    assert_eq!(changed.state, TaskState::Done, "a later turn leaves the task done");
+    assert_eq!(
+        changed.state,
+        TaskState::Done,
+        "a later turn leaves the task done"
+    );
     assert_eq!(
         deliveries(&changed),
         [(DeliveryState::AwaitingReview, DeliveryActor::Daemon)]
@@ -226,7 +244,10 @@ async fn only_a_turn_that_changed_files_awaits_review_and_the_next_message_reope
 
     // The user's next message re-opens the work, in the user's name; the next turn that
     // changes files has it await review again.
-    t.user.chat_send(session, "Simplify total().").await.unwrap();
+    t.user
+        .chat_send(session, "Simplify total().")
+        .await
+        .unwrap();
     let reopened = t
         .wait(task.id, "the new turn never re-opened the work", |task| {
             task.delivery == DeliveryState::None

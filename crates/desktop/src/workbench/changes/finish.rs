@@ -261,10 +261,7 @@ impl ChangesView {
             .sessions()
             .iter()
             .filter(|s| {
-                s.agent.is_some()
-                    || s.chat
-                        .as_ref()
-                        .is_some_and(|chat| !chat.is_assistant())
+                s.agent.is_some() || s.chat.as_ref().is_some_and(|chat| !chat.is_assistant())
             })
             .filter(|s| here(s.id) && !store.tasks().ran_a_task(s.id))
             .max_by_key(|s| s.created_at_ms)

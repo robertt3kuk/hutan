@@ -2023,7 +2023,10 @@ fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAp
         changes.read_with(cx, |c, _| c.finish_message()),
         Some("Change the greeting".to_owned())
     );
-    assert_eq!(changes.read_with(cx, |c, _| c.finish_hint().map(str::to_owned)), None);
+    assert_eq!(
+        changes.read_with(cx, |c, _| c.finish_hint().map(str::to_owned)),
+        None
+    );
     changes.update(cx, |c, cx| {
         c.set_finish_push(false, cx);
         c.confirm_finish(cx);
