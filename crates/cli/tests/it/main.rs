@@ -15,6 +15,7 @@ mod history;
 mod history_resume;
 mod integration;
 mod integration_mcp;
+mod lsp;
 mod mcp;
 mod memory;
 mod notify;

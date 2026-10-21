@@ -559,10 +559,7 @@ impl LspHub {
                 ));
             }
         }
-        let language = req
-            .language
-            .clone()
-            .or_else(|| language_of(&path).map(str::to_owned));
+        let language = req.language.clone().or_else(|| language_of(&path));
         let (doc_id, owner) = self.register(conn, &path, language.clone(), &req)?;
         if !owner {
             let servers = self.servers_of_mirror(&path);

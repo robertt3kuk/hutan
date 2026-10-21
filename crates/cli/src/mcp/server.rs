@@ -306,7 +306,139 @@ async fn run_tool(server: &Server, tool: &Tool, arguments: Value) -> ToolOutcome
             Ok(describe_success(result))
         }
         Call::SessionOutput => session_output(server, arguments).await,
+        Call::Diagnostics => diagnostics(server, arguments).await,
     }
+}
+
+/// The MCP tool `diagnostics`: the files an agent changed (or the ones it names) and the files
+/// that import them directly, or everything the servers know about the workspace.
+async fn diagnostics(server: &Server, arguments: Value) -> ToolOutcome {
+    use hutan_protocol::lsp::{LspDiagnosticsRequest, LspSeverity};
+
+    use crate::diag::{self, Collected};
+
+    let object = arguments.as_object().cloned().unwrap_or_default();
+    if let Some(unknown) = object
+        .keys()
+        .find(|k| !["paths", "scope", "min_severity", "wait_secs"].contains(&k.as_str()))
+    {
+        return Err(format!("bad arguments: unknown argument `{unknown}`"));
+    }
+    let min_severity = match object.get("min_severity").and_then(Value::as_str) {
+        None => None,
+        Some("error") => Some(LspSeverity::Error),
+        Some("warning") => Some(LspSeverity::Warning),
+        Some("information") => Some(LspSeverity::Information),
+        Some("hint") => Some(LspSeverity::Hint),
+        Some(other) => return Err(format!("bad arguments: `min_severity` `{other}`")),
+    };
+    let wait = std::time::Duration::from_secs(
+        object
+            .get("wait_secs")
+            .and_then(Value::as_u64)
+            .unwrap_or(30)
+            .clamp(1, 120),
+    );
+    let scope = object
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("changed");
+    if !["changed", "project"].contains(&scope) {
+        return Err(format!("bad arguments: `scope` `{scope}`"));
+    }
+    let cwd = std::env::current_dir().map_err(|e| format!("no working directory: {e}"))?;
+    let client = server.client().await.map_err(describe_error)?;
+    if !client.supports_lsp() || !client.supports_doc_sync() {
+        return Err(
+            "this hutand has no language servers (it is older than protocol 0.39)".to_owned(),
+        );
+    }
+    let explicit: Vec<std::path::PathBuf> = object
+        .get("paths")
+        .and_then(Value::as_array)
+        .map(|paths| {
+            paths
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|p| {
+                    let p = std::path::Path::new(p);
+                    if p.is_absolute() {
+                        p.to_owned()
+                    } else {
+                        cwd.join(p)
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut collected;
+    let mut notes = Vec::new();
+    if !explicit.is_empty() {
+        collected = diag::collect(&client, &explicit, min_severity, wait)
+            .await
+            .map_err(describe_error)?;
+    } else if scope == "project" {
+        let workspace_id = workspace_of_session(&client).await;
+        let result = client
+            .lsp_diagnostics(LspDiagnosticsRequest {
+                path: None,
+                workspace_id,
+                min_severity,
+            })
+            .await
+            .map_err(describe_error)?;
+        collected = Collected::of_folder(std::path::Path::new("/"), result);
+        notes.push(match workspace_id {
+            Some(_) => "scope: the whole workspace (what the servers know now)".to_owned(),
+            None => "scope: every server (this session has no workspace)".to_owned(),
+        });
+    } else {
+        let Some((root, changed)) = diag::changed_files(&cwd) else {
+            return Err(format!(
+                "{} is not in a git checkout: pass `paths`, or use `scope` `project`",
+                cwd.display()
+            ));
+        };
+        if changed.is_empty() {
+            return Ok((
+                "no files changed in this checkout: nothing to check".to_owned(),
+                Some(json!({"files": [], "changed": [], "importers": []})),
+            ));
+        }
+        let importers = diag::importers_of(&client, &root, &changed)
+            .await
+            .map_err(describe_error)?;
+        let mut files = changed.clone();
+        files.extend(importers.iter().cloned());
+        collected = diag::collect(&client, &files, min_severity, wait)
+            .await
+            .map_err(describe_error)?;
+        notes.push(format!(
+            "scope: {} changed file(s) and {} file(s) that import them",
+            changed.len(),
+            importers.len()
+        ));
+        let mut json = collected.json();
+        json["changed"] = json!(changed);
+        json["importers"] = json!(importers);
+        collected.notes.extend(notes);
+        return Ok((collected.render(), Some(json)));
+    }
+    collected.notes.extend(notes);
+    Ok((collected.render(), Some(collected.json())))
+}
+
+/// The workspace of the session this server runs in, when it runs in one.
+async fn workspace_of_session(client: &Client) -> Option<hutan_core::WorkspaceId> {
+    let session = crate::commands::session_origin()?.session_id;
+    let list: hutan_protocol::messages::SessionList = client
+        .call(Request::SessionList(Default::default()))
+        .await
+        .ok()?;
+    list.sessions
+        .into_iter()
+        .find(|s| s.id == session)
+        .map(|s| s.workspace_id)
 }
 
 async fn session_output(server: &Server, arguments: Value) -> ToolOutcome {

@@ -3,6 +3,7 @@
 mod args;
 mod attach_spec;
 mod commands;
+mod diag;
 mod error;
 mod hook;
 mod integration;

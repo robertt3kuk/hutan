@@ -125,6 +125,12 @@ pub enum Command {
     /// (atomically, with a version check), find and search (`hutan fs ls|cat|stat|write|find|search`)
     #[command(subcommand)]
     Fs(FsCommand),
+    /// Language servers the daemon runs for the editor and for agents: list them, restart or stop
+    /// one, trust a folder (`hutan lsp ls|status|restart|stop|trust`)
+    Lsp(LspArgs),
+    /// Errors and warnings of a file (or what the servers know about a folder), from its language
+    /// server; works without the Hutan window
+    Diagnostics(DiagnosticsArgs),
     /// Open `path[:line[:col]]` in a file tab of the Hutan window (looked up through the
     /// daemon); without a window, print where the file is
     Open(OpenArgs),
@@ -909,6 +915,59 @@ pub struct AssistantResetArgs {
     /// $HUTAN_WORKSPACE, else the global Mawas of Home)
     #[arg(long = "ws", visible_alias = "workspace", value_name = "ID|NAME")]
     pub workspace: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct LspArgs {
+    #[command(subcommand)]
+    pub command: Option<LspCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LspCommand {
+    /// The servers, one line each: state, root, documents, memory (the default)
+    Ls,
+    /// Like `ls`, with the folder decisions, the limits and what to do about a missing server
+    Status,
+    /// Start a server again; a missing one is looked for again
+    Restart(LspServerArgs),
+    /// Stop a server; the next document that needs it starts it again
+    Stop(LspServerArgs),
+    /// Decide whether language servers may start in a folder (and everything below it). A server
+    /// runs the project's build scripts and procedural macros and rust-analyzer does not sandbox
+    /// them: trust only folders whose code you would run. Only you can decide, not an agent
+    Trust(LspTrustArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct LspServerArgs {
+    /// The server's id as `hutan lsp ls` prints it, or its name when only one server has it
+    pub server: String,
+}
+
+#[derive(Debug, Args)]
+pub struct LspTrustArgs {
+    /// The folder (default: the current directory)
+    pub folder: Option<PathBuf>,
+    /// Never start a server there
+    #[arg(long, conflicts_with = "forget")]
+    pub deny: bool,
+    /// Forget the decision about this folder: it is asked about again
+    #[arg(long)]
+    pub forget: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct DiagnosticsArgs {
+    /// A file (opened through the daemon, so no window is needed) or a folder (what the servers
+    /// know below it); default: the current directory
+    pub path: Option<PathBuf>,
+    /// Only this serious or more: `error`, `warning`, `info` or `hint`
+    #[arg(long, value_name = "LEVEL")]
+    pub severity: Option<String>,
+    /// For a file: wait at most this many seconds for the server to start and answer (default 30)
+    #[arg(long, value_name = "SECS", default_value_t = 30)]
+    pub wait: u64,
 }
 
 #[derive(Debug, Subcommand)]

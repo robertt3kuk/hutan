@@ -246,20 +246,25 @@ impl Catalog {
     }
 }
 
-/// The LSP language id of a file, from its name; `None` for a file no language is known for.
-pub fn language_of(path: &Path) -> Option<&'static str> {
+/// The LSP language id of a file, from its name: the ids of the common languages as editors use
+/// them, else the extension itself (`zig`, `lua`: what the `languages` of a server of your own
+/// name); `None` for a file without an extension.
+pub fn language_of(path: &Path) -> Option<String> {
     let name = path.file_name()?.to_str()?;
-    match name {
-        "Cargo.lock" | "Pipfile" => return Some("toml"),
-        "Makefile" | "makefile" | "GNUmakefile" => return Some("makefile"),
-        "Dockerfile" => return Some("dockerfile"),
+    let known = match name {
+        "Cargo.lock" | "Pipfile" => Some("toml"),
+        "Makefile" | "makefile" | "GNUmakefile" => Some("makefile"),
+        "Dockerfile" => Some("dockerfile"),
         ".bashrc" | ".bash_profile" | ".zshrc" | ".zprofile" | ".profile" | ".zshenv" => {
-            return Some("shellscript");
+            Some("shellscript")
         }
-        _ => {}
+        _ => None,
+    };
+    if let Some(known) = known {
+        return Some(known.to_owned());
     }
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-    Some(match ext.as_str() {
+    let id = match ext.as_str() {
         "rs" => "rust",
         "ts" | "mts" | "cts" => "typescript",
         "tsx" => "typescriptreact",
@@ -280,8 +285,10 @@ pub fn language_of(path: &Path) -> Option<&'static str> {
         "yaml" | "yml" => "yaml",
         "html" | "htm" => "html",
         "css" => "css",
+        other if other.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => other,
         _ => return None,
-    })
+    };
+    Some(id.to_owned())
 }
 
 #[cfg(test)]
@@ -380,10 +387,13 @@ root_markers = ["my.toml"]
             ("/r/include/a.hpp", Some("cpp")),
             ("/r/run.sh", Some("shellscript")),
             ("/r/Cargo.lock", Some("toml")),
-            ("/r/notes.txt", None),
+            // Other extensions name themselves, for the servers of your own.
+            ("/r/main.zig", Some("zig")),
+            ("/r/notes.txt", Some("txt")),
             ("/r/noextension", None),
+            ("/r/odd.a-b", None),
         ] {
-            assert_eq!(language_of(Path::new(path)), language, "{path}");
+            assert_eq!(language_of(Path::new(path)).as_deref(), language, "{path}");
         }
     }
 }

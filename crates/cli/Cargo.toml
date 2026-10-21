@@ -39,6 +39,7 @@ hutan-gateway = { workspace = true, features = ["test-support"] }
 hutan-storage.workspace = true
 parking_lot.workspace = true
 portable-pty.workspace = true
+regex.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["io-util", "process", "rt-multi-thread"] }
 vt100.workspace = true

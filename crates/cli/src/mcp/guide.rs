@@ -23,6 +23,13 @@ LOOK (always allowed)
   hutan memory ls              what Mawas remembers (the user approved each entry)
   hutan fs ls|cat|stat|find|search   files through the daemon (workspaces only; fs find is fuzzy
                                by name, fs search is by content)
+  hutan diagnostics [path]     errors and warnings from the language servers: for a file (opened
+                               through the daemon, no window needed) or what they know below a
+                               folder; MCP `diagnostics` checks the files you changed and the
+                               files that import them. `stale`/\"not installed\"/\"not trusted\"
+                               means no answer, not \"no problems\". Trusting a folder
+                               (hutan lsp trust) is the user's, never yours.
+  hutan lsp ls                 the language servers: state, root, memory
   hutan approvals              what waits for the user
   hutan notify ls              pending notifications
   hutan search <words>         past sessions (needs the history index)
@@ -82,8 +89,11 @@ approves the request in Hutan; the result tells you when it did. If the user den
 it fails with DENIED: do not retry unless the user asks. In Advisor mode changes are refused \
 (REFUSED): describe what you would change instead. You can never answer approvals or change \
 grants yourself. `ui_actions` lists what the window can do and its settings; use `ui_run` and \
-`ui_set_setting` for those, and `open_file` to show the user a file at a line. `checkpoint_list`, \
-`checkpoint_diff` and `checkpoint_preview` show what the user can rewind to (the files of each \
+`ui_set_setting` for those, and `open_file` to show the user a file at a line. `diagnostics` \
+shows the language servers' errors in the files you changed and the files that import them (a \
+server that is not installed, not trusted or still indexing says so: that is not \"no problems\"); \
+`lsp_status` lists the servers. `checkpoint_list`, `checkpoint_diff` and \
+`checkpoint_preview` show what the user can rewind to (the files of each \
 agent turn) and what a restore would do; you cannot restore. `memory_list` and \
 `memory_search` read what Hutan remembers about the \
 user; `memory_propose` only proposes - nothing is remembered until the user approves it, so \

@@ -18,6 +18,9 @@ pub enum Call {
     /// The last lines of a terminal session as text (`session.list`, then the terminal's
     /// snapshot and scrollback).
     SessionOutput,
+    /// Diagnostics of the files an agent changed and their direct importers, or of the given
+    /// files, or of the whole project (`doc.open`, `lsp.diagnostics`, `fs.search`).
+    Diagnostics,
 }
 
 /// One tool.
@@ -725,6 +728,69 @@ static TOOLS: &[Tool] = &[
             )
         },
     },
+    // ---- language servers -------------------------------------------------------------------
+    Tool {
+        name: "diagnostics",
+        description: "Errors and warnings the project's language servers (rust-analyzer, \
+                      typescript-language-server, gopls, …) report, as `path:line:col: severity: \
+                      message`. By default (`scope` `changed`) the files changed in the \
+                      checkout you run in (`git status`) plus the files that directly import \
+                      them, so you see what your edit broke; `paths` checks exactly those \
+                      files; `scope` `project` returns everything the servers know about the \
+                      workspace (slow, large: ask for it only when needed). Results are \
+                      `stale` until the server is ready: a server that is still indexing, not \
+                      installed or not trusted by the user (the user decides that in Hutan, you \
+                      cannot) says so instead of reporting no problems. Only the workspace's \
+                      own folders are checked. This is not a code search: use `fs_search` or \
+                      your own tools to find references. Read-only.",
+        read_only: true,
+        call: Call::Diagnostics,
+        schema: || {
+            object(
+                json!({
+                    "paths": {
+                        "type": "array",
+                        "items": path("A file to check (absolute, or relative to your working directory)."),
+                        "description": "Check exactly these files (at most 40).",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["changed", "project"],
+                        "default": "changed",
+                        "description": "`changed`: the files changed in your checkout and their direct importers. `project`: everything the servers know about the workspace.",
+                    },
+                    "min_severity": {
+                        "type": "string",
+                        "enum": ["error", "warning", "information", "hint"],
+                        "description": "Only problems at least this serious (default: all).",
+                    },
+                    "wait_secs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 120,
+                        "default": 30,
+                        "description": "How long to wait for a server that is still starting.",
+                    },
+                }),
+                &[],
+            )
+        },
+    },
+    Tool {
+        name: "lsp_status",
+        description: "The language servers Hutan runs: for each its state (`starting`, `indexing`, \
+                      `ready`, `failed`, `stopped`, `not_installed` with the command that \
+                      installs it, `untrusted` until the user trusts the folder), root, open \
+                      documents and memory, and the folders the user trusted. Read-only.",
+        read_only: true,
+        call: request("lsp.status"),
+        schema: || {
+            object(
+                json!({"workspace_id": workspace_id("Only the servers of this workspace.")}),
+                &[],
+            )
+        },
+    },
     // ---- workspaces and projects ------------------------------------------------------------
     Tool {
         name: "workspace_list",
@@ -1354,6 +1420,8 @@ mod tests {
             "checkpoint_list",
             "checkpoint_diff",
             "checkpoint_preview",
+            "diagnostics",
+            "lsp_status",
         ] {
             assert!(find(name).is_some(), "missing tool {name}");
         }
@@ -1374,6 +1442,16 @@ mod tests {
                 tool.description
             );
         }
+        // Language servers: an agent reads their findings; trusting a folder (which lets a
+        // server run the project's build scripts) is the user's alone.
+        for name in ["lsp_trust", "lsp_restart", "lsp_stop"] {
+            assert!(find(name).is_none(), "{name}: not an agent's tool");
+        }
+        for name in ["diagnostics", "lsp_status"] {
+            let tool = find(name).unwrap();
+            assert!(tool.read_only, "{name}");
+        }
+        assert!(find("diagnostics").unwrap().description.contains("cannot"));
         // Memory has no direct write tool for an agent: it can only propose.
         for name in [
             "memory_write",

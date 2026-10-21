@@ -11,8 +11,8 @@ use hutan_client::Client;
 use hutan_core::SessionId;
 use hutan_protocol::messages::{Event, SessionInfo};
 use hutan_protocol::resources::{
-    AgentInterrupted, InterruptVia, ProcessInfo, ProcessSignaled, ResourceSample, SessionResources,
-    SignalName,
+    AgentInterrupted, InterruptVia, ProcessInfo, ProcessSignaled, ResourceSample, ServiceResources,
+    SessionResources, SignalName,
 };
 use tokio::sync::broadcast::error::RecvError;
 
@@ -104,6 +104,8 @@ impl Ctx {
         let mut shown = sample.clone();
         if let Some(only) = only {
             shown.sessions.retain(|s| s.session_id == only);
+            // The daemon's own services belong to no session.
+            shown.services.clear();
         }
         if clear {
             print!("{CLEAR}");
@@ -305,7 +307,29 @@ fn session_block(
     }
 }
 
-/// The whole sample as text: a block per session, then `hutand`. Sessions busiest first for
+fn service_block(service: &ServiceResources, order: Order, out: &mut String) {
+    out.push_str(&format!(
+        "{} {}  ({} process(es), cpu {}%, {}){}\n",
+        service.kind,
+        service.label,
+        service.totals.processes,
+        cpu_text(Some(service.totals.cpu_percent)),
+        mem_text(service.totals.rss_bytes),
+        if service.truncated {
+            "  [list truncated]"
+        } else {
+            ""
+        }
+    ));
+    out.push_str("      PID   CPU%      RSS STATE     COMMAND\n");
+    for (depth, process) in tree_rows(&service.processes, order) {
+        out.push_str(&process_line(depth, process, None));
+        out.push('\n');
+    }
+}
+
+/// The whole sample as text: a block per session, a block per service (language servers), then
+/// `hutand`. Sessions busiest first for
 /// [`Order::Cpu`], in creation order otherwise.
 fn render(sample: &ResourceSample, sessions: &[SessionInfo], order: Order) -> String {
     let mut shown: Vec<&SessionResources> = sample.sessions.iter().collect();
@@ -313,12 +337,16 @@ fn render(sample: &ResourceSample, sessions: &[SessionInfo], order: Order) -> St
         shown.sort_by(|a, b| b.totals.cpu_percent.total_cmp(&a.totals.cpu_percent));
     }
     let mut out = String::new();
-    if shown.is_empty() {
+    if shown.is_empty() && sample.services.is_empty() {
         out.push_str("no live session has a process\n\n");
     }
     for session in shown {
         let info = sessions.iter().find(|s| s.id == session.session_id);
         session_block(session, info, order, &mut out);
+        out.push('\n');
+    }
+    for service in &sample.services {
+        service_block(service, order, &mut out);
         out.push('\n');
     }
     if sample.truncated {
@@ -421,6 +449,36 @@ mod tests {
         assert!(row("cargo test").ends_with("◆ agent omp"));
         assert!(text.contains("agents without a process id: Explore (sub, idle)"));
         assert!(text.ends_with("hutand  pid 912  cpu 1.0%  3.0M"), "{text}");
+    }
+
+    #[test]
+    fn language_servers_are_listed_as_services_after_the_sessions() {
+        let mut shown = sample();
+        shown.services = vec![ServiceResources {
+            service_id: "lsp:rust-analyzer:/repo".to_owned(),
+            kind: "lsp".to_owned(),
+            label: "rust-analyzer /repo".to_owned(),
+            processes: vec![
+                process(300, 1, "rust-analyzer", Some(2.0)),
+                process(310, 300, "rust-analyzer-proc-macro-srv", None),
+            ],
+            totals: ResourceTotals {
+                processes: 2,
+                cpu_percent: 2.0,
+                rss_bytes: 6 * 1024 * 1024,
+            },
+            truncated: false,
+        }];
+        let text = render(&shown, &[], Order::Pid);
+        let service = text
+            .find("lsp rust-analyzer /repo  (2 process(es), cpu 2.0%, 6.0M)")
+            .unwrap();
+        assert!(service > text.find("-zsh").unwrap());
+        assert!(service < text.find("hutand  pid 912").unwrap());
+        assert!(
+            text.contains("sleeping   rust-analyzer-proc-macro-srv"),
+            "{text}"
+        );
     }
 
     #[test]
