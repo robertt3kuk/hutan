@@ -383,35 +383,41 @@ impl View {
 
     /// Applies renders (acking each when `auto_ack`) until the screen satisfies `pred`.
     pub async fn wait_for(&mut self, what: &str, pred: impl Fn(&Screen) -> bool) {
-        self.wait_for_within(what, WAIT, pred).await;
-    }
-
-    /// [`View::wait_for`] with its own overall deadline, for waits that are a liveness bound
-    /// on slow work rather than a latency check. Each render must still arrive within `WAIT`.
-    pub async fn wait_for_within(
-        &mut self,
-        what: &str,
-        deadline: Duration,
-        pred: impl Fn(&Screen) -> bool,
-    ) {
-        let outcome = timeout(deadline, async {
-            loop {
-                if pred(&self.screen) {
-                    return;
-                }
-                // Credit is one frame: the render being waited for needs the last one acked.
-                if self.auto_ack && self.acked != self.screen.frame {
-                    self.ack().await;
-                }
-                self.next_render().await;
-            }
-        })
-        .await;
+        let outcome = timeout(WAIT, self.wait_until(pred)).await;
         assert!(
             outcome.is_ok(),
             "{what}: timed out; screen:\n{}",
             self.screen.text()
         );
+    }
+
+    /// [`View::wait_for`] for work whose total time depends on the machine (a flood through a
+    /// debug build): no overall deadline, but every render must arrive within `WAIT` of the
+    /// previous one, so a stalled daemon fails and a slow one does not.
+    pub async fn wait_for_progress(&mut self, what: &str, pred: impl Fn(&Screen) -> bool) {
+        while !pred(&self.screen) {
+            let step = timeout(WAIT, self.step()).await;
+            assert!(
+                step.is_ok(),
+                "{what}: no render for {WAIT:?}; screen:\n{}",
+                self.screen.text()
+            );
+        }
+    }
+
+    async fn wait_until(&mut self, pred: impl Fn(&Screen) -> bool) {
+        while !pred(&self.screen) {
+            self.step().await;
+        }
+    }
+
+    /// One more render. Credit is one frame: the render being waited for needs the last one
+    /// acked.
+    async fn step(&mut self) {
+        if self.auto_ack && self.acked != self.screen.frame {
+            self.ack().await;
+        }
+        self.next_render().await;
     }
 
     /// Fails if any render arrives within `quiet`.

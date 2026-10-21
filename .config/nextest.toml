@@ -13,3 +13,9 @@ retries = { backoff = "fixed", count = 2, delay = "2s" }
 slow-timeout = { period = "30s", terminate-after = 6 }
 fail-fast = false
 test-threads = 4
+
+# The flood test pushes megabytes through a debug-build emulator and is CPU-bound: it runs with
+# the whole test-thread budget to itself, so the other tests' daemons do not stretch it.
+[[profile.default.overrides]]
+filter = 'package(hutan-daemon) & test(=sessions::ack_pacing_keeps_floods_bounded_and_the_daemon_responsive)'
+threads-required = "num-test-threads"

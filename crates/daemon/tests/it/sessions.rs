@@ -102,10 +102,13 @@ async fn ack_pacing_keeps_floods_bounded_and_the_daemon_responsive() {
     let client = t.connect().await;
     let observer_client = t.connect().await;
 
-    // The brief's flood, plus a marker printed when it is over.
+    // A flood plus a marker printed when it is over. 2 MB is 1 M lines of `yes`: 70 times the
+    // retained history (10 000 lines + the engine's 4 096 headroom) and 30 times the reader's
+    // 64 KiB buffer, so it cannot be held anywhere between the child and the client. (The
+    // brief's 20 MB took 15–16 s in a debug build alone and over a minute on a busy machine.)
     let session = create(
         &client,
-        sh("yes | head -c 20000000; echo FLOOD-DONE; exec cat"),
+        sh("yes | head -c 2000000; echo FLOOD-DONE; exec cat"),
     )
     .await;
     let tid = terminal_of(&session);
@@ -137,10 +140,8 @@ async fn ack_pacing_keeps_floods_bounded_and_the_daemon_responsive() {
             .is_some_and(|line| line.trim() == "FLOOD-DONE")
     };
     let mut observer = View::attach(&observer_client, tid, None).await;
-    // A liveness bound: 20 MB through a debug build takes 15-16 s alone, longer under load.
-    observer
-        .wait_for_within("flood finished", Duration::from_secs(60), finished)
-        .await;
+    // No wall-clock bound on the flood: every render must arrive within `WAIT` of the last.
+    observer.wait_for_progress("flood finished", finished).await;
     status(&observer_client).await;
 
     // The next render after acking reflects the latest screen, not the intermediate one.
