@@ -964,6 +964,7 @@ fn target_session(request: &Request) -> Option<SessionId> {
         Request::AgentInterrupt(r) => Some(r.session_id),
         Request::SessionSendText(r) => Some(r.session_id),
         Request::ChatSend(r) => Some(r.session_id),
+        Request::ChatRetry(r) => Some(r.session_id),
         Request::ChatSetModel(r) => Some(r.session_id),
         _ => None,
     }
@@ -1103,6 +1104,10 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
         Request::ChatSend(r) => format!(
             "send a message ({} characters) to the chat {}",
             r.text.chars().count(),
+            session(r.session_id)
+        ),
+        Request::ChatRetry(r) => format!(
+            "send the last message of the chat {} again",
             session(r.session_id)
         ),
         Request::ChatInterrupt(r) => format!("interrupt the turn of {}", session(r.session_id)),

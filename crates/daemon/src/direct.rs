@@ -130,10 +130,14 @@ impl DirectSession {
     /// Starts a turn with the user's `text` and what they attached; its events follow on the
     /// session's stream. The attachments are part of the journaled message: the model gets, and
     /// the conversation keeps, `text` followed by their resolved text.
+    ///
+    /// `retry` (`chat.retry`): `text` is the journal's last user message; the request carries
+    /// the conversation before it, then it, and the turn does not journal it again.
     pub(crate) async fn send(
         self: &Arc<Self>,
         text: String,
         attached: Option<Attached>,
+        retry: bool,
     ) -> Result<TurnId, ErrorBody> {
         if self.shut.load(Ordering::Acquire) {
             return Err(ErrorBody::new(
@@ -156,7 +160,12 @@ impl DirectSession {
             self.require_vision(&record.id, &target.model, provider.as_ref())
                 .await?;
         }
-        let history = self.load_history().await?;
+        let mut history = self.load_history().await?;
+        if retry && let Some(last_user) = history.iter().rposition(|(role, _)| *role == Role::User)
+        {
+            // The message itself is the new one; what a failed turn said after it goes.
+            history.truncate(last_user);
+        }
         let max_context_chars = self.max_context_chars.load(Ordering::Relaxed);
         let (mut messages, dropped) = build_context(
             &history,
@@ -185,6 +194,7 @@ impl DirectSession {
             provider,
             request,
             text,
+            retry,
             attachments,
             provider_id: record.id,
             dropped,
@@ -331,6 +341,7 @@ impl DirectSession {
             provider,
             request,
             text,
+            retry,
             attachments,
             provider_id,
             dropped,
@@ -343,27 +354,29 @@ impl DirectSession {
         start.payload = Some(json!({ "provider_id": provider_id, "model": model }));
         self.emit(start).await;
 
-        let user_item = ItemId::new();
-        self.emit(Self::draft(
-            turn_id,
-            Some(user_item),
-            AgentEventKind::MessageStart {
-                role: MessageRole::User,
-                phase: None,
-            },
-        ))
-        .await;
-        let mut user_end = Self::draft(
-            turn_id,
-            Some(user_item),
-            AgentEventKind::MessageEnd {
-                role: MessageRole::User,
-                phase: None,
-                text,
-            },
-        );
-        user_end.payload = attachments.map(|meta| json!({ ATTACHMENTS_META_KEY: meta }));
-        self.emit(user_end).await;
+        if !retry {
+            let user_item = ItemId::new();
+            self.emit(Self::draft(
+                turn_id,
+                Some(user_item),
+                AgentEventKind::MessageStart {
+                    role: MessageRole::User,
+                    phase: None,
+                },
+            ))
+            .await;
+            let mut user_end = Self::draft(
+                turn_id,
+                Some(user_item),
+                AgentEventKind::MessageEnd {
+                    role: MessageRole::User,
+                    phase: None,
+                    text,
+                },
+            );
+            user_end.payload = attachments.map(|meta| json!({ ATTACHMENTS_META_KEY: meta }));
+            self.emit(user_end).await;
+        }
         if dropped > 0 {
             self.emit(Self::draft(
                 turn_id,
@@ -511,6 +524,8 @@ struct Run {
     text: String,
     /// What the user's message says about its attachments (`attachments_meta`).
     attachments: Option<Vec<AttachmentMeta>>,
+    /// `chat.retry`: the user message is in the journal already.
+    retry: bool,
     provider_id: String,
     dropped: usize,
     cancel: CancellationToken,

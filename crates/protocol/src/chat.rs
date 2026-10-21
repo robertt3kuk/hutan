@@ -88,6 +88,17 @@ pub struct ChatSend {
     pub attachments: Vec<Attachment>,
 }
 
+/// `chat.retry` (protocol 0.34, capability `chat.retry`): sends the conversation's last user
+/// message again, as a new turn, **without journaling it again**: the journal keeps one user
+/// message however often it is retried. A direct chat sends the conversation up to and including
+/// that message (what a failed or cancelled turn said after it is left out of the request); a
+/// harness chat gets the message's text again (attachments are not sent again). Answered with
+/// [`ChatSent`]; `invalid_state` while a turn runs or when the chat has no user message yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatRetry {
+    pub session_id: SessionId,
+}
+
 /// Result of `chat.send`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatSent {

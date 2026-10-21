@@ -66,6 +66,9 @@ use crate::registry::{self, ChatNotifier};
 pub const AGENT_CODEX: &str = "codex";
 /// Names of the temporary files that hold clipboard images for Codex (`<home>/tmp/`).
 const TEMP_IMAGE_PREFIX: &str = "img-";
+/// How many of the newest journaled `message_end` events `chat.retry` looks through for the
+/// last user message (a turn ends a few assistant messages at most after it).
+const RETRY_LOOKBACK: u32 = 200;
 /// The `error` of a turn row that a daemon shutdown cancelled; the next start tells such a turn
 /// from one the user cancelled (`session.recovery`, `last_turn: interrupted`).
 pub const DAEMON_STOP_TURN_ERROR: &str = "hutand stopped during the turn";
@@ -298,6 +301,10 @@ struct Delivery {
     meta: Option<Vec<AttachmentMeta>>,
     /// Temporary files holding clipboard images for the agent; removed when the turn ends.
     temp_files: Vec<PathBuf>,
+    /// The turn is a `chat.retry`: the user message the agent echoes is already in the journal
+    /// and is dropped, not journaled again. Cleared by that echo's `message_end` and when the
+    /// turn ends.
+    retry: bool,
 }
 
 /// What Hutan adds to one turn of a Mawas conversation (`crate::memory`): context blocks that
@@ -1261,6 +1268,51 @@ impl ChatManager {
         text: String,
         attached: Option<Attached>,
     ) -> Result<TurnId, ErrorBody> {
+        self.start_turn(id, text, attached, false).await
+    }
+
+    /// `chat.retry`: the conversation's last user message again, as a new turn that does not
+    /// journal it a second time.
+    pub async fn retry(&self, id: SessionId) -> Result<TurnId, ErrorBody> {
+        let storage = self.storage.clone();
+        let rows = tokio::task::spawn_blocking(move || {
+            storage
+                .chat()
+                .items_of_kind(id, "message_end", RETRY_LOOKBACK)
+        })
+        .await
+        .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("reading the journal: {e}")))?
+        .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("reading the journal: {e}")))?;
+        // Newest first.
+        let text = rows
+            .iter()
+            .filter_map(|row| serde_json::from_str::<AgentEvent>(&row.event_json).ok())
+            .find_map(|event| match event.kind {
+                AgentEventKind::MessageEnd {
+                    role: hutan_core::agent::MessageRole::User,
+                    text,
+                    ..
+                } if !text.trim().is_empty() => Some(text),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                ErrorBody::new(
+                    ErrorCode::InvalidState,
+                    "there is nothing to retry: the chat has no message of the user yet",
+                )
+            })?;
+        self.start_turn(id, text, None, true).await
+    }
+
+    /// A turn with `text`; `retry`: the message is the journal's last user message, which the
+    /// turn does not journal again.
+    async fn start_turn(
+        &self,
+        id: SessionId,
+        text: String,
+        attached: Option<Attached>,
+        retry: bool,
+    ) -> Result<TurnId, ErrorBody> {
         if text.trim().is_empty() && attached.is_none() {
             return Err(ErrorBody::new(
                 ErrorCode::BadRequest,
@@ -1333,7 +1385,11 @@ impl ChatManager {
                 };
                 match prepared {
                     Ok(()) => {
-                        lock(&live.delivery).meta = meta;
+                        {
+                            let mut delivery = lock(&live.delivery);
+                            delivery.meta = meta;
+                            delivery.retry = retry;
+                        }
                         let sent = adapter
                             .send_message_with(text, extras)
                             .await
@@ -1363,7 +1419,7 @@ impl ChatManager {
             }
             Backend::Direct(session) => {
                 let text = memory.appended_to(text);
-                session.send(text, attached).await
+                session.send(text, attached, retry).await
             }
         };
         if started.is_err() {
@@ -1866,6 +1922,7 @@ impl ChatManager {
         let files = {
             let mut delivery = lock(&live.delivery);
             delivery.meta = None;
+            delivery.retry = false;
             std::mem::take(&mut delivery.temp_files)
         };
         for file in files {
@@ -1977,6 +2034,24 @@ impl ChatManager {
     }
 
     async fn handle(&self, live: &Live, mut draft: AgentEventDraft) {
+        // A retried turn: the agent's echo of the user message is in the journal already.
+        if let AgentEventKind::MessageStart {
+            role: hutan_core::agent::MessageRole::User,
+            ..
+        }
+        | AgentEventKind::MessageEnd {
+            role: hutan_core::agent::MessageRole::User,
+            ..
+        } = &draft.kind
+        {
+            let mut delivery = lock(&live.delivery);
+            if delivery.retry {
+                if matches!(draft.kind, AgentEventKind::MessageEnd { .. }) {
+                    delivery.retry = false;
+                }
+                return;
+            }
+        }
         let ts_ms = registry::now_ms();
         let ends_turn = draft.kind.ends_turn();
         if ends_turn

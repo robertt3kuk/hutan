@@ -33,6 +33,7 @@ impl Ctx {
             ChatCommand::Log(TargetArgs { target }) => self.chat_log(&target).await,
             ChatCommand::Attach(TargetArgs { target }) => self.chat_attach(&target).await,
             ChatCommand::Interrupt(TargetArgs { target }) => self.chat_interrupt(&target).await,
+            ChatCommand::Retry(TargetArgs { target }) => self.chat_retry(&target).await,
             ChatCommand::Models(args) => self.chat_models(&args.agent).await,
             ChatCommand::Model(args) => self.chat_model(args).await,
         }
@@ -298,6 +299,26 @@ impl Ctx {
             .map_err(|e| self.fail(e))?;
         self.print(&json!({"session_id": session.id}), || {
             format!("interrupted {}", session.id)
+        })
+    }
+
+    /// `hutan chat retry`: `chat.retry` (protocol 0.34). Prints the new turn's id.
+    async fn chat_retry(&self, target: &str) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        let session = self.resolve_chat(&client, target).await?;
+        if !client.supports_chat_retry() {
+            return Err(CliError::Failed(
+                "this daemon cannot retry a message (it predates protocol 0.34); restart it with \
+                 `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let sent = client
+            .chat_retry(session.id)
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&sent, || {
+            format!("sent the last message again: turn {}", sent.turn_id)
         })
     }
 

@@ -542,6 +542,8 @@ pub enum ChatCommand {
     Attach(TargetArgs),
     /// Stop the turn in progress
     Interrupt(TargetArgs),
+    /// Send the chat's last message again (after a failed turn); it is not journaled twice
+    Retry(TargetArgs),
     /// List the models the agent offers
     Models(ChatModelsArgs),
     /// Switch the model of a direct or harness chat for its next turn (the history stays)

@@ -2,6 +2,8 @@
 //!
 //! - [`notify`] also carries `notify.mute` and `SessionInfo.muted`; a focused session raises no
 //!   intent and focusing one withdraws its intents (protocol 0.34, capability `notify.mute`).
+//! - [`chat`] also carries `chat.retry`: the last user message again, journaled once
+//!   (protocol 0.34, capability `chat.retry`).
 //! - [`fs`]: the daemon's file service: `fs.read`, chunked atomic `fs.write.*`, `fs.stat`,
 //!   `fs.list`, `fs.find`, `fs.search`, `fs.watch` and the `fs.changed` event (protocol 0.33,
 //!   capabilities `fs`, `fs.watch`).

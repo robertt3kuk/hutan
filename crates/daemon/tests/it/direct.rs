@@ -18,7 +18,9 @@ use hutan_daemon::GatewayConfig;
 use hutan_gateway::testing::{MockServer, Reply};
 use hutan_gateway::{CredentialStore, HttpConfig, MemoryStore, ProbeTarget, ProviderKind};
 use hutan_protocol::ErrorCode;
-use hutan_protocol::chat::{ChatCreate, ChatHistory, ChatHistoryRequest, ChatSend, ChatSent};
+use hutan_protocol::chat::{
+    ChatCreate, ChatHistory, ChatHistoryRequest, ChatRetry, ChatSend, ChatSent,
+};
 use hutan_protocol::messages::{
     Empty, Event, Request, SessionInfo, SessionList, SessionListFilter, SessionRef, SessionResult,
 };
@@ -1255,6 +1257,78 @@ async fn provider_failures_end_the_turn_with_a_clear_message_and_leave_the_chat_
             .collect::<Vec<_>>(),
         ["hello", "again", "third"]
     );
+    t.stop().await;
+}
+
+/// `chat.retry` (protocol 0.34): a rate-limited turn retried twice, then answered; the journal
+/// holds the user message once, and every request carried it once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retry_sends_the_last_message_again_without_journaling_it_twice() {
+    let mock = MockServer::start().await;
+    for _ in 0..2 {
+        mock.route(
+            "POST",
+            OPENAI_PATH,
+            Reply::json(429, r#"{"error":{"message":"slow down"}}"#).header("retry-after", "1"),
+        );
+    }
+    mock.route("POST", OPENAI_PATH, openai_reply(&["done"], (1, 1)));
+    let mut t = Direct::start().await;
+    let p = t
+        .add_provider(
+            "openai",
+            "OpenAI",
+            Some(format!("{}/v1", mock.url())),
+            Some("gpt-x"),
+        )
+        .await;
+    t.set_key(&p.id, "sk-test").await;
+    let created = t.create(&p.id, None, None).await;
+
+    // Nothing to retry before the first message.
+    let early = t
+        .try_call::<ChatSent>(Request::ChatRetry(ChatRetry {
+            session_id: created.id,
+        }))
+        .await;
+    assert_eq!(remote_code(early), ErrorCode::InvalidState);
+
+    t.send(created.id, "hello").await;
+    let failed = t.turn_events(created.id).await;
+    assert!(matches!(
+        failed.last().unwrap().kind,
+        AgentEventKind::TurnFailed { .. }
+    ));
+    for attempt in 0..2 {
+        t.wait_state(created.id, SessionState::Idle).await;
+        t.call::<ChatSent>(Request::ChatRetry(ChatRetry {
+            session_id: created.id,
+        }))
+        .await;
+        let events = t.turn_events(created.id).await;
+        assert!(
+            message_texts(&events, MessageRole::User).is_empty(),
+            "attempt {attempt}: the retried message is not journaled again"
+        );
+        if attempt == 1 {
+            assert_eq!(message_texts(&events, MessageRole::Assistant), ["done"]);
+        }
+    }
+    let history = t.history(created.id).await;
+    assert_eq!(
+        message_texts(&history.events, MessageRole::User),
+        ["hello"],
+        "one user message after two retries"
+    );
+    // Every request sent the message once, as the last user message.
+    for n in 0..3 {
+        let users: Vec<String> = sent_messages(&mock, OPENAI_PATH, n)
+            .into_iter()
+            .filter(|(role, _)| role == "user")
+            .map(|(_, text)| text)
+            .collect();
+        assert_eq!(users, ["hello"], "request {n}");
+    }
     t.stop().await;
 }
 

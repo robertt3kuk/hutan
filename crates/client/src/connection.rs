@@ -617,6 +617,20 @@ impl Connection {
         client.chat_send_with(session, text, attachments).await
     }
 
+    /// True while connected to a daemon that advertised capability `chat.retry`
+    /// ([`Client::supports_chat_retry`]); false when disconnected.
+    pub fn supports_chat_retry(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_chat_retry())
+    }
+
+    /// `chat.retry` ([`Client::chat_retry`]).
+    pub async fn chat_retry(&self, session: SessionId) -> Result<ChatSent, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.chat_retry(session).await
+    }
+
     /// True while connected to a daemon that advertised capability `assistant`
     /// ([`Client::supports_assistant`]); false when disconnected.
     pub fn supports_assistant(&self) -> bool {

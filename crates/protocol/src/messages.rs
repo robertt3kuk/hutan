@@ -18,7 +18,7 @@ use crate::assistant::{AssistantConfigure, AssistantListRequest, AssistantOpen, 
 use crate::blocks::{Block, TerminalBlockText, TerminalBlocks};
 use crate::chat::{
     ApprovalInfo, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatHistoryRequest, ChatInfo,
-    ChatModelsRequest, ChatSend, QuestionAnswer, QuestionInfo, QuestionListRequest,
+    ChatModelsRequest, ChatRetry, ChatSend, QuestionAnswer, QuestionInfo, QuestionListRequest,
 };
 use crate::control::{ErrorBody, ErrorCode};
 use crate::daemon_settings::DaemonSettingSet;
@@ -186,6 +186,10 @@ pub enum Request {
     /// Capability `chat.codex`: send the user's message; answered with `ChatSent`.
     #[serde(rename = "chat.send")]
     ChatSend(ChatSend),
+    /// Capability `chat.retry` (protocol 0.34): send the last user message again without
+    /// journaling it again; answered with `ChatSent`.
+    #[serde(rename = "chat.retry")]
+    ChatRetry(ChatRetry),
     /// Capability `chat.codex`: stop the turn in progress.
     #[serde(rename = "chat.interrupt")]
     ChatInterrupt(SessionRef),

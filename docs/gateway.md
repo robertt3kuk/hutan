@@ -111,7 +111,7 @@ system prompt. Direct chats reuse the streaming transcript and usage footer. The
 **Switch model…** control (or ⌘K → **Chat: Switch Model…**) changes the next turn's provider
 and model; switching is disabled during a turn. The journal displays the switch notice.
 Missing/rejected keys offer **Set key…**; missing models offer **Pick another model…**.
-Other gateway errors remain inline, including the provider's retry-after hint for rate limits. A failed turn that may pass (rate limit, provider failure, connection, timeout, broken stream) gets a recovery row under its footer in the desktop (`UX-RETRY`): one sentence on what to do next, `Retry available in N s` counted down from a `retry-after` until its window passes, and **Retry now**, which sends the conversation's last message again (`chat.send`); it is offered on the newest failure only, while no turn runs and nothing was sent since. Known gap: that resend is a second `message_end` of the user in the journal and the provider sees it twice; a retry that reuses the failed turn's message needs a daemon/protocol request.
+Other gateway errors remain inline, including the provider's retry-after hint for rate limits. A failed turn that may pass (rate limit, provider failure, connection, timeout, broken stream) gets a recovery row under its footer in the desktop (`UX-RETRY`): one sentence on what to do next, `Retry available in N s` counted down from a `retry-after` until its window passes, and **Retry now**, which sends the conversation's last message again; it is offered on the newest failure only, while no turn runs and nothing was sent since. With a daemon of protocol 0.34 (capability `chat.retry`) *Retry now* sends `chat.retry`: the daemon takes the last user message from the journal and starts a turn that does **not** journal it again — a direct chat sends the conversation up to and including that message (what a failed or cancelled turn said after it is left out), a harness chat gets its text again and the echo the harness sends back is dropped — so after any number of retries the journal and the provider see the message once. An older daemon gets a plain `chat.send` of that text, as before (the message is then journaled twice). `hutan chat retry <session>` does the same from a shell.
 
 ## CLI
 
@@ -122,7 +122,7 @@ hutan provider ls | models <id> | rm <id>
 hutan provider discover [--add]
 hutan chat new --direct --provider <id> [--model M] [--system TEXT] [--cwd DIR] [--ws W] [--title T]
 hutan chat model <session> <model> [--provider <id>]
-hutan chat send|log|attach|interrupt …               # as for agent chats
+hutan chat send|log|attach|interrupt|retry …         # as for agent chats
 ```
 
 `--json` prints the protocol result. A key is never a command-line argument (it would be visible in `ps` and shell history): it is read from stdin — without echo on a terminal — or from an environment variable.

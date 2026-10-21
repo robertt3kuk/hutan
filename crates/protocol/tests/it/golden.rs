@@ -2692,6 +2692,10 @@ fn requests() -> Vec<(&'static str, Request)> {
                 muted: false,
             }),
         ),
+        (
+            "chat_retry",
+            Request::ChatRetry(hutan_protocol::chat::ChatRetry { session_id: sid() }),
+        ),
     ]
 }
 

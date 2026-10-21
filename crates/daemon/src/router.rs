@@ -329,6 +329,14 @@ impl Router {
                 }
                 ok(&ChatSent { turn_id })
             }
+            Request::ChatRetry(req) => {
+                self.live_chat(req.session_id).await?;
+                let turn_id = self.registry.chats().retry(req.session_id).await?;
+                if self.agent_origin(conn).await.is_none() {
+                    self.registry.note_user_action(req.session_id);
+                }
+                ok(&ChatSent { turn_id })
+            }
             Request::ChatInterrupt(req) => {
                 self.live_chat(req.session_id).await?;
                 self.registry.chats().interrupt(req.session_id).await?;
@@ -713,6 +721,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::HistoryRebuild(_) => ("history.rebuild", Mutate),
         Request::ChatCreate(_) => ("chat.create", Mutate),
         Request::ChatSend(_) => ("chat.send", Mutate),
+        // Sends the same message again: what `chat.send` would do.
+        Request::ChatRetry(_) => ("chat.retry", Mutate),
         Request::ChatInterrupt(_) => ("chat.interrupt", Mutate),
         Request::ChatHistory(_) => ("chat.history", Read),
         Request::ChatModels(_) => ("chat.models", Read),

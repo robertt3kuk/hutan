@@ -217,7 +217,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "memory",
             "fs",
             "fs.watch",
-            "notify.mute"
+            "notify.mute",
+            "chat.retry"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);

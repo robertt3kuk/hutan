@@ -23,8 +23,8 @@ use hutan_protocol::blocks::{
 };
 use hutan_protocol::chat::{
     ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond, ChatCreate, ChatHistory,
-    ChatHistoryRequest, ChatModels, ChatModelsRequest, ChatSend, ChatSent, HISTORY_MAX_LIMIT,
-    QuestionAnswer, QuestionInfo, QuestionList, QuestionListRequest,
+    ChatHistoryRequest, ChatModels, ChatModelsRequest, ChatRetry, ChatSend, ChatSent,
+    HISTORY_MAX_LIMIT, QuestionAnswer, QuestionInfo, QuestionList, QuestionListRequest,
 };
 use hutan_protocol::daemon_settings::{DaemonSettingSet, DaemonSettings};
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
@@ -154,6 +154,8 @@ pub(crate) const FS_WATCH_CAPABILITY: &str = "fs.watch";
 /// Capability for `notify.mute`, `SessionInfo.muted`, intents withheld for a focused session and
 /// withdrawn when one is focused (protocol 0.34).
 pub(crate) const NOTIFY_MUTE_CAPABILITY: &str = "notify.mute";
+/// Capability for `chat.retry` (protocol 0.34).
+pub(crate) const CHAT_RETRY_CAPABILITY: &str = "chat.retry";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -189,6 +191,7 @@ const CAPABILITIES: &[&str] = &[
     FS_CAPABILITY,
     FS_WATCH_CAPABILITY,
     NOTIFY_MUTE_CAPABILITY,
+    CHAT_RETRY_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -520,6 +523,20 @@ impl Client {
             attachments,
         }))
         .await
+    }
+
+    /// True when the daemon advertised capability `chat.retry` (protocol 0.34).
+    pub fn supports_chat_retry(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == CHAT_RETRY_CAPABILITY)
+    }
+
+    /// `chat.retry`: sends the chat's last user message again; the journal keeps it once.
+    pub async fn chat_retry(&self, session_id: SessionId) -> Result<ChatSent, ClientError> {
+        self.call(Request::ChatRetry(ChatRetry { session_id }))
+            .await
     }
 
     /// True when the daemon advertised capability `assistant` (protocol 0.12).

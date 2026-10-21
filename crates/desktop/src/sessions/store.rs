@@ -672,8 +672,9 @@ impl SessionsStore {
     }
 
     /// Sends the last message the user wrote in the chat again: what "Retry last message" of a
-    /// turn the restart interrupted does. The journal is the source, so it works for a chat no
-    /// tab has open.
+    /// turn the restart interrupted and *Retry now* of a failed turn do. With `chat.retry`
+    /// (protocol 0.34) the daemon finds the message and does not journal it a second time; an
+    /// older daemon gets it from the journal here, as a new `chat.send`.
     pub fn retry_last_message(
         &self,
         session: SessionId,
@@ -681,6 +682,13 @@ impl SessionsStore {
     ) -> Task<Result<(), String>> {
         let connection = self.connection.clone();
         cx.background_spawn(async move {
+            if connection.supports_chat_retry() {
+                return connection
+                    .chat_retry(session)
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| e.to_string());
+            }
             let text = last_user_message(&connection, session).await?;
             connection
                 .chat_send_with(session, text, Vec::new())
