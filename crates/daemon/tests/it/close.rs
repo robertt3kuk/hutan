@@ -101,12 +101,36 @@ fn zsh_available() -> bool {
     Path::new("/bin/zsh").exists()
 }
 
-/// The session row as the database has it, closed or not.
+/// The closed session rows as the database has them. Storage writes are queued behind the
+/// writer thread (ADR 0006): a reply does not mean the row is on disk yet.
 fn closed_rows(paths: &hutan_daemon::Paths) -> Vec<hutan_storage::ClosedSession> {
     let storage = Storage::open(&paths.database).unwrap();
     let rows = storage.sessions().list_closed().unwrap();
     storage.close();
     rows
+}
+
+/// Reads the database through a second handle until exactly `count` sessions are closed.
+async fn wait_closed_rows(
+    paths: &hutan_daemon::Paths,
+    count: usize,
+) -> Vec<hutan_storage::ClosedSession> {
+    timeout(WAIT, async {
+        loop {
+            let rows = closed_rows(paths);
+            if rows.len() == count {
+                return rows;
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "{count} closed session rows never reached the database; found {}",
+            closed_rows(paths).len()
+        )
+    })
 }
 
 // Terminals -------------------------------------------------------------------------------------
@@ -158,8 +182,7 @@ async fn closing_an_idle_terminal_removes_it_and_announces_it() {
     assert_eq!(counts.live_sessions, 0, "{counts:?}");
 
     // The row is kept, marked closed.
-    let rows = closed_rows(&t.paths);
-    assert_eq!(rows.len(), 1);
+    let rows = wait_closed_rows(&t.paths, 1).await;
     assert_eq!(rows[0].session.id, created.id);
     assert_eq!(rows[0].session.state, SessionState::Stopped);
 
@@ -219,7 +242,7 @@ async fn a_busy_terminal_asks_first_and_stop_running_closes_it() {
             .then_some(())
     })
     .await;
-    assert_eq!(closed_rows(&t.paths).len(), 1);
+    wait_closed_rows(&t.paths, 1).await;
     t.stop().await;
 }
 
@@ -321,7 +344,7 @@ async fn reopening_a_terminal_respawns_it_in_its_directory_with_the_same_identit
         s.contains(&root.to_string_lossy())
     })
     .await;
-    assert!(closed_rows(&t.paths).is_empty(), "no longer closed");
+    wait_closed_rows(&t.paths, 0).await;
 
     // Reopened twice is not possible; closing again works like the first time.
     assert_eq!(
@@ -329,7 +352,7 @@ async fn reopening_a_terminal_respawns_it_in_its_directory_with_the_same_identit
         ErrorCode::InvalidState
     );
     close(&client, created.id, true).await.unwrap();
-    assert_eq!(closed_rows(&t.paths).len(), 1);
+    wait_closed_rows(&t.paths, 1).await;
     t.stop().await;
 }
 
@@ -618,7 +641,7 @@ async fn a_chat_in_the_middle_of_a_turn_is_busy() {
 
     close(&client, created.id, true).await.unwrap();
     assert!(listed(&client, created.id).await.is_none());
-    assert_eq!(closed_rows(&t.paths).len(), 1);
+    wait_closed_rows(&t.paths, 1).await;
     t.stop().await;
 }
 
