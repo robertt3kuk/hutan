@@ -891,7 +891,7 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "daemon",
         "checkpoints.exclude",
         "Never recorded",
-        "File names left out of every checkpoint (`*` matches anything, case ignored): likely secrets.",
+        "File names left out of every checkpoint, likely secrets. A star matches anything; case is ignored.",
     ),
     field(
         "daemon",
