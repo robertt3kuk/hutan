@@ -1,9 +1,12 @@
-//! `hutan checkpoint ls|diff|rm`: the checkpoints of agent turns (protocol 0.37, ADR 0019).
+//! `hutan checkpoint ls|diff|rm` (protocol 0.37) and `restore|undo` (protocol 0.38): the
+//! checkpoints of agent turns (ADR 0019).
+
+mod restore;
 
 use std::collections::HashMap;
 
 use hutan_client::{Client, ClientError};
-use hutan_core::{CheckpointId, CheckpointInfo, CheckpointState, SessionId};
+use hutan_core::{CheckpointId, CheckpointInfo, CheckpointKind, CheckpointState, SessionId};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::checkpoint::{
     CheckpointDiff, CheckpointDiffRequest, CheckpointFileStatus, CheckpointList,
@@ -25,6 +28,8 @@ impl Ctx {
             CheckpointCommand::Ls(args) => self.checkpoint_ls(args).await,
             CheckpointCommand::Diff(args) => self.checkpoint_diff(args).await,
             CheckpointCommand::Rm(args) => self.checkpoint_rm(args).await,
+            CheckpointCommand::Restore(args) => self.checkpoint_restore(args).await,
+            CheckpointCommand::Undo(args) => self.checkpoint_undo(args).await,
         }
     }
 
@@ -300,6 +305,12 @@ fn note(c: &CheckpointInfo) -> String {
     {
         parts.push(reason.clone());
     }
+    if c.kind == CheckpointKind::Restore {
+        parts.insert(
+            0,
+            "a restore (`hutan checkpoint undo` undoes it)".to_owned(),
+        );
+    }
     match c.skipped.len() {
         0 => {}
         1 => parts.push(format!("{} not captured", c.skipped[0].path)),
@@ -351,7 +362,7 @@ fn stat_text(diff: &CheckpointDiff) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hutan_core::{CheckpointKind, SkipReason, SkippedFile};
+    use hutan_core::{SkipReason, SkippedFile};
     use hutan_protocol::checkpoint::CheckpointFile;
 
     fn info(state: CheckpointState, created_ms: u64) -> CheckpointInfo {

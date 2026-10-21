@@ -93,7 +93,7 @@ pub enum Command {
     #[command(subcommand)]
     Chat(ChatCommand),
     /// Checkpoints of agent turns: the checkout's files before and after each turn of an agent
-    /// chat, which the user can rewind to (`hutan checkpoint ls|diff|rm`)
+    /// chat, which the user can rewind to (`hutan checkpoint ls|diff|rm|restore|undo`)
     #[command(subcommand)]
     Checkpoint(CheckpointCommand),
     /// The logins of the agent harnesses (OMP, Claude Code, Codex): list them, log in or out
@@ -576,6 +576,14 @@ pub enum CheckpointCommand {
     /// Delete a checkpoint, or every checkpoint of a session (their refs and rows): what they
     /// kept can no longer be restored
     Rm(CheckpointRmArgs),
+    /// Restore the files a checkpoint's turn changed to how they were before it: prints the
+    /// preview, asks (default No), leaves conflicts alone unless named; files only (the agent
+    /// still remembers, git history is not rewound). The restore is a checkpoint too: undo it
+    /// with `hutan checkpoint undo`
+    Restore(CheckpointRestoreArgs),
+    /// Undo the latest restore (restore the files it changed to how they were before it);
+    /// undoing again undoes the undo
+    Undo(CheckpointUndoArgs),
 }
 
 #[derive(Debug, Args)]
@@ -614,6 +622,38 @@ pub struct CheckpointRmArgs {
     /// A checkpoint (id or unique id prefix), or a session (id, prefix or title): every
     /// checkpoint of it
     pub target: String,
+}
+
+#[derive(Debug, Args)]
+pub struct CheckpointRestoreArgs {
+    /// Restore the files to before this checkpoint's turn (id or unique id prefix)
+    pub checkpoint: String,
+    /// Rewind through this later checkpoint of the same session too (every turn in between)
+    #[arg(long, value_name = "CHECKPOINT")]
+    pub through: Option<String>,
+    /// Only this file or directory, relative to the checkout (repeatable)
+    #[arg(long = "path", value_name = "PATH")]
+    pub paths: Vec<String>,
+    /// Overwrite this conflict too: a file changed since the turn, between the turns or while
+    /// it ran (repeatable; the preview lists them)
+    #[arg(long = "accept-conflicts", value_name = "PATH")]
+    pub accept_conflicts: Vec<String>,
+    /// Restore without asking (required when stdin is not a terminal)
+    #[arg(long, short = 'y')]
+    pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CheckpointUndoArgs {
+    /// Undo the latest restore of this session (id, unique id prefix, or exact title; a closed
+    /// session by its full id); without it, the latest restore of any session
+    pub session: Option<String>,
+    /// Overwrite this conflict too (repeatable; the preview lists them)
+    #[arg(long = "accept-conflicts", value_name = "PATH")]
+    pub accept_conflicts: Vec<String>,
+    /// Undo without asking (required when stdin is not a terminal)
+    #[arg(long, short = 'y')]
+    pub yes: bool,
 }
 
 #[derive(Debug, Subcommand)]

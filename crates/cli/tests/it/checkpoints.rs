@@ -273,3 +273,116 @@ async fn ls_diff_and_rm_work_on_the_checkpoints_of_a_fixture_chat() {
     assert_eq!(empty.trim_end(), "no checkpoints");
     r.t.stop().await;
 }
+
+fn read(root: &Path, path: &str) -> Option<String> {
+    fs::read_to_string(root.join(path)).ok()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restore_previews_asks_and_undo_flips_it_back_and_forth() {
+    let r = Repo::start(1).await;
+    let root = r.root.display().to_string();
+    let created =
+        r.t.hutan(&["chat", "new", "--json", "--cwd", &root])
+            .await
+            .ok()
+            .json();
+    let session = created["session"]["id"].as_str().unwrap().to_owned();
+    r.t.hutan(&["chat", "send", &session, "turn 0"]).await.ok();
+    fs::write(r.root.join("a.txt"), "edited by the agent\n").unwrap();
+    fs::write(r.root.join("new.txt"), "new\n").unwrap();
+    fs::write(r.gate(0), "").unwrap();
+    let checkpoint = r.listed(&session, 1).await[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // Without a terminal and without --yes: the preview, the label, and nothing restored.
+    let asked =
+        r.t.hutan(&["checkpoint", "restore", &checkpoint[..20]])
+            .await;
+    assert_eq!(asked.code, 2, "{asked:?}");
+    assert!(asked.stdout.contains("write   a.txt"), "{}", asked.stdout);
+    assert!(asked.stdout.contains("delete  new.txt"), "{}", asked.stdout);
+    assert!(
+        asked.stdout.contains("2 files to restore"),
+        "{}",
+        asked.stdout
+    );
+    assert!(
+        asked
+            .stdout
+            .contains("Restores files only. Codex still remembers this turn"),
+        "{}",
+        asked.stdout
+    );
+    assert!(asked.stderr.contains("pass --yes"), "{}", asked.stderr);
+    assert_eq!(
+        read(&r.root, "a.txt").as_deref(),
+        Some("edited by the agent\n")
+    );
+    // A conflict that is not one is a usage error.
+    let wrong =
+        r.t.hutan(&[
+            "checkpoint",
+            "restore",
+            &checkpoint,
+            "--accept-conflicts",
+            "a.txt",
+            "--yes",
+        ])
+        .await;
+    assert_eq!(wrong.code, 2, "{wrong:?}");
+    assert!(
+        wrong.stderr.contains("is not a conflict"),
+        "{}",
+        wrong.stderr
+    );
+
+    // --yes restores.
+    let done =
+        r.t.hutan(&["checkpoint", "restore", &checkpoint, "--yes"])
+            .await
+            .ok()
+            .stdout;
+    assert!(done.contains("wrote    a.txt"), "{done}");
+    assert!(done.contains("deleted  new.txt"), "{done}");
+    assert!(done.contains("restored: 2 files"), "{done}");
+    assert_eq!(read(&r.root, "a.txt").as_deref(), Some("alpha\n"));
+    assert_eq!(read(&r.root, "new.txt"), None);
+    let listed = r.listed(&session, 2).await;
+    assert_eq!(listed[0]["kind"], "restore");
+    let table = r.t.hutan(&["checkpoint", "ls", &session]).await.ok().stdout;
+    assert!(table.contains("a restore"), "{table}");
+
+    // Undo, then undo the undo.
+    let undone =
+        r.t.hutan(&["checkpoint", "undo", &session, "--yes"])
+            .await
+            .ok()
+            .stdout;
+    assert!(undone.starts_with("Undo: files of"), "{undone}");
+    assert!(undone.contains("undone: 2 files"), "{undone}");
+    assert_eq!(
+        read(&r.root, "a.txt").as_deref(),
+        Some("edited by the agent\n")
+    );
+    assert_eq!(read(&r.root, "new.txt").as_deref(), Some("new\n"));
+    let json =
+        r.t.hutan(&["--json", "checkpoint", "undo", "--yes"])
+            .await
+            .ok()
+            .json();
+    assert_eq!(json["deleted"], serde_json::json!(["new.txt"]));
+    assert_eq!(json["checkpoint"]["kind"], "restore");
+    assert_eq!(read(&r.root, "a.txt").as_deref(), Some("alpha\n"));
+    assert_eq!(r.listed(&session, 4).await.len(), 4);
+    // Nothing left to restore of the turn: said, and nothing happens.
+    let nothing =
+        r.t.hutan(&["checkpoint", "restore", &checkpoint, "--yes"])
+            .await
+            .ok()
+            .stdout;
+    assert!(nothing.contains("nothing to restore"), "{nothing}");
+    r.t.stop().await;
+}

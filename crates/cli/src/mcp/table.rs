@@ -702,6 +702,29 @@ static TOOLS: &[Tool] = &[
             )
         },
     },
+    Tool {
+        name: "checkpoint_preview",
+        description: "What restoring the checkout's files to before a checkpoint's turn would do \
+                      (through a later checkpoint's turn with `through`), file by file: \
+                      `action` (`write`, `delete`, `skip`), `state` (`clean`; `after`, `gap`, \
+                      `during`: changed by someone else since, between or during the turns, \
+                      left alone unless the user accepts; `uncaptured`: never restored) and \
+                      why, plus who else works in the checkout and whether a turn is running. \
+                      Nothing is written. Only the user can restore, in Hutan; you cannot \
+                      restore. Read-only.",
+        read_only: true,
+        call: request("checkpoint.preview"),
+        schema: || {
+            object(
+                json!({
+                    "checkpoint_id": id("Rewind to before this checkpoint's turn (`checkpoint_list` shows them)."),
+                    "through": id("A later checkpoint of the same session: rewind its turn and every one in between too."),
+                    "paths": {"type": "array", "items": text("A file or directory, relative to the checkout."), "description": "Only these files or directories."},
+                }),
+                &["checkpoint_id"],
+            )
+        },
+    },
     // ---- workspaces and projects ------------------------------------------------------------
     Tool {
         name: "workspace_list",
@@ -1330,6 +1353,7 @@ mod tests {
             "agent_interrupt",
             "checkpoint_list",
             "checkpoint_diff",
+            "checkpoint_preview",
         ] {
             assert!(find(name).is_some(), "missing tool {name}");
         }
@@ -1341,7 +1365,7 @@ mod tests {
         for name in ["checkpoint_restore", "checkpoint_undo"] {
             assert!(find(name).is_none(), "{name}: agents cannot restore");
         }
-        for name in ["checkpoint_list", "checkpoint_diff"] {
+        for name in ["checkpoint_list", "checkpoint_diff", "checkpoint_preview"] {
             let tool = find(name).unwrap();
             assert!(tool.read_only, "{name}");
             assert!(
