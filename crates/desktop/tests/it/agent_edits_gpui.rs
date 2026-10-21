@@ -64,7 +64,7 @@ fn a_shell_write_of_an_agent_turn_reaches_the_open_file_and_the_ledger(cx: &mut 
     // started (FSEvents): write again until the buffer has it.
     let mut polls = 0u32;
     loop {
-        if polls % 100 == 0 {
+        if polls.is_multiple_of(100) {
             std::fs::write(&file, &after).unwrap();
         }
         draw(cx);

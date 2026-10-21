@@ -58,12 +58,12 @@ fn agent_version(base: &str) -> String {
 
 /// A clean buffer of `base` that took the agent's write, as the desktop does it: reload, then
 /// the turn's changes.
-fn written<'a>(
-    cx: &'a mut TestAppContext,
+fn written(
+    cx: &mut TestAppContext,
 ) -> (
     Entity<CodeView>,
     Entity<FileBuffer>,
-    &'a mut VisualTestContext,
+    &mut VisualTestContext,
     String,
     String,
 ) {
