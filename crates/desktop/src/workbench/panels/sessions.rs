@@ -1644,7 +1644,11 @@ impl SessionsPanel {
         let id = info.id.to_string();
         let open_id = id.clone();
         let menu_id = id.clone();
-        let badge = self.env.sessions.read(cx).agent_badge(info.id);
+        let mut badge = self.env.sessions.read(cx).agent_badge(info.id);
+        if presentation.needs_you {
+            // The lane already says the session needs you; its ▲ does not say it twice.
+            badge.blocked.clear();
+        }
         let mut badge = agent_badge(
             &theme,
             &badge,

@@ -173,9 +173,11 @@ impl Workbench {
             .enumerate()
             .map(|(index, row)| {
                 let session = row.session;
-                let tone = match row.chip.tone {
-                    ChipTone::Info => theme.accent,
-                    ChipTone::Warn => theme.warning,
+                // The same marks as the sidebar rows: a restart that went as planned is quiet
+                // (muted, `action.recover`), only one that needs a look is a warning.
+                let (tone, glyph) = match row.chip.tone {
+                    ChipTone::Info => (theme.muted, crate::icons::Icon::ActionRecover),
+                    ChipTone::Warn => (theme.warning, crate::icons::Icon::StateWarning),
                 };
                 let detail = self
                     .sessions
@@ -241,7 +243,7 @@ impl Workbench {
                                 this.open_recovered(session, window, cx);
                             }))
                             .child(ui::state_label(
-                                ui::state_glyph(tone, &theme),
+                                glyph,
                                 row.chip.label,
                                 tone,
                                 false,

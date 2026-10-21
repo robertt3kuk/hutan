@@ -339,7 +339,7 @@ const FIELDS: &[FieldText] = &[
         "panels.sessions",
         "row",
         "Row contents",
-        "What each row shows, in order. The first line can show state, kind, title and age; the second line can show folder (where the session is now) and placement (main checkout or worktree branch). Pick the parts from the menu.",
+        "What each row shows, in order. The row is one line of state, kind, title and age. A second line appears only when it has news: folder (where the session is now, once it has left its checkout) and placement (a worktree branch, or a shared main checkout). Pick the parts from the menu.",
         &[
             ("state", "State"),
             ("kind", "Kind"),

@@ -121,7 +121,13 @@ pub fn placement_badge(
         .gap(px(2.0))
         .max_w(px(130.0))
         .truncate()
-        .px(px(tokens.spacing * 2.0))
+        // A quiet badge is text on the row's own fill and lines up with the title above it; only
+        // the warning has a tint to pad.
+        .px(px(if badge.shared {
+            tokens.spacing * 2.0
+        } else {
+            0.0
+        }))
         .rounded(px(crate::theme::pill_radius()))
         .bg(color.opacity(if badge.shared { 0.14 } else { 0.0 }))
         .text_size(px(tokens.secondary_font_size))
