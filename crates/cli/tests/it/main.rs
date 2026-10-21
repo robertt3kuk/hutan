@@ -7,6 +7,7 @@ mod common;
 mod config;
 mod control;
 mod detach;
+mod files;
 mod grants;
 mod harness;
 mod history;

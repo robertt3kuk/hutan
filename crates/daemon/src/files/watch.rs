@@ -748,8 +748,7 @@ fn prepare(window: Vec<(PathBuf, Entry)>, evidence: Evidence) -> Vec<Prepared> {
             let own = evidence
                 .writes
                 .iter()
-                .filter(|w| w.path == path && w.at.elapsed() <= OWN_WRITE_TTL)
-                .next_back();
+                .rfind(|w| w.path == path && w.at.elapsed() <= OWN_WRITE_TTL);
             let attribution = if let Some(write) = own {
                 Attribution::Own {
                     conn: write.conn,
@@ -967,6 +966,110 @@ mod tests {
         // A path already in the window is still merged when the window is full.
         window.add(&key, vec![Raw::Removed("/repo/f0".into())]);
         assert!(window.entries[Path::new("/repo/f0")].removed);
+    }
+
+    #[test]
+    fn repeated_events_of_one_path_are_one_change_and_renames_name_both_paths() {
+        let key = key("/repo");
+        let mut window = Window::new(CHANGES_MAX);
+        window.add(
+            &key,
+            (0..100)
+                .map(|_| Raw::Modified("/repo/a.rs".into()))
+                .collect(),
+        );
+        assert_eq!(window.entries.len(), 1, "a hundred writes are one change");
+        window.add(
+            &key,
+            vec![
+                Raw::Created("/repo/a.rs".into()),
+                Raw::Renamed {
+                    from: "/repo/old.rs".into(),
+                    to: "/repo/new.rs".into(),
+                },
+            ],
+        );
+        assert!(window.entries[Path::new("/repo/a.rs")].created);
+        assert_eq!(
+            window.entries[Path::new("/repo/new.rs")].from.as_deref(),
+            Some(Path::new("/repo/old.rs"))
+        );
+        assert!(window.entries[Path::new("/repo/old.rs")].removed);
+    }
+
+    #[test]
+    fn platform_events_become_raw_events_and_reads_are_not_changes() {
+        use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind, RenameMode};
+        let event = |kind| notify::Event::new(kind).add_path("/repo/a.rs".into());
+        assert!(raw_of(event(EventKind::Access(AccessKind::Any))).is_empty());
+        assert!(matches!(
+            raw_of(event(EventKind::Create(CreateKind::File))).as_slice(),
+            [Raw::Created(_)]
+        ));
+        assert!(matches!(
+            raw_of(event(EventKind::Remove(RemoveKind::File))).as_slice(),
+            [Raw::Removed(_)]
+        ));
+        assert!(matches!(
+            raw_of(event(EventKind::Modify(ModifyKind::Name(RenameMode::Any)))).as_slice(),
+            [Raw::Name(_)]
+        ));
+        let both = notify::Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+            .add_path("/repo/a.rs".into())
+            .add_path("/repo/b.rs".into());
+        assert!(matches!(raw_of(both).as_slice(), [Raw::Renamed { .. }]));
+    }
+
+    #[test]
+    fn a_window_is_looked_at_on_disk_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("kept.rs"), "kept").unwrap();
+        std::fs::write(root.join("new.rs"), "new!").unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        let entry = |created: bool, removed: bool| Entry {
+            created,
+            removed,
+            from: None,
+        };
+        let window = vec![
+            (root.join("kept.rs"), entry(false, false)),
+            (root.join("new.rs"), entry(true, false)),
+            (root.join("gone.rs"), entry(false, true)),
+            // Created and gone again inside the window: no client ever saw it.
+            (root.join("flash.tmp"), entry(true, true)),
+            (root.join("sub"), entry(true, false)),
+        ];
+        let evidence = Evidence {
+            writes: Vec::new(),
+            notes: Vec::new(),
+            sessions: Vec::new(),
+        };
+        let prepared = prepare(window, evidence);
+        let seen: Vec<(String, ChangeKind, Option<u64>)> = prepared
+            .iter()
+            .map(|p| {
+                (
+                    p.change
+                        .path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    p.change.kind,
+                    p.change.version.map(|v| v.size),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("kept.rs".to_owned(), ChangeKind::Modified, Some(4)),
+                ("new.rs".to_owned(), ChangeKind::Created, Some(4)),
+                ("gone.rs".to_owned(), ChangeKind::Removed, None),
+                ("sub".to_owned(), ChangeKind::Created, None),
+            ]
+        );
     }
 
     #[test]

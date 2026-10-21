@@ -71,13 +71,16 @@ impl Default for Limits {
     }
 }
 
+/// An upload that a blocking job works on while the table holds it too; the commit takes it.
+type SharedUpload = Arc<Mutex<Option<Upload>>>;
+
 /// An upload between its begin and its commit.
 #[derive(Debug)]
 struct Slot {
     conn: ConnId,
     agent: Option<SessionId>,
     last_activity: Instant,
-    upload: Arc<Mutex<Option<Upload>>>,
+    upload: SharedUpload,
 }
 
 #[derive(Debug)]
@@ -368,7 +371,7 @@ impl FileService {
         &self,
         conn: ConnId,
         upload_id: &str,
-    ) -> Result<(Arc<Mutex<Option<Upload>>>, Option<SessionId>), ErrorBody> {
+    ) -> Result<(SharedUpload, Option<SessionId>), ErrorBody> {
         let mut uploads = self.uploads.lock();
         self.sweep(&mut uploads);
         match uploads.get_mut(upload_id) {

@@ -18,6 +18,8 @@ LOOK (always allowed)
   hutan ws ls                  workspaces and projects
   hutan ps                     processes of every live session with CPU and memory
   hutan memory ls              what Mawas remembers (the user approved each entry)
+  hutan fs ls|cat|stat|find|search   files through the daemon (workspaces only; fs find is fuzzy
+                               by name, fs search is by content)
   hutan approvals              what waits for the user
   hutan notify ls              pending notifications
   hutan search <words>         past sessions (needs the history index)
@@ -33,6 +35,8 @@ CHANGE
   hutan chat new|send|interrupt     talk to another agent (codex, or a model directly)
   hutan task add|start|done|cancel|reset   plan and run work
   hutan wt new|rm                   git worktrees
+  hutan fs write <path> [--expect V]   replace a file atomically; --expect takes the version
+                               `hutan fs stat` printed, and a changed file is a conflict
   hutan ws new|open|pin             workspaces and projects
   hutan ui run <action> [--arg k=v]   do what the window can do (split, preset, open a panel...)
   hutan ui set <namespace.key> <value> [--layer user|workspace|project]   change a setting

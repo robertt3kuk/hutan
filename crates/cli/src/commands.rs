@@ -27,6 +27,7 @@ mod assistant;
 mod attach;
 mod chat;
 mod config;
+mod files;
 mod grants;
 mod help;
 mod history;
@@ -104,6 +105,8 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Assistant(command) => ctx?.assistant(command).await,
         Command::Grants(command) => ctx?.grants(command).await,
         Command::Memory(command) => ctx?.memory(command).await,
+        Command::Fs(command) => ctx?.fs(command).await,
+        Command::Open(args) => ctx?.open(args).await,
         Command::Approvals => ctx?.approvals().await,
         Command::Approve(args) => ctx?.approve(args).await,
         Command::Questions => ctx?.questions().await,

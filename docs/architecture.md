@@ -105,6 +105,27 @@ erDiagram
 - **One terminal model per terminal, many views.** A `TerminalSession` entity owns the `TerminalHandle` (one attachment per terminal per connection) and a `terminal_view::SharedTerminal` (the `TerminalModel` plus ack and status). Pane tabs (interactive `TerminalView`s) draw from it. The newest frame is acked after the first view that shows it has painted it, so a hidden terminal is paced at zero cost and catches up when shown. A restarted session re-binds the same tab to its new terminal; `EpochChanged`, `NotFound` and ended sessions show as `ViewStatus::Ended` with Restart / Close.
 - **Settings.** One `SettingsStore` per app with namespaces `appearance`, `terminal`, `layout`, `panels.sessions`, `panels.inspector`, `workspaces`, `agents`; file changes hot-reload density, terminal font/theme (plus `terminal.set_colors` for every attached terminal), panel options, status-bar items, preset definitions and the keymap. The first root of the *active* workspace layers its `.hutan/settings.toml` over the user settings (M12-B); each workspace keeps its own pane tree and docks in `desktop-state.json`. The settings sheet (⌘,) is generated from the store's schemas and writes through `write_user`, which keeps `settings.toml`'s comments.
 
+## File service (E-3, ADR 0012 amendment 2026-10-21, protocol 0.33)
+
+Files are read and written by the daemon, never by a client: it is the one place permissions are enforced, agents and `hutan fs` need the same access as the editor, and a remote client (M9) has no local disk. `crates/daemon/src/files/` (`docs/protocol.md` § Files):
+
+```mermaid
+flowchart LR
+  C[desktop buffer store / CLI / agent] -->|fs.read · fs.write.* · fs.list · fs.find · fs.search · fs.watch| R[router: Read / Mutate]
+  R --> F[FileService]
+  F --> CF[confine: canonical path below a tracked root,<br/>openat O_NOFOLLOW per component]
+  F --> W[WatchHub: one notify watcher per root<br/>while a connection holds interest]
+  W -->|fs.changed · fs.generation per connection, outside the replay ring| C
+  B[event bus: live file_diff of chats] -->|bounded observer| W
+  S[registry: sessions, agent state] --> W
+  K[ControlService] -->|agent's fs.write.begin asks| R
+```
+
+- **Roots** are the folders of the daemon's workspaces and projects and the git checkouts its sessions work in; `picked` (a file the user chose) reaches further, an agent's never does. Reads open from the root descriptor without following links; a write goes to a temporary file in the target's directory, is flushed and `renameat`ed over it, with the target's mode, after a version check (`conflict` with the current version).
+- **Bounded everywhere**: 1 MiB chunks under the 4 MiB frame, 64 MiB per file, 8 uploads (30 s idle expiry), 4 searches per connection, finder indexes of 200 000 paths (8 roots kept), 256 watched paths per connection, 500 changes per `fs.changed`, a bounded channel from each platform watcher; no unbounded channel (a test greps for it). A full connection queue drops an `fs.changed` and the next one says `overflow`; it never closes the connection.
+- **Watchers** exist only while a client has interest; the desktop's `BufferStore` (E-5) will hold open documents and expanded folders as interest and reconcile on `fs.changed`, treating its own `write_id` as no news.
+- **`fs.search`** runs on a task of its own per request (the connection goes on reading, so `fs.search.cancel` arrives); everything else is answered in order.
+
 ## Session environment (B-1)
 
 A terminal session's process starts the way a tab of Terminal.app, iTerm2 or Ghostty does: from the user's login environment, not from whatever environment started `hutand` (a shell with virtualenv exports, or the bare GUI environment when the desktop or launchd did). Code: `crates/terminal/src/env.rs` (assembly, system facts), `command()` in `crates/terminal/src/terminal.rs`; setting: `daemon.toml` `[terminal] env_inherit`.
@@ -192,6 +213,7 @@ Implemented by `hutan_client::Connection` (M2.2): one `hutan-client` thread with
 | Event log | daemon | in-memory ring per epoch |
 | Workbench layout (docks, pane tree, open items, sizes), focus, scroll, selection, window frames | desktop | `desktop-state.json` per window |
 | Settings, presets, keymap, themes | desktop | `settings.toml`, `keymap.toml`, `<repo>/.hutan/settings.toml` (ADR 0010) |
+| Files on disk: reading, atomic writes, finder index, search, change watching and the origin of each change | daemon (`files`, protocol 0.33) | none of its own: the files; the finder's index is in memory |
 | Notification presentation | daemon (native, from `Hutan.app`) / desktop | none |
 
 ## Persistence and restore (ADR 0006, 0009)

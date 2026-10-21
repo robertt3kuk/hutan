@@ -117,6 +117,13 @@ pub enum Command {
     /// ls|add|edit|archive|restore|history|proposals`)
     #[command(subcommand)]
     Memory(MemoryCommand),
+    /// Files through the daemon, the one place permissions are enforced: list, print, write
+    /// (atomically, with a version check), find and search (`hutan fs ls|cat|stat|write|find|search`)
+    #[command(subcommand)]
+    Fs(FsCommand),
+    /// Resolve `path[:line[:col]]` through the daemon and print where it is (the desktop does
+    /// not open files from here yet)
+    Open(OpenArgs),
     /// List the permission requests of agent chats that wait for an answer
     Approvals,
     /// Answer a permission request with one of the options it offers (see `hutan approvals`)
@@ -752,6 +759,110 @@ pub struct AssistantResetArgs {
     /// $HUTAN_WORKSPACE, else the global Mawas of Home)
     #[arg(long = "ws", visible_alias = "workspace", value_name = "ID|NAME")]
     pub workspace: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FsCommand {
+    /// List a folder: directories first, then files by name; entries a `.gitignore` rule matches
+    /// are marked
+    Ls(FsLsArgs),
+    /// Print a file exactly as it is on disk (byte-order mark and line endings included)
+    Cat(FsPathArgs),
+    /// What a path is, with the version a later `write --expect` takes
+    Stat(FsPathArgs),
+    /// Replace a file with the text of stdin, `--from FILE` or `--text`: written to a temporary
+    /// file next to it and renamed over it, so a reader never sees half of it; with `--expect`
+    /// refused when the file changed since that version (exit 1, the current version on stderr)
+    Write(FsWriteArgs),
+    /// Find files by a fuzzy name (`rtr` finds `src/router.rs`), best first
+    Find(FsFindArgs),
+    /// Search file contents: `path:line:text` per hit, honouring `.gitignore`
+    Search(FsSearchArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct FsLsArgs {
+    /// The folder (default: the current directory)
+    pub path: Option<PathBuf>,
+    /// Do not mark ignored entries
+    #[arg(long)]
+    pub no_ignore: bool,
+    /// At most this many entries (default and ceiling 5000)
+    #[arg(long, value_name = "N")]
+    pub limit: Option<u32>,
+    /// A path you chose yourself: allowed outside the workspaces (never from an agent's session)
+    #[arg(long)]
+    pub picked: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FsPathArgs {
+    pub path: PathBuf,
+    /// A path you chose yourself: allowed outside the workspaces (never from an agent's session)
+    #[arg(long)]
+    pub picked: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FsWriteArgs {
+    pub path: PathBuf,
+    /// Take the new content from this local file (`-`: stdin, the default)
+    #[arg(long, value_name = "FILE", conflicts_with = "text")]
+    pub from: Option<PathBuf>,
+    /// The new content, as given
+    #[arg(long, value_name = "TEXT")]
+    pub text: Option<String>,
+    /// The version the content was based on, as `hutan fs stat` prints it (`mtime_ns:size:ino`);
+    /// without it an existing file is overwritten whatever it is
+    #[arg(long, value_name = "VERSION", conflicts_with = "create")]
+    pub expect: Option<String>,
+    /// The file must not exist yet (its folder must)
+    #[arg(long)]
+    pub create: bool,
+    /// A path you chose yourself: allowed outside the workspaces (never from an agent's session)
+    #[arg(long)]
+    pub picked: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FsFindArgs {
+    pub query: String,
+    /// Look below this folder (default: the current directory)
+    #[arg(long, value_name = "DIR")]
+    pub root: Option<PathBuf>,
+    /// At most this many (default 50, ceiling 200)
+    #[arg(long, value_name = "N")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct FsSearchArgs {
+    pub pattern: String,
+    /// Search below this folder (default: the current directory)
+    #[arg(long, value_name = "DIR")]
+    pub root: Option<PathBuf>,
+    /// The pattern is a regular expression (default: literal text)
+    #[arg(long)]
+    pub regex: bool,
+    /// Ignore case (default: smart: exact when the pattern has a capital letter)
+    #[arg(short = 'i', long, conflicts_with = "case_sensitive")]
+    pub ignore_case: bool,
+    /// Match case exactly
+    #[arg(short = 's', long)]
+    pub case_sensitive: bool,
+    /// Only files matching this glob, relative to the root (`*.rs`); `!glob` leaves them out;
+    /// repeatable
+    #[arg(short = 'g', long = "glob", value_name = "GLOB")]
+    pub globs: Vec<String>,
+    /// At most this many hits (default 200, ceiling 1000)
+    #[arg(long, value_name = "N")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct OpenArgs {
+    /// A file as `path`, `path:line` or `path:line:col`
+    pub target: String,
 }
 
 #[derive(Debug, Subcommand)]

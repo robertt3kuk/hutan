@@ -356,10 +356,9 @@ pub fn version_of(stat: &Stat) -> FileVersion {
 }
 
 pub fn mtime_ns(stat: &Stat) -> i64 {
-    let seconds = i64::from(stat.st_mtime);
-    seconds
+    stat.st_mtime
         .saturating_mul(1_000_000_000)
-        .saturating_add(i64::from(stat.st_mtime_nsec))
+        .saturating_add(stat.st_mtime_nsec)
 }
 
 pub fn kind_of(stat: &Stat) -> FsKind {
