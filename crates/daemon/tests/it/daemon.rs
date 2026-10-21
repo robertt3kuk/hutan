@@ -7,6 +7,7 @@
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::time::Duration;
 
+use crate::common::start_when_free;
 use futures::{SinkExt, StreamExt};
 use hutan_client::{Client, ClientError, ConnectOptions};
 use hutan_core::{Epoch, Seq, SessionId, WorkspaceId};
@@ -663,9 +664,7 @@ async fn shutdown_replies_removes_socket_and_releases_lock() {
     assert!(!t.paths.socket.exists(), "socket must be removed");
 
     // The lock is free again: a new daemon starts on the same home.
-    let again = hutan_daemon::start(DaemonConfig::new(t.paths.clone()))
-        .await
-        .unwrap();
+    let again = start_when_free(DaemonConfig::new(t.paths.clone())).await;
     again.shutdown();
     again.wait().await.unwrap();
 }

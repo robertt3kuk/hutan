@@ -97,21 +97,7 @@ impl TestDaemon {
     /// Stops this daemon, then starts a new one on the same `HUTAN_HOME` (a daemon restart:
     /// new epoch, same database).
     pub async fn restart(self) -> Self {
-        let Self {
-            _dir,
-            paths,
-            daemon,
-        } = self;
-        daemon.shutdown();
-        timeout(WAIT, daemon.wait()).await.unwrap().unwrap();
-        let daemon = hutan_daemon::start(DaemonConfig::new(paths.clone()))
-            .await
-            .unwrap();
-        Self {
-            _dir,
-            paths,
-            daemon,
-        }
+        self.restart_with(|_| {}).await
     }
 
     /// [`restart`](Self::restart) with `tweak` applied to the new daemon's config.
@@ -125,21 +111,7 @@ impl TestDaemon {
         timeout(WAIT, daemon.wait()).await.unwrap().unwrap();
         let mut config = DaemonConfig::new(paths.clone());
         tweak(&mut config);
-        // Tests share one process: another test spawning a child at this very moment can hold
-        // a copy of the lock's descriptor until its `exec`, so the lock may be released a few
-        // milliseconds late.
-        let daemon = timeout(WAIT, async {
-            loop {
-                match hutan_daemon::start(config.clone()).await {
-                    Err(hutan_daemon::DaemonError::AlreadyRunning { .. }) => {
-                        tokio::time::sleep(Duration::from_millis(20)).await;
-                    }
-                    other => return other.unwrap(),
-                }
-            }
-        })
-        .await
-        .unwrap();
+        let daemon = start_when_free(config).await;
         Self {
             _dir,
             paths,
@@ -156,15 +128,34 @@ impl TestDaemon {
             daemon,
         } = self;
         timeout(WAIT, daemon.wait()).await.unwrap().unwrap();
-        let daemon = hutan_daemon::start(DaemonConfig::new(paths.clone()))
-            .await
-            .unwrap();
+        let daemon = start_when_free(DaemonConfig::new(paths.clone())).await;
         Self {
             _dir,
             paths,
             daemon,
         }
     }
+}
+
+/// Starts a daemon on the home of one that has just stopped. The stopped daemon released its
+/// lock before it ended, but a child the daemon spawned at that moment (the login environment's
+/// `defaults`, `path_helper`, shells) holds a copy of the lock's descriptor until its `exec`
+/// closes it, and on a loaded machine that takes long enough to make a start in between fail
+/// with `AlreadyRunning`. A daemon that really is still running keeps the lock, and the wait
+/// ends in the deadline.
+pub async fn start_when_free(config: DaemonConfig) -> RunningDaemon {
+    timeout(WAIT, async {
+        loop {
+            match hutan_daemon::start(config.clone()).await {
+                Err(hutan_daemon::DaemonError::AlreadyRunning { .. }) => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                other => return other.unwrap(),
+            }
+        }
+    })
+    .await
+    .expect("the stopped daemon's lock was never released")
 }
 
 pub fn size(cols: u16, rows: u16) -> TerminalSize {
