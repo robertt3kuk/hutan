@@ -1237,14 +1237,27 @@ fn start_runs_a_codex_chat_as_a_task_and_opens_it_focused(cx: &mut TestAppContex
         .read_with(cx, |wb, _| wb.chat_view_of(session.id))
         .unwrap();
     assert!(cx.update(|window, cx| focused.read(cx).focus_handle_is_focused(window)));
-    // Once the first turn ended the task is done and its chat waits for a reviewer.
+    // Once the first turn ended the task is done; the turn changed no files, so nothing
+    // waits for a reviewer (FX-REVIEW rule 2).
     pump(cx, "the first turn to end", |cx| {
         view.read_with(cx, |wb, cx| {
-            let store = wb.sessions().read(cx);
-            store
-                .session(session.id)
-                .is_some_and(|s| store.presentation(s).label == "review")
+            wb.sessions()
+                .read(cx)
+                .tasks()
+                .ordered()
+                .first()
+                .is_some_and(|t| {
+                    t.state == hutan_core::task::TaskState::Done
+                        && t.delivery == hutan_core::task::DeliveryState::None
+                })
         })
+    });
+    view.read_with(cx, |wb, cx| {
+        let store = wb.sessions().read(cx);
+        let shown = store
+            .session(session.id)
+            .map(|s| store.presentation(s).label);
+        assert_ne!(shown.as_deref(), Some("review"));
     });
 }
 
