@@ -36,8 +36,8 @@ use hutan_protocol::task::{
 };
 use hutan_protocol::worktree::{
     WorktreeCommit, WorktreeCommitted, WorktreeCreate, WorktreeDiff, WorktreeDiffRequest,
-    WorktreeFileDiff, WorktreeFileDiffRequest, WorktreeInfo, WorktreeList, WorktreeListRequest,
-    WorktreeMerge, WorktreeMerged, WorktreeRemove, WorktreeRemoved,
+    WorktreeFileDiff, WorktreeFileDiffRequest, WorktreeFinish, WorktreeFinished, WorktreeInfo,
+    WorktreeList, WorktreeListRequest, WorktreeRemove, WorktreeRemoved,
 };
 use hutan_terminal_view::DefaultColors;
 use tokio::sync::broadcast::error::RecvError;
@@ -2105,29 +2105,14 @@ impl SessionsStore {
         self.call(Request::WorktreeFileDiff(request), |diff| diff, cx)
     }
 
-    /// `worktree.merge`. The error text carries git's reason; for a conflict the files follow
-    /// it, one per line after `conflict:`.
-    pub fn merge_worktree(
+    /// `worktree.finish`: the user's Finish of a checkout (commit, merge a worktree, push). A
+    /// step that failed is in the answer; the error is a refusal before anything changed.
+    pub fn finish_checkout(
         &self,
-        request: WorktreeMerge,
+        request: WorktreeFinish,
         cx: &mut Context<Self>,
-    ) -> Task<Result<WorktreeMerged, String>> {
-        let connection = self.connection.clone();
-        cx.background_spawn(async move {
-            connection
-                .call::<WorktreeMerged>(Request::WorktreeMerge(request))
-                .await
-                .map_err(|error| match &error {
-                    hutan_client::ClientError::Remote(body) => {
-                        let mut text = body.message.clone();
-                        for file in hutan_protocol::worktree::conflict_files(body) {
-                            text.push_str(&format!("\nconflict: {file}"));
-                        }
-                        text
-                    }
-                    other => other.to_string(),
-                })
-        })
+    ) -> Task<Result<WorktreeFinished, String>> {
+        self.call(Request::WorktreeFinish(request), |done| done, cx)
     }
 
     /// `worktree.commit`: commits everything in a worktree so a merge takes it.

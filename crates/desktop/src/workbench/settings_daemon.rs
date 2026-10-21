@@ -78,15 +78,22 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
                 "projects.auto",
             ],
         }],
-        "control" => &[Section {
-            title: "",
-            help: "",
-            keys: &[
-                "control.agents",
-                "control.mcp",
-                "control.approval_timeout_secs",
-            ],
-        }],
+        "control" => &[
+            Section {
+                title: "",
+                help: "",
+                keys: &[
+                    "control.agents",
+                    "control.mcp",
+                    "control.approval_timeout_secs",
+                ],
+            },
+            Section {
+                title: words::SEC_FINISH,
+                help: "",
+                keys: &["finish.push"],
+            },
+        ],
         "history" => &[
             Section {
                 title: words::SEC_HISTORY,

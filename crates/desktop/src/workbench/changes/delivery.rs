@@ -1,10 +1,10 @@
 //! Delivery in the Changes view (DL-1, protocol 0.25, capability `task.review`): the review of
 //! the task whose work the checkout holds — **Accept**, **Request changes…** with a note — and
-//! the truth about what a merge takes: the commits on the branch (what `worktree.merge`
-//! integrates) apart from the uncommitted changes of the worktree (what it would not take), with
-//! **Commit all…** to bring the second into the first, and the cleanup offer after a merge that
-//! left uncommitted changes behind (removing the worktree would discard them: it defaults to
-//! *Keep*).
+//! the truth about what a merge takes: the commits on the branch (what the merge step of
+//! **Finish** integrates) apart from the uncommitted changes of the worktree (which Finish
+//! commits first), with **Commit all…** to commit them without merging, and the cleanup offer
+//! after a merge that left uncommitted changes behind (removing the worktree would discard
+//! them: it defaults to *Keep*).
 //!
 //! The daemon owns the delivery state: this module sends `task.review` and `worktree.commit`
 //! and draws what `task.updated` and `worktree.diff` say.
@@ -239,7 +239,7 @@ impl ChangesView {
         if self.merged.is_some() {
             return;
         }
-        self.merge = None;
+        self.finish = None;
         self.delivery.form = Some(TextForm {
             kind,
             input: TextInput::new(),
@@ -697,10 +697,10 @@ impl ChangesView {
         let more = |total: usize| total.saturating_sub(LISTED);
 
         let committed_head = if commits.is_empty() && committed.is_empty() {
-            format!("Committed on {branch}: nothing yet. A merge would have nothing to take.")
+            format!("Committed on {branch}: nothing yet.")
         } else {
             format!(
-                "Committed on {branch}: {}, {}. Merge into {target} takes exactly these.",
+                "Committed on {branch}: {}, {}. Finish merges these into {target}.",
                 plural(commits.len(), "commit", "commits"),
                 plural(committed.len(), "file", "files"),
             )
@@ -745,12 +745,12 @@ impl ChangesView {
         let dirty = self.has_uncommitted();
         if dirty {
             let head = if uncommitted.is_empty() {
-                "Uncommitted in the worktree: changes that are not listed here. A merge does not \
-                 take them."
+                "Uncommitted in the worktree: changes that are not listed here. Finish commits \
+                 them first."
                     .to_owned()
             } else {
                 format!(
-                    "Uncommitted in the worktree: {}. A merge does not take them.",
+                    "Uncommitted in the worktree: {}. Finish commits them first.",
                     plural(uncommitted.len(), "file", "files")
                 )
             };
@@ -819,8 +819,8 @@ impl ChangesView {
         matches!(&self.listing, Listing::Ready(diff) if diff.commits_truncated)
     }
 
-    /// The merge preview inside the merge form: exactly the commits it integrates, and a
-    /// warning for what it leaves out.
+    /// The merge preview inside the Finish form of a worktree: exactly the commits the merge
+    /// integrates, and the uncommitted changes the commit step adds to them.
     pub(super) fn render_merge_takes(
         &self,
         theme: &Theme,
@@ -844,15 +844,15 @@ impl ChangesView {
                 div()
                     .medium()
                     .child(SharedString::from(if commits.is_empty() {
-                        "This merge takes no commit.".to_owned()
+                        "The merge takes no commit yet.".to_owned()
                     } else {
                         format!(
-                            "This merge takes {}:",
+                            "The merge takes {}:",
                             plural(commits.len(), "commit", "commits")
                         )
                     }))
                     .relative()
-                    .child(probe(&self.env.regions, Region::Changes("merge-commits"))),
+                    .child(probe(&self.env.regions, Region::Changes("finish-commits"))),
             )
             .child(
                 self.scope_lines(
@@ -868,14 +868,23 @@ impl ChangesView {
                 ),
             );
         if self.has_uncommitted() {
+            let uncommitted = self.uncommitted_files().len();
             column = column.child(
                 div()
                     .text_color(theme.warning)
                     .text_size(px(tokens.secondary_font_size))
-                    .child(
-                        "The worktree has uncommitted changes that are not part of this merge. \
-                         Commit them first to include them.",
-                    ),
+                    .child(SharedString::from(if uncommitted == 0 {
+                        "First, the uncommitted changes of the worktree are committed with the \
+                         message below, so the merge takes them too."
+                            .to_owned()
+                    } else {
+                        format!(
+                            "First, {} with uncommitted changes {} committed with the message \
+                             below, so the merge takes them too.",
+                            plural(uncommitted, "file", "files"),
+                            if uncommitted == 1 { "is" } else { "are" }
+                        )
+                    })),
             );
         }
         column.into_any_element()

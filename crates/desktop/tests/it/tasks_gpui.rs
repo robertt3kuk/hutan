@@ -100,7 +100,15 @@ struct Env {
 
 impl Env {
     fn new() -> Self {
-        let daemon = TestDaemon::start();
+        Self::with_daemon(TestDaemon::start())
+    }
+
+    /// [`new`](Self::new) with `daemon_toml` as the daemon's `daemon.toml`.
+    fn with_config(daemon_toml: &str) -> Self {
+        Self::with_daemon(TestDaemon::start_with_config(daemon_toml))
+    }
+
+    fn with_daemon(daemon: TestDaemon) -> Self {
         let (keep, root) = repo();
         let workspace = daemon.create_workspace("proj", &[&root]).id;
         Self {
@@ -814,7 +822,7 @@ fn the_changes_view_lists_files_and_renders_a_diff_with_folding_hunks(cx: &mut T
 }
 
 #[gpui::test]
-fn a_view_of_a_checkout_without_changes_says_so_and_cannot_merge(cx: &mut TestAppContext) {
+fn a_main_checkout_without_changes_says_so_and_finishes_without_a_merge(cx: &mut TestAppContext) {
     let env = Env::new();
     let (view, cx) = open(cx, &env);
     let root = env.root.clone();
@@ -827,9 +835,18 @@ fn a_view_of_a_checkout_without_changes_says_so_and_cannot_merge(cx: &mut TestAp
         changes.read_with(cx, |c, _| c.base().is_some() && c.info().is_some())
     });
     assert!(changes.read_with(cx, |c, _| c.files().is_empty() && !c.can_merge()));
-    // The merge button of the main checkout is inert.
-    click(&view, cx, Region::Changes("merge"));
-    assert!(!changes.read_with(cx, |c, _| c.merge_open()));
+    // Finish works in the main checkout too: commit and push, no merge modes.
+    click(&view, cx, Region::Changes("finish"));
+    assert!(changes.read_with(cx, |c, _| c.finish_open()));
+    wait_until(cx, "the form", |cx| {
+        region(&view, cx, Region::Changes("finish-confirm")).is_some()
+    });
+    assert!(region(&view, cx, Region::Changes("strategy-merge")).is_none());
+    // The Push pill keeps it local for this Finish.
+    click(&view, cx, Region::Changes("finish-push"));
+    assert_eq!(changes.read_with(cx, |c, _| c.finish_push()), Some(false));
+    click(&view, cx, Region::Changes("finish-cancel"));
+    assert!(!changes.read_with(cx, |c, _| c.finish_open()));
 }
 
 /// Opens the Changes view of `wt` and waits for its list and worktree.
@@ -849,8 +866,21 @@ fn open_changes(
     changes
 }
 
+/// Opens the Finish form and turns its push off (these repositories have no remote).
+fn finish_locally(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    changes: &Entity<ChangesView>,
+) {
+    click(view, cx, Region::Changes("finish"));
+    assert!(changes.read_with(cx, |c, _| c.finish_open()));
+    // Through the API: a result card that just appeared moves the form under a click.
+    changes.update(cx, |c, cx| c.set_finish_push(false, cx));
+    assert_eq!(changes.read_with(cx, |c, _| c.finish_push()), Some(false));
+}
+
 #[gpui::test]
-fn merging_from_the_view_commits_in_the_main_checkout_and_offers_the_removal(
+fn finishing_a_worktree_merges_it_in_the_main_checkout_and_offers_the_removal(
     cx: &mut TestAppContext,
 ) {
     let env = Env::new();
@@ -862,14 +892,12 @@ fn merging_from_the_view_commits_in_the_main_checkout_and_offers_the_removal(
     fs::write(env.root.join("main.txt"), "m\n").unwrap();
     commit_all(&env.root, "main work");
 
-    click(&view, cx, Region::Changes("merge"));
-    assert!(changes.read_with(cx, |c, _| c.merge_open()));
+    finish_locally(&view, cx, &changes);
     assert_eq!(
-        changes.read_with(cx, |c, _| c.merge_strategy()),
+        changes.read_with(cx, |c, _| c.finish_strategy()),
         Some(MergeStrategy::Merge)
     );
-    changes.update(cx, |c, cx| c.set_merge_message("Merge the feature", cx));
-    click(&view, cx, Region::Changes("merge-confirm"));
+    click(&view, cx, Region::Changes("finish-confirm"));
     wait_until(cx, "the merge result", |cx| {
         changes.read_with(cx, |c, _| c.merged().is_some())
     });
@@ -884,16 +912,28 @@ fn merging_from_the_view_commits_in_the_main_checkout_and_offers_the_removal(
     );
     assert_eq!(
         git_out(&env.root, &["log", "-1", "--format=%s"]).trim(),
-        "Merge the feature"
+        "Merge branch 'feature/x'"
     );
-    // The toast, and the form is gone.
+    // Each step says what it did; the toast names the merge, and the form is gone.
+    let done = changes.read_with(cx, |c, _| c.finished().cloned().unwrap());
+    let lines = hutan_desktop::workbench::finish_step_lines(&done);
+    assert_eq!(lines[0].1, "Nothing to commit on feature/x.");
+    assert!(
+        lines[1].1.starts_with("Merged feature/x into main ("),
+        "{lines:?}"
+    );
+    assert_eq!(
+        lines[2].1,
+        "Not pushed: push was off. The commit stays local."
+    );
     assert!(
         view.read_with(cx, |wb, _| wb.notice().map(|n| n.to_string()))
             .is_some_and(|n| n.starts_with("Merged feature/x into main (")),
     );
-    assert!(!changes.read_with(cx, |c, _| c.merge_open()));
-    wait_until(cx, "the remove offer", |cx| {
-        region(&view, cx, Region::Changes("remove")).is_some()
+    assert!(!changes.read_with(cx, |c, _| c.finish_open()));
+    wait_until(cx, "the result and the remove offer", |cx| {
+        region(&view, cx, Region::Changes("finish-result")).is_some()
+            && region(&view, cx, Region::Changes("remove")).is_some()
     });
 
     // "Remove worktree and branch": gone, with its (merged) branch, and the tab closes.
@@ -918,39 +958,52 @@ fn merging_from_the_view_commits_in_the_main_checkout_and_offers_the_removal(
 }
 
 #[gpui::test]
-fn keeping_the_worktree_after_a_squash_merge_dismisses_the_offer(cx: &mut TestAppContext) {
+fn a_squash_finish_commits_the_rest_first_and_keep_dismisses_the_offer(cx: &mut TestAppContext) {
     let env = Env::new();
     let wt = feature_worktree(&env);
     let (view, cx) = open(cx, &env);
     let changes = open_changes(&view, cx, &wt);
-    click(&view, cx, Region::Changes("merge"));
+    finish_locally(&view, cx, &changes);
     click(&view, cx, Region::Changes("strategy-squash"));
     assert_eq!(
-        changes.read_with(cx, |c, _| c.merge_strategy()),
+        changes.read_with(cx, |c, _| c.finish_strategy()),
         Some(MergeStrategy::Squash)
     );
-    changes.update(cx, |c, cx| c.set_merge_message("Add b", cx));
-    click(&view, cx, Region::Changes("merge-confirm"));
+    changes.update(cx, |c, cx| c.set_finish_message("Add b", cx));
+    click(&view, cx, Region::Changes("finish-confirm"));
     wait_until(cx, "the merge result", |cx| {
         changes.read_with(cx, |c, _| c.merged().is_some())
     });
     let merged = changes.read_with(cx, |c, _| c.merged().cloned().unwrap());
     assert_eq!(merged.strategy, MergeStrategy::Squash);
     assert!(
-        merged.source_dirty,
-        "the untracked file is not part of the merge"
+        !merged.source_dirty,
+        "Finish committed the untracked file before merging"
+    );
+    assert_eq!(
+        changes.read_with(cx, |c, _| c.cleanup_default()),
+        Some(CleanupDefault::Remove)
     );
     assert_eq!(
         git_out(&env.root, &["log", "-1", "--format=%s"]).trim(),
         "Add b"
     );
+    assert_eq!(
+        git_out(&env.root, &["show", "main:untracked.txt"]),
+        "u1\nu2\n"
+    );
     click(&view, cx, Region::Changes("keep"));
     assert!(changes.read_with(cx, |c, _| c.merged().is_none()));
     assert!(wt.exists());
+    // The result stays until it is dismissed.
+    click(&view, cx, Region::Changes("finish-done"));
+    assert!(changes.read_with(cx, |c, _| c.finished().is_none()));
 }
 
 #[gpui::test]
-fn a_conflicting_merge_stays_open_with_the_files_and_changes_nothing(cx: &mut TestAppContext) {
+fn a_conflicting_finish_says_so_with_the_files_and_a_refusal_stays_in_the_form(
+    cx: &mut TestAppContext,
+) {
     let env = Env::new();
     let wt = feature_worktree(&env);
     fs::write(env.root.join("a.txt"), "main side\n").unwrap();
@@ -959,34 +1012,49 @@ fn a_conflicting_merge_stays_open_with_the_files_and_changes_nothing(cx: &mut Te
     let (view, cx) = open(cx, &env);
     let changes = open_changes(&view, cx, &wt);
 
-    click(&view, cx, Region::Changes("merge"));
-    click(&view, cx, Region::Changes("merge-confirm"));
-    wait_until(cx, "the refusal", |cx| {
-        changes.read_with(cx, |c, _| c.merge_error().is_some())
+    finish_locally(&view, cx, &changes);
+    changes.update(cx, |c, cx| c.set_finish_message("Wip", cx));
+    click(&view, cx, Region::Changes("finish-confirm"));
+    wait_until(cx, "the steps", |cx| {
+        changes.read_with(cx, |c, _| c.finished().is_some())
     });
-    assert_eq!(
-        changes.read_with(cx, |c, _| c.merge_conflicts().to_vec()),
-        ["a.txt"]
+    let done = changes.read_with(cx, |c, _| c.finished().cloned().unwrap());
+    let merge = done.merge.clone().unwrap();
+    assert_eq!(merge.conflicts, ["a.txt"]);
+    let lines = hutan_desktop::workbench::finish_step_lines(&done);
+    assert!(
+        lines[0].1.starts_with("Committed 1 file on feature/x"),
+        "{lines:?}"
     );
-    let error = changes.read_with(cx, |c, _| c.merge_error().unwrap().to_owned());
-    assert!(error.contains("conflicts in 1 file(s)"), "{error}");
-    assert!(changes.read_with(cx, |c, _| c.merge_open() && c.merged().is_none()));
+    assert!(lines[1].1.contains("conflict"), "{lines:?}");
+    assert_eq!(lines[1].0, hutan_desktop::workbench::StepTone::Failed);
+    assert!(changes.read_with(cx, |c, _| c.merged().is_none()));
     assert_eq!(git_out(&env.root, &["rev-parse", "HEAD"]), head);
     assert_eq!(git_out(&env.root, &["status", "--porcelain"]), "");
+    wait_until(cx, "the result card", |cx| {
+        region(&view, cx, Region::Changes("finish-result")).is_some()
+    });
 
-    // A dirty main checkout is refused too, with its reason.
-    changes.update(cx, |c, cx| c.close_merge(cx));
-    fs::write(env.root.join("stray.txt"), "x\n").unwrap();
+    // A dirty main checkout is refused before anything changes, and the form says why.
     fs::write(env.root.join("a.txt"), "one\ntwo\nthree\n").unwrap();
     commit_all(&env.root, "undo the edit");
     fs::write(env.root.join("stray.txt"), "dirty\n").unwrap();
-    click(&view, cx, Region::Changes("merge"));
-    click(&view, cx, Region::Changes("merge-confirm"));
-    wait_until(cx, "the second refusal", |cx| {
-        changes.read_with(cx, |c, _| c.merge_error().is_some())
+    fs::write(wt.join("more.txt"), "more\n").unwrap();
+    let wt_head = git_out(&wt, &["rev-parse", "HEAD"]);
+    finish_locally(&view, cx, &changes);
+    changes.update(cx, |c, cx| c.set_finish_message("More", cx));
+    click(&view, cx, Region::Changes("finish-confirm"));
+    wait_until(cx, "the refusal", |cx| {
+        changes.read_with(cx, |c, _| c.finish_error().is_some())
     });
-    let error = changes.read_with(cx, |c, _| c.merge_error().unwrap().to_owned());
+    let error = changes.read_with(cx, |c, _| c.finish_error().unwrap().to_owned());
     assert!(error.contains("uncommitted changes"), "{error}");
+    assert!(changes.read_with(cx, |c, _| c.finish_open()));
+    assert_eq!(
+        git_out(&wt, &["rev-parse", "HEAD"]),
+        wt_head,
+        "nothing was committed"
+    );
 }
 
 // Entry points ----------------------------------------------------------------------------------
@@ -1238,7 +1306,7 @@ fn the_header_accepts_the_work_of_the_task_on_the_branch(cx: &mut TestAppContext
             c.delivery_state(cx) == Some(DeliveryState::AwaitingReview)
         })
     });
-    for name in ["delivery", "accept", "request-changes", "merge"] {
+    for name in ["delivery", "accept", "request-changes", "finish"] {
         wait_until(cx, name, |cx| {
             region(&view, cx, Region::Changes(name)).is_some()
         });
@@ -1282,7 +1350,7 @@ fn the_changes_toolbar_wraps_so_every_action_stays_inside_a_narrow_window(cx: &m
             c.delivery_state(cx) == Some(DeliveryState::AwaitingReview)
         })
     });
-    let names = ["accept", "request-changes", "toggle", "refresh", "merge"];
+    let names = ["accept", "request-changes", "toggle", "refresh", "finish"];
     let inside = |view: &Entity<Workbench>, cx: &mut VisualTestContext, width: f32, what: &str| {
         draw(cx);
         for name in names {
@@ -1310,15 +1378,15 @@ fn the_changes_toolbar_wraps_so_every_action_stays_inside_a_narrow_window(cx: &m
     // The reported case: both docks visible at the default width.
     cx.simulate_resize(gpui::size(gpui::px(1280.0), gpui::px(800.0)));
     inside(&view, cx, 1280.0, "1280 px, docks visible");
-    // A narrow window: 640 px with the docks hidden still shows Merge and the rest.
+    // A narrow window: 640 px with the docks hidden still shows Finish and the rest.
     cx.dispatch_action(actions::ToggleLeftDock);
     cx.dispatch_action(actions::ToggleRightDock);
     cx.simulate_resize(gpui::size(gpui::px(640.0), gpui::px(800.0)));
     inside(&view, cx, 640.0, "640 px");
-    // Merge is a click away and still opens the form.
-    click(&view, cx, Region::Changes("merge"));
-    wait_until(cx, "the merge form", |cx| {
-        region(&view, cx, Region::Changes("merge-confirm")).is_some()
+    // Finish is a click away and still opens the form.
+    click(&view, cx, Region::Changes("finish"));
+    wait_until(cx, "the finish form", |cx| {
+        region(&view, cx, Region::Changes("finish-confirm")).is_some()
     });
 }
 
@@ -1513,12 +1581,13 @@ fn the_scope_says_what_a_merge_takes_and_commit_all_brings_the_rest(cx: &mut Tes
         changes.read_with(cx, |c, _| c.files().len() == 3)
     });
 
-    // The merge form lists exactly the commits it integrates and warns about the rest.
-    click(&view, cx, Region::Changes("merge"));
+    // The Finish form lists exactly the commits the merge integrates and says the rest is
+    // committed first.
+    click(&view, cx, Region::Changes("finish"));
     wait_until(cx, "the merge preview", |cx| {
-        region(&view, cx, Region::Changes("merge-commits")).is_some()
+        region(&view, cx, Region::Changes("finish-commits")).is_some()
     });
-    click(&view, cx, Region::Changes("merge-cancel"));
+    click(&view, cx, Region::Changes("finish-cancel"));
 
     // Commit all…: a message is required; then the worktree is clean and the commit is new.
     click(&view, cx, Region::Changes("commit-all"));
@@ -1554,7 +1623,7 @@ fn the_scope_says_what_a_merge_takes_and_commit_all_brings_the_rest(cx: &mut Tes
 }
 
 #[gpui::test]
-fn merging_marks_the_task_merged_and_leftovers_default_the_cleanup_to_keep(
+fn finishing_takes_the_task_title_commits_the_rest_and_marks_the_task_merged(
     cx: &mut TestAppContext,
 ) {
     let env = Env::new();
@@ -1564,16 +1633,24 @@ fn merging_marks_the_task_merged_and_leftovers_default_the_cleanup_to_keep(
     wait_until(cx, "the task of the view", |cx| {
         changes.read_with(cx, |c, cx| c.can_review(cx))
     });
-    click(&view, cx, Region::Changes("merge"));
-    changes.update(cx, |c, cx| c.set_merge_message("Merge Fix login", cx));
-    click(&view, cx, Region::Changes("merge-confirm"));
+    finish_locally(&view, cx, &changes);
+    // The message starts as the task's title, and stays editable.
+    assert_eq!(
+        changes.read_with(cx, |c, _| c.finish_message()),
+        Some("Fix login".to_owned())
+    );
+    click(&view, cx, Region::Changes("finish-confirm"));
     wait_until(cx, "the merge result", |cx| {
         changes.read_with(cx, |c, _| c.merged().is_some())
     });
     let merged = changes.read_with(cx, |c, _| c.merged().cloned().unwrap());
     assert!(
-        merged.source_dirty,
-        "untracked.txt is not part of the merge"
+        !merged.source_dirty,
+        "untracked.txt was committed with the task's title before the merge"
+    );
+    assert_eq!(
+        git_out(&wt, &["log", "-1", "--format=%s"]).trim(),
+        "Fix login"
     );
 
     // The task is merged, with the commit the merge made.
@@ -1596,17 +1673,16 @@ fn merging_marks_the_task_merged_and_leftovers_default_the_cleanup_to_keep(
         })
     });
 
-    // Uncommitted changes remain: removing the worktree would discard them, so Keep is the
-    // default and the offer says so.
+    // Nothing is left in the worktree: removing it is the default.
     assert_eq!(
         changes.read_with(cx, |c, _| c.cleanup_default()),
-        Some(CleanupDefault::Keep)
+        Some(CleanupDefault::Remove)
     );
+    assert!(env.root.join("untracked.txt").exists());
     draw(cx);
     assert!(region(&view, cx, Region::Changes("remove")).is_some());
     click(&view, cx, Region::Changes("keep"));
     assert!(changes.read_with(cx, |c, _| c.merged().is_none()));
-    assert!(wt.join("untracked.txt").exists(), "nothing was discarded");
 }
 
 #[gpui::test]
@@ -1621,8 +1697,8 @@ fn after_commit_all_nothing_is_left_and_removal_is_the_default(cx: &mut TestAppC
     wait_until(cx, "the commit", |cx| {
         changes.read_with(cx, |c, _| c.commits().len() == 2 && !c.has_uncommitted())
     });
-    click(&view, cx, Region::Changes("merge"));
-    click(&view, cx, Region::Changes("merge-confirm"));
+    finish_locally(&view, cx, &changes);
+    click(&view, cx, Region::Changes("finish-confirm"));
     wait_until(cx, "the merge result", |cx| {
         changes.read_with(cx, |c, _| c.merged().is_some())
     });
@@ -1636,4 +1712,105 @@ fn after_commit_all_nothing_is_left_and_removal_is_the_default(cx: &mut TestAppC
     wait_until(cx, "the worktree to go", |_| !wt.exists());
     // Removing a merged worktree discards nothing: the task stays merged.
     assert_eq!(env.task(task.id).unwrap().delivery, DeliveryState::Merged);
+}
+
+// Finish and push -------------------------------------------------------------------------------
+
+/// `env.root`'s `main` tracking `main` of a bare `origin` next to it; the path of `origin`.
+fn with_origin(env: &Env) -> PathBuf {
+    let bare = env.root.parent().unwrap().join("origin.git");
+    git(
+        env.root.parent().unwrap(),
+        &["init", "-q", "--bare", "-b", "main", "origin.git"],
+    );
+    git(
+        &env.root,
+        &["remote", "add", "origin", bare.to_str().unwrap()],
+    );
+    git(&env.root, &["push", "-q", "-u", "origin", "main"]);
+    bare
+}
+
+/// The daemon pushes in its own environment, not a login shell's: the tests do not depend on
+/// the account's shell.
+const DAEMON_ENV: &str = "[terminal]\nenv_inherit = \"daemon\"\n";
+
+#[gpui::test]
+fn finishing_the_main_checkout_commits_and_pushes_to_its_upstream(cx: &mut TestAppContext) {
+    let env = Env::with_config(DAEMON_ENV);
+    let bare = with_origin(&env);
+    fs::write(env.root.join("a.txt"), "one\ntwo\nthree\nfour\n").unwrap();
+    let (view, cx) = open(cx, &env);
+    let changes = open_changes(&view, cx, &env.root);
+
+    click(&view, cx, Region::Changes("finish"));
+    // Push starts as `[finish] push` (on by default).
+    assert_eq!(changes.read_with(cx, |c, _| c.finish_push()), Some(true));
+    changes.update(cx, |c, cx| c.set_finish_message("Add four", cx));
+    click(&view, cx, Region::Changes("finish-confirm"));
+    wait_until(cx, "the steps", |cx| {
+        changes.read_with(cx, |c, _| c.finished().is_some())
+    });
+    let done = changes.read_with(cx, |c, _| c.finished().cloned().unwrap());
+    let lines = hutan_desktop::workbench::finish_step_lines(&done);
+    assert!(
+        lines[0].1.starts_with("Committed 1 file on main ("),
+        "{lines:?}"
+    );
+    assert!(
+        lines[1].1.starts_with("Pushed main to origin/main ("),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|(tone, _)| *tone == hutan_desktop::workbench::StepTone::Done)
+    );
+    assert!(done.merge.is_none());
+    assert_eq!(
+        git_out(&bare, &["log", "-1", "--format=%s", "main"]).trim(),
+        "Add four"
+    );
+    assert_eq!(
+        git_out(&bare, &["rev-parse", "main"]),
+        git_out(&env.root, &["rev-parse", "HEAD"])
+    );
+    assert!(
+        view.read_with(cx, |wb, _| wb.notice().map(|n| n.to_string()))
+            .is_some_and(|n| n.starts_with("Pushed main to origin/main (")),
+    );
+    wait_until(cx, "the result card", |cx| {
+        region(&view, cx, Region::Changes("finish-result")).is_some()
+    });
+}
+
+#[gpui::test]
+fn a_finish_whose_push_fails_says_why_and_keeps_the_commit(cx: &mut TestAppContext) {
+    // `main` has no upstream: the commit is made, the push says so.
+    let env = Env::with_config(DAEMON_ENV);
+    fs::write(env.root.join("a.txt"), "local\n").unwrap();
+    let (view, cx) = open(cx, &env);
+    let changes = open_changes(&view, cx, &env.root);
+    click(&view, cx, Region::Changes("finish"));
+    changes.update(cx, |c, cx| c.set_finish_message("Local work", cx));
+    click(&view, cx, Region::Changes("finish-confirm"));
+    wait_until(cx, "the steps", |cx| {
+        changes.read_with(cx, |c, _| c.finished().is_some())
+    });
+    let done = changes.read_with(cx, |c, _| c.finished().cloned().unwrap());
+    let lines = hutan_desktop::workbench::finish_step_lines(&done);
+    assert_eq!(lines[1].0, hutan_desktop::workbench::StepTone::Failed);
+    assert!(
+        lines[1].1.starts_with("Not pushed — no upstream:") && lines[1].1.contains("git push -u"),
+        "{lines:?}"
+    );
+    assert_eq!(
+        git_out(&env.root, &["log", "-1", "--format=%s"]).trim(),
+        "Local work"
+    );
+    // The failure is what the toast says.
+    assert!(
+        view.read_with(cx, |wb, _| wb.notice().map(|n| n.to_string()))
+            .is_some_and(|n| n.starts_with("Not pushed — no upstream")),
+    );
 }

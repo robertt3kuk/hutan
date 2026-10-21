@@ -1,18 +1,21 @@
 //! The Changes view (M7-C): what a worktree (or the main checkout) changed against its base,
-//! read-only, with a file list and a unified diff per file, and — for a worktree — the merge
-//! into the main checkout and the offer to remove the worktree afterwards.
+//! read-only, with a file list and a unified diff per file, and **Finish** (PR-FINISH, ADR
+//! 0020): commit, merge a worktree into the main checkout, push — then the offer to remove a
+//! merged worktree.
 //!
 //! Everything comes from the daemon: `worktree.diff` (the file list, against the merge base of
 //! the base branch and `HEAD`, uncommitted changes togglable), `worktree.file_diff` (one file's
-//! patch, fetched when it is selected) and `worktree.merge`. Patches are parsed with
+//! patch, fetched when it is selected) and `worktree.finish`. Patches are parsed with
 //! `hutan_chat_view::diff` and drawn with the chat's diff rows; each hunk folds.
 
 mod comments;
 mod delivery;
+mod finish;
 mod tray;
 
 pub use comments::{Mark, ReviewComment, SnippetLine};
 pub use delivery::{CleanupDefault, DeliveryForm};
+pub use finish::{StepTone, step_lines as finish_step_lines};
 pub use tray::{Selection, SendTarget};
 
 use std::collections::{HashMap, HashSet};
@@ -26,20 +29,17 @@ use gpui::{
 };
 use hutan_chat_view::diff::{self, FileDiff, LineKind, MAX_LINES};
 use hutan_protocol::worktree::{
-    DiffFile, DiffStatus, MergeStrategy, WorktreeDiff, WorktreeDiffRequest,
-    WorktreeFileDiffRequest, WorktreeInfo, WorktreeMerge, WorktreeMerged, WorktreeRemove,
+    DiffFile, DiffStatus, WorktreeDiff, WorktreeDiffRequest, WorktreeFileDiffRequest,
+    WorktreeFinished, WorktreeInfo, WorktreeMerged, WorktreeRemove,
 };
 
-use super::chat::vim::{Outcome, Vim};
-use super::chat::{Look, TextInput, counts_of, diff_row};
-use super::panels::{edit_text, field_box, pill};
+use super::chat::{Look, counts_of, diff_row};
+use super::panels::pill;
 use super::registry::PanelEnv;
 use super::render::probe;
 use super::style::UiStyle;
-use super::text_field::{FieldMut, FieldRef};
 use super::ui::{self, StyledExt as _};
 use super::view::Region;
-use super::vim_ui::{self, VimConfig};
 use crate::sessions::CheckoutActivity;
 use crate::theme::{DensityExt as _, Theme, Tokens};
 
@@ -122,17 +122,6 @@ enum Listing {
 }
 
 #[derive(Debug)]
-struct MergeForm {
-    strategy: MergeStrategy,
-    message: TextInput,
-    /// Vim's modal state over the message (`editor.vim_mode`).
-    vim: Vim,
-    running: bool,
-    error: Option<String>,
-    conflicts: Vec<String>,
-}
-
-#[derive(Debug)]
 struct Merged {
     result: WorktreeMerged,
     removing: bool,
@@ -186,7 +175,10 @@ pub struct ChangesView {
     selected: Option<String>,
     patches: HashMap<String, FilePatch>,
     collapsed: HashSet<(String, usize)>,
-    merge: Option<MergeForm>,
+    /// The Finish form, while it is open.
+    finish: Option<finish::FinishForm>,
+    /// What the last Finish in this view did, step by step, until dismissed.
+    finished: Option<WorktreeFinished>,
     merged: Option<Merged>,
     message_focus: FocusHandle,
     /// The checkout's canonical path, which sessions' placements name.
@@ -245,7 +237,8 @@ impl ChangesView {
             selected: None,
             patches: HashMap::new(),
             collapsed: HashSet::new(),
-            merge: None,
+            finish: None,
+            finished: None,
             merged: None,
             message_focus: cx.focus_handle(),
             canonical,
@@ -390,22 +383,6 @@ impl ChangesView {
         hunks
     }
 
-    pub fn merge_open(&self) -> bool {
-        self.merge.is_some()
-    }
-
-    pub fn merge_strategy(&self) -> Option<MergeStrategy> {
-        self.merge.as_ref().map(|m| m.strategy)
-    }
-
-    pub fn merge_error(&self) -> Option<&str> {
-        self.merge.as_ref().and_then(|m| m.error.as_deref())
-    }
-
-    pub fn merge_conflicts(&self) -> &[String] {
-        self.merge.as_ref().map_or(&[], |m| m.conflicts.as_slice())
-    }
-
     /// The result of a merge done in this view, while its offer to remove the worktree stands.
     pub fn merged(&self) -> Option<&WorktreeMerged> {
         self.merged.as_ref().map(|m| &m.result)
@@ -415,7 +392,7 @@ impl ChangesView {
         self.merged.as_ref().and_then(|m| m.error.as_deref())
     }
 
-    /// Whether this checkout can be merged: a worktree with a branch.
+    /// Whether this checkout is a worktree with a branch (one Finish merges).
     pub fn can_merge(&self) -> bool {
         self.info
             .as_ref()
@@ -735,108 +712,7 @@ impl ChangesView {
         cx.notify();
     }
 
-    // ---- merging --------------------------------------------------------------------------
-
-    /// Opens the merge form ("Merge into main…").
-    pub fn open_merge(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.can_merge() || self.merged.is_some() {
-            return;
-        }
-        self.delivery.close();
-        if self.merge.is_none() {
-            self.merge = Some(MergeForm {
-                strategy: MergeStrategy::Merge,
-                message: TextInput::new(),
-                vim: Vim::new(),
-                running: false,
-                error: None,
-                conflicts: Vec::new(),
-            });
-        }
-        window.focus(&self.message_focus, cx);
-        cx.notify();
-    }
-
-    pub fn close_merge(&mut self, cx: &mut Context<Self>) {
-        self.merge = None;
-        cx.notify();
-    }
-
-    pub fn set_strategy(&mut self, strategy: MergeStrategy, cx: &mut Context<Self>) {
-        if let Some(form) = &mut self.merge {
-            form.strategy = strategy;
-            form.error = None;
-            cx.notify();
-        }
-    }
-
-    pub fn set_merge_message(&mut self, text: &str, cx: &mut Context<Self>) {
-        if let Some(form) = &mut self.merge {
-            form.message.set(text);
-            cx.notify();
-        }
-    }
-
-    /// Sends `worktree.merge`; the result is a notice and the offer to remove the worktree, a
-    /// refusal stays in the form (a conflict lists its files).
-    pub fn confirm_merge(&mut self, cx: &mut Context<Self>) {
-        let Some(form) = &mut self.merge else {
-            return;
-        };
-        if form.running {
-            return;
-        }
-        form.running = true;
-        form.error = None;
-        form.conflicts.clear();
-        let message = form.message.text().trim().to_owned();
-        let request = WorktreeMerge {
-            path: self.path.clone(),
-            into: self.base.clone(),
-            strategy: form.strategy,
-            message: (form.strategy != MergeStrategy::Rebase && !message.is_empty())
-                .then_some(message),
-        };
-        let merging = self
-            .env
-            .sessions
-            .update(cx, |store, cx| store.merge_worktree(request, cx));
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = merging.await;
-            this.update(cx, |this, cx| {
-                match result {
-                    Ok(result) => {
-                        this.merge = None;
-                        cx.emit(ChangesEvent::Notice(format!(
-                            "Merged {} into {} ({})",
-                            result.branch,
-                            result.target,
-                            result.commit.chars().take(7).collect::<String>()
-                        )));
-                        this.merged = Some(Merged {
-                            result,
-                            removing: false,
-                            error: None,
-                        });
-                        this.reload(cx);
-                    }
-                    Err(error) => {
-                        if let Some(form) = &mut this.merge {
-                            form.running = false;
-                            let (text, conflicts) = split_conflicts(&error);
-                            form.error = Some(text);
-                            form.conflicts = conflicts;
-                        }
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
+    // ---- after a merge ----------------------------------------------------------------------
     /// "Remove worktree and branch": `worktree.remove` with `delete_branch` (the daemon deletes
     /// the branch with `-d`: it is merged now).
     pub fn remove_worktree(&mut self, cx: &mut Context<Self>) {
@@ -895,72 +771,6 @@ impl ChangesView {
         self.merged = None;
         cx.notify();
     }
-
-    fn on_message_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        let vim = VimConfig::of(&self.env.settings);
-        match event.keystroke.key.as_str() {
-            "escape" => {
-                // Under Vim mode the first Escape leaves Insert (or Visual); Normal mode closes.
-                if vim.enabled
-                    && let Some(form) = &mut self.merge
-                    && vim_ui::apply(
-                        &mut form.vim,
-                        &mut form.message,
-                        event,
-                        vim.options(false, true),
-                        cx,
-                    ) == Outcome::Handled
-                {
-                    cx.notify();
-                    cx.stop_propagation();
-                    return;
-                }
-                self.close_merge(cx);
-            }
-            "enter" if event.keystroke.modifiers.platform => self.confirm_merge(cx),
-            _ => {
-                let Some(form) = &mut self.merge else {
-                    return;
-                };
-                if !edit_text(&mut form.message, &mut form.vim, vim, event, true, cx) {
-                    return;
-                }
-                cx.notify();
-            }
-        }
-        cx.stop_propagation();
-    }
-
-    /// How the merge message's element reaches its text: the platform's text input and the mouse.
-    fn message_field(&self, cx: &Context<Self>) -> FieldRef {
-        FieldRef::new(
-            cx.weak_entity(),
-            self.message_focus.clone(),
-            |this, _, f| {
-                let vim_on = VimConfig::of(&this.env.settings).enabled;
-                if let Some(form) = &mut this.merge {
-                    f(&mut FieldMut {
-                        input: &mut form.message,
-                        vim: vim_on.then_some(&mut form.vim),
-                        multiline: true,
-                    });
-                }
-            },
-        )
-    }
-}
-
-/// The reason of a refused merge and the files `conflict:` lines name.
-fn split_conflicts(error: &str) -> (String, Vec<String>) {
-    let mut text = Vec::new();
-    let mut files = Vec::new();
-    for line in error.lines() {
-        match line.strip_prefix("conflict: ") {
-            Some(file) => files.push(file.to_owned()),
-            None => text.push(line),
-        }
-    }
-    (text.join("\n"), files)
 }
 
 fn status_mark(status: DiffStatus, theme: &Theme) -> (&'static str, gpui::Hsla) {
@@ -999,11 +809,14 @@ impl Render for ChangesView {
         if let Some(tray) = self.render_review_tray(&theme, &tokens, cx) {
             root = root.child(tray);
         }
+        if let Some(done) = &self.finished {
+            root = root.child(self.render_finished(done, &theme, &tokens, cx));
+        }
         if let Some(merged) = &self.merged {
             root = root.child(self.render_merged(merged, &theme, &tokens, cx));
         }
-        if self.merge.is_some() {
-            root = root.child(self.render_merge_form(&theme, &tokens, window, cx));
+        if self.finish.is_some() {
+            root = root.child(self.render_finish_form(&theme, &tokens, window, cx));
         }
         root.child(match &self.listing {
             Listing::Loading => div()
@@ -1125,10 +938,10 @@ impl ChangesView {
             (a + f.additions as usize, r + f.deletions as usize)
         });
         let look = Look::of(cx);
-        let merge_enabled = self.can_merge() && self.merged.is_none();
+        let finish_enabled = self.can_finish(cx);
         // The title and counts on the left, the actions on the right. When the pane is too
         // narrow the actions wrap under the title (and wrap again among themselves) instead of
-        // running out of the pane: Merge is always reachable.
+        // running out of the pane: Finish is always reachable.
         div()
             .flex()
             .flex_wrap()
@@ -1209,20 +1022,20 @@ impl ChangesView {
                     )
                     .child(
                         ui::button(
-                            "changes-merge",
-                            format!("Merge into {}…", self.base().map_or("main", |b| b)),
+                            "changes-finish",
+                            "Finish…",
                             ui::ButtonKind::Primary,
-                            merge_enabled,
+                            finish_enabled,
                             theme,
                             tokens,
                         )
                         .relative()
-                        .when(merge_enabled, |s| {
+                        .when(finish_enabled, |s| {
                             s.on_click(
-                                cx.listener(|this, _, window, cx| this.open_merge(window, cx)),
+                                cx.listener(|this, _, window, cx| this.open_finish(window, cx)),
                             )
                         })
-                        .child(probe(&self.env.regions, Region::Changes("merge"))),
+                        .child(probe(&self.env.regions, Region::Changes("finish"))),
                     ),
             )
             .into_any_element()
@@ -1254,156 +1067,6 @@ impl ChangesView {
                 .child(probe(&self.env.regions, Region::Changes("freshness")))
                 .into_any_element(),
         )
-    }
-
-    fn render_merge_form(
-        &self,
-        theme: &Theme,
-        tokens: &Tokens,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(form) = &self.merge else {
-            return div().into_any_element();
-        };
-        let branch = self
-            .info
-            .as_ref()
-            .and_then(|i| i.branch.clone())
-            .unwrap_or_default();
-        let target = self.base().unwrap_or("main").to_owned();
-        let mut strategies = div().flex().gap(px(tokens.spacing));
-        for (strategy, label, key) in [
-            (MergeStrategy::Merge, "Merge commit", "strategy-merge"),
-            (MergeStrategy::Squash, "Squash", "strategy-squash"),
-            (MergeStrategy::Rebase, "Rebase", "strategy-rebase"),
-        ] {
-            strategies = strategies.child(
-                pill(
-                    SharedString::from(format!("changes-{key}")),
-                    label,
-                    form.strategy == strategy,
-                    theme,
-                    tokens,
-                )
-                .relative()
-                .on_click(cx.listener(move |this, _, _, cx| this.set_strategy(strategy, cx)))
-                .child(probe(&self.env.regions, Region::Changes(key))),
-            );
-        }
-        let focused = self.message_focus.is_focused(window);
-        let vim = VimConfig::of(&self.env.settings).enabled;
-        let mut body = div()
-            .flex()
-            .flex_col()
-            .flex_none()
-            .gap(px(tokens.spacing * 1.5))
-            .m(px(tokens.spacing * 2.0))
-            .p(px(tokens.spacing * 3.0))
-            .card(theme, tokens)
-            .child(
-                div()
-                    .medium()
-                    .child(SharedString::from(format!("Merge {branch} into {target}"))),
-            )
-            .child(
-                div()
-                    .text_color(theme.muted)
-                    .text_size(px(tokens.secondary_font_size))
-                    .child(
-                        "Runs in the main checkout and makes a local commit; nothing is pushed. \
-                         It is refused when the main checkout has uncommitted changes or does not \
-                         have the target branch checked out, and aborted cleanly on conflicts.",
-                    ),
-            )
-            .child(strategies)
-            .child(self.render_merge_takes(theme, tokens, cx));
-        if form.strategy != MergeStrategy::Rebase {
-            body = body.child(
-                field_box(
-                    "changes-message",
-                    &form.message,
-                    vim.then_some(&form.vim),
-                    "Commit message (empty: git's own)",
-                    focused,
-                    true,
-                    Some(self.message_field(cx)),
-                    theme,
-                    tokens,
-                )
-                .relative()
-                .track_focus(&self.message_focus)
-                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                    this.on_message_key(event, cx);
-                }))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _: &MouseDownEvent, window, cx| {
-                        // The workbench takes focus on this same mouse down; ask again after it.
-                        let handle = this.message_focus.clone();
-                        cx.defer_in(window, move |_, window, cx| window.focus(&handle, cx));
-                    }),
-                )
-                .child(probe(&self.env.regions, Region::Changes("message"))),
-            );
-        }
-        if let Some(error) = &form.error {
-            body = body.child(
-                div()
-                    .text_color(theme.danger)
-                    .child(SharedString::from(error.clone())),
-            );
-        }
-        if !form.conflicts.is_empty() {
-            body = body.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .font_family(Look::of(cx).mono.clone())
-                    .text_size(px(tokens.secondary_font_size))
-                    .children(form.conflicts.iter().map(|file| {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(4.0))
-                            .child(crate::icons::glyph(crate::icons::Icon::StateWarning))
-                            .child(SharedString::from(file.clone()))
-                    })),
-            );
-        }
-        body.child(
-            div()
-                .flex()
-                .justify_end()
-                .gap(px(tokens.spacing * 2.0))
-                .child(
-                    ui::button(
-                        "changes-merge-cancel",
-                        "Cancel",
-                        ui::ButtonKind::Ghost,
-                        true,
-                        theme,
-                        tokens,
-                    )
-                    .relative()
-                    .on_click(cx.listener(|this, _, _, cx| this.close_merge(cx)))
-                    .child(probe(&self.env.regions, Region::Changes("merge-cancel"))),
-                )
-                .child(
-                    ui::button(
-                        "changes-merge-confirm",
-                        if form.running { "Merging…" } else { "Merge" },
-                        ui::ButtonKind::Primary,
-                        !form.running,
-                        theme,
-                        tokens,
-                    )
-                    .relative()
-                    .on_click(cx.listener(|this, _, _, cx| this.confirm_merge(cx)))
-                    .child(probe(&self.env.regions, Region::Changes("merge-confirm"))),
-                ),
-        )
-        .into_any_element()
     }
 
     fn render_merged(
@@ -1881,16 +1544,6 @@ mod tests {
             hunk_ranges(&diff::split_patch("diff --git a/x b/x\nBinary files differ\n")[0])
                 .is_empty()
         );
-    }
-
-    #[test]
-    fn conflict_lines_leave_the_reason() {
-        let (text, files) = split_conflicts(
-            "merging `a` into `main` conflicts\nconflict: a.txt\nconflict: b/c.txt",
-        );
-        assert_eq!(text, "merging `a` into `main` conflicts");
-        assert_eq!(files, ["a.txt", "b/c.txt"]);
-        assert_eq!(split_conflicts("plain"), ("plain".to_owned(), vec![]));
     }
 
     #[test]

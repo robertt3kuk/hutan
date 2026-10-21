@@ -815,6 +815,12 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "Time to answer an agent's request",
         "A request that waits for your answer is refused after this many seconds.",
     ),
+    field(
+        "daemon",
+        "finish.push",
+        "Push after Finish",
+        "Finish in Changes commits (and merges a worktree), then pushes the branch to its upstream with your own git credentials; it never force-pushes. Off, the commit stays on this Mac until you push it yourself. Agents can never Finish.",
+    ),
     // ---- history indexing ----
     field(
         "daemon",
@@ -1136,7 +1142,10 @@ pub fn page_keywords(page: &str) -> &'static str {
         "sessions_restore" => {
             "Restore sessions restart respawn home folder environment login shell projects"
         }
-        "control" => "Agents control approval security MCP tools read only allow ask permission",
+        "control" => {
+            "Agents control approval security MCP tools read only allow ask permission finish \
+             push commit git"
+        }
         "agents_tools" => {
             "OMP Claude Code Codex program arguments environment MCP servers gateway context \
              tasks parallel"
@@ -1288,6 +1297,7 @@ pub mod words {
         SEC_CODEX = "Codex";
         SEC_MCP = "MCP servers";
         SEC_LIMITS = "Limits";
+        SEC_FINISH = "Finish";
         SEC_ASSISTANT_PANEL = "Mawas";
         SEC_ASSISTANT_ACT = "What Mawas may do";
         SEC_ASSISTANT_ACT_HELP = "Ask before acting: Mawas can change things, and every change asks you first (grants answer for what you allowed). Advisor: Mawas reads and advises, and cannot change anything. A change of mode applies from the next message.";
