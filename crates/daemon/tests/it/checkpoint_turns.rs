@@ -803,6 +803,28 @@ impl Chat {
         .unwrap_or_else(|_| panic!("checkpoints never got there: {:?}", self.rows(session)))
     }
 
+    /// The checkpoint refs of the repository once they are `want` (sorted). A row names its end
+    /// ref before the turn's start ref is deleted, so a settled row does not yet mean the start
+    /// ref is gone.
+    async fn refs_when(&self, want: &[String]) -> Vec<String> {
+        let have = || {
+            let mut have = refs(&self.root);
+            have.sort();
+            have
+        };
+        timeout(WAIT, async {
+            loop {
+                let refs = have();
+                if refs == want {
+                    return refs;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| have())
+    }
+
     async fn set(&self, key: &str, value: Value) {
         self.client
             .call::<hutan_protocol::daemon_settings::DaemonSettings>(Request::DaemonSettingsSet(
@@ -888,8 +910,7 @@ async fn a_fixture_chat_gets_one_ref_per_turn_that_changed_files_and_none_for_a_
         .map(|n| format!("refs/hutan/checkpoints/{session}/{}", turns[*n]))
         .collect();
     want.sort();
-    let mut have = refs(&t.root);
-    have.sort();
+    let have = t.refs_when(&want).await;
     assert_eq!(
         have, want,
         "one ref per turn that changed files, no start ref left"
