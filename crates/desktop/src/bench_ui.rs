@@ -13,6 +13,8 @@
 //! | `sidebar` | clicks the sessions filter, types a query and erases it, then drags a project onto a workspace | `key` ops of the `filter` phase, frames of the `drag` phase (B9) |
 //! | `idle` | nothing: the frames drawn while the window idles (diagnosis of B3) | frames of the `idle` phase |
 //! | `switch` | jumps between the tabs with ⌘1…⌘9 and to sessions with ⌘P | `switch` and `jump` ops (B10) |
+//! | `editor_open` | opens each file in a tab (`workbench::OpenFile`), waits for its highlighted viewport, pauses for a memory sample | `open` op per file (B11a/b first paint), `editor_highlighted` (B11c), `editor_rss_point` (B11d) |
+//! | `editor_scroll` | opens a file, then scrolls it down and back up with the wheel | frames of the `scroll_down` / `scroll_up` phases (B13), `editor_shaped` |
 //!
 //! The windows must be in front and the display awake, as for the keystroke benchmarks.
 
@@ -27,7 +29,7 @@ use hutan_terminal_view::trace;
 use serde::Deserialize;
 
 use crate::frames::{self, Op};
-use crate::workbench::actions::OpenSession;
+use crate::workbench::actions::{FileTarget, OpenFile, OpenSession};
 use crate::workbench::{Region, Workbench};
 
 const POLL: Duration = Duration::from_millis(2);
@@ -85,6 +87,24 @@ pub enum Scenario {
         interval_ms: u64,
         #[serde(default)]
         jitter_ms: u64,
+    },
+    EditorOpen {
+        #[serde(default)]
+        start_delay_ms: u64,
+        /// Absolute paths below a project, opened one after the other.
+        files: Vec<String>,
+        /// Seconds to wait after each file is highlighted (the harness samples memory then).
+        #[serde(default)]
+        pause_s: u64,
+    },
+    EditorScroll {
+        #[serde(default)]
+        start_delay_ms: u64,
+        file: String,
+        /// Frames of scrolling each way.
+        frames: u32,
+        /// Pixels per frame.
+        step_px: f32,
     },
 }
 
@@ -357,6 +377,32 @@ impl Driver<'_> {
                 self.sleep(Duration::from_millis(start_delay_ms)).await;
                 self.switch(&steps, interval_ms, jitter_ms).await;
             }
+            Scenario::EditorOpen {
+                start_delay_ms,
+                files,
+                pause_s,
+            } => {
+                self.sleep(Duration::from_millis(start_delay_ms)).await;
+                self.frame_event("bench_start");
+                frames::set_recording(true);
+                for (n, file) in files.iter().enumerate() {
+                    self.editor_open(n, file, this).await;
+                    trace::event_with("editor_rss_point", &format!(r#""file":{n}"#));
+                    self.sleep(Duration::from_secs(pause_s)).await;
+                }
+            }
+            Scenario::EditorScroll {
+                start_delay_ms,
+                file,
+                frames,
+                step_px,
+            } => {
+                self.sleep(Duration::from_millis(start_delay_ms)).await;
+                self.frame_event("bench_start");
+                frames::set_recording(true);
+                self.editor_open(0, &file, this).await;
+                self.editor_scroll(frames, step_px, this).await;
+            }
         }
         frames::set_recording(false);
         self.frame_event("bench_done");
@@ -627,6 +673,114 @@ impl Driver<'_> {
         }
         Self::phase("switch", "end");
     }
+
+    // ---- B11, B13 -----------------------------------------------------------------------------
+
+    /// The focused file tab's code view, once its buffer has text.
+    fn code_view(
+        this: &gpui::WeakEntity<Workbench>,
+        cx: &gpui::App,
+    ) -> Option<gpui::Entity<hutan_code_view::CodeView>> {
+        this.read_with(cx, |workbench, cx| {
+            let view = workbench.focused_file_view()?;
+            let view = view.read(cx);
+            view.buffer()
+                .read(cx)
+                .is_ready()
+                .then(|| view.code().clone())
+        })
+        .ok()
+        .flatten()
+    }
+
+    /// Opens `file` through the action, as `ui.run` and `hutan open` do; the `open` op ends with
+    /// the first frame that draws its text. Then waits for the highlighted viewport.
+    async fn editor_open(&mut self, n: usize, file: &str, this: &gpui::WeakEntity<Workbench>) {
+        let phase = format!("open_{n}");
+        Self::phase(&phase, "start");
+        let op = Op::start("open");
+        let _ = self.cx.update(|window, cx| {
+            window.dispatch_action(
+                Box::new(OpenFile(FileTarget {
+                    path: file.to_owned(),
+                    line: None,
+                    column: None,
+                })),
+                cx,
+            );
+        });
+        op.dispatched();
+        self.settled().await;
+        Self::phase(&phase, "end");
+        let mut times = None;
+        let this_ = this.clone();
+        self.until(|_, cx| {
+            times = Self::code_view(&this_, cx).map(|code| code.read(cx).paint_times());
+            times.is_some_and(|t| t.first_highlighted.is_some())
+                || Self::code_view(&this_, cx)
+                    .is_some_and(|code| code.read(cx).buffer().read(cx).is_large())
+        })
+        .await;
+        if let Some(times) = times
+            && let (Some(text), Some(colored)) = (times.first_text, times.first_highlighted)
+        {
+            let ms = colored.saturating_duration_since(text).as_secs_f64() * 1000.0;
+            trace::event_with(
+                "editor_highlighted",
+                &format!(r#""file":{n},"after_first_paint_ms":{ms:.3}"#),
+            );
+        }
+    }
+
+    async fn editor_scroll(
+        &mut self,
+        frames_each_way: u32,
+        step_px: f32,
+        this: &gpui::WeakEntity<Workbench>,
+    ) {
+        let Some(center) = self.center_of(this, Region::Center).await else {
+            return;
+        };
+        let shaped = |cx: &mut AsyncWindowContext| {
+            cx.update(|_, cx| {
+                Self::code_view(this, cx).map(|code| code.read(cx).stats().lines_shaped)
+            })
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+        };
+        let before = shaped(self.cx);
+        for (name, direction) in [("scroll_down", -1.0f32), ("scroll_up", 1.0)] {
+            Self::phase(name, "start");
+            for _ in 0..frames_each_way {
+                self.input(PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    position: center,
+                    delta: ScrollDelta::Pixels(point(px(0.0), px(step_px * direction))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: TouchPhase::Moved,
+                }));
+                self.frame(Duration::from_millis(100)).await;
+            }
+            Self::phase(name, "end");
+        }
+        let after = shaped(self.cx);
+        let rows = self
+            .cx
+            .update(|_, cx| {
+                Self::code_view(this, cx).and_then(|code| code.read(cx).layout().map(|l| l.rows))
+            })
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+        trace::event_with(
+            "editor_shaped",
+            &format!(
+                r#""lines":{},"frames":{},"rows":{rows}"#,
+                after - before,
+                2 * frames_each_way
+            ),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -649,6 +803,16 @@ mod tests {
         ));
         let json = r#"{"scenario":"switch","steps":["cmd-1","jump:foo"],"interval_ms":100}"#;
         assert!(matches!(Scenario::parse(json), Ok(Scenario::Switch { .. })));
+        let json = r#"{"scenario":"editor_open","files":["/a.rs"],"pause_s":3}"#;
+        assert!(matches!(
+            Scenario::parse(json),
+            Ok(Scenario::EditorOpen { .. })
+        ));
+        let json = r#"{"scenario":"editor_scroll","file":"/a.rs","frames":10,"step_px":40.0}"#;
+        assert!(matches!(
+            Scenario::parse(json),
+            Ok(Scenario::EditorScroll { .. })
+        ));
     }
 
     #[test]

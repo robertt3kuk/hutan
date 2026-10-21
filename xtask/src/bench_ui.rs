@@ -804,3 +804,143 @@ pub async fn switching(stack: &mut Stack<'_>) -> Result<Metrics> {
     display(&mut metrics, &trace, &[])?;
     Ok(metrics)
 }
+
+// ---- B11, B13 ------------------------------------------------------------------------------
+
+/// Rust source of about `bytes` bytes: items like a real crate's (doc comments, structs,
+/// impls, `match`, strings), every one distinct, so highlighting and shaping do real work.
+fn rust_source(bytes: usize) -> String {
+    let mut text = String::with_capacity(bytes + 1024);
+    let mut n = 0usize;
+    while text.len() < bytes {
+        text.push_str(&format!(
+            "/// Item {n}: what it holds and why.\n\
+             #[derive(Debug, Clone, PartialEq)]\n\
+             pub struct Item{n} {{\n    pub id: u64,\n    pub name: String,\n    pub tags: Vec<&'static str>,\n}}\n\n\
+             impl Item{n} {{\n    pub fn new(id: u64) -> Self {{\n        Self {{ id, name: format!(\"item-{{id}}-{n}\"), tags: vec![\"a\", \"b\"] }}\n    }}\n\n\
+             \x20   pub fn score(&self, x: i64) -> i64 {{\n        match x % 3 {{\n            0 => x * {n} + 1,\n            1 => -x,\n            _ => self.id as i64 ^ x,\n        }}\n    }}\n}}\n\n"
+        ));
+        n += 1;
+    }
+    text
+}
+
+/// A project with the files the editor scenarios open, and a terminal shown in the center.
+async fn editor_stack(
+    stack: &mut Stack<'_>,
+    sizes: &[(&str, usize)],
+) -> Result<(Vec<String>, Value)> {
+    let projects = open_projects(stack, 1).await?;
+    let project = &projects[0];
+    let term = terminal(stack, project, "term-0").await?;
+    let mut files = Vec::new();
+    for (name, bytes) in sizes {
+        let path = project.dir.join(name);
+        std::fs::write(&path, rust_source(*bytes))?;
+        files.push(path.canonicalize()?.display().to_string());
+    }
+    let layout = seed::custom_layout(
+        seed::dock("sessions", 240.0, true),
+        seed::hidden_dock("inspector", 300.0),
+        seed::hidden_dock("resources", 200.0),
+        seed::pane_of(1, vec![seed::terminal_item(&term.id.to_string())], 0),
+        1,
+    );
+    Ok((files, layout))
+}
+
+/// B11a-d: a 1 MB file is opened (first paint, highlighted viewport, memory), then a 10 MB one.
+pub async fn editor_open(stack: &mut Stack<'_>) -> Result<Metrics> {
+    let (files, layout) = editor_stack(
+        stack,
+        &[("one_mb.rs", 1_000_000), ("ten_mb.rs", 10_000_000)],
+    )
+    .await?;
+    let scenario = json!({
+        "scenario": "editor_open",
+        "start_delay_ms": 3000,
+        "files": files,
+        "pause_s": 3,
+    });
+    stack.launch_layout(&layout, true, None, Some(&scenario))?;
+    let before = settled_rss(stack).await?;
+    stack
+        .wait_trace("the 1 MB file", DONE_PATIENCE, |e| {
+            is_event(e, "editor_rss_point") && e["file"] == 0
+        })
+        .await?;
+    // The tree is in once the viewport was highlighted; a moment for the allocator to settle.
+    sleep(Duration::from_millis(1500)).await;
+    let with_one = proc::usage(stack.desktop()?.pid())?.rss_bytes as f64 / MIB;
+    wait_done(stack).await?;
+
+    let trace = stack.trace();
+    let mut metrics = Metrics::new();
+    for (n, metric) in [(0usize, "b11a_open_1mb"), (1, "b11b_open_10mb")] {
+        let window = phase(&trace, &format!("open_{n}")).context("no open phase")?;
+        let opened = ops(&trace, "open", &[window]);
+        let Some(&(total, hutan)) = opened.first() else {
+            bail!("file {n} was never painted");
+        };
+        metrics.insert(format!("{metric}_ms"), total);
+        metrics.insert(format!("{metric}_hutan_ms"), hutan);
+    }
+    for e in trace.iter().filter(|e| is_event(e, "editor_highlighted")) {
+        let ms = e["after_first_paint_ms"].as_f64().unwrap_or(f64::NAN);
+        match e["file"].as_u64() {
+            Some(0) => metrics.insert("b11c_highlighted_after_ms".into(), ms),
+            Some(1) => metrics.insert("b11_highlighted_10mb_after_ms".into(), ms),
+            _ => None,
+        };
+    }
+    metrics.insert("b11d_rss_before_mb".into(), before);
+    metrics.insert("b11d_rss_with_1mb_mb".into(), with_one);
+    metrics.insert("b11d_rss_growth_mb".into(), with_one - before);
+    display(&mut metrics, &trace, &[])?;
+    Ok(metrics)
+}
+
+const EDITOR_SCROLL_FRAMES: u32 = 600;
+const EDITOR_SCROLL_STEP_PX: f32 = 120.0;
+
+/// B13: a 1 MB file scrolled down and back with the wheel, one step per frame.
+pub async fn editor_scroll(stack: &mut Stack<'_>) -> Result<Metrics> {
+    let (files, layout) = editor_stack(stack, &[("one_mb.rs", 1_000_000)]).await?;
+    let scenario = json!({
+        "scenario": "editor_scroll",
+        "start_delay_ms": 3000,
+        "file": files[0],
+        "frames": EDITOR_SCROLL_FRAMES,
+        "step_px": EDITOR_SCROLL_STEP_PX,
+    });
+    stack.launch_layout(&layout, true, None, Some(&scenario))?;
+    wait_done(stack).await?;
+    let trace = stack.trace();
+    let scroll: Vec<(u64, u64)> = ["scroll_down", "scroll_up"]
+        .iter()
+        .filter_map(|name| phase(&trace, name))
+        .collect();
+    let frames = intervals(&trace, &scroll);
+    let mut metrics = Metrics::new();
+    put_stats(&mut metrics, "b13_scroll_frame", &frames);
+    metrics.insert(
+        "b13_scroll_frame_p95_ms".into(),
+        percentile(&frames, 95.0).context("no scroll frames")?,
+    );
+    put_stats(
+        &mut metrics,
+        "b13_scroll_work",
+        &series(&trace, "frame", "work_us", &scroll),
+    );
+    if let Some(shaped) = trace.iter().find(|e| is_event(e, "editor_shaped")) {
+        let lines = shaped["lines"].as_f64().unwrap_or(0.0);
+        let frames_n = shaped["frames"].as_f64().unwrap_or(1.0).max(1.0);
+        metrics.insert("b13_lines_shaped_per_frame".into(), lines / frames_n);
+        metrics.insert(
+            "b13_rows_in_view".into(),
+            shaped["rows"].as_f64().unwrap_or(0.0),
+        );
+    }
+    display(&mut metrics, &trace, &frames)?;
+    Ok(metrics)
+}

@@ -203,6 +203,46 @@ pub const BUDGETS: &[Budget] = &[
         limit: 50.0,
         frame_margin_ms: None,
     },
+    Budget {
+        id: "B11a",
+        name: "Open a 1 MB Rust file in a pane: dispatch to first paint of its text",
+        metric: "b11a_open_1mb_ms",
+        unit: "ms",
+        limit: 100.0,
+        frame_margin_ms: None,
+    },
+    Budget {
+        id: "B11b",
+        name: "Open a 10 MB Rust file in a pane: dispatch to first paint of its text",
+        metric: "b11b_open_10mb_ms",
+        unit: "ms",
+        limit: 500.0,
+        frame_margin_ms: None,
+    },
+    Budget {
+        id: "B11c",
+        name: "1 MB Rust file: highlighted viewport after the first paint",
+        metric: "b11c_highlighted_after_ms",
+        unit: "ms",
+        limit: 400.0,
+        frame_margin_ms: None,
+    },
+    Budget {
+        id: "B11d",
+        name: "Desktop RSS growth, one open 1 MB file with syntax",
+        metric: "b11d_rss_growth_mb",
+        unit: "MB",
+        limit: 40.0,
+        frame_margin_ms: None,
+    },
+    Budget {
+        id: "B13",
+        name: "Continuous scroll of a 1 MB file: frame interval p95 (one frame + 2 ms)",
+        metric: "b13_scroll_frame_p95_ms",
+        unit: "ms",
+        limit: 0.0,
+        frame_margin_ms: Some(2.0),
+    },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,10 +267,14 @@ enum Scenario {
     Sidebar,
     /// B10: switching between ten terminals and five chats.
     Switching,
+    /// B11a-d: a 1 MB and a 10 MB Rust file opened in a tab.
+    EditorOpen,
+    /// B13: a 1 MB Rust file scrolled.
+    EditorScroll,
 }
 
 impl Scenario {
-    const ALL: [Scenario; 10] = [
+    const ALL: [Scenario; 12] = [
         Scenario::Idle,
         Scenario::IdleWide,
         Scenario::Typing,
@@ -241,6 +285,8 @@ impl Scenario {
         Scenario::Streaming,
         Scenario::Sidebar,
         Scenario::Switching,
+        Scenario::EditorOpen,
+        Scenario::EditorScroll,
     ];
 
     fn name(self) -> &'static str {
@@ -255,6 +301,8 @@ impl Scenario {
             Scenario::Streaming => "streaming (B8)",
             Scenario::Sidebar => "sidebar (B9)",
             Scenario::Switching => "switching (B10)",
+            Scenario::EditorOpen => "editor open (B11)",
+            Scenario::EditorScroll => "editor scroll (B13)",
         }
     }
 
@@ -270,6 +318,8 @@ impl Scenario {
             Scenario::Streaming => &["B8a", "B8b", "B8c"],
             Scenario::Sidebar => &["B9a", "B9b"],
             Scenario::Switching => &["B10"],
+            Scenario::EditorOpen => &["B11a", "B11b", "B11c", "B11d"],
+            Scenario::EditorScroll => &["B13"],
         }
     }
 }
@@ -308,7 +358,7 @@ pub async fn run(options: Options) -> Result<()> {
     for id in &wanted {
         if !BUDGETS.iter().any(|b| selects(id, b.id)) {
             bail!(
-                "unknown budget {id}; known: B1, B2, B2w, B3, B3p, B4a, B4b, B5, B6, B7a, B7b, B7c, B8a, B8b, B8c, B9a, B9b, B10"
+                "unknown budget {id}; known: B1, B2, B2w, B3, B3p, B4a, B4b, B5, B6, B7a, B7b, B7c, B8a, B8b, B8c, B9a, B9b, B10, B11a, B11b, B11c, B11d, B13"
             );
         }
     }
@@ -944,6 +994,8 @@ async fn run_scenario(
         Scenario::Streaming => crate::bench_ui::streaming(&mut stack).await,
         Scenario::Sidebar => crate::bench_ui::sidebar(&mut stack).await,
         Scenario::Switching => crate::bench_ui::switching(&mut stack).await,
+        Scenario::EditorOpen => crate::bench_ui::editor_open(&mut stack).await,
+        Scenario::EditorScroll => crate::bench_ui::editor_scroll(&mut stack).await,
     };
     // The trace of the run stays next to the report: what the harness reads is what you can read.
     let trace = stack.path("trace.jsonl");
