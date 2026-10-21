@@ -35,6 +35,7 @@ mod perf_gpui;
 mod polish_gpui;
 mod projects_gpui;
 mod queue_gpui;
+mod quick_open_gpui;
 mod recovery_gpui;
 mod resources_gpui;
 mod review_comments_gpui;

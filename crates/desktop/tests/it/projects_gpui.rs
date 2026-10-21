@@ -1276,7 +1276,7 @@ fn the_jump_palette_lists_workspaces_projects_and_sessions(cx: &mut TestAppConte
     let (view, cx) = w.synced(cx, None);
     let _panel = panel(&view, cx);
 
-    cx.simulate_keystrokes("cmd-p");
+    cx.dispatch_action(actions::OpenJump);
     let entries = view
         .read_with(cx, |wb, _| wb.picker().map(|p| p.entries.clone()))
         .unwrap();
@@ -1284,10 +1284,10 @@ fn the_jump_palette_lists_workspaces_projects_and_sessions(cx: &mut TestAppConte
     assert_eq!(
         titles,
         [
-            "shop", "api", "web", "lab", "notes", "docs", "Home", "s-main", "s-wt", "s-web",
-            "s-notes"
+            "shop", "api", "web", "lab", "notes", "Home", "s-main", "s-wt", "s-web", "s-notes"
         ],
-        "workspaces with their projects, loose projects, Home, then the sessions — hidden ones too"
+        "workspaces with their projects, loose projects, Home, then the sessions — hidden ones \
+         too, but not `docs`: a project that never had a session is stale (E-13a)"
     );
     let detail = |name: &str| {
         entries
@@ -1311,12 +1311,12 @@ fn the_jump_palette_lists_workspaces_projects_and_sessions(cx: &mut TestAppConte
     view.update(cx, |wb, cx| wb.set_picker_query("lab", cx));
     cx.simulate_keystrokes("enter");
     assert_eq!(active(&view, cx), Some(w.lab.id));
-    cx.simulate_keystrokes("cmd-p");
+    cx.dispatch_action(actions::OpenJump);
     view.update(cx, |wb, cx| wb.set_picker_query("web", cx));
     cx.simulate_keystrokes("enter");
     assert_eq!(active(&view, cx), Some(w.shop.id));
     assert_eq!(active_project(&view, cx), Some(w.web.id));
-    cx.simulate_keystrokes("cmd-p");
+    cx.dispatch_action(actions::OpenJump);
     view.update(cx, |wb, cx| wb.set_picker_query("s-notes", cx));
     cx.simulate_keystrokes("enter");
     assert_eq!(active(&view, cx), Some(w.notes.id));

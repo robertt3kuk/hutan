@@ -755,33 +755,26 @@ fn the_jump_palette_reaches_hidden_workspaces_and_their_sessions(cx: &mut TestAp
     // `ghost` is empty and `sleepy` sleeping: both are out of the sidebar.
     assert_eq!(listed(&panel, cx), ["busy", "Home"]);
 
+    // ⌘P (the Zed base's quick open) lists the jump rows as its Sessions section.
     cx.simulate_keystrokes("cmd-p");
     assert_eq!(
         view.read_with(cx, |wb, _| wb.picker().map(|p| p.kind)),
-        Some(PickerKind::Jump)
+        Some(PickerKind::QuickOpen)
     );
     let titles = view.read_with(cx, |wb, _| wb.picker_titles());
-    for wanted in ["Home", "ghost", "sleepy", "busy"] {
+    for wanted in ["Home", "sleepy", "busy"] {
         assert!(titles.iter().any(|t| t == wanted), "{wanted} in {titles:?}");
     }
+    // `ghost` never had a session: stale, not offered (E-13a); ⌘O still lists it.
+    assert!(!titles.iter().any(|t| t == "ghost"), "{titles:?}");
     assert!(
         titles.iter().any(|t| *t == ended.title),
         "sessions are listed too: {titles:?}"
     );
+    cx.simulate_keystrokes("escape");
+    let _ = ghost;
 
-    // Enter on a hidden workspace shows it (and, being active, it appears in the sidebar).
-    view.update(cx, |wb, cx| wb.set_picker_query("ghost", cx));
-    assert_eq!(
-        view.read_with(cx, |wb, _| wb.picker_titles())
-            .first()
-            .map(ToString::to_string),
-        Some("ghost".to_owned())
-    );
-    cx.simulate_keystrokes("enter");
-    assert_eq!(active(&view, cx), Some(ghost.id));
-    assert_eq!(listed(&panel, cx), ["ghost", "busy", "Home"]);
-
-    // A session of another hidden workspace: its workspace is shown and its tab focused.
+    // A session of a hidden workspace: its workspace is shown and its tab focused.
     cx.simulate_keystrokes("cmd-p");
     view.update(cx, |wb, cx| wb.set_picker_query(&ended.title, cx));
     let rows = view.read_with(cx, |wb, _| wb.picker_titles());

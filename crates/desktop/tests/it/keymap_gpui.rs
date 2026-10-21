@@ -270,14 +270,14 @@ fn switching_the_keymap_base_rebinds_live(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-p");
     assert_eq!(
         view.read_with(cx, |wb, _| wb.picker().map(|p| p.kind)),
-        Some(PickerKind::Jump)
+        Some(PickerKind::QuickOpen)
     );
     cx.simulate_keystrokes("escape");
 
     set_base(&view, cx, "hutan");
     assert_eq!(hint(cx, &actions::TogglePalette).as_deref(), Some("⌘K"));
     assert_eq!(hint(cx, &actions::ToggleBottomDock).as_deref(), Some("⌥⌘J"));
-    // Hutan: ⌘J jumps, ⌘⌥J is the bottom dock, ⌘P and ⌘R are free again.
+    // Hutan: ⌘J jumps, ⌘⌥J is the bottom dock, ⌘R is free again (⌘P is quick open in both).
     cx.simulate_keystrokes("cmd-j");
     assert_eq!(
         visible(&view, cx),
