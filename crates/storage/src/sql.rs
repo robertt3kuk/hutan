@@ -14,8 +14,8 @@ use serde::de::DeserializeOwned;
 use crate::error::{Result, StorageError};
 use crate::rows::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
-    CreatedBy, EpochEnd, EpochRecord, GrantRow, ProviderRow, QuestionOutcome, QuestionRow,
-    QueuedRow, RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
+    CreatedBy, EpochEnd, EpochRecord, GrantRow, LspTrustRow, ProviderRow, QuestionOutcome,
+    QuestionRow, QueuedRow, RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
 };
 
 pub const EPOCH_HISTORY_KEY: &str = "epoch_history";
@@ -98,6 +98,13 @@ pub enum Write {
     /// Removes a grant (nothing happens for a missing one).
     DeleteGrant {
         id: u64,
+    },
+    /// Records the user's decision about a folder's language servers (`lsp_trust`), replacing
+    /// an earlier one for the same folder.
+    SetLspTrust(Box<LspTrustRow>),
+    /// Forgets the decision about a folder (nothing happens for a missing one).
+    DeleteLspTrust {
+        folder: PathBuf,
     },
     /// Appends to the epoch history, keeping the newest [`EPOCH_HISTORY_KEPT`].
     RecordEpoch(EpochRecord),
@@ -302,6 +309,28 @@ pub fn apply(conn: &Connection, write: &Write) -> Result<()> {
         Write::DeleteGrant { id } => {
             conn.execute("DELETE FROM control_grants WHERE id = ?1", [ms(*id)])
                 .map_err(StorageError::sqlite("deleting a control grant"))?;
+        }
+        Write::SetLspTrust(row) => {
+            conn.execute(
+                "INSERT INTO lsp_trust (folder, decision, decided_at_ms, decided_by) \
+                 VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT (folder) DO UPDATE SET decision = excluded.decision, \
+                     decided_at_ms = excluded.decided_at_ms, decided_by = excluded.decided_by",
+                params![
+                    row.folder.to_string_lossy(),
+                    if row.trusted { "trusted" } else { "denied" },
+                    ms(row.decided_at_ms),
+                    row.decided_by,
+                ],
+            )
+            .map_err(StorageError::sqlite("writing an LSP trust decision"))?;
+        }
+        Write::DeleteLspTrust { folder } => {
+            conn.execute(
+                "DELETE FROM lsp_trust WHERE folder = ?1",
+                [folder.to_string_lossy()],
+            )
+            .map_err(StorageError::sqlite("deleting an LSP trust decision"))?;
         }
         Write::RecordEpoch(record) => record_epoch(conn, *record)?,
         Write::RecordEpochStop {
@@ -1013,6 +1042,43 @@ pub fn control_grants(conn: &Connection) -> Result<Vec<GrantRow>> {
         .query_map([], |row| Ok(grant_from(row)))
         .map_err(StorageError::sqlite(context))?;
     collect(rows, context)
+}
+
+/// The decisions about folders' language servers, by folder.
+pub fn lsp_trust(conn: &Connection) -> Result<Vec<LspTrustRow>> {
+    let context = "reading LSP trust decisions";
+    let mut stmt = conn
+        .prepare(
+            "SELECT folder, decision, decided_at_ms, decided_by FROM lsp_trust ORDER BY folder",
+        )
+        .map_err(StorageError::sqlite(context))?;
+    let rows = stmt
+        .query_map([], |row| {
+            let decision: String = row.get(1)?;
+            Ok((
+                PathBuf::from(row.get::<_, String>(0)?),
+                decision,
+                unms(row.get(2)?),
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(StorageError::sqlite(context))?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (folder, decision, decided_at_ms, decided_by) =
+            row.map_err(StorageError::sqlite(context))?;
+        out.push(LspTrustRow {
+            folder,
+            trusted: match decision.as_str() {
+                "trusted" => true,
+                "denied" => false,
+                other => return Err(StorageError::corrupt("lsp_trust.decision", other)),
+            },
+            decided_at_ms,
+            decided_by,
+        });
+    }
+    Ok(out)
 }
 
 fn grant_from(row: &Row<'_>) -> Result<GrantRow> {

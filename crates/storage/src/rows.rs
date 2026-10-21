@@ -229,6 +229,18 @@ pub struct WorktreeRow {
     pub created_at_ms: u64,
 }
 
+/// What the user decided about a folder's language servers (`lsp_trust`, protocol 0.39).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspTrustRow {
+    /// Canonical, absolute.
+    pub folder: PathBuf,
+    /// `true`: trusted; `false`: denied.
+    pub trusted: bool,
+    pub decided_at_ms: u64,
+    /// The client that decided (`desktop`, `cli`, ...).
+    pub decided_by: String,
+}
+
 /// One grant of the control gate (`control_grants`, protocol 0.31): `tool` may run without an
 /// approval for Mawas chats of `workspace_id`, or for the chat `chat_session_id` alone (exactly
 /// one of the two is set).

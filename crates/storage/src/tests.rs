@@ -2353,3 +2353,41 @@ mod memory {
         storage.close();
     }
 }
+
+#[test]
+fn lsp_trust_decisions_are_replaced_listed_by_folder_and_forgotten() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let row = |folder: &str, trusted: bool, at: u64| crate::LspTrustRow {
+        folder: folder.into(),
+        trusted,
+        decided_at_ms: at,
+        decided_by: "cli".to_owned(),
+    };
+    storage.lsp_trust().set(row("/b/repo", true, 1)).unwrap();
+    storage.lsp_trust().set(row("/a/repo", false, 2)).unwrap();
+    assert_eq!(
+        storage.lsp_trust().list().unwrap(),
+        [row("/a/repo", false, 2), row("/b/repo", true, 1)]
+    );
+    // A new decision about the same folder replaces the old one.
+    storage.lsp_trust().set(row("/a/repo", true, 3)).unwrap();
+    assert_eq!(
+        storage.lsp_trust().list().unwrap()[0],
+        row("/a/repo", true, 3)
+    );
+    storage.lsp_trust().forget("/a/repo".into()).unwrap();
+    storage.lsp_trust().forget("/never/decided".into()).unwrap();
+    assert_eq!(
+        storage.lsp_trust().list().unwrap(),
+        [row("/b/repo", true, 1)]
+    );
+    storage.close();
+    // What was decided survives a reopen.
+    let storage = Storage::open(db(&dir)).unwrap();
+    assert_eq!(
+        storage.lsp_trust().list().unwrap(),
+        [row("/b/repo", true, 1)]
+    );
+    storage.close();
+}

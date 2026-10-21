@@ -108,6 +108,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "checkpoint_during",
         sql: include_str!("../migrations/0016_checkpoint_during.sql"),
     },
+    Migration {
+        version: 17,
+        name: "lsp_trust",
+        sql: include_str!("../migrations/0017_lsp_trust.sql"),
+    },
 ];
 
 /// Schema version recorded in the database; 0 for a database without `app_meta`.

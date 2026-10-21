@@ -3010,7 +3010,10 @@ fn requests() -> Vec<(&'static str, Request)> {
                 doc_id: "d1".into(),
             }),
         ),
-        ("lsp_status", Request::LspStatus(LspStatusRequest::default())),
+        (
+            "lsp_status",
+            Request::LspStatus(LspStatusRequest::default()),
+        ),
         (
             "lsp_status_workspace",
             Request::LspStatus(LspStatusRequest {

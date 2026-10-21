@@ -41,8 +41,8 @@ pub use memory::{
 pub use migrate::{BACKUPS_KEPT, MIGRATIONS, Migration};
 pub use rows::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
-    CreatedBy, EpochEnd, EpochRecord, GrantRow, ProviderRow, QuestionOutcome, QuestionRow,
-    QueuedRow, RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
+    CreatedBy, EpochEnd, EpochRecord, GrantRow, LspTrustRow, ProviderRow, QuestionOutcome,
+    QuestionRow, QueuedRow, RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
 };
 pub use sql::{EPOCH_HISTORY_KEPT, RECENT_PROJECTS_KEPT, Write};
 
@@ -189,6 +189,10 @@ impl Storage {
 
     pub fn control_grants(&self) -> ControlGrants<'_> {
         ControlGrants(self)
+    }
+
+    pub fn lsp_trust(&self) -> LspTrust<'_> {
+        LspTrust(self)
     }
 
     pub fn memory(&self) -> Memory<'_> {
@@ -579,6 +583,27 @@ impl ControlGrants<'_> {
     /// Newest first.
     pub fn list(&self) -> Result<Vec<GrantRow>> {
         self.0.read(sql::control_grants)
+    }
+}
+
+/// What the user decided about folders' language servers (protocol 0.39).
+#[derive(Debug, Clone, Copy)]
+pub struct LspTrust<'a>(&'a Storage);
+
+impl LspTrust<'_> {
+    /// Records a decision, applied before it returns (a failing database is the error).
+    pub fn set(&self, row: LspTrustRow) -> Result<()> {
+        self.0.write_checked(Write::SetLspTrust(Box::new(row)))
+    }
+
+    /// Forgets the decision about `folder`, applied before it returns.
+    pub fn forget(&self, folder: PathBuf) -> Result<()> {
+        self.0.write_checked(Write::DeleteLspTrust { folder })
+    }
+
+    /// Every decision, folders sorted.
+    pub fn list(&self) -> Result<Vec<LspTrustRow>> {
+        self.0.read(sql::lsp_trust)
     }
 }
 
