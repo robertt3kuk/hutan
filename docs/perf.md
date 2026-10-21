@@ -578,6 +578,8 @@ harness in `xtask/src/bench_ui.rs`).
 - Replacing `code_view`'s internals would move neither number.
 - Re-evaluate at E-6 only if the editing work (IME, selections) is estimated over L, the other half of the trigger.
 
+**Orchestrator decision (2026-10-21) on the misses.** B11d was marked [INFERENCE] in the spike with the instruction to replace it by E-2's measurement before enforcing; the measured tree alone is 37 MB/MB for token-dense Rust. B11d is re-based on measurement, not relaxed silently: **≤ 60 MB desktop RSS growth for one visible 1 MB file with syntax, ≤ 8 MB without**, and the tree is kept only for visible files (already true). A future `syntax_max_bytes` threshold (no tree above it until asked) is the lever if real files exceed it. B13 stays 10.3 ms at 120 Hz: Hutan's frame work is 2.5 ms p95, the missed vsyncs are the display floor under load also seen in B7b; it is re-measured on an idle machine and with GF-1 (on-demand display link) when that spike runs.
+
 ## Editor: the Vim layer (slice E-7a, `hutan-vim`)
 
 E-7a moves the V-1 modal layer out of `desktop` into a GPUI-free crate and changes no behaviour, so
