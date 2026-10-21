@@ -1356,7 +1356,9 @@ fn every_workspace_command_is_in_the_palette(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn the_status_bar_names_the_active_workspace(cx: &mut TestAppContext) {
+fn the_active_workspace_follows_open_workspace_and_is_not_in_the_quiet_status_bar(
+    cx: &mut TestAppContext,
+) {
     let daemon = TestDaemon::start();
     let mut folders = Folders::default();
     let proj = project(&daemon, &mut folders, "proj");
@@ -1366,8 +1368,8 @@ fn the_status_bar_names_the_active_workspace(cx: &mut TestAppContext) {
     assert!(
         view.read_with(cx, |wb, _| wb
             .region_bounds(Region::StatusItem("workspace")))
-            .is_some(),
-        "the workspace status item is in the default status bar"
+            .is_none(),
+        "the workspace item is not in the built-in status bar (CL-CHROME)"
     );
     assert_eq!(
         view.read_with(cx, |wb, cx| wb

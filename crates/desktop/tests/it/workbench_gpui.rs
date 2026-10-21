@@ -53,7 +53,7 @@ fn opens_with_default_layout_and_title(cx: &mut TestAppContext) {
         state.docks.left.panels,
         vec![PanelId::new("sessions"), PanelId::new("tasks")]
     );
-    assert_eq!(state.docks.right.active, Some(PanelId::new("history")));
+    assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
     assert_eq!(state.panes().len(), 1);
     assert_eq!(cx.window_title().as_deref(), Some("Welcome — Hutan"));
 }
@@ -745,18 +745,20 @@ fn dragging_a_tab_onto_a_pane_edge_splits_it(cx: &mut TestAppContext) {
 #[gpui::test]
 fn dragging_a_panel_tab_to_a_pane_and_to_another_dock(cx: &mut TestAppContext) {
     let (view, cx) = open(cx, None);
-    // Dock tab → center pane (opens the panel as a tab).
+    // Dock tab → center pane (opens the panel as a tab). Requests is listed in the rail's ⋯
+    // until it shows, so it is opened first to have an icon (the fourth).
     let pane = state(&view, cx).first_pane_id();
-    let tab = bounds(&view, cx, Region::DockTab(DockPosition::Right, 2));
+    cx.dispatch_action(actions::OpenPanel("inspector".into()));
+    let tab = bounds(&view, cx, Region::DockTab(DockPosition::Right, 3));
     let target = bounds(&view, cx, Region::Pane(pane));
     drag(cx, center_of(tab), center_of(target));
     let s = state(&view, cx);
     assert_eq!(
         s.docks.right.panels,
         vec![
-            PanelId::new("history"),
             PanelId::new("changes"),
             PanelId::new("agents"),
+            PanelId::new("history"),
             PanelId::new("resources")
         ]
     );
@@ -853,10 +855,10 @@ fn right_click_menus_list_the_documented_entries(cx: &mut TestAppContext) {
     assert_eq!(
         state(&view, cx).docks.right.panels,
         vec![
-            PanelId::new("history"),
             PanelId::new("changes"),
-            PanelId::new("inspector"),
             PanelId::new("agents"),
+            PanelId::new("history"),
+            PanelId::new("inspector"),
             PanelId::new("resources")
         ]
     );

@@ -817,8 +817,7 @@ fn a_history_hit_of_an_assistant_conversation_opens_it_in_the_panel_and_continue
         .expect("the History panel is drawn");
     cx.dispatch_action(actions::SearchHistory);
     draw(cx);
-    history_panel.update(cx, |p, cx| p.set_query("", cx));
-    cx.simulate_input("quokkaquartz");
+    history_panel.update(cx, |p, cx| p.set_query("quokkaquartz", cx));
     pump_until(cx, "the hit", |cx| {
         history_panel.read_with(cx, |p, _| !p.searching() && !p.hits().is_empty())
     });
@@ -826,6 +825,7 @@ fn a_history_hit_of_an_assistant_conversation_opens_it_in_the_panel_and_continue
     assert_eq!(hit.session_id, Some(global));
     assert!(hit.resume_argv.is_none());
     let before = session_infos(&view, cx).len();
+    history_panel.update_in(cx, |p, window, cx| p.focus_search(window, cx));
     cx.simulate_keystrokes("down enter");
     pump_until(cx, "the assistant to show the conversation", |cx| {
         panel.read_with(cx, |p, cx| p.session(cx)) == Some(global)

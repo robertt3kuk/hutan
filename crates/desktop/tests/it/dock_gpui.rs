@@ -290,14 +290,14 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
     assert_size(body.size.width, 350.0);
     assert_size(rail.size.width, 40.0);
     assert!(rail.left() >= body.right(), "the rail is outside the body");
-    for i in 0..5 {
+    for i in 0..3 {
         let icon = bounds(&view, cx, Region::DockTab(Right, i));
         assert!(rail.contains(&icon.center()), "icon {i} is on the rail");
         assert_size(icon.size.width, 32.0);
     }
     assert_eq!(
         state(&view, cx).docks.right.active,
-        Some(PanelId::new("history"))
+        Some(PanelId::new("changes"))
     );
 
     // The active icon collapses the body; the rail stays and remembers the panel and width.
@@ -305,10 +305,10 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
     assert_eq!(chosen(&view, cx, Right), Compact);
     assert!(!painted(&view, cx, Region::Dock(Right)));
     assert_size(bounds(&view, cx, Region::Rail(Right)).size.width, 40.0);
-    assert!(painted(&view, cx, Region::DockTab(Right, 4)));
+    assert!(painted(&view, cx, Region::DockTab(Right, 2)));
     assert_eq!(
         state(&view, cx).docks.right.active,
-        Some(PanelId::new("history"))
+        Some(PanelId::new("changes"))
     );
     assert_eq!(state(&view, cx).docks.right.size, 350.0);
 
@@ -318,7 +318,7 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
     assert_size(bounds(&view, cx, Region::Dock(Right)).size.width, 350.0);
     click(&view, cx, Region::DockTab(Right, 0));
     assert_eq!(chosen(&view, cx, Right), Compact);
-    click(&view, cx, Region::DockTab(Right, 3));
+    click(&view, cx, Region::DockTab(Right, 1));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
@@ -326,7 +326,7 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
     );
 
     // Another icon while open switches the panel and stays open.
-    click(&view, cx, Region::DockTab(Right, 1));
+    click(&view, cx, Region::DockTab(Right, 0));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
@@ -340,7 +340,7 @@ fn cmd_l_toggles_the_body_and_keeps_the_rail_and_the_panel(cx: &mut TestAppConte
     click(&view, cx, Region::DockTab(Right, 2));
     assert_eq!(
         state(&view, cx).docks.right.active,
-        Some(PanelId::new("inspector"))
+        Some(PanelId::new("history"))
     );
     cx.simulate_keystrokes("cmd-l");
     draw(cx);
@@ -352,7 +352,7 @@ fn cmd_l_toggles_the_body_and_keeps_the_rail_and_the_panel(cx: &mut TestAppConte
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
-        Some(PanelId::new("inspector")),
+        Some(PanelId::new("history")),
         "the last panel comes back"
     );
     // The rail's own button does the same.
@@ -701,7 +701,7 @@ fn opening_a_dock_in_a_narrow_window_keeps_it_open_until_the_window_grows(cx: &m
     assert_eq!(shown(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
-        Some(PanelId::new("changes"))
+        Some(PanelId::new("agents"))
     );
     // ⌘B again is the user's own collapse.
     cx.simulate_keystrokes("cmd-b");
@@ -871,7 +871,7 @@ fn a_new_approval_does_not_expand_a_collapsed_right_panel(cx: &mut TestAppContex
     assert_eq!(chosen(&view, cx, Right), Compact, "still collapsed");
     assert!(!painted(&view, cx, Region::Dock(Right)));
     assert!(
-        painted(&view, cx, Region::DockTab(Right, 2)),
+        painted(&view, cx, Region::DockTab(Right, 3)),
         "the Requests icon is on the rail"
     );
     assert!(
@@ -881,11 +881,15 @@ fn a_new_approval_does_not_expand_a_collapsed_right_panel(cx: &mut TestAppContex
         ),
         "the keyboard stays where it was"
     );
-    // The panel is selected on the rail for when the user opens it.
+    // The panel the rail remembers does not change; the Requests icon opens it.
+    assert_eq!(
+        state(&view, cx).docks.right.active,
+        Some(PanelId::new("changes"))
+    );
+    click(&view, cx, Region::DockTab(Right, 3));
+    assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
         Some(PanelId::new("inspector"))
     );
-    click(&view, cx, Region::DockTab(Right, 2));
-    assert_eq!(chosen(&view, cx, Right), Expanded);
 }

@@ -159,9 +159,10 @@ fn default_state_is_valid() {
     assert_eq!(state.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(
         state.docks.right.panels,
-        ids(&["history", "changes", "inspector", "agents", "resources"])
+        ids(&["changes", "agents", "history", "inspector", "resources"])
     );
-    assert_eq!(state.docks.right.active, Some(PanelId::new("history")));
+    assert_eq!(state.docks.right.more, ids(&["inspector", "resources"]));
+    assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
     assert_eq!(
         (state.docks.left.size, state.docks.right.size),
         (280.0, 350.0)
@@ -533,9 +534,11 @@ fn panel_moves_between_docks_and_reveals_target() {
     check(&state);
     assert_eq!(
         state.docks.right.panels,
-        ids(&["history", "changes", "agents", "resources"])
+        ids(&["changes", "agents", "history", "resources"])
     );
-    assert_eq!(state.docks.right.active, Some(PanelId::new("history")));
+    assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
+    // A panel that leaves the dock leaves its ⋯ list too.
+    assert_eq!(state.docks.right.more, ids(&["resources"]));
     assert_eq!(state.docks.bottom.panels, ids(&["inspector"]));
     assert!(state.docks.bottom.visible);
     assert_eq!(state.focus, FocusTarget::Dock(DockPosition::Bottom));
@@ -589,7 +592,7 @@ fn panel_drop_into_new_split_from_dock() {
     assert_eq!(state.panes().len(), 2);
     assert_eq!(
         state.docks.right.panels,
-        ids(&["history", "changes", "agents", "resources"])
+        ids(&["changes", "agents", "history", "resources"])
     );
 }
 
@@ -1592,11 +1595,13 @@ fn random_operations_preserve_invariants_and_conserve_items() {
 fn builtin_presets_place_the_pages_and_the_strip_and_never_the_assistant() {
     let presets = default_presets();
     let by = |name: &str| presets.iter().find(|p| p.name == name).unwrap().clone();
-    let strip = ids(&["history", "changes", "inspector", "agents", "resources"]);
+    let strip = ids(&["changes", "agents", "history", "inspector", "resources"]);
+    let more = ids(&["inspector", "resources"]);
 
     let default = by("default");
     assert_eq!(default.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(default.docks.right.panels, strip);
+    assert_eq!(default.docks.right.more, more);
     assert!(default.docks.left.visible && default.docks.right.visible);
     assert!(default.docks.bottom.panels.is_empty() && !default.docks.bottom.visible);
 
@@ -2140,35 +2145,35 @@ fn a_dock_that_collapses_gives_the_keyboard_back_to_the_center() {
 
 #[test]
 fn the_active_icon_of_an_open_right_panel_collapses_it_and_any_icon_of_a_collapsed_one_opens_it() {
-    let history = PanelId::new("history");
-    let changes = PanelId::new("changes");
+    let first = PanelId::new("changes");
+    let other = PanelId::new("history");
     let mut state = WorkbenchState::default();
     state.focus_dock(DockPosition::Right);
     // Open + active icon: collapse to the rail, the panel and the width are remembered.
     state.resize_dock(DockPosition::Right, 400.0);
-    assert!(!state.click_rail_icon(DockPosition::Right, &history, DockMode::Expanded));
+    assert!(!state.click_rail_icon(DockPosition::Right, &first, DockMode::Expanded));
     assert_eq!(mode(&state, DockPosition::Right), DockMode::Compact);
-    assert_eq!(state.docks.right.active, Some(history.clone()));
+    assert_eq!(state.docks.right.active, Some(first.clone()));
     assert_eq!(state.docks.right.size, 400.0);
     assert!(matches!(state.focus, FocusTarget::Pane(_)));
     // Collapsed + the remembered (active) icon: opens that panel and focuses the dock.
-    assert!(state.click_rail_icon(DockPosition::Right, &history, DockMode::Compact));
+    assert!(state.click_rail_icon(DockPosition::Right, &first, DockMode::Compact));
     assert_eq!(mode(&state, DockPosition::Right), DockMode::Expanded);
     assert_eq!(state.focus, FocusTarget::Dock(DockPosition::Right));
     // Open + another icon: switches, stays open.
-    assert!(state.click_rail_icon(DockPosition::Right, &changes, DockMode::Expanded));
-    assert_eq!(state.docks.right.active, Some(changes.clone()));
+    assert!(state.click_rail_icon(DockPosition::Right, &other, DockMode::Expanded));
+    assert_eq!(state.docks.right.active, Some(other.clone()));
     assert_eq!(mode(&state, DockPosition::Right), DockMode::Expanded);
     // Collapsed + another icon: opens that one.
     state.set_dock_mode(DockPosition::Right, DockMode::Compact);
-    assert!(state.click_rail_icon(DockPosition::Right, &history, DockMode::Compact));
-    assert_eq!(state.docks.right.active, Some(history.clone()));
+    assert!(state.click_rail_icon(DockPosition::Right, &first, DockMode::Compact));
+    assert_eq!(state.docks.right.active, Some(first.clone()));
     // Hidden + an icon cannot happen on screen, but still opens.
     state.set_dock_mode(DockPosition::Right, DockMode::Hidden);
-    assert!(state.click_rail_icon(DockPosition::Right, &changes, DockMode::Hidden));
+    assert!(state.click_rail_icon(DockPosition::Right, &other, DockMode::Hidden));
     // The window shows an auto-collapsed dock as Compact although the user's mode is Expanded:
     // its active icon opens it instead of collapsing it for real.
-    assert!(state.click_rail_icon(DockPosition::Right, &changes, DockMode::Compact));
+    assert!(state.click_rail_icon(DockPosition::Right, &other, DockMode::Compact));
     assert_eq!(mode(&state, DockPosition::Right), DockMode::Expanded);
     // A panel the dock does not hold changes nothing.
     state.set_dock_mode(DockPosition::Right, DockMode::Compact);

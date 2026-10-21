@@ -23,6 +23,26 @@ fn open(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) 
     open_with(cx, settings, connection, None)
 }
 
+/// Like [`open`] under a preset whose status bar names the dock buttons (the built-in presets
+/// no longer show them, CL-CHROME): the docks of the default, the status bar of before.
+fn open_with_dock_buttons(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) {
+    let (connection, settings, _) = offline_connection();
+    let preset: toml::Value = toml::from_str(
+        r#"
+left = { panels = ["sessions", "tasks"], size = 280, visible = true }
+right = { panels = ["changes", "agents", "history", "inspector", "resources"], size = 350, visible = true, more = ["inspector", "resources"] }
+bottom = { panels = [], size = 200, visible = false }
+status_bar = { left = ["connection", "attention"], right = ["palette_hint", "dock_left", "dock_bottom", "dock_right"] }
+"#,
+    )
+    .unwrap();
+    settings.write_user("layout.presets.docks", preset).unwrap();
+    settings
+        .write_user("layout.preset", toml::Value::String("docks".into()))
+        .unwrap();
+    open_with(cx, settings, connection, None)
+}
+
 fn state(view: &Entity<Workbench>, cx: &VisualTestContext) -> WorkbenchState {
     view.read_with(cx, |wb, _| wb.state().clone())
 }
@@ -183,7 +203,7 @@ fn dock_keys_work_while_a_terminal_has_focus(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_status_bar_dock_buttons_toggle_the_docks(cx: &mut TestAppContext) {
-    let (view, cx) = open(cx);
+    let (view, cx) = open_with_dock_buttons(cx);
     give_the_bottom_dock_a_panel(&view, cx);
     assert_eq!(visible(&view, cx), [true, true, false]);
 
@@ -216,7 +236,7 @@ fn the_status_bar_dock_buttons_toggle_the_docks(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_hidden_dock_without_panels_has_a_disabled_button(cx: &mut TestAppContext) {
-    let (view, cx) = open(cx);
+    let (view, cx) = open_with_dock_buttons(cx);
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| {
             let bottom = s.docks.get_mut(DockPosition::Bottom);
@@ -241,7 +261,7 @@ fn a_hidden_dock_without_panels_has_a_disabled_button(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn switching_the_keymap_base_rebinds_live(cx: &mut TestAppContext) {
-    let (view, cx) = open(cx);
+    let (view, cx) = open_with_dock_buttons(cx);
     // Zed: ⌘J is the bottom dock, ⌘P jumps.
     cx.simulate_keystrokes("cmd-j");
     assert_eq!(visible(&view, cx), [true, true, true]);

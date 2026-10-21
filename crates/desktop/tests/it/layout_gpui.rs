@@ -116,9 +116,10 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     assert_eq!(s.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(
         s.docks.right.panels,
-        ids(&["history", "changes", "inspector", "agents", "resources"])
+        ids(&["changes", "agents", "history", "inspector", "resources"])
     );
-    assert_eq!(s.docks.right.active, Some(PanelId::new("history")));
+    assert_eq!(s.docks.right.more, ids(&["inspector", "resources"]));
+    assert_eq!(s.docks.right.active, Some(PanelId::new("changes")));
     assert!(s.docks.bottom.panels.is_empty() && !s.docks.bottom.visible);
     assert!(s.docks.left.visible && s.docks.right.visible);
     assert_eq!((s.docks.left.size, s.docks.right.size), (280.0, 350.0));
@@ -157,20 +158,25 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     );
     assert!(painted(&view, cx, Region::Toolbar("new")));
     assert!(painted(&view, cx, Region::Toolbar("settings")));
-    // The right rail: five icons, 32 pt targets under the title bar row, outside the body.
+    // The right rail: three icons and ⋯, 32 pt targets under the title bar row, outside the
+    // body; Requests and Resources are in ⋯ (CL-CHROME).
     let rail = bounds(&view, cx, Region::Rail(DockPosition::Right));
     assert_size(rail.size.width, 40.0);
     assert!(rail.left() >= right.right());
-    for index in 0..5 {
+    for index in 0..3 {
         let icon = bounds(&view, cx, Region::DockTab(DockPosition::Right, index));
         assert!(rail.contains(&icon.center()), "icon {index}");
         assert!(icon.origin.y >= titlebar.bottom(), "icon {index}");
         assert_size(icon.size.height, 32.0);
     }
-    assert!(
-        !painted(&view, cx, Region::StripMore),
-        "five icons fit the rail"
-    );
+    for index in 3..5 {
+        assert!(!painted(
+            &view,
+            cx,
+            Region::DockTab(DockPosition::Right, index)
+        ));
+    }
+    assert!(rail.contains(&bounds(&view, cx, Region::StripMore).center()));
 }
 
 #[gpui::test]
@@ -438,14 +444,8 @@ fn turning_mawas_off_closes_its_tab_and_its_nav_row(cx: &mut TestAppContext) {
 fn the_right_strip_switches_tabs(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     let active = |cx: &VisualTestContext| state(&view, cx).docks.right.active.unwrap();
-    assert_eq!(active(cx).as_str(), "history", "History is the default tab");
-    for (index, panel) in [
-        (1, "changes"),
-        (2, "inspector"),
-        (3, "agents"),
-        (4, "resources"),
-        (0, "history"),
-    ] {
+    assert_eq!(active(cx).as_str(), "changes", "Changes is the default tab");
+    for (index, panel) in [(1, "agents"), (2, "history"), (0, "changes")] {
         click(&view, cx, Region::DockTab(DockPosition::Right, index));
         assert_eq!(active(cx).as_str(), panel);
         assert_eq!(
@@ -465,7 +465,7 @@ fn icons_that_do_not_fit_move_into_the_more_menu(cx: &mut TestAppContext) {
     let more = bounds(&view, cx, Region::StripMore);
     assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 0)));
     assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 1)));
-    assert!(!painted(&view, cx, Region::DockTab(DockPosition::Right, 4)));
+    assert!(!painted(&view, cx, Region::DockTab(DockPosition::Right, 2)));
 
     cx.simulate_click(more.center(), Modifiers::none());
     let labels: Vec<String> = view
@@ -474,12 +474,13 @@ fn icons_that_do_not_fit_move_into_the_more_menu(cx: &mut TestAppContext) {
         .into_iter()
         .map(|(label, _)| label.to_string())
         .collect();
-    assert_eq!(labels, ["Requests", "Agents", "Resources"]);
+    // The icon that did not fit, then the panels the dock lists in ⋯.
+    assert_eq!(labels, ["History", "Requests", "Resources"]);
 
     // Choosing one makes it the active tab, and the active tab never hides.
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(0, window, cx));
     let s = state(&view, cx);
-    assert_eq!(s.docks.right.active, Some(PanelId::new("inspector")));
+    assert_eq!(s.docks.right.active, Some(PanelId::new("history")));
     assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 2)));
 }
 
@@ -518,7 +519,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
     assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(
         s.docks.right.panels,
-        ids(&["history", "changes", "inspector", "agents", "resources"])
+        ids(&["changes", "agents", "history", "inspector", "resources"])
     );
     assert!(s.zoomed.is_some());
 
@@ -726,7 +727,7 @@ fn the_very_first_launch_opens_with_the_right_sidebar_on_its_rail(cx: &mut TestA
         docks.right.mode(),
         hutan_desktop::workbench::model::DockMode::Compact
     );
-    assert_eq!(docks.right.active, Some(PanelId::new("history")));
+    assert_eq!(docks.right.active, Some(PanelId::new("changes")));
     assert!(
         docks.left.is_expanded(),
         "the left sidebar is as it always was"
@@ -736,7 +737,7 @@ fn the_very_first_launch_opens_with_the_right_sidebar_on_its_rail(cx: &mut TestA
     assert!(state(&view, cx).docks.right.is_expanded());
     assert_eq!(
         state(&view, cx).docks.right.active,
-        Some(PanelId::new("history"))
+        Some(PanelId::new("changes"))
     );
 }
 

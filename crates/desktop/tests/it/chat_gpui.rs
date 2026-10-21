@@ -690,7 +690,7 @@ fn an_approval_card_answers_through_the_daemon_and_resolves(cx: &mut TestAppCont
     });
     draw(cx);
     assert!(
-        region(&view, cx, Region::StatusItem("approvals"))
+        region(&view, cx, Region::StatusItem("attention"))
             .is_some_and(|b| b.size.width > gpui::px(10.0)),
         "the status bar counts the request"
     );
@@ -915,11 +915,11 @@ fn review_approvals_lists_every_pending_request_across_sessions(cx: &mut TestApp
                 .is_some_and(|i| matches!(i, hutan_desktop::workbench::model::ItemRef::Chat { .. }))
         })
     });
-    // The status bar item opens the same list.
+    // Agent: Review Approvals opens the same list from anywhere.
     view.update_in(cx, |wb, window, cx| wb.new_terminal(window, cx));
     cx.run_until_parked();
     draw(cx);
-    click(&view, cx, Region::StatusItem("approvals"));
+    cx.dispatch_action(hutan_desktop::workbench::actions::ReviewApprovals);
     pump(cx, "the picker", |cx| {
         view.read_with(cx, |wb, _| wb.picker().is_some())
     });

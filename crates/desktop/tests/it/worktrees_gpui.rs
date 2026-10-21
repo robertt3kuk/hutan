@@ -228,19 +228,8 @@ fn the_changes_tab_lists_the_checkouts_and_a_click_opens_the_changes_view(cx: &m
         wb.switch_workspace(workspace, window, cx)
     });
 
-    // The strip's second icon is Changes.
-    wait_until(cx, "the strip", |cx| {
-        view.read_with(cx, |wb, _| {
-            wb.region_bounds(Region::DockTab(DockPosition::Right, 1))
-                .is_some()
-        })
-    });
-    let tab = view
-        .read_with(cx, |wb, _| {
-            wb.region_bounds(Region::DockTab(DockPosition::Right, 1))
-        })
-        .unwrap();
-    cx.simulate_click(tab.center(), Modifiers::none());
+    // Changes is the rail's first icon and the panel a new layout remembers; open its body.
+    cx.dispatch_action(actions::OpenPanel("changes".into()));
     assert_eq!(
         view.read_with(cx, |wb, _| wb.state().docks.right.active.clone())
             .map(|p| p.to_string()),

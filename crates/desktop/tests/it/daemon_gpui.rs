@@ -426,13 +426,13 @@ fn a_termination_signal_saves_disconnects_and_never_stops_the_daemon(cx: &mut Te
 // daemon controls ---------------------------------------------------------------------------
 
 #[gpui::test]
-fn the_connection_status_item_opens_the_popover_with_the_daemons_status(cx: &mut TestAppContext) {
+fn daemon_status_opens_the_popover_with_the_daemons_status(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     daemon.sh("sleep 600");
     let (view, cx) = open(cx, &daemon, None);
     wait_synced(&view, cx, 1);
 
-    click(&view, cx, Region::StatusItem("connection"));
+    dispatch(cx, actions::daemon::Status);
     assert!(view.read_with(cx, |wb, _| wb.daemon_popover_open()));
     wait_until(cx, "daemon.status", |cx| {
         view.read_with(cx, |wb, _| wb.daemon_status().is_some())
@@ -463,10 +463,10 @@ fn the_connection_status_item_opens_the_popover_with_the_daemons_status(cx: &mut
     // Escape closes it.
     dispatch(cx, palette::Dismiss);
     assert!(!view.read_with(cx, |wb, _| wb.daemon_popover_open()));
-    // Clicking the item opens it again; clicking it while open closes it (the backdrop).
-    click(&view, cx, Region::StatusItem("connection"));
+    // Daemon → Status opens it again; a click outside it while open closes it (the backdrop).
+    dispatch(cx, actions::daemon::Status);
     assert!(view.read_with(cx, |wb, _| wb.daemon_popover_open()));
-    click(&view, cx, Region::StatusItem("connection"));
+    click(&view, cx, Region::Titlebar);
     assert!(!view.read_with(cx, |wb, _| wb.daemon_popover_open()));
 }
 
@@ -600,7 +600,7 @@ fn stop_without_live_sessions_needs_no_confirmation(cx: &mut TestAppContext) {
         })
     });
     // The popover shows the way back: Start (button and banner), no Restart/Stop.
-    click(&view, cx, Region::StatusItem("connection"));
+    dispatch(cx, actions::daemon::Status);
     draw(cx);
     assert!(view.read_with(cx, |wb, _| {
         wb.region_bounds(Region::Popover("daemon-start")).is_some()
@@ -631,7 +631,7 @@ fn the_popover_controls_stop_restart_and_start_a_real_daemon(cx: &mut TestAppCon
     let epoch_before = epoch(cx);
 
     // Restart from the popover: confirms because a session is live.
-    click(&view, cx, Region::StatusItem("connection"));
+    dispatch(cx, actions::daemon::Status);
     wait_until(cx, "daemon.status", |cx| {
         view.read_with(cx, |wb, _| wb.daemon_status().is_some())
     });
@@ -795,7 +795,7 @@ fn the_popover_switch_registers_start_at_login_and_follows_external_edits(cx: &m
     assert!(!checked(cx));
 
     // The switch in the popover writes settings.toml and registers the launch agent.
-    click(&view, cx, Region::StatusItem("connection"));
+    dispatch(cx, actions::daemon::Status);
     click(&view, cx, Region::Popover("start_at_login"));
     assert!(on(cx));
     assert_eq!(fakes.login.calls(), [LoginItemCall::Register]);
@@ -842,7 +842,7 @@ fn the_popover_and_menu_toggle_keep_running_without_the_system(cx: &mut TestAppC
     let checked = |cx: &mut VisualTestContext| menu_checked(cx, "Keep Daemon Running");
     assert!(!on(cx) && !checked(cx), "off by default");
 
-    click(&view, cx, Region::StatusItem("connection"));
+    dispatch(cx, actions::daemon::Status);
     click(&view, cx, Region::Popover("keep_running"));
     assert!(on(cx) && checked(cx));
     let saved = read(daemon.home(), "settings.toml");
@@ -861,7 +861,7 @@ fn outside_the_bundle_only_the_login_switch_is_unavailable(cx: &mut TestAppConte
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon, None);
     wait_synced(&view, cx, 0);
-    click(&view, cx, Region::StatusItem("connection"));
+    dispatch(cx, actions::daemon::Status);
     click(&view, cx, Region::Popover("start_at_login"));
     assert!(!view.read_with(cx, |wb, _| wb.start_at_login_enabled()));
     assert_eq!(read(daemon.home(), "settings.toml"), "");
