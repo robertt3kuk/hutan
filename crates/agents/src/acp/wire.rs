@@ -199,6 +199,9 @@ pub struct ModeState {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Mode {
     pub id: String,
+    /// The display name (`Plan Mode`); empty when the agent sent none.
+    #[serde(default)]
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

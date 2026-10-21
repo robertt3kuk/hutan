@@ -156,6 +156,11 @@ impl Mapper {
         self.mode = mode;
     }
 
+    /// The mode the session runs in as last reported (its start, then its updates).
+    pub fn mode(&self) -> Option<&str> {
+        self.mode.as_deref()
+    }
+
     /// The directory the agent works in: permission requests say where they would act.
     pub fn set_cwd(&mut self, cwd: String) {
         self.cwd = Some(cwd);

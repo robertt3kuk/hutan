@@ -792,6 +792,49 @@ mod tests {
         assert_eq!(ask(AGENT_OMP).session_mode, None);
     }
 
+    /// User decision D4 (`UX-MODE-CHIP`): an ordinary harness chat starts the harness bare, so
+    /// the user's own configuration decides its mode; Hutan only reads and shows it
+    /// (`ChatInfo.mode`). Only Mawas's own profiles pass a mode or an approval flag.
+    #[test]
+    fn ordinary_harness_chats_launch_bare_and_never_change_the_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let omp = executable(dir.path(), "omp");
+        let claude = executable(dir.path(), "claude-agent-acp");
+        let h = harnesses(&[
+            (
+                "omp",
+                HarnessSettings {
+                    bin: Some(omp),
+                    ..HarnessSettings::default()
+                },
+            ),
+            (
+                "claude",
+                HarnessSettings {
+                    bin: Some(claude),
+                    ..HarnessSettings::default()
+                },
+            ),
+        ]);
+        assert_eq!(h.acp_config("omp", None).unwrap().args, ["acp"]);
+        assert!(h.acp_config("claude", None).unwrap().args.is_empty());
+        for flag in [
+            "--approval-mode",
+            "--tools",
+            "--append-system-prompt",
+            "--yolo",
+        ] {
+            assert!(
+                !h.acp_config("omp", None)
+                    .unwrap()
+                    .args
+                    .iter()
+                    .any(|a| a == flag),
+                "{flag}"
+            );
+        }
+    }
+
     #[test]
     fn mcp_servers_become_acp_objects() {
         let servers = BTreeMap::from([

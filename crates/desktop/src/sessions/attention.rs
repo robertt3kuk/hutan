@@ -789,6 +789,7 @@ mod tests {
             agent_session_id: None,
             assistant: false,
             images: None,
+            mode: None,
         });
         session
     }

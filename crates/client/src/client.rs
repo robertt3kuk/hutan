@@ -158,6 +158,8 @@ pub(crate) const NOTIFY_MUTE_CAPABILITY: &str = "notify.mute";
 pub(crate) const CHAT_RETRY_CAPABILITY: &str = "chat.retry";
 /// Capability for `DiffFile.staged` / `.unstaged` of `worktree.diff` (protocol 0.34).
 pub(crate) const WORKTREE_INDEX_CAPABILITY: &str = "worktree.index";
+/// Capability for `ChatInfo.mode`: the session mode a harness reports (protocol 0.34).
+pub(crate) const CHAT_MODE_CAPABILITY: &str = "chat.mode";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -195,6 +197,7 @@ const CAPABILITIES: &[&str] = &[
     NOTIFY_MUTE_CAPABILITY,
     CHAT_RETRY_CAPABILITY,
     WORKTREE_INDEX_CAPABILITY,
+    CHAT_MODE_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -543,6 +546,15 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == WORKTREE_INDEX_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `chat.mode` (protocol 0.34): a harness chat
+    /// without `ChatInfo.mode` reports no mode (rather than an older daemon not saying).
+    pub fn supports_chat_mode(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == CHAT_MODE_CAPABILITY)
     }
 
     /// `chat.retry`: sends the chat's last user message again; the journal keeps it once.

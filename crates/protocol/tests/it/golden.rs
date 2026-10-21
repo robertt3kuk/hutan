@@ -268,6 +268,7 @@ fn chat_info() -> ChatInfo {
         agent_session_id: None,
         assistant: false,
         images: None,
+        mode: None,
     }
 }
 
@@ -288,6 +289,7 @@ fn harness_chat_session_info() -> SessionInfo {
             agent_session_id: Some("01a140f0-8de4-70fb-9f43-aaa92aef0e15".into()),
             assistant: false,
             images: Some(true),
+            mode: None,
         }),
         ..chat_session_info()
     }
@@ -310,6 +312,7 @@ fn harness_assistant_session_info() -> SessionInfo {
             agent_session_id: Some("01a140f0-8de4-70fb-9f43-aaa92aef0e15".into()),
             assistant: true,
             images: Some(false),
+            mode: None,
         }),
         ..chat_session_info()
     }
@@ -332,6 +335,7 @@ fn direct_chat_session_info() -> SessionInfo {
             agent_session_id: None,
             assistant: false,
             images: None,
+            mode: None,
         }),
         ..chat_session_info()
     }
@@ -416,6 +420,7 @@ fn assistant_session_info() -> SessionInfo {
             agent_session_id: None,
             assistant: false,
             images: None,
+            mode: None,
         }),
         ..chat_session_info()
     }
@@ -4253,6 +4258,25 @@ fn responses_match_fixtures() {
                 17,
                 &AgentTree {
                     observations: vec![observation()],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "chat_session_result_harness_mode",
+            ControlMessage::ok(
+                36,
+                &SessionResult {
+                    session: SessionInfo {
+                        chat: harness_chat_session_info().chat.map(|chat| ChatInfo {
+                            mode: Some(ChatMode::new(
+                                "bypassPermissions",
+                                Some("Bypass Permissions".into()),
+                            )),
+                            ..chat
+                        }),
+                        ..harness_chat_session_info()
+                    },
                 },
             )
             .unwrap(),

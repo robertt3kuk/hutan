@@ -30,7 +30,7 @@ use tokio::time::timeout;
 use tracing::{debug, warn};
 
 use crate::adapter::{
-    AdapterMessage, AgentAdapter, ExitInfo, MessageExtras, StartSpec, Started, TurnRef,
+    AdapterMessage, AgentAdapter, ExitInfo, MessageExtras, SessionMode, StartSpec, Started, TurnRef,
 };
 use crate::codex::{AnswerError, Mapped, Reply};
 use crate::error::AgentError;
@@ -107,6 +107,26 @@ struct ModeChoice {
     config_id: Option<String>,
     available: Vec<String>,
     current: String,
+    /// `(id, display name)` of the modes offered, for `ChatInfo.mode`.
+    names: Vec<(String, String)>,
+}
+
+impl ModeChoice {
+    /// The mode the session runs in, with its name; `None` when the agent says none.
+    fn current_mode(&self) -> Option<SessionMode> {
+        (!self.current.is_empty()).then(|| session_mode(&self.names, &self.current))
+    }
+}
+
+/// `id` with the name the agent gave it in `names`.
+fn session_mode(names: &[(String, String)], id: &str) -> SessionMode {
+    SessionMode {
+        id: id.to_owned(),
+        name: names
+            .iter()
+            .find(|(known, name)| known == id && !name.is_empty() && name != id)
+            .map(|(_, name)| name.clone()),
+    }
 }
 
 #[derive(Debug)]
@@ -123,6 +143,8 @@ struct Shared {
     /// The agent said `promptCapabilities.image`: image content blocks are accepted.
     images: bool,
     can_close: bool,
+    /// `(id, display name)` of the session's modes: names the mode an update reports.
+    mode_names: Vec<(String, String)>,
 }
 
 /// One ACP agent process with one open session.
@@ -276,19 +298,26 @@ fn mode_choice(result: &wire::SessionResult) -> Option<ModeChoice> {
             config_id: None,
             available: state.available_modes.iter().map(|m| m.id.clone()).collect(),
             current: state.current_mode_id.clone(),
+            names: state
+                .available_modes
+                .iter()
+                .map(|m| (m.id.clone(), m.name.clone()))
+                .collect(),
         });
     }
     let option = result
         .config_options
         .iter()
         .find(|o| o.category.as_deref() == Some("mode") || o.id == "mode")?;
+    let values = select_values(&option.options);
     Some(ModeChoice {
         config_id: Some(option.id.clone()),
-        available: select_values(&option.options)
-            .into_iter()
-            .map(|(value, ..)| value)
-            .collect(),
+        available: values.iter().map(|(value, ..)| value.clone()).collect(),
         current: option.current_value.as_str().unwrap_or_default().to_owned(),
+        names: values
+            .into_iter()
+            .map(|(value, name, _)| (value, name))
+            .collect(),
     })
 }
 
@@ -561,6 +590,7 @@ impl AcpAdapter {
             thread_id: opened.session_id.clone(),
             resumed: opened.resumed,
             images: Some(opened.capabilities.prompt_capabilities.image),
+            mode: mode.as_ref().and_then(ModeChoice::current_mode),
         };
         let shared = Arc::new(Shared {
             transport,
@@ -574,6 +604,7 @@ impl AcpAdapter {
             embedded_context: opened.capabilities.prompt_capabilities.embedded_context,
             images: opened.capabilities.prompt_capabilities.image,
             can_close: opened.close,
+            mode_names: mode.map(|m| m.names).unwrap_or_default(),
         });
         tokio::spawn(pump(shared.clone(), incoming, exit));
         AcpSession {
@@ -738,8 +769,20 @@ async fn pump(
                 } else {
                     Vec::new()
                 };
-                let drafts = lock(&shared.mapper).notification(&method, params);
-                emit_nodes(&shared, updates).await && emit(&shared, drafts).await
+                let (drafts, mode) = {
+                    let mut mapper = lock(&shared.mapper);
+                    let before = mapper.mode().map(str::to_owned);
+                    let drafts = mapper.notification(&method, params);
+                    let after = mapper.mode().map(str::to_owned);
+                    (drafts, after.filter(|after| before.as_ref() != Some(after)))
+                };
+                let mode = mode.map(|id| session_mode(&shared.mode_names, &id));
+                emit_nodes(&shared, updates).await
+                    && emit(&shared, drafts).await
+                    && match mode {
+                        Some(mode) => shared.events.send(AdapterMessage::Mode(mode)).await.is_ok(),
+                        None => true,
+                    }
             }
             Incoming::Request { id, method, params } => {
                 let Mapped { drafts, reply } = lock(&shared.mapper).request(id, &method, params);

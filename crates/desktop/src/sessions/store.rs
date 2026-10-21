@@ -1421,6 +1421,12 @@ impl SessionsStore {
         self.session(session).is_some_and(|info| info.muted)
     }
 
+    /// Whether the daemon reports harness modes (`ChatInfo.mode`, protocol 0.34): without it a
+    /// missing mode means "not said", not "not reported by the harness".
+    pub fn supports_chat_mode(&self) -> bool {
+        self.connection.supports_chat_mode()
+    }
+
     /// Whether the daemon can mute a session's notifications.
     pub fn supports_mute(&self) -> bool {
         self.connection.supports_notify_mute()

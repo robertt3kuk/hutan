@@ -37,6 +37,18 @@ pub struct Started {
     /// Whether the agent takes images (protocol 0.23): `Some` when its handshake says so (ACP
     /// `promptCapabilities.image`), `None` when it cannot tell before a message is sent.
     pub images: Option<bool>,
+    /// The session mode the agent reports it runs in (ACP `modes` or a `mode` config option),
+    /// `None` when it reports none (Codex). Read only: what the agent was started with.
+    pub mode: Option<SessionMode>,
+}
+
+/// A session mode an agent reports (protocol 0.34, `ChatInfo.mode`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionMode {
+    /// The agent's id of the mode (`default`, `plan`, `bypassPermissions`).
+    pub id: String,
+    /// Its display name, when the agent gave one.
+    pub name: Option<String>,
 }
 
 /// How an agent process ended.
@@ -55,6 +67,9 @@ pub enum AdapterMessage {
     /// Something about an agent of the session's observation tree: the main agent's thread, or a
     /// subagent's (`docs/integrations.md`).
     Node(Box<NodeUpdate>),
+    /// The agent reports that its session mode changed (ACP `current_mode_update`, a `mode`
+    /// config option update). Whoever changed it, the agent or its user: Hutan never does.
+    Mode(SessionMode),
     /// The process ended; nothing follows.
     Exited(ExitInfo),
 }

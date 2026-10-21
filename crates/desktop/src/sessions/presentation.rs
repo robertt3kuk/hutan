@@ -1208,6 +1208,7 @@ mod tests {
             agent_session_id: exact.then(|| "conv-1".to_owned()),
             assistant,
             images: None,
+            mode: None,
         }
     }
 

@@ -938,6 +938,35 @@ fn image_path(path: &Path) -> Attachment {
     }
 }
 
+/// `UX-MODE-CHIP` (protocol 0.34): `ChatInfo.mode` is the mode the harness reports at the start
+/// (OMP's `mode` config option) and follows its updates; Hutan never asks for a mode itself.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_mode_a_harness_reports_is_the_chats_mode_and_follows_its_updates() {
+    let mut t = H::omp(&fixture("unknown-update")).await;
+    assert!(t.client.supports_chat_mode());
+    let created = t.create("omp").await;
+    let mode = created.chat.as_ref().unwrap().mode.clone().unwrap();
+    assert_eq!((mode.id.as_str(), mode.label()), ("default", "Default"));
+    assert!(!mode.approves_everything);
+    t.send(created.id, "go").await;
+    let changed = wait_event(&mut t.events, "the mode update", |event| match event {
+        Event::SessionUpdated { session } if session.id == created.id => session
+            .chat
+            .as_ref()
+            .and_then(|chat| chat.mode.clone())
+            .filter(|mode| mode.id == "plan"),
+        _ => None,
+    })
+    .await;
+    assert_eq!(changed.label(), "Plan");
+    assert!(
+        t.received_of("session/set_mode").is_empty()
+            && t.received_of("session/set_config_option").is_empty(),
+        "Hutan never changes an ordinary chat's mode"
+    );
+    t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn images_and_pasted_text_reach_an_omp_chat_and_are_journaled_without_bytes() {
     let mut t = H::omp(&fixture("plain-turn")).await;

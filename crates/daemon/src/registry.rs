@@ -15,12 +15,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::time::{Instant, sleep_until};
 
-use hutan_agents::{CodexConfig, ExitInfo, Started};
+use hutan_agents::{CodexConfig, ExitInfo, SessionMode, Started};
 use hutan_core::{
     AgentNode, NodeOutcome, NodeUpdate, ObservationTree, Patch, SessionEvent, SessionId,
     SessionKind, SessionState, TerminalId, WorkspaceId,
 };
-use hutan_protocol::chat::{ChatCreate, ChatInfo};
+use hutan_protocol::chat::{ChatCreate, ChatInfo, ChatMode};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, AgentState, CreatedBy, Event,
@@ -205,6 +205,11 @@ enum Command {
         session: SessionId,
         update: Box<NodeUpdate>,
     },
+    /// From a chat session's pump: the harness reports its session mode changed.
+    ChatMode {
+        session: SessionId,
+        mode: SessionMode,
+    },
     /// Whether the session is a chat session, and live.
     ChatTarget(SessionId, Reply<bool>),
     /// `chat.set_model`: answered once the switch is journaled.
@@ -278,6 +283,11 @@ impl ChatNotifier {
             update: Box::new(update),
         })
         .await;
+    }
+
+    /// The harness reports that its session mode changed (`ChatInfo.mode`).
+    pub(crate) async fn mode(&self, session: SessionId, mode: SessionMode) {
+        self.send(Command::ChatMode { session, mode }).await;
     }
 }
 
@@ -1292,6 +1302,7 @@ impl SessionRegistry {
                 } => self.on_chat_state(session, turn, pending, questions),
                 Command::ChatExited { session, exit } => self.on_chat_exited(session, &exit),
                 Command::ChatNode { session, update } => self.on_chat_node(session, *update),
+                Command::ChatMode { session, mode } => self.on_chat_mode(session, mode),
                 Command::InvalidatePlacements(reply) => {
                     self.invalidate_placements();
                     let _ = reply.send(Ok(()));
@@ -3484,6 +3495,7 @@ impl SessionRegistry {
                 if let Some(chat) = &mut session.info.chat {
                     chat.model = started.model;
                     chat.images = started.images;
+                    chat.mode = started.mode.map(|mode| ChatMode::new(mode.id, mode.name));
                     if !is_gateway_agent(&chat.agent) {
                         chat.agent_session_id = Some(started.thread_id);
                     }
@@ -3568,6 +3580,23 @@ impl SessionRegistry {
             self.emit_session(index);
             self.persist_session(index);
         }
+    }
+
+    /// The harness's session mode changed: `ChatInfo.mode` says so (read only, protocol 0.34).
+    fn on_chat_mode(&mut self, id: SessionId, mode: SessionMode) {
+        let Ok(index) = self.session_index(id) else {
+            return;
+        };
+        let mode = ChatMode::new(mode.id, mode.name);
+        let Some(chat) = &mut self.sessions[index].info.chat else {
+            return;
+        };
+        if chat.mode.as_ref() == Some(&mode) {
+            return;
+        }
+        chat.mode = Some(mode);
+        let session = self.sessions[index].info.clone();
+        self.emit(&Event::SessionUpdated { session });
     }
 
     /// An update of the session's agent tree from its adapter (the main agent's thread and the
@@ -4705,6 +4734,7 @@ fn chat_info(spec: &ChatSpec) -> ChatInfo {
         provider_id: spec.provider_id.clone(),
         assistant: spec.assistant,
         images: None,
+        mode: None,
         agent_session_id: (!is_gateway_agent(&spec.agent))
             .then(|| spec.thread_id.clone())
             .flatten(),

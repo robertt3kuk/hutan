@@ -658,6 +658,11 @@ impl ChatView {
         let pending = self.pending.len();
         let session = self.session;
         let context = self.model.read(cx).transcript().context_use();
+        // `UX-MODE-CHIP` (protocol 0.34): the mode a harness reports, read only.
+        let mode = chat
+            .filter(|chat| is_harness_chat(&chat.agent))
+            .filter(|_| self.sessions.read(cx).supports_chat_mode())
+            .map(mode_chip);
         div()
             .relative()
             .flex()
@@ -693,6 +698,33 @@ impl ChatView {
                     .text_color(theme.muted)
                     .text_size(px(tokens.secondary_font_size))
                     .child(SharedString::from(text))
+            }))
+            .children(mode.map(|chip| {
+                let color = if chip.warning {
+                    theme.warning
+                } else {
+                    theme.muted
+                };
+                let tip = SharedString::from(chip.tooltip);
+                div()
+                    .id("chat-mode")
+                    .relative()
+                    .flex_none()
+                    .child(
+                        div()
+                            .px(px(tokens.spacing * 2.0))
+                            .rounded(px(crate::theme::pill_radius()))
+                            .bg(color.opacity(0.12))
+                            .text_color(color)
+                            .text_size(px(tokens.secondary_font_size))
+                            .whitespace_nowrap()
+                            .child(SharedString::from(chip.text)),
+                    )
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
+                            .into()
+                    })
+                    .child(probe(&self.regions, Region::Chat("mode")))
             }))
             .children(context.map(|context| {
                 // Muted, and fainter still when the agent reports no window to measure against.
@@ -1519,5 +1551,93 @@ impl Render for ChatView {
             .children(attach)
             .child(composer)
             .child(drop_overlay)
+    }
+}
+
+/// The chat header's mode chip (`UX-MODE-CHIP`, protocol 0.34).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModeChip {
+    pub text: String,
+    pub tooltip: String,
+    /// The mode lets the agent act without asking: drawn as a warning.
+    pub warning: bool,
+}
+
+/// What the header says about the mode a harness runs in: `Mode: Plan`, a warning for a mode
+/// that approves everything, `Mode unknown` when the harness reports none. Hutan never changes
+/// the mode (user decision D4), so the chip has no action.
+pub fn mode_chip(chat: &hutan_protocol::chat::ChatInfo) -> ModeChip {
+    match &chat.mode {
+        Some(mode) if mode.approves_everything => ModeChip {
+            text: format!("Mode: {} · approves everything", mode.label()),
+            tooltip: format!(
+                "The agent runs in its “{}” mode ({}): it acts without asking for approval. \
+                 Hutan shows the mode the agent reports and never changes it; change it in the \
+                 agent's own settings.",
+                mode.label(),
+                mode.id
+            ),
+            warning: true,
+        },
+        Some(mode) => ModeChip {
+            text: format!("Mode: {}", mode.label()),
+            tooltip: format!(
+                "The mode the agent reports it runs in ({}). Hutan shows it and never changes it.",
+                mode.id
+            ),
+            warning: false,
+        },
+        None => ModeChip {
+            text: "Mode unknown".to_owned(),
+            tooltip: "This harness does not report its mode. Its own settings decide what it may \
+                      do without asking."
+                .to_owned(),
+            warning: false,
+        },
+    }
+}
+
+#[cfg(test)]
+mod mode_chip_tests {
+    use hutan_protocol::chat::{ChatInfo, ChatMode};
+
+    use super::mode_chip;
+
+    fn chat(mode: Option<ChatMode>) -> ChatInfo {
+        ChatInfo {
+            agent: "claude".into(),
+            model: "sonnet".into(),
+            approval_policy: Default::default(),
+            sandbox: Default::default(),
+            turn_active: false,
+            pending_approvals: 0,
+            pending_questions: 0,
+            provider_id: None,
+            agent_session_id: None,
+            assistant: false,
+            images: None,
+            mode,
+        }
+    }
+
+    #[test]
+    fn the_chip_names_the_reported_mode_warns_for_bypass_and_says_when_none_is_reported() {
+        let plan = mode_chip(&chat(Some(ChatMode::new("plan", Some("Plan Mode".into())))));
+        assert_eq!(plan.text, "Mode: Plan Mode");
+        assert!(!plan.warning);
+        let bypass = mode_chip(&chat(Some(ChatMode::new(
+            "bypassPermissions",
+            Some("Bypass Permissions".into()),
+        ))));
+        assert_eq!(
+            bypass.text,
+            "Mode: Bypass Permissions · approves everything"
+        );
+        assert!(bypass.warning);
+        let bare = mode_chip(&chat(Some(ChatMode::new("default", None))));
+        assert_eq!(bare.text, "Mode: default");
+        let unknown = mode_chip(&chat(None));
+        assert_eq!(unknown.text, "Mode unknown");
+        assert!(unknown.tooltip.contains("does not report"));
     }
 }

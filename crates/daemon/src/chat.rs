@@ -1175,6 +1175,7 @@ impl ChatManager {
             resumed: spec.thread_id.is_some(),
             // The provider's model list answers when an image is attached.
             images: None,
+            mode: None,
         })
     }
 
@@ -1881,6 +1882,7 @@ impl ChatManager {
                     match message {
                         AdapterMessage::Event(draft) => self.handle(&live, *draft).await,
                         AdapterMessage::Node(update) => self.notifier.node(live.id, *update).await,
+                        AdapterMessage::Mode(mode) => self.notifier.mode(live.id, mode).await,
                         AdapterMessage::Exited(info) => {
                             exit = info;
                             break;

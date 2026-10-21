@@ -140,7 +140,7 @@ fn kinds(messages: &[AdapterMessage]) -> Vec<&AgentEventKind> {
         .iter()
         .filter_map(|m| match m {
             AdapterMessage::Event(draft) => Some(&draft.kind),
-            AdapterMessage::Exited(_) | AdapterMessage::Node(_) => None,
+            AdapterMessage::Exited(_) | AdapterMessage::Node(_) | AdapterMessage::Mode(_) => None,
         })
         .collect()
 }
@@ -642,8 +642,17 @@ async fn updates_hutan_has_no_model_for_become_opaque_events() {
     let AcpSession {
         adapter,
         mut events,
+        started,
         ..
     } = h.start("unknown-update").await;
+    // The mode the session starts in, as `session/new` reported it (protocol 0.34).
+    assert_eq!(
+        started.mode,
+        Some(hutan_agents::SessionMode {
+            id: "default".into(),
+            name: Some("Default".into()),
+        })
+    );
     initial(&mut events).await;
     adapter.send_message("go".into()).await.unwrap();
     let seen = collect_until(&mut events, ends_turn).await;
@@ -673,6 +682,21 @@ async fn updates_hutan_has_no_model_for_become_opaque_events() {
     assert!(
         notices.contains(&(NoticeLevel::Info, "mode: plan")),
         "{notices:?}"
+    );
+    // ...and reported as the session's mode, with the name the agent gave it.
+    let modes: Vec<_> = seen
+        .iter()
+        .filter_map(|m| match m {
+            AdapterMessage::Mode(mode) => Some(mode.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        modes,
+        [hutan_agents::SessionMode {
+            id: "plan".into(),
+            name: Some("Plan".into()),
+        }]
     );
     assert!(
         notices.contains(&(

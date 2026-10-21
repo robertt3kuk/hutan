@@ -258,6 +258,12 @@ pub struct ChatInfo {
     /// model of a direct chat, which the provider's model list answers).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<bool>,
+    /// Protocol 0.34 (capability `chat.mode`): the session mode the harness reports it runs in
+    /// (ACP `modes.currentModeId` or a `mode` config option, and their updates). Absent when the
+    /// harness reports none (Codex, whose approval policy and sandbox say it, and direct
+    /// chats). Hutan only reads it: it never changes an ordinary chat's mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ChatMode>,
 }
 
 impl ChatInfo {
@@ -265,5 +271,45 @@ impl ChatInfo {
     /// a harness assistant (protocol 0.20).
     pub fn is_assistant(&self) -> bool {
         self.assistant || self.agent == crate::assistant::AGENT_ASSISTANT
+    }
+}
+
+/// A harness's session mode (protocol 0.34, capability `chat.mode`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatMode {
+    /// The harness's id of the mode (`default`, `plan`, `acceptEdits`, `bypassPermissions`).
+    pub id: String,
+    /// The harness's name for it, when it gave one (`Plan Mode`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The mode lets the agent act without asking (Claude Code `bypassPermissions`, a `yolo`
+    /// or full-access mode): clients show it as a warning.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub approves_everything: bool,
+}
+
+impl ChatMode {
+    /// The mode `id` (named `name`), with [`approves_everything`](Self::approves_everything)
+    /// decided from its id.
+    pub fn new(id: impl Into<String>, name: Option<String>) -> Self {
+        let id = id.into();
+        let approves_everything = Self::id_approves_everything(&id);
+        Self {
+            id,
+            name: name.filter(|n| !n.trim().is_empty()),
+            approves_everything,
+        }
+    }
+
+    /// Whether a mode id means "act without asking": `bypassPermissions`, `yolo`,
+    /// `full-access` / `full_access` (any case).
+    pub fn id_approves_everything(id: &str) -> bool {
+        let id = id.to_ascii_lowercase();
+        id.contains("bypass") || id.contains("yolo") || id.replace('_', "-").contains("full-access")
+    }
+
+    /// What a person reads: the name, else the id.
+    pub fn label(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.id)
     }
 }

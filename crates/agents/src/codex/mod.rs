@@ -364,6 +364,8 @@ impl CodexAppServerAdapter {
                 // The app-server takes `localImage` input; whether the model reads it is the
                 // model's business.
                 images: None,
+                // Codex says its approval policy and sandbox instead (`ChatInfo`).
+                mode: None,
             },
             mapper,
         ))
