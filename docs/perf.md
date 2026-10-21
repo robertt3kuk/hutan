@@ -730,3 +730,16 @@ more than with the repository.
 The 120 MiB case of the spike is not repeated: such a file is now skipped by `max_file_bytes`
 (10 MiB) after an `lstat`, before anything reads it (tested in
 `checkpoints::files_over_the_caps_are_skipped_before_anything_is_hashed`).
+
+## Editor: the file finder (slice E-13a)
+
+Test `quick_open_gpui::the_finders_first_results_on_a_hundred_thousand_files`: a generated tree of 100 001 files (100 folders × 1 000 `module_NNNN.rs`, one `needle_handler.rs`), opened as the project; ⌘P is opened and the daemon's index is waited for (built by ⌘P's warm-up `fs.find`, kept while ⌘P watches the root), then `n`, `e`, `e`, `d` are typed one at a time, each timed from the key to the first frame drawn with its answer (the real socket, the in-process daemon, the GPUI test window; polled every 5 ms, so up to 5 ms is the poll). Budget (spike §4.7 row E-13a): first results ≤ 50 ms. Machine: the M1 Pro of the other rows, **under a load average of 54–67** (other agents' builds), not the idle machine `just bench` asks for.
+
+| Build | key → frame of the answer (`n`, `ne`, `nee`, `need`) | worst | Budget | |
+|---|---|---|---|---|
+| debug (`cargo nextest`, the gate) | 1349, 328, 382, 292 ms | 1.35 s | the test asserts ≤ 5 s in debug | recorded only |
+| release, run 1 | 36.2, 42.5, 183.5, 72.8 ms | 183.5 ms | ≤ 50 ms | **✗** |
+| release, run 2 | 107.4, 66.3, 109.3, 58.8 ms | 109.3 ms | ≤ 50 ms | **✗** |
+| release, run 3 | 47.7, 48.9, 171.0, 49.3 ms | 171.0 ms | ≤ 50 ms | **✗** |
+
+**Miss, not relaxed.** Medians of the release runs sit around the budget (≈ 49–73 ms) and one key in each run takes 110–185 ms. Not yet separated: the load of the machine (load 54–67 on 10 cores), the daemon's `fs.find` itself (a subsequence test over 100 001 paths, the fzy matrix for each match, a sort; built per query from the shared index), and late `fs.generation`s from the tree just written (FSEvents after the watch starts) that make the daemon rebuild its index and ⌘P ask again. Follow-up: time `fs.find` alone in the daemon on an idle machine, keep a scorer and its buffers per index, narrow a query that extends the last one to the last answer's candidates, and make this test wait until the root's generations are quiet; then measure again on an idle machine with `just bench`.
