@@ -215,7 +215,6 @@ fn two_agents_in_one_checkout_turn_the_badge_into_a_warning(cx: &mut TestAppCont
 #[gpui::test]
 fn the_changes_tab_lists_the_checkouts_and_a_click_opens_the_changes_view(cx: &mut TestAppContext) {
     use gpui::Modifiers;
-    use hutan_desktop::workbench::model::DockPosition;
     use hutan_desktop::workbench::panels::ChangesPanel;
 
     let daemon = TestDaemon::start();
