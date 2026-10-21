@@ -177,7 +177,10 @@ impl TasksPanel {
                                 );
                             })
                             .ok();
-                            started.warnings.first().cloned()
+                            started
+                                .warnings
+                                .first()
+                                .map(|w| super::super::launcher::short_start_warning(w))
                         }
                         Err(error) => Some(format!("Cannot start the task: {error}")),
                     };

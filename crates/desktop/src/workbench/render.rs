@@ -2219,6 +2219,10 @@ impl Workbench {
             .text_size(px(tokens.secondary_font_size))
             .child(
                 div()
+                    // However long a notice is, it gives way to ellipsis: the right side of the
+                    // bar (⌘⇧P, the editor's position) never leaves the window.
+                    .flex_1()
+                    .min_w_0()
                     .flex()
                     .items_center()
                     .gap(px(tokens.spacing * 3.0))
@@ -2233,6 +2237,7 @@ impl Workbench {
             .child(
                 div()
                     .flex()
+                    .flex_none()
                     .items_center()
                     .gap(px(tokens.spacing * 2.0))
                     .children(right),

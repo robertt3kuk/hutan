@@ -491,6 +491,31 @@ impl Launcher {
     }
 }
 
+/// What the status bar says of a warning the daemon returned with a start. The daemon's
+/// sentence about a shared checkout names the folder and every other session; the bar has room
+/// for a short item, and the full account is where it belongs: the sheet's warning before the
+/// start, and the session's *shared checkout* badge after it.
+pub(crate) fn short_start_warning(warning: &str) -> String {
+    const SHARED: &str = " live agent(s) already work in ";
+    if let Some(at) = warning.find(SHARED)
+        && let Some(count) = warning[..at]
+            .strip_suffix(" other")
+            .and_then(|n| n.parse::<usize>().ok())
+    {
+        return if count == 1 {
+            "Another agent already works in this checkout".to_owned()
+        } else {
+            format!("{count} other agents already work in this checkout")
+        };
+    }
+    const MAX: usize = 80;
+    if warning.chars().count() <= MAX {
+        return warning.to_owned();
+    }
+    let cut: String = warning.chars().take(MAX).collect();
+    format!("{}…", cut.trim_end())
+}
+
 /// A project the sheet can start in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectChoice {
@@ -1853,7 +1878,7 @@ impl Workbench {
                             this.launcher_refocus(window, cx);
                         }
                         if let Some(warning) = started.warnings.first() {
-                            this.set_notice(warning.clone(), cx);
+                            this.set_notice(short_start_warning(warning), cx);
                         }
                         // The agent has the review as its prompt: its comments count as sent.
                         if let Some(handoff) = &handoff {
@@ -2448,5 +2473,30 @@ impl Workbench {
             &parent,
             0,
         )
+    }
+}
+
+#[cfg(test)]
+mod start_warning_tests {
+    use super::short_start_warning;
+
+    #[test]
+    fn the_shared_checkout_sentence_is_short_and_other_warnings_are_clipped() {
+        let daemon = "1 other live agent(s) already work in /Users/me/proj/acme-api: Look around \
+                      the project and tell me what you find. (01M5FQCT2V6JRRVA8Q58PTFQTG); their \
+                      edits and this task's can overwrite each other";
+        assert_eq!(
+            short_start_warning(daemon),
+            "Another agent already works in this checkout"
+        );
+        assert_eq!(
+            short_start_warning(&daemon.replacen("1 other", "3 other", 1)),
+            "3 other agents already work in this checkout"
+        );
+        assert_eq!(short_start_warning("short"), "short");
+        let long = "x".repeat(200);
+        let shown = short_start_warning(&long);
+        assert_eq!(shown.chars().count(), 81);
+        assert!(shown.ends_with('…'));
     }
 }
