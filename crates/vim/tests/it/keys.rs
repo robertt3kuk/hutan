@@ -201,3 +201,28 @@ fn reset_returns_to_insert_and_keeps_the_register() {
     assert_eq!(r.mode(), Mode::Insert);
     assert_eq!(r.vim.register(), ("foo ", false));
 }
+
+#[test]
+fn a_character_is_text_only_where_vim_waits_for_one() {
+    let mut r = Rig::new("|abc def");
+    // Idle Normal mode: a letter of another alphabet is no command, so it is a key by place.
+    assert!(!r.vim.takes_text('в'));
+    r.keys("d");
+    assert!(!r.vim.takes_text('в'), "an operator waits for a motion");
+    r.keys("<Esc>2");
+    assert!(!r.vim.takes_text('в'), "a count waits for a command");
+    r.keys("<Esc>\"");
+    assert!(!r.vim.takes_text('в'), "a register name is Latin");
+    r.keys("<Esc>'");
+    assert!(!r.vim.takes_text('в'), "a mark name is Latin");
+    for waits in ["f", "dt", "r", "2F"] {
+        r.keys("<Esc>").keys(waits);
+        assert!(r.vim.takes_text('в'), "{waits} waits for a character");
+    }
+    r.keys("<Esc>/");
+    assert!(r.vim.takes_text('в'), "the search line is text");
+    r.keys("<Esc>vr");
+    assert!(r.vim.takes_text('в'), "Visual r waits for a character");
+    r.keys("<Esc><Esc>i");
+    assert!(r.vim.takes_text('в'), "Insert mode types");
+}

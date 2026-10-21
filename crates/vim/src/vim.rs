@@ -345,6 +345,25 @@ impl<H: VimHost> Vim<H> {
             .map(|l| format!("{}{}", l.kind, l.text))
     }
 
+    /// Whether `c`, typed now, is text rather than a command key: Insert mode, the `:` / `/` /
+    /// `?` line, or a command that waits for its character (`f`, `t`, `r`). A client on a
+    /// keyboard layout that does not type Latin letters reads every other key by its place on
+    /// the keyboard instead (`d` where the key types `в`).
+    pub fn takes_text(&self, c: char) -> bool {
+        let core = &self.core;
+        if core.mode == Mode::Insert || core.cmdline.is_some() {
+            return true;
+        }
+        let mut keys = core.pending.clone();
+        keys.push(Key::Char(c));
+        let cx = Context {
+            visual: core.mode.is_visual(),
+            recording: core.recording.is_some(),
+            search: None,
+        };
+        matches!(command::parse(&keys, cx), Parse::Done(_))
+    }
+
     /// The register being recorded into (`q{reg}`).
     pub fn recording(&self) -> Option<char> {
         self.core.recording.as_ref().map(|(r, _)| *r)
