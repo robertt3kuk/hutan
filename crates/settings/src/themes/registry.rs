@@ -30,6 +30,9 @@ const DEBOUNCE: Duration = Duration::from_millis(100);
 const MAX_DELAY: Duration = Duration::from_millis(500);
 /// How long the platform watcher needs to be live after the watched set changed.
 const SETTLE: Duration = Duration::from_millis(150);
+/// After the watched set changed, one more rescan this long after the last event, in case the
+/// platform dropped an event while its stream restarted.
+const VERIFY: Duration = Duration::from_millis(1000);
 const MAX_SETTLE_ROUNDS: usize = 4;
 /// Pending filesystem events; a full queue already has a rescan coming.
 const QUEUE: usize = 64;
@@ -342,11 +345,20 @@ impl Shared {
 }
 
 fn run(rx: &mpsc::Receiver<Msg>, shared: &Weak<Shared>) {
+    // Set when the watched set changed: the platform may have dropped events while its stream
+    // restarted (under load longer than SETTLE), so one more look follows even without an event.
+    let mut verify = false;
     loop {
-        match rx.recv() {
-            Ok(Msg::Changed) => {}
-            Ok(Msg::Stop) | Err(_) => return,
+        let first = if verify {
+            rx.recv_timeout(VERIFY)
+        } else {
+            rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        };
+        match first {
+            Ok(Msg::Changed) | Err(RecvTimeoutError::Timeout) => {}
+            Ok(Msg::Stop) | Err(RecvTimeoutError::Disconnected) => return,
         }
+        verify = false;
         let started = Instant::now();
         loop {
             let left = MAX_DELAY.saturating_sub(started.elapsed());
@@ -370,6 +382,7 @@ fn run(rx: &mpsc::Receiver<Msg>, shared: &Weak<Shared>) {
             if !shared.rewatch() {
                 break;
             }
+            verify = true;
             std::thread::sleep(SETTLE);
         }
     }
