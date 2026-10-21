@@ -12,6 +12,8 @@
 //! - [`recovery`]: what a start did to each restored session (`SessionInfo.recovery`).
 //! - [`placement`]: which git checkout a session works in and which agents share one.
 //! - [`worktrees`]: git worktrees (`worktree.*`) on top of the git command line.
+//! - [`checkpoints`]: per-turn snapshots of a checkout's files in hidden git refs, through a
+//!   private index (ADR 0019; the engine, not yet wired to sessions).
 //! - [`tasks`]: tasks with dependencies (`task.*`): finish detection, auto-start, restart.
 //! - [`projects`]: the Home folder, project identity (git common directory), which project or
 //!   Home a folder belongs to.
@@ -53,6 +55,7 @@ pub mod assistant;
 pub mod assistant_pick;
 pub mod bus;
 pub mod chat;
+pub mod checkpoints;
 pub mod config;
 pub mod conn;
 pub mod context;
