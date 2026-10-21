@@ -1430,7 +1430,7 @@ impl ChatManager {
         let checkpoint = self.checkpoints.begin(id).await;
         // Mawas's memory: the first turn of a Claude Code conversation carries it, and any turn
         // carries what changed since the conversation last heard of it.
-        let memory = self.turn_memory(&live).await;
+        let memory = self.turn_memory(live).await;
         let started = match &live.backend {
             Backend::Agent(adapter) => {
                 // ACP harnesses take each text attachment as an embedded resource and each
@@ -1466,7 +1466,7 @@ impl ChatManager {
                     text
                 };
                 let prepared = if codex {
-                    self.give_images_a_file(&live, &mut extras.images).await
+                    self.give_images_a_file(live, &mut extras.images).await
                 } else {
                     Ok(())
                 };
@@ -1491,12 +1491,12 @@ impl ChatManager {
                                 }
                             });
                         if sent.is_err() {
-                            self.drop_temp_images(&live);
+                            self.drop_temp_images(live);
                         }
                         sent
                     }
                     Err(error) => {
-                        self.drop_temp_images(&live);
+                        self.drop_temp_images(live);
                         Err(error)
                     }
                 }
@@ -1514,9 +1514,9 @@ impl ChatManager {
         }
         if started.is_err() {
             live.busy.store(false, Ordering::Release);
-            memory.undo(&live);
+            memory.undo(live);
         } else {
-            self.memory_delivered(&live, memory).await;
+            self.memory_delivered(live, memory).await;
         }
         started
     }
@@ -2283,9 +2283,10 @@ impl ChatManager {
                     let Some(message) = message else { break };
                     match message {
                         AdapterMessage::Event(draft) => {
-                            let ended = draft.kind.ends_turn().then(|| {
-                                matches!(draft.kind, AgentEventKind::TurnFailed { .. })
-                            });
+                            let ended = draft.kind.ends_turn().then_some(matches!(
+                                draft.kind,
+                                AgentEventKind::TurnFailed { .. }
+                            ));
                             self.handle(&live, *draft).await;
                             if let Some(failed) = ended {
                                 self.after_turn(&live, failed);

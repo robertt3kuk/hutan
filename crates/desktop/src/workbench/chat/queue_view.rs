@@ -108,8 +108,12 @@ impl ChatView {
                 .pr(px(tokens.spacing))
                 .h(px(tokens.sidebar_row - 4.0))
                 .rounded(px(crate::theme::pill_radius()))
-                .bg(theme.accent_soft)
-                .when(open, |s| s.border_1().border_color(theme.accent))
+                // The chip open in the composer is the plain surface; the others are tinted.
+                .bg(if open {
+                    theme.surface_hover
+                } else {
+                    theme.accent_soft
+                })
                 .text_size(px(tokens.secondary_font_size))
                 .child(
                     div()
