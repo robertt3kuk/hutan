@@ -15,7 +15,7 @@ use super::input::TextInput;
 use super::markdown_view::{Ids, Look, blocks};
 use super::question::{Input, QuestionForm};
 use super::view::ChatView;
-use super::widgets::{ButtonKind, button};
+use super::widgets::{ButtonKind, approval_outcome, button};
 use crate::workbench::render::probe;
 use crate::workbench::text_field::{EditableText, FieldMut, FieldRef, FieldState, edit_keys};
 use crate::workbench::ui::{FocusRingExt as _, StyledExt as _};
@@ -339,49 +339,55 @@ impl ChatView {
         let id = question.id;
         let pending = question.state == QuestionState::Pending;
         let here = self.sessions.read(cx).question_answered_here(id);
-        let status: Option<(String, gpui::Hsla)> = match &question.state {
-            QuestionState::Pending => None,
-            QuestionState::Answered { withheld, values } => {
-                let mut line = format!(
-                    "{} · {}",
-                    question.decision_text(),
-                    question.answered_from(here)
-                );
-                if !withheld.is_empty() {
-                    line.push_str(" · secret answers are not kept");
-                }
-                let shown: Vec<String> = question
-                    .spec
-                    .fields
-                    .iter()
-                    .filter_map(|f| {
-                        values.get(&f.id).map(|v| {
-                            let text = match v {
-                                serde_json::Value::String(s) => s.clone(),
-                                other => other.to_string(),
-                            };
-                            format!("{}: {text}", f.label)
+        // Answered, declined or ended: one line, the outcome's glyph in its color and the words
+        // `muted`, then the answers that may be shown (secret ones never are).
+        let status: Option<((crate::icons::Icon, gpui::Hsla), String, Vec<String>)> =
+            match &question.state {
+                QuestionState::Pending => None,
+                QuestionState::Answered { withheld, values } => {
+                    let mut line = format!(
+                        "{} · {}",
+                        question.decision_text(),
+                        question.answered_from(here)
+                    );
+                    if !withheld.is_empty() {
+                        line.push_str(" · secret answers are not kept");
+                    }
+                    let shown: Vec<String> = question
+                        .spec
+                        .fields
+                        .iter()
+                        .filter_map(|f| {
+                            values.get(&f.id).map(|v| {
+                                let text = match v {
+                                    serde_json::Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                };
+                                format!("{}: {text}", f.label)
+                            })
                         })
-                    })
-                    .collect();
-                if !shown.is_empty() {
-                    line.push_str(&format!("\n{}", shown.join("\n")));
+                        .collect();
+                    Some((
+                        (crate::icons::Icon::StateCompleted, theme.success),
+                        line,
+                        shown,
+                    ))
                 }
-                Some((line, theme.success))
-            }
-            QuestionState::Declined | QuestionState::Cancelled => Some((
-                format!(
-                    "{} · {}",
-                    question.decision_text(),
-                    question.answered_from(here)
-                ),
-                theme.muted,
-            )),
-            QuestionState::Expired => Some((
-                "No answer: the turn ended or the agent went away".to_owned(),
-                theme.muted,
-            )),
-        };
+                QuestionState::Declined | QuestionState::Cancelled => Some((
+                    (crate::icons::Icon::StateIdle, theme.muted),
+                    format!(
+                        "{} · {}",
+                        question.decision_text(),
+                        question.answered_from(here)
+                    ),
+                    Vec::new(),
+                )),
+                QuestionState::Expired => Some((
+                    (crate::icons::Icon::StateIdle, theme.muted),
+                    "No answer: the turn ended or the agent went away".to_owned(),
+                    Vec::new(),
+                )),
+            };
         let form = self.forms.get(&id).cloned();
         let fields: Vec<AnyElement> = match (&form, pending) {
             (Some(form), true) => question
@@ -433,15 +439,6 @@ impl ChatView {
                     .flex()
                     .items_center()
                     .gap(px(tokens.spacing * 1.5))
-                    .child(
-                        div()
-                            .text_color(if pending { theme.warning } else { theme.muted })
-                            .child(crate::icons::glyph(if pending {
-                                crate::icons::Icon::StateUnread
-                            } else {
-                                crate::icons::Icon::StateIdle
-                            })),
-                    )
                     .child(
                         div()
                             .font_weight(FontWeight::MEDIUM)
@@ -510,9 +507,19 @@ impl ChatView {
                         ),
                 )
             })
-            .children(
-                status.map(|(text, color)| div().text_color(color).child(SharedString::from(text))),
-            )
+            .children(status.map(|(mark, line, answers)| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(tokens.spacing))
+                    .child(approval_outcome(mark, line, look))
+                    .children(answers.into_iter().map(|answer| {
+                        div()
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(theme.muted)
+                            .child(SharedString::from(answer))
+                    }))
+            }))
             .children(ended.map(|answers| {
                 let copied = answers.clone();
                 div()
@@ -577,10 +584,8 @@ impl ChatView {
                 .min_h(px(if tall { 72.0 } else { 28.0 }))
                 .px(px(tokens.spacing * 2.0))
                 .py(px(tokens.spacing))
-                .border_1()
-                .border_color(theme.border)
+                .outlined(theme, tokens)
                 .focus_ring(typing, theme, tokens)
-                .rounded(px(tokens.card_radius))
                 .cursor_text()
                 .flex()
                 .child(
@@ -605,16 +610,14 @@ impl ChatView {
         let control: AnyElement = match (&field.kind, &form.inputs[at]) {
             (FieldKind::Boolean, Input::Boolean(on)) => {
                 let on = *on;
-                button(
+                // A picked answer is a selection (an `accent_soft` fill), not a primary button:
+                // Submit is the card's one primary.
+                crate::workbench::ui::choice(
                     SharedString::from(format!("question-toggle-{id}-{at}")),
                     if on { "Yes" } else { "No" },
-                    if on {
-                        ButtonKind::Primary
-                    } else {
-                        ButtonKind::Secondary
-                    },
-                    true,
-                    look,
+                    on,
+                    theme,
+                    tokens,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if let Some(form) = this.forms.get_mut(&id) {
@@ -649,17 +652,14 @@ impl ChatView {
                             .flex()
                             .flex_col()
                             .child(
-                                button(
+                                crate::workbench::ui::choice(
                                     SharedString::from(format!("question-option-{id}-{at}-{k}")),
                                     option.label.clone(),
-                                    if picked {
-                                        ButtonKind::Primary
-                                    } else {
-                                        ButtonKind::Secondary
-                                    },
-                                    true,
-                                    look,
+                                    picked,
+                                    theme,
+                                    tokens,
                                 )
+                                .gap(px(tokens.spacing))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     let spec_fields = this
                                         .model

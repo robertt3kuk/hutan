@@ -6,7 +6,10 @@ use std::rc::Rc;
 use super::context::{meta_text, split_context};
 use super::markdown_view::{Ids, Look, blocks, code_block};
 use super::view::ChatView;
-use super::widgets::{ButtonKind, button, duration, pill, tail_lines, tokens};
+use super::widgets::{
+    ButtonKind, always_note, approval_group, approval_option, approval_outcome, decision_mark,
+    duration, pill, scope_tooltip, tail_lines, tokens,
+};
 use crate::workbench::harnesses::harness_name;
 use crate::workbench::render::probe;
 use crate::workbench::ui::{StyledExt as _, approval_button_kind};
@@ -22,10 +25,7 @@ use hutan_chat_view::{
     TurnOutcome, TurnUsage,
 };
 use hutan_core::ApprovalId;
-use hutan_core::agent::{
-    FileChangeKind, NoticeLevel, PermissionKind, PermissionOptionKind, PlanStepStatus, ToolKind,
-    ToolStatus,
-};
+use hutan_core::agent::{FileChangeKind, NoticeLevel, PlanStepStatus, ToolKind, ToolStatus};
 
 /// The default open/closed part of a card (a command's output, a tool's arguments, reasoning).
 pub(super) const PART_BODY: u32 = 0;
@@ -36,17 +36,19 @@ const TAIL_LINES: usize = 8;
 /// Most lines of a command's output drawn even when expanded.
 const MAX_OUTPUT_LINES: usize = 2000;
 
-fn status_color(look: &Look, tool: &Tool) -> gpui::Hsla {
+/// The state color of a tool that ended badly: `danger` for a failure or a non-zero exit,
+/// `warning` for a declined one; `None` while it runs and once it ended well or was stopped,
+/// when its header's words stay `muted`.
+fn status_tone(look: &Look, tool: &Tool) -> Option<gpui::Hsla> {
     let theme = &look.theme;
     match (tool.status, tool.interrupted) {
-        (_, true) => theme.muted,
-        (None, _) => theme.accent,
+        (_, true) | (None, _) => None,
         (Some(ToolStatus::Completed), _) => match tool.exit_code {
-            Some(code) if code != 0 => theme.danger,
-            _ => theme.success,
+            Some(code) if code != 0 => Some(theme.danger),
+            _ => None,
         },
-        (Some(ToolStatus::Failed), _) => theme.danger,
-        (Some(ToolStatus::Declined), _) => theme.warning,
+        (Some(ToolStatus::Failed), _) => Some(theme.danger),
+        (Some(ToolStatus::Declined), _) => Some(theme.warning),
     }
 }
 
@@ -70,13 +72,27 @@ fn status_text(tool: &Tool) -> String {
     text
 }
 
-fn approval_heading(kind: PermissionKind) -> &'static str {
-    match kind {
-        PermissionKind::Command => "Run this command?",
-        PermissionKind::FileChange => "Apply these changes?",
-        PermissionKind::Permissions => "Grant extra permissions?",
-        PermissionKind::Control => "Let this agent control Hutan?",
-        PermissionKind::Other => "Allow this?",
+/// The right end of a tool card's header: what the tool did, as muted words (`running…`,
+/// `done · 2 m 53 s`, `exit 0 · 4 s`), or a state label in the state's color when it ended
+/// badly. Never a pill, never the accent.
+fn tool_status(tool: &Tool, look: &Look) -> AnyElement {
+    let (theme, tokens) = (&look.theme, &look.tokens);
+    match status_tone(look, tool) {
+        Some(tone) => crate::workbench::ui::state_label(
+            crate::workbench::ui::state_glyph(tone, theme),
+            status_text(tool),
+            tone,
+            false,
+            theme,
+            tokens,
+        )
+        .into_any_element(),
+        None => div()
+            .flex_none()
+            .text_size(px(tokens.secondary_font_size))
+            .text_color(theme.muted)
+            .child(SharedString::from(status_text(tool)))
+            .into_any_element(),
     }
 }
 
@@ -134,23 +150,30 @@ impl ChatView {
                 &mut ids,
                 cx,
             ),
-            Body::Footer(footer) => {
-                let card = footer_card(footer, &look);
-                let (recovery, failed) = match &footer.outcome {
-                    TurnOutcome::Failed { message, .. } => (
-                        self.provider_error_action(message, &look, cx),
-                        Some((message.clone(), entry.ts_ms)),
-                    ),
-                    _ => (None, None),
-                };
-                let retry = failed
-                    .and_then(|(message, at)| self.footer_retry(index, &message, at, &look, cx));
-                div()
-                    .child(card)
-                    .children(recovery)
-                    .children(retry)
-                    .into_any_element()
-            }
+            Body::Footer(footer) => match footer_card(footer, &look) {
+                // A turn that simply completed says so on its cards and in the status line; its
+                // footer is drawn only for what nothing else says (usage, a failure). Without a
+                // line the entry is its padding alone, the gap between two turns (a list item
+                // with no height would hide the top of the list from its scroll handler).
+                None => div().into_any_element(),
+                Some(card) => {
+                    let (recovery, failed) = match &footer.outcome {
+                        TurnOutcome::Failed { message, .. } => (
+                            self.provider_error_action(message, &look, cx),
+                            Some((message.clone(), entry.ts_ms)),
+                        ),
+                        _ => (None, None),
+                    };
+                    let retry = failed.and_then(|(message, at)| {
+                        self.footer_retry(index, &message, at, &look, cx)
+                    });
+                    div()
+                        .child(card)
+                        .children(recovery)
+                        .children(retry)
+                        .into_any_element()
+                }
+            },
             Body::Notice { level, message } => notice_card(*level, message, &look),
         };
         div()
@@ -214,16 +237,18 @@ impl ChatView {
                     pill(meta_text(meta), look).font_family(look.mono.clone())
                 }
             }));
-        // No bubble for the agent; the user's message sits in an `accent_soft` bubble on the right.
+        // No bubble for the agent; the user's message sits in a neutral bubble on the right: a
+        // card (`surface`, the card radius), at most 70 % of the column. The accent is not spent
+        // on the user's own words.
         let bubble = div()
             .flex()
             .flex_col()
             .gap(px(tokens.spacing * 1.5))
-            .max_w(relative(0.85))
+            .max_w(relative(0.7))
             .px(px(tokens.spacing * 3.5))
             .py(px(tokens.spacing * 2.5))
-            .rounded(px(tokens.card_radius))
-            .bg(theme.accent_soft)
+            .card(theme, tokens)
+            .text_color(theme.fg)
             .child(blocks(&parsed, &look.sans(), ids))
             .when(!meta.is_empty(), |s| s.child(chips))
             .when_some(context, |s, context| {
@@ -391,7 +416,6 @@ impl ChatView {
                 crate::icons::Icon::ActionSettings
             }
         };
-        let color = status_color(look, tool);
         let id = entry.id;
         let hover = theme.surface_hover;
         let header_title = match tool.kind {
@@ -412,13 +436,14 @@ impl ChatView {
             .filter_map(|approval| transcript.approval(*approval))
             .map(|approval| self.approval_card(approval, false, look, cx))
             .collect();
+        // A fill without a border; a request waiting on it says so in its own group, under the
+        // card's only hairline, and in the status line, not as a colored edge.
         div()
             .flex()
             .flex_col()
             .gap(px(tokens.spacing * 1.5))
             .p(px(tokens.spacing * 2.5))
             .card(theme, tokens)
-            .border_color(if pending { theme.warning } else { theme.border })
             .child(
                 div()
                     .id(ids.next("tool-header"))
@@ -432,7 +457,6 @@ impl ChatView {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.toggle(index, id, PART_BODY, cx);
                     }))
-                    .child(div().flex_none().size(px(7.0)).rounded_full().bg(color))
                     .child(
                         div()
                             .flex_none()
@@ -449,7 +473,7 @@ impl ChatView {
                             .font_family(look.mono.clone())
                             .child(SharedString::from(header_title)),
                     )
-                    .child(pill(status_text(tool), look))
+                    .child(tool_status(tool, look))
                     .child(probe(&self.regions, Region::ChatPart(index, PART_BODY))),
             )
             .child(body)
@@ -821,31 +845,43 @@ impl ChatView {
         self.resolution_line(model.transcript().approval(id)?, cx)
     }
 
-    /// One line per standing ("Always") option of `approval`, naming the option and what it
-    /// does beyond this request; what the card shows under its buttons.
-    fn scope_lines(&self, approval: &Approval, cx: &App) -> Vec<String> {
-        let agent = self
-            .sessions
+    /// The harness of this chat by name (`OMP`), for the sentences about standing rules.
+    fn harness(&self, cx: &App) -> Option<String> {
+        self.sessions
             .read(cx)
             .session(self.session)
             .and_then(|info| info.chat.as_ref())
-            .map(|chat| harness_name(&chat.agent));
+            .map(|chat| harness_name(&chat.agent))
+    }
+
+    /// The tooltip of each standing ("Always") option of `approval`, in order: its key, its
+    /// label and what it does beyond this request (what the card printed under its buttons
+    /// before CL-CHAT).
+    fn scope_lines(&self, approval: &Approval, cx: &App) -> Vec<String> {
+        let agent = self.harness(cx);
         approval
             .options
             .iter()
             .enumerate()
             .filter_map(|(number, option)| {
-                scope_sentence(option, approval, agent.as_deref())
-                    .map(|sentence| format!("{} {}: {sentence}", number + 1, option.label))
+                scope_tooltip(number, option, &approval.title, agent.as_deref())
             })
             .collect()
     }
 
-    /// The scope lines of request `id` as its card draws them (`None` when it is not in this
+    /// The tooltips of the standing options of request `id` (`None` when it is not in this
     /// transcript).
     pub fn scope_text(&self, id: ApprovalId, cx: &App) -> Option<Vec<String>> {
         let model = self.model.read(cx);
         Some(self.scope_lines(model.transcript().approval(id)?, cx))
+    }
+
+    /// The one sentence under the buttons of request `id` while it waits (`None` when it offers
+    /// no standing option or is not in this transcript).
+    pub fn always_note_text(&self, id: ApprovalId, cx: &App) -> Option<String> {
+        let model = self.model.read(cx);
+        let approval = model.transcript().approval(id)?;
+        always_note(&approval.options, &approval.title)
     }
 
     /// The ids of the options of request `id` that its card draws as primary buttons.
@@ -862,159 +898,90 @@ impl ChatView {
         )
     }
 
+    /// A permission request. Waiting, it is the approval group: inside its tool's card
+    /// (`standalone` false) under the card's one hairline, indented 16 px; on its own as a card
+    /// that also names the tool. Answered or expired, it collapses to one line
+    /// (`✓ Allowed once · from this window`), with the tool named when there is no card around.
     pub(super) fn approval_card(
         &self,
         approval: &Approval,
-        show_title: bool,
+        standalone: bool,
         look: &Look,
         cx: &Context<Self>,
     ) -> AnyElement {
         let (theme, tokens) = (&look.theme, &look.tokens);
-        let pending = approval.state == ApprovalState::Pending;
-        let ordinal = self.pending.iter().position(|id| *id == approval.id);
-        let status: Option<(String, gpui::Hsla)> = match &approval.state {
+        let outcome = match &approval.state {
             ApprovalState::Pending => None,
-            ApprovalState::Selected { .. } => {
-                let option = approval.chosen();
-                let tone = match option.map(|o| o.kind) {
-                    Some(PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways) => {
-                        theme.success
-                    }
-                    Some(PermissionOptionKind::RejectOnce | PermissionOptionKind::RejectAlways) => {
-                        theme.danger
-                    }
-                    _ => theme.muted,
-                };
-                self.resolution_line(approval, cx).map(|line| (line, tone))
-            }
+            ApprovalState::Selected { .. } => Some((
+                decision_mark(approval.chosen().map(|o| o.kind), look),
+                self.resolution_line(approval, cx).unwrap_or_default(),
+            )),
             ApprovalState::Expired => Some((
+                decision_mark(None, look),
                 "No answer: the turn ended or the agent withdrew the request".to_owned(),
-                theme.muted,
             )),
         };
+        if let Some((mark, line)) = outcome {
+            let line = if standalone {
+                format!(
+                    "{line} · {}",
+                    approval.title.lines().next().unwrap_or_default()
+                )
+            } else {
+                line
+            };
+            return approval_outcome(mark, line, look).into_any_element();
+        }
+        let ordinal = self.pending.iter().position(|id| *id == approval.id);
         let approval_id: ApprovalId = approval.id;
-        // What an "Always" option reaches is said before it can be clicked.
-        let scopes = if pending {
-            self.scope_lines(approval, cx)
-        } else {
-            Vec::new()
-        };
-        let buttons: Vec<AnyElement> = if pending {
-            approval
-                .options
-                .iter()
-                .enumerate()
-                .map(|(number, option)| {
-                    let option_id = option.id.clone();
-                    let region = ordinal.map_or(usize::MAX, |ordinal| ordinal * 8 + number);
-                    button(
-                        SharedString::from(format!("approve-{}-{number}", approval.id)),
-                        format!("{} {}", number + 1, option.label),
-                        approval_button_kind(option.kind),
-                        true,
-                        look,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.answer(approval_id, option_id.clone(), cx);
-                    }))
-                    .child(probe(&self.regions, Region::ChatOption(region)))
-                    .into_any_element()
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        div()
-            .relative()
-            .flex()
-            .flex_col()
-            .gap(px(tokens.spacing * 2.0))
-            .p(px(tokens.spacing * 3.0))
-            .card(theme, tokens)
-            .border_color(if pending { theme.warning } else { theme.border })
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(tokens.spacing * 1.5))
-                    .child(
-                        div()
-                            .text_color(if pending { theme.warning } else { theme.muted })
-                            .child(crate::icons::glyph(if pending {
-                                crate::icons::Icon::StateUnread
-                            } else {
-                                crate::icons::Icon::StateIdle
-                            })),
-                    )
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(approval_heading(approval.kind)),
-                    ),
-            )
-            .when(show_title, |s| {
-                s.child(
-                    div()
-                        .font_family(look.mono.clone())
-                        .child(SharedString::from(approval.title.clone())),
+        let agent = self.harness(cx);
+        let buttons: Vec<AnyElement> = approval
+            .options
+            .iter()
+            .enumerate()
+            .map(|(number, option)| {
+                let option_id = option.id.clone();
+                let region = ordinal.map_or(usize::MAX, |ordinal| ordinal * 8 + number);
+                approval_option(
+                    SharedString::from(format!("approve-{}-{number}", approval.id)),
+                    number,
+                    option,
+                    scope_tooltip(number, option, &approval.title, agent.as_deref()),
+                    look,
                 )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.answer(approval_id, option_id.clone(), cx);
+                }))
+                .child(probe(&self.regions, Region::ChatOption(region)))
+                .into_any_element()
             })
-            .children(approval.detail.as_ref().map(|detail| {
-                div()
-                    .text_color(theme.muted)
-                    .text_size(px(tokens.secondary_font_size))
-                    .child(SharedString::from(detail.clone()))
-            }))
-            .when(pending, |s| {
-                s.child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(px(tokens.spacing * 2.0))
-                        .children(buttons),
-                )
-            })
-            .children(scopes.into_iter().map(|line| {
-                div()
-                    .text_color(theme.muted)
-                    .text_size(px(tokens.secondary_font_size))
-                    .child(SharedString::from(line))
-            }))
-            .children(
-                status.map(|(text, color)| div().text_color(color).child(SharedString::from(text))),
-            )
-            .into_any_element()
+            .collect();
+        let group = approval_group(
+            approval.kind,
+            standalone.then_some(approval.title.as_str()),
+            approval.detail.as_deref(),
+            buttons,
+            always_note(&approval.options, &approval.title),
+            look,
+        )
+        .relative();
+        if standalone {
+            group
+                .p(px(tokens.spacing * 3.0))
+                .card(theme, tokens)
+                .into_any_element()
+        } else {
+            group
+                .pt(px(tokens.spacing * 3.0))
+                .pl(px(16.0))
+                .border_t_1()
+                .border_color(theme.border)
+                .into_any_element()
+        }
     }
 }
 
 // ---- pieces without state -------------------------------------------------------------------
-
-/// The sentence that says what a standing ("Always") option does beyond this request, naming
-/// the tool the request is about (its title, first line, at most [`SCOPE_TITLE`] characters)
-/// and the harness whose rule it is. `None` for options that only answer this request.
-fn scope_sentence(
-    option: &hutan_core::agent::PermissionOption,
-    approval: &Approval,
-    agent: Option<&str>,
-) -> Option<String> {
-    let verb = match option.kind {
-        PermissionOptionKind::AllowAlways => "stops asking about",
-        PermissionOptionKind::RejectAlways => "refuses, without asking,",
-        _ => return None,
-    };
-    let agent = agent.unwrap_or("the agent");
-    let first = approval.title.lines().next().unwrap_or_default();
-    let mut tool: String = first.chars().take(SCOPE_TITLE).collect();
-    if first.chars().count() > SCOPE_TITLE {
-        tool.push('…');
-    }
-    Some(format!(
-        "beyond this one request, {agent} {verb} what its rule for “{tool}” covers. Hutan cannot show or revoke that rule."
-    ))
-}
-
-/// Longest tool name a scope sentence quotes.
-const SCOPE_TITLE: usize = 80;
 
 fn counts(diff: &FileDiff, look: &Look) -> AnyElement {
     counts_of(diff.added, diff.removed, look)
@@ -1202,57 +1169,60 @@ fn usage_text(usage: &TurnUsage) -> String {
     parts.join(" · ")
 }
 
-fn footer_card(footer: &Footer, look: &Look) -> AnyElement {
-    let (theme, tokens) = (&look.theme, &look.tokens);
-    let (mark, color, text) = match &footer.outcome {
-        TurnOutcome::Completed => (
-            crate::icons::Icon::StateCompleted,
-            theme.success,
-            "done".to_owned(),
-        ),
-        TurnOutcome::Failed { message, .. } => (
-            crate::icons::Icon::StateFailed,
-            theme.danger,
-            format!("failed: {message}"),
-        ),
-        TurnOutcome::Cancelled => (
-            crate::icons::Icon::StateInterrupted,
-            theme.muted,
-            "interrupted".to_owned(),
-        ),
+/// What a turn's footer says, or `None` when it would only repeat what is already on screen:
+/// a turn that simply completed (no usage reported) ends as its cards say (`done · 2 m 53 s` on
+/// the tool's header) and as the status line says (`idle`). The turn's result is drawn once.
+/// A completed turn with usage figures, a failed and an interrupted one keep their line.
+fn footer_line(footer: &Footer) -> Option<String> {
+    let usage = footer
+        .usage
+        .as_ref()
+        .map(usage_text)
+        .filter(|u| !u.is_empty());
+    let text = match &footer.outcome {
+        TurnOutcome::Completed if usage.is_none() => return None,
+        TurnOutcome::Completed => "done".to_owned(),
+        TurnOutcome::Failed { message, .. } => format!("failed: {message}"),
+        TurnOutcome::Cancelled => "interrupted".to_owned(),
     };
     let mut line = vec![text];
     if let Some(ms) = footer.duration_ms {
         line.push(duration(ms));
     }
-    if let Some(usage) = footer
-        .usage
-        .as_ref()
-        .map(usage_text)
-        .filter(|u| !u.is_empty())
-    {
-        line.push(usage);
-    }
-    div()
-        .flex()
-        .gap(px(tokens.spacing * 1.5))
-        .text_color(theme.muted)
-        .text_size(px(tokens.secondary_font_size))
-        .child(
-            div()
-                .flex_none()
-                .text_color(color)
-                .child(crate::icons::glyph(mark)),
-        )
-        .child(
-            div()
-                .min_w_0()
-                .when(matches!(footer.outcome, TurnOutcome::Failed { .. }), |s| {
-                    s.text_color(theme.danger)
-                })
-                .child(SharedString::from(line.join(" · "))),
-        )
-        .into_any_element()
+    line.extend(usage);
+    Some(line.join(" · "))
+}
+
+fn footer_card(footer: &Footer, look: &Look) -> Option<AnyElement> {
+    let (theme, tokens) = (&look.theme, &look.tokens);
+    let line = footer_line(footer)?;
+    let (mark, color) = match &footer.outcome {
+        TurnOutcome::Completed => (crate::icons::Icon::StateCompleted, theme.success),
+        TurnOutcome::Failed { .. } => (crate::icons::Icon::StateFailed, theme.danger),
+        TurnOutcome::Cancelled => (crate::icons::Icon::StateInterrupted, theme.muted),
+    };
+    Some(
+        div()
+            .flex()
+            .gap(px(tokens.spacing * 1.5))
+            .text_color(theme.muted)
+            .text_size(px(tokens.secondary_font_size))
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(color)
+                    .child(crate::icons::glyph(mark)),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .when(matches!(footer.outcome, TurnOutcome::Failed { .. }), |s| {
+                        s.text_color(theme.danger)
+                    })
+                    .child(SharedString::from(line)),
+            )
+            .into_any_element(),
+    )
 }
 
 fn notice_card(level: NoticeLevel, message: &str, look: &Look) -> AnyElement {
@@ -1278,71 +1248,43 @@ fn notice_card(level: NoticeLevel, message: &str, look: &Look) -> AnyElement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hutan_core::agent::PermissionOption;
 
-    fn option(kind: PermissionOptionKind, label: &str) -> PermissionOption {
-        PermissionOption {
-            id: label.to_owned(),
-            label: label.to_owned(),
-            kind,
-            provider: None,
-        }
-    }
-
-    fn approval(title: &str) -> Approval {
-        Approval {
-            id: ApprovalId::new(),
-            turn: None,
-            kind: PermissionKind::Command,
-            title: title.to_owned(),
-            detail: None,
-            options: Vec::new(),
-            state: ApprovalState::Pending,
-            decided_by: None,
+    fn footer(outcome: TurnOutcome, usage: Option<TurnUsage>) -> Footer {
+        Footer {
+            outcome,
+            duration_ms: Some(173_000),
+            usage,
         }
     }
 
     #[test]
-    fn only_the_choices_about_this_request_are_primary() {
-        use PermissionOptionKind::*;
-        let primary: Vec<bool> = [
-            AllowOnce,
-            AllowAlways,
-            RejectOnce,
-            RejectAlways,
-            Cancel,
-            Other,
-        ]
-        .map(|kind| approval_button_kind(kind) == ButtonKind::Primary)
-        .to_vec();
-        assert_eq!(primary, [true, false, true, false, false, false]);
-    }
-
-    #[test]
-    fn standing_options_say_whose_rule_they_set_and_for_what() {
-        let request = approval("cargo test --workspace\nsecond line");
-        let always = option(PermissionOptionKind::AllowAlways, "Always allow `cargo`");
-        let sentence = scope_sentence(&always, &request, Some("Claude Code")).unwrap();
-        assert!(sentence.starts_with(
-            "beyond this one request, Claude Code stops asking about what its rule for “cargo test --workspace” covers."
-        ));
-        let never = option(PermissionOptionKind::RejectAlways, "Never");
-        assert!(
-            scope_sentence(&never, &request, None)
-                .unwrap()
-                .starts_with("beyond this one request, the agent refuses, without asking, what")
+    fn the_turn_result_is_drawn_once() {
+        // A turn that simply completed: its cards and the status line already say it.
+        assert_eq!(footer_line(&footer(TurnOutcome::Completed, None)), None);
+        let usage = TurnUsage {
+            total_tokens: Some(1_234),
+            ..TurnUsage::default()
+        };
+        assert_eq!(
+            footer_line(&footer(TurnOutcome::Completed, Some(usage))).as_deref(),
+            Some("done · 2 m 53 s · 1.2k tokens")
         );
-        for kind in [
-            PermissionOptionKind::AllowOnce,
-            PermissionOptionKind::RejectOnce,
-            PermissionOptionKind::Cancel,
-            PermissionOptionKind::Other,
-        ] {
-            assert_eq!(scope_sentence(&option(kind, "x"), &request, None), None);
-        }
-        // A long tool name is cut, not left to flood the card.
-        let long = approval(&"x".repeat(200));
-        let sentence = scope_sentence(&always, &long, None).unwrap();
-        assert!(sentence.contains(&format!("“{}…”", "x".repeat(SCOPE_TITLE))));
+        // Usage without a figure to show is no usage.
+        assert_eq!(
+            footer_line(&footer(TurnOutcome::Completed, Some(TurnUsage::default()))),
+            None
+        );
+        let failed = TurnOutcome::Failed {
+            message: "rate limited".into(),
+            details: None,
+        };
+        assert_eq!(
+            footer_line(&footer(failed, None)).as_deref(),
+            Some("failed: rate limited · 2 m 53 s")
+        );
+        assert_eq!(
+            footer_line(&footer(TurnOutcome::Cancelled, None)).as_deref(),
+            Some("interrupted · 2 m 53 s")
+        );
     }
 }

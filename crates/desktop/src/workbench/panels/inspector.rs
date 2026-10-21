@@ -14,6 +14,8 @@ use hutan_terminal_view::blocks::{self as block_ui, Tone};
 use super::common::{panel_header, state_dot, tone_color};
 use crate::settings::InspectorPanelSettings;
 use crate::workbench::actions::{BlockRef, JumpToBlock};
+use crate::workbench::chat::{self, Look};
+use crate::workbench::harnesses::harness_name;
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::UiStyle;
@@ -174,6 +176,38 @@ impl InspectorPanel {
 }
 
 impl InspectorPanel {
+    /// The session a request or question is in, as a link that opens it (`in omp · api →`).
+    fn session_link(
+        &self,
+        id: impl Into<SharedString>,
+        session: hutan_core::SessionId,
+        prefix: &str,
+        theme: &crate::theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let title = self
+            .env
+            .sessions
+            .read(cx)
+            .session(session)
+            .map_or_else(|| "a session that is gone".to_owned(), |s| s.title.clone());
+        let session = session.to_string();
+        div()
+            .id(id.into())
+            .min_w_0()
+            .truncate()
+            .text_color(theme.accent)
+            .cursor_pointer()
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(
+                    Box::new(crate::workbench::actions::OpenSession(session.clone())),
+                    cx,
+                );
+            })
+            .child(SharedString::from(format!("{prefix}{title} →")))
+            .into_any_element()
+    }
+
     /// One pending question: what is asked and in which session; it is answered in the chat.
     fn question_row(
         &self,
@@ -182,20 +216,19 @@ impl InspectorPanel {
         tokens: &crate::theme::Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let title = self
-            .env
-            .sessions
-            .read(cx)
-            .session(question.session_id)
-            .map_or_else(|| "a session that is gone".to_owned(), |s| s.title.clone());
-        let session = question.session_id.to_string();
+        let link = self.session_link(
+            format!("inspector-open-question-{}", question.id),
+            question.session_id,
+            "answer in ",
+            theme,
+            cx,
+        );
         div()
             .flex()
             .flex_col()
             .gap(px(tokens.spacing))
-            .p(px(tokens.spacing * 2.5))
+            .p(px(tokens.spacing * 3.0))
             .card(theme, tokens)
-            .border_color(theme.warning)
             .child(
                 div()
                     .font_weight(gpui::FontWeight::MEDIUM)
@@ -204,120 +237,88 @@ impl InspectorPanel {
                         question.spec.title
                     ))),
             )
-            .child(
-                div()
-                    .id(SharedString::from(format!(
-                        "inspector-open-question-{}",
-                        question.id
-                    )))
-                    .min_w_0()
-                    .truncate()
-                    .text_color(theme.accent)
-                    .cursor_pointer()
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(
-                            Box::new(crate::workbench::actions::OpenSession(session.clone())),
-                            cx,
-                        );
-                    })
-                    .child(SharedString::from(format!("answer in {title} →"))),
-            )
+            .child(link)
             .into_any_element()
     }
 
-    /// One pending request: what is asked, in which session, and a button per offered option.
+    /// One pending request: the chat's approval group (the question, the tool, where it acts,
+    /// a button per offered option with its key and the Always sentence), on a card under the
+    /// link to its session.
     fn approval_row(
         &self,
         approval: &hutan_protocol::chat::ApprovalInfo,
-        theme: &crate::theme::Theme,
-        tokens: &crate::theme::Tokens,
+        look: &Look,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let title = self
-            .env
-            .sessions
-            .read(cx)
-            .session(approval.session_id)
-            .map_or_else(|| "a session that is gone".to_owned(), |s| s.title.clone());
-        let session = approval.session_id.to_string();
-        let ordinal = self
-            .env
-            .sessions
-            .read(cx)
-            .approvals()
-            .iter()
-            .position(|a| a.id == approval.id)
-            .unwrap_or(0);
-        let regions = self.env.regions.clone();
-        let buttons = approval.options.iter().enumerate().map(|(number, option)| {
-            let (id, option_id) = (approval.id, option.id.clone());
-            ui::button(
-                SharedString::from(format!("inspector-approve-{id}-{number}")),
-                SharedString::from(format!("{} {}", number + 1, option.label)),
-                ui::approval_button_kind(option.kind),
-                true,
-                theme,
-                tokens,
+        let (theme, tokens) = (&look.theme, &look.tokens);
+        let (ordinal, agent) = {
+            let store = self.env.sessions.read(cx);
+            (
+                store
+                    .approvals()
+                    .iter()
+                    .position(|a| a.id == approval.id)
+                    .unwrap_or(0),
+                store
+                    .session(approval.session_id)
+                    .and_then(|info| info.chat.as_ref())
+                    .map(|chat| harness_name(&chat.agent)),
             )
-            .relative()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                let task = this.env.sessions.update(cx, |store, cx| {
-                    store.respond_approval(id, option_id.clone(), cx)
-                });
-                cx.spawn(async move |_, _| {
-                    if let Err(error) = task.await {
-                        tracing::warn!("could not answer a permission request: {error}");
-                    }
-                })
-                .detach();
-            }))
-            .child(probe(
-                &regions,
-                Region::InspectorOption(ordinal * 8 + number),
-            ))
-        });
+        };
+        let regions = self.env.regions.clone();
+        let buttons: Vec<AnyElement> = approval
+            .options
+            .iter()
+            .enumerate()
+            .map(|(number, option)| {
+                let (id, option_id) = (approval.id, option.id.clone());
+                chat::approval_option(
+                    SharedString::from(format!("inspector-approve-{id}-{number}")),
+                    number,
+                    option,
+                    chat::scope_tooltip(number, option, &approval.title, agent.as_deref()),
+                    look,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let task = this.env.sessions.update(cx, |store, cx| {
+                        store.respond_approval(id, option_id.clone(), cx)
+                    });
+                    cx.spawn(async move |_, _| {
+                        if let Err(error) = task.await {
+                            tracing::warn!("could not answer a permission request: {error}");
+                        }
+                    })
+                    .detach();
+                }))
+                .child(probe(
+                    &regions,
+                    Region::InspectorOption(ordinal * 8 + number),
+                ))
+                .into_any_element()
+            })
+            .collect();
+        let link = self.session_link(
+            format!("inspector-open-{}", approval.id),
+            approval.session_id,
+            "in ",
+            theme,
+            cx,
+        );
         div()
             .flex()
             .flex_col()
-            .gap(px(tokens.spacing))
-            .p(px(tokens.spacing * 2.5))
+            .gap(px(tokens.spacing * 2.0))
+            .p(px(tokens.spacing * 3.0))
             .card(theme, tokens)
-            .border_color(theme.warning)
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .child(SharedString::from(approval.title.clone())),
-            )
-            .child(
-                div()
-                    .id(SharedString::from(format!(
-                        "inspector-open-{}",
-                        approval.id
-                    )))
-                    .min_w_0()
-                    .truncate()
-                    .text_color(theme.accent)
-                    .cursor_pointer()
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(
-                            Box::new(crate::workbench::actions::OpenSession(session.clone())),
-                            cx,
-                        );
-                    })
-                    .child(SharedString::from(format!("in {title} →"))),
-            )
-            .children(approval.detail.as_ref().map(|detail| {
-                div()
-                    .text_color(theme.muted)
-                    .child(SharedString::from(detail.clone()))
-            }))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(tokens.spacing))
-                    .children(buttons),
-            )
+            .child(link)
+            .child(chat::approval_group(
+                approval.kind,
+                Some(&approval.title),
+                approval.detail.as_deref(),
+                buttons,
+                chat::always_note(&approval.options, &approval.title),
+                look,
+            ))
             .into_any_element()
     }
 }
@@ -394,6 +395,7 @@ impl Render for InspectorPanel {
                     .h(px(260.0))
                     .into_any_element()
                 } else {
+                    let look = Look::of(cx);
                     div()
                         .flex()
                         .flex_col()
@@ -402,7 +404,7 @@ impl Render for InspectorPanel {
                         .children(
                             approvals
                                 .iter()
-                                .map(|approval| self.approval_row(approval, &theme, &tokens, cx)),
+                                .map(|approval| self.approval_row(approval, &look, cx)),
                         )
                         .children(
                             questions

@@ -241,10 +241,12 @@ impl Workbench {
         project_body = project_body.child(note(project_detail.clone(), theme.faint));
 
         // ---- What ----
-        let mut what = div().flex().flex_wrap().gap(px(tokens.spacing));
+        // One silhouette (`ui::segmented`): the choices are segments of one strip, the selected
+        // one an `accent_soft` fill.
+        let mut what = ui::segmented(&theme, &tokens);
         for choice in LaunchKind::ALL {
             what = what.child(
-                ui::choice(
+                ui::segment(
                     id(format!("launch-what-{}", choice.key())),
                     choice.label(),
                     kind == choice,
@@ -262,6 +264,8 @@ impl Workbench {
                 )),
             );
         }
+        // In a row of its own, so the strip is as wide as its segments.
+        let what = div().flex().child(what);
 
         // ---- Agent ----
         let mut agent_rows: Vec<AnyElement> = Vec::new();
@@ -973,11 +977,10 @@ impl Workbench {
             .flex_col()
             .gap(px(tokens.spacing))
             .child(
-                div()
-                    .flex()
-                    .gap(px(tokens.spacing))
+                div().flex().child(
+                ui::segmented(&theme, &tokens)
                     .child(
-                        ui::choice("launch-mode-now", "Start now", !queue, &theme, &tokens)
+                        ui::segment("launch-mode-now", "Start now", !queue, &theme, &tokens)
                             .relative()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.launcher_focus_stop(LauncherStop::Mode, window, cx);
@@ -986,7 +989,7 @@ impl Workbench {
                             .child(probe(&self.regions, Region::LauncherChoice("mode", "now"))),
                     )
                     .child(
-                        ui::choice("launch-mode-queue", "Queue as task", queue, &theme, &tokens)
+                        ui::segment("launch-mode-queue", "Queue as task", queue, &theme, &tokens)
                             .relative()
                             .when(direct, |s| s.opacity(0.55))
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -995,6 +998,7 @@ impl Workbench {
                             }))
                             .child(probe(&self.regions, Region::LauncherChoice("mode", "queue"))),
                     ),
+                ),
             )
             .child(note(
                 if direct {

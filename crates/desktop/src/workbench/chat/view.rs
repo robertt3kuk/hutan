@@ -621,17 +621,27 @@ impl ChatView {
                 .border_b_1()
                 .border_color(theme.border)
                 .child(
+                    // The glyph carries the warning; the words are `fg`.
                     div()
                         .min_w_0()
                         .flex()
                         .items_center()
                         .gap(px(4.0))
-                        .text_color(theme.warning)
-                        .child(crate::icons::glyph(crate::icons::Icon::StateApproval))
-                        .child(div().truncate().child(SharedString::from(format!(
-                            "{pending} approval{} waiting",
-                            if pending == 1 { "" } else { "s" }
-                        )))),
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_color(theme.warning)
+                                .child(crate::icons::glyph(crate::icons::Icon::StateApproval)),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .text_color(theme.fg)
+                                .child(SharedString::from(format!(
+                                    "{pending} approval{} waiting",
+                                    if pending == 1 { "" } else { "s" }
+                                ))),
+                        ),
                 )
                 .child(probe(&self.regions, Region::Chat("header")))
                 .into_any_element();
@@ -662,123 +672,160 @@ impl ChatView {
             .filter(|chat| is_harness_chat(&chat.agent))
             .filter(|_| self.sessions.read(cx).supports_chat_mode())
             .map(mode_chip);
+        // Direct and harness chats can change their model (`chat.set_model`), between turns.
+        let switchable =
+            chat.is_some_and(|chat| is_gateway_chat(&chat.agent) || is_harness_chat(&chat.agent));
+        let between_turns = chat.is_some_and(|chat| !chat.turn_active);
+        let tooltip = |text: SharedString| {
+            move |_: &mut Window, cx: &mut App| {
+                cx.new(|_| crate::workbench::style::TextTooltip(text.clone()))
+                    .into()
+            }
+        };
+        let (words, attention) = status_words(&presentation);
+        let state = ui::state_label(
+            presentation.icon(),
+            words,
+            tone_color(theme, presentation.tone),
+            attention,
+            theme,
+            tokens,
+        );
+        // Who runs it: `OMP · opus-4-6`, muted. Where the model can change it is a ghost menu
+        // (it replaces the *Switch model…* button): ▾ and a click between turns, plain words
+        // while a turn runs.
+        let who = detail.map(|text| {
+            let words = div().min_w_0().truncate().child(SharedString::from(text));
+            if !switchable {
+                return div()
+                    .min_w_0()
+                    .text_color(theme.muted)
+                    .text_size(px(tokens.secondary_font_size))
+                    .child(words)
+                    .into_any_element();
+            }
+            let (hover, fg) = (theme.surface_hover, theme.fg);
+            div()
+                .id("chat-switch-model")
+                .relative()
+                .flex()
+                .min_w_0()
+                .items_center()
+                .gap(px(2.0))
+                .h(px(tokens.control_height - 4.0))
+                // The words line up with the state's; the hover fill reaches past them.
+                .px(px(tokens.spacing * 1.5))
+                .mx(px(-tokens.spacing * 1.5))
+                .rounded(px(tokens.radius))
+                .text_color(theme.muted)
+                .text_size(px(tokens.secondary_font_size))
+                .child(words)
+                .when(between_turns, |s| {
+                    s.child(
+                        div()
+                            .flex_none()
+                            .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown)),
+                    )
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover).text_color(fg))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(actions::SwitchChatModelById(session.to_string())),
+                            cx,
+                        );
+                    })
+                    .tooltip(tooltip("Switch model…".into()))
+                })
+                .when(!between_turns, |s| {
+                    s.tooltip(tooltip("The model can be switched between turns".into()))
+                })
+                .child(probe(&self.regions, Region::Chat("switch-model")))
+                .into_any_element()
+        });
         // A status line, not a second title (CL-CHROME, D-C5): the tab and the window title name
-        // the session; this row says its state (a glyph in the state's color and the word), who
-        // runs it and what is open to change. The tab strip is always drawn, so the title never
-        // has to come back here. A waiting approval is the state's word ("blocked · approval")
-        // and the card's to say, not a count beside it.
+        // the session; this row says its state, who runs it and what is open to change, then
+        // the session's menu. A waiting approval is the state's to say and the card's to ask,
+        // not a count beside it. Chips are neutral; only a mode that approves everything warns.
+        let hover = theme.surface_hover;
         div()
             .relative()
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(tokens.spacing * 2.0))
+            .gap(px(tokens.spacing * 3.0))
             .h(px(tokens.pane_header))
             .px(px(tokens.spacing * 3.0))
             .border_b_1()
             .border_color(theme.border)
-            .child(crate::workbench::ui::state_label(
-                presentation.icon(),
-                // What needs you carries its reason: "blocked · approval".
-                if presentation.needs_you && !presentation.detail.is_empty() {
-                    format!("{} · {}", presentation.label, presentation.detail)
-                } else {
-                    presentation.label.clone()
-                },
-                tone_color(theme, presentation.tone),
-                false,
-                theme,
-                tokens,
-            ))
-            .children(detail.map(|text| {
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(theme.muted)
-                    .text_size(px(tokens.secondary_font_size))
-                    .child(SharedString::from(text))
-            }))
+            .child(state)
+            .children(who)
             .children(mode.map(|chip| {
-                let color = if chip.warning {
-                    theme.warning
-                } else {
-                    theme.muted
-                };
                 let tip = SharedString::from(chip.tooltip);
+                let text = SharedString::from(chip.text);
+                let label = if chip.warning {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(tokens.spacing))
+                        .text_size(px(tokens.secondary_font_size))
+                        .whitespace_nowrap()
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_color(theme.warning)
+                                .child(crate::icons::glyph(crate::icons::Icon::StateWarning)),
+                        )
+                        .child(div().text_color(theme.warning).child(text))
+                } else {
+                    ui::counter(text, theme, tokens).whitespace_nowrap()
+                };
                 div()
                     .id("chat-mode")
                     .relative()
                     .flex_none()
-                    .child(
-                        div()
-                            .px(px(tokens.spacing * 2.0))
-                            .rounded(px(crate::theme::pill_radius()))
-                            .bg(color.opacity(0.12))
-                            .text_color(color)
-                            .text_size(px(tokens.secondary_font_size))
-                            .whitespace_nowrap()
-                            .child(SharedString::from(chip.text)),
-                    )
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
-                            .into()
-                    })
+                    .child(label)
+                    .tooltip(tooltip(tip))
                     .child(probe(&self.regions, Region::Chat("mode")))
             }))
             .children(context.map(|context| {
-                // Muted, and fainter still when the agent reports no window to measure against.
-                let color = if context.window.is_some() {
-                    theme.muted
-                } else {
-                    theme.faint
-                };
                 let tip = SharedString::from(context_tooltip(&context));
                 div()
                     .id("chat-context")
                     .relative()
                     .flex_none()
-                    .child(
-                        // Not a capped `ui::pill`: the percentage and the figures read whole.
-                        div()
-                            .px(px(tokens.spacing * 2.0))
-                            .rounded(px(crate::theme::pill_radius()))
-                            .bg(color.opacity(0.12))
-                            .text_color(color)
-                            .text_size(px(tokens.secondary_font_size))
-                            .whitespace_nowrap()
-                            .child(SharedString::from(context_text(&context))),
-                    )
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
-                            .into()
-                    })
+                    // A neutral counter, whole: the percentage and the figures read together.
+                    .child(ui::counter(context_text(&context), theme, tokens).whitespace_nowrap())
+                    .tooltip(tooltip(tip))
                     .child(probe(&self.regions, Region::Chat("context")))
             }))
-            .when(
-                chat.is_some_and(|chat| {
-                    is_gateway_chat(&chat.agent) || is_harness_chat(&chat.agent)
-                }),
-                |s| {
-                    s.child(
-                        button(
-                            "chat-switch-model",
-                            "Switch model…",
-                            ButtonKind::Secondary,
-                            chat.is_some_and(|chat| !chat.turn_active),
-                            look,
-                        )
-                        .when(chat.is_some_and(|chat| !chat.turn_active), |b| {
-                            b.on_click(move |_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(actions::SwitchChatModelById(session.to_string())),
-                                    cx,
-                                );
-                            })
-                        })
-                        .child(probe(&self.regions, Region::Chat("switch-model"))),
-                    )
-                },
+            .child(div().flex_1())
+            .child(
+                div()
+                    .id("chat-menu")
+                    .relative()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(tokens.control_height - 4.0))
+                    .rounded(px(tokens.radius))
+                    .text_color(theme.muted)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(move |event, window, cx| {
+                        window.dispatch_action(
+                            Box::new(actions::ShowSessionMenu(actions::SessionMenuAt {
+                                session: session.to_string(),
+                                position: event.position(),
+                            })),
+                            cx,
+                        );
+                    })
+                    .tooltip(tooltip("More".into()))
+                    .child(crate::icons::glyph(crate::icons::Icon::ActionMore))
+                    .child(probe(&self.regions, Region::Chat("menu"))),
             )
             .child(probe(&self.regions, Region::Chat("header")))
             .into_any_element()
@@ -1538,6 +1585,28 @@ impl Render for ChatView {
     }
 }
 
+/// The words of the status line's state, and whether they are drawn in `fg` (the glyph alone
+/// in the state's color). What needs a decision is said as such — `Needs you · approval` — with
+/// the warning on the glyph; any other state is its word (`idle`, `working`), and a session that
+/// needs a look for another reason carries it (`failed · exit 1`), in the state's color.
+pub fn status_words(presentation: &crate::sessions::attention::Presentation) -> (String, bool) {
+    use crate::sessions::attention::Tone;
+    let detail = |word: &str| {
+        if presentation.detail.is_empty() {
+            word.to_owned()
+        } else {
+            format!("{word} · {}", presentation.detail)
+        }
+    };
+    if presentation.needs_you && presentation.tone == Tone::Warning {
+        (detail("Needs you"), true)
+    } else if presentation.needs_you {
+        (detail(&presentation.label), false)
+    } else {
+        (presentation.label.clone(), false)
+    }
+}
+
 /// The chat header's mode chip (`UX-MODE-CHIP`, protocol 0.34).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModeChip {
@@ -1585,7 +1654,35 @@ pub fn mode_chip(chat: &hutan_protocol::chat::ChatInfo) -> ModeChip {
 mod mode_chip_tests {
     use hutan_protocol::chat::{ChatInfo, ChatMode};
 
-    use super::mode_chip;
+    use super::{mode_chip, status_words};
+    use crate::sessions::attention::{Presentation, Tone};
+
+    #[test]
+    fn the_status_line_says_what_needs_you_as_such() {
+        let p = |label: &str, detail: &str, tone, needs_you| Presentation {
+            label: label.into(),
+            detail: detail.into(),
+            tone,
+            filled: needs_you,
+            needs_you,
+        };
+        assert_eq!(
+            status_words(&p("blocked", "approval", Tone::Warning, true)),
+            ("Needs you · approval".to_owned(), true)
+        );
+        assert_eq!(
+            status_words(&p("blocked", "question", Tone::Warning, true)),
+            ("Needs you · question".to_owned(), true)
+        );
+        assert_eq!(
+            status_words(&p("failed", "exit 1", Tone::Error, true)),
+            ("failed · exit 1".to_owned(), false)
+        );
+        assert_eq!(
+            status_words(&p("idle", "OMP · opus", Tone::Muted, false)),
+            ("idle".to_owned(), false)
+        );
+    }
 
     fn chat(mode: Option<ChatMode>) -> ChatInfo {
         ChatInfo {

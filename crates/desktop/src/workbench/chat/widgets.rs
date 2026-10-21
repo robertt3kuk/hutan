@@ -1,10 +1,17 @@
-//! Small pieces the chat view shares: buttons, chips and number formatting.
+//! Small pieces the chat view shares: buttons, chips, number formatting, and the approval group
+//! that every place a permission request is answered draws (the tool card, a request without a
+//! tool, the inspector's Requests).
 
-use gpui::SharedString;
+use gpui::{
+    AnyElement, AppContext as _, FontWeight, Hsla, ParentElement as _, SharedString,
+    StatefulInteractiveElement as _, Styled as _, div, px,
+};
 use hutan_chat_view::ContextUse;
+use hutan_core::agent::{PermissionKind, PermissionOption, PermissionOptionKind};
 
 use super::markdown_view::Look;
 
+use crate::icons::Icon;
 use crate::workbench::ui;
 pub use crate::workbench::ui::ButtonKind;
 
@@ -142,9 +149,298 @@ pub fn tail_lines(text: &str, max: usize) -> (&str, usize) {
     (&text[at..], skip)
 }
 
+// ---- the approval group ---------------------------------------------------------------------
+
+/// What an approval asks, by its kind.
+pub fn approval_heading(kind: PermissionKind) -> &'static str {
+    match kind {
+        PermissionKind::Command => "Run this command?",
+        PermissionKind::FileChange => "Apply these changes?",
+        PermissionKind::Permissions => "Grant extra permissions?",
+        PermissionKind::Control => "Let this agent control Hutan?",
+        PermissionKind::Other => "Allow this?",
+    }
+}
+
+/// Longest tool name a sentence about a standing rule quotes.
+pub const SCOPE_TITLE: usize = 80;
+
+/// The tool a request is about as the sentences quote it: its title's first line, at most
+/// [`SCOPE_TITLE`] characters.
+fn quoted_tool(title: &str) -> String {
+    let first = title.lines().next().unwrap_or_default();
+    let mut tool: String = first.chars().take(SCOPE_TITLE).collect();
+    if first.chars().count() > SCOPE_TITLE {
+        tool.push('…');
+    }
+    tool
+}
+
+/// The sentence that says what a standing ("Always") option does beyond this request, naming
+/// the tool the request is about (`title`) and the harness whose rule it is. `None` for options
+/// that only answer this request.
+pub fn scope_sentence(
+    option: &PermissionOption,
+    title: &str,
+    agent: Option<&str>,
+) -> Option<String> {
+    let verb = match option.kind {
+        PermissionOptionKind::AllowAlways => "stops asking about",
+        PermissionOptionKind::RejectAlways => "refuses, without asking,",
+        _ => return None,
+    };
+    let agent = agent.unwrap_or("the agent");
+    let tool = quoted_tool(title);
+    Some(format!(
+        "beyond this one request, {agent} {verb} what its rule for “{tool}” covers. Hutan cannot show or revoke that rule."
+    ))
+}
+
+/// The tooltip of option `number` (0-based) when it sets a standing rule: its key and label, then
+/// [`scope_sentence`] (`2 Always allow: beyond this one request, OMP stops asking about …`).
+pub fn scope_tooltip(
+    number: usize,
+    option: &PermissionOption,
+    title: &str,
+    agent: Option<&str>,
+) -> Option<String> {
+    scope_sentence(option, title, agent)
+        .map(|sentence| format!("{} {}: {sentence}", number + 1, option.label))
+}
+
+/// The one muted sentence under the buttons while a standing ("Always") option is offered; the
+/// whole of what each one does is its button's tooltip.
+pub fn always_note(options: &[PermissionOption], title: &str) -> Option<String> {
+    options
+        .iter()
+        .any(|o| {
+            matches!(
+                o.kind,
+                PermissionOptionKind::AllowAlways | PermissionOptionKind::RejectAlways
+            )
+        })
+        .then(|| {
+            format!(
+                "Always sets a standing rule for “{}” that Hutan cannot show or revoke.",
+                quoted_tool(title)
+            )
+        })
+}
+
+/// One option of a request: its label and its key (`1`–`4`, the agent's order) inside the button,
+/// primary only for *allow once* ([`ui::approval_button_kind`]), and `tooltip` (what a standing
+/// option sets) on hover. The caller adds the click and the probe.
+pub fn approval_option(
+    id: impl Into<gpui::ElementId>,
+    number: usize,
+    option: &PermissionOption,
+    tooltip: Option<String>,
+    look: &Look,
+) -> gpui::Stateful<gpui::Div> {
+    let kind = ui::approval_button_kind(option.kind);
+    let button = button(id, option.label.clone(), kind, true, look)
+        .relative()
+        .child(ui::key_hint(
+            (number + 1).to_string(),
+            kind,
+            &look.theme,
+            &look.tokens,
+        ));
+    match tooltip {
+        Some(tip) => {
+            let tip = SharedString::from(tip);
+            button.tooltip(move |_, cx| {
+                cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
+                    .into()
+            })
+        }
+        None => button,
+    }
+}
+
+/// A request waiting for an answer, as one group: the question (13 px medium), what it is about
+/// (`title`, mono, when the place it sits in does not already say it), where and what it touches
+/// (`detail`, mono 12 px `muted`), the option `buttons` on one row (they wrap only when the column
+/// is too narrow), and `note` (the Always sentence) muted under them. No fill and no border of
+/// its own: it sits in a tool card under a hairline, in a card of its own, or in a panel row.
+pub fn approval_group(
+    kind: PermissionKind,
+    title: Option<&str>,
+    detail: Option<&str>,
+    buttons: Vec<AnyElement>,
+    note: Option<String>,
+    look: &Look,
+) -> gpui::Div {
+    let (theme, tokens) = (&look.theme, &look.tokens);
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(tokens.spacing * 2.0))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(tokens.spacing))
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.fg)
+                        .child(approval_heading(kind)),
+                )
+                .children(title.map(|title| {
+                    div()
+                        .font_family(look.mono.clone())
+                        .text_color(theme.fg)
+                        .child(SharedString::from(title.to_owned()))
+                }))
+                .children(detail.map(|detail| {
+                    div()
+                        .font_family(look.mono.clone())
+                        .text_size(px(tokens.secondary_font_size))
+                        .text_color(theme.muted)
+                        .child(SharedString::from(detail.to_owned()))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(tokens.spacing * 2.0))
+                .children(buttons),
+        )
+        .children(note.map(|note| {
+            div()
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(theme.muted)
+                .child(SharedString::from(note))
+        }))
+}
+
+/// The glyph and color of a decision: allowed in `success`, denied in `danger`, anything else
+/// (cancelled, the agent's own kind, no answer) `muted`.
+pub fn decision_mark(kind: Option<PermissionOptionKind>, look: &Look) -> (Icon, Hsla) {
+    let theme = &look.theme;
+    match kind {
+        Some(PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways) => {
+            (Icon::StateCompleted, theme.success)
+        }
+        Some(PermissionOptionKind::RejectOnce | PermissionOptionKind::RejectAlways) => {
+            (Icon::StateFailed, theme.danger)
+        }
+        _ => (Icon::StateIdle, theme.muted),
+    }
+}
+
+/// An answered (or expired) request, collapsed to one line: the decision's glyph in its color,
+/// the words (`Allowed once · from this window`) `muted`.
+pub fn approval_outcome(
+    mark: (Icon, Hsla),
+    text: impl Into<SharedString>,
+    look: &Look,
+) -> gpui::Div {
+    let (theme, tokens) = (&look.theme, &look.tokens);
+    div()
+        .flex()
+        .items_center()
+        .gap(px(tokens.spacing * 1.5))
+        .min_w_0()
+        .text_size(px(tokens.secondary_font_size))
+        .text_color(theme.muted)
+        .child(
+            div()
+                .flex_none()
+                .text_color(mark.1)
+                .child(crate::icons::glyph(mark.0)),
+        )
+        .child(div().min_w_0().truncate().child(text.into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn option(kind: PermissionOptionKind, label: &str) -> PermissionOption {
+        PermissionOption {
+            id: label.to_owned(),
+            label: label.to_owned(),
+            kind,
+            provider: None,
+        }
+    }
+
+    #[test]
+    fn only_allow_once_is_primary() {
+        use PermissionOptionKind::*;
+        let primary: Vec<bool> = [
+            AllowOnce,
+            AllowAlways,
+            RejectOnce,
+            RejectAlways,
+            Cancel,
+            Other,
+        ]
+        .map(|kind| ui::approval_button_kind(kind) == ButtonKind::Primary)
+        .to_vec();
+        assert_eq!(primary, [true, false, false, false, false, false]);
+    }
+
+    #[test]
+    fn standing_options_say_whose_rule_they_set_and_for_what() {
+        let title = "cargo test --workspace\nsecond line";
+        let always = option(PermissionOptionKind::AllowAlways, "Always allow `cargo`");
+        let sentence = scope_sentence(&always, title, Some("Claude Code")).unwrap();
+        assert!(sentence.starts_with(
+            "beyond this one request, Claude Code stops asking about what its rule for “cargo test --workspace” covers."
+        ));
+        let never = option(PermissionOptionKind::RejectAlways, "Never");
+        assert!(
+            scope_sentence(&never, title, None)
+                .unwrap()
+                .starts_with("beyond this one request, the agent refuses, without asking, what")
+        );
+        for kind in [
+            PermissionOptionKind::AllowOnce,
+            PermissionOptionKind::RejectOnce,
+            PermissionOptionKind::Cancel,
+            PermissionOptionKind::Other,
+        ] {
+            assert_eq!(scope_sentence(&option(kind, "x"), title, None), None);
+            assert_eq!(scope_tooltip(0, &option(kind, "x"), title, None), None);
+        }
+        // The tooltip is the line the card used to print under its buttons.
+        assert_eq!(
+            scope_tooltip(1, &always, title, Some("OMP")).unwrap(),
+            format!(
+                "2 Always allow `cargo`: {}",
+                scope_sentence(&always, title, Some("OMP")).unwrap()
+            )
+        );
+        // A long tool name is cut, not left to flood the card.
+        let long = "x".repeat(200);
+        let sentence = scope_sentence(&always, &long, None).unwrap();
+        assert!(sentence.contains(&format!("“{}…”", "x".repeat(SCOPE_TITLE))));
+    }
+
+    #[test]
+    fn one_sentence_stands_for_every_always_option() {
+        let once = [
+            option(PermissionOptionKind::AllowOnce, "Allow once"),
+            option(PermissionOptionKind::RejectOnce, "Reject"),
+        ];
+        assert_eq!(always_note(&once, "edit: src/lib.rs"), None);
+        let all = [
+            option(PermissionOptionKind::AllowOnce, "Allow once"),
+            option(PermissionOptionKind::AllowAlways, "Always allow"),
+            option(PermissionOptionKind::RejectOnce, "Reject"),
+            option(PermissionOptionKind::RejectAlways, "Always reject"),
+        ];
+        assert_eq!(
+            always_note(&all, "edit: src/lib.rs\nmore").as_deref(),
+            Some(
+                "Always sets a standing rule for “edit: src/lib.rs” that Hutan cannot show or revoke."
+            )
+        );
+    }
 
     #[test]
     fn durations_and_counts_read_naturally() {

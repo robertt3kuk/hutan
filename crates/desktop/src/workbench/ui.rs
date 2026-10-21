@@ -247,18 +247,37 @@ pub enum ButtonKind {
 }
 
 /// How an approval option's button looks, wherever a request is answered (the chat card, the
-/// inspector's Requests): only the choices that touch this one request (allow once, reject once)
-/// are primary; "Always", cancel and the agent's own kinds are secondary. The harness's option
+/// inspector's Requests): only *allow once* is primary, the one default commit of the decision;
+/// rejecting, "Always", cancel and the agent's own kinds are secondary. The harness's option
 /// order never makes a standing rule the easy click, and nothing is activated by Return or by
 /// a click beside the buttons.
 pub fn approval_button_kind(kind: hutan_core::agent::PermissionOptionKind) -> ButtonKind {
     use hutan_core::agent::PermissionOptionKind as Kind;
     match kind {
-        Kind::AllowOnce | Kind::RejectOnce => ButtonKind::Primary,
-        Kind::AllowAlways | Kind::RejectAlways | Kind::Cancel | Kind::Other => {
+        Kind::AllowOnce => ButtonKind::Primary,
+        Kind::RejectOnce | Kind::AllowAlways | Kind::RejectAlways | Kind::Cancel | Kind::Other => {
             ButtonKind::Secondary
         }
     }
+}
+
+/// The key a button answers to (`1`), drawn inside the button after its label: 11 px, `muted`,
+/// or the primary button's `on_accent` ink, so it reads on the fill.
+pub fn key_hint(
+    key: impl Into<SharedString>,
+    kind: ButtonKind,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> gpui::Div {
+    div()
+        .flex_none()
+        .text_size(px(tokens.section_font_size))
+        .font_weight(FontWeight::NORMAL)
+        .text_color(match kind {
+            ButtonKind::Primary => theme.on_accent(),
+            ButtonKind::Secondary | ButtonKind::Ghost => theme.muted,
+        })
+        .child(key.into())
 }
 
 /// A text button at the control height and radius. Primary is the `accent` fill with

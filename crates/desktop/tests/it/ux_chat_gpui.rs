@@ -214,19 +214,26 @@ fn an_approval_card_does_not_make_the_harnesss_first_option_the_easy_click(
         )
     });
     assert_eq!(options, ["allow_always", "allow_once", "reject_once"]);
-    // ... but "Always allow" is not the primary button: the choices about this one request are.
+    // ... and "Always allow" is not the primary button: *allow once* is the one primary of the
+    // decision (CL-CHAT); rejecting is a secondary like the standing options.
     assert_eq!(
         chat.read_with(cx, |c, cx| c.primary_options(approval, cx).unwrap()),
-        ["allow_once", "reject_once"]
+        ["allow_once"]
     );
-    // The standing option says what it does beyond this request and whose rule it is.
+    // What the standing option does is its button's tooltip, word for word what the card
+    // printed under its buttons before: its key and label, then whose rule it is and for what.
     let scopes = chat.read_with(cx, |c, cx| c.scope_text(approval, cx).unwrap());
     assert_eq!(scopes.len(), 1, "{scopes:?}");
-    assert!(
-        scopes[0].starts_with("1 Always allow edits: beyond this one request, OMP stops asking about what its rule for “edit: 3 files” covers."),
-        "{scopes:?}"
+    assert_eq!(
+        scopes[0],
+        "1 Always allow edits: beyond this one request, OMP stops asking about what its rule for “edit: 3 files” covers. Hutan cannot show or revoke that rule."
     );
-    assert!(scopes[0].contains("Hutan cannot show or revoke that rule"));
+    // Under the buttons, one sentence stands for it.
+    assert_eq!(
+        chat.read_with(cx, |c, cx| c.always_note_text(approval, cx))
+            .as_deref(),
+        Some("Always sets a standing rule for “edit: 3 files” that Hutan cannot show or revoke.")
+    );
 
     // The card says where the patch would act and lists every file of it, none clamped.
     let lines: Vec<&str> = detail.lines().collect();
@@ -236,6 +243,20 @@ fn an_approval_card_does_not_make_the_harnesss_first_option_the_easy_click(
         ["/work/src/lib.rs", "/work/src/main.rs", "/work/README.md"]
     );
     draw(cx);
+    // The options are one row of buttons in the reading column.
+    let tops: Vec<gpui::Pixels> = (0..3)
+        .map(|n| {
+            view.read_with(cx, |wb, _| wb.region_bounds(Region::ChatOption(n)))
+                .expect("an option button")
+                .origin
+                .y
+        })
+        .collect();
+    // (Probes may sit a pixel apart; a second row would be a whole button lower.)
+    assert!(
+        tops.iter().all(|y| (*y - tops[0]).abs() < gpui::px(4.0)),
+        "one row: {tops:?}"
+    );
 
     // Return approves nothing: it is a line break in the composer (the send key is ⌘↩).
     cx.simulate_keystrokes("enter");

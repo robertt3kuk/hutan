@@ -603,7 +603,8 @@ impl Colors {
     fn of(theme: &Theme) -> Self {
         Self {
             text: theme.fg,
-            placeholder: theme.faint,
+            // `muted`, not `faint`: a placeholder is read (≥ 4.5:1), `faint` is disabled text.
+            placeholder: theme.muted,
             caret: theme.accent,
             selection: Hsla {
                 a: 0.3,
