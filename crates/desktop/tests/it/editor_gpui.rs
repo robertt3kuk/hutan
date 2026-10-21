@@ -341,3 +341,128 @@ fn saving_keeps_crlf_and_never_overwrites_a_change_on_disk(cx: &mut TestAppConte
         mine.replace('\n', "\r\n")
     );
 }
+
+/// Opens `name` holding `text` in a tab and returns its view and buffer, with the code focused.
+fn open_text(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    dir: &std::path::Path,
+    name: &str,
+    text: &str,
+) -> (
+    std::path::PathBuf,
+    Entity<hutan_desktop::workbench::file_view::FileView>,
+    Entity<hutan_code_view::FileBuffer>,
+) {
+    let file = dir.join(name);
+    std::fs::write(&file, text).unwrap();
+    open_file(view, cx, &file);
+    let file_view = view.read_with(cx, |wb, _| wb.focused_file_view().unwrap());
+    let buffer = file_view.read_with(cx, |v, _| v.buffer().clone());
+    draw(cx);
+    (file, file_view, buffer)
+}
+
+#[gpui::test]
+fn autosave_after_a_delay_and_on_focus_change(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, settings) = open(
+        cx,
+        &daemon,
+        "[editor]\nautosave = \"after_delay\"\nautosave_delay_ms = 200\n",
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (file, _, buffer) = open_text(&view, cx, dir.path(), "a.txt", "a\n");
+    cx.simulate_input("x");
+    assert!(
+        buffer.read_with(cx, |b, _| b.is_dirty()),
+        "not before the delay"
+    );
+    cx.executor().advance_clock(Duration::from_millis(300));
+    wait_until(cx, "the save after the delay", |cx| {
+        buffer.read_with(cx, |b, _| !b.is_dirty() && !b.is_saving())
+    });
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "xa\n");
+
+    settings
+        .write_user(
+            "editor.autosave",
+            toml::Value::String("on_focus_change".into()),
+        )
+        .unwrap();
+    wait_until(cx, "the new setting", |_| {
+        settings
+            .get::<hutan_desktop::settings::EditorSettings>()
+            .autosave
+            == hutan_desktop::settings::Autosave::OnFocusChange
+    });
+    cx.simulate_input("y");
+    cx.executor().advance_clock(Duration::from_millis(300));
+    draw(cx);
+    assert!(
+        buffer.read_with(cx, |b, _| b.is_dirty()),
+        "no delay save any more"
+    );
+    // The palette takes the keyboard from the code.
+    cx.simulate_keystrokes("cmd-shift-p");
+    wait_until(cx, "the save when the code lost the keyboard", |cx| {
+        buffer.read_with(cx, |b, _| !b.is_dirty() && !b.is_saving())
+    });
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "xya\n");
+}
+
+#[gpui::test]
+fn closing_a_changed_file_asks_to_save_it(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, "");
+    let dir = tempfile::tempdir().unwrap();
+    let (file, _, buffer) = open_text(&view, cx, dir.path(), "notes.txt", "a\n");
+    let item = ItemRef::file(buffer.read_with(cx, |b, _| b.path().display().to_string()));
+    let has_tab = |view: &Entity<Workbench>, cx: &mut VisualTestContext| {
+        view.read_with(cx, |wb, _| wb.state().find_item(&item).is_some())
+    };
+    cx.simulate_input("x");
+
+    // Cancel keeps the tab and the changes.
+    cx.dispatch_action(actions::ClosePaneItem);
+    draw(cx);
+    let title = view.read_with(cx, |wb, _| wb.modal().map(|m| m.title.to_string()));
+    assert_eq!(title.as_deref(), Some("Save changes to notes.txt?"));
+    view.update_in(cx, |wb, window, cx| wb.close_modal(window, cx));
+    draw(cx);
+    assert!(has_tab(&view, cx) && buffer.read_with(cx, |b, _| b.is_dirty()));
+
+    // Save writes the file, then closes the tab.
+    cx.dispatch_action(actions::ClosePaneItem);
+    draw(cx);
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
+    wait_until(cx, "the save and the close", |cx| !has_tab(&view, cx));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "xa\n");
+
+    // Don't Save closes it and leaves the file as it was.
+    let (file, _, buffer) = open_text(&view, cx, dir.path(), "other.txt", "b\n");
+    let other = ItemRef::file(buffer.read_with(cx, |b, _| b.path().display().to_string()));
+    cx.simulate_input("z");
+    cx.dispatch_action(actions::ClosePaneItem);
+    draw(cx);
+    assert!(view.read_with(cx, |wb, _| wb.modal().is_some()));
+    view.update_in(cx, |wb, window, cx| wb.choose_modal_alternative(window, cx));
+    draw(cx);
+    assert!(view.read_with(cx, |wb, _| wb.state().find_item(&other).is_none()));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "b\n");
+}
+
+#[gpui::test]
+fn typing_works_with_vim_mode_on(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
+    let dir = tempfile::tempdir().unwrap();
+    let (_, _, buffer) = open_text(&view, cx, dir.path(), "v.txt", "end\n");
+    cx.simulate_input("ijk ");
+    cx.simulate_keystrokes("backspace enter");
+    assert_eq!(
+        buffer.read_with(cx, |b, _| b.text().to_string()),
+        "ijk\nend\n",
+        "keys type, never run Vim commands, in a file tab (E-8 wires Vim)"
+    );
+}
