@@ -388,10 +388,12 @@ async fn renders_carry_the_same_viewport_top_as_the_blocks_answer() {
         view.screen.lines[usize::try_from(row).unwrap()].trim_end(),
         "$ cmd"
     );
-    // More output moves the number in the frames, and the answer follows.
+    // More output moves the number in the frames, and the answer follows. The line is scrolled
+    // in twice: the tty echoes `x\r\n` at once, then `cat` writes its own `x\r\n`. The view
+    // can show the state in between, so wait for the last scroll before comparing.
     client.send_input(terminal, b"x\n").await.unwrap();
-    view.wait_for("the screen to scroll", |s| {
-        s.viewport_top > answer.viewport_top
+    view.wait_for("the echo and cat's output to scroll the screen", |s| {
+        s.viewport_top == answer.viewport_top + 2
     })
     .await;
     let later = client.terminal_blocks(terminal, None, 10).await.unwrap();
