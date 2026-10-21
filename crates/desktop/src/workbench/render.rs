@@ -869,6 +869,16 @@ impl Workbench {
                 this.open_file_dialog(window, cx);
             }),
         )
+        .on_action(
+            cx.listener(|this, _: &actions::OpenFileInSplitRight, window, cx| {
+                this.split_focused_file(Edge::Right, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::OpenFileInSplitDown, window, cx| {
+                this.split_focused_file(Edge::Bottom, window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, a: &actions::OpenFile, window, cx| {
             let target = super::files::FileOpen {
                 path: a.0.path.clone().into(),

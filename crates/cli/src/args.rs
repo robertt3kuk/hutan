@@ -121,8 +121,8 @@ pub enum Command {
     /// (atomically, with a version check), find and search (`hutan fs ls|cat|stat|write|find|search`)
     #[command(subcommand)]
     Fs(FsCommand),
-    /// Resolve `path[:line[:col]]` through the daemon and print where it is (the desktop does
-    /// not open files from here yet)
+    /// Open `path[:line[:col]]` in a file tab of the Hutan window (looked up through the
+    /// daemon); without a window, print where the file is
     Open(OpenArgs),
     /// List the permission requests of agent chats that wait for an answer
     Approvals,

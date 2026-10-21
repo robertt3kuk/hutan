@@ -389,9 +389,10 @@ fn runs_for(
         let shown = display.text_range(rel);
         if shown.start > at {
             runs.push(run(shown.start - at, None));
+            at = shown.start;
         }
-        if shown.end > shown.start.max(at) {
-            runs.push(run(shown.end - shown.start.max(at), Some(span.token)));
+        if shown.end > at {
+            runs.push(run(shown.end - at, Some(span.token)));
             at = shown.end;
         }
     }
@@ -515,6 +516,31 @@ mod tests {
         );
         assert_eq!(runs[0].color, style.token_color(Some(Token::Keyword)));
         assert_eq!(runs[1].color, style.token_color(None));
+    }
+
+    #[test]
+    fn spans_right_of_the_window_never_overrun_the_text() {
+        // Columns 0..5 of a long line; the span lies past the window, the second one inside.
+        let display = DisplayLine::build("0123456789abcdef", 0, 5);
+        let spans = vec![
+            HighlightSpan {
+                range: 1..2,
+                token: Token::Keyword,
+            },
+            HighlightSpan {
+                range: 10..12,
+                token: Token::String,
+            },
+            HighlightSpan {
+                range: 13..14,
+                token: Token::Number,
+            },
+        ];
+        let runs = runs_for(&display, 0..16, &spans, &style());
+        assert_eq!(
+            runs.iter().map(|r| r.len).sum::<usize>(),
+            display.text.len()
+        );
     }
 
     #[test]

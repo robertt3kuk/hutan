@@ -8,7 +8,7 @@ use crate::common;
 use std::time::{Duration, Instant};
 
 use common::{TestDaemon, draw, open_with, wait_until};
-use gpui::{Entity, TestAppContext, VisualTestContext};
+use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use hutan_code_view::{FailReason, LoadState};
 use hutan_desktop::workbench::model::{Edge, ItemRef, WorkbenchState};
 use hutan_desktop::workbench::{FileOpen, Workbench, actions};
@@ -222,5 +222,35 @@ fn large_files_ask_first_and_binary_files_are_refused(cx: &mut TestAppContext) {
             }
         ),
         "{state:?}"
+    );
+}
+
+#[gpui::test]
+fn workbench_actions_reach_the_window_from_a_focused_file(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, "");
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("lib.rs");
+    std::fs::write(&file, rust_source(50)).unwrap();
+    let path = open_file(&view, cx, &file);
+    draw(cx);
+    let focused = cx.update(|window, cx| {
+        let code = view
+            .read(cx)
+            .focused_file_view()
+            .unwrap()
+            .read(cx)
+            .code()
+            .clone();
+        code.focus_handle(cx).is_focused(window)
+    });
+    assert!(focused, "the file's code has the keyboard");
+    cx.dispatch_action(actions::OpenFileInSplitRight);
+    draw(cx);
+    let panes = view.read_with(cx, |wb, _| wb.state().center.panes().len());
+    assert_eq!(panes, 2, "the palette command reached the workbench");
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.state().active_center_item()),
+        Some(ItemRef::file(path))
     );
 }

@@ -228,3 +228,17 @@ fn dragging_selects_and_copy_takes_the_text(cx: &mut TestAppContext) {
     );
     assert_eq!(view.read_with(cx, |v, cx| v.position(cx)), (2, 6));
 }
+
+#[gpui::test]
+fn a_markdown_file_draws_with_its_inline_highlights(cx: &mut TestAppContext) {
+    let text = include_str!("../../../../docs/editor.md");
+    let (view, buffer, cx) = open(cx, "editor.md", text, true);
+    assert!(buffer.read_with(cx, |b, _| b.wait_for_syntax(Duration::from_secs(30))));
+    draw(cx);
+    view.update(cx, |v, cx| v.scroll_lines(20.0, cx));
+    draw(cx);
+    assert!(
+        view.read_with(cx, |v, _| v.paint_times().first_highlighted)
+            .is_some()
+    );
+}

@@ -118,6 +118,8 @@ actions!(
         ReviewChanges,
         RunSetup,
         OpenFileDialog,
+        OpenFileInSplitRight,
+        OpenFileInSplitDown,
     ]
 );
 
@@ -559,6 +561,8 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Workspace: Jump to Workspace or Session…", OpenJump),
         command("Workspace: Go to Home", GoHome),
         command("File: Open File…", OpenFileDialog),
+        command("File: Open in Split Right", OpenFileInSplitRight),
+        command("File: Open in Split Down", OpenFileInSplitDown),
         command(
             "Workspace: Pin / Unpin Active Workspace",
             PinActiveWorkspace,

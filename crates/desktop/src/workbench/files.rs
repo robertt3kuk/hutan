@@ -484,6 +484,26 @@ impl Workbench {
         self.focus_root(window, cx);
     }
 
+    /// "File: Open in Split Right / Down": the focused file tab's file in a new split.
+    pub(crate) fn split_focused_file(
+        &mut self,
+        edge: Edge,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pane = self.state.active_pane_id();
+        let path = self
+            .state
+            .active_pane()
+            .and_then(|p| p.active_item())
+            .and_then(ItemRef::as_file)
+            .map(str::to_owned);
+        match path {
+            Some(path) => self.open_file_in_split(pane, &path, edge, window, cx),
+            None => self.set_notice("The focused tab is not a file", cx),
+        }
+    }
+
     /// Entries of a file tab's menu: the same file in a new split (one buffer, two views), and
     /// its path.
     pub(crate) fn file_tab_entries(&self, pane: PaneId, path: &str) -> Vec<MenuEntry> {
