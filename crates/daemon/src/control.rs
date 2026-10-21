@@ -914,7 +914,8 @@ pub fn always_ask(request: &Request) -> bool {
         | Request::SessionSendText(_)
         | Request::DaemonShutdown(_)
         | Request::HistoryClear(_)
-        | Request::AssistantConfigure(_) => true,
+        | Request::AssistantConfigure(_)
+        | Request::CheckpointRemove(_) => true,
         Request::SessionClose(r) => r.stop_running,
         Request::UiRun(r) => r.action == "workbench::Quit",
         Request::UiSetSetting(r) => r.namespace == "assistant",
@@ -972,6 +973,7 @@ fn target_session(request: &Request) -> Option<SessionId> {
         Request::ChatSend(r) => Some(r.session_id),
         Request::ChatRetry(r) => Some(r.session_id),
         Request::ChatSetModel(r) => Some(r.session_id),
+        Request::CheckpointRemove(r) => r.session_id,
         _ => None,
     }
 }
@@ -1197,6 +1199,18 @@ fn describe_request(request: &Request, session: &dyn Fn(SessionId) -> String) ->
             "change the setting {}.{} ({} layer)",
             r.namespace, r.key, r.layer
         ),
+        Request::CheckpointRemove(r) => match (r.checkpoint_id, r.session_id) {
+            (Some(id), _) => format!(
+                "delete the checkpoint {id} (the saved files of one agent turn; it can no longer \
+                 be restored)"
+            ),
+            (None, Some(id)) => format!(
+                "delete every checkpoint of {} (the saved files of its agent turns; they can no \
+                 longer be restored)",
+                session(id)
+            ),
+            (None, None) => "delete checkpoints".to_owned(),
+        },
         other => format!("make the request `{}`", request_method(other)),
     };
     Described { title, detail }

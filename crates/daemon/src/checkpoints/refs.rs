@@ -48,7 +48,7 @@ const FORMAT: &str = "--format=%(refname)%00%(objectname)%00%(tree)%00%(parent)%
 %(trailers:key=Hutan-Checkpoint,valueonly,separator=%x2C)";
 
 impl Checkpoints {
-    fn repo_git(&self, common_dir: &Path) -> Git {
+    pub(super) fn repo_git(&self, common_dir: &Path) -> Git {
         Git::new(
             common_dir,
             &self.inner.config.git_env,

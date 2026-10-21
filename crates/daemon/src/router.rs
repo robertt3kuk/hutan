@@ -577,6 +577,22 @@ impl Router {
                 ok(&self.files.watch(conn, agent, req).await?)
             }
             Request::FsUnwatch(req) => ok(&self.files.unwatch(conn.id(), req).await?),
+            Request::CheckpointList(req) => {
+                ok(&self.registry.chats().checkpoints().list(req).await?)
+            }
+            Request::CheckpointDiff(req) => {
+                ok(&self.registry.chats().checkpoints().diff(req).await?)
+            }
+            Request::CheckpointRemove(req) => {
+                let target = match (req.checkpoint_id, req.session_id) {
+                    (Some(id), _) => id.to_string(),
+                    (None, Some(session)) => session.to_string(),
+                    (None, None) => String::new(),
+                };
+                let removed = self.registry.chats().checkpoints().remove(req).await;
+                audit(Actor::of(conn), "checkpoint.remove", &target, &removed);
+                ok(&removed?)
+            }
         }
     }
 
@@ -888,6 +904,11 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::FsSearchCancel(_) => ("fs.search.cancel", Read),
         Request::FsWatch(_) => ("fs.watch", Read),
         Request::FsUnwatch(_) => ("fs.unwatch", Read),
+        // Checkpoints (protocol 0.37): reading them is free; removing one is a change an agent
+        // asks for under `[control]` (restoring is the user's alone, CK-4).
+        Request::CheckpointList(_) => ("checkpoint.list", Read),
+        Request::CheckpointDiff(_) => ("checkpoint.diff", Read),
+        Request::CheckpointRemove(_) => ("checkpoint.remove", Mutate),
         Request::FsWriteBegin(_) => ("fs.write.begin", Mutate),
         Request::FsWriteChunk(_) => ("fs.write.chunk", Mutate),
         Request::FsWriteCommit(_) => ("fs.write.commit", Mutate),

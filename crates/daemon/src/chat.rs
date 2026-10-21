@@ -540,6 +540,8 @@ impl ChatManager {
                 }
             }
         });
+        // Checkpoint events go to every client; a chat's checkpoint state to its `ChatInfo`.
+        checkpoints.connect(bus.clone(), notifier.clone());
         let manager = Arc::new(Self {
             bus,
             queues: Queues::new(storage.clone()),

@@ -71,6 +71,7 @@ pub const CAPABILITIES: &[&str] = &[
     "chat.mode",
     "finish",
     "chat.queue",
+    "checkpoint",
 ];
 
 /// How long a closing connection may take to flush already queued messages.

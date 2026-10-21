@@ -28,6 +28,10 @@ use hutan_protocol::chat::{
     ChatSentNow, HISTORY_MAX_LIMIT, QuestionAnswer, QuestionInfo, QuestionList,
     QuestionListRequest, QueuedMessage,
 };
+use hutan_protocol::checkpoint::{
+    CheckpointDiff, CheckpointDiffRequest, CheckpointList, CheckpointListRequest,
+    CheckpointRemove, CheckpointRemoved,
+};
 use hutan_protocol::daemon_settings::{DaemonSettingSet, DaemonSettings};
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
 use hutan_protocol::memory::{
@@ -168,6 +172,9 @@ pub(crate) const FINISH_CAPABILITY: &str = "finish";
 /// Capability for the chat queue: `chat.queue.*`, `chat.send_now`, the `chat.queue` event and
 /// `chat.interrupt`'s `keep_queue` (protocol 0.36).
 pub(crate) const CHAT_QUEUE_CAPABILITY: &str = "chat.queue";
+/// Capability for `checkpoint.list|diff|remove`, the `checkpoint.*` events and
+/// `ChatInfo.checkpoints` (protocol 0.37).
+pub(crate) const CHECKPOINT_CAPABILITY: &str = "checkpoint";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -208,6 +215,7 @@ const CAPABILITIES: &[&str] = &[
     CHAT_MODE_CAPABILITY,
     FINISH_CAPABILITY,
     CHAT_QUEUE_CAPABILITY,
+    CHECKPOINT_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -555,6 +563,16 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == CHAT_QUEUE_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `checkpoint` (protocol 0.37): checkpoints of
+    /// agent turns can be listed, diffed and removed, and `ChatInfo.checkpoints` says whether a
+    /// chat gets them.
+    pub fn supports_checkpoints(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == CHECKPOINT_CAPABILITY)
     }
 
     /// True when the daemon advertised capability `worktree.index` (protocol 0.34): the files
@@ -1343,6 +1361,33 @@ impl Client {
             item_id,
         }))
         .await
+    }
+
+    /// `checkpoint.list` (protocol 0.37): one page of checkpoints, newest first; `next` asks
+    /// for the page after it.
+    pub async fn checkpoint_list(
+        &self,
+        request: CheckpointListRequest,
+    ) -> Result<CheckpointList, ClientError> {
+        self.call(Request::CheckpointList(request)).await
+    }
+
+    /// `checkpoint.diff` (protocol 0.37): what changed from a checkpoint's start to its end, to
+    /// the checkout now, or to another checkpoint's end; bounded like `worktree.diff`.
+    pub async fn checkpoint_diff(
+        &self,
+        request: CheckpointDiffRequest,
+    ) -> Result<CheckpointDiff, ClientError> {
+        self.call(Request::CheckpointDiff(request)).await
+    }
+
+    /// `checkpoint.remove` (protocol 0.37): one checkpoint, or every checkpoint of a session;
+    /// answers with the ones that went.
+    pub async fn checkpoint_remove(
+        &self,
+        request: CheckpointRemove,
+    ) -> Result<CheckpointRemoved, ClientError> {
+        self.call(Request::CheckpointRemove(request)).await
     }
 
     /// One page of a chat's journal, oldest first (see [`ChatHistoryRequest`]).

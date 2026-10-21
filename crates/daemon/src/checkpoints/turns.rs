@@ -29,15 +29,25 @@
 //!
 //! Mawas conversations (assistants) and direct model chats have no checkpoints: they do not
 //! edit files.
+//!
+//! **Clients** (protocol 0.37, capability `checkpoint`) list, diff and remove checkpoints
+//! through the requests of `requests`; `checkpoint.created` goes out when a turn's checkpoint is
+//! recorded, `checkpoint.removed` when checkpoints go (`checkpoint.remove`, retention), and a
+//! chat's `ChatInfo.checkpoints` (with `checkpoint.state`) follows [`TurnCheckpoints::status`].
+
+mod requests;
+
+pub use requests::LISTED;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use hutan_core::{
     CheckpointId, CheckpointKind, CheckpointState, CheckpointStatus, SessionId, SkippedFile, TurnId,
 };
+use hutan_protocol::messages::Event;
 use hutan_storage::{CheckpointFilter, CheckpointRow, Storage, StorageError};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -47,7 +57,9 @@ use tracing::{debug, info, warn};
 use super::refs::RefInfo;
 use super::retention::{self, Policy};
 use super::{Caps, CheckpointError, Checkpoints, Config, Kind, Label, STORE_DIR, Snapshot, caps};
+use crate::bus::EventBus;
 use crate::config::{CheckpointMode, CheckpointSettings, ProjectCheckpoints};
+use crate::registry::ChatNotifier;
 
 /// How long a turn's prompt waits for its start snapshot (ADR 0019 Decision 6).
 pub const START_BUDGET: Duration = Duration::from_secs(5);
@@ -101,11 +113,21 @@ pub struct TurnCheckpoints {
     in_flight: watch::Sender<usize>,
     /// Reconcile and retention, one at a time.
     upkeep: tokio::sync::Mutex<()>,
+    /// Where events go, once the chat manager connected the service.
+    events: OnceLock<Events>,
+}
+
+/// The bus that takes `checkpoint.*` events and the registry that keeps `ChatInfo.checkpoints`.
+#[derive(Debug)]
+struct Events {
+    bus: Arc<EventBus>,
+    registry: ChatNotifier,
 }
 
 /// One chat session.
 #[derive(Debug)]
 struct Slot {
+    session: SessionId,
     cwd: PathBuf,
     scope: parking_lot::Mutex<Scope>,
     state: parking_lot::Mutex<SlotState>,
@@ -240,12 +262,57 @@ impl TurnCheckpoints {
             sessions: parking_lot::Mutex::new(HashMap::new()),
             in_flight: watch::Sender::new(0),
             upkeep: tokio::sync::Mutex::new(()),
+            events: OnceLock::new(),
         })
     }
 
     /// The snapshot engine.
     pub fn engine(&self) -> &Checkpoints {
         &self.engine
+    }
+
+    /// Sends the service's events to `bus`, and tells `registry` when a chat's checkpoint state
+    /// may have changed. Once; later calls change nothing.
+    pub(crate) fn connect(&self, bus: Arc<EventBus>, registry: ChatNotifier) {
+        let _ = self.events.set(Events { bus, registry });
+    }
+
+    /// The registry reads the session's [`status`](Self::status) again.
+    fn state_changed(&self, session: SessionId) {
+        if let Some(events) = self.events.get() {
+            let registry = events.registry.clone();
+            tokio::spawn(async move { registry.checkpoints(session).await });
+        }
+    }
+
+    fn publish(&self, event: &Event) {
+        if let Some(events) = self.events.get()
+            && let Err(error) = events.bus.publish(event)
+        {
+            warn!(%error, "checkpoints: publishing an event");
+        }
+    }
+
+    /// Writes the final row of a turn's checkpoint; `checkpoint.created` follows once it is
+    /// written, for a checkpoint that `checkpoint.list` shows.
+    async fn record(&self, row: CheckpointRow) {
+        let created = (self.events.get().is_some() && LISTED.contains(&row.state)).then(|| {
+            Event::CheckpointCreated {
+                checkpoint: Box::new(row.info()),
+            }
+        });
+        if self.write(row).await
+            && let Some(event) = created
+        {
+            self.publish(&event);
+        }
+    }
+
+    /// `checkpoint.removed`.
+    fn announce_removed(&self, ids: Vec<CheckpointId>) {
+        if !ids.is_empty() {
+            self.publish(&Event::CheckpointRemoved { ids });
+        }
     }
 
     /// `[checkpoints]` as the service uses it now.
@@ -258,11 +325,18 @@ impl TurnCheckpoints {
     pub fn apply_settings(&self, settings: CheckpointSettings) {
         let on = settings.mode == CheckpointMode::On;
         *self.settings.write() = settings;
-        if !on {
-            return;
-        }
-        let slots: Vec<Arc<Slot>> = self.sessions.lock().values().cloned().collect();
-        for slot in slots {
+        let slots: Vec<(SessionId, Arc<Slot>)> = self
+            .sessions
+            .lock()
+            .iter()
+            .map(|(id, slot)| (*id, slot.clone()))
+            .collect();
+        for (session, slot) in slots {
+            // `mode` may have changed what the session's status says.
+            self.state_changed(session);
+            if !on {
+                continue;
+            }
             let switched_off = {
                 let mut state = slot.state.lock();
                 let off = matches!(
@@ -351,8 +425,18 @@ impl TurnCheckpoints {
             .is_some()
     }
 
-    fn set_status(slot: &Slot, status: Option<CheckpointStatus>) {
-        slot.state.lock().status = status;
+    /// What the last snapshot said about the session's checkout; the registry hears of a
+    /// change.
+    fn set_status(&self, slot: &Slot, status: Option<CheckpointStatus>) {
+        let changed = {
+            let mut state = slot.state.lock();
+            let changed = state.status != status;
+            state.status = status;
+            changed
+        };
+        if changed {
+            self.state_changed(slot.session);
+        }
     }
 
     // Sessions -------------------------------------------------------------------------------
@@ -369,6 +453,7 @@ impl TurnCheckpoints {
                 }
                 _ => {
                     let slot = Arc::new(Slot {
+                        session,
                         cwd,
                         scope: parking_lot::Mutex::new(scope),
                         state: parking_lot::Mutex::new(SlotState::default()),
@@ -380,6 +465,8 @@ impl TurnCheckpoints {
         };
         let project = self.project(&slot);
         if project.mode == CheckpointMode::Off {
+            // `ChatInfo.checkpoints` says so at once.
+            self.state_changed(session);
             return;
         }
         let this = Arc::clone(self);
@@ -396,7 +483,9 @@ impl TurnCheckpoints {
                     classify(error).1
                 }
             };
-            Self::set_status(&slot, status);
+            // `ChatInfo.checkpoints` gets its first value now, whether or not it changed.
+            slot.state.lock().status = status;
+            this.state_changed(session);
         });
     }
 
@@ -465,7 +554,7 @@ impl TurnCheckpoints {
             Ok(result) => match settled(&row, result) {
                 (written, Ok(snapshot)) => {
                     row = written;
-                    Self::set_status(&slot, None);
+                    self.set_status(&slot, None);
                     Start::Taken(Box::new(snapshot))
                 }
                 (written, Err(error)) => {
@@ -573,14 +662,14 @@ impl TurnCheckpoints {
     async fn record_failure(&self, slot: &Slot, mut row: CheckpointRow, error: &CheckpointError) {
         let (state, status) = classify(error);
         if state != CheckpointState::Failed {
-            Self::set_status(slot, status);
+            self.set_status(slot, status);
         }
         row.state = state;
         row.reason = Some(error.to_string());
         row.reference = None;
         row.ended_ms = Some(now_ms());
         debug!(checkpoint = %row.id, %error, state = state.as_str(), "no checkpoint for this turn");
-        self.write(row).await;
+        self.record(row).await;
     }
 
     /// Records the end of a turn; returns the repository whose retention is due.
@@ -615,7 +704,7 @@ impl TurnCheckpoints {
             row.reference = None;
             row.ended_ms = Some(now_ms());
             row.bytes = start.bytes_hashed;
-            self.write(row).await;
+            self.record(row).await;
             self.delete_refs(&common_dir, start_ref).await;
             return None;
         }
@@ -638,7 +727,7 @@ impl TurnCheckpoints {
         row.ended_ms = Some(now_ms());
         match ended {
             Ok(end) => {
-                Self::set_status(slot, None);
+                self.set_status(slot, None);
                 row.bytes = start.bytes_hashed.saturating_add(end.bytes_hashed);
                 row.skipped = skipped(&start, Some(&end));
                 row.tree = Some(end.tree.clone());
@@ -678,7 +767,7 @@ impl TurnCheckpoints {
             Err(error) => {
                 let (state, status) = classify(&error);
                 if state != CheckpointState::Failed {
-                    Self::set_status(slot, status);
+                    self.set_status(slot, status);
                 }
                 row.state = state;
                 row.reason = Some(error.to_string());
@@ -689,7 +778,7 @@ impl TurnCheckpoints {
         }
         debug!(checkpoint = %row.id, state = row.state.as_str(), files = row.files_changed, "turn checkpoint recorded");
         // The row names the end ref before the start ref goes.
-        self.write(row).await;
+        self.record(row).await;
         self.delete_refs(&common_dir, start_ref).await;
         Some(common_dir)
     }
@@ -955,10 +1044,15 @@ impl TurnCheckpoints {
             }
             let ids: Vec<CheckpointId> = drop.into_iter().collect();
             let count = ids.len();
-            self.store("dropping old checkpoints", move |s| {
-                s.checkpoints().delete(ids)
-            })
-            .await;
+            let gone = ids.clone();
+            let deleted = self
+                .store("dropping old checkpoints", move |s| {
+                    s.checkpoints().delete(gone)
+                })
+                .await;
+            if deleted.is_some() {
+                self.announce_removed(ids);
+            }
             info!(repository = ?repository, dropped = count, refs = refs.len(), "checkpoint retention");
         }
         if let Some(dir) = repository.as_deref().filter(|d| d.is_dir())

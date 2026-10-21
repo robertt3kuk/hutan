@@ -210,6 +210,8 @@ enum Command {
         session: SessionId,
         mode: SessionMode,
     },
+    /// From the checkpoint service: whether a chat's turns get checkpoints may have changed.
+    ChatCheckpoints { session: SessionId },
     /// Whether the session is a chat session, and live.
     ChatTarget(SessionId, Reply<bool>),
     /// `chat.set_model`: answered once the switch is journaled.
@@ -288,6 +290,11 @@ impl ChatNotifier {
     /// The harness reports that its session mode changed (`ChatInfo.mode`).
     pub(crate) async fn mode(&self, session: SessionId, mode: SessionMode) {
         self.send(Command::ChatMode { session, mode }).await;
+    }
+
+    /// Whether the session's turns get checkpoints may have changed (`ChatInfo.checkpoints`).
+    pub(crate) async fn checkpoints(&self, session: SessionId) {
+        self.send(Command::ChatCheckpoints { session }).await;
     }
 }
 
@@ -1306,6 +1313,7 @@ impl SessionRegistry {
                 Command::ChatExited { session, exit } => self.on_chat_exited(session, &exit),
                 Command::ChatNode { session, update } => self.on_chat_node(session, *update),
                 Command::ChatMode { session, mode } => self.on_chat_mode(session, mode),
+                Command::ChatCheckpoints { session } => self.on_chat_checkpoints(session),
                 Command::InvalidatePlacements(reply) => {
                     self.invalidate_placements();
                     let _ = reply.send(Ok(()));
@@ -3609,6 +3617,32 @@ impl SessionRegistry {
         }
         chat.mode = Some(mode);
         let session = self.sessions[index].info.clone();
+        self.emit(&Event::SessionUpdated { session });
+    }
+
+    /// Whether the chat's turns get checkpoints may have changed: `ChatInfo.checkpoints`
+    /// follows what the checkpoint service says now (protocol 0.37), and `checkpoint.state`
+    /// tells when it changed. A chat the service forgot (its agent stopped) keeps the last one.
+    fn on_chat_checkpoints(&mut self, id: SessionId) {
+        let Some(status) = self.chats.checkpoints().status(id) else {
+            return;
+        };
+        let Ok(index) = self.session_index(id) else {
+            return;
+        };
+        let Some(chat) = &mut self.sessions[index].info.chat else {
+            return;
+        };
+        if chat.checkpoints.as_ref() == Some(&status) {
+            return;
+        }
+        chat.checkpoints = Some(status.clone());
+        let session = self.sessions[index].info.clone();
+        self.emit(&Event::CheckpointStateChanged {
+            session_id: id,
+            state: status.state,
+            reason: status.reason,
+        });
         self.emit(&Event::SessionUpdated { session });
     }
 

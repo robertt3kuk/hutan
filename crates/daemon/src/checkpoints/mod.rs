@@ -15,9 +15,12 @@
 //! - `snapshot`: the algorithm (seed, refresh, candidates, filters, raw hashing, tree, commit,
 //!   ref).
 //! - `refs`: listing, deleting and packing the hidden refs of a repository.
+//! - `diff`: what changed between two checkpoints (or a checkpoint and the checkout now),
+//!   bounded like `worktree.diff` (`checkpoint.diff`).
 //! - `retention`: which checkpoints go (count, age, bytes, refs).
 //! - [`turns`]: the checkpoints of chat turns: a snapshot when a turn starts and when it ends,
-//!   their rows in SQLite, the settings, reconcile at start and retention.
+//!   their rows in SQLite, the settings, reconcile at start and retention; and the requests of
+//!   clients (`checkpoint.list`, `.diff`, `.remove`) and the events they get.
 //!
 //! Snapshots of one checkout run one at a time; once started a snapshot runs to its end even
 //! when the caller stops waiting (a turn's prompt goes to the agent after a budget and the
@@ -25,6 +28,7 @@
 //! checkout's checkpoints off until [`Checkpoints::switch_on`].
 
 pub mod caps;
+mod diff;
 mod git;
 mod refs;
 mod retention;

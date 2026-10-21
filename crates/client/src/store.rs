@@ -398,6 +398,11 @@ impl StoreState {
             // chat (`Connection::chat_updates`).
             Event::ChatEvent { event, .. } => effects.chat.push(*event),
             Event::ChatQueueChanged { queue, .. } => effects.queues.push(queue),
+            // A chat's checkpoint state arrives in its `session.updated` too; checkpoints
+            // themselves are read on demand (`checkpoint.list`).
+            Event::CheckpointCreated { .. }
+            | Event::CheckpointRemoved { .. }
+            | Event::CheckpointStateChanged { .. } => {}
             Event::AgentTreeUpdated {
                 session_id,
                 nodes_changed,

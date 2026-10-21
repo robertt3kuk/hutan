@@ -228,6 +228,87 @@ impl Git {
         let output = self.write(args, input).await?;
         ensure(args, output)
     }
+
+    /// A read whose output is kept up to `cap` bytes: past it git is killed and the flag says
+    /// more was coming. It must succeed unless it was cut.
+    pub async fn read_capped(
+        &self,
+        args: &[&str],
+        cap: usize,
+    ) -> Result<(Vec<u8>, bool), CheckpointError> {
+        let args = os_args(args);
+        let step = step_name(&args);
+        let limit = self.read_timeout;
+        let mut command = self.command(&args, false, true);
+        let run = async {
+            let mut child = command.spawn().map_err(spawn_failed)?;
+            let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+                return Err(CheckpointError::Internal(
+                    "git was started without pipes".to_owned(),
+                ));
+            };
+            let errors = tokio::spawn(read_up_to(stderr, STDERR_CAP));
+            let (stdout, cut) = read_up_to(stdout, cap).await;
+            if cut {
+                let _ = child.start_kill();
+            }
+            let status = child.wait().await.map_err(|source| CheckpointError::Io {
+                what: "wait for git".to_owned(),
+                source,
+            })?;
+            let (stderr, _) = errors.await.unwrap_or_default();
+            if !cut && !status.success() {
+                let output = Output {
+                    stdout: Vec::new(),
+                    stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                    success: false,
+                };
+                return Err(CheckpointError::GitFailed {
+                    step: step.clone(),
+                    message: output.message(),
+                });
+            }
+            Ok((stdout, cut))
+        };
+        match tokio::time::timeout(limit, run).await {
+            Ok(result) => result,
+            Err(_) => Err(CheckpointError::TimedOut { step, after: limit }),
+        }
+    }
+}
+
+/// Only the message of a failure is read from stderr.
+const STDERR_CAP: usize = 64 * 1024;
+
+/// Reads up to `cap` bytes; the flag says more was coming.
+async fn read_up_to<R: tokio::io::AsyncRead + Unpin>(mut reader: R, cap: usize) -> (Vec<u8>, bool) {
+    use tokio::io::AsyncReadExt as _;
+    let mut out = Vec::new();
+    let mut chunk = vec![0_u8; 32 * 1024];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => return (out, false),
+            Ok(n) => {
+                let room = cap + 1 - out.len();
+                out.extend_from_slice(&chunk[..n.min(room)]);
+                if out.len() > cap {
+                    out.truncate(cap);
+                    return (out, true);
+                }
+            }
+        }
+    }
+}
+
+fn spawn_failed(error: std::io::Error) -> CheckpointError {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        CheckpointError::GitMissing
+    } else {
+        CheckpointError::Io {
+            what: "start git".to_owned(),
+            source: error,
+        }
+    }
 }
 
 pub(crate) fn os_args<'a>(args: &[&'a str]) -> Vec<&'a OsStr> {
@@ -256,16 +337,7 @@ async fn run(
     step: &str,
 ) -> Result<Output, CheckpointError> {
     let started = std::time::Instant::now();
-    let mut child = command.spawn().map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            CheckpointError::GitMissing
-        } else {
-            CheckpointError::Io {
-                what: "start git".to_owned(),
-                source: error,
-            }
-        }
-    })?;
+    let mut child = command.spawn().map_err(spawn_failed)?;
     // Feed stdin beside reading stdout so neither pipe can fill up and stall the other.
     let feeder = match (input, child.stdin.take()) {
         (Some(bytes), Some(mut stdin)) => Some(tokio::spawn(async move {
