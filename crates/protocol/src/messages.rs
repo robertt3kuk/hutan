@@ -36,6 +36,10 @@ use crate::fs::{
 };
 use crate::grants::{ControlGrantRevoke, ControlGrantsList};
 use crate::history::{HistorySearch, HistorySetEnabled};
+use crate::lsp::{
+    DocChange, DocOpen, DocRef, LspDiagnostic, LspDiagnosticsRequest, LspPositionRequest,
+    LspServerInfo, LspServerRef, LspStatusRequest, LspTrustRequest,
+};
 use crate::memory::{
     MemoryHistoryRequest, MemoryList, MemoryProposalResolve, MemoryProposalsList, MemoryPropose,
     MemoryScope, MemoryTransition, MemoryUpdate, MemoryWrite,
@@ -528,6 +532,48 @@ pub enum Request {
     /// it is Undo). User-only: an agent-originated connection gets `forbidden`.
     #[serde(rename = "checkpoint.restore")]
     CheckpointRestore(CheckpointRestore),
+    /// Capability `doc.sync` (protocol 0.39): the client has a document open; the hub keeps a
+    /// bounded text mirror and starts the language server of its language in a trusted
+    /// folder; answered with `DocOpened`. State of the mirror only: never a mutation.
+    #[serde(rename = "doc.open")]
+    DocOpen(DocOpen),
+    /// Capability `doc.sync`: the owner's edits (or the whole new text) of an open document;
+    /// answered with `Empty`.
+    #[serde(rename = "doc.change")]
+    DocChange(DocChange),
+    /// Capability `doc.sync`: the document was written to disk (`didSave`); answered with
+    /// `Empty`.
+    #[serde(rename = "doc.save")]
+    DocSave(DocRef),
+    /// Capability `doc.sync`: the document is closed; answered with `Empty`.
+    #[serde(rename = "doc.close")]
+    DocClose(DocRef),
+    /// Capability `lsp` (protocol 0.39): the servers, the trust decisions; answered with
+    /// `LspStatus`. Read-only.
+    #[serde(rename = "lsp.status")]
+    LspStatus(LspStatusRequest),
+    /// Capability `lsp`: what the servers published; answered with `LspDiagnosticsResult`.
+    /// Read-only.
+    #[serde(rename = "lsp.diagnostics")]
+    LspDiagnostics(LspDiagnosticsRequest),
+    /// Capability `lsp`: hover at a position of an open document; answered with `LspHover`.
+    /// Read-only.
+    #[serde(rename = "lsp.hover")]
+    LspHover(LspPositionRequest),
+    /// Capability `lsp`: go to definition; answered with `LspLocations`. Read-only.
+    #[serde(rename = "lsp.definition")]
+    LspDefinition(LspPositionRequest),
+    /// Capability `lsp`: starts a server again (or looks for its binary again); answered with
+    /// `LspServerInfo`. A mutation: an agent asks per `[control]`.
+    #[serde(rename = "lsp.restart")]
+    LspRestart(LspServerRef),
+    /// Capability `lsp`: stops a server; answered with `LspServerInfo`. A mutation.
+    #[serde(rename = "lsp.stop")]
+    LspStop(LspServerRef),
+    /// Capability `lsp`: the user's decision about a folder; answered with `LspTrustResult`.
+    /// User-only: an agent-originated connection gets `forbidden`.
+    #[serde(rename = "lsp.trust")]
+    LspTrust(LspTrustRequest),
 }
 
 impl Request {
@@ -1307,6 +1353,23 @@ pub enum Event {
         files_searched: u64,
         hits: u32,
     },
+    /// Capability `lsp` (protocol 0.39): a language server changed state (it started, became
+    /// ready, crashed, stopped, was found missing or untrusted); `server` is the whole entry.
+    #[serde(rename = "lsp.state")]
+    LspState { server: Box<LspServerInfo> },
+    /// Capability `lsp`: a server replaced the diagnostics of `path` (at most 4 a second per
+    /// file; the whole set, an empty one clears the file). Sent to the connections that have
+    /// the document open, outside the replay ring: it carries the seq of the last retained
+    /// event and is never replayed; a client that missed one asks `lsp.diagnostics`.
+    #[serde(rename = "lsp.diagnostics")]
+    LspDiagnosticsChanged {
+        path: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<i32>,
+        diagnostics: Vec<LspDiagnostic>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        truncated: bool,
+    },
 }
 
 impl Event {
@@ -1320,6 +1383,7 @@ impl Event {
                 | Self::FsChanged { .. }
                 | Self::FsGeneration { .. }
                 | Self::FsSearchProgress { .. }
+                | Self::LspDiagnosticsChanged { .. }
         )
     }
 
@@ -1370,6 +1434,8 @@ impl Event {
         "checkpoint.created",
         "checkpoint.removed",
         "checkpoint.state",
+        "lsp.state",
+        "lsp.diagnostics",
     ];
 }
 

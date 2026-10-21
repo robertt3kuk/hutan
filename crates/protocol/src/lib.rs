@@ -1,5 +1,9 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`lsp`]: language servers in the daemon — `doc.open|change|save|close` (capability
+//!   `doc.sync`), `lsp.status|diagnostics|hover|definition|restart|stop|trust` and the events
+//!   `lsp.state` and `lsp.diagnostics` (protocol 0.39, capability `lsp`); [`resources`] lists the
+//!   servers as `services`.
 //! - [`checkpoint`]: checkpoints of agent edits on the wire — `checkpoint.list|diff|remove`, the
 //!   events `checkpoint.created|removed|state` and `ChatInfo.checkpoints` (protocol 0.37,
 //!   capability `checkpoint`, ADR 0019); restoring files to before turns —
@@ -71,6 +75,7 @@ pub mod frame;
 pub mod fs;
 pub mod grants;
 pub mod history;
+pub mod lsp;
 pub mod memory;
 pub mod messages;
 pub mod notify;
@@ -94,7 +99,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 38,
+    minor: 39,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

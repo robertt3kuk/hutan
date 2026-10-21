@@ -1,0 +1,1 @@
+{"id":222,"method":"lsp.diagnostics","params":{"min_severity":"warning","path":"/Users/me/repo/src/main.rs"}}

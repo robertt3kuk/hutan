@@ -1,0 +1,1 @@
+{"id":62,"result":{"decision":"trusted","folder":"/Users/me/repo","servers":[{"capabilities":["hover","definition","references"],"documents":2,"languages":["rust"],"name":"rust-analyzer","pid":51204,"restarts":0,"root":"/Users/me/repo","rss_bytes":1468006400,"server_id":"rust-analyzer:/Users/me/repo","state":"starting"}]}}

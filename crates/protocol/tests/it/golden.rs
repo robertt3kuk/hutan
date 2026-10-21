@@ -38,6 +38,7 @@ use hutan_protocol::control::ControlMessage;
 use hutan_protocol::fs::*;
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
 use hutan_protocol::history::*;
+use hutan_protocol::lsp::*;
 use hutan_protocol::memory::*;
 use hutan_protocol::messages::*;
 use hutan_protocol::notify::{
@@ -782,8 +783,79 @@ fn resource_sample() -> ResourceSample {
                 truncated: true,
             },
         ],
+        services: vec![],
         daemon: process_info(912, 1, "hutand", "hutand"),
         truncated: false,
+    }
+}
+
+fn lsp_server_info(state: LspServerState) -> LspServerInfo {
+    LspServerInfo {
+        server_id: "rust-analyzer:/Users/me/repo".into(),
+        name: "rust-analyzer".into(),
+        root: "/Users/me/repo".into(),
+        languages: vec!["rust".into()],
+        state,
+        reason: None,
+        pid: Some(51_204),
+        restarts: 0,
+        rss_bytes: Some(1_468_006_400),
+        documents: 2,
+        install: None,
+        setting: None,
+        trust_pending: false,
+        capabilities: vec!["hover".into(), "definition".into(), "references".into()],
+    }
+}
+
+fn lsp_not_installed() -> LspServerInfo {
+    LspServerInfo {
+        state: LspServerState::NotInstalled,
+        reason: Some("`rust-analyzer` was not found on the login PATH".into()),
+        pid: None,
+        rss_bytes: None,
+        documents: 1,
+        install: Some("rustup component add rust-analyzer".into()),
+        setting: Some("lsp.servers.rust-analyzer.command".into()),
+        capabilities: vec![],
+        ..lsp_server_info(LspServerState::NotInstalled)
+    }
+}
+
+fn lsp_untrusted() -> LspServerInfo {
+    LspServerInfo {
+        state: LspServerState::Untrusted,
+        reason: Some("the folder is not trusted yet: `hutan lsp trust /Users/me/repo`".into()),
+        pid: None,
+        rss_bytes: None,
+        documents: 1,
+        trust_pending: true,
+        capabilities: vec![],
+        ..lsp_server_info(LspServerState::Untrusted)
+    }
+}
+
+fn lsp_diagnostic() -> LspDiagnostic {
+    LspDiagnostic {
+        range: LspRange {
+            start: LspPosition {
+                line: 41,
+                character: 8,
+            },
+            end: LspPosition {
+                line: 41,
+                character: 15,
+            },
+        },
+        severity: Some(LspSeverity::Error),
+        code: Some("E0425".into()),
+        source: Some("rustc".into()),
+        message: "cannot find value `missing` in this scope".into(),
+        related: vec![LspRelated {
+            path: "/Users/me/repo/src/lib.rs".into(),
+            range: LspRange::default(),
+            message: "similarly named function `mising` defined here".into(),
+        }],
     }
 }
 
@@ -2880,6 +2952,137 @@ fn requests() -> Vec<(&'static str, Request)> {
                 plan_digest: plan_digest().into(),
             }),
         ),
+        (
+            "doc_open",
+            Request::DocOpen(DocOpen {
+                path: "/Users/me/repo/src/main.rs".into(),
+                language: None,
+                version: 1,
+                text: "fn main() {}\n".into(),
+            }),
+        ),
+        (
+            "doc_open_language",
+            Request::DocOpen(DocOpen {
+                path: "/Users/me/repo/web/app.tsx".into(),
+                language: Some("typescriptreact".into()),
+                version: 0,
+                text: String::new(),
+            }),
+        ),
+        (
+            "doc_change_edits",
+            Request::DocChange(DocChange {
+                doc_id: "d1".into(),
+                version: 2,
+                edits: vec![DocEdit {
+                    start: LspPosition {
+                        line: 0,
+                        character: 11,
+                    },
+                    end: LspPosition {
+                        line: 0,
+                        character: 11,
+                    },
+                    text: "println!()".into(),
+                }],
+                text: None,
+            }),
+        ),
+        (
+            "doc_change_full",
+            Request::DocChange(DocChange {
+                doc_id: "d1".into(),
+                version: 3,
+                edits: vec![],
+                text: Some("fn main() {}\n".into()),
+            }),
+        ),
+        (
+            "doc_save",
+            Request::DocSave(DocRef {
+                doc_id: "d1".into(),
+            }),
+        ),
+        (
+            "doc_close",
+            Request::DocClose(DocRef {
+                doc_id: "d1".into(),
+            }),
+        ),
+        ("lsp_status", Request::LspStatus(LspStatusRequest::default())),
+        (
+            "lsp_status_workspace",
+            Request::LspStatus(LspStatusRequest {
+                workspace_id: Some(ws()),
+            }),
+        ),
+        (
+            "lsp_diagnostics",
+            Request::LspDiagnostics(LspDiagnosticsRequest::default()),
+        ),
+        (
+            "lsp_diagnostics_path",
+            Request::LspDiagnostics(LspDiagnosticsRequest {
+                path: Some("/Users/me/repo/src/main.rs".into()),
+                workspace_id: None,
+                min_severity: Some(LspSeverity::Warning),
+            }),
+        ),
+        (
+            "lsp_diagnostics_workspace",
+            Request::LspDiagnostics(LspDiagnosticsRequest {
+                path: None,
+                workspace_id: Some(ws()),
+                min_severity: None,
+            }),
+        ),
+        (
+            "lsp_hover",
+            Request::LspHover(LspPositionRequest {
+                path: "/Users/me/repo/src/main.rs".into(),
+                position: LspPosition {
+                    line: 3,
+                    character: 9,
+                },
+            }),
+        ),
+        (
+            "lsp_definition",
+            Request::LspDefinition(LspPositionRequest {
+                path: "/Users/me/repo/src/main.rs".into(),
+                position: LspPosition {
+                    line: 3,
+                    character: 9,
+                },
+            }),
+        ),
+        (
+            "lsp_restart",
+            Request::LspRestart(LspServerRef {
+                server_id: "rust-analyzer:/Users/me/repo".into(),
+            }),
+        ),
+        (
+            "lsp_stop",
+            Request::LspStop(LspServerRef {
+                server_id: "rust-analyzer:/Users/me/repo".into(),
+            }),
+        ),
+        (
+            "lsp_trust",
+            Request::LspTrust(LspTrustRequest {
+                folder: "/Users/me/repo".into(),
+                decision: LspTrust::Trusted,
+            }),
+        ),
+        (
+            "lsp_trust_ask",
+            Request::LspTrust(LspTrustRequest {
+                folder: "/Users/me/repo".into(),
+                decision: LspTrust::Ask,
+            }),
+        ),
     ]
 }
 
@@ -3944,6 +4147,75 @@ fn events() -> Vec<(&'static str, Event)> {
                     },
                 ],
                 overflow: false,
+            },
+        ),
+        (
+            "resources_updated_services",
+            Event::ResourcesUpdated {
+                sample: Box::new(ResourceSample {
+                    services: vec![ServiceResources {
+                        service_id: "lsp:rust-analyzer:/Users/me/repo".into(),
+                        kind: "lsp".into(),
+                        label: "rust-analyzer /Users/me/repo".into(),
+                        processes: vec![
+                            process_info(
+                                51_204,
+                                912,
+                                "rust-analyzer",
+                                "/opt/homebrew/bin/rust-analyzer",
+                            ),
+                            process_info(
+                                51_230,
+                                51_204,
+                                "rust-analyzer-proc-macro-srv",
+                                "rust-analyzer-proc-macro-srv",
+                            ),
+                        ],
+                        totals: ResourceTotals {
+                            processes: 2,
+                            cpu_percent: 0.0,
+                            rss_bytes: 8_388_608,
+                        },
+                        truncated: false,
+                    }],
+                    ..resource_sample()
+                }),
+            },
+        ),
+        (
+            "lsp_state",
+            Event::LspState {
+                server: Box::new(lsp_server_info(LspServerState::Ready)),
+            },
+        ),
+        (
+            "lsp_state_not_installed",
+            Event::LspState {
+                server: Box::new(lsp_not_installed()),
+            },
+        ),
+        (
+            "lsp_state_untrusted",
+            Event::LspState {
+                server: Box::new(lsp_untrusted()),
+            },
+        ),
+        (
+            "lsp_diagnostics",
+            Event::LspDiagnosticsChanged {
+                path: "/Users/me/repo/src/main.rs".into(),
+                version: Some(4),
+                diagnostics: vec![lsp_diagnostic()],
+                truncated: false,
+            },
+        ),
+        (
+            "lsp_diagnostics_cleared",
+            Event::LspDiagnosticsChanged {
+                path: "/Users/me/repo/src/main.rs".into(),
+                version: None,
+                diagnostics: vec![],
+                truncated: false,
             },
         ),
     ]
@@ -5972,6 +6244,174 @@ fn responses_match_fixtures() {
                 error
             }),
         ),
+        (
+            "doc_opened",
+            ControlMessage::ok(
+                55,
+                &DocOpened {
+                    doc_id: "d1".into(),
+                    owner: true,
+                    language: Some("rust".into()),
+                    servers: vec![DocServer {
+                        server_id: "rust-analyzer:/Users/me/repo".into(),
+                        name: "rust-analyzer".into(),
+                        state: LspServerState::Starting,
+                        reason: None,
+                        install: None,
+                        setting: None,
+                        trust_pending: false,
+                    }],
+                    reason: None,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "doc_opened_not_installed",
+            ControlMessage::ok(
+                56,
+                &DocOpened {
+                    doc_id: "d2".into(),
+                    owner: false,
+                    language: Some("rust".into()),
+                    servers: vec![DocServer {
+                        server_id: "rust-analyzer:/Users/me/repo".into(),
+                        name: "rust-analyzer".into(),
+                        state: LspServerState::NotInstalled,
+                        reason: Some("`rust-analyzer` was not found on the login PATH".into()),
+                        install: Some("rustup component add rust-analyzer".into()),
+                        setting: Some("lsp.servers.rust-analyzer.command".into()),
+                        trust_pending: false,
+                    }],
+                    reason: None,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "doc_opened_no_server",
+            ControlMessage::ok(
+                57,
+                &DocOpened {
+                    doc_id: "d3".into(),
+                    owner: true,
+                    language: None,
+                    servers: vec![],
+                    reason: Some("no language server is configured for `.txt` files".into()),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "lsp_status",
+            ControlMessage::ok(
+                58,
+                &LspStatus {
+                    enabled: true,
+                    trust_policy: LspTrustPolicy::Ask,
+                    max_servers: 4,
+                    servers: vec![
+                        lsp_server_info(LspServerState::Ready),
+                        lsp_untrusted(),
+                        lsp_not_installed(),
+                    ],
+                    trust: vec![LspTrustEntry {
+                        folder: "/Users/me/repo".into(),
+                        decision: LspTrust::Trusted,
+                        decided_at_ms: 1_791_894_170_000,
+                        decided_by: "cli".into(),
+                    }],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "lsp_diagnostics",
+            ControlMessage::ok(
+                59,
+                &LspDiagnosticsResult {
+                    files: vec![LspFileDiagnostics {
+                        path: "/Users/me/repo/src/main.rs".into(),
+                        version: Some(4),
+                        server_id: "rust-analyzer:/Users/me/repo".into(),
+                        diagnostics: vec![lsp_diagnostic()],
+                        truncated: false,
+                    }],
+                    truncated: false,
+                    stale: true,
+                    servers: vec![LspServerBrief {
+                        server_id: "rust-analyzer:/Users/me/repo".into(),
+                        name: "rust-analyzer".into(),
+                        state: LspServerState::Indexing,
+                    }],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "lsp_hover",
+            ControlMessage::ok(
+                60,
+                &LspHover {
+                    contents: Some("```rust\nfn main()\n```".into()),
+                    range: Some(LspRange {
+                        start: LspPosition {
+                            line: 3,
+                            character: 4,
+                        },
+                        end: LspPosition {
+                            line: 3,
+                            character: 8,
+                        },
+                    }),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "lsp_locations",
+            ControlMessage::ok(
+                61,
+                &LspLocations {
+                    locations: vec![LspLocation {
+                        path: "/Users/me/repo/src/lib.rs".into(),
+                        range: LspRange {
+                            start: LspPosition {
+                                line: 10,
+                                character: 7,
+                            },
+                            end: LspPosition {
+                                line: 10,
+                                character: 12,
+                            },
+                        },
+                    }],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "lsp_trust_result",
+            ControlMessage::ok(
+                62,
+                &LspTrustResult {
+                    folder: "/Users/me/repo".into(),
+                    decision: LspTrust::Trusted,
+                    servers: vec![lsp_server_info(LspServerState::Starting)],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "error_lsp_trust_forbidden",
+            ControlMessage::err(
+                63,
+                ErrorBody::new(
+                    ErrorCode::Forbidden,
+                    "`lsp.trust` is the user's alone: an agent cannot trust a folder",
+                ),
+            ),
+        ),
     ];
     for (name, message) in cases {
         let json = String::from_utf8(message.to_json().unwrap()).unwrap();
@@ -6172,11 +6612,13 @@ fn fs_requests_default_what_they_omit() {
 }
 
 #[test]
-fn only_fs_and_resource_events_are_connection_local() {
+fn only_fs_resource_and_diagnostics_events_are_connection_local() {
     for (name, event) in events() {
         assert_eq!(
             event.is_connection_local(),
-            name.starts_with("fs_") || name == "resources_updated",
+            name.starts_with("fs_")
+                || name.starts_with("resources_updated")
+                || name.starts_with("lsp_diagnostics"),
             "{name}"
         );
     }

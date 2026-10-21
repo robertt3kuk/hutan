@@ -15,6 +15,7 @@ mod client;
 mod connection;
 mod error;
 mod fs;
+mod lsp;
 pub mod recovery;
 mod socket;
 mod store;

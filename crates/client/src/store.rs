@@ -467,6 +467,10 @@ impl StoreState {
             // The search's stream is no state of the sessions list; whoever asks for it reads
             // it from `Client::events`.
             Event::FsSearchProgress { .. } => {}
+            // Language servers (protocol 0.39): the servers' state and the diagnostics of the
+            // open documents are no state of the sessions list either; whoever shows them
+            // reads `Client::events` and asks `lsp.status` / `lsp.diagnostics`.
+            Event::LspState { .. } | Event::LspDiagnosticsChanged { .. } => {}
             Event::UiCommand {
                 request_id,
                 window_id,

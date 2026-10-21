@@ -179,6 +179,11 @@ pub(crate) const CHECKPOINT_CAPABILITY: &str = "checkpoint";
 /// Capability for `checkpoint.preview|restore` and `fs.changed` origin `restore` (protocol
 /// 0.38).
 pub(crate) const CHECKPOINT_RESTORE_CAPABILITY: &str = "checkpoint.restore";
+/// Capability for `doc.open|change|save|close` (protocol 0.39).
+pub(crate) const DOC_SYNC_CAPABILITY: &str = "doc.sync";
+/// Capability for `lsp.*`, the `lsp.state` and `lsp.diagnostics` events and
+/// `ResourceSample.services` (protocol 0.39).
+pub(crate) const LSP_CAPABILITY: &str = "lsp";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -221,6 +226,8 @@ const CAPABILITIES: &[&str] = &[
     CHAT_QUEUE_CAPABILITY,
     CHECKPOINT_CAPABILITY,
     CHECKPOINT_RESTORE_CAPABILITY,
+    DOC_SYNC_CAPABILITY,
+    LSP_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take

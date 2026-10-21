@@ -102,12 +102,32 @@ pub struct SessionResources {
     pub truncated: bool,
 }
 
-/// One look at everything Hutan runs: the live sessions and `hutand`.
+/// What a service the daemon runs for itself (not for a session) adds up to: a language server
+/// and the processes below it (protocol 0.39).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ServiceResources {
+    /// `lsp:` and the server's id.
+    pub service_id: String,
+    /// What runs: `lsp`.
+    pub kind: String,
+    /// The service's name: `rust-analyzer` and its folder.
+    pub label: String,
+    /// Parents before their children.
+    pub processes: Vec<ProcessInfo>,
+    pub totals: ResourceTotals,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+}
+
+/// One look at everything Hutan runs: the live sessions, the daemon's services and `hutand`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResourceSample {
     pub at_ms: u64,
     /// Live sessions that have a process, in the order the sessions were created.
     pub sessions: Vec<SessionResources>,
+    /// The language servers that run (protocol 0.39): `service` nodes next to the sessions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<ServiceResources>,
     /// `hutand` itself.
     pub daemon: ProcessInfo,
     /// Some process was left out because of [`MAX_PROCESSES_TOTAL`].

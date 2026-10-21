@@ -395,6 +395,7 @@ mod tests {
         ResourceSample {
             at_ms: 1,
             sessions: vec![session],
+            services: Vec::new(),
             daemon: process(912, 1, "hutand", Some(1.0)),
             truncated: false,
         }
