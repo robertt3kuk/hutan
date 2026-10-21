@@ -706,13 +706,22 @@ impl Chat {
         transcript: impl FnOnce(&Path) -> PathBuf,
         tweak: impl FnOnce(&mut hutan_daemon::DaemonConfig, &Path),
     ) -> Self {
+        Self::start_toml("", transcript, tweak).await
+    }
+
+    /// [`start_with`](Self::start_with) with `toml` as `daemon.toml`.
+    async fn start_toml(
+        toml: &str,
+        transcript: impl FnOnce(&Path) -> PathBuf,
+        tweak: impl FnOnce(&mut hutan_daemon::DaemonConfig, &Path),
+    ) -> Self {
         let work = tempfile::tempdir().unwrap();
         let root = repository(work.path());
         let config = codex(
             &transcript(work.path()),
             &work.path().join("received.jsonl"),
         );
-        let daemon = TestDaemon::start_with("", |c| {
+        let daemon = TestDaemon::start_with(toml, |c| {
             c.codex = Some(config);
             c.checkpoints.git_env = git_env();
             tweak(c, &root);
@@ -1088,4 +1097,396 @@ async fn a_chat_outside_git_or_in_the_home_directory_records_unsupported() {
     }
     assert!(refs(&t.root).is_empty());
     t.daemon.stop().await;
+}
+
+// The requests of clients (protocol 0.37, slice CK-3) -------------------------------------------
+
+mod wire {
+    use super::*;
+
+    use common::remote_code;
+    use hutan_core::{CheckpointAvailability, CheckpointInfo};
+    use hutan_protocol::ErrorCode;
+    use hutan_protocol::chat::{ApprovalInfo, ApprovalList, ApprovalListRequest, ApprovalRespond};
+    use hutan_protocol::checkpoint::{
+        CheckpointDiff, CheckpointDiffRequest, CheckpointFileStatus, CheckpointListRequest,
+        CheckpointRemove, DIFF_FILE_PATCH_CAP, DiffAgainst,
+    };
+    use hutan_protocol::messages::{ClientKind, Empty, Origin};
+
+    /// The next `checkpoint.created` of `session`.
+    async fn created(t: &mut Chat, session: SessionId) -> CheckpointInfo {
+        wait_event(&mut t.events, "checkpoint.created", |event| match event {
+            Event::CheckpointCreated { checkpoint } if checkpoint.session_id == session => {
+                Some((**checkpoint).clone())
+            }
+            _ => None,
+        })
+        .await
+    }
+
+    /// The next `checkpoint.state` of `session` with `state`, and its reason.
+    async fn state(
+        t: &mut Chat,
+        session: SessionId,
+        wanted: CheckpointAvailability,
+    ) -> Option<String> {
+        wait_event(&mut t.events, "checkpoint.state", |event| match event {
+            Event::CheckpointStateChanged {
+                session_id,
+                state,
+                reason,
+            } if *session_id == session && *state == wanted => Some(reason.clone()),
+            _ => None,
+        })
+        .await
+    }
+
+    async fn session_info(client: &Client, id: SessionId) -> SessionInfo {
+        let list: hutan_protocol::messages::SessionList = client
+            .call(Request::SessionList(Default::default()))
+            .await
+            .unwrap();
+        list.sessions.into_iter().find(|s| s.id == id).unwrap()
+    }
+
+    fn diff_of(id: CheckpointId) -> CheckpointDiffRequest {
+        CheckpointDiffRequest {
+            checkpoint_id: id,
+            against: DiffAgainst::End,
+            path: None,
+            stat: false,
+        }
+    }
+
+    fn paths(diff: &CheckpointDiff) -> Vec<&str> {
+        diff.files.iter().map(|f| f.path.as_str()).collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_client_lists_diffs_and_removes_the_checkpoints_of_a_fixture_chat() {
+        let mut t = Chat::start(|dir| {
+            let gates: Vec<PathBuf> = (0..3).map(|n| dir.join(format!("gate-{n}"))).collect();
+            held_turns(dir, &gates)
+        })
+        .await;
+        let session = t.create().await;
+        let id = session.id;
+        assert_eq!(
+            state(&mut t, id, CheckpointAvailability::On).await,
+            None,
+            "a chat in a git checkout gets checkpoints"
+        );
+        let info = session_info(&t.client, id).await;
+        assert_eq!(
+            info.chat.unwrap().checkpoints.unwrap().state,
+            CheckpointAvailability::On
+        );
+
+        // Turn 0 edits a tracked file and adds a binary one; turn 1 only reads; turn 2 adds a
+        // text file larger than one file's patch bound.
+        let big: String = (0..300_000).map(|n| format!("row {n:08}\n")).collect();
+        let mut turns = Vec::new();
+        let mut checkpoints = Vec::new();
+        for n in 0..3 {
+            turns.push(t.send(id, &format!("turn {n}")).await);
+            match n {
+                0 => {
+                    fs::write(t.root.join("a.txt"), "edited by the agent\n").unwrap();
+                    fs::write(t.root.join("logo.bin"), [0_u8, 1, 2, 0, 255, 0]).unwrap();
+                }
+                2 => fs::write(t.root.join("big.txt"), &big).unwrap(),
+                _ => {}
+            }
+            fs::write(t.gate(n), "").unwrap();
+            t.turn_end().await;
+            if n != 1 {
+                // The read-only turn announces nothing: the next event is turn 2's.
+                let info = created(&mut t, id).await;
+                assert_eq!(info.turn_id, Some(turns[n]), "turn {n}");
+                checkpoints.push(info);
+            }
+        }
+        let (first, last) = (checkpoints[0].clone(), checkpoints[1].clone());
+        assert_eq!((first.files_changed, first.added, first.removed), (2, 1, 1));
+        assert_eq!(first.state, CheckpointState::Ok);
+
+        // Newest first, a page at a time; the read-only turn is not listed.
+        let client = &t.client;
+        let all = client
+            .checkpoint_list(CheckpointListRequest {
+                session_id: Some(id),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let ids: Vec<CheckpointId> = all.checkpoints.iter().map(|c| c.id).collect();
+        assert_eq!(ids, [last.id, first.id]);
+        assert_eq!(all.next, None);
+        let page = client
+            .checkpoint_list(CheckpointListRequest {
+                session_id: Some(id),
+                limit: Some(1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(page.checkpoints[0].id, last.id);
+        assert_eq!(page.next, Some(last.id));
+        let rest = client
+            .checkpoint_list(CheckpointListRequest {
+                session_id: Some(id),
+                limit: Some(1),
+                before: page.next,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(rest.checkpoints[0].id, first.id);
+        assert_eq!(rest.next, None);
+        let by_workspace = client
+            .checkpoint_list(CheckpointListRequest {
+                workspace_id: Some(session.workspace_id),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(by_workspace.checkpoints.len(), 2);
+        for bad in [Some(0), Some(201)] {
+            let refused = client
+                .checkpoint_list(CheckpointListRequest {
+                    limit: bad,
+                    ..Default::default()
+                })
+                .await;
+            assert_eq!(remote_code(refused), ErrorCode::BadRequest);
+        }
+
+        // What turn 0 changed: statuses, counts, the binary flag, the patch.
+        let diff = client.checkpoint_diff(diff_of(first.id)).await.unwrap();
+        assert_eq!(paths(&diff), ["a.txt", "logo.bin"]);
+        let (a, logo) = (&diff.files[0], &diff.files[1]);
+        assert_eq!(
+            (a.status, a.added, a.removed, a.binary),
+            (CheckpointFileStatus::Modified, 1, 1, false)
+        );
+        assert_eq!(
+            (logo.status, logo.binary, logo.added),
+            (CheckpointFileStatus::Added, true, 0)
+        );
+        let patch = diff.patch.unwrap();
+        assert!(patch.contains("-alpha\n+edited by the agent\n"), "{patch}");
+        assert!(patch.contains("Binary files /dev/null and b/logo.bin differ"));
+        assert!(!diff.truncated);
+        let only = client
+            .checkpoint_diff(CheckpointDiffRequest {
+                path: Some("a.txt".into()),
+                stat: true,
+                ..diff_of(first.id)
+            })
+            .await
+            .unwrap();
+        assert_eq!(paths(&only), ["a.txt"]);
+        assert_eq!(only.patch, None, "--stat leaves the patch out");
+
+        // A file larger than the per-file bound is cut on a line and flagged.
+        let diff = client.checkpoint_diff(diff_of(last.id)).await.unwrap();
+        assert_eq!(paths(&diff), ["big.txt"]);
+        assert_eq!(diff.files[0].added, 300_000);
+        assert!(diff.files[0].truncated && diff.truncated);
+        let patch = diff.patch.unwrap();
+        assert!(patch.len() <= DIFF_FILE_PATCH_CAP && patch.ends_with('\n'));
+
+        // Against the checkout now: a later edit of the user shows, and the user's index is
+        // left alone (nothing is staged).
+        fs::write(t.root.join("a.txt"), "edited by the user\n").unwrap();
+        let index = fs::read(t.root.join(".git/index")).unwrap();
+        let now = client
+            .checkpoint_diff(CheckpointDiffRequest {
+                against: DiffAgainst::Now,
+                stat: true,
+                ..diff_of(first.id)
+            })
+            .await
+            .unwrap();
+        assert_eq!(paths(&now), ["a.txt", "big.txt", "logo.bin"]);
+        let now = client
+            .checkpoint_diff(CheckpointDiffRequest {
+                against: DiffAgainst::Now,
+                path: Some("a.txt".into()),
+                ..diff_of(first.id)
+            })
+            .await
+            .unwrap();
+        assert!(
+            now.patch.unwrap().contains("+edited by the user\n"),
+            "the user's edit after the turns"
+        );
+        assert_eq!(fs::read(t.root.join(".git/index")).unwrap(), index);
+        assert_eq!(git(&t.root, &["diff", "--cached", "--name-only"]), "");
+
+        // From turn 0's start through turn 2's end.
+        let through = client
+            .checkpoint_diff(CheckpointDiffRequest {
+                against: DiffAgainst::Checkpoint(last.id),
+                stat: true,
+                ..diff_of(first.id)
+            })
+            .await
+            .unwrap();
+        assert_eq!(paths(&through), ["a.txt", "big.txt", "logo.bin"]);
+
+        // Refusals.
+        let outside = client
+            .checkpoint_diff(CheckpointDiffRequest {
+                path: Some("../a.txt".into()),
+                ..diff_of(first.id)
+            })
+            .await;
+        assert_eq!(remote_code(outside), ErrorCode::BadRequest);
+        let unknown = client.checkpoint_diff(diff_of(CheckpointId::new())).await;
+        assert_eq!(remote_code(unknown), ErrorCode::NotFound);
+
+        // Removing one: its ref and its row go, and subscribers hear of it.
+        let removed = client
+            .checkpoint_remove(CheckpointRemove {
+                checkpoint_id: Some(first.id),
+                session_id: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(removed.removed, [first.id]);
+        let ids = wait_event(&mut t.events, "checkpoint.removed", |event| match event {
+            Event::CheckpointRemoved { ids } => Some(ids.clone()),
+            _ => None,
+        })
+        .await;
+        assert_eq!(ids, [first.id]);
+        let first_ref = format!("refs/hutan/checkpoints/{id}/{}", turns[0]);
+        assert!(!refs(&t.root).contains(&first_ref), "{:?}", refs(&t.root));
+        assert!(t.rows(id).iter().all(|r| r.id != first.id.to_string()));
+        let gone = t.client.checkpoint_diff(diff_of(first.id)).await;
+        assert_eq!(remote_code(gone), ErrorCode::NotFound);
+
+        // Removing the session's: every row (the read-only turn's too) and every ref.
+        let removed = t
+            .client
+            .checkpoint_remove(CheckpointRemove {
+                checkpoint_id: None,
+                session_id: Some(id),
+            })
+            .await
+            .unwrap();
+        assert_eq!(removed.removed.len(), 2);
+        assert!(refs(&t.root).is_empty());
+        assert!(t.rows(id).is_empty());
+        let again = t
+            .client
+            .checkpoint_remove(CheckpointRemove {
+                checkpoint_id: None,
+                session_id: Some(id),
+            })
+            .await;
+        assert_eq!(remote_code(again), ErrorCode::NotFound);
+        let neither = t.client.checkpoint_remove(CheckpointRemove::default()).await;
+        assert_eq!(remote_code(neither), ErrorCode::BadRequest);
+        t.daemon.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_chat_outside_git_says_its_checkpoints_are_unsupported_and_why() {
+        let mut t = Chat::start(|dir| held_fixture(dir, "plain-turn", &dir.join("gate-0"))).await;
+        let plain = t.work.path().join("plain");
+        fs::create_dir_all(&plain).unwrap();
+        let id = t.create_in(&plain).await.id;
+        let reason = state(&mut t, id, CheckpointAvailability::Unsupported)
+            .await
+            .unwrap();
+        assert!(reason.contains("is not in a git repository"), "{reason}");
+        let status = session_info(&t.client, id)
+            .await
+            .chat
+            .unwrap()
+            .checkpoints
+            .unwrap();
+        assert_eq!(status.state, CheckpointAvailability::Unsupported);
+        assert_eq!(status.reason, Some(reason));
+        t.daemon.stop().await;
+    }
+
+    async fn pending(user: &Client) -> Vec<ApprovalInfo> {
+        user.call::<ApprovalList>(Request::ApprovalList(ApprovalListRequest::default()))
+            .await
+            .unwrap()
+            .approvals
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_agent_lists_and_diffs_freely_and_its_remove_waits_for_the_user() {
+        let mut t = Chat::start_toml(
+            "[control]\nagents = \"ask\"\napproval_timeout_secs = 20\n",
+            |dir| held_fixture(dir, "plain-turn", &dir.join("gate-0")),
+            |_, _| {},
+        )
+        .await;
+        let id = t.create().await.id;
+        t.send(id, "edit").await;
+        fs::write(t.root.join("a.txt"), "edited\n").unwrap();
+        fs::write(t.gate(0), "").unwrap();
+        t.turn_end().await;
+        let checkpoint = created(&mut t, id).await;
+
+        // The chat's own agent, through `hutan mcp` or the CLI inside the chat.
+        let mut options = t.daemon.options();
+        options.client.origin = Some(Origin { session_id: id });
+        let agent = Client::connect(options).await.unwrap();
+        let user = t.daemon.connect_as(ClientKind::Desktop).await;
+        let listed = agent
+            .checkpoint_list(CheckpointListRequest::default())
+            .await
+            .unwrap();
+        assert_eq!(listed.checkpoints.len(), 1);
+        agent.checkpoint_diff(diff_of(checkpoint.id)).await.unwrap();
+        assert!(pending(&user).await.is_empty(), "reads never ask");
+
+        let remove = tokio::spawn({
+            let agent = agent.clone();
+            async move {
+                agent
+                    .checkpoint_remove(CheckpointRemove {
+                        checkpoint_id: Some(checkpoint.id),
+                        session_id: None,
+                    })
+                    .await
+            }
+        });
+        let approval = timeout(WAIT, async {
+            loop {
+                if let Some(found) = pending(&user).await.into_iter().next() {
+                    return found;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the removal asks the user");
+        assert!(
+            approval.title.contains("delete the checkpoint"),
+            "{}",
+            approval.title
+        );
+        assert_eq!(refs(&t.root).len(), 1, "nothing is removed before the answer");
+        let options: Vec<&str> = approval.options.iter().map(|o| o.id.as_str()).collect();
+        assert!(options.contains(&"allow_once"), "{options:?}");
+        user.call::<Empty>(Request::ApprovalRespond(ApprovalRespond {
+            approval_id: approval.id,
+            option_id: "allow_once".to_owned(),
+        }))
+        .await
+        .unwrap();
+        let removed = remove.await.unwrap().unwrap();
+        assert_eq!(removed.removed, [checkpoint.id]);
+        assert!(refs(&t.root).is_empty());
+        t.daemon.stop().await;
+    }
 }
