@@ -491,14 +491,15 @@ mod tests {
             panic!("a file row opens a file");
         };
         assert_eq!(hit.path, PathBuf::from("/repo/src/main.rs"));
-        assert_eq!(hit.dir_marks, [0..1]);
-        assert_eq!(hit.name_marks, [0..4]);
+        let one = |marks: &[std::ops::Range<usize>]| (marks.len() == 1).then(|| marks[0].clone());
+        assert_eq!(one(&hit.dir_marks), Some(0..1));
+        assert_eq!(one(&hit.name_marks), Some(0..4));
         let top = file_entry(Path::new("/repo"), "Cargo.toml", &[[0, 5]]);
         assert_eq!(top.detail.as_ref(), "");
         let PickerAction::OpenFile(hit) = top.action else {
             panic!("a file row opens a file");
         };
-        assert_eq!(hit.name_marks, [0..5]);
+        assert_eq!(one(&hit.name_marks), Some(0..5));
     }
 
     #[test]

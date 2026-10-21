@@ -364,7 +364,7 @@ fn open_file_starts_in_the_active_project(cx: &mut TestAppContext) {
     project(&view, cx, &root);
     cx.dispatch_action(actions::OpenFileDialog);
     wait_until(cx, "the Open panel", |_| !fake.asked().is_empty());
-    assert_eq!(fake.asked(), [root.clone()]);
+    assert_eq!(fake.asked(), std::slice::from_ref(&root));
     assert!(fake.answer(Some(file.clone())));
     let wanted = file.display().to_string();
     wait_until(cx, "the chosen file", |cx| {
