@@ -255,3 +255,89 @@ fn workbench_actions_reach_the_window_from_a_focused_file(cx: &mut TestAppContex
         Some(ItemRef::file(path))
     );
 }
+
+/// E-6 over a real daemon: typing then ⌘S writes through `fs.write` and the file keeps its
+/// CRLF line endings; our own save comes back as `fs.changed` (origin `self`) and reloads
+/// nothing; a change on disk reloads a clean buffer; a change on disk under unsaved changes shows
+/// the conflict bar and ⌘S never writes over it; Keep Mine does, on purpose.
+#[gpui::test]
+fn saving_keeps_crlf_and_never_overwrites_a_change_on_disk(cx: &mut TestAppContext) {
+    use hutan_code_view::Conflict;
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, "");
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, "one\r\ntwo\r\n").unwrap();
+    open_file(&view, cx, &file);
+    let file_view = view.read_with(cx, |wb, _| wb.focused_file_view().unwrap());
+    let buffer = file_view.read_with(cx, |v, _| v.buffer().clone());
+    draw(cx);
+
+    cx.simulate_input("zero ");
+    assert!(buffer.read_with(cx, |b, _| b.is_dirty()));
+    cx.simulate_keystrokes("cmd-s");
+    wait_until(cx, "the save", |cx| {
+        buffer.read_with(cx, |b, _| !b.is_dirty() && !b.is_saving())
+    });
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"zero one\r\ntwo\r\n",
+        "CRLF stays"
+    );
+
+    // The daemon tells this window about its own write; that is no change.
+    let version = buffer.read_with(cx, |b, _| b.version());
+    wait_until(cx, "the echo of our own save", |cx| {
+        view.read_with(cx, |wb, _| wb.buffers().changes_seen() >= 1)
+    });
+    assert_eq!(
+        buffer.read_with(cx, |b, _| b.version()),
+        version,
+        "no reload"
+    );
+    assert!(buffer.read_with(cx, |b, _| b.conflict().is_none() && b.can_undo()));
+
+    // Somebody else changes the file: the clean buffer takes it.
+    std::fs::write(&file, "external\r\ntwo\r\n").unwrap();
+    wait_until(cx, "the reload", |cx| {
+        buffer.read_with(cx, |b, _| b.text().to_string() == "external\ntwo\n")
+    });
+    assert!(!buffer.read_with(cx, |b, _| b.is_dirty()));
+
+    // Under unsaved changes a change on disk gets the bar, and ⌘S does not write.
+    cx.simulate_input("mine ");
+    std::fs::write(&file, "theirs\r\n").unwrap();
+    wait_until(cx, "the conflict bar", |cx| {
+        buffer.read_with(cx, |b, _| {
+            matches!(b.conflict(), Some(Conflict::Changed { disk: Some(_) }))
+        })
+    });
+    cx.simulate_keystrokes("cmd-s");
+    draw(cx);
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"theirs\r\n",
+        "never overwritten"
+    );
+    assert!(buffer.read_with(cx, |b, _| b.is_dirty()));
+    file_view.update(cx, |v, cx| v.toggle_diff(cx));
+    assert!(file_view.read_with(cx, |v, _| v.diff().is_some_and(|d| !d.is_empty())));
+
+    // Keep Mine writes the buffer over the file, on purpose.
+    file_view.update(cx, |_, cx| {
+        cx.emit(
+            hutan_desktop::workbench::file_view::FileViewEvent::Overwrite(
+                buffer.read(cx).path().to_owned(),
+            ),
+        );
+    });
+    wait_until(cx, "the overwrite", |cx| {
+        buffer.read_with(cx, |b, _| !b.is_dirty() && !b.is_saving())
+    });
+    let mine = buffer.read_with(cx, |b, _| b.text().to_string());
+    assert!(mine.contains("mine "), "{mine:?}");
+    assert_eq!(
+        String::from_utf8(std::fs::read(&file).unwrap()).unwrap(),
+        mine.replace('\n', "\r\n")
+    );
+}
