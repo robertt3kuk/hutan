@@ -173,13 +173,15 @@ Ordered; each line is one slice with a brief in `docs/briefs/` (written ones mar
 **Done 2026-10-20/21:** AG-1 (real-window check pending), TH-2 (icon packs, merged `7c29634`).
 
 **In flight:**
-- [ ] BLD-1 One integration-test binary per crate (brief `BLD-1.md`).
+- [x] BLD-1 One integration-test binary per crate (brief `BLD-1.md`).
 
-**Next — wave 1 (2026-10-21 plan; at most two coding agents at once, one gate at a time):**
-- [ ] TH-3 Theme/icon pickers with live preview, diagnostics, `hutan theme ls|validate|new|export` (brief `TH-3.md`; `theme-packs.md` §5.1–5.2, §6). Covers the audit's UX-PACK-PICKER.
-- [ ] UX wave 1 from `spikes/2026-10-21-ux-plan.md` §waves (no protocol change): UX-PARITY-RULE, UX-REPAINT-DOC, UX-APPROVAL-CARD, UX-CONTEXT-METER, UX-DRAFTS, UX-JUMP-LATEST, UX-TERM-RESIZE (phase A), UX-SESSION-NAMES, UX-HISTORY-CONSENT, UX-MAWAS-LAZY. Evidence: `spikes/2026-10-21-ux-audit.md` (hands-on, Cua Driver) and `spikes/2026-10-21-competitor-ux/` (12 products' issues).
-- [ ] Editor M11 per `spikes/2026-10-21-editor.md` (option B′, own core; ADR 0012 amendment pending the user's confirmation): first E-1 `buffer` (crop rope, transactions, undo, selections), E-2 `syntax` (tree-sitter), E-7a extract `chat/vim.rs` into a `vim` crate; then E-3 daemon `fs.*` protocol, E-4… (§4.7).
-- [ ] UC-0/UC-1 gated UI check for agents through Cua Driver (`spikes/2026-10-21-developer-tools.md` §ranking; needs ADR + capability `uicheck`; user decision D1 trust model).
+**Wave 1 (2026-10-21 plan; at most two coding agents at once, one gate at a time):**
+- [x] TH-3 Theme/icon pickers with live preview, diagnostics, `hutan theme ls|validate|new|export` (brief `TH-3.md`). Covers the audit's UX-PACK-PICKER.
+- [x] UX wave 1 from `spikes/2026-10-21-ux-plan.md` (UX-PARITY-RULE, UX-REPAINT-DOC, UX-APPROVAL-CARD, UX-CONTEXT-METER, UX-DRAFTS, UX-JUMP-LATEST, UX-TERM-RESIZE A, UX-SESSION-NAMES, UX-HISTORY-CONSENT, UX-MAWAS-LAZY); FX-FLAKY-1.
+- [ ] UX wave 2: [x] UX-TERM-2 (UX-LINKS, UX-TERM-DROP-PASTE, UX-TERM-RESIZE B), [ ] UX-ATTN-1 (CHANGES-FRESH done; ATTENTION-CONTROLS, RETRY in progress), [ ] UX-CHROME-1 (brief ready), protocol lane: UX-NOTIFY-CONTROL → UX-MODE-CHIP (D4: show the real mode, never change it) → UX-CHANGES-INDEX (D2: read-only staged/unstaged markers, no stage/commit).
+- [ ] UX wave 3 decided 2026-10-21: UX-QUEUE-STEER (D1: the send key **queues** while the agent works; a separate chord interrupts and sends; Stop clears the queue), UX-CHECKPOINT (D3: ADR + spike first: per-turn snapshots in hidden git refs, previewed undoable restore); D5 multi-window deferred until after the editor.
+- [ ] Editor M11, ADR 0012 **amended 2026-10-21** (B′ and all recommendations: file I/O through the daemon, Vim first-class before the demo with default-off + first-run question, LSP found never fetched with folder trust, ⌘P Files + Sessions). Done: E-1 `buffer`, E-2 `syntax`, E-4 tokens, E-7a `vim`. Next: E-3 daemon `fs.*` protocol, then E-5 viewer, E-6 editing, E-7b Vim growth, E-8 Vim in the editor, E-9…E-14 (`spikes/2026-10-21-editor.md` §4.7).
+- [ ] UC-0/UC-1 gated Cua UI check for agents — **not now** (user, 2026-10-21); Cua stays a development tool (usertester, `process.md` § UI checks).
 - [ ] TH-4 Importers: Ghostty, iTerm2, Alacritty, VS Code, Zed, WezTerm, Warp (`theme-packs.md` §5.3) — good candidate for a cheaper model.
 - [ ] DB-3 Optional agent activity fields (`turn_started_at_ms`, `last_state_report_at_ms`, `observation_reason`; additive minor + capability `agent.activity-summary`) (`chrome-v3.md` §6).
 - [ ] ST-4 Truthful Mawas configuration read API (`assistant.settings` capability), then ST-5 13-page Settings IA with explicit scope/provenance/reset-to-inherit, ST-6 unified search, ST-7 keyboard-shortcut editor, ST-8 validation/preset editor, ST-9 data/storage + preference export/import, ST-10 recently changed (`spikes/2026-10-20-settings-v2.md` §7–8).
