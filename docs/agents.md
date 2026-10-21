@@ -88,7 +88,7 @@ max_repo_refs = 1000
 mode = "off"
 ```
 
-Retention drops the oldest checkpoints first (a restore's, the state Undo needs, after every turn's), deletes their refs and packs `refs/hutan/*`; Hutan never runs `git gc` or `prune`, so their objects age out under git's own settings. `git log --all` shows checkpoint commits and `git push --mirror` would push them: do not mirror-push a repository Hutan checkpoints. The rows (`checkpoints` table) and the refs are reconciled when the daemon starts. Restoring checkpoints comes with CK-4.
+Retention drops the oldest checkpoints first (a restore's, the state Undo needs, after every turn's), deletes their refs and packs `refs/hutan/*`; Hutan never runs `git gc` or `prune`, so their objects age out under git's own settings. `git log --all` shows checkpoint commits and `git push --mirror` would push them: do not mirror-push a repository Hutan checkpoints. The rows (`checkpoints` table) and the refs are reconciled when the daemon starts. Each checkpoint commit names the HEAD it saw (trailer `Hutan-Head`), so a restore can say whether HEAD moved.
 
 **Listing, diffing, removing** (protocol 0.37, capability `checkpoint`; `docs/protocol.md` § Checkpoints):
 
@@ -99,6 +99,24 @@ hutan checkpoint rm CHECKPOINT|SESSION                                   # delet
 ```
 
 `ls` shows checkpoints that keep files or say why not (`ok`, `late`, `failed`, `off`); a turn that changed nothing and a folder outside git are not listed, and a chat outside git says `checkpoints: unsupported` with the reason in its `ChatInfo`. A checkpoint id prefix works where it is unique among the newest 200. `diff --against now` reads the checkout through a fresh snapshot of Hutan's own index (your index is never read or written); diffs are bounded like `hutan wt diff` (2 MiB per file, 20 MiB in all, 5 000 files) and flag binary files. What is captured: tracked and untracked-not-ignored files of the checkout, raw bytes; never ignored files, nested repositories, `filter=` (LFS) paths, files over `max_file_bytes` or names in `exclude` — those are listed as not captured. Privacy: diffs carry file contents and go only to the client that asked; events, logs and the MCP list carry paths and counts. Agents may list and diff (CLI, MCP `checkpoint_list` / `checkpoint_diff`); `rm` from an agent asks per `[control]` (`docs/control.md`).
+
+**Restoring, undoing** (protocol 0.38, capability `checkpoint.restore`; `docs/protocol.md` § Checkpoints › Restore):
+
+```text
+hutan checkpoint restore CHECKPOINT [--through CP] [--path P]... [--accept-conflicts P]... [--yes]
+hutan checkpoint undo [SESSION] [--accept-conflicts P]... [--yes]   # restores the latest restore; again = undo the undo
+```
+
+`restore` puts the files a turn changed back as they were before it (with `--through`, before the first of a run of turns of the session); it prints the preview first — each file's action (`write`, `delete`, `skip`) and state — and the label, then asks `[y/N]` (Enter is No). Without a terminal it restores nothing unless `--yes` is given; `--json` prints the preview, or with `--yes` the result. Per file, three ways (ADR 0019 Decision 8):
+
+- **clean**: the file is as the last turn left it: written back (or deleted, when the turn created it; folders the deletion empties go too).
+- **after** (changed since the turn), **gap** (changed between two of the turns), **during** (you saved it in Hutan's editor while the turn ran): a conflict, left alone unless named with `--accept-conflicts PATH`.
+- **uncaptured**: a snapshot left it out (too large, a secret's name, LFS, a nested repository), so there is nothing to restore it from or to undo with: never written, and listed whether or not the turn touched it. Symbolic links and submodules are never written either.
+- A file no restored turn changed is never touched, whoever changed it — so restoring one agent's turn in a checkout another agent shares leaves the other's files alone (the preview names the sharing sessions).
+
+Before writing, the daemon takes a checkpoint of the checkout (the restore's own, kind `restore`) and plans again from it; if any file changed since the preview it writes nothing and shows the new preview. Files are written atomically and as raw bytes, never under `.git`, never through a link; open editor tabs reload (their `fs.changed` says `origin: restore`). Another checkpoint ends the restore, so `hutan checkpoint undo` restores it the same way, and undoing again undoes the undo. A restore is refused while any agent in the checkout has a turn running (interrupt it first), and for a `late` checkpoint (its start may already hold some of its turn's edits).
+
+**What it will not do** — the label every preview prints: "Restores files only. `<Harness>` still remembers this turn and may mention or redo the changes. Git history (commits, branches, stash) and anything outside `<checkout>` are not rewound." When HEAD moved during the turns the preview says from which commit to which, and HEAD stays. Staged changes are not restored (your index is never read or written); edits outside the checkout, in submodules, or to files a snapshot left out are not undone. Only you can restore: an agent's `checkpoint.restore` is refused (`forbidden`) whatever `[control]` says, and `hutan mcp` has no restore tool (agents get `checkpoint_preview`, a read).
 
 ## Configuration
 

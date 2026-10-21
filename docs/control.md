@@ -163,6 +163,7 @@ A stdio MCP server (hand-rolled JSON-RPC, one message per line; protocol version
 | `worktree_rm` | `worktree.remove` | yes | remove a worktree |
 | `checkpoint_list` | `checkpoint.list` | no | checkpoints of agent turns, newest first: what the user can rewind to; the agent cannot restore (0.37) |
 | `checkpoint_diff` | `checkpoint.diff` | no | what a turn changed, or what changed since it started (`against: now`); bounded like `worktree_diff` (0.37) |
+| `checkpoint_preview` | `checkpoint.preview` | no | what restoring the files to before a turn would do, file by file (write, delete, skip; clean or conflict); nothing is written, and only the user can restore (0.38) |
 | `workspace_list` | `workspace.list` | no | workspaces and projects |
 | `project_recent` | `workspace.recent` | no | recently opened folders |
 | `workspace_create` | `workspace.create` | yes | a workspace (group) with folders and projects |
@@ -179,7 +180,7 @@ A stdio MCP server (hand-rolled JSON-RPC, one message per line; protocol version
 
 `hutan help agent` prints the same guide for agents that only have a shell (what is allowed, that changes may wait for approval, exit codes).
 
-**Checkpoints** (protocol 0.37): `checkpoint.list` and `checkpoint.diff` are reads, free under every policy. `checkpoint.remove` is a change: under `ask` it raises a `control` approval ("delete the checkpoint …"), `read_only` refuses it, `allow` runs it; for Mawas it always asks (it destroys what a restore needs). There is no MCP tool to remove or restore; restoring will be user-only (CK-4).
+**Checkpoints** (protocol 0.37, 0.38): `checkpoint.list`, `checkpoint.diff` and `checkpoint.preview` are reads, free under every policy. `checkpoint.remove` is a change: under `ask` it raises a `control` approval ("delete the checkpoint …"), `read_only` refuses it, `allow` runs it; for Mawas it always asks (it destroys what a restore needs). `checkpoint.restore` is **user-only**: an agent-originated connection gets `forbidden` (`decision: user_only`) under every `[control] agents` policy and for Mawas too — an agent must never unwind the user's work, nor its own turn's record of it (ADR 0019 Decision 10). There is no MCP tool to remove or restore; `checkpoint_preview` lets an agent see what the user could restore.
 
 ## Wiring
 
