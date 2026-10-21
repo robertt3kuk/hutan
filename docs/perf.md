@@ -539,6 +539,45 @@ and `hutan-buffer`). A change to a query file rebuilds only `hutan-syntax` (1.2 
   and a fresh parse. The gate therefore compares strictly on error-free results (an edit that
   leaves errors is reverted by the next step) and only checks well-formedness on the others.
 
+## Editor: the viewer (slice E-5, `hutan-code-view`)
+
+Budgets B11a–d and B13 of `docs/spikes/2026-10-21-editor.md` § 4.8, end to end through the real
+daemon and the release desktop (`just bench --only B11,B13`; scenarios `editor-open` and
+`editor-scroll`: `HUTAN_BENCH_UI` `editor_open` / `editor_scroll` in `crates/desktop/src/bench_ui.rs`,
+harness in `xtask/src/bench_ui.rs`).
+
+| | |
+|---|---|
+| Machine | Apple M1 Pro (10 cores, 16 GB), macOS 27.0.1, 120 Hz display (refresh interval 8.33 ms measured by the run); other agents were building (load average 12–20), so the numbers are pessimistic |
+| Method | One run (`--runs 1`), 2026-10-21. A seeded project holds generated Rust files: items with doc comments, derives, impls, `match` and strings, every one distinct. They are 1 000 000 and 10 000 000 bytes. The window shows a terminal; the driver dispatches `workbench::OpenFile` (what `ui.run` and `hutan open` send). **Open** is from dispatch to the end of the first frame that draws the file's text: `fs.stat`, the chunked `fs.read`, the rope, the first layout. **Highlighted** is from that frame to the first frame whose lines carry colors from a finished tree of the current text (`CodeView::paint_times`). **RSS** is sampled before the open and 1.5 s after the 1 MB file is highlighted. **Scroll** is 600 wheel steps of 120 px down and 600 back, one per frame. |
+
+| # | Measure | Result | Budget | |
+|---|---|---|---|---|
+| B11a | open 1 MB, dispatch → first paint of text | **22.2 ms** (Hutan's own handlers and frame: 7.4 ms) | ≤ 100 ms | ✓ |
+| B11b | open 10 MB, dispatch → first paint of text | **122.4 ms** (4.1 ms Hutan; the rest is the daemon read and the transfer) | ≤ 500 ms | ✓ |
+| B11c | 1 MB: first paint → highlighted viewport | **141 ms** (the background parse, ≈ 100 ms in E-2's bench, plus the wake-up and a frame) | ≤ 400 ms | ✓ |
+| — | 10 MB: first paint → highlighted viewport (under `large_file_bytes`, so it is parsed) | 1 146 ms | — | input never waited |
+| B11d | desktop RSS growth, one open 1 MB file with syntax | **52.9 MB** (133.5 → 186.4 MB) | ≤ 40 MB | **✗ miss by 12.9 MB** |
+| B13 | scroll of the 1 MB file: frame interval p95 | **12.4 ms** (p50 8.33 = every vsync, p99 13.6, max 14.8; 1 198 intervals) | refresh + 2 ms = **10.3 ms** at 120 Hz (the spike's 60 Hz figure: 18.7 ms) | **✗ miss by 2.1 ms** at 120 Hz; ✓ against 18.7 ms |
+| B13 | frame work while scrolling (render + layout + paint, Hutan's share) | p50 1.7 ms, **p95 2.5 ms**, max 7.4 ms | — | |
+| B13 | lines shaped per frame while scrolling | **5.2** with 39 rows in view | ≤ visible + overscan | ✓ (also the GPUI test `a_frame_shapes_only_the_lines_in_view`) |
+
+**The misses.**
+- **B11d.** The tree-sitter tree of the 1 MB file alone is ≈ 37 MB (E-2's measurement above, made outside the desktop). The rest of the growth is allocator high water that RSS does not give back, not data the viewer keeps:
+  - the 1 MB text received in chunks and copied into the rope;
+  - the language's compiled queries (loaded once per language per process);
+  - glyph atlas pages for the new glyphs.
+
+  Nothing in `code_view` holds a whole-file structure besides the rope (≈ 1×). The tree of a tab that is not shown is dropped, so the budget holds per *visible* file, not per open file. The spike marks B11d [INFERENCE], to be replaced by E-2's number; with E-2's 37 MB tree, ≤ 40 MB leaves 3 MB for everything else, which a desktop process cannot meet as RSS. Not relaxed here: the options are a smaller syntax threshold (no tree above e.g. 512 KB until asked), or a re-measurement of the budget as "tree + rope + 8 MB". That is the orchestrator's call.
+- **B13 at 120 Hz.** Frames take 2.5 ms (p95) of Hutan's time and shape about 5 lines each. The p95 interval is 12.4 ms because about 1 frame in 15 missed a vsync on a machine with load 12–20. That is the same display floor B7b reports. Against the spike's 60 Hz figure (18.7 ms) it passes.
+
+**Fallback decision (spike § 4.1): stay with B′ (own `code_view`); GPUI Kit is not adopted.**
+- The trigger was "the read-only viewer cannot meet B11/B13".
+- B11a–c pass with 4×, 4× and 2.8× headroom.
+- The two misses are not the viewer's element. B11d is the tree-sitter tree, which `gpui-base` would hold just the same, since its highlighter is tree-sitter too. B13's frame work is 2.5 ms with only the visible lines shaped; the missed intervals are display hiccups under load.
+- Replacing `code_view`'s internals would move neither number.
+- Re-evaluate at E-6 only if the editing work (IME, selections) is estimated over L, the other half of the trigger.
+
 ## Editor: the Vim layer (slice E-7a, `hutan-vim`)
 
 E-7a moves the V-1 modal layer out of `desktop` into a GPUI-free crate and changes no behaviour, so

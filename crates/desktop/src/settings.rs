@@ -80,8 +80,7 @@ pub enum OpenFilesWith {
     /// The file's default application, as a double click in Finder.
     #[default]
     System,
-    /// The editor: today the system's default text editor (`open -t`); the built-in editor
-    /// takes over when it exists.
+    /// Hutan's own file viewer, in a tab, at the clicked line and column.
     Editor,
 }
 

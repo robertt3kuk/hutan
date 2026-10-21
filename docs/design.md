@@ -335,6 +335,9 @@ scope = "active_workspace"     # active_workspace | all
 [editor]
 vim_mode = false               # Vim's Normal / Insert / Visual in text inputs (see Vim mode); ⌘K → Toggle Vim Mode
 vim_use_system_clipboard = true  # yanks and deletes also go to the system clipboard; p pastes from it
+font_size = 13.0              # code in file tabs (the pack's monospace family)
+line_height = 1.45            # code line height, a multiple of the font size
+large_file_bytes = 16777216   # above this a file asks first, then opens read-only without syntax (see File tabs)
 ```
 
 ### Settings sheet (ST-2)
@@ -502,9 +505,9 @@ Hold **⌘** over terminal text: a URL or a file path that is really there is un
 - **Paths must exist.** A path is a link only when the file or folder is on disk, so `e.g.`, `1.5` and `localhost:3000` are never underlined. `~/x` uses the home folder; an absolute path is taken as written; a relative path is resolved against the folder the command ran in (the working directory the shell reported for the block that owns the line, `OSC 7`), else the shell's current folder (`SessionInfo.folder`, else its start folder); with neither, a relative path is not a link.
 - **Wrapped lines.** A URL or path that the terminal soft-wrapped onto the next row is one link and is underlined on both rows; a hard line break never joins two rows.
 - **Cost.** Nothing is scanned per frame: the logical line under the pointer is read once when the pointer enters a new cell with ⌘ held (and once more on the click), at most 16 wrapped rows on each side, and one `stat` for a path. New output drops the underline until the pointer moves.
-- **Where it opens** (`terminal.open_files_with`, default `system`). A URL opens in the browser. A file opens with its default application (`system`, like a double click in Finder) or with the default text editor (`editor`, `open -t`; the built-in editor of E-5/E-10 takes this value over and will open the file at the line, which the system cannot be told). A file that is gone by the time of the click says so in a notice. One function, `workbench::open_link::open_link`, decides; the terminal view only emits `TerminalViewEvent::OpenLink(LinkTarget)`.
+- **Where it opens** (`terminal.open_files_with`, default `system`). A URL opens in the browser. A file opens with its default application (`system`, like a double click in Finder) or in a file tab of Hutan's own viewer at the clicked line and column (`editor`, E-5; see File tabs). A file that is gone by the time of the click says so in a notice. One method, `Workbench::open_terminal_link` (`workbench/open_link.rs`), decides; the terminal view only emits `TerminalViewEvent::OpenLink(LinkTarget)`.
 
-Parity: OSC 8 ⌘-click kept (it now goes through the same event and opener); nothing removed.
+Parity: OSC 8 ⌘-click kept (it now goes through the same event and opener); nothing removed. E-5: `editor` used to mean the system's default text editor (`open -t`); it now means the built-in viewer, at the line. `system` stays the default.
 
 ### Terminal drops and pastes (UX-TERM-DROP-PASTE)
 
@@ -513,6 +516,18 @@ Parity: OSC 8 ⌘-click kept (it now goes through the same event and opener); no
 - **Multi-line paste.** `terminal.confirm_multiline_paste` (default on). When the program did **not** enable bracketed paste (a plain shell: a pasted newline is an Enter, so each line would run at once) and the text has a line break that is not just its last character, ⌘V opens a card over the terminal: *Paste N lines into the terminal?*, the first six lines, **Cancel** (Esc), **Paste** (⌘↩, as it is) and **Paste as one line** (↩, the default: line breaks and the blanks around them become one space, so nothing runs until the user presses Enter). While the card is open no key reaches the program (⌘ shortcuts of the app still work) and the mouse does not click through. A single line with its trailing newline is typed at once; a bracketed-paste program (editors, agent TUIs) is never asked about and gets the text inside the markers as before. The card closes when the session ends. Daemon-driven pastes (*Send to agent*, `session.send_text`) are not the user's clipboard and are not asked about.
 
 Parity: ⌘V of a multi-line text into a plain shell used to run it at once; it now asks (turn off with `terminal.confirm_multiline_paste = false`). Nothing is removed.
+
+## File tabs (E-5)
+
+A file opens in a center tab (`ItemRef::File`, `ui.layout` kind `file`, file icon `item.file`, titled with the file name, the full path as tooltip): read-only, drawn by `hutan-code-view` (`docs/editor.md`). Ways in: ⌘K **File: Open File…** (a Finder dialog), **Open File…** in a session's and a project's context menu, ⌘-click on a path in a terminal with `terminal.open_files_with = "editor"`, `hutan open path[:line[:col]]`, and `ui.run workbench::OpenFile {path, line?, column?}` (only below the workspace roots: an agent may ask for it). Opening a file that has a tab focuses that tab.
+
+- **The view.** Line numbers in a gutter (the current line's number brighter), code in the pack's monospace family with the `syntax.*` colors of the pack (E-4), no wrapping, horizontal scrolling for long lines. Mouse: drag selects, double-click a word, triple-click a line, ⇧-click extends. Keys (`CodeView` context): ⌘C copy, ⌘A select all, ↑ ↓ a line, Page Up / Page Down and Space / ⇧Space a page, ⌘↑ ⌘↓ / Home End the start and end.
+- **Find in file.** ⌘F opens a bar over the code (the selection, if it is one line, becomes the query): the field, `n of m`, **Aa** (match case), **.\*** (regular expression), previous / next, ×. Return / ⇧Return and ⌘G / ⌘⇧G step through the matches (wrapping), Escape closes and gives the keyboard back to the code. Matches are tinted with `editor.search-match`, the current one with `editor.search-match.active`; at most 10 000 are kept (`10000+`).
+- **Two panes, one file.** A file tab's menu has **Open in Split Right / Down**: a second view of the same buffer (each with its own scroll, selection and find), and **Copy Path**. ⌘D still splits with a new terminal.
+- **States.** *Opening x…* while it loads; above `editor.large_file_bytes` (16 MiB) a card says how large it is and offers **Open Read-Only** (large-file mode: no syntax highlighting, a banner says so) or **Open with System**; a binary or non-UTF-8 file, one over the daemon's 64 MiB, one that is gone or outside what the window may read says so, with **Open with System** where that can help.
+- **Status bar.** `editor.position` (`Ln 12, Col 5`: the selection's end, else the top line) and `editor.language` (`Rust`, `Plain Text · large file`) show while a file tab has focus.
+- **Persistence.** File tabs are saved with the layout; a binary from before file tabs restores them as placeholders titled with the file name (`model/types.rs`).
+
 
 ## Terminal blocks (M10-C)
 

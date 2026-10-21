@@ -51,6 +51,7 @@ crates/
   vim/            Vim modal layer (E-7a, ADR 0012), extracted from the desktop's V-1: `Vim<H: VimHost>` (modes, counts, motions, operators, text objects, unnamed register, `.` repeat) over a host that answers byte-offset reads (char at, line of, slice) and applies `Transaction`s with undo groups; the desktop's `TextInput` is one host (every text field), a rope host over `hutan_buffer::Buffer` is the editor's (E-8); no dependencies, no GPUI, no I/O
   settings/       layered TOML settings store, schema registry, watcher, keymap, color packs and their registry (`themes/`, ADR 0018; no GPUI; ADR 0010)
   terminal_view/  GPUI terminal element/view over render DTOs, input encoding (UI crate)
+  code_view/      GPUI code view (E-5, ADR 0012, UI crate): `FileBuffer` (one file's text, load state, a `syntax` tree only while shown), `CodeView` and its element (shapes only the lines in view, `syntax.*` colors of the pack, mouse selection), find in file; read-only until E-6 (`docs/editor.md`)
   desktop/        Hutan GPUI app: workbench (docks, pane tree, panels, presets), wiring (UI crate)
 xtask/            bundle, sign, schema export, corpus recording
 ```
@@ -68,6 +69,7 @@ flowchart BT
   core --> terminal & runtime & storage & security & notifications
   buffer
   buffer -.-> syntax
+  buffer & syntax & settings --> code_view --> desktop
   vim --> desktop
   index --> daemon
   runtime --> agents
@@ -76,7 +78,7 @@ flowchart BT
   protocol --> daemon
 ```
 
-Arrows point from dependency to dependent. Forbidden: anything depending on `daemon`; UI crates or `cli` depending on service crates; GPUI in any non-UI crate (UI crates: `desktop`, `terminal_view`, later `chat_view`).
+Arrows point from dependency to dependent. Forbidden: anything depending on `daemon`; UI crates or `cli` depending on service crates; GPUI in any non-UI crate (UI crates: `desktop`, `terminal_view`, `code_view`, later `chat_view`). The desktop's buffer store (`workbench/files.rs`) reads files only through the daemon (`fs.stat`, `fs.read`).
 
 ## Domain model
 
