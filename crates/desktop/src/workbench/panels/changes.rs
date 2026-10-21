@@ -9,14 +9,15 @@
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Task, Window, div, px,
+    AnyElement, AppContext as _, Context, InteractiveElement, IntoElement, ParentElement, Render,
+    SharedString, StatefulInteractiveElement, Styled, Task, Window, div, px,
 };
 use hutan_client::ConnectionState;
 use hutan_core::WorkspaceId;
 use hutan_protocol::worktree::WorktreeInfo;
 
 use crate::icons::{Icon, icon};
+use crate::sessions::CheckoutActivity;
 use crate::theme::DensityExt as _;
 use crate::workbench::Region;
 use crate::workbench::actions::ReviewChangesAt;
@@ -45,8 +46,16 @@ pub struct ChangesPanel {
     /// The workspace and connection state the listing describes.
     asked: Option<(WorkspaceId, ConnectionState)>,
     loaded_at: Option<Instant>,
+    /// When the listing on screen was read, in Unix milliseconds.
+    refreshed_ms: Option<u64>,
+    /// Why the last refresh failed while the listing on screen is older.
+    refresh_error: Option<String>,
+    /// A listing is in flight; an automatic trigger meanwhile asks for one more afterwards.
+    loading: bool,
+    reload_again: bool,
     generation: u64,
     task: Option<Task<()>>,
+    _subscriptions: Vec<gpui::Subscription>,
 }
 
 impl std::fmt::Debug for ChangesPanel {
@@ -73,18 +82,62 @@ pub fn ordered(mut worktrees: Vec<WorktreeInfo>) -> Vec<WorktreeInfo> {
 
 impl ChangesPanel {
     pub fn new(env: PanelEnv, cx: &mut Context<Self>) -> Self {
-        cx.observe(&env.sessions, |this, _, cx| this.sync(cx))
-            .detach();
+        let sessions = env.sessions.clone();
+        let subscriptions = vec![
+            cx.observe(&sessions, |this, _, cx| this.sync(cx)),
+            // Something may have changed in a checkout: an agent's turn or a command ended.
+            cx.subscribe(&sessions, |this, _, _: &CheckoutActivity, cx| {
+                this.refresh_soon(cx);
+            }),
+        ];
         let mut panel = Self {
             env,
             checkouts: Checkouts::Idle,
             asked: None,
             loaded_at: None,
+            refreshed_ms: None,
+            refresh_error: None,
+            loading: false,
+            reload_again: false,
             generation: 0,
             task: None,
+            _subscriptions: subscriptions,
         };
         panel.sync(cx);
         panel
+    }
+
+    /// Lists the checkouts again whenever `window` becomes the active window.
+    pub fn follow_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self._subscriptions
+            .push(cx.observe_window_activation(window, |this, window, cx| {
+                if window.is_window_active() {
+                    this.refresh_soon(cx);
+                }
+            }));
+    }
+
+    /// [`refresh`](Self::refresh) for a trigger nobody asked for: it waits for a listing in
+    /// flight and asks once more afterwards.
+    pub fn refresh_soon(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.checkouts, Checkouts::Idle) {
+            return;
+        }
+        if self.loading {
+            self.reload_again = true;
+        } else {
+            self.refresh(cx);
+        }
+    }
+
+    /// Why the last refresh failed while the listing on screen is older.
+    pub fn refresh_error(&self) -> Option<&str> {
+        self.refresh_error.as_deref()
+    }
+
+    /// When the listing on screen was read (Unix milliseconds).
+    pub fn refreshed_ms(&self) -> Option<u64> {
+        self.refreshed_ms
     }
 
     /// What the panel lists (tests).
@@ -122,7 +175,11 @@ impl ChangesPanel {
             _ => {
                 self.generation += 1;
                 self.task = None;
+                self.loading = false;
+                self.reload_again = false;
                 self.checkouts = Checkouts::Idle;
+                self.refreshed_ms = None;
+                self.refresh_error = None;
                 cx.notify();
             }
         }
@@ -139,6 +196,8 @@ impl ChangesPanel {
     fn load(&mut self, workspace: WorkspaceId, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
+        self.loading = true;
+        self.reload_again = false;
         if !matches!(self.checkouts, Checkouts::Ready(_)) {
             self.checkouts = Checkouts::Loading;
         }
@@ -153,10 +212,22 @@ impl ChangesPanel {
                 if this.generation != generation {
                     return;
                 }
-                this.checkouts = match result {
-                    Ok(list) => Checkouts::Ready(ordered(list)),
-                    Err(error) => Checkouts::Failed(error),
-                };
+                this.loading = false;
+                match result {
+                    Ok(list) => {
+                        this.checkouts = Checkouts::Ready(ordered(list));
+                        this.refreshed_ms = Some(hutan_client::time::now_ms());
+                        this.refresh_error = None;
+                    }
+                    // The list on screen stays; the panel says it is not current.
+                    Err(error) if matches!(this.checkouts, Checkouts::Ready(_)) => {
+                        this.refresh_error = Some(error);
+                    }
+                    Err(error) => this.checkouts = Checkouts::Failed(error),
+                }
+                if std::mem::take(&mut this.reload_again) {
+                    this.refresh(cx);
+                }
                 cx.notify();
             })
             .ok();
@@ -299,6 +370,28 @@ impl Render for ChangesPanel {
             }
         };
 
+        // A refresh that failed leaves the list standing; say how old it is.
+        let stale = self.refresh_error.as_ref().map(|error| {
+            let age = self.refreshed_ms.map_or_else(String::new, |at| {
+                format!(" from {}", hutan_client::time::relative_to_now(at))
+            });
+            let tip = SharedString::from(error.clone());
+            div()
+                .id("changes-stale")
+                .flex_none()
+                .px(px(tokens.spacing * 3.0))
+                .pb(px(tokens.spacing))
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(theme.warning)
+                .tooltip(move |_, cx| {
+                    cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
+                        .into()
+                })
+                .child(SharedString::from(format!(
+                    "Couldn't refresh · showing the list{age}"
+                )))
+                .child(probe(&self.env.regions, Region::Changes("panel-stale")))
+        });
         div()
             .size_full()
             .flex()
@@ -322,6 +415,7 @@ impl Render for ChangesPanel {
                     )
                     .child(refresh),
             )
+            .children(stale)
             .child(body)
     }
 }

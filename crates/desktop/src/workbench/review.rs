@@ -99,6 +99,7 @@ impl Workbench {
         let dir = PathBuf::from(path);
         let comments = self.review_comments.get(path).cloned().unwrap_or_default();
         let view = cx.new(|cx| ChangesView::new(env, dir, None, comments, cx));
+        view.update(cx, |view, cx| view.follow_window(window, cx));
         let key = path.to_owned();
         let subscription = cx.subscribe_in(
             &view,

@@ -178,6 +178,76 @@ pub struct SessionClosed {
     pub session_id: SessionId,
 }
 
+/// What happened in a session that may have changed files of the checkout it works in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivityCause {
+    /// An agent's turn ended (a chat turn, or a terminal agent that reported it stopped), or the
+    /// agent's session ended.
+    TurnEnded,
+    /// A command finished in a terminal (`terminal.block`, `OSC 133;D`).
+    CommandFinished,
+}
+
+/// Emitted by [`SessionsStore`] when something happened that may have changed the files of the
+/// checkout a session works in: Changes views and the Changes panel read the checkout again
+/// (`UX-CHANGES-FRESH`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckoutActivity {
+    pub session_id: SessionId,
+    pub cause: ActivityCause,
+    /// Where the session works: its checkout, the folder it is in and, for a finished command,
+    /// the directory the shell reported for it.
+    pub places: Vec<PathBuf>,
+}
+
+impl CheckoutActivity {
+    /// Whether the activity happened in (or below) the checkout at `path` (or its canonical
+    /// spelling).
+    pub fn touches(&self, path: &std::path::Path, canonical: &std::path::Path) -> bool {
+        self.places
+            .iter()
+            .any(|place| place.starts_with(path) || place.starts_with(canonical))
+    }
+}
+
+/// Whether an agent works in `info` right now: a chat turn is in progress or waits for an answer,
+/// or a terminal agent reported that it works or is blocked.
+fn agent_busy(info: &SessionInfo) -> bool {
+    use hutan_core::SessionState;
+    use hutan_protocol::messages::AgentState;
+    if info.chat.is_some() {
+        return matches!(
+            info.state,
+            SessionState::Running | SessionState::WaitingApproval
+        );
+    }
+    info.agent
+        .as_ref()
+        .is_some_and(|report| report.state != AgentState::Idle)
+        && matches!(
+            info.state,
+            SessionState::Running | SessionState::Idle | SessionState::WaitingApproval
+        )
+}
+
+/// The places a session works in, for [`CheckoutActivity`].
+fn session_places(info: &SessionInfo) -> Vec<PathBuf> {
+    let mut places: Vec<PathBuf> = Vec::new();
+    for place in [
+        info.placement.as_ref().map(|p| p.root.clone()),
+        info.folder.clone(),
+        info.cwd.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !places.contains(&place) {
+            places.push(place);
+        }
+    }
+    places
+}
+
 /// Why `session.close` did not close the session.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CloseFailure {
@@ -330,6 +400,7 @@ impl EventEmitter<UiOpenRequested> for SessionsStore {}
 impl EventEmitter<AccountsChanged> for SessionsStore {}
 impl EventEmitter<MemoryChanged> for SessionsStore {}
 impl EventEmitter<SessionClosed> for SessionsStore {}
+impl EventEmitter<CheckoutActivity> for SessionsStore {}
 impl EventEmitter<RecoverySummaryDue> for SessionsStore {}
 
 impl std::fmt::Debug for SessionsStore {
@@ -458,6 +529,9 @@ impl SessionsStore {
             }
             self.observe_blocked_nodes(cx);
             self.observe_recovery(cx);
+            if was_connected && before.epoch == self.state.epoch {
+                self.observe_turn_ends(&before, cx);
+            }
             let known: Vec<SessionId> = self.state.sessions.iter().map(|s| s.id).collect();
             self.recent.retain(|id, _| !known.contains(id));
         }
@@ -578,6 +652,25 @@ impl SessionsStore {
         })
     }
 
+    /// Emits [`CheckoutActivity`] for every session whose agent stopped working since `before`.
+    fn observe_turn_ends(&self, before: &StoreState, cx: &mut Context<Self>) {
+        for old in &before.sessions {
+            if !agent_busy(old) {
+                continue;
+            }
+            let Some(now) = self.state.sessions.iter().find(|s| s.id == old.id) else {
+                continue;
+            };
+            if !agent_busy(now) {
+                cx.emit(CheckoutActivity {
+                    session_id: now.id,
+                    cause: ActivityCause::TurnEnded,
+                    places: session_places(now),
+                });
+            }
+        }
+    }
+
     /// Emits [`AgentAttentionChanged`] for every session in which a node became blocked since
     /// the last state. The first state of an epoch is the baseline.
     fn observe_blocked_nodes(&mut self, cx: &mut Context<Self>) {
@@ -639,6 +732,21 @@ impl SessionsStore {
             }
             // Blocks go to the attachment that shows the terminal, if there is one.
             Notice::TerminalBlock { terminal, block } => {
+                if block.state == hutan_protocol::blocks::BlockState::Finished
+                    && let Some(info) = self.state.sessions.iter().find(|s| s.terminal_id == Some(*terminal))
+                {
+                    let mut places = session_places(info);
+                    if let Some(cwd) = &block.cwd
+                        && !places.contains(cwd)
+                    {
+                        places.push(cwd.clone());
+                    }
+                    cx.emit(CheckoutActivity {
+                        session_id: info.id,
+                        cause: ActivityCause::CommandFinished,
+                        places,
+                    });
+                }
                 let attached: Vec<_> = self
                     .terminals
                     .values()
@@ -1860,5 +1968,75 @@ mod tests {
         assert!(ui_open_is_fresh(1_000, 16_000));
         assert!(!ui_open_is_fresh(1_000, 16_001));
         assert!(ui_open_is_fresh(5_000, 1_000), "a future stamp is current");
+    }
+
+    fn info(state: hutan_core::SessionState) -> SessionInfo {
+        SessionInfo {
+            id: SessionId::new(),
+            workspace_id: WorkspaceId::new(),
+            kind: hutan_core::SessionKind::Terminal,
+            title: "t".into(),
+            state,
+            command: vec![],
+            cwd: None,
+            terminal_id: None,
+            created_at_ms: 0,
+            agent: None,
+            restored: false,
+            chat: None,
+            placement: None,
+            folder: None,
+            recovery: None,
+        }
+    }
+
+    fn report(
+        state: hutan_protocol::messages::AgentState,
+    ) -> hutan_protocol::messages::AgentReport {
+        hutan_protocol::messages::AgentReport {
+            source: "hook".into(),
+            agent: "claude".into(),
+            state,
+            message: None,
+            agent_session_id: None,
+            updated_at_ms: 0,
+            blocked_sub: None,
+        }
+    }
+
+    #[test]
+    fn a_terminal_agent_is_busy_while_it_works_or_waits_for_a_decision() {
+        use hutan_core::SessionState;
+        use hutan_protocol::messages::AgentState;
+        let mut terminal = info(SessionState::Running);
+        assert!(!agent_busy(&terminal), "a plain shell is not an agent");
+        for (state, busy) in [
+            (AgentState::Working, true),
+            (AgentState::Blocked, true),
+            (AgentState::Idle, false),
+        ] {
+            terminal.agent = Some(report(state));
+            assert_eq!(agent_busy(&terminal), busy, "{state:?}");
+        }
+        // The agent's process went away with its last report still "working".
+        terminal.agent = Some(report(AgentState::Working));
+        terminal.state = SessionState::Stopped;
+        assert!(!agent_busy(&terminal));
+    }
+
+    #[test]
+    fn activity_touches_the_checkouts_it_happened_in_or_below() {
+        let activity = CheckoutActivity {
+            session_id: SessionId::new(),
+            cause: ActivityCause::CommandFinished,
+            places: vec![PathBuf::from("/private/repo/src")],
+        };
+        let path = std::path::Path::new("/tmp/repo");
+        assert!(activity.touches(path, std::path::Path::new("/private/repo")));
+        assert!(!activity.touches(path, std::path::Path::new("/private/other")));
+        assert!(!activity.touches(
+            std::path::Path::new("/private/rep"),
+            std::path::Path::new("/private/rep")
+        ));
     }
 }

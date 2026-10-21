@@ -16,12 +16,12 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, ScrollHandle, SharedString,
     StatefulInteractiveElement, Styled, Window, div, prelude::*, px,
 };
-use hutan_chat_view::diff::{DiffLine, LineKind};
+use hutan_chat_view::diff::{DiffLine, FileDiff, LineKind};
 use hutan_core::SessionId;
 
 use super::comments::{
-    self, ComposeError, MAX_COMMENTS, Mark, ReviewComment, clock, compose_chat, compose_plain,
-    diff_text, now_ms, snippet,
+    self, ComposeError, MAX_COMMENTS, Mark, ReviewComment, SnippetLine, clock, compose_chat,
+    compose_plain, diff_text, now_ms, snippet,
 };
 use super::{ChangesEvent, ChangesView, FilePatch, hunk_ranges};
 use crate::settings::{ChatSettings, SendKey};
@@ -66,6 +66,12 @@ struct Draft {
     editing: Option<u64>,
     input: TextInput,
     vim: Vim,
+    /// What the selected lines said when the box opened, and their surroundings: where the
+    /// lines are found again when the patch is read anew, and what the comment is saved with.
+    lines: Vec<SnippetLine>,
+    excerpt: Vec<SnippetLine>,
+    /// The lines are gone from the patch (the file changed under the box).
+    outdated: bool,
 }
 
 /// An agent a review can go to: a live chat, or a terminal with an agent, in this checkout.
@@ -136,6 +142,19 @@ pub(super) struct Anchors {
     index: HashMap<u64, usize>,
 }
 
+/// Where `lines` are in `diff` now: the hunk and the first and last line index of the closest
+/// run of lines saying the same, `None` when the lines are gone.
+fn place(
+    diff: &FileDiff,
+    ranges: &[std::ops::Range<usize>],
+    lines: &[SnippetLine],
+) -> Option<(usize, usize, usize)> {
+    let hint = lines.first().and_then(|l| l.new.or(l.old));
+    let (first, last) = comments::locate(diff, ranges, lines, hint)?;
+    let hunk = ranges.iter().position(|r| r.contains(&first))?;
+    Some((hunk, first, last))
+}
+
 impl ChangesView {
     // ---- read access (also for tests) -----------------------------------------------------
 
@@ -153,6 +172,25 @@ impl ChangesView {
     /// Whether the comment box is open.
     pub fn comment_box_open(&self) -> bool {
         self.review.draft.is_some()
+    }
+
+    /// What is typed in the open comment box of a new comment.
+    pub fn comment_text(&self) -> Option<String> {
+        self.review
+            .draft
+            .as_ref()
+            .filter(|d| d.editing.is_none())
+            .map(|d| d.input.text().to_owned())
+    }
+
+    /// Where the open comment box of a new comment sits: the last diff line it is under, and
+    /// whether its lines are gone from the patch.
+    pub fn comment_box_at(&self) -> Option<(usize, bool)> {
+        self.review
+            .draft
+            .as_ref()
+            .filter(|d| d.editing.is_none())
+            .map(|d| (d.to, d.outdated))
     }
 
     /// What the tray says about a send that did not go.
@@ -355,6 +393,13 @@ impl ChangesView {
             return false;
         };
         let (from, to) = selection.span();
+        let Some((lines, excerpt)) = self.selected_diff().and_then(|diff| {
+            hunk_ranges(diff)
+                .get(selection.hunk)
+                .and_then(|hunk| snippet(diff, hunk, from, to))
+        }) else {
+            return false;
+        };
         self.review.draft = Some(Draft {
             file: selection.file,
             hunk: selection.hunk,
@@ -363,6 +408,9 @@ impl ChangesView {
             editing: None,
             input: TextInput::new(),
             vim: Vim::new(),
+            lines,
+            excerpt,
+            outdated: false,
         });
         self.review.notice = None;
         window.focus(&self.review.comment_focus, cx);
@@ -410,12 +458,10 @@ impl ChangesView {
             return false;
         }
         let ranges = hunk_ranges(diff);
-        let Some((lines, excerpt)) = ranges
-            .get(draft.hunk)
-            .and_then(|hunk| snippet(diff, hunk, draft.from, draft.to))
-        else {
+        let (lines, excerpt) = (draft.lines.clone(), draft.excerpt.clone());
+        if lines.is_empty() {
             return false;
-        };
+        }
         let id = self
             .review
             .comments
@@ -437,7 +483,10 @@ impl ChangesView {
             keep_open: false,
             outdated: false,
         };
-        if let Some(found) = comments::locate(diff, &ranges, &comment.lines, comment.hint()) {
+        if draft.outdated {
+            comment.outdated = true;
+        } else if let Some(found) = comments::locate(diff, &ranges, &comment.lines, comment.hint())
+        {
             self.review.placed.insert(id, found);
         } else {
             comment.outdated = true;
@@ -473,6 +522,9 @@ impl ChangesView {
             editing: Some(id),
             input,
             vim: Vim::new(),
+            lines: Vec::new(),
+            excerpt: Vec::new(),
+            outdated: false,
         });
         window.focus(&self.review.comment_focus, cx);
         cx.notify();
@@ -551,6 +603,54 @@ impl ChangesView {
         }
         if changed {
             self.comments_changed(cx);
+        }
+    }
+
+    /// The patch of `file` was replaced by one that may differ from `before` (a refresh): the
+    /// line selection and the open comment box follow their lines to where those are now. A
+    /// selection whose lines are gone is dropped; a box whose lines are gone stays, with its
+    /// text, and says so.
+    pub(super) fn review_patch_replaced(&mut self, file: &str, before: &FileDiff) {
+        let Some(FilePatch::Ready { diff: now, .. }) = self.patches.get(file) else {
+            return;
+        };
+        if now == before {
+            return;
+        }
+        let ranges = hunk_ranges(now);
+        if let Some(selection) = self.review.selection.clone()
+            && selection.file == file
+        {
+            let (from, to) = selection.span();
+            let moved = hunk_ranges(before)
+                .get(selection.hunk)
+                .and_then(|hunk| snippet(before, hunk, from, to))
+                .and_then(|(lines, _)| place(now, &ranges, &lines));
+            self.review.selection = moved.map(|(hunk, first, last)| Selection {
+                file: selection.file,
+                hunk,
+                anchor: first,
+                head: last,
+            });
+        }
+        if let Some(draft) = &mut self.review.draft
+            && draft.editing.is_none()
+            && draft.file == file
+        {
+            match place(now, &ranges, &draft.lines) {
+                Some((hunk, first, last)) => {
+                    draft.hunk = hunk;
+                    draft.from = first;
+                    draft.to = last;
+                    draft.outdated = false;
+                }
+                None => {
+                    draft.outdated = true;
+                    // The box stays where it can still be drawn.
+                    draft.to = draft.to.min(now.lines.len().saturating_sub(1));
+                    draft.from = draft.from.min(draft.to);
+                }
+            }
         }
     }
 
@@ -1476,7 +1576,14 @@ impl ChangesView {
                     .selected_diff()
                     .map(|d| selection_label(&draft.file, d, from, to))
                     .unwrap_or_else(|| draft.file.clone());
-                format!("Comment on {lines}")
+                if draft.outdated {
+                    format!(
+                        "Comment on {} — those lines changed; it will be saved as outdated",
+                        draft.file
+                    )
+                } else {
+                    format!("Comment on {lines}")
+                }
             }
         };
         let empty = draft.input.text().trim().is_empty();

@@ -146,9 +146,11 @@ pub fn builtin_panels() -> PanelRegistry {
         title: "Changes".into(),
         icon: crate::icons::Icon::PanelChanges,
         default_dock: DockPosition::Right,
-        factory: Rc::new(|env, _window, cx| {
+        factory: Rc::new(|env, window, cx| {
             let env = env.clone();
-            AnyView::from(cx.new(|cx| ChangesPanel::new(env, cx)))
+            let panel = cx.new(|cx| ChangesPanel::new(env, cx));
+            panel.update(cx, |panel, cx| panel.follow_window(window, cx));
+            AnyView::from(panel)
         }),
     });
     registry.register(PanelSpec {

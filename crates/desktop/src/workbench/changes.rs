@@ -40,6 +40,7 @@ use super::text_field::{FieldMut, FieldRef};
 use super::ui::{self, StyledExt as _};
 use super::view::Region;
 use super::vim_ui::{self, VimConfig};
+use crate::sessions::CheckoutActivity;
 use crate::theme::{DensityExt as _, Theme, Tokens};
 
 /// Below this width the view stacks: the file list becomes a strip above the diff, so the diff
@@ -78,6 +79,27 @@ pub fn hunk_ranges(diff: &FileDiff) -> Vec<Range<usize>> {
         .enumerate()
         .map(|(i, start)| *start..starts.get(i + 1).copied().unwrap_or(diff.lines.len()))
         .collect()
+}
+
+/// How old a read is, in the words the freshness chip uses: `just now`, `3 s ago`, then the
+/// minutes, hours and days of `docs/design.md` § Time.
+fn age_words(age_ms: u64) -> String {
+    match age_ms / 1000 {
+        0..=4 => "just now".to_owned(),
+        secs @ 5..=59 => format!("{secs} s ago"),
+        _ => hutan_client::time::relative_text(age_ms, 0),
+    }
+}
+
+/// The chip over the file list: `updated 3 s ago`, or `couldn't refresh · showing changes from
+/// 3 min ago` while the last refresh failed.
+pub fn freshness_label(now_ms: u64, refreshed_ms: u64, failed: bool) -> String {
+    let age = age_words(now_ms.saturating_sub(refreshed_ms));
+    if failed {
+        format!("couldn't refresh · showing changes from {age}")
+    } else {
+        format!("updated {age}")
+    }
 }
 
 /// A file's patch as the view holds it.
@@ -141,6 +163,17 @@ pub struct ChangesView {
     files_open: bool,
     /// Horizontal scroll of the diff, for lines wider than the pane.
     diff_x: ScrollHandle,
+    /// When the listing was last read, in Unix milliseconds (`updated 3 s ago`).
+    refreshed_ms: Option<u64>,
+    /// Why the last refresh failed while the listing it left standing is older.
+    refresh_error: Option<String>,
+    /// A reload is in flight; an automatic trigger that arrives meanwhile asks for one more
+    /// afterwards instead of racing it.
+    loading: bool,
+    reload_again: bool,
+    /// The timer that redraws the age chip while the view is drawn.
+    tick: Option<gpui::Task<()>>,
+    _subscriptions: Vec<gpui::Subscription>,
     /// The width the view was last painted at (the workbench clears the shared regions before it
     /// draws, so the view keeps its own).
     width: std::rc::Rc<std::cell::Cell<Option<gpui::Pixels>>>,
@@ -185,9 +218,22 @@ impl ChangesView {
             files_open: false,
             diff_x: ScrollHandle::new(),
             width: std::rc::Rc::default(),
+            refreshed_ms: None,
+            refresh_error: None,
+            loading: false,
+            reload_again: false,
+            tick: None,
+            _subscriptions: Vec::new(),
         };
-        cx.observe(&view.env.sessions, |_, _, cx| cx.notify())
-            .detach();
+        let sessions = view.env.sessions.clone();
+        view._subscriptions = vec![
+            cx.observe(&sessions, |_, _, cx| cx.notify()),
+            cx.subscribe(&sessions, |this, _, activity: &CheckoutActivity, cx| {
+                if activity.touches(&this.path, &this.canonical) {
+                    this.refresh_soon(cx);
+                }
+            }),
+        ];
         view.reload(cx);
         view
     }
@@ -310,13 +356,46 @@ impl ChangesView {
 
     // ---- loading --------------------------------------------------------------------------
 
-    /// Asks for the worktree and its file list again (keeping the selection when the file is
-    /// still changed).
+    /// Reads the checkout again (the Refresh button, a window that came back, an agent's turn
+    /// that ended). What the user is looking at stays: the selected file (while it is still
+    /// changed), its patch until the new one arrives, the folds, the scroll, the line selection
+    /// and an open comment box where their lines moved to. A refresh that fails keeps the list
+    /// and says so in the freshness chip.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
+        self.load(false, cx);
+    }
+
+    /// [`reload`](Self::reload) for a trigger nobody asked for: it waits for a reload in flight
+    /// and then reads once more, so a burst of finished commands is at most two reads.
+    pub fn refresh_soon(&mut self, cx: &mut Context<Self>) {
+        if self.loading {
+            self.reload_again = true;
+        } else {
+            self.reload(cx);
+        }
+    }
+
+    /// Reads the checkout again whenever `window` becomes the active window.
+    pub fn follow_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self._subscriptions
+            .push(cx.observe_window_activation(window, |this, window, cx| {
+                if window.is_window_active() {
+                    this.refresh_soon(cx);
+                }
+            }));
+    }
+
+    /// `replace`: the question changed (uncommitted changes in or out), so nothing of the old
+    /// answer is kept and a failure replaces the list.
+    fn load(&mut self, replace: bool, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
-        self.patches.clear();
-        self.review_reloading();
+        self.loading = true;
+        self.reload_again = false;
+        if replace {
+            self.patches.clear();
+            self.review_reloading();
+        }
         if !matches!(self.listing, Listing::Ready(_)) {
             self.listing = Listing::Loading;
         }
@@ -340,6 +419,7 @@ impl ChangesView {
                 if this.generation != generation {
                     return;
                 }
+                this.loading = false;
                 if let Ok(list) = worktrees {
                     this.info = list.into_iter().find(|w| w.path == path);
                 }
@@ -352,12 +432,18 @@ impl ChangesView {
                             .cloned();
                         this.selected = keep.or_else(|| diff.files.first().map(|f| f.path.clone()));
                         this.listing = Listing::Ready(diff);
-                        if let Some(file) = this.selected.clone() {
-                            this.load_patch(&file, cx);
-                        }
+                        this.refreshed_ms = Some(hutan_client::time::now_ms());
+                        this.refresh_error = None;
+                        this.refresh_patches(cx);
                         this.review_listed(cx);
                     }
+                    Err(error) if !replace && matches!(this.listing, Listing::Ready(_)) => {
+                        this.refresh_error = Some(error);
+                    }
                     Err(error) => this.listing = Listing::Failed(error),
+                }
+                if std::mem::take(&mut this.reload_again) {
+                    this.reload(cx);
                 }
                 cx.notify();
             })
@@ -367,12 +453,102 @@ impl ChangesView {
         cx.notify();
     }
 
+    /// After a listing: the patches of the shown file and of the files with review comments are
+    /// fetched again, the old ones standing until the new ones arrive; the others are dropped
+    /// (they are fetched when a file is selected).
+    fn refresh_patches(&mut self, cx: &mut Context<Self>) {
+        let wanted = self.refresh_files();
+        let mut old = std::mem::take(&mut self.patches);
+        for file in &wanted {
+            if let Some(patch @ FilePatch::Ready { .. }) = old.remove(file) {
+                self.patches.insert(file.clone(), patch);
+            }
+        }
+        for file in &wanted {
+            self.fetch_patch(file, cx);
+        }
+        if self
+            .review
+            .selection
+            .as_ref()
+            .is_some_and(|s| Some(s.file.as_str()) != self.selected.as_deref())
+        {
+            self.review.selection = None;
+        }
+    }
+
     /// Includes or leaves out the uncommitted changes, and lists again.
     pub fn set_include_uncommitted(&mut self, include: bool, cx: &mut Context<Self>) {
         if self.include_uncommitted != include {
             self.include_uncommitted = include;
-            self.reload(cx);
+            self.load(true, cx);
         }
+    }
+
+    /// The files whose patches a refresh reads again: the shown one first, then every listed
+    /// file this diff has review comments on.
+    fn refresh_files(&self) -> Vec<String> {
+        let mut files: Vec<String> = self.selected.iter().cloned().collect();
+        if let Some(base) = self.base() {
+            for comment in self.review.comments.iter().filter(|c| c.base == base) {
+                if !files.contains(&comment.file)
+                    && self.files().iter().any(|f| f.path == comment.file)
+                {
+                    files.push(comment.file.clone());
+                }
+            }
+        }
+        files
+    }
+
+    /// When the listing was last read (Unix milliseconds), once it has been.
+    pub fn refreshed_ms(&self) -> Option<u64> {
+        self.refreshed_ms
+    }
+
+    /// Why the last refresh failed, while the list on screen is older than it.
+    pub fn refresh_error(&self) -> Option<&str> {
+        self.refresh_error.as_deref()
+    }
+
+    /// Whether a read of the checkout is in flight.
+    pub fn loading(&self) -> bool {
+        self.loading
+    }
+
+    /// The freshness chip's words at `now_ms`: `updated 3 s ago`, or that the last refresh
+    /// failed. Nothing before the first listing.
+    pub fn freshness_text(&self, now_ms: u64) -> Option<String> {
+        Some(freshness_label(
+            now_ms,
+            self.refreshed_ms?,
+            self.refresh_error.is_some(),
+        ))
+    }
+
+    /// Draws the age chip again in a second (a minute in, every 30 s) while the view is drawn.
+    fn schedule_tick(&mut self, cx: &mut Context<Self>) {
+        let Some(at) = self.refreshed_ms else {
+            return;
+        };
+        if self.tick.is_some() {
+            return;
+        }
+        let wait = if hutan_client::time::now_ms().saturating_sub(at) < 60_000 {
+            1
+        } else {
+            30
+        };
+        self.tick = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(wait))
+                .await;
+            this.update(cx, |this, cx| {
+                this.tick = None;
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     /// Shows a file's diff (fetched from the daemon the first time).
@@ -411,14 +587,22 @@ impl ChangesView {
         f32::from(self.diff_x.max_offset().x)
     }
 
+    /// Shows `file`'s patch: fetched the first time it is wanted.
     fn load_patch(&mut self, file: &str, cx: &mut Context<Self>) {
-        if self.patches.contains_key(file) {
-            return;
+        if !self.patches.contains_key(file) {
+            self.fetch_patch(file, cx);
         }
+    }
+
+    /// Asks the daemon for `file`'s patch. A patch already held stays on screen until its
+    /// replacement arrives, so a refresh does not blank the diff or reset its scroll.
+    fn fetch_patch(&mut self, file: &str, cx: &mut Context<Self>) {
         let Some(entry) = self.files().iter().find(|f| f.path == file).cloned() else {
             return;
         };
-        self.patches.insert(file.to_owned(), FilePatch::Loading);
+        if !self.patches.contains_key(file) {
+            self.patches.insert(file.to_owned(), FilePatch::Loading);
+        }
         let generation = self.generation;
         let request = WorktreeFileDiffRequest {
             path: self.path.clone(),
@@ -437,18 +621,33 @@ impl ChangesView {
                 if this.generation != generation {
                     return;
                 }
-                let patch = match answer {
-                    Ok(answer) => FilePatch::Ready {
-                        diff: diff::split_patch(&answer.patch)
-                            .into_iter()
-                            .next()
-                            .unwrap_or_else(|| diff::split_patch("diff --git a/x b/x\n").remove(0)),
-                        truncated: answer.truncated,
-                        binary: answer.binary || entry.binary,
-                    },
-                    Err(error) => FilePatch::Failed(error),
-                };
-                this.patches.insert(entry.path.clone(), patch);
+                match answer {
+                    Ok(answer) => {
+                        let patch = FilePatch::Ready {
+                            diff: diff::split_patch(&answer.patch)
+                                .into_iter()
+                                .next()
+                                .unwrap_or_else(|| {
+                                    diff::split_patch("diff --git a/x b/x\n").remove(0)
+                                }),
+                            truncated: answer.truncated,
+                            binary: answer.binary || entry.binary,
+                        };
+                        let before = this.patches.insert(entry.path.clone(), patch);
+                        if let Some(FilePatch::Ready { diff: before, .. }) = before {
+                            this.review_patch_replaced(&entry.path, &before);
+                        }
+                    }
+                    // A patch that is on screen stays; the chip says it is not current.
+                    Err(error) => {
+                        if matches!(this.patches.get(&entry.path), Some(FilePatch::Ready { .. })) {
+                            this.refresh_error = Some(error);
+                        } else {
+                            this.patches
+                                .insert(entry.path.clone(), FilePatch::Failed(error));
+                        }
+                    }
+                }
                 this.review_patch_arrived(&entry.path, cx);
                 cx.notify();
             })
@@ -708,6 +907,7 @@ fn status_mark(status: DiffStatus, theme: &Theme) -> (&'static str, gpui::Hsla) 
 impl Render for ChangesView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.env.regions.rendered(cx.entity_id());
+        self.schedule_tick(cx);
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let look = Look::of(cx);
@@ -887,6 +1087,7 @@ impl ChangesView {
                         }))
                         .child(probe(&self.env.regions, Region::Changes("toggle"))),
                     )
+                    .children(self.render_freshness(theme, tokens))
                     .child(
                         ui::button(
                             "changes-refresh",
@@ -919,6 +1120,34 @@ impl ChangesView {
                     ),
             )
             .into_any_element()
+    }
+
+    /// The chip that says how current the list is; it turns to a warning when a refresh failed.
+    /// Its tooltip has the absolute time of the last read, and the reason of a failure.
+    fn render_freshness(&self, theme: &Theme, tokens: &Tokens) -> Option<AnyElement> {
+        let refreshed = self.refreshed_ms?;
+        let text = self.freshness_text(hutan_client::time::now_ms())?;
+        let failed = self.refresh_error.is_some();
+        let mut tip = format!(
+            "Last read {}",
+            hutan_client::time::local_time_seconds_text(refreshed)
+        );
+        if let Some(error) = &self.refresh_error {
+            tip = format!("{error}\n{tip}");
+        }
+        let tip = SharedString::from(tip);
+        Some(
+            div()
+                .id("changes-freshness")
+                .relative()
+                .flex_none()
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(if failed { theme.warning } else { theme.muted })
+                .tooltip(move |_, cx| cx.new(|_| super::style::TextTooltip(tip.clone())).into())
+                .child(SharedString::from(text))
+                .child(probe(&self.env.regions, Region::Changes("freshness")))
+                .into_any_element(),
+        )
     }
 
     fn render_merge_form(
@@ -1532,5 +1761,26 @@ mod tests {
         assert_eq!(text, "merging `a` into `main` conflicts");
         assert_eq!(files, ["a.txt", "b/c.txt"]);
         assert_eq!(split_conflicts("plain"), ("plain".to_owned(), vec![]));
+    }
+
+    #[test]
+    fn the_freshness_chip_counts_seconds_then_minutes() {
+        let then = 1_000_000;
+        for (age_ms, words) in [
+            (0, "updated just now"),
+            (4_999, "updated just now"),
+            (5_000, "updated 5 s ago"),
+            (59_999, "updated 59 s ago"),
+            (60_000, "updated 1 min ago"),
+            (3 * 3_600_000, "updated 3 h ago"),
+        ] {
+            assert_eq!(freshness_label(then + age_ms, then, false), words);
+        }
+        assert_eq!(
+            freshness_label(then + 180_000, then, true),
+            "couldn't refresh · showing changes from 3 min ago"
+        );
+        // A clock that went backwards does not underflow.
+        assert_eq!(freshness_label(then - 1, then, false), "updated just now");
     }
 }
