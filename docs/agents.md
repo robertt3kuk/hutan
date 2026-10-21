@@ -65,6 +65,31 @@ The pump gives every event the session's next `seq` and a timestamp. Everything 
 
 The `ChatSpec` of a chat (agent, model, policies, **provider thread id**) is the session row's `spec_json`. After a daemon restart (`restore_sessions = "respawn"`, the default) live chat sessions start again: `thread/resume` with the stored thread id, the same session id, history unchanged. `restore_sessions = "stopped"`, a stopped session and a failed one stay listed; `hutan restart <id>` (`session.restart`) resumes them. An open turn at the time of a crash is closed in the journal (`turn_failed` / `turn_cancelled`) and approvals left open become `expired`. The restart is said on the session (`SessionInfo.recovery`, `chat_resumed` with `last_turn: completed | interrupted`, or `not_restarted` with the agent's error; `docs/protocol.md` § Recovery): the desktop's chat header offers *Retry last message* for an interrupted turn, which sends the journal's last user message again (attachments are not resent). A shutdown that cancels an open turn marks its row (`hutan stopped during the turn`) and the approvals it expires (`decided_by` `daemon_stop`), so the next start can tell it from a turn the user cancelled. Provider resume only continues the agent: Codex's resumed thread omits tool items and renumbers ids, which is why the history shown comes from Hutan's journal.
 
+## Checkpoints
+
+Every turn of a Codex, OMP or Claude Code chat whose folder is in a git checkout gets a **checkpoint** (ADR 0019, on by default): a snapshot of the checkout's files just before the prompt reaches the agent and another when the turn ends — however it ends (completed, failed, interrupted, the agent exiting, the daemon stopping). The snapshots are commits in the repository itself, kept by one hidden ref per turn, `refs/hutan/checkpoints/<session>/<turn>` (the end commit; its parent is the start); a turn that changed no file keeps no ref and is recorded as `unchanged`. They are taken through Hutan's own index, so your index, `HEAD`, branches, stash and working tree are never touched, and ignored files are never read. Files above `max_file_bytes`, past a snapshot's budget, with secret-looking names, LFS and other filtered paths, and nested repositories are left out and listed. The prompt waits at most 5 s for the start snapshot; past that it goes and the turn is marked `late` (its start may already hold some of its edits). A folder outside git, the home directory or a volume root, more than `max_untracked_files` untracked files, or no `git` record the turn as `unsupported` with the reason; three failed snapshots in a row or less than 2 GiB free switch the checkout's checkpoints `off` until a checkpoint setting is changed with `mode = "on"`. Mawas conversations and direct model chats have none.
+
+Settings (`daemon.toml`, live; `hutan config set checkpoints.mode off` takes effect from the next snapshot):
+
+```toml
+[checkpoints]
+mode = "on"                    # or "off"
+max_file_bytes = 10485760      # 10 MiB
+snapshot_budget_bytes = 67108864   # new content per snapshot, 64 MiB
+max_files = 5000
+max_untracked_files = 20000
+exclude = [".env*", "*.pem", "*.key", "*.p12", "id_rsa*", "id_ed25519*", "*.kdbx", "credentials*"]
+keep_turns = 100               # retention, per session
+keep_days = 30                 # a session's checkpoints go after 30 days without a new one
+max_repo_bytes = 1073741824    # 1 GiB recorded per repository
+max_repo_refs = 1000
+
+[checkpoints.projects.web]     # a project (name or id): mode and the four snapshot bounds
+mode = "off"
+```
+
+Retention drops the oldest checkpoints first (a restore's, the state Undo needs, after every turn's), deletes their refs and packs `refs/hutan/*`; Hutan never runs `git gc` or `prune`, so their objects age out under git's own settings. `git log --all` shows checkpoint commits and `git push --mirror` would push them: do not mirror-push a repository Hutan checkpoints. The rows (`checkpoints` table) and the refs are reconciled when the daemon starts. Listing, diffing and restoring checkpoints come with CK-3 and CK-4.
+
 ## Configuration
 
 `daemon.toml`:

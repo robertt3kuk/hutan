@@ -4,6 +4,7 @@ mod assistant_backend;
 mod assistant_sleep;
 mod blocks;
 mod chat;
+mod checkpoint_turns;
 mod checkpoints;
 mod close;
 mod common;

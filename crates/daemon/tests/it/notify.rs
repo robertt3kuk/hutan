@@ -439,6 +439,9 @@ async fn a_finished_chat_turn_raises_an_intent_unless_a_client_has_the_session_f
     .await
     .expect("the daemon never noticed the closed connection");
 
+    // Intents are watched on a subscription of their own: waiting for a turn's end on the other
+    // one skips whatever arrives before it, an intent of the previous turn included.
+    let (_watcher, mut intents) = t.daemon.connect_subscribed().await;
     // Turns finish in order: the focused session first, then the others.
     t.send(focused.id, "Say hi").await;
     t.turn_end(focused.id).await;
@@ -449,8 +452,11 @@ async fn a_finished_chat_turn_raises_an_intent_unless_a_client_has_the_session_f
     let mut raised = Vec::new();
     for _ in 0..3 {
         raised.push(
-            t.next_intent("a chat_turn_finished intent", |i| {
-                i.kind == IntentKind::ChatTurnFinished
+            wait_event(&mut intents, "a chat_turn_finished intent", |event| match event {
+                Event::NotifyIntent { intent } if intent.kind == IntentKind::ChatTurnFinished => {
+                    Some(intent.clone())
+                }
+                _ => None,
             })
             .await,
         );
@@ -460,7 +466,13 @@ async fn a_finished_chat_turn_raises_an_intent_unless_a_client_has_the_session_f
     let mut expected = vec![unfocused.id, released.id, dropped.id];
     expected.sort();
     assert_eq!(sessions, expected, "everything but the focused session");
-    t.no_intent(Duration::from_millis(300)).await;
+    // Nothing more comes (the focused session's turn raised nothing).
+    let quiet = tokio::time::Instant::now() + Duration::from_millis(300);
+    while let Ok(received) = timeout(quiet - tokio::time::Instant::now(), intents.recv()).await {
+        if let (_, Event::NotifyIntent { intent }) = received.expect("event stream closed") {
+            panic!("unexpected intent: {intent:?}");
+        }
+    }
     let pending = t.intents().await;
     assert_eq!(pending.len(), 3);
     assert!(pending.iter().all(|i| i.session_id != focused.id));

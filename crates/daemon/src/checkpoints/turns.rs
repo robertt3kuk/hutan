@@ -130,11 +130,25 @@ struct Pending {
     start: Start,
 }
 
+/// The row a start wrote (with its repository and ref) and the start snapshot.
+type Started = (CheckpointRow, Result<Snapshot, CheckpointError>);
+
 #[derive(Debug)]
 enum Start {
+    /// Taken within the budget; the pending row is the one written.
     Taken(Result<Snapshot, CheckpointError>),
     /// Still running after the budget.
-    Late(JoinHandle<Result<Snapshot, CheckpointError>>),
+    Late(JoinHandle<Started>),
+}
+
+impl Start {
+    /// The start, waited for when it is late; `row` is the pending row.
+    async fn outcome(self, row: CheckpointRow) -> Started {
+        match self {
+            Self::Taken(result) => (row, result),
+            Self::Late(handle) => settled(&row, handle.await),
+        }
+    }
 }
 
 /// Ends one piece of in-flight work, whatever happens to its task.
@@ -173,10 +187,12 @@ fn classify(error: &CheckpointError) -> (CheckpointState, Option<CheckpointStatu
     }
 }
 
-fn joined(
-    result: Result<Result<Snapshot, CheckpointError>, tokio::task::JoinError>,
-) -> Result<Snapshot, CheckpointError> {
-    result.unwrap_or_else(|error| Err(CheckpointError::Internal(error.to_string())))
+/// A start task's outcome; `row` stands in when the task did not finish.
+fn settled(row: &CheckpointRow, result: Result<Started, tokio::task::JoinError>) -> Started {
+    result.unwrap_or_else(|error| {
+        let error = CheckpointError::Internal(error.to_string());
+        (row.clone(), Err(error))
+    })
 }
 
 /// The start's and the end's skipped paths, the end's winning, at most [`SKIPPED_KEPT`].
@@ -416,38 +432,36 @@ impl TurnCheckpoints {
             now_ms(),
         );
         row.checkout = Some(slot.cwd.clone());
-        let label = Label::before_turn(session.to_string(), id.to_string());
-        match tokio::time::timeout_at(deadline, self.engine.repository(&slot.cwd)).await {
-            Ok(Ok((toplevel, common_dir))) => {
-                row.checkout = Some(toplevel);
-                row.common_dir = Some(common_dir);
-                row.reference = label.reference();
-            }
-            Ok(Err(error)) => {
-                self.record_failure(&slot, row, &error).await;
-                return None;
-            }
-            Err(_) => {
-                row.state = CheckpointState::Failed;
-                row.reason = Some(format!(
-                    "git did not answer within {} s",
-                    self.start_budget.as_secs_f32()
-                ));
-                self.write(row).await;
-                return None;
-            }
-        }
-        // Without its row no ref may be written (reconcile would take it for a leftover).
-        if !self.write(row.clone()).await {
-            return None;
-        }
-
-        let engine = self.engine.clone();
+        // Everything git does counts against the budget, finding the repository included.
+        let this = Arc::clone(self);
         let cwd = slot.cwd.clone();
         let caps = self.caps(&project);
-        let mut handle = tokio::spawn(async move { engine.snapshot_with(&cwd, label, caps).await });
+        let first = row.clone();
+        let mut handle = tokio::spawn(async move {
+            let mut row = first;
+            let (toplevel, common_dir) = match this.engine.repository(&cwd).await {
+                Ok(found) => found,
+                Err(error) => return (row, Err(error)),
+            };
+            let label = Label::before_turn(row.session_id.to_string(), row.id.to_string());
+            row.checkout = Some(toplevel);
+            row.common_dir = Some(common_dir);
+            row.reference = label.reference();
+            // Without its row no ref may be written (reconcile would take it for a leftover).
+            if !this.write(row.clone()).await {
+                row.reference = None;
+                let error = CheckpointError::Internal("the checkpoint could not be recorded".into());
+                return (row, Err(error));
+            }
+            let snapshot = this.engine.snapshot_with(&cwd, label, caps).await;
+            (row, snapshot)
+        });
         let start = match tokio::time::timeout_at(deadline, &mut handle).await {
-            Ok(result) => Start::Taken(joined(result)),
+            Ok(result) => {
+                let (written, snapshot) = settled(&row, result);
+                row = written;
+                Start::Taken(snapshot)
+            }
             Err(_) => {
                 info!(%session, checkpoint = %id, budget_ms = self.start_budget.as_millis(), "the start snapshot is late; the prompt goes first");
                 Start::Late(handle)
@@ -493,13 +507,13 @@ impl TurnCheckpoints {
         let this = Arc::clone(self);
         tokio::spawn(async move {
             let _guard = guard;
-            let start = match pending.start {
-                Start::Taken(result) => result,
-                Start::Late(handle) => joined(handle.await),
-            };
-            if let (Ok(start), Some(dir)) = (&start, &pending.row.common_dir)
+            let (_, start) = pending.start.outcome(pending.row.clone()).await;
+            if let Ok(start) = &start
                 && let Some(reference) = &start.reference
-                && let Err(error) = this.engine.delete_refs(dir, &[reference.clone()]).await
+                && let Err(error) = this
+                    .engine
+                    .delete_refs(&start.common_dir, &[reference.clone()])
+                    .await
             {
                 warn!(%error, "checkpoints: removing the start of a turn that was not sent");
             }
@@ -571,12 +585,9 @@ impl TurnCheckpoints {
 
     /// Records the end of a turn; returns the repository whose retention is due.
     async fn end(&self, slot: &Slot, pending: Pending, turn: Option<TurnId>) -> Option<PathBuf> {
-        let Pending { mut row, start, .. } = pending;
+        let Pending { row, start, .. } = pending;
         let late = matches!(start, Start::Late(_));
-        let start = match start {
-            Start::Taken(result) => result,
-            Start::Late(handle) => joined(handle.await),
-        };
+        let (mut row, start) = start.outcome(row).await;
         row.turn_id = turn;
         let start = match start {
             Ok(start) => start,
