@@ -159,6 +159,56 @@ colors! {
     BlockFolded = "terminal.block.folded", false, Mix { from: Color::TerminalBackground, toward: Color::TerminalForeground, amount: 0.07 }, "Fill of a folded block's summary row.";
     MarkdownLink = "markdown.link", true, Alias(Color::Accent), "Links in chat messages.";
     MarkdownInlineCodeBackground = "markdown.inline-code.background", false, Alias(Color::SurfaceHover), "Background of inline code in chat messages.";
+
+    // ---- editor surface (E-4): every one derived, so a sparse pack gets a complete editor ----
+    EditorBackground = "editor.background", false, Alias(Color::Background), "Background of the code editor.";
+    EditorForeground = "editor.foreground", true, Alias(Color::Foreground), "Default text of the code editor: code that no syntax token colors.";
+    EditorGutterBackground = "editor.gutter.background", false, Alias(Color::EditorBackground), "Background of the line-number gutter.";
+    EditorGutterForeground = "editor.gutter.foreground", true, Mix { from: Color::EditorForeground, toward: Color::EditorBackground, amount: 0.4 }, "Line numbers.";
+    EditorLineNumberActive = "editor.line-number.active", true, Alias(Color::EditorForeground), "The line number of the cursor's line.";
+    EditorCurrentLine = "editor.current-line", false, AlphaByPolarity { of: Color::EditorForeground, dark: 0.05, light: 0.04 }, "Tint of the cursor's line.";
+    EditorSelection = "editor.selection", false, AlphaByPolarity { of: Color::Accent, dark: 0.32, light: 0.26 }, "Background of selected text in the focused editor.";
+    EditorSelectionInactive = "editor.selection.inactive", false, Alpha(Color::EditorSelection, 0.5), "Background of selected text in an editor that does not have focus.";
+    EditorCursor = "editor.cursor", true, Alias(Color::Accent), "The text cursor.";
+    EditorWhitespace = "editor.whitespace", false, Alpha(Color::EditorForeground, 0.25), "Visible whitespace marks (spaces, tabs).";
+    EditorIndentGuide = "editor.indent-guide", false, Alpha(Color::EditorForeground, 0.10), "Vertical indentation guides.";
+    EditorBracketMatch = "editor.bracket-match", false, Alpha(Color::Accent, 0.28), "Background of a bracket and its partner.";
+    EditorSearchMatch = "editor.search-match", false, Alpha(Color::StateWarning, 0.28), "Background of every find match.";
+    EditorSearchMatchActive = "editor.search-match.active", false, Alpha(Color::StateWarning, 0.60), "Background of the current find match.";
+    EditorDiagnosticError = "editor.diagnostic.error", true, Alias(Color::StateError), "Underline of an error diagnostic.";
+    EditorDiagnosticWarning = "editor.diagnostic.warning", true, Alias(Color::StateWarning), "Underline of a warning diagnostic.";
+    EditorDiagnosticInfo = "editor.diagnostic.info", true, Alias(Color::Accent), "Underline of an information diagnostic.";
+    EditorDiagnosticHint = "editor.diagnostic.hint", true, Alias(Color::TextMuted), "Underline of a hint diagnostic.";
+    EditorDiffGutterAdded = "editor.diff-gutter.added", true, Alias(Color::DiffAdded), "Gutter bar of lines added since the last commit.";
+    EditorDiffGutterModified = "editor.diff-gutter.modified", true, Alias(Color::DiffModified), "Gutter bar of lines modified since the last commit.";
+    EditorDiffGutterRemoved = "editor.diff-gutter.removed", true, Alias(Color::DiffRemoved), "Gutter mark where lines were removed since the last commit.";
+    EditorAgentChanged = "editor.agent-changed", false, AlphaByPolarity { of: Color::Accent, dark: 0.20, light: 0.16 }, "Background of lines an agent changed.";
+
+    // ---- syntax (E-4): the 22 names of `hutan_syntax::Token`, in its order. Text colors, so
+    // opaque; the defaults are the normal ANSI colors, which the terminal contrast check holds
+    // to 4.5:1, and the muted and editor foregrounds ----
+    SyntaxComment = "syntax.comment", true, Alias(Color::TextMuted), "Comments.";
+    SyntaxString = "syntax.string", true, Alias(Color::AnsiGreen), "Strings, character literals, raw text and dates.";
+    SyntaxStringEscape = "syntax.string.escape", true, Alias(Color::AnsiCyan), "Escape sequences inside strings.";
+    SyntaxNumber = "syntax.number", true, Alias(Color::AnsiYellow), "Numbers.";
+    SyntaxConstant = "syntax.constant", true, Alias(Color::AnsiYellow), "Constants: `true`, `null`, enum-like names.";
+    SyntaxKeyword = "syntax.keyword", true, Alias(Color::AnsiMagenta), "Keywords, `self` and `this`.";
+    SyntaxOperator = "syntax.operator", true, Alias(Color::EditorForeground), "Operators.";
+    SyntaxFunction = "syntax.function", true, Alias(Color::AnsiBlue), "Functions and macros: definitions and calls.";
+    SyntaxFunctionMethod = "syntax.function.method", true, Alias(Color::SyntaxFunction), "Methods.";
+    SyntaxType = "syntax.type", true, Alias(Color::AnsiCyan), "Types, constructors, namespaces and lifetimes.";
+    SyntaxTypeBuiltin = "syntax.type.builtin", true, Alias(Color::SyntaxType), "Built-in types.";
+    SyntaxVariable = "syntax.variable", true, Alias(Color::EditorForeground), "Variables.";
+    SyntaxVariableParameter = "syntax.variable.parameter", true, Alias(Color::SyntaxVariable), "Function parameters.";
+    SyntaxProperty = "syntax.property", true, Alias(Color::SyntaxVariable), "Fields and keys.";
+    SyntaxAttribute = "syntax.attribute", true, Alias(Color::AnsiYellow), "Attributes and decorators.";
+    SyntaxTag = "syntax.tag", true, Alias(Color::AnsiRed), "HTML and JSX tag names, CSS selectors.";
+    SyntaxPunctuation = "syntax.punctuation", true, Alias(Color::TextMuted), "Delimiters and separators.";
+    SyntaxPunctuationBracket = "syntax.punctuation.bracket", true, Alias(Color::SyntaxPunctuation), "Brackets.";
+    SyntaxMarkupHeading = "syntax.markup.heading", true, Alias(Color::SyntaxFunction), "Markdown headings.";
+    SyntaxMarkupBold = "syntax.markup.bold", true, Alias(Color::EditorForeground), "Bold text in markup.";
+    SyntaxMarkupItalic = "syntax.markup.italic", true, Alias(Color::EditorForeground), "Italic text in markup.";
+    SyntaxMarkupLink = "syntax.markup.link", true, Alias(Color::AnsiCyan), "Links in markup.";
 }
 
 impl Color {
@@ -180,6 +230,33 @@ impl Color {
         Color::AnsiBrightMagenta,
         Color::AnsiBrightCyan,
         Color::AnsiBrightWhite,
+    ];
+
+    /// The `syntax.*` tokens in the order of `hutan_syntax::Token::ALL` (a test holds the two
+    /// lists equal), so a renderer indexes a table of them by the token's discriminant.
+    pub const SYNTAX: [Color; 22] = [
+        Color::SyntaxComment,
+        Color::SyntaxString,
+        Color::SyntaxStringEscape,
+        Color::SyntaxNumber,
+        Color::SyntaxConstant,
+        Color::SyntaxKeyword,
+        Color::SyntaxOperator,
+        Color::SyntaxFunction,
+        Color::SyntaxFunctionMethod,
+        Color::SyntaxType,
+        Color::SyntaxTypeBuiltin,
+        Color::SyntaxVariable,
+        Color::SyntaxVariableParameter,
+        Color::SyntaxProperty,
+        Color::SyntaxAttribute,
+        Color::SyntaxTag,
+        Color::SyntaxPunctuation,
+        Color::SyntaxPunctuationBracket,
+        Color::SyntaxMarkupHeading,
+        Color::SyntaxMarkupBold,
+        Color::SyntaxMarkupItalic,
+        Color::SyntaxMarkupLink,
     ];
 
     /// The token with this manifest id.

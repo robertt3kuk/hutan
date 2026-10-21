@@ -35,8 +35,8 @@ pub use manifest::{
 };
 pub use registry::{ThemeRegistry, ThemeWatchGuard};
 pub use resolve::{
-    BlockColors, BlockFills, ColorOverrides, DensityValues, Fonts, Problem, Provenance,
-    ResolvedTheme, TerminalTheme, derive_block_fills, resolve,
+    BlockColors, BlockFills, ColorOverrides, DensityValues, EditorTheme, Fonts, Problem,
+    Provenance, ResolvedTheme, TerminalTheme, derive_block_fills, resolve,
 };
 pub use tokens::{
     COLOR_SPECS, Color, ColorSpec, DENSITY_SPECS, DensityKey, Fallback, FontRole, METRIC_SPECS,

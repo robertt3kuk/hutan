@@ -53,6 +53,31 @@ root = true
 "terminal.ansi.bright-cyan" = "#23909a"
 "terminal.ansi.bright-white" = "#8c8a82"
 
+# Editor syntax colors (E-4), each at least 4.5:1 on editor.background (derived from
+# ui.background); the editor.* surface roles are all derived (docs/themes.md).
+"syntax.comment" = "#6f6d66"
+"syntax.string" = "#2f7a48"
+"syntax.string.escape" = "#167780"
+"syntax.number" = "#a8480f"
+"syntax.constant" = "#9a4a1a"
+"syntax.keyword" = "#8e4ea8"
+"syntax.operator" = "#4a4944"
+"syntax.function" = "#2b62b8"
+"syntax.function.method" = "#1d4f99"
+"syntax.type" = "#8a6300"
+"syntax.type.builtin" = "#7a5600"
+"syntax.variable" = "#1f1e1d"
+"syntax.variable.parameter" = "#5a4a2a"
+"syntax.property" = "#1a6f8f"
+"syntax.attribute" = "#a0402a"
+"syntax.tag" = "#b93a26"
+"syntax.punctuation" = "#6f6d66"
+"syntax.punctuation.bracket" = "#57554f"
+"syntax.markup.heading" = "#a8480f"
+"syntax.markup.bold" = "#1f1e1d"
+"syntax.markup.italic" = "#4a4944"
+"syntax.markup.link" = "#2b62b8"
+
 [fonts]
 ui = [".SystemUIFont"]
 prose = [".New York", "New York", "Georgia", ".SystemUIFont"]

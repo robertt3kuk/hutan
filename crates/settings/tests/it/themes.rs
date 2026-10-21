@@ -311,6 +311,220 @@ fn the_builtins_contrast_baseline_is_reviewed() {
     }
 }
 
+// ---- editor and syntax tokens (E-4) ---------------------------------------------------------
+
+#[test]
+fn the_syntax_tokens_are_exactly_the_names_of_the_syntax_crates_tokens() {
+    use hutan_syntax::Token;
+    let registry: Vec<&str> = Color::SYNTAX.iter().map(|c| c.id()).collect();
+    let tokens: Vec<&str> = Token::ALL.iter().map(|t| t.name()).collect();
+    assert_eq!(registry, tokens, "same names in the same order");
+    // Nothing else in the registry claims the namespace.
+    let claimed = themes::COLOR_SPECS
+        .iter()
+        .filter(|s| s.id.starts_with("syntax."))
+        .count();
+    assert_eq!(claimed, Token::ALL.len());
+    // The resolved table is indexed by the token's discriminant.
+    for builtin in Builtin::ALL {
+        let theme = builtin_theme(builtin);
+        let editor = theme.editor();
+        for token in Token::ALL {
+            let id = Color::from_id(token.name()).unwrap();
+            assert_eq!(editor.syntax[token as usize], theme.color(id).rgb());
+        }
+    }
+}
+
+fn without_syntax(builtin: Builtin) -> themes::ResolvedTheme {
+    let file = match builtin {
+        Builtin::HutanDark => "hutan-dark",
+        Builtin::HutanLight => "hutan-light",
+    };
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../assets/themes")
+        .join(file)
+        .join("theme.toml");
+    let text: String = fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.starts_with("\"syntax.") && !line.starts_with("\"editor."))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let parsed = themes::parse(&text, Some(&path));
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    themes::resolve(
+        &parsed.declaration.unwrap(),
+        None,
+        &ColorOverrides::default(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_pack_without_editor_or_syntax_colors_derives_all_of_them() {
+    for builtin in Builtin::ALL {
+        let theme = without_syntax(builtin);
+        let mut seen = 0;
+        for spec in &themes::COLOR_SPECS {
+            if !(spec.id.starts_with("editor.") || spec.id.starts_with("syntax.")) {
+                continue;
+            }
+            seen += 1;
+            assert_eq!(
+                theme.provenance(spec.token),
+                Provenance::Derived,
+                "{}",
+                spec.id
+            );
+            assert!(
+                theme.color(spec.token).is_opaque() || !spec.opaque,
+                "{} must stay opaque",
+                spec.id
+            );
+        }
+        assert_eq!(seen, 22 + 22);
+        let at = |id: &str| theme.color(Color::from_id(id).unwrap());
+        for (derived, source) in [
+            ("editor.background", "ui.background"),
+            ("editor.foreground", "ui.foreground"),
+            ("editor.gutter.background", "ui.background"),
+            ("editor.line-number.active", "ui.foreground"),
+            ("editor.cursor", "ui.accent"),
+            ("editor.diagnostic.error", "state.error"),
+            ("editor.diagnostic.warning", "state.warning"),
+            ("editor.diagnostic.info", "ui.accent"),
+            ("editor.diagnostic.hint", "ui.text.muted"),
+            ("editor.diff-gutter.added", "diff.added"),
+            ("editor.diff-gutter.modified", "diff.modified"),
+            ("editor.diff-gutter.removed", "diff.removed"),
+            ("syntax.comment", "ui.text.muted"),
+            ("syntax.string", "terminal.ansi.green"),
+            ("syntax.keyword", "terminal.ansi.magenta"),
+            ("syntax.function", "terminal.ansi.blue"),
+            ("syntax.function.method", "syntax.function"),
+            ("syntax.variable.parameter", "editor.foreground"),
+            ("syntax.punctuation.bracket", "ui.text.muted"),
+        ] {
+            assert_eq!(at(derived), at(source), "{derived} <- {source}");
+        }
+        // The tints follow what they are tinted from.
+        let accent = at("ui.accent");
+        for tint in [
+            "editor.selection",
+            "editor.bracket-match",
+            "editor.agent-changed",
+        ] {
+            let c = at(tint);
+            assert_eq!((c.r, c.g, c.b), (accent.r, accent.g, accent.b), "{tint}");
+            assert!(c.a > 0.0 && c.a < 1.0, "{tint}");
+        }
+        assert_eq!(
+            at("editor.selection.inactive").a,
+            at("editor.selection").a * 0.5
+        );
+        // And the derived syntax colors are readable on the editor background, like the
+        // palette they come from.
+        let issues = themes::contrast_issues(&theme);
+        assert!(
+            !issues
+                .iter()
+                .any(|i| i.foreground.starts_with("syntax.") || i.foreground.starts_with("editor.")),
+            "{issues:?}"
+        );
+    }
+}
+
+#[test]
+fn a_sparse_pack_gets_a_complete_editor_that_follows_its_core_colors() {
+    let (dir, registry) = registry();
+    write_pack(
+        dir.path(),
+        "paper-night",
+        &sparse(
+            "paper-night",
+            "dark",
+            "\"ui.background\" = \"#101418\"\n\"state.error\" = \"#ff5555\"\n\"diff.added\" = \"#44dd66\"",
+        ),
+    );
+    registry.rescan();
+    let snapshot = registry.snapshot();
+    let theme = snapshot.pack("paper-night").unwrap().resolved();
+    let editor = theme.editor();
+    assert_eq!(editor.name, "paper-night");
+    assert_eq!(editor.background.to_string(), "#101418");
+    assert_eq!(editor.gutter_background.to_string(), "#101418");
+    assert_eq!(editor.diagnostic_error.to_string(), "#ff5555");
+    assert_eq!(editor.diff_added.to_string(), "#44dd66");
+    // The base's syntax colors are inherited; no `unknown token` or `unsupported` anywhere.
+    let dark = builtin_theme(Builtin::HutanDark);
+    assert_eq!(editor.syntax, dark.editor().syntax);
+    assert!(
+        snapshot
+            .diagnostics()
+            .iter()
+            .all(|d| !d.message.contains("unknown") && !d.message.contains("unsupported")),
+        "{:?}",
+        snapshot.diagnostics()
+    );
+}
+
+#[test]
+fn the_builtins_syntax_colors_meet_aa_on_the_editor_background() {
+    for builtin in Builtin::ALL {
+        let theme = builtin_theme(builtin);
+        let background = theme
+            .color(Color::EditorBackground)
+            .over(theme.color(Color::Background).rgb());
+        for token in Color::SYNTAX {
+            let ratio = themes::contrast_ratio(theme.color(token).rgb(), background);
+            assert!(
+                ratio >= 4.5,
+                "{} {}: {ratio:.2}:1",
+                builtin.id(),
+                token.id()
+            );
+        }
+        let ratio = themes::contrast_ratio(theme.color(Color::EditorForeground).rgb(), background);
+        assert!(
+            ratio >= 4.5,
+            "{} editor.foreground: {ratio:.2}:1",
+            builtin.id()
+        );
+        assert!(
+            themes::contrast_issues(&theme)
+                .iter()
+                .all(|i| i.background != "editor.background"),
+            "{}",
+            builtin.id()
+        );
+    }
+}
+
+#[test]
+fn a_syntax_color_that_is_hard_to_read_is_reported_as_contrast_advice() {
+    let (dir, registry) = registry();
+    write_pack(
+        dir.path(),
+        "dim-comments",
+        &sparse("dim-comments", "dark", "\"syntax.comment\" = \"#2e2e2c\""),
+    );
+    registry.rescan();
+    let snapshot = registry.snapshot();
+    let diagnostics = snapshot.diagnostics();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(!diagnostics[0].is_error());
+    assert!(
+        diagnostics[0]
+            .message
+            .starts_with("syntax.comment on editor.background: contrast"),
+        "{}",
+        diagnostics[0].message
+    );
+    // Hot reload is unchanged: the pack is loaded and usable.
+    assert!(snapshot.pack("dim-comments").is_some());
+}
+
 // ---- loading --------------------------------------------------------------------------------
 
 #[test]
@@ -1310,23 +1524,82 @@ fn token_reference() -> String {
     out
 }
 
+/// The contrast of every `syntax.*` color (and the editor's default text) on `editor.background`
+/// in both built-ins, for `docs/themes.md`.
+fn syntax_contrast_table() -> String {
+    let themes = [
+        builtin_theme(Builtin::HutanDark),
+        builtin_theme(Builtin::HutanLight),
+    ];
+    let mut out = String::from(
+        "| Token (`syntax.` prefix) | hutan-dark | Ratio | hutan-light | Ratio |\n|---|---|---|---|---|\n",
+    );
+    let background = |theme: &themes::ResolvedTheme| {
+        theme
+            .color(Color::EditorBackground)
+            .over(theme.color(Color::Background).rgb())
+    };
+    let mut row = |label: String, token: Color| {
+        out.push_str(&format!("| {label} |"));
+        for theme in &themes {
+            let color = theme.color(token).rgb();
+            let ratio = themes::contrast_ratio(color, background(theme));
+            out.push_str(&format!(" `{color}` | {ratio:.2}:1 |"));
+        }
+        out.push('\n');
+    };
+    row(
+        "default text (`editor.foreground`)".to_owned(),
+        Color::EditorForeground,
+    );
+    for token in Color::SYNTAX {
+        let name = token.id().strip_prefix("syntax.").unwrap_or(token.id());
+        row(format!("`{name}`"), token);
+    }
+    let [dark, light] = &themes;
+    out.push_str(&format!(
+        "\nOn `editor.background`: `{}` (hutan-dark) and `{}` (hutan-light).\n",
+        background(dark),
+        background(light)
+    ));
+    out
+}
+
 #[test]
 fn the_token_reference_in_the_docs_is_generated_from_the_registry() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/themes.md");
     let text = fs::read_to_string(&path).expect("docs/themes.md exists");
-    let (begin, end) = ("<!-- tokens:begin -->\n", "<!-- tokens:end -->");
-    let from = text.find(begin).expect("begin marker") + begin.len();
-    let to = text.find(end).expect("end marker");
-    let wanted = format!("\n{}\n", token_reference());
+    let blocks = [
+        (
+            "<!-- tokens:begin -->\n",
+            "<!-- tokens:end -->",
+            token_reference(),
+        ),
+        (
+            "<!-- syntax-contrast:begin -->\n",
+            "<!-- syntax-contrast:end -->",
+            syntax_contrast_table(),
+        ),
+    ];
+    let mut updated = text.clone();
+    for (begin, end, body) in &blocks {
+        let from = updated.find(begin).expect("begin marker") + begin.len();
+        let to = updated.find(end).expect("end marker");
+        let wanted = format!("\n{body}\n");
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            updated = format!("{}{}{}", &updated[..from], wanted, &updated[to..]);
+        } else {
+            assert_eq!(
+                &updated[from..to],
+                wanted,
+                "docs/themes.md is out of date; run `UPDATE_GOLDEN=1 cargo nextest run -p hutan-settings --test it -E 'test(/^themes::/)'`"
+            );
+        }
+    }
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
-        fs::write(&path, format!("{}{}{}", &text[..from], wanted, &text[to..])).unwrap();
+        fs::write(&path, &updated).unwrap();
         return;
     }
-    assert_eq!(
-        &text[from..to],
-        wanted,
-        "docs/themes.md is out of date; run `UPDATE_GOLDEN=1 cargo nextest run -p hutan-settings --test it -E 'test(/^themes::/)'`"
-    );
     // Every token id is documented exactly once.
     for spec in &themes::COLOR_SPECS {
         assert_eq!(

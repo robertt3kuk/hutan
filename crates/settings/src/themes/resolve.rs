@@ -172,6 +172,70 @@ impl ResolvedTheme {
             },
         }
     }
+
+    /// The editor section as the code view consumes it (E-5).
+    pub fn editor(&self) -> EditorTheme {
+        let at = |token: Color| self.color(token);
+        EditorTheme {
+            name: self.id.clone(),
+            background: at(Color::EditorBackground),
+            foreground: at(Color::EditorForeground),
+            gutter_background: at(Color::EditorGutterBackground),
+            gutter_foreground: at(Color::EditorGutterForeground),
+            line_number_active: at(Color::EditorLineNumberActive),
+            current_line: at(Color::EditorCurrentLine),
+            selection: at(Color::EditorSelection),
+            selection_inactive: at(Color::EditorSelectionInactive),
+            cursor: at(Color::EditorCursor),
+            whitespace: at(Color::EditorWhitespace),
+            indent_guide: at(Color::EditorIndentGuide),
+            bracket_match: at(Color::EditorBracketMatch),
+            search_match: at(Color::EditorSearchMatch),
+            search_match_active: at(Color::EditorSearchMatchActive),
+            diagnostic_error: at(Color::EditorDiagnosticError),
+            diagnostic_warning: at(Color::EditorDiagnosticWarning),
+            diagnostic_info: at(Color::EditorDiagnosticInfo),
+            diagnostic_hint: at(Color::EditorDiagnosticHint),
+            diff_added: at(Color::EditorDiffGutterAdded),
+            diff_modified: at(Color::EditorDiffGutterModified),
+            diff_removed: at(Color::EditorDiffGutterRemoved),
+            agent_changed: at(Color::EditorAgentChanged),
+            syntax: Color::SYNTAX.map(|token| self.color(token).rgb()),
+        }
+    }
+}
+
+/// The code editor's colors: the surface roles and one opaque color per `syntax.*` token.
+/// Translucent roles are meant to be drawn over the editor's own background.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EditorTheme {
+    /// Id of the pack this comes from.
+    pub name: String,
+    pub background: Rgba,
+    pub foreground: Rgba,
+    pub gutter_background: Rgba,
+    pub gutter_foreground: Rgba,
+    pub line_number_active: Rgba,
+    pub current_line: Rgba,
+    pub selection: Rgba,
+    pub selection_inactive: Rgba,
+    pub cursor: Rgba,
+    pub whitespace: Rgba,
+    pub indent_guide: Rgba,
+    pub bracket_match: Rgba,
+    pub search_match: Rgba,
+    pub search_match_active: Rgba,
+    pub diagnostic_error: Rgba,
+    pub diagnostic_warning: Rgba,
+    pub diagnostic_info: Rgba,
+    pub diagnostic_hint: Rgba,
+    pub diff_added: Rgba,
+    pub diff_modified: Rgba,
+    pub diff_removed: Rgba,
+    pub agent_changed: Rgba,
+    /// The `syntax.*` colors in the order of `hutan_syntax::Token::ALL`: index with
+    /// `token as usize`.
+    pub syntax: [Rgb; 22],
 }
 
 /// The terminal view's colors: a complete palette plus the block overlay roles.

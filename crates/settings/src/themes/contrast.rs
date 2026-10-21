@@ -134,6 +134,12 @@ pub fn contrast_issues(theme: &ResolvedTheme) -> Vec<ContrastIssue> {
         let threshold = if i < 8 { TEXT } else { GRAPHIC };
         check(ansi, Color::TerminalBackground, threshold);
     }
+
+    // Editor: the default text and every `syntax.*` color on the editor background.
+    check(Color::EditorForeground, Color::EditorBackground, TEXT);
+    for token in Color::SYNTAX {
+        check(token, Color::EditorBackground, TEXT);
+    }
     out
 }
 

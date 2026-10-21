@@ -604,12 +604,7 @@ fn clip(text: &str) -> String {
 }
 
 fn warn_unknown(sink: &mut Sink<'_>, key: &str, id: &str, what: &str) {
-    if id == "syntax" || id.starts_with("syntax.") {
-        sink.warn(
-            key,
-            "unsupported: the syntax.* namespace is reserved until the editor ships; ignored",
-        );
-    } else if !valid_token_id(id) {
+    if !valid_token_id(id) {
         sink.warn(
             key,
             format!(
@@ -926,9 +921,9 @@ extends = "builtin:hutan-dark"
     }
 
     #[test]
-    fn unknown_tokens_and_keys_warn_and_syntax_is_reported_unsupported() {
+    fn unknown_tokens_and_keys_warn_but_syntax_and_editor_tokens_are_known() {
         let text = format!(
-            "{SPARSE}\"ui.nope\" = \"#000000\"\n\"syntax.keyword\" = \"#ff0000\"\n\"UI.Bad\" = \"#000000\"\n"
+            "{SPARSE}\"ui.nope\" = \"#000000\"\n\"syntax.keyword\" = \"#ff0000\"\n\"editor.background\" = \"#101010\"\n\"syntax.nope\" = \"#00ff00\"\n\"UI.Bad\" = \"#000000\"\n"
         )
         .replace("[colors]", "mood = \"calm\"\n[colors]");
         let parsed = parse(&text, None);
@@ -948,8 +943,11 @@ extends = "builtin:hutan-dark"
         assert!(
             warnings
                 .iter()
-                .any(|(_, key, m)| *key == "colors.syntax.keyword" && m.contains("unsupported"))
+                .any(|(_, key, m)| *key == "colors.syntax.nope" && m.contains("unknown color"))
         );
+        assert!(warnings.iter().all(
+            |(_, key, _)| *key != "colors.syntax.keyword" && *key != "colors.editor.background"
+        ));
         assert!(
             warnings
                 .iter()

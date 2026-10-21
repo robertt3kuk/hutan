@@ -51,7 +51,7 @@ mono = ["JetBrains Mono", "Menlo"]
 A **root** pack (`root = true`, no `extends`) must declare every required color, both density tables, every metric and every font role. The built-ins are root packs; copy one to start from a complete example.
 
 - Colors are `#rrggbb` or `#rrggbbaa` (either case, straight alpha, sRGB). Keys are quoted dotted ids (`"ui.border"`); nested tables under `[colors]` are an error. Text and terminal colors must be opaque; surfaces, borders, effects and tints may be translucent.
-- Unknown keys and tokens warn and are ignored. `syntax.*` is reserved for the editor and reported as unsupported. A wrong type, a malformed color, a number out of range or an invalid `extends` is an error and the pack is not loaded.
+- Unknown keys and tokens warn and are ignored (`syntax.*` and `editor.*` are real tokens: see [Editor and syntax colors](#editor-and-syntax-colors)). A wrong type, a malformed color, a number out of range or an invalid `extends` is an error and the pack is not loaded.
 - `schema_version` must be `1`; any other value disables the pack with a diagnostic.
 - Numbers are never clamped: a value outside its range is an error. Heights must leave room for their text (height >= text size + 2), `nav.line-height >= nav.text.size`, `strip.button.size >= nav.icon.size`, `titlebar.height >= strip.button.size`.
 - `[fonts]` roles are ordered lists of installed families; the first installed one is used (the system UI font always is), the last one if none is. Hutan loads no font files.
@@ -120,6 +120,49 @@ hutan theme export canopy-night --resolved --output ~/Desktop
 hutan theme new canopy-lines --kind icon --name "Canopy Lines" --author "Me" --license MIT
 ```
 
+## Editor and syntax colors
+
+The code editor reads two families of tokens from the same pack, both optional: a pack that sets none of them still has a complete editor.
+
+- **`syntax.*`**: one opaque text color per token of the editor's highlighter, with exactly the names of `hutan_syntax::Token` (`syntax.comment`, `syntax.string`, `syntax.string.escape`, `syntax.number`, `syntax.constant`, `syntax.keyword`, `syntax.operator`, `syntax.function`, `syntax.function.method`, `syntax.type`, `syntax.type.builtin`, `syntax.variable`, `syntax.variable.parameter`, `syntax.property`, `syntax.attribute`, `syntax.tag`, `syntax.punctuation`, `syntax.punctuation.bracket`, `syntax.markup.heading`, `syntax.markup.bold`, `syntax.markup.italic`, `syntax.markup.link`). A test keeps the two lists equal; which grammar capture becomes which token is the syntax crate's table (`Token::from_capture`), not the pack's. A name below `syntax.` that is not one of these is an unknown token (a warning).
+- **`editor.*`**: the surface: `editor.background`, `editor.foreground`, `editor.gutter.background` / `.foreground`, `editor.line-number.active`, `editor.current-line`, `editor.selection` / `.selection.inactive`, `editor.cursor`, `editor.whitespace`, `editor.indent-guide`, `editor.bracket-match`, `editor.search-match` / `.search-match.active`, `editor.diagnostic.error|warning|info|hint` (the colors of the underlines), `editor.diff-gutter.added|modified|removed` and `editor.agent-changed` (the highlight of lines an agent changed). Tints (`current-line`, `selection`, `search-match`, ...) may be translucent and are drawn over the editor background; text, cursor and underline colors are opaque.
+
+**Derivation.** Every one of them has a fallback in the reference below, so a sparse pack gets a complete editor from the core colors it already sets: `editor.background` and `editor.foreground` follow `ui.background` and `ui.foreground`; the diff gutter follows `diff.*` (so `state.success` recolors it), the diagnostic underlines follow `state.error`, `state.warning`, `ui.accent` (info) and `ui.text.muted` (hint); selection, bracket match and agent-changed are tints of `ui.accent`, search matches of `state.warning`. Without `syntax.*` colors the highlighter uses the terminal palette: strings green, escapes and types cyan, numbers, constants and attributes yellow, keywords magenta, functions blue, tags red; comments, punctuation and brackets are `ui.text.muted`; variables, parameters, properties and operators are the editor foreground. Only the normal ANSI colors (0 to 7) are used, which the terminal contrast check already holds to 4.5:1. Both built-in packs declare all 22 `syntax.*` colors (below); a sparse pack that extends one inherits them, and changing `terminal.ansi.green` then does not move `syntax.string`: write the token to change it. `editor.*` is derived in both built-ins. `ResolvedTheme::editor()` gives the editor view one immutable `EditorTheme`: the surface roles and the 22 syntax colors in the order of `hutan_syntax::Token::ALL` (index with `token as usize`), so a theme change restyles without re-parsing.
+
+**Contrast.** `syntax.*` and `editor.foreground` on `editor.background` join the contrast advice (text, 4.5:1; Problems key `contrast`, warning only, a pack is reported for what it makes worse than its base). Both built-ins meet it for every token, and a test fails if one stops:
+
+<!-- syntax-contrast:begin -->
+
+| Token (`syntax.` prefix) | hutan-dark | Ratio | hutan-light | Ratio |
+|---|---|---|---|---|
+| default text (`editor.foreground`) | `#f5f4ef` | 13.77:1 | `#1f1e1d` | 15.80:1 |
+| `comment` | `#94928a` | 4.86:1 | `#6f6d66` | 4.92:1 |
+| `string` | `#86d19c` | 8.38:1 | `#2f7a48` | 4.99:1 |
+| `string.escape` | `#5fc2c6` | 7.23:1 | `#167780` | 5.00:1 |
+| `number` | `#f2a27a` | 7.38:1 | `#a8480f` | 5.54:1 |
+| `constant` | `#f5b48a` | 8.50:1 | `#9a4a1a` | 5.92:1 |
+| `keyword` | `#daaee6` | 8.07:1 | `#8e4ea8` | 5.24:1 |
+| `operator` | `#c8c6be` | 8.86:1 | `#4a4944` | 8.56:1 |
+| `function` | `#8fb9f2` | 7.50:1 | `#2b62b8` | 5.63:1 |
+| `function.method` | `#a6c8f5` | 8.81:1 | `#1d4f99` | 7.58:1 |
+| `type` | `#eec261` | 9.04:1 | `#8a6300` | 5.16:1 |
+| `type.builtin` | `#e2ae45` | 7.49:1 | `#7a5600` | 6.31:1 |
+| `variable` | `#eae8e1` | 12.37:1 | `#1f1e1d` | 15.80:1 |
+| `variable.parameter` | `#d9c7a3` | 9.13:1 | `#5a4a2a` | 8.14:1 |
+| `property` | `#7dd3d6` | 8.78:1 | `#1a6f8f` | 5.37:1 |
+| `attribute` | `#c996d8` | 6.38:1 | `#a0402a` | 6.11:1 |
+| `tag` | `#f08c7a` | 6.31:1 | `#b93a26` | 5.39:1 |
+| `punctuation` | `#a6a49c` | 6.07:1 | `#6f6d66` | 4.92:1 |
+| `punctuation.bracket` | `#bdbbb3` | 7.89:1 | `#57554f` | 7.07:1 |
+| `markup.heading` | `#f2a27a` | 7.38:1 | `#a8480f` | 5.54:1 |
+| `markup.bold` | `#f5f4ef` | 13.77:1 | `#1f1e1d` | 15.80:1 |
+| `markup.italic` | `#d6d4cc` | 10.21:1 | `#4a4944` | 8.56:1 |
+| `markup.link` | `#8fb9f2` | 7.50:1 | `#2b62b8` | 5.63:1 |
+
+On `editor.background`: `#262624` (hutan-dark) and `#faf9f5` (hutan-light).
+
+<!-- syntax-contrast:end -->
+
 ## Hot reload
 
 One watcher per application watches `themes/` (creation, removal, single-file packs) and each pack folder (edits in place; atomic-save rename works). Events go through a bounded queue and a debounce (100 ms quiet, 500 ms at most) into one worker that rescans; a flood coalesces into one rescan. Editing the active pack restyles chrome, chat, diffs, terminal rows, fonts and density without a restart, and the daemon learns the new terminal colors once. An edit that changes nothing publishes nothing, and editing a pack that is not in use changes only the catalog (pickers, Problems): no view is invalidated.
@@ -144,6 +187,8 @@ Paths (`license_file` and icon assets) are normalized relative UTF-8 paths with 
 ## Problems and contrast
 
 Pack and selection problems appear in the Settings Problems list (the same list as settings errors), one line each, with the file, the key (`colors.ui.border`, `icons.action.close`, `appearance.dark_theme`) and the reason, for color and icon packs alike (`hutan theme validate` prints the same lines). A change that only adds, fixes or removes a problem (an unused pack, a bad icon file) updates the list without restyling anything. Contrast is advice only (key `contrast`, WCAG 2.2 ratios, translucent colors composed over what they are drawn on): a user pack is reported for the pairs it makes worse than its base (a root pack is judged against the built-in of its polarity, so an exported flat copy reports what its source did). The built-ins' own known shortfalls (for example white on the orange accent) are a reviewed baseline in `crates/settings/tests/it/themes.rs`; they are reported nowhere else and nothing is repaired. A `license` that is not an SPDX expression (`MIT OR Apache-2.0`) or a `LicenseRef-<name>` marker, or is `LicenseRef-Unknown`, is a warning (key `license`; a syntax check, not legal advice).
+
+The pairs checked are the chrome text on its surfaces, the terminal palette on the terminal background and the editor: `editor.foreground` and every `syntax.*` color on `editor.background` (4.5:1).
 
 ## Differences from the hard-coded look
 
@@ -234,6 +279,50 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | `terminal.block.folded` | may be translucent | `terminal.background` mixed 0.07 of the way to `terminal.foreground` | Fill of a folded block's summary row. |
 | `markdown.link` | opaque | `ui.accent` | Links in chat messages. |
 | `markdown.inline-code.background` | may be translucent | `ui.surface.hover` | Background of inline code in chat messages. |
+| `editor.background` | may be translucent | `ui.background` | Background of the code editor. |
+| `editor.foreground` | opaque | `ui.foreground` | Default text of the code editor: code that no syntax token colors. |
+| `editor.gutter.background` | may be translucent | `editor.background` | Background of the line-number gutter. |
+| `editor.gutter.foreground` | opaque | `editor.foreground` mixed 0.4 of the way to `editor.background` | Line numbers. |
+| `editor.line-number.active` | opaque | `editor.foreground` | The line number of the cursor's line. |
+| `editor.current-line` | may be translucent | `editor.foreground` at alpha 0.05 (dark) / 0.04 (light) | Tint of the cursor's line. |
+| `editor.selection` | may be translucent | `ui.accent` at alpha 0.32 (dark) / 0.26 (light) | Background of selected text in the focused editor. |
+| `editor.selection.inactive` | may be translucent | `editor.selection` at alpha 0.5 | Background of selected text in an editor that does not have focus. |
+| `editor.cursor` | opaque | `ui.accent` | The text cursor. |
+| `editor.whitespace` | may be translucent | `editor.foreground` at alpha 0.25 | Visible whitespace marks (spaces, tabs). |
+| `editor.indent-guide` | may be translucent | `editor.foreground` at alpha 0.1 | Vertical indentation guides. |
+| `editor.bracket-match` | may be translucent | `ui.accent` at alpha 0.28 | Background of a bracket and its partner. |
+| `editor.search-match` | may be translucent | `state.warning` at alpha 0.28 | Background of every find match. |
+| `editor.search-match.active` | may be translucent | `state.warning` at alpha 0.6 | Background of the current find match. |
+| `editor.diagnostic.error` | opaque | `state.error` | Underline of an error diagnostic. |
+| `editor.diagnostic.warning` | opaque | `state.warning` | Underline of a warning diagnostic. |
+| `editor.diagnostic.info` | opaque | `ui.accent` | Underline of an information diagnostic. |
+| `editor.diagnostic.hint` | opaque | `ui.text.muted` | Underline of a hint diagnostic. |
+| `editor.diff-gutter.added` | opaque | `diff.added` | Gutter bar of lines added since the last commit. |
+| `editor.diff-gutter.modified` | opaque | `diff.modified` | Gutter bar of lines modified since the last commit. |
+| `editor.diff-gutter.removed` | opaque | `diff.removed` | Gutter mark where lines were removed since the last commit. |
+| `editor.agent-changed` | may be translucent | `ui.accent` at alpha 0.2 (dark) / 0.16 (light) | Background of lines an agent changed. |
+| `syntax.comment` | opaque | `ui.text.muted` | Comments. |
+| `syntax.string` | opaque | `terminal.ansi.green` | Strings, character literals, raw text and dates. |
+| `syntax.string.escape` | opaque | `terminal.ansi.cyan` | Escape sequences inside strings. |
+| `syntax.number` | opaque | `terminal.ansi.yellow` | Numbers. |
+| `syntax.constant` | opaque | `terminal.ansi.yellow` | Constants: `true`, `null`, enum-like names. |
+| `syntax.keyword` | opaque | `terminal.ansi.magenta` | Keywords, `self` and `this`. |
+| `syntax.operator` | opaque | `editor.foreground` | Operators. |
+| `syntax.function` | opaque | `terminal.ansi.blue` | Functions and macros: definitions and calls. |
+| `syntax.function.method` | opaque | `syntax.function` | Methods. |
+| `syntax.type` | opaque | `terminal.ansi.cyan` | Types, constructors, namespaces and lifetimes. |
+| `syntax.type.builtin` | opaque | `syntax.type` | Built-in types. |
+| `syntax.variable` | opaque | `editor.foreground` | Variables. |
+| `syntax.variable.parameter` | opaque | `syntax.variable` | Function parameters. |
+| `syntax.property` | opaque | `syntax.variable` | Fields and keys. |
+| `syntax.attribute` | opaque | `terminal.ansi.yellow` | Attributes and decorators. |
+| `syntax.tag` | opaque | `terminal.ansi.red` | HTML and JSX tag names, CSS selectors. |
+| `syntax.punctuation` | opaque | `ui.text.muted` | Delimiters and separators. |
+| `syntax.punctuation.bracket` | opaque | `syntax.punctuation` | Brackets. |
+| `syntax.markup.heading` | opaque | `syntax.function` | Markdown headings. |
+| `syntax.markup.bold` | opaque | `editor.foreground` | Bold text in markup. |
+| `syntax.markup.italic` | opaque | `editor.foreground` | Italic text in markup. |
+| `syntax.markup.link` | opaque | `terminal.ansi.cyan` | Links in markup. |
 
 #### Density (`[density.compact]`, `[density.comfortable]`)
 
