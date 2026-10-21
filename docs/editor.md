@@ -9,9 +9,10 @@ Hutan's own code editor (ADR 0012 and its amendment of 2026-10-21; plan and budg
 | E-3 | file service in the daemon: `fs.read`, `fs.write`, `fs.stat`, … | `crates/daemon/src/files`, `docs/protocol.md` § Files |
 | E-4 | `editor.*` and `syntax.*` colors in the color packs | `docs/themes.md` |
 | E-5 | read-only viewer in file tabs | `crates/code_view`, `crates/desktop/src/workbench/{files,file_view}.rs` |
-| **E-6** | **editing: carets, multi-cursor, input methods, undo, auto-indent and pairs, clipboard, save through the daemon, conflict bar, replace** | `crates/code_view/src/{editing,motion,input,rules}.rs`, `crates/desktop/src/workbench/file_sync.rs` |
+| E-6 | editing: carets, multi-cursor, input methods, undo, auto-indent and pairs, clipboard, save through the daemon, conflict bar, replace | `crates/code_view/src/{editing,motion,input,rules}.rs`, `crates/desktop/src/workbench/file_sync.rs` |
+| **E-8** | **Vim in file tabs: modes, block caret, the Escape rule for input methods, the `:` line, splits, clipboard registers** | `crates/code_view/src/{vim_host,modal,ex}.rs`, `crates/desktop/src/workbench/{file_ex,editor_status}.rs` |
 
-Vim in files (E-8), LSP, and the file tree (E-13a) are not here yet. `editor.vim_mode` changes nothing in a file tab yet: typing works the same with it on.
+LSP and the file tree (E-13a) are not here yet.
 
 ## File tabs (E-5)
 
@@ -54,6 +55,40 @@ How it looks and which keys do what: `docs/design.md` § File tabs. Under the ho
 | `editor.autosave` | `off` | `on_focus_change` or `after_delay`; never while the conflict bar shows |
 | `editor.autosave_delay_ms` | `1000` | for `after_delay` |
 | `terminal.open_files_with` | `system` | `editor` sends ⌘-clicked paths to a file tab at the line |
+
+## Vim (E-8)
+
+With `editor.vim_mode` on (live; ⌘K → *Editor: Toggle Vim Mode*), a file tab edits like Vim. Everything `hutan-vim` supports (`docs/design.md` § Vim mode) works on the file's rope.
+
+- **Rope-native host.** `BufferHost` (`code_view/src/vim_host.rs`) implements `VimHost` on `hutan_buffer::Buffer`: reads are `O(log n)` on the rope, and every Vim transaction is one `hutan_buffer::Transaction` carrying the caret before and after it. For one key the view lends the buffer's text model to the host (`FileBuffer::lend`) and takes it back with the steps the key made (`FileBuffer::restore`), which reach the parser and the other views like any edit. A Normal command is one undo step; an Insert session is one step with the command that started it; `:s`, `:g` and `:normal` are one step each.
+- **Modes.** A file opens in Normal mode with a block caret; Insert has a bar caret and types through the editor's own path (auto-pairs, auto-indent, input methods); Visual draws its selection from the Vim state. A mouse selection made in Normal mode becomes a Visual one at the next key. Vim state is per view, so two panes of one file can be in different modes.
+- **Keys and input methods.** In Normal and Visual the view refuses text input (`accepts_text_input` is false, and `replace_text_in_range` drops anything a platform still sends), so printable keys arrive as key presses, matched by the character they produce (Dvorak, Cyrillic), and never insert text, with or without an input method. In Insert, Escape first ends a composition (the marked text stays); the next Escape leaves Insert.
+- **Keymap contexts.** The code view's context is `CodeView Editor` plus `vim_mode = normal | insert | visual` while Vim is on. The editor's keys that Vim answers in Normal and Visual (arrows, Home/End, Return, Tab, Backspace/Delete, ⌥/⇧ motions, ⌃A ⌃E ⌃K, line moves) are bound in `CodeView && vim_mode != normal && vim_mode != visual`; its Escape (back to one caret) only in `CodeView && !vim_mode`.
+- **Status items.** `editor.mode` shows `NORMAL` / `INSERT` / `VISUAL` and the keys of a command in progress (`2d`); `editor.position` shows `Ln, Col`. Both are cached views that read the focused code view (`editor_status.rs`).
+- **The `:` line** opens under the code (`'<,'>` after a Visual selection), with ↑ ↓ history; Escape or Backspace on an empty line closes it. Answers and errors show on the same line until the next key.
+
+| Command | Does |
+|---|---|
+| `:w` `:w!` | saves through `fs.write` with the version it was read as (E-6: a file changed on disk is never overwritten; the conflict bar asks) |
+| `:q` `:q!` | closes the tab; refuses (E37) when it is the last tab of a file with unsaved changes, unless `!` |
+| `:wq` `:x` | saves and closes (`:x` writes only a changed file) |
+| `:e <path>` `:e` `:e!` | opens a path (relative to the file's folder, `~` allowed); `:e` reads the clean file again; `:e!` drops the changes (⌘Z brings them back) |
+| `:sp` `:vs` | splits the pane below / right with a second view of the same buffer |
+| `:b <n or name>` `:ls` | goes to an open file by Vim buffer number or a unique part of its path; lists them (`%` this one, `+` unsaved) |
+| `:s/pat/rep/[gine]` with ranges `%` `.` `$` `N` `'<` `'>` `±N` | substitutes; searched in the background over a rope snapshot, applied as one step if the text did not change meanwhile |
+| `:g/pat/cmd` `:g!` `:v` | runs `d`, `s/…/…/` or `normal …` on matching lines |
+| `:normal keys` | runs Normal-mode keys on each line of the range |
+| `:noh` | clears the find highlights |
+| `:set number` `ignorecase` `smartcase` (with `no`, `inv`, `!`, `?`) | the gutter's numbers; the case rules of `:s` / `:g` |
+| `:N` | goes to line N |
+| `:term` | starts a Hutan terminal in the file's folder, in a split below |
+
+Anything else answers `Not supported: :…`. Patterns are Rust `regex` syntax (as find's regex mode), with `\<` `\>` taken as word boundaries; a replacement knows `&`, `\0`–`\9`, `\r`/`\n` and `\\`.
+
+- **Registers** follow `editor.vim_use_system_clipboard`: on, yanks and deletes also write the system clipboard and `p` pastes from it (lines stay lines); off, the register is private.
+- **Live toggle.** Turning `editor.vim_mode` off drops a pending command and closes an Insert session's undo step; turning it on puts every file tab in Normal mode.
+
+**Parity** (what changes in a file tab with Vim on): in Normal and Visual the unmodified arrows, Home/End, Return, Tab, Backspace/Delete, ⇧/⌥ arrow selections and motions, ⌥↑/⌥↓ line moves, ⌥⇧↑/↓ duplicates and ⌃A/⌃E/⌃K are Vim's (or do nothing) instead of the editor's; Escape leaves Insert/Visual instead of reducing to one caret. ⌘ shortcuts (⌘Z, ⌘C/⌘V/⌘X, ⌘A, ⌘D, ⌘S, ⌘F, ⌘/) keep their meaning in every mode. Without Vim nothing changes.
 
 ## Tests
 
