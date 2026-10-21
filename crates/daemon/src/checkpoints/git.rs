@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use tokio::io::AsyncWriteExt as _;
-use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 use super::CheckpointError;
 
@@ -273,6 +273,110 @@ impl Git {
         match tokio::time::timeout(limit, run).await {
             Ok(result) => result,
             Err(_) => Err(CheckpointError::TimedOut { step, after: limit }),
+        }
+    }
+
+    /// `cat-file --batch`: blobs one at a time, as the object store holds them (no filter
+    /// runs). A read: git is killed when the reader is dropped.
+    pub fn blobs(&self) -> Result<Blobs, CheckpointError> {
+        let args = os_args(&["cat-file", "--batch"]);
+        let mut child = self
+            .command(&args, true, true)
+            .spawn()
+            .map_err(spawn_failed)?;
+        // Nothing worth reading comes on stderr: a missing object is said on stdout.
+        drop(child.stderr.take());
+        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            return Err(CheckpointError::Internal(
+                "git was started without pipes".to_owned(),
+            ));
+        };
+        Ok(Blobs {
+            _child: child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            timeout: self.read_timeout,
+        })
+    }
+}
+
+/// A running `cat-file --batch` ([`Git::blobs`]).
+#[derive(Debug)]
+pub(crate) struct Blobs {
+    /// Killed on drop.
+    _child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    timeout: Duration,
+}
+
+impl Blobs {
+    /// The bytes of blob `oid`; an error when it is missing, not a blob, or larger than `max`.
+    pub async fn read(&mut self, oid: &str, max: u64) -> Result<Vec<u8>, CheckpointError> {
+        let failed = |message: String| CheckpointError::GitFailed {
+            step: "cat-file".to_owned(),
+            message,
+        };
+        if !super::is_object_id(oid) {
+            return Err(failed(format!("`{oid}` is not an object id")));
+        }
+        let io = |source| CheckpointError::Io {
+            what: "read a blob from git".to_owned(),
+            source,
+        };
+        let read = async {
+            self.stdin
+                .write_all(format!("{oid}\n").as_bytes())
+                .await
+                .map_err(io)?;
+            self.stdin.flush().await.map_err(io)?;
+            let mut header = Vec::new();
+            self.stdout
+                .read_until(b'\n', &mut header)
+                .await
+                .map_err(io)?;
+            let header = String::from_utf8_lossy(&header);
+            let fields: Vec<&str> = header.split_whitespace().collect();
+            let (kind, size) = match fields.as_slice() {
+                [_, kind, size] => (
+                    (*kind).to_owned(),
+                    size.parse::<u64>()
+                        .map_err(|_| failed(format!("unexpected answer `{}`", header.trim())))?,
+                ),
+                [_, "missing"] => return Err(failed(format!("object {oid} is missing"))),
+                _ => return Err(failed(format!("unexpected answer `{}`", header.trim()))),
+            };
+            let refused = if kind != "blob" {
+                Some(format!("{oid} is a {kind}, not a blob"))
+            } else if size > max {
+                Some(format!(
+                    "blob {oid} is {size} bytes, more than the {max} a restore writes"
+                ))
+            } else {
+                None
+            };
+            if let Some(message) = refused {
+                // The answer is read to its end, so the next one starts where it should.
+                let mut rest = (&mut self.stdout).take(size + 1);
+                tokio::io::copy(&mut rest, &mut tokio::io::sink())
+                    .await
+                    .map_err(io)?;
+                return Err(failed(message));
+            }
+            let len = usize::try_from(size)
+                .map_err(|_| failed(format!("blob {oid} is too large to read")))?;
+            // The content, then the newline that ends every answer.
+            let mut bytes = vec![0_u8; len + 1];
+            self.stdout.read_exact(&mut bytes).await.map_err(io)?;
+            bytes.truncate(len);
+            Ok(bytes)
+        };
+        match tokio::time::timeout(self.timeout, read).await {
+            Ok(result) => result,
+            Err(_) => Err(CheckpointError::TimedOut {
+                step: "cat-file".to_owned(),
+                after: self.timeout,
+            }),
         }
     }
 }

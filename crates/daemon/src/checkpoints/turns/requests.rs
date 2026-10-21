@@ -28,16 +28,16 @@ pub const LISTED: &[CheckpointState] = &[
     CheckpointState::Off,
 ];
 
-fn bad_request(message: impl Into<String>) -> ErrorBody {
+pub(super) fn bad_request(message: impl Into<String>) -> ErrorBody {
     ErrorBody::new(ErrorCode::BadRequest, message)
 }
 
-fn invalid_state(message: impl Into<String>) -> ErrorBody {
+pub(super) fn invalid_state(message: impl Into<String>) -> ErrorBody {
     ErrorBody::new(ErrorCode::InvalidState, message)
 }
 
 /// What a client is told about a failure of the engine.
-fn engine_error(error: CheckpointError) -> ErrorBody {
+pub(super) fn engine_error(error: CheckpointError) -> ErrorBody {
     let code = match &error {
         CheckpointError::NotARepository { .. }
         | CheckpointError::Unsupported(_)
@@ -53,7 +53,7 @@ fn engine_error(error: CheckpointError) -> ErrorBody {
 }
 
 /// A file or directory inside a checkout: relative, no `..`, no NUL.
-fn validate_relative(path: &str) -> Result<(), ErrorBody> {
+pub(super) fn validate_relative(path: &str) -> Result<(), ErrorBody> {
     let plain = !path.is_empty()
         && !path.contains('\0')
         && Path::new(path)
@@ -69,14 +69,14 @@ fn validate_relative(path: &str) -> Result<(), ErrorBody> {
 }
 
 /// The start and end commits a checkpoint keeps, and its repository.
-struct Recorded {
-    common_dir: PathBuf,
-    start: String,
-    end: String,
+pub(super) struct Recorded {
+    pub common_dir: PathBuf,
+    pub start: String,
+    pub end: String,
 }
 
 /// The commits of `row`; `invalid_state` for a checkpoint that keeps none, saying why.
-fn recorded(row: &CheckpointRow) -> Result<Recorded, ErrorBody> {
+pub(super) fn recorded(row: &CheckpointRow) -> Result<Recorded, ErrorBody> {
     if row.state == CheckpointState::Running {
         return Err(invalid_state(format!(
             "the turn of checkpoint {} is still running",
@@ -103,7 +103,7 @@ fn recorded(row: &CheckpointRow) -> Result<Recorded, ErrorBody> {
 
 impl TurnCheckpoints {
     /// Runs `op` on the database; a failure is the client's `internal` error.
-    async fn query<T: Send + 'static>(
+    pub(super) async fn query<T: Send + 'static>(
         &self,
         what: &'static str,
         op: impl FnOnce(&Storage) -> Result<T, hutan_storage::StorageError> + Send + 'static,
@@ -116,7 +116,7 @@ impl TurnCheckpoints {
     }
 
     /// The checkpoint `id`; `not_found` when there is none.
-    async fn row(&self, id: CheckpointId) -> Result<CheckpointRow, ErrorBody> {
+    pub(super) async fn row(&self, id: CheckpointId) -> Result<CheckpointRow, ErrorBody> {
         self.query("reading a checkpoint", move |s| s.checkpoints().get(id))
             .await?
             .ok_or_else(|| ErrorBody::new(ErrorCode::NotFound, format!("no checkpoint {id}")))

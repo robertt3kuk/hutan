@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant as StdInstant, SystemTime};
 
 use hutan_core::agent::Delivery;
-use hutan_core::{AgentEventKind, ItemId, SessionId};
+use hutan_core::{AgentEventKind, CheckpointId, ItemId, SessionId};
 use hutan_protocol::fs::{
     AgentConfidence, COALESCE_MS, ChangeKind, FileVersion, FsChange, FsOrigin, FsWatching,
     GENERATION_INTERVAL_MS, WATCH_MAX_PATHS,
@@ -58,6 +58,8 @@ const NOTE_WINDOW: Duration = Duration::from_secs(15);
 const SERVED_MAX: usize = 1024;
 /// Paths whose birth a watcher remembers, for telling created from modified.
 const BIRTHS_MAX: usize = 1024;
+/// Paths of restores remembered (a restore announces each file it writes or deletes).
+const RESTORES_MAX: usize = 4096;
 
 /// What one watcher covers.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -152,6 +154,14 @@ struct Served {
     version: FileVersion,
 }
 
+/// A path a restore changed, waiting to be recognised in the stream of changes.
+#[derive(Debug, Clone)]
+struct Restored {
+    path: PathBuf,
+    checkpoint: CheckpointId,
+    at: StdInstant,
+}
+
 #[derive(Debug)]
 pub struct WatchHub {
     registry: RegistryHandle,
@@ -163,6 +173,7 @@ pub struct WatchHub {
     writes: Mutex<VecDeque<OwnWrite>>,
     notes: Mutex<VecDeque<Note>>,
     served: Mutex<VecDeque<Served>>,
+    restores: Mutex<VecDeque<Restored>>,
 }
 
 impl WatchHub {
@@ -181,6 +192,7 @@ impl WatchHub {
             writes: Mutex::new(VecDeque::new()),
             notes: Mutex::new(VecDeque::new()),
             served: Mutex::new(VecDeque::new()),
+            restores: Mutex::new(VecDeque::new()),
         })
     }
 
@@ -385,6 +397,20 @@ impl WatchHub {
             }
             None => writes.retain(|w| w.write_id != write_id),
         }
+    }
+
+    /// A restore of checkpoint `checkpoint` is about to change `path` (canonical): a file it
+    /// writes or deletes, or a folder it makes or removes. Registered before the change.
+    pub fn restoring(&self, path: &Path, checkpoint: CheckpointId) {
+        let mut restores = self.restores.lock();
+        if restores.len() >= RESTORES_MAX {
+            restores.pop_front();
+        }
+        restores.push_back(Restored {
+            path: path.to_owned(),
+            checkpoint,
+            at: StdInstant::now(),
+        });
     }
 
     /// Notes the files of a chat's `file_diff` event.
@@ -758,6 +784,10 @@ enum Attribution {
         item: Option<ItemId>,
         confidence: AgentConfidence,
     },
+    /// A restore of files (`checkpoint.restore`): exact, like an own write.
+    Restore {
+        checkpoint: CheckpointId,
+    },
     External,
 }
 
@@ -782,6 +812,9 @@ impl Prepared {
                 confidence: AgentConfidence::Session,
             },
             Attribution::Own { .. } | Attribution::External => FsOrigin::External,
+            Attribution::Restore { checkpoint } => FsOrigin::Restore {
+                checkpoint_id: *checkpoint,
+            },
             Attribution::Agent {
                 session,
                 item,
@@ -802,6 +835,7 @@ impl Prepared {
 /// Everything a flush needs to attribute changes, taken before the blocking work.
 struct Evidence {
     writes: Vec<OwnWrite>,
+    restores: Vec<Restored>,
     notes: Vec<Note>,
     sessions: Vec<SessionInfo>,
 }
@@ -936,7 +970,16 @@ fn prepare(
                 .writes
                 .iter()
                 .rfind(|w| w.path == path && w.at.elapsed() <= OWN_WRITE_TTL);
-            let attribution = if let Some(write) = own {
+            let restored = evidence
+                .restores
+                .iter()
+                .rfind(|r| r.path == path && r.at.elapsed() <= OWN_WRITE_TTL)
+                .filter(|r| own.is_none_or(|w| w.at <= r.at));
+            let attribution = if let Some(restored) = restored {
+                Attribution::Restore {
+                    checkpoint: restored.checkpoint,
+                }
+            } else if let Some(write) = own {
                 Attribution::Own {
                     conn: write.conn,
                     write_id: write.write_id.clone(),
@@ -1090,6 +1133,7 @@ async fn flush(
         .unwrap_or_default();
     let evidence = Evidence {
         writes: hub.writes.lock().iter().cloned().collect(),
+        restores: hub.restores.lock().iter().cloned().collect(),
         notes: hub.notes.lock().iter().cloned().collect(),
         sessions,
     };
@@ -1266,6 +1310,7 @@ mod tests {
         };
         let evidence = || Evidence {
             writes: Vec::new(),
+            restores: Vec::new(),
             notes: Vec::new(),
             sessions: Vec::new(),
         };

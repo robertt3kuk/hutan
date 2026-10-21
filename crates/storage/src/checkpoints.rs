@@ -1,4 +1,4 @@
-//! The `checkpoints` table (schema v14, ADR 0019): one row per checkpoint of a chat session.
+//! The `checkpoints` table (schema v14, v16, ADR 0019): one row per checkpoint of a chat session.
 //!
 //! Writes are applied before they return (they go through the writer like a read): the daemon
 //! writes a turn's row before the turn's first ref and reconciles rows with refs at start, so
@@ -46,6 +46,8 @@ pub struct CheckpointRow {
     /// New content the checkpoint's snapshots hashed into the object store.
     pub bytes: u64,
     pub skipped: Vec<SkippedFile>,
+    /// Files the user saved while the turn ran, relative to the checkout (schema v16).
+    pub during: Vec<String>,
 }
 
 impl CheckpointRow {
@@ -78,6 +80,7 @@ impl CheckpointRow {
             lines_removed: 0,
             bytes: 0,
             skipped: Vec::new(),
+            during: Vec::new(),
         }
     }
 
@@ -254,7 +257,7 @@ impl Checkpoints<'_> {
 
 const SELECT: &str = "SELECT id, session_id, turn_id, kind, state, reason, checkout, common_dir, \
      ref, commit_id, start_commit, tree, parent_id, created_ms, ended_ms, files_changed, \
-     lines_added, lines_removed, bytes, skipped_json FROM checkpoints";
+     lines_added, lines_removed, bytes, skipped_json, during_json FROM checkpoints";
 
 fn list(conn: &Connection, filter: &CheckpointFilter) -> Result<Vec<CheckpointRow>> {
     let context = "reading checkpoints";
@@ -291,13 +294,18 @@ fn upsert(conn: &Connection, row: &CheckpointRow) -> Result<()> {
         what: "checkpoint skipped files",
         detail: e.to_string(),
     })?;
+    let during = serde_json::to_string(&row.during).map_err(|e| StorageError::Encode {
+        what: "checkpoint files saved during the turn",
+        detail: e.to_string(),
+    })?;
     let path = |p: &Option<PathBuf>| p.as_ref().map(|p| p.to_string_lossy().into_owned());
     conn.execute(
         "INSERT OR REPLACE INTO checkpoints (id, session_id, turn_id, kind, state, reason, \
              checkout, common_dir, ref, commit_id, start_commit, tree, parent_id, created_ms, \
-             ended_ms, files_changed, lines_added, lines_removed, bytes, skipped_json) \
+             ended_ms, files_changed, lines_added, lines_removed, bytes, skipped_json, \
+             during_json) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, \
-             ?19, ?20)",
+             ?19, ?20, ?21)",
         params![
             row.id.to_string(),
             row.session_id.to_string(),
@@ -319,6 +327,7 @@ fn upsert(conn: &Connection, row: &CheckpointRow) -> Result<()> {
             ms(row.lines_removed),
             ms(row.bytes),
             skipped,
+            during,
         ],
     )
     .map_err(StorageError::sqlite("writing a checkpoint"))?;
@@ -343,6 +352,7 @@ fn from_row(row: &Row<'_>) -> Result<CheckpointRow> {
     let kind = required(3, "kind")?;
     let state = required(4, "state")?;
     let skipped = required(19, "skipped_json")?;
+    let during = required(20, "during_json")?;
     Ok(CheckpointRow {
         id: required(0, "id")?
             .parse()
@@ -382,6 +392,8 @@ fn from_row(row: &Row<'_>) -> Result<CheckpointRow> {
         bytes: int(18)?,
         skipped: serde_json::from_str(&skipped)
             .map_err(|e| StorageError::corrupt("checkpoints.skipped_json", e))?,
+        during: serde_json::from_str(&during)
+            .map_err(|e| StorageError::corrupt("checkpoints.during_json", e))?,
     })
 }
 
@@ -434,6 +446,7 @@ mod tests {
             reason: SkipReason::TooLarge,
             bytes: Some(11),
         }];
+        full.during = vec!["src/lib.rs".to_owned()];
         let older = row(a, 10, Some("/r/.git"));
         let elsewhere = row(b, 15, None);
         for r in [&full, &older, &elsewhere] {

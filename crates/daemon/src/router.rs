@@ -24,6 +24,7 @@ use tracing::info;
 use crate::accounts::AccountService;
 use crate::assistant::{AssistantService, Origin};
 use crate::bus::EventBus;
+use crate::checkpoints::turns::RestoreContext;
 use crate::conn::{ConnHandle, ConnId};
 use crate::control::{Access, ControlService};
 use crate::daemon_settings::SettingsService;
@@ -564,11 +565,16 @@ impl Router {
             Request::FsWriteChunk(req) => ok(&self.files.write_chunk(conn.id(), req).await?),
             Request::FsWriteCommit(req) => {
                 let upload = req.upload_id.clone();
+                let by_user = self.agent_origin(conn).await.is_none();
                 let written = self.files.write_commit(conn, req).await;
                 let what = written
                     .as_ref()
                     .map_or(upload, |w| w.path.display().to_string());
                 audit(Actor::of(conn), "fs.write", &what, &written);
+                if by_user && let Ok(written) = &written {
+                    // A save during a turn is a conflict of that turn's restore (`during`).
+                    self.registry.chats().checkpoints().saved(&written.path);
+                }
                 ok(&written?)
             }
             Request::FsWriteAbort(req) => ok(&self.files.write_abort(conn.id(), &req)),
@@ -593,11 +599,44 @@ impl Router {
                 audit(Actor::of(conn), "checkpoint.remove", &target, &removed);
                 ok(&removed?)
             }
+            Request::CheckpointPreview(req) => {
+                let ctx = self.restore_context().await;
+                ok(&self
+                    .registry
+                    .chats()
+                    .checkpoints()
+                    .preview(req, &ctx)
+                    .await?)
+            }
+            Request::CheckpointRestore(req) => {
+                let target = req.checkpoint_id.to_string();
+                let ctx = self.restore_context().await;
+                let restored = self.registry.chats().checkpoints().restore(req, ctx).await;
+                audit(Actor::of(conn), "checkpoint.restore", &target, &restored);
+                ok(&restored?)
+            }
         }
     }
 
     fn providers(&self) -> &Arc<ProviderService> {
         self.registry.chats().providers()
+    }
+
+    /// What a preview or a restore of checkpoints needs from the rest of the daemon: the
+    /// sessions (who works in the checkout, whose turn runs) and the file service's watchers,
+    /// told of each file a restore changes.
+    async fn restore_context(&self) -> RestoreContext {
+        let sessions = self
+            .registry
+            .list_sessions(hutan_protocol::messages::SessionListFilter::default())
+            .await
+            .map(|list| list.sessions)
+            .unwrap_or_default();
+        let files = Arc::clone(&self.files);
+        RestoreContext {
+            sessions,
+            announce: Arc::new(move |checkpoint, path| files.restoring(path, checkpoint)),
+        }
     }
 
     /// The session must be a chat session with a running agent.
@@ -905,10 +944,14 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::FsWatch(_) => ("fs.watch", Read),
         Request::FsUnwatch(_) => ("fs.unwatch", Read),
         // Checkpoints (protocol 0.37): reading them is free; removing one is a change an agent
-        // asks for under `[control]` (restoring is the user's alone, CK-4).
+        // asks for under `[control]`. A preview is a read (protocol 0.38); restoring files is
+        // the user's alone, whatever `[control]` says: an agent must not unwind the user's work
+        // (ADR 0019 Decision 10).
         Request::CheckpointList(_) => ("checkpoint.list", Read),
         Request::CheckpointDiff(_) => ("checkpoint.diff", Read),
         Request::CheckpointRemove(_) => ("checkpoint.remove", Mutate),
+        Request::CheckpointPreview(_) => ("checkpoint.preview", Read),
+        Request::CheckpointRestore(_) => ("checkpoint.restore", UserOnly),
         Request::FsWriteBegin(_) => ("fs.write.begin", Mutate),
         Request::FsWriteChunk(_) => ("fs.write.chunk", Mutate),
         Request::FsWriteCommit(_) => ("fs.write.commit", Mutate),

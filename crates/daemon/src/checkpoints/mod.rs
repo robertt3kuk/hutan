@@ -18,9 +18,12 @@
 //! - `diff`: what changed between two checkpoints (or a checkpoint and the checkout now),
 //!   bounded like `worktree.diff` (`checkpoint.diff`).
 //! - `retention`: which checkpoints go (count, age, bytes, refs).
+//! - `restore`: what a restore reads (the turns' changes, the files of a tree, the HEAD a
+//!   snapshot saw, raw blobs) and how it writes (confined, atomic, never under `.git`).
 //! - [`turns`]: the checkpoints of chat turns: a snapshot when a turn starts and when it ends,
 //!   their rows in SQLite, the settings, reconcile at start and retention; and the requests of
-//!   clients (`checkpoint.list`, `.diff`, `.remove`) and the events they get.
+//!   clients (`checkpoint.list`, `.diff`, `.remove`, `.preview`, `.restore`) and the events
+//!   they get.
 //!
 //! Snapshots of one checkout run one at a time; once started a snapshot runs to its end even
 //! when the caller stops waiting (a turn's prompt goes to the agent after a budget and the
@@ -31,6 +34,7 @@ pub mod caps;
 mod diff;
 mod git;
 mod refs;
+mod restore;
 mod retention;
 mod snapshot;
 pub mod turns;
@@ -47,6 +51,9 @@ pub use caps::{Caps, SkipReason, Skipped};
 
 /// The namespace of every checkpoint ref.
 pub const REF_PREFIX: &str = "refs/hutan/checkpoints/";
+
+/// The trailer of a checkpoint commit that names the user's HEAD when it was taken.
+pub const HEAD_TRAILER: &str = "Hutan-Head";
 
 /// The store's directory name under `HUTAN_HOME` ([`Config::store`]).
 pub const STORE_DIR: &str = "checkpoints";
@@ -91,6 +98,10 @@ pub enum Kind {
     /// No commit and no ref: the private index and the object store catch up with the
     /// checkout (the first snapshot of a checkout, taken when a chat opens).
     Warm,
+    /// A restore before it writes: ref `<name>-start` (CK-4).
+    RestorePre,
+    /// A restore once it wrote: ref `<name>`, its parent the pre-restore commit.
+    RestorePost,
 }
 
 impl Kind {
@@ -99,7 +110,14 @@ impl Kind {
             Self::Start => "start",
             Self::End => "end",
             Self::Warm => "warm",
+            Self::RestorePre => "restore-pre",
+            Self::RestorePost => "restore-post",
         }
+    }
+
+    /// The first snapshot of a turn or a restore: its ref goes once the second is written.
+    pub fn is_start(kind: &str) -> bool {
+        kind == Self::Start.as_str() || kind == Self::RestorePre.as_str()
     }
 }
 
@@ -170,6 +188,21 @@ impl Label {
         }
     }
 
+    /// A snapshot of restore `checkpoint` of `session`'s files ([`Kind::RestorePre`] or
+    /// [`Kind::RestorePost`]), named by it.
+    pub fn restore(session: impl Into<String>, checkpoint: impl Into<String>, kind: Kind) -> Self {
+        let checkpoint = checkpoint.into();
+        Self {
+            session: session.into(),
+            name: checkpoint.clone(),
+            turn: None,
+            checkpoint: Some(checkpoint),
+            kind,
+            parent: None,
+            unchanged_tree: None,
+        }
+    }
+
     #[must_use]
     pub fn with_parent(mut self, parent: impl Into<String>) -> Self {
         self.parent = Some(parent.into());
@@ -189,12 +222,16 @@ impl Label {
         self
     }
 
-    /// `refs/hutan/checkpoints/<session>/<name>-start` for a start, `.../<name>` for an end,
-    /// none for a warm-up.
+    /// `refs/hutan/checkpoints/<session>/<name>-start` for a start (of a turn or a restore),
+    /// `.../<name>` for an end, none for a warm-up.
     pub fn reference(&self) -> Option<String> {
         match self.kind {
-            Kind::Start => Some(format!("{REF_PREFIX}{}/{}-start", self.session, self.name)),
-            Kind::End => Some(format!("{REF_PREFIX}{}/{}", self.session, self.name)),
+            Kind::Start | Kind::RestorePre => {
+                Some(format!("{REF_PREFIX}{}/{}-start", self.session, self.name))
+            }
+            Kind::End | Kind::RestorePost => {
+                Some(format!("{REF_PREFIX}{}/{}", self.session, self.name))
+            }
             Kind::Warm => None,
         }
     }
@@ -456,6 +493,52 @@ impl Checkpoints {
         health.off = None;
         Ok(())
     }
+
+    /// Holds the checkout containing `checkout` for a restore: no other snapshot of it runs
+    /// until the hold is dropped, so the restore's own two snapshots and its writes are not
+    /// interleaved with a turn's.
+    pub async fn exclusive(&self, checkout: &Path) -> Result<Exclusive, CheckpointError> {
+        let repo = self.inner.checkout_of(checkout).await?;
+        let health = self.inner.lock_for(&repo.toplevel).lock_owned().await;
+        Ok(Exclusive {
+            inner: Arc::clone(&self.inner),
+            repo,
+            health,
+        })
+    }
+}
+
+/// A checkout held by [`Checkpoints::exclusive`].
+#[derive(Debug)]
+pub struct Exclusive {
+    inner: Arc<Inner>,
+    repo: Repo,
+    health: tokio::sync::OwnedMutexGuard<Health>,
+}
+
+impl Exclusive {
+    /// The checkout's top level.
+    pub fn checkout(&self) -> &Path {
+        &self.repo.toplevel
+    }
+
+    /// The repository's common git directory.
+    pub fn common_dir(&self) -> &Path {
+        &self.repo.common_dir
+    }
+
+    /// A snapshot of the held checkout. Unlike [`Checkpoints::snapshot`] it runs on the
+    /// caller's task: the caller keeps it alive (a restore runs on its own task).
+    pub async fn snapshot(
+        &mut self,
+        label: &Label,
+        caps: &Caps,
+    ) -> Result<Snapshot, CheckpointError> {
+        label.validate()?;
+        self.inner
+            .take_locked(&self.repo, &mut self.health, label, caps)
+            .await
+    }
 }
 
 impl Inner {
@@ -531,6 +614,18 @@ impl Inner {
             .join(format!("{}.index", short_hash(&repo.git_dir)))
     }
 
+    /// The checkout containing `checkout`, unless checkpoints refuse it (`/`, a volume root,
+    /// the home directory).
+    async fn checkout_of(&self, checkout: &Path) -> Result<Repo, CheckpointError> {
+        let repo = self.resolve(checkout).await?;
+        if self.refused_root(&repo.toplevel) {
+            return Err(CheckpointError::Unsupported(Unsupported::Root(
+                repo.toplevel,
+            )));
+        }
+        Ok(repo)
+    }
+
     async fn snapshot(
         &self,
         checkout: &Path,
@@ -538,32 +633,38 @@ impl Inner {
         caps: &Caps,
     ) -> Result<Snapshot, CheckpointError> {
         label.validate()?;
-        let repo = self.resolve(checkout).await?;
-        if self.refused_root(&repo.toplevel) {
-            return Err(CheckpointError::Unsupported(Unsupported::Root(
-                repo.toplevel,
-            )));
-        }
+        let repo = self.checkout_of(checkout).await?;
         let lock = self.lock_for(&repo.toplevel);
         let mut health = lock.lock().await;
+        self.take_locked(&repo, &mut health, label, caps).await
+    }
+
+    /// One snapshot of `repo`, whose lock the caller holds (`health` is behind it).
+    async fn take_locked(
+        &self,
+        repo: &Repo,
+        health: &mut Health,
+        label: &Label,
+        caps: &Caps,
+    ) -> Result<Snapshot, CheckpointError> {
         let started = Instant::now();
         if let Some(reason) = &health.off {
             return Err(CheckpointError::SwitchedOff {
                 reason: reason.clone(),
             });
         }
-        let result = match self.check_disk(&repo, caps) {
+        let result = match self.check_disk(repo, caps) {
             Ok(()) => {
-                let index = self.private_index(&repo);
+                let index = self.private_index(repo);
                 let git = self.git(&repo.toplevel);
-                snapshot::take(&git, &repo, &index, caps, label, &mut health.memory).await
+                snapshot::take(&git, repo, &index, caps, label, &mut health.memory).await
             }
             Err(error) => Err(error),
         };
         match result {
             Ok(parts) => {
                 health.failures = 0;
-                Ok(parts.into_snapshot(&repo, label, started, Instant::now()))
+                Ok(parts.into_snapshot(repo, label, started, Instant::now()))
             }
             Err(error) => {
                 if let CheckpointError::LowDisk { .. } = &error {

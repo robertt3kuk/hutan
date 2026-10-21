@@ -31,15 +31,20 @@
 //! edit files.
 //!
 //! **Clients** (protocol 0.37, capability `checkpoint`) list, diff and remove checkpoints
-//! through the requests of `requests`; `checkpoint.created` goes out when a turn's checkpoint is
-//! recorded, `checkpoint.removed` when checkpoints go (`checkpoint.remove`, retention), and a
-//! chat's `ChatInfo.checkpoints` (with `checkpoint.state`) follows [`TurnCheckpoints::status`].
+//! through the requests of `requests`; `checkpoint.created` goes out when a turn's (or a
+//! restore's) checkpoint is recorded, `checkpoint.removed` when checkpoints go
+//! (`checkpoint.remove`, retention), and a chat's `ChatInfo.checkpoints` (with
+//! `checkpoint.state`) follows [`TurnCheckpoints::status`]. They preview and restore the files
+//! of turns through `restore` (protocol 0.38, capability `checkpoint.restore`); a file the user
+//! saves while a turn runs ([`TurnCheckpoints::saved`]) is a conflict of that turn's restore.
 
 mod requests;
+mod restore;
 
 pub use requests::LISTED;
+pub use restore::{Announce, RestoreContext};
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -69,6 +74,9 @@ const RETENTION_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Paths left out that a checkpoint lists (the rest are counted by nobody: a summary).
 pub const SKIPPED_KEPT: usize = 200;
+
+/// Files saved during a turn that its checkpoint remembers.
+pub const DURING_KEPT: usize = 1000;
 
 /// The reason of a `running` row an earlier daemon left without an end.
 pub const STOPPED_REASON: &str = "hutand stopped before the end of the turn was recorded";
@@ -149,6 +157,9 @@ struct Pending {
     /// The turn, once `chat.send` knows it.
     turn: Option<TurnId>,
     start: Start,
+    /// Files the user saved through the file service meanwhile (canonical, at most
+    /// [`DURING_KEPT`]).
+    during: BTreeSet<PathBuf>,
 }
 
 /// The row a start wrote (with its repository and ref) and the start snapshot.
@@ -239,6 +250,16 @@ fn skipped(start: &Snapshot, end: Option<&Snapshot>) -> Vec<SkippedFile> {
 
 fn now_ms() -> u64 {
     crate::registry::now_ms()
+}
+
+/// The paths of `saved` inside `checkout`, relative to it.
+fn saved_within(saved: &BTreeSet<PathBuf>, checkout: &Path) -> Vec<String> {
+    let canonical = std::fs::canonicalize(checkout).unwrap_or_else(|_| checkout.to_owned());
+    saved
+        .iter()
+        .filter_map(|path| path.strip_prefix(&canonical).ok())
+        .filter_map(|relative| relative.to_str().map(str::to_owned))
+        .collect()
 }
 
 impl TurnCheckpoints {
@@ -571,8 +592,22 @@ impl TurnCheckpoints {
             row,
             turn: None,
             start,
+            during: BTreeSet::new(),
         });
         Some(id)
+    }
+
+    /// The user saved `path` (canonical) through the file service: every turn running now
+    /// remembers it, and the one whose checkout holds it lists it as `during` when restored.
+    pub fn saved(&self, path: &Path) {
+        let slots: Vec<Arc<Slot>> = self.sessions.lock().values().cloned().collect();
+        for slot in slots {
+            if let Some(pending) = slot.state.lock().pending.as_mut()
+                && pending.during.len() < DURING_KEPT
+            {
+                pending.during.insert(path.to_owned());
+            }
+        }
     }
 
     /// The turn of checkpoint `id` was sent; the agent calls it `turn`.
@@ -674,7 +709,9 @@ impl TurnCheckpoints {
 
     /// Records the end of a turn; returns the repository whose retention is due.
     async fn end(&self, slot: &Slot, pending: Pending, turn: Option<TurnId>) -> Option<PathBuf> {
-        let Pending { row, start, .. } = pending;
+        let Pending {
+            row, start, during, ..
+        } = pending;
         let late = matches!(start, Start::Late(_));
         let (mut row, start) = start.outcome(row).await;
         row.turn_id = turn;
@@ -730,6 +767,7 @@ impl TurnCheckpoints {
                 self.set_status(slot, None);
                 row.bytes = start.bytes_hashed.saturating_add(end.bytes_hashed);
                 row.skipped = skipped(&start, Some(&end));
+                row.during = saved_within(&during, &start.checkout);
                 row.tree = Some(end.tree.clone());
                 row.state = if late {
                     CheckpointState::Late
@@ -862,7 +900,9 @@ impl TurnCheckpoints {
         let by_name: HashMap<&str, &RefInfo> = refs.iter().map(|r| (r.name.as_str(), r)).collect();
         let ends_by_checkpoint: HashMap<&str, &RefInfo> = refs
             .iter()
-            .filter(|r| r.kind.as_deref() != Some("start"))
+            .filter(|r| {
+                !r.kind.as_deref().is_some_and(Kind::is_start) && !r.name.ends_with("-start")
+            })
             .filter_map(|r| r.checkpoint.as_deref().map(|c| (c, r)))
             .collect();
         let known: HashSet<String> = rows.iter().map(|r| r.id.to_string()).collect();
@@ -904,7 +944,8 @@ impl TurnCheckpoints {
             if referenced.contains(&info.name) {
                 continue;
             }
-            let start = info.kind.as_deref() == Some("start") || info.name.ends_with("-start");
+            let start =
+                info.kind.as_deref().is_some_and(Kind::is_start) || info.name.ends_with("-start");
             let claimed = info.checkpoint.as_ref().is_some_and(|c| known.contains(c));
             if start {
                 stale.push(info.name.clone());

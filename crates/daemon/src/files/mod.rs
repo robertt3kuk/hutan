@@ -458,6 +458,12 @@ impl FileService {
         Empty {}
     }
 
+    /// A restore of checkpoint `checkpoint` (`checkpoint.restore`) is about to change `path`:
+    /// the change it causes goes out in `fs.changed` with `origin: restore`.
+    pub fn restoring(&self, path: &std::path::Path, checkpoint: hutan_core::CheckpointId) {
+        self.hub.restoring(path, checkpoint);
+    }
+
     /// Drops the uploads that were idle too long (their temporary files go with them).
     fn sweep(&self, uploads: &mut HashMap<String, Slot>) {
         let idle = self.upload_idle;

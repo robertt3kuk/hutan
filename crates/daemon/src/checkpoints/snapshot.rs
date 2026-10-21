@@ -19,7 +19,8 @@
 //!    A skipped path is left out of the tree and listed.
 //! 5. **Hash** the rest with `hash-object -w --no-filters` (raw bytes; symbolic links as their
 //!    target text), then `update-index --index-info` (removals first), `write-tree`,
-//!    `commit-tree`, `update-ref`.
+//!    `commit-tree` (its trailers name the session, turn, kind, checkpoint and the user's HEAD
+//!    of the moment, so a restore can say HEAD moved), `update-ref`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
@@ -34,7 +35,7 @@ use super::caps::{self, Candidate, Caps, Kind as FileKind, SkipReason, Skipped};
 use super::git::{
     self, Git, nul_records, os, os_args, parse_check_attr, parse_diff_files, parse_staged,
 };
-use super::{CheckpointError, Label, Repo, Snapshot, Unsupported};
+use super::{CheckpointError, HEAD_TRAILER, Label, Repo, Snapshot, Unsupported};
 
 /// Total bytes of paths per `hash-object` command line (macOS `ARG_MAX` is 1 MiB).
 const ARGS_BYTES: usize = 256 * 1024;
@@ -817,6 +818,13 @@ impl<'a> Snapshotter<'a> {
         message.push_str(&format!("Hutan-Kind: {kind}\n"));
         if let Some(checkpoint) = &label.checkpoint {
             message.push_str(&format!("Hutan-Checkpoint: {checkpoint}\n"));
+        }
+        let head = self
+            .user
+            .read(&os_args(&["rev-parse", "-q", "--verify", "HEAD"]), None)
+            .await?;
+        if head.success && super::is_object_id(&head.line()) {
+            message.push_str(&format!("{HEAD_TRAILER}: {}\n", head.line()));
         }
         let mut args = vec!["commit-tree", "--no-gpg-sign", "-m", message.as_str()];
         if let Some(parent) = &label.parent {
