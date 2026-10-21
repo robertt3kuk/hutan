@@ -1069,9 +1069,16 @@ fn a_conflicting_finish_says_so_with_the_files_and_a_refusal_stays_in_the_form(
     assert!(changes.read_with(cx, |c, _| c.merged().is_none()));
     assert_eq!(git_out(&env.root, &["rev-parse", "HEAD"]), head);
     assert_eq!(git_out(&env.root, &["status", "--porcelain"]), "");
-    wait_until(cx, "the result card", |cx| {
-        region(&view, cx, Region::Changes("finish-result")).is_some()
-    });
+    // The Finish reads the checkout again; its answer changes the list above the form, so the
+    // next clicks wait for it (a form that moves between mouse down and up gets no click).
+    wait_until(
+        cx,
+        "the result card and the listing after the Finish",
+        |cx| {
+            region(&view, cx, Region::Changes("finish-result")).is_some()
+                && !changes.read_with(cx, |c, _| c.loading())
+        },
+    );
 
     // A dirty main checkout is refused before anything changes, and the form says why.
     fs::write(env.root.join("a.txt"), "one\ntwo\nthree\n").unwrap();
