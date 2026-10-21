@@ -1,6 +1,6 @@
 //! The asynchronous side: cancellation by version, never blocking on a stale tree, the edit log.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use hutan_syntax::{Language, MAX_LOGGED_EDITS, Syntax, TextEdit, Token};
@@ -21,13 +21,38 @@ fn big_rust(bytes: usize) -> String {
     text
 }
 
-fn rust() -> (Syntax, Arc<Mutex<Vec<u64>>>) {
-    let published = Arc::new(Mutex::new(Vec::new()));
-    let sink = Arc::clone(&published);
-    let syntax = Syntax::with_notify(Language::Rust, move |version| {
-        sink.lock().unwrap().push(version);
-    })
-    .expect("syntax");
+/// The versions a [`Syntax`] announced through its notify callback, in order. The worker calls
+/// it after the tree became visible, so `wait_for` can return before the announcement: a test
+/// about announcements waits for the one it means ([`Published::through`]).
+#[derive(Clone, Default)]
+struct Published(Arc<(Mutex<Vec<u64>>, Condvar)>);
+
+impl Published {
+    fn push(&self, version: u64) {
+        let (versions, announced) = &*self.0;
+        versions.lock().unwrap().push(version);
+        announced.notify_all();
+    }
+
+    /// Every version announced up to and including `version` (the worker announces in order).
+    fn through(&self, version: u64) -> Vec<u64> {
+        let (versions, announced) = &*self.0;
+        let (versions, waited) = announced
+            .wait_timeout_while(versions.lock().unwrap(), LONG, |v| !v.contains(&version))
+            .unwrap();
+        assert!(
+            !waited.timed_out(),
+            "version {version} was never announced: {versions:?}"
+        );
+        versions.clone()
+    }
+}
+
+fn rust() -> (Syntax, Published) {
+    let published = Published::default();
+    let sink = published.clone();
+    let syntax =
+        Syntax::with_notify(Language::Rust, move |version| sink.push(version)).expect("syntax");
     (syntax, published)
 }
 
@@ -53,7 +78,7 @@ fn a_newer_version_cancels_the_parse_in_flight() {
     assert_eq!(stats.cancelled, 1, "{stats:?}");
     assert_eq!(stats.completed, 1, "{stats:?}");
     assert_eq!(
-        *published.lock().unwrap(),
+        published.through(2),
         vec![2],
         "version 1 must never be published"
     );
@@ -77,7 +102,7 @@ fn a_request_the_worker_has_not_started_is_replaced() {
     let stats = syntax.stats();
     assert_eq!(stats.superseded, 1, "version 2 never started: {stats:?}");
     assert_eq!(stats.started, 2, "{stats:?}");
-    assert_eq!(*published.lock().unwrap(), vec![3]);
+    assert_eq!(published.through(3), vec![3]);
 }
 
 #[test]
@@ -240,7 +265,7 @@ fn awaited_edits_each_publish_and_equal_a_fresh_parse() {
             );
         }
     }
-    assert_eq!(published.lock().unwrap().len(), 61);
+    assert_eq!(published.through(version).len(), 61);
 }
 
 #[test]
