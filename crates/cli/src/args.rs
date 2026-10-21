@@ -140,6 +140,9 @@ pub enum Command {
     /// Git worktrees: isolated checkouts for parallel agents (`hutan wt new|ls|rm|diff|merge|commit`)
     #[command(subcommand)]
     Wt(WtCommand),
+    /// Finish the work in a checkout: commit everything, merge a worktree into its target, push
+    /// the branch to its upstream (never forced). Only you can run it, not an agent
+    Finish(FinishArgs),
     /// Tasks with dependencies, run in the main checkout or a worktree (`hutan task add|ls|start|done|review|cancel|reset|rm|show`)
     #[command(subcommand)]
     Task(TaskCommand),
@@ -496,6 +499,33 @@ pub struct WtCommitArgs {
     /// The commit message
     #[arg(short = 'm', long, value_name = "MSG")]
     pub message: String,
+}
+
+#[derive(Debug, Args)]
+pub struct FinishArgs {
+    /// The checkout: a worktree's path or branch, or a main checkout's path (default: the
+    /// checkout of the current directory)
+    pub target: Option<String>,
+    #[arg(long = "ws", value_name = "ID|NAME", help = WT_WS_HELP)]
+    pub workspace: Option<String>,
+    /// The commit message for the uncommitted changes (and a squash's commit); needed when there
+    /// are any
+    #[arg(short = 'm', long, value_name = "MSG")]
+    pub message: Option<String>,
+    /// Commit (and merge) only; do not push. Without it, `[finish] push` of daemon.toml decides
+    /// (default: push)
+    #[arg(long)]
+    pub no_push: bool,
+    /// A worktree: merge into this branch, which the main checkout must have checked out
+    /// (default: the repository's default branch)
+    #[arg(long, value_name = "BRANCH")]
+    pub into: Option<String>,
+    /// A worktree: one commit with the branch's changes instead of a merge commit
+    #[arg(long, conflicts_with = "rebase")]
+    pub squash: bool,
+    /// A worktree: rebase the branch onto the target, then fast-forward the target
+    #[arg(long)]
+    pub rebase: bool,
 }
 
 #[derive(Debug, Subcommand)]

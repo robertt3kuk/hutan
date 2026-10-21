@@ -1,4 +1,5 @@
-//! `hutan wt new|ls|rm|diff|merge|commit` and the worktree step of `hutan new --worktree`.
+//! `hutan wt new|ls|rm|diff|merge|commit`, `hutan finish` and the worktree step of `hutan new
+//! --worktree`.
 
 use std::path::{Path, PathBuf};
 
@@ -6,8 +7,9 @@ use hutan_client::Client;
 use hutan_core::WorkspaceId;
 use hutan_protocol::messages::{CreatedBy, Request, WorkspaceKind, WorkspaceOpen, WorkspaceOpened};
 use hutan_protocol::worktree::{
-    DiffFile, DiffStatus, MergeStrategy, WorktreeCommit, WorktreeCreate, WorktreeCreated,
-    WorktreeDiff, WorktreeDiffRequest, WorktreeFileDiffRequest, WorktreeInfo, WorktreeList,
+    DiffFile, DiffStatus, FinishCommit, FinishMerge, FinishPush, MergeStrategy, StepReason,
+    StepStatus, WorktreeCommit, WorktreeCreate, WorktreeCreated, WorktreeDiff, WorktreeDiffRequest,
+    WorktreeFileDiffRequest, WorktreeFinish, WorktreeFinished, WorktreeInfo, WorktreeList,
     WorktreeMerge, WorktreeMerged, WorktreeRemove, conflict_files,
 };
 use serde_json::json;
@@ -16,7 +18,7 @@ use super::Ctx;
 use super::sessions::with_source;
 use super::workspaces::workspace_target;
 use crate::args::{
-    WtCommand, WtCommitArgs, WtDiffArgs, WtLsArgs, WtMergeArgs, WtNewArgs, WtRmArgs,
+    FinishArgs, WtCommand, WtCommitArgs, WtDiffArgs, WtLsArgs, WtMergeArgs, WtNewArgs, WtRmArgs,
 };
 use crate::error::CliError;
 
@@ -172,6 +174,42 @@ impl Ctx {
             }
         }
         self.fail(error)
+    }
+
+    /// `hutan finish`: one line per step; exit 1 when a step failed (what the steps before it
+    /// did stays).
+    pub(super) async fn finish(&self, args: FinishArgs) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        let scope = self.wt_scope(&client, args.workspace).await?.map(|s| s.0);
+        let list = client
+            .worktree_list(scope)
+            .await
+            .map_err(|e| self.fail(e))?;
+        let cwd = std::env::current_dir()?;
+        let checkout = match &args.target {
+            Some(target) => resolve_worktree(&list, target, &cwd)?.clone(),
+            None => checkout_of(&list, &cwd)?.clone(),
+        };
+        let strategy = match (args.squash, args.rebase) {
+            (true, _) => MergeStrategy::Squash,
+            (_, true) => MergeStrategy::Rebase,
+            _ => MergeStrategy::Merge,
+        };
+        let finished = client
+            .worktree_finish(WorktreeFinish {
+                checkout: checkout.path.clone(),
+                message: args.message.unwrap_or_default(),
+                push: args.no_push.then_some(false),
+                into: args.into,
+                strategy,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&finished, || finished_text(&checkout, &finished))?;
+        if finished.failed() {
+            return Err(CliError::Reported);
+        }
+        Ok(())
     }
 
     async fn wt_new(&self, args: WtNewArgs) -> Result<(), CliError> {
@@ -334,6 +372,144 @@ pub(super) fn no_workspace() -> CliError {
          --ws, set $HUTAN_WORKSPACE, or run the command in a repository or folder"
             .to_owned(),
     )
+}
+
+/// The checkout `cwd` is in: the deepest listed checkout containing it.
+fn checkout_of<'a>(list: &'a [WorktreeInfo], cwd: &Path) -> Result<&'a WorktreeInfo, CliError> {
+    let dir = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    list.iter()
+        .filter(|w| dir.starts_with(&w.path))
+        .max_by_key(|w| w.path.components().count())
+        .ok_or_else(|| {
+            CliError::Failed(format!(
+                "{} is in no git checkout of this project; run `hutan finish` inside one or \
+                 name it (`hutan wt ls`)",
+                cwd.display()
+            ))
+        })
+}
+
+fn short(hash: &str) -> String {
+    hash.chars().take(7).collect()
+}
+
+fn files_text(n: u32) -> String {
+    if n == 1 {
+        "1 file".to_owned()
+    } else {
+        format!("{n} files")
+    }
+}
+
+/// Why a step did not run or failed, in a few words.
+fn reason_text(reason: Option<StepReason>) -> &'static str {
+    match reason {
+        Some(StepReason::NothingToCommit) => "nothing to commit",
+        Some(StepReason::NothingToMerge) => "nothing to merge",
+        Some(StepReason::UpToDate) => "up to date",
+        Some(StepReason::EarlierStepFailed) => "skipped: an earlier step failed",
+        Some(StepReason::Conflict) => "conflict",
+        Some(StepReason::NoUpstream) => "no upstream",
+        Some(StepReason::Rejected) => "rejected",
+        Some(StepReason::Auth) => "authentication",
+        Some(StepReason::Error) | None => "error",
+    }
+}
+
+fn commit_line(step: &FinishCommit) -> String {
+    match step.status {
+        StepStatus::Ok => format!(
+            "commit: committed {} on {} ({})",
+            files_text(step.files),
+            step.branch,
+            short(step.commit.as_deref().unwrap_or_default())
+        ),
+        StepStatus::Skipped => format!("commit: {}", reason_text(step.reason)),
+        StepStatus::Failed => format!(
+            "commit failed: {}",
+            step.message.as_deref().unwrap_or("git refused")
+        ),
+    }
+}
+
+fn merge_line(step: &FinishMerge) -> String {
+    match step.status {
+        StepStatus::Ok => format!(
+            "merge:  {} {} into {} ({})",
+            match step.strategy {
+                MergeStrategy::Merge => "merged",
+                MergeStrategy::Squash => "squash-merged",
+                MergeStrategy::Rebase => "rebased and merged",
+            },
+            step.branch,
+            step.target,
+            short(step.commit.as_deref().unwrap_or_default())
+        ),
+        StepStatus::Skipped => match &step.message {
+            Some(message) => format!("merge:  {message}"),
+            None => format!("merge:  {}", reason_text(step.reason)),
+        },
+        StepStatus::Failed => {
+            let mut text = format!(
+                "merge failed ({}): {}",
+                reason_text(step.reason),
+                step.message.as_deref().unwrap_or_default()
+            );
+            for file in &step.conflicts {
+                text.push_str(&format!("\n  conflict: {file}"));
+            }
+            text
+        }
+    }
+}
+
+fn push_line(step: Option<&FinishPush>) -> String {
+    let Some(step) = step else {
+        return "push:   not pushed (--no-push, or `[finish] push = false` in daemon.toml)"
+            .to_owned();
+    };
+    let upstream = step.upstream.as_deref().unwrap_or("its upstream");
+    match step.status {
+        StepStatus::Ok => format!(
+            "push:   pushed {} to {upstream}{} ({})",
+            step.branch,
+            match step.ahead {
+                Some(1) => " (1 commit)".to_owned(),
+                Some(n) => format!(" ({n} commits)"),
+                None => String::new(),
+            },
+            short(step.commit.as_deref().unwrap_or_default())
+        ),
+        StepStatus::Skipped => match &step.message {
+            Some(message) => format!("push:   {message}"),
+            None => format!("push:   {}", reason_text(step.reason)),
+        },
+        StepStatus::Failed => format!(
+            "push failed ({}): {}",
+            reason_text(step.reason),
+            step.message.as_deref().unwrap_or_default()
+        ),
+    }
+}
+
+/// What `hutan finish` did, one line per step, then the worktree cleanup a merge allows.
+fn finished_text(checkout: &WorktreeInfo, finished: &WorktreeFinished) -> String {
+    let mut lines = vec![commit_line(&finished.commit)];
+    if let Some(merge) = &finished.merge {
+        lines.push(merge_line(merge));
+    }
+    lines.push(push_line(finished.push.as_ref()));
+    if finished
+        .merge
+        .as_ref()
+        .is_some_and(|m| m.status == StepStatus::Ok)
+    {
+        lines.push(format!(
+            "remove the worktree with `hutan wt rm {} --delete-branch`",
+            checkout.path.display()
+        ));
+    }
+    lines.join("\n")
 }
 
 /// The worktree `target` names: a path (as written, or relative to `cwd`), else a branch.
@@ -703,5 +879,77 @@ mod tests {
             "{table}"
         );
         assert_eq!(worktree_table(&[]), "no worktrees");
+    }
+
+    #[test]
+    fn finish_names_the_checkout_of_the_directory() {
+        let list = fixture();
+        assert_eq!(
+            checkout_of(&list, Path::new("/w/a-wt/x/src")).unwrap().path,
+            Path::new("/w/a-wt/x")
+        );
+        assert_eq!(
+            checkout_of(&list, Path::new("/w/b")).unwrap().path,
+            Path::new("/w/b")
+        );
+        assert!(checkout_of(&list, Path::new("/elsewhere")).is_err());
+    }
+
+    #[test]
+    fn finish_says_what_each_step_did() {
+        let worktree = wt("/w/a-wt/x", "/w/a", Some("feature/x"), false);
+        let finished = WorktreeFinished {
+            commit: FinishCommit {
+                status: StepStatus::Ok,
+                reason: None,
+                message: None,
+                branch: "feature/x".into(),
+                commit: Some("7a6b5c4d3e2f1098".into()),
+                files: 2,
+            },
+            merge: Some(FinishMerge {
+                status: StepStatus::Ok,
+                reason: None,
+                message: None,
+                branch: "feature/x".into(),
+                target: "main".into(),
+                strategy: MergeStrategy::Squash,
+                commit: Some("9d8c7b6a5f4e3d2c".into()),
+                conflicts: vec![],
+                source_dirty: false,
+            }),
+            push: Some(FinishPush {
+                status: StepStatus::Failed,
+                reason: Some(StepReason::Rejected),
+                message: Some("origin/main has 1 commit that main does not have".into()),
+                branch: "main".into(),
+                upstream: Some("origin/main".into()),
+                commit: None,
+                ahead: Some(1),
+                behind: Some(1),
+            }),
+        };
+        let text = finished_text(&worktree, &finished);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "commit: committed 2 files on feature/x (7a6b5c4)");
+        assert_eq!(
+            lines[1],
+            "merge:  squash-merged feature/x into main (9d8c7b6)"
+        );
+        assert_eq!(
+            lines[2],
+            "push failed (rejected): origin/main has 1 commit that main does not have"
+        );
+        assert!(lines[3].contains("hutan wt rm /w/a-wt/x --delete-branch"));
+
+        let local = WorktreeFinished {
+            merge: None,
+            push: None,
+            ..finished
+        };
+        let text = finished_text(&worktree, &local);
+        assert!(
+            text.ends_with("not pushed (--no-push, or `[finish] push = false` in daemon.toml)")
+        );
     }
 }

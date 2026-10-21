@@ -113,6 +113,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Answer(args) => ctx?.answer(args).await,
         Command::Notify(command) => ctx?.notify(command).await,
         Command::Wt(command) => ctx?.wt(command).await,
+        Command::Finish(args) => ctx?.finish(args).await,
         Command::Task(command) => ctx?.task(command).await,
     }
 }

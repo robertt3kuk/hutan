@@ -366,3 +366,50 @@ async fn wt_commit_commits_everything_so_the_merge_takes_it() {
     );
     t.stop().await;
 }
+
+/// `hutan finish` in a main checkout whose `main` tracks a local bare `origin`: `--no-push`
+/// keeps the commit local, a plain `hutan finish` pushes it, and a run with nothing left says so.
+#[tokio::test(flavor = "multi_thread")]
+async fn finish_commits_then_pushes_unless_told_not_to() {
+    let t = TestDaemon::start_toml("[terminal]\nenv_inherit = \"daemon\"\n", |_| {}).await;
+    let repo = Repo::new();
+    let bare = repo.root.parent().unwrap().join("origin.git");
+    git(
+        repo.root.parent().unwrap(),
+        &["init", "-q", "--bare", "-b", "main", s(&bare)],
+    );
+    git(&repo.root, &["remote", "add", "origin", s(&bare)]);
+    git(&repo.root, &["push", "-q", "-u", "origin", "main"]);
+    t.hutan(&["project", "open", s(&repo.root)]).await.ok();
+    let remote_main = || git(&bare, &["rev-parse", "main"]).trim().to_owned();
+    let before = remote_main();
+
+    fs::write(repo.root.join("a.txt"), "local\n").unwrap();
+    let local = hutan_in(&t, &repo.root, &["finish", "--no-push", "-m", "Local"])
+        .await
+        .ok();
+    assert!(
+        local.stdout.contains("commit: committed 1 file on main")
+            && local.stdout.contains("not pushed"),
+        "{local:?}"
+    );
+    assert_eq!(remote_main(), before);
+
+    // Without a message there is nothing to commit; the push takes the commit made above.
+    let pushed = hutan_in(&t, &repo.root, &["finish", "--json"]).await.ok();
+    let json = pushed.json();
+    assert_eq!(json["commit"]["reason"], "nothing_to_commit", "{json}");
+    assert_eq!(json["push"]["status"], "ok", "{json}");
+    assert_eq!(json["push"]["upstream"], "origin/main");
+    assert_eq!(
+        remote_main(),
+        git(&repo.root, &["rev-parse", "HEAD"]).trim()
+    );
+
+    // Uncommitted changes need a message.
+    fs::write(repo.root.join("a.txt"), "again\n").unwrap();
+    let refused = hutan_in(&t, &repo.root, &["finish"]).await;
+    assert_eq!(refused.code, 1, "{refused:?}");
+    assert!(refused.stderr.contains("needs a message"), "{refused:?}");
+    t.stop().await;
+}
