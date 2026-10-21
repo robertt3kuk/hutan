@@ -454,9 +454,7 @@ async fn resume_references_replace_the_spec_command_and_unusable_rows_fail_clean
     }
     storage.close();
 
-    let daemon = hutan_daemon::start(DaemonConfig::new(paths.clone()))
-        .await
-        .unwrap();
+    let daemon = start_when_free(DaemonConfig::new(paths.clone())).await;
     let t = TestDaemon {
         _dir: t._dir,
         paths,

@@ -213,7 +213,7 @@ impl M {
         storage.close();
         let mut config = hutan_daemon::DaemonConfig::new(paths.clone());
         tweak(&mut config);
-        let daemon = hutan_daemon::start(config).await.unwrap();
+        let daemon = common::start_when_free(config).await;
         let daemon = TestDaemon {
             _dir,
             paths,

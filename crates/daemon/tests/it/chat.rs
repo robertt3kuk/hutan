@@ -985,7 +985,7 @@ async fn start_chat_daemon(
 ) -> Chat {
     let mut daemon_config = hutan_daemon::DaemonConfig::new(paths.clone());
     daemon_config.codex = Some(config);
-    let daemon = hutan_daemon::start(daemon_config).await.unwrap();
+    let daemon = common::start_when_free(daemon_config).await;
     let daemon = TestDaemon {
         _dir: dir,
         paths,

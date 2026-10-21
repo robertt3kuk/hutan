@@ -84,9 +84,7 @@ async fn stop_keeping_home(t: TestDaemon) -> (TempDir, Paths) {
 }
 
 async fn start_on(dir: TempDir, paths: Paths) -> TestDaemon {
-    let daemon = hutan_daemon::start(DaemonConfig::new(paths.clone()))
-        .await
-        .unwrap();
+    let daemon = start_when_free(DaemonConfig::new(paths.clone())).await;
     TestDaemon {
         _dir: dir,
         paths,
