@@ -68,6 +68,8 @@ const DISK_READS_MAX: usize = 512;
 const DISK_READ_MAX_BYTES: u64 = 4 << 20;
 /// How long shutdown waits for the servers to leave before their groups are killed.
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(3);
+/// How long a request at a position waits for a server that is still starting.
+const START_WAIT: Duration = Duration::from_secs(10);
 /// How often idle servers are looked for when no tuning says otherwise.
 const IDLE_TICK: Duration = Duration::from_secs(5);
 
@@ -1708,37 +1710,63 @@ impl LspHub {
         texts
     }
 
-    /// The server and the text of an open document, for a request at a position.
-    fn target(&self, path: &Path) -> Result<(Arc<Server>, Text, Uri, PositionEncoding), ErrorBody> {
-        let state = self.state.lock();
-        let mirror = state.mirrors.get(path).ok_or_else(|| {
-            invalid_state(format!(
-                "`{}` is not open: send `doc.open` first",
-                path.display()
-            ))
-        })?;
-        let slot = mirror
-            .slot
-            .as_ref()
-            .and_then(|id| state.slots.get(id))
-            .ok_or_else(|| invalid_state("no language server serves this document"))?;
-        let info = slot.info();
-        let Some(server) = slot.server.clone() else {
+    /// The server and the text of an open document, for a request at a position. A server that
+    /// is still starting is waited for (at most [`START_WAIT`]).
+    async fn target(
+        &self,
+        path: &Path,
+    ) -> Result<(Arc<Server>, Text, Uri, PositionEncoding), ErrorBody> {
+        let (server, info) = {
+            let state = self.state.lock();
+            let mirror = state.mirrors.get(path).ok_or_else(|| {
+                invalid_state(format!(
+                    "`{}` is not open: send `doc.open` first",
+                    path.display()
+                ))
+            })?;
+            let slot = mirror
+                .slot
+                .as_ref()
+                .and_then(|id| state.slots.get(id))
+                .ok_or_else(|| invalid_state("no language server serves this document"))?;
+            (slot.server.clone(), slot.info())
+        };
+        let Some(server) = server else {
             return Err(invalid_state(format!(
                 "the language server is {}{}",
                 info.state.as_str(),
                 info.reason.map(|r| format!(": {r}")).unwrap_or_default()
             )));
         };
+        if info.state == LspServerState::Starting {
+            let wait = self
+                .tuning
+                .timeouts
+                .unwrap_or_default()
+                .initialize
+                .min(START_WAIT);
+            let _ = timeout(wait, server.wait_for(|s| s.state != ServerState::Starting)).await;
+        }
         let encoding = server.encoding().ok_or_else(|| {
-            invalid_state(format!("the language server is {}", info.state.as_str()))
+            let status = server.status();
+            invalid_state(format!(
+                "the language server is {}{}",
+                state_of(status.state).as_str(),
+                status
+                    .last_error
+                    .map(|r| format!(": {r}"))
+                    .unwrap_or_default()
+            ))
         })?;
-        Ok((
-            server,
-            mirror.buffer.snapshot(),
-            mirror.uri.clone(),
-            encoding,
-        ))
+        let (text, uri) = {
+            let state = self.state.lock();
+            let mirror = state
+                .mirrors
+                .get(path)
+                .ok_or_else(|| invalid_state("the document was closed"))?;
+            (mirror.buffer.snapshot(), mirror.uri.clone())
+        };
+        Ok((server, text, uri, encoding))
     }
 
     fn position_params(
@@ -1756,7 +1784,7 @@ impl LspHub {
     /// `lsp.hover`.
     pub async fn hover(&self, req: LspPositionRequest) -> Result<LspHover, ErrorBody> {
         let path = canonical(&req.path).await?;
-        let (server, text, uri, encoding) = self.target(&path)?;
+        let (server, text, uri, encoding) = self.target(&path).await?;
         let hover = server
             .request::<HoverRequest>(HoverParams {
                 text_document_position_params: Self::position_params(
@@ -1786,7 +1814,7 @@ impl LspHub {
     /// `lsp.definition`.
     pub async fn definition(&self, req: LspPositionRequest) -> Result<LspLocations, ErrorBody> {
         let path = canonical(&req.path).await?;
-        let (server, text, uri, encoding) = self.target(&path)?;
+        let (server, text, uri, encoding) = self.target(&path).await?;
         let response = server
             .request::<GotoDefinition>(GotoDefinitionParams {
                 text_document_position_params: Self::position_params(

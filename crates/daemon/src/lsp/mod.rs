@@ -16,3 +16,30 @@ mod roots;
 mod trust;
 
 pub use hub::{Inputs, LspHub, LspTuning};
+
+#[cfg(test)]
+mod tests {
+    /// The queues of the hub, of the client library it drives and of the daemon's side are
+    /// bounded: no unbounded channel anywhere in them (`AGENTS.md`: bounded everything).
+    #[test]
+    fn no_channel_of_the_language_servers_is_unbounded() {
+        let needle = ["unbounded", "_channel"].concat();
+        let needle_type = ["Unbounded", "Sender"].concat();
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut checked = 0;
+        for dir in ["src/lsp", "../lsp_client/src"] {
+            for entry in std::fs::read_dir(manifest.join(dir)).unwrap() {
+                let path = entry.unwrap().path();
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                // The test itself spells the needles out of pieces.
+                assert!(!source.contains(&needle), "{}", path.display());
+                assert!(!source.contains(&needle_type), "{}", path.display());
+                checked += 1;
+            }
+        }
+        assert!(checked >= 15, "{checked}");
+    }
+}

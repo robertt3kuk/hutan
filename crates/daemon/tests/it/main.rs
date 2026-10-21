@@ -19,6 +19,7 @@ mod harness;
 mod history;
 mod history_sessions;
 mod login_env;
+mod lsp;
 mod mawas;
 mod memory;
 mod menu_bar;
