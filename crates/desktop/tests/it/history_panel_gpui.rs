@@ -255,7 +255,7 @@ fn typing_right_after_search_history_lands_in_the_history_field(cx: &mut TestApp
         .read_with(cx, |wb, _| wb.panel::<HistoryPanel>("history"))
         .expect("the History panel is drawn");
     assert_eq!(panel.read_with(cx, |p, _| p.query().to_owned()), "axolotl");
-    let field = panel.read_with(cx, |p, cx| gpui::Focusable::focus_handle(p, cx));
+    let field = panel.read_with(cx, gpui::Focusable::focus_handle);
     let terminal = terminal(cx).expect("the terminal view is still there");
     cx.update(|window, _| {
         assert!(
