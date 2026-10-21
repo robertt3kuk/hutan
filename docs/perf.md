@@ -633,3 +633,69 @@ multi-byte texts and options agree on outcome, text, caret, selection, mode, reg
 and clipboard after every key. The scaffold is not kept; the V-1 suite (40 tests) runs against the adapter with its
 assertions untouched (only the rig changed: it reaches Normal mode by Escape, since the mode is no
 longer a field the test can set).
+
+## Checkpoints: snapshot cost (slice CK-1)
+
+The checkpoint engine (`crates/daemon/src/checkpoints/`, ADR 0019) on a generated repository shaped
+like the spike's (`docs/spikes/2026-10-21-checkpoints.md` §4.1): 100 directories × 100 `.rs` files
+of 3–8 KiB, 20 random 1 MiB binaries, an ignored `node_modules/` of 5 000 files and an ignored
+`.env`; committed and `git gc`'d, then one `git status` so the user's index is stat-clean as in
+daily use. Measured with
+
+```text
+cargo run -p hutan-daemon --release --example checkpoint_bench -- 5
+```
+
+which generates the repository in a temporary directory, takes one seeding snapshot, then 5
+snapshots per scenario (each run of an editing scenario writes fresh content, so every run hashes
+new objects), and prints the table below. `RUST_LOG=hutan_daemon=debug` adds the time of every git
+step. Wall time is the whole `Checkpoints::snapshot` call (`rev-parse` to `update-ref`); object
+growth is `count-objects -v` (`size` + `size-pack`) before and after.
+
+| | |
+|---|---|
+| Machine | Apple M1 Pro (10 cores, 16 GB), macOS 27.0.1, APFS, `git version 2.54.0 (Apple Git-157)`, release build |
+| Load | other agents building on the machine: 1-minute load average 10–14 during the run (process.md asks for < 20) |
+
+| Scenario | Median of 5 | Runs (ms) | Files hashed | Object growth (median) |
+|---|---|---|---|---|
+| `git status --porcelain` (reference) | 33 ms | 35, 33, 36, 33, 32 | — | — |
+| first snapshot (seeds the private index from the user's) | 225 ms | 1 run | 0 | 4 KiB |
+| unchanged | **101 ms** | 101, 109, 103, 99, 101 | 0 | 4 KiB (the commit) |
+| 3 edits | **242 ms** | 236, 256, 240, 250, 242 | 3 | 36 KiB |
+| 250 edits (200 modified + 50 new files) | **542 ms** | 508, 542, 562, 544, 530 | 250 | 1 416 KiB |
+| one new 5 MiB binary | **432 ms** | 432, 440, 486, 374, 396 | 1 | 5 136 KiB |
+| 10 000 files touched, same content | **736 ms** | 882, 735, 726, 783, 736 | 0 | 4 KiB |
+
+Where the time goes (debug step timings, same machine and load): every git process costs 15–35 ms
+here whatever it does, so the cost follows the number of git steps:
+- **Unchanged**: 5 processes — `rev-parse`, `diff-files` (stat only), `ls-files -o`, `commit-tree`,
+  `update-ref`. `write-tree` is skipped when nothing was written to the private index (its tree is
+  the last snapshot's), and the check of the whole private index for entries that became ignored
+  (`ls-files -c -i`, ≈ 35 ms) runs only when an ignore source changed: a `.gitignore` among the
+  changes, `info/exclude`, the global excludes file or the configuration naming it.
+- **Edits** add `check-ignore` over the stat-dirty paths (so a changed file under a `.gitignore`
+  that ignores itself is never read; past 256 paths the one-pass `ls-files -c -i` instead, since
+  `check-ignore` costs ≈ 0.1 ms a path), `update-index --refresh` and a second `diff-files` (to
+  tell real changes from touched files), `check-attr filter`, `hash-object -w --no-filters`,
+  `update-index --index-info` and `write-tree`: ≈ 12 processes for 3 edits. Hashing writes one
+  loose object per new blob, ≈ 0.9 ms each (250 files: ≈ 200 ms; not `fsync`: `core.fsync=none`
+  measured the same).
+- **Touched files** (a branch switch, a formatter that rewrites unchanged files): the refresh
+  reads every stat-dirty file once (≈ 600 ms for 10 000 files) and records their stat data, so the
+  next snapshot is back at the unchanged cost. Nothing is hashed or written.
+- **First snapshot**: the copy of the user's index, `check-attr` over every tracked path (to drop
+  `filter=` paths and mark converted ones), and the ignore-source read; once per checkout and
+  daemon run.
+
+Against the spike's prototype (§4.2, an unloaded run): unchanged 101 ms vs 117–141 ms; 3 edits
+242 ms vs 125 ms (method A, `git add`); 250 edits 542 ms vs 326 ms; 5 MiB binary 432 ms vs
+404 ms; touched 10 000 files 736 ms vs 513 ms (persistent private index). The edit scenarios
+pay for the steps that keep content raw, capped and private (`lstat` filters, `check-ignore`,
+`check-attr`, separate hashing) where `git add` does it in one process. Earlier runs of the same
+bench at load 20–27 gave unchanged 107–145 ms and 3 edits 237–272 ms; the numbers move with load
+more than with the repository.
+
+The 120 MiB case of the spike is not repeated: such a file is now skipped by `max_file_bytes`
+(10 MiB) after an `lstat`, before anything reads it (tested in
+`checkpoints::files_over_the_caps_are_skipped_before_anything_is_hashed`).
