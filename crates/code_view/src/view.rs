@@ -12,9 +12,9 @@ use std::time::Instant;
 
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement as _, Pixels, Point, Render, ScrollWheelEvent, ShapedLine, Styled as _,
-    Subscription, Task, Window, div,
+    InteractiveElement, IntoElement, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent,
+    ShapedLine, Styled as _, Subscription, Task, Window, div,
 };
 use hutan_buffer::{Bias, Selection, Selections, Text, Transaction};
 
@@ -35,11 +35,14 @@ pub const MAX_COLUMN_LINES: usize = 10_000;
 /// What happened to a view that its owner may show (the status bar's position).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodeViewEvent {
-    /// The selections or the find state changed.
+    /// The selections, the Vim state or the find state changed.
     Changed,
     /// The view lost the keyboard, or its window stopped being the active one (autosave on
     /// focus change).
     FocusLost,
+    /// `:` in Vim's Normal or Visual mode: the owner opens the command line (`visual`: with
+    /// the range `'<,'>` of the selection that just ended).
+    CommandLine { visual: bool },
 }
 
 /// What a drag extends: characters, words (a double click), lines (a triple click) or a block of
@@ -187,6 +190,13 @@ pub struct CodeView {
     pub(crate) times: PaintTimes,
     /// The widest line drawn so far, in columns (how far the view scrolls right).
     pub(crate) widest: usize,
+    /// Vim's state while `editor.vim_mode` is on (`modal.rs`).
+    pub(crate) vim: Option<crate::modal::VimState>,
+    /// `:set number`: the gutter shows line numbers.
+    pub(crate) show_numbers: bool,
+    /// The `:s` / `:g` that is searching, and its cancel flag.
+    pub(crate) ex_task: Option<Task<()>>,
+    pub(crate) ex_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     _observe: Subscription,
     _edits: Subscription,
     /// Focus-out and window-activation watchers, made at the first render (they need the
@@ -251,6 +261,10 @@ impl CodeView {
             stats: ViewStats::default(),
             times: PaintTimes::default(),
             widest: 0,
+            vim: None,
+            show_numbers: true,
+            ex_task: None,
+            ex_cancel: None,
             _observe: observe,
             _edits: edits,
             focus_watch: Vec::new(),
@@ -1046,10 +1060,36 @@ impl Render for CodeView {
         self.watch_focus(window, cx);
         let root = div()
             .id("code-view")
-            .key_context(crate::KEY_CONTEXT)
+            .key_context(self.key_context())
             .track_focus(&self.focus)
-            .size_full();
+            .size_full()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if this.vim_key_down(event, cx) {
+                    cx.stop_propagation();
+                }
+            }));
         crate::actions::register(root, cx).child(CodeElement::new(cx.entity()))
+    }
+}
+
+impl CodeView {
+    /// `CodeView Editor`, and `vim_mode = normal | insert | visual` while Vim is on: the
+    /// editor's own bindings are bound outside Normal and Visual so they never shadow Vim.
+    fn key_context(&self) -> KeyContext {
+        let mut context = KeyContext::default();
+        context.add(crate::KEY_CONTEXT);
+        context.add(crate::EDITOR_CONTEXT);
+        if let Some(mode) = self.vim_mode() {
+            context.set(
+                crate::VIM_MODE_KEY,
+                match mode {
+                    hutan_vim::Mode::Normal => "normal",
+                    hutan_vim::Mode::Insert => "insert",
+                    hutan_vim::Mode::Visual => "visual",
+                },
+            );
+        }
+        context
     }
 }
 

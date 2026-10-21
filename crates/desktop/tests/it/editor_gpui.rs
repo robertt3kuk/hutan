@@ -453,16 +453,109 @@ fn closing_a_changed_file_asks_to_save_it(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn typing_works_with_vim_mode_on(cx: &mut TestAppContext) {
+fn vim_in_a_file_tab_normal_keys_never_type_and_the_colon_line_saves(cx: &mut TestAppContext) {
+    use hutan_code_view::VimMode;
     let daemon = TestDaemon::start();
-    let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
+    let (view, cx, settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
     let dir = tempfile::tempdir().unwrap();
-    let (_, _, buffer) = open_text(&view, cx, dir.path(), "v.txt", "end\n");
+    let (file, file_view, buffer) = open_text(&view, cx, dir.path(), "v.txt", "end\n");
+    let code = file_view.read_with(cx, |v, _| v.code().clone());
+    let mode = |cx: &mut VisualTestContext| code.read_with(cx, |c, _| c.vim_mode());
+    assert_eq!(
+        mode(cx),
+        Some(VimMode::Normal),
+        "a file opens in Normal mode"
+    );
+
+    // Normal-mode letters are commands, never text (`j`, `k` on a one-line file do nothing).
+    cx.simulate_input("jk");
+    assert_eq!(buffer.read_with(cx, |b, _| b.text().to_string()), "end\n");
+
+    // `i` enters Insert: keys type, with the editor's own Backspace and Return.
     cx.simulate_input("ijk ");
     cx.simulate_keystrokes("backspace enter");
     assert_eq!(
         buffer.read_with(cx, |b, _| b.text().to_string()),
-        "ijk\nend\n",
-        "keys type, never run Vim commands, in a file tab (E-8 wires Vim)"
+        "jk\nend\n"
+    );
+    cx.simulate_keystrokes("escape");
+    assert_eq!(mode(cx), Some(VimMode::Normal));
+
+    // A caret move does not notify the workbench: the status items read the code view.
+    let notified = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = notified.clone();
+    let _watch = cx.update(|_, cx| cx.observe(&view, move |_, _| seen.set(seen.get() + 1)));
+    cx.simulate_input("l");
+    draw(cx);
+    assert_eq!(notified.get(), 0, "B12a: the workbench is not notified");
+    let position = view.read_with(cx, |wb, cx| {
+        wb.editor_items().and_then(|items| items.position_text(cx))
+    });
+    assert_eq!(position.as_deref(), Some("Ln 2, Col 2"));
+
+    // `:w` saves through fs.write.
+    cx.simulate_input(":");
+    draw(cx);
+    assert_eq!(
+        file_view.read_with(cx, |v, _| v.command_text().map(str::to_owned)),
+        Some(String::new())
+    );
+    cx.simulate_input("w");
+    cx.simulate_keystrokes("enter");
+    wait_until(cx, "the save", |cx| {
+        buffer.read_with(cx, |b, _| !b.is_dirty() && !b.is_saving())
+    });
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "jk\nend\n");
+
+    // An unknown command says so; `:sp` splits the pane with the same buffer.
+    file_view.update_in(cx, |v, window, cx| v.run_command("frobnicate", window, cx));
+    let message = code.read_with(cx, |c, _| c.vim_message().map(|m| m.text.clone()));
+    assert_eq!(message.as_deref(), Some("Not supported: :frobnicate"));
+    file_view.update_in(cx, |v, window, cx| v.run_command("vs", window, cx));
+    draw(cx);
+    let canonical = file.canonicalize().unwrap().display().to_string();
+    let tabs = view.read_with(cx, |wb, _| {
+        wb.state()
+            .center
+            .panes()
+            .iter()
+            .filter(|p| {
+                p.items
+                    .iter()
+                    .any(|i| i.as_file() == Some(canonical.as_str()))
+            })
+            .count()
+    });
+    assert_eq!(tabs, 2, ":vs shows the file in a second pane");
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.buffers().len()),
+        1,
+        "one buffer"
+    );
+
+    // Turning Vim off in the middle of a command is safe: the pending `d` is dropped.
+    cx.simulate_input("d");
+    settings
+        .write_user("editor.vim_mode", toml::Value::Boolean(false))
+        .unwrap();
+    wait_until(cx, "Vim off", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.focused_file_view()
+                .is_some_and(|v| v.read(cx).code().read(cx).vim_mode().is_none())
+        })
+    });
+    let focused = view.read_with(cx, |wb, cx| {
+        wb.focused_file_view().map(|v| v.read(cx).code().clone())
+    });
+    let focused = focused.unwrap();
+    cx.update(|window, cx| {
+        let handle = focused.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+    });
+    draw(cx);
+    cx.simulate_input("x");
+    assert!(
+        buffer.read_with(cx, |b, _| b.text().to_string().contains('x')),
+        "plain typing"
     );
 }

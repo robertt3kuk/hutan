@@ -2018,7 +2018,7 @@ impl Workbench {
                 let view = self.changes_view(path, window, cx);
                 cached_view(&self.regions, view)
             }
-            ItemRef::File { path } => self.render_file_item(pane, path, cx),
+            ItemRef::File { path } => self.render_file_item(pane, path, window, cx),
         }
     }
 
@@ -2094,6 +2094,11 @@ impl Workbench {
             }
         };
         let hint = |action: &dyn Action| key_hint(window, action).unwrap_or_default();
+        let weak = cx.weak_entity();
+        let editor_items = self
+            .editor_items
+            .get_or_insert_with(|| super::editor_status::EditorItems::new(weak, cx))
+            .clone();
         let ctx = StatusContext {
             theme: &theme,
             density: self.density,
@@ -2106,6 +2111,8 @@ impl Workbench {
                 bottom: hint(&actions::ToggleBottomDock),
             },
             data: &data,
+            editor_items: &editor_items,
+            height: tokens.status_bar,
         };
         let status_bar = self.status_bar();
         let render_side = |ids: &[String]| -> Vec<AnyElement> {

@@ -128,6 +128,10 @@ pub struct StatusContext<'a> {
     /// Key hint of each dock's toggle action, from the live keymap (empty when unbound).
     pub dock_hints: PerDock<SharedString>,
     pub data: &'a StatusData,
+    /// The views of `editor.position` and `editor.mode`, which follow the focused code view.
+    pub editor_items: &'a super::editor_status::EditorItems,
+    /// Height of the status bar.
+    pub height: f32,
 }
 
 /// Live numbers the status items show.
@@ -150,17 +154,20 @@ pub struct StatusData {
     pub terminal_theme: String,
     /// Visibility and content of the three docks.
     pub docks: PerDock<DockState>,
-    /// The focused file tab's position and language; `None` when no file tab has focus.
+    /// The focused file tab's language and whether Vim is on in it; `None` when no file tab
+    /// has focus.
     pub editor: Option<EditorStatus>,
 }
 
-/// What the `editor.position` and `editor.language` items show.
+/// What the editor items know of the focused file tab at the workbench's level. Its line and
+/// column and its Vim mode follow the caret, so `editor.position` and `editor.mode` read them
+/// from the code view themselves ([`EditorItems`](super::editor_status::EditorItems)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorStatus {
-    /// `Ln 12, Col 5`.
-    pub position: String,
     /// `Rust`, `Plain Text · large file`.
     pub language: String,
+    /// `editor.vim_mode` is on: `editor.mode` shows.
+    pub vim: bool,
 }
 
 pub type StatusRender = Rc<dyn Fn(&StatusContext<'_>) -> AnyElement>;
@@ -228,6 +235,7 @@ impl Default for StatusBarLayout {
             .map(str::to_owned)
             .to_vec(),
             right: [
+                "editor.mode",
                 "editor.position",
                 "editor.language",
                 "density",

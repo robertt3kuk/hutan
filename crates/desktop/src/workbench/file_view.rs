@@ -1,9 +1,10 @@
-//! A file tab (`ItemRef::File`, slices E-5 and E-6): the code view of one file
+//! A file tab (`ItemRef::File`, slices E-5, E-6 and E-8): the code view of one file
 //! (`hutan-code-view`), its find and replace bar, the conflict bar when the file changed on disk
-//! under unsaved changes (*Reload · Keep Mine · Show Diff*), and what a file says while it loads,
-//! when it is too large to open without asking, and when it cannot be shown at all (binary, not
-//! UTF-8, gone, outside what the daemon lets the window read). One view per pane; the buffer is
-//! shared through the workbench's buffer store (`files.rs`), which saves it (`file_sync.rs`).
+//! under unsaved changes (*Reload · Keep Mine · Show Diff*), Vim's `:` line and the answers of
+//! its commands, and what a file says while it loads, when it is too large to open without
+//! asking, and when it cannot be shown at all (binary, not UTF-8, gone, outside what the daemon
+//! lets the window read). One view per pane; the buffer is shared through the workbench's buffer
+//! store (`files.rs`), which saves it (`file_sync.rs`).
 
 use std::path::PathBuf;
 
@@ -14,9 +15,10 @@ use gpui::{
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
 use hutan_chat_view::diff::DiffLine;
+use hutan_code_view::ex::Ex;
 use hutan_code_view::{
-    CloseFind, CodeStyle, CodeView, CodeViewEvent, Conflict, FailReason, FileBuffer, Find,
-    FindNext, FindPrevious, FindQuery, FindReplace, LoadState, Save,
+    CloseFind, CodeStyle, CodeView, CodeViewEvent, Conflict, ExRun, FailReason, FileBuffer, Find,
+    FindNext, FindPrevious, FindQuery, FindReplace, LoadState, Save, VimSettings,
 };
 use hutan_settings::SettingsStore;
 
@@ -33,6 +35,8 @@ use crate::theme::{DensityExt as _, Theme, Tokens};
 pub const KEY_CONTEXT: &str = "FileView";
 /// The key context of the find field.
 pub const FIND_CONTEXT: &str = "FileFind";
+/// Commands kept in the `:` line's history (↑ ↓).
+const COMMAND_HISTORY: usize = 100;
 
 /// What a file tab asks of the workbench.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,8 +45,6 @@ pub enum FileViewEvent {
     OpenWithSystem(PathBuf),
     /// The user confirmed opening a large file (read-only, no syntax).
     OpenLarge(PathBuf),
-    /// The selection or the find state changed (the status bar's position).
-    Changed,
     /// ⌘S.
     Save(PathBuf),
     /// The conflict bar's *Reload*: take the file as it is on disk.
@@ -51,6 +53,18 @@ pub enum FileViewEvent {
     Overwrite(PathBuf),
     /// The code lost the keyboard (autosave on focus change).
     FocusLost(PathBuf),
+    /// A `:` command about files, windows, buffers or terminals (`:w :q :e :sp :vs :b :ls
+    /// :term`), for the workbench to run.
+    Ex(Ex),
+}
+
+/// Vim's `:` line while it is open.
+#[derive(Debug, Default)]
+struct CommandLine {
+    text: String,
+    edit: FieldEdit,
+    /// Where ↑ / ↓ are in the history (`None`: the line being typed).
+    at: Option<usize>,
 }
 
 /// One tab of a file.
@@ -71,6 +85,14 @@ pub struct FileView {
     replace_focus: FocusHandle,
     /// The conflict's diff (the disk's text to the buffer's), while *Show Diff* is on.
     diff: Option<Vec<DiffLine>>,
+    /// Vim's `:` line, while open.
+    command: Option<CommandLine>,
+    command_focus: FocusHandle,
+    /// The `:` commands run, oldest first.
+    history: Vec<String>,
+    /// The `:` line opened and takes the keyboard at the next frame (the event that opens it
+    /// comes without a window).
+    focus_command_on_render: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -109,17 +131,15 @@ impl FileView {
                 cx.notify();
             }),
             cx.subscribe(&code, |this, _, event: &CodeViewEvent, cx| match event {
-                CodeViewEvent::Changed => {
-                    cx.emit(FileViewEvent::Changed);
-                    cx.notify();
-                }
+                CodeViewEvent::Changed => cx.notify(),
                 CodeViewEvent::FocusLost => {
                     let path = this.buffer.read(cx).path().to_owned();
                     cx.emit(FileViewEvent::FocusLost(path));
                 }
+                CodeViewEvent::CommandLine { visual } => this.open_command_line(*visual, cx),
             }),
         ];
-        Self {
+        let mut this = Self {
             settings,
             regions,
             buffer,
@@ -135,8 +155,227 @@ impl FileView {
             replace_edit: FieldEdit::new(),
             replace_focus: cx.focus_handle(),
             diff: None,
+            command: None,
+            command_focus: cx.focus_handle(),
+            history: Vec::new(),
+            focus_command_on_render: false,
             _subscriptions: subscriptions,
+        };
+        this.sync_vim(cx);
+        this
+    }
+
+    /// Follows `editor.vim_mode` and `editor.vim_use_system_clipboard` (live).
+    pub fn sync_vim(&mut self, cx: &mut Context<Self>) {
+        let config = VimConfig::of(&self.settings);
+        let settings = config.enabled.then_some(VimSettings {
+            use_system_clipboard: config.use_system_clipboard,
+        });
+        if settings.is_none() {
+            self.command = None;
         }
+        self.code.update(cx, |code, cx| code.set_vim(settings, cx));
+    }
+
+    // ---- Vim's `:` line ---------------------------------------------------------------------
+
+    /// `:` in Normal or Visual mode: the line opens (with `'<,'>` after a Visual selection)
+    /// and takes the keyboard.
+    fn open_command_line(&mut self, visual: bool, cx: &mut Context<Self>) {
+        let text = if visual { "'<,'>" } else { "" }.to_owned();
+        let edit = FieldEdit::new();
+        self.command = Some(CommandLine {
+            text,
+            edit,
+            at: None,
+        });
+        self.focus_command_on_render = true;
+        cx.notify();
+    }
+
+    /// The text of the `:` line while it is open.
+    pub fn command_text(&self) -> Option<&str> {
+        self.command.as_ref().map(|c| c.text.as_str())
+    }
+
+    /// Closes the `:` line without running it; the code gets the keyboard back.
+    fn close_command_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.command = None;
+        let focus = self.code.focus_handle(cx);
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// Runs `line` as if typed on the `:` line (Return): what concerns the text runs in the
+    /// code view, `:noh` here, and files, windows, buffers and terminals in the workbench.
+    pub fn run_command(&mut self, line: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.command = None;
+        if !line.trim().is_empty() && self.history.last().map(String::as_str) != Some(line) {
+            self.history.push(line.to_owned());
+            if self.history.len() > COMMAND_HISTORY {
+                self.history.remove(0);
+            }
+        }
+        let focus = self.code.focus_handle(cx);
+        window.focus(&focus, cx);
+        let ran = self
+            .code
+            .update(cx, |code, cx| code.run_command_line(line, cx));
+        match ran {
+            ExRun::Done => {}
+            ExRun::Owner(Ex::NoHighlight) => {
+                if self.find_open {
+                    self.close_find(window, cx);
+                } else {
+                    self.code.update(cx, |code, cx| code.clear_find(cx));
+                }
+            }
+            ExRun::Owner(command) => cx.emit(FileViewEvent::Ex(command)),
+        }
+        cx.notify();
+    }
+
+    /// Shows `text` on the `:` line (the workbench's answer to a command it ran).
+    pub fn say(&mut self, text: impl Into<String>, error: bool, cx: &mut Context<Self>) {
+        self.code
+            .update(cx, |code, cx| code.set_vim_message(text, error, cx));
+    }
+
+    fn command_field(&self, cx: &Context<Self>) -> FieldRef {
+        FieldRef::new(
+            cx.weak_entity(),
+            self.command_focus.clone(),
+            |this, cx, f| {
+                if let Some(command) = &mut this.command {
+                    command.edit.with(&mut command.text, false, false, f);
+                }
+                cx.notify();
+            },
+        )
+    }
+
+    fn on_command_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ks = &event.keystroke;
+        let plain = !ks.modifiers.platform && !ks.modifiers.control && !ks.modifiers.alt;
+        let Some(command) = &mut self.command else {
+            return;
+        };
+        match ks.key.as_str() {
+            "enter" if plain => {
+                let line = command.text.clone();
+                self.run_command(&line, window, cx);
+                cx.stop_propagation();
+                return;
+            }
+            "escape" if plain => {
+                self.close_command_line(window, cx);
+                cx.stop_propagation();
+                return;
+            }
+            // Backspace on an empty line closes it, as in Vim.
+            "backspace" if plain && command.text.is_empty() => {
+                self.close_command_line(window, cx);
+                cx.stop_propagation();
+                return;
+            }
+            "up" | "down" if plain && !self.history.is_empty() => {
+                let last = self.history.len() - 1;
+                command.at = match (ks.key.as_str(), command.at) {
+                    ("up", None) => Some(last),
+                    ("up", Some(at)) => Some(at.saturating_sub(1)),
+                    ("down", Some(at)) if at < last => Some(at + 1),
+                    _ => None,
+                };
+                command.text = command
+                    .at
+                    .and_then(|at| self.history.get(at).cloned())
+                    .unwrap_or_default();
+                command.edit = FieldEdit::new();
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+            _ => {}
+        }
+        let config = VimConfig {
+            enabled: false,
+            use_system_clipboard: false,
+        };
+        if command.edit.key(&mut command.text, event, config, true, cx) == Outcome::Handled {
+            cx.notify();
+            cx.stop_propagation();
+        }
+    }
+
+    /// The line under the code while Vim is on and there is something to show: the `:` line,
+    /// or the answer of the last command.
+    fn render_command_bar(
+        &mut self,
+        theme: &Theme,
+        tokens: &Tokens,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let bar = div()
+            .id("file-command")
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(tokens.spacing))
+            .h(px(tokens.sidebar_row))
+            .px(px(tokens.spacing * 2.0))
+            .border_t_1()
+            .border_color(theme.border)
+            .bg(theme.sidebar)
+            .text_size(px(tokens.secondary_font_size));
+        if let Some(command) = &self.command {
+            let focused = self.command_focus.is_focused(window);
+            let field = vim_ui::string_field(
+                "file-command-text",
+                &command.edit,
+                &command.text,
+                false,
+                "",
+                focused,
+                false,
+                self.command_field(cx),
+                theme,
+                tokens,
+            );
+            return Some(
+                bar.child(div().text_color(theme.fg).child(":"))
+                    .child(
+                        div()
+                            .id("file-command-box")
+                            .track_focus(&self.command_focus)
+                            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                                this.on_command_key(event, window, cx);
+                            }))
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .cursor_text()
+                            .children(field),
+                    )
+                    .into_any_element(),
+            );
+        }
+        let message = self.code.read(cx).vim_message().cloned()?;
+        Some(
+            bar.text_color(if message.error {
+                theme.danger
+            } else {
+                theme.fg
+            })
+            .child(div().min_w_0().truncate().child(message.text))
+            .into_any_element(),
+        )
     }
 
     pub fn code(&self) -> &Entity<CodeView> {
@@ -921,6 +1160,16 @@ impl Render for FileView {
         } else {
             self.render_state(&state, &theme, &tokens, cx)
         };
+        if std::mem::take(&mut self.focus_command_on_render) {
+            cx.defer_in(window, |this, window, cx| {
+                if this.command.is_some() {
+                    window.focus(&this.command_focus, cx);
+                }
+            });
+        }
+        let command_bar = ready
+            .then(|| self.render_command_bar(&theme, &tokens, window, cx))
+            .flatten();
         div()
             .id("file-view")
             .key_context(KEY_CONTEXT)
@@ -955,6 +1204,7 @@ impl Render for FileView {
                 )
             })
             .child(div().flex_1().min_h_0().child(body))
+            .children(command_bar)
     }
 }
 

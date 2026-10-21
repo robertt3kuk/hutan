@@ -571,6 +571,8 @@ pub struct Workbench {
     pub(crate) file_subscriptions: HashMap<(PaneId, String), Subscription>,
     pub(crate) rendered_files: std::collections::HashSet<(PaneId, String)>,
     pub(crate) pruned_files: Vec<Entity<super::file_view::FileView>>,
+    /// The status items that follow the focused code view, made at the first status bar.
+    pub(crate) editor_items: Option<super::editor_status::EditorItems>,
     pub(crate) notice: Option<SharedString>,
     /// "Closed … · Undo" (`closing.rs`).
     pub(crate) close_toast: Option<super::closing::CloseToast>,
@@ -999,6 +1001,7 @@ impl Workbench {
             changes_subscriptions: Vec::new(),
             buffers: super::files::BufferStore::default(),
             file_views: HashMap::new(),
+            editor_items: None,
             file_subscriptions: HashMap::new(),
             rendered_files: std::collections::HashSet::new(),
             pruned_files: Vec::new(),

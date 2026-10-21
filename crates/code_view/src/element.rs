@@ -54,8 +54,8 @@ struct LinePaint {
     /// Column ranges painted behind the text: the current line, find matches, the current
     /// match, the matching brackets, the selections.
     fills: Vec<(Range<f32>, Hsla)>,
-    /// Columns of the carets on this line.
-    carets: Vec<f32>,
+    /// Column ranges of the bar carets on this line (a block caret is one of the fills).
+    carets: Vec<Range<f32>>,
     /// Column ranges of marked (composing) text, underlined.
     marked: Vec<Range<f32>>,
 }
@@ -189,11 +189,10 @@ fn prepare(
 ) -> Prepaint {
     let style = view.style.clone();
     let (cell, line_h) = metrics(&style, window);
-    let (text, version, ready, editable, syntax) = {
+    let (text, ready, editable, syntax) = {
         let buffer = view.buffer().read(cx);
         (
             buffer.text().clone(),
-            buffer.version(),
             buffer.is_ready(),
             buffer.is_editable(),
             buffer.syntax_view(),
@@ -201,7 +200,13 @@ fn prepare(
     };
     let line_count = if ready { text.line_count() } else { 0 };
     let digits = line_count.max(1).to_string().len().max(3);
-    let gutter_w = cell * (digits as f32 + 2.5);
+    // `:set nonumber`: a narrow gutter without numbers.
+    let numbers = view.show_numbers;
+    let gutter_w = if numbers {
+        cell * (digits as f32 + 2.5)
+    } else {
+        cell * 1.0
+    };
     let text_left = bounds.left() + gutter_w + cell * 0.5;
     let rows = (f32::from(bounds.size.height) / f32::from(line_h)).ceil() as usize + 1;
     view.layout = Some(Layout {
@@ -264,7 +269,7 @@ fn prepare(
     } else {
         rgba(theme.selection_inactive)
     };
-    let selections: Vec<Range<usize>> = view.selections.iter().map(|s| s.range()).collect();
+    let selections: Vec<Range<usize>> = view.drawn_selections();
     let heads: Vec<usize> = {
         let mut heads: Vec<usize> = view.selections.iter().map(|s| s.head).collect();
         heads.sort_unstable();
@@ -272,8 +277,10 @@ fn prepare(
     };
     let primary = view.selections.primary();
     let head_line = text.line_of_byte(primary.head.min(text.len())).ok();
+    // Vim's Normal and Visual draw a block over the character under the caret.
+    let block = view.block_caret();
     // The current line is tinted while there is one caret and nothing is selected.
-    if focused && view.selections.len() == 1 && primary.is_empty() {
+    if focused && view.selections.len() == 1 && selections.iter().all(|s| s.is_empty()) {
         prepaint.current_line = Some(rgba(theme.current_line));
     }
     let brackets = if focused && primary.is_empty() && highlighted {
@@ -286,10 +293,14 @@ fn prepare(
     let find_matches = &view.find.result.matches;
     let current_match = view.find.current_match();
 
-    // Highlights are asked for once per frame, and only when a line has to be shaped.
-    let mut spans: Option<Vec<HighlightSpan>> = None;
+    // What each line shows. A shaped line is found again by its line, its text and the source
+    // of its colors (the tree, mapped across edits until a new one lands), not by the text's
+    // version: after a keystroke only the line it changed misses, and highlights are asked for
+    // the lines that miss, not for the whole view.
     let mut shaped = 0usize;
     let text_system = window.text_system().clone();
+    let mut rows: Vec<Row> = Vec::with_capacity(lines.len());
+    let mut missing: Option<Range<usize>> = None;
     for line in lines.clone() {
         let Ok(content) = text.line_content_range(line) else {
             continue;
@@ -299,7 +310,8 @@ fn prepare(
         view.widest = view.widest.max(crate::layout::line_columns(&window_text));
         let key = hash_of((
             line,
-            version,
+            hash_of(&display.text),
+            display.start_col,
             from_col,
             to_col,
             view.style_generation,
@@ -307,26 +319,41 @@ fn prepare(
         ));
         let text_line = if display.text.is_empty() {
             None
-        } else if let Some(hit) = view.lines.get(key) {
-            Some(hit)
         } else {
-            let spans = spans.get_or_insert_with(|| {
-                let start = text.line_start(lines.start).unwrap_or(0);
-                let end = text
-                    .line_range(lines.end.saturating_sub(1))
-                    .map_or(text.len(), |r| r.end);
-                syntax
-                    .as_ref()
-                    .map(|s| s.highlights(start..end))
-                    .unwrap_or_default()
-            });
-            let runs = runs_for(&display, content.clone(), spans, &style);
-            let shown = content_key(&display.text, &runs, view.style_generation);
+            view.lines.get(key)
+        };
+        if text_line.is_none() && !display.text.is_empty() {
+            missing = Some(missing.map_or(line..line + 1, |m| m.start..line + 1));
+        }
+        rows.push(Row {
+            line,
+            content,
+            window_text,
+            display,
+            key,
+            text_line,
+        });
+    }
+    if let Some(missing) = missing {
+        let start = text.line_start(missing.start).unwrap_or(0);
+        let end = text
+            .line_range(missing.end - 1)
+            .map_or(text.len(), |r| r.end);
+        let spans: Vec<HighlightSpan> = syntax
+            .as_ref()
+            .map(|s| s.highlights(start..end))
+            .unwrap_or_default();
+        for row in rows
+            .iter_mut()
+            .filter(|r| r.text_line.is_none() && !r.display.text.is_empty())
+        {
+            let runs = runs_for(&row.display, row.content.clone(), &spans, &style);
+            let shown = content_key(&row.display.text, &runs, view.style_generation);
             let shaped_line = match view.shapes.get(shown) {
                 Some(hit) => hit,
                 None => {
                     let shaped_line = Rc::new(text_system.shape_line(
-                        SharedString::from(display.text.clone()),
+                        SharedString::from(row.display.text.clone()),
                         px(style.font_size),
                         &runs,
                         Some(cell),
@@ -336,9 +363,19 @@ fn prepare(
                     shaped_line
                 }
             };
-            view.lines.insert(key, shaped_line.clone());
-            Some(shaped_line)
-        };
+            view.lines.insert(row.key, shaped_line.clone());
+            row.text_line = Some(shaped_line);
+        }
+    }
+    for row in rows {
+        let Row {
+            line,
+            content,
+            window_text,
+            display,
+            text_line,
+            ..
+        } = row;
 
         let number_color = if head_line == Some(line) {
             theme.line_number_active
@@ -346,27 +383,28 @@ fn prepare(
             theme.gutter_foreground
         };
         let number_key = hash_of((line, view.style_generation, head_line == Some(line)));
-        let number = match view.numbers.get(number_key) {
-            Some(hit) => hit,
-            None => {
-                let label = (line + 1).to_string();
-                let run = TextRun {
-                    len: label.len(),
-                    font: style.font(None),
-                    color: rgba(number_color),
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                };
-                let shaped_number = Rc::new(text_system.shape_line(
-                    SharedString::from(label),
-                    px(style.font_size),
-                    &[run],
-                    Some(cell),
-                ));
-                view.numbers.insert(number_key, shaped_number.clone());
-                shaped_number
-            }
+        let number = if !numbers {
+            None
+        } else if let Some(hit) = view.numbers.get(number_key) {
+            Some(hit)
+        } else {
+            let label = (line + 1).to_string();
+            let run = TextRun {
+                len: label.len(),
+                font: style.font(None),
+                color: rgba(number_color),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let shaped_number = Rc::new(text_system.shape_line(
+                SharedString::from(label),
+                px(style.font_size),
+                &[run],
+                Some(cell),
+            ));
+            view.numbers.insert(number_key, shaped_number.clone());
+            Some(shaped_number)
         };
 
         let line_range = content.start..content.end;
@@ -419,16 +457,29 @@ fn prepare(
                 fills.push((columns(clipped, eol), selection_color));
             }
         }
-        let carets = if focused {
+        let carets: Vec<Range<f32>> = if focused {
             let first_head = heads.partition_point(|h| *h < line_range.start);
             heads[first_head..]
                 .iter()
                 .take_while(|h| **h <= line_range.end)
-                .map(|h| col(*h))
+                .map(|h| {
+                    let from = col(*h);
+                    // A block covers the character's cells (one at the end of the line).
+                    let to = match text.char_at(*h).filter(|c| *c != '\n') {
+                        Some(c) if block => col(*h + c.len_utf8()).max(from + 1.0),
+                        _ => from + 1.0,
+                    };
+                    from..to
+                })
                 .collect()
         } else {
             Vec::new()
         };
+        if block {
+            let mut color = rgba(theme.cursor);
+            color.a *= 0.55;
+            fills.extend(carets.iter().map(|c| (c.clone(), color)));
+        }
         let marked = view
             .marked
             .iter()
@@ -438,11 +489,11 @@ fn prepare(
 
         prepaint.lines.push(LinePaint {
             y: bounds.top() + px((line - first) as f32 * line_hf - offset),
-            number: Some(number),
+            number,
             text: text_line,
             start_col: display.start_col,
             fills,
-            carets,
+            carets: if block { Vec::new() } else { carets },
             marked,
         });
         if prepaint.current_line.is_some()
@@ -596,7 +647,7 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
                 ));
             }
             for caret in &line.carets {
-                let x = x_of(*caret);
+                let x = x_of(caret.start);
                 window.paint_quad(fill(
                     Bounds::new(point(x - px(1.0), line.y), size(px(2.0), line_h)),
                     state.caret_color,
@@ -614,6 +665,15 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// One line of a frame: what it shows and its shaped text, if it is already shaped.
+struct Row {
+    line: usize,
+    content: Range<usize>,
+    window_text: String,
+    display: DisplayLine,
+    key: u64,
+    text_line: Option<Rc<ShapedLine>>,
+}
 #[cfg(test)]
 mod tests {
     use super::*;

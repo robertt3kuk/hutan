@@ -10,6 +10,8 @@ mod closing;
 mod daemon;
 mod daemon_popover;
 mod docks;
+pub mod editor_status;
+mod file_ex;
 mod file_sync;
 pub mod file_view;
 pub mod files;

@@ -454,6 +454,38 @@ impl FileBuffer {
         cx.notify();
     }
 
+    // ---- Vim -------------------------------------------------------------------------------
+
+    /// Lends the text model to a Vim host for one key (E-8): the typing step that is open ends
+    /// first, so the key's change is a step of its own. Hand it back with
+    /// [`restore`](Self::restore) before anything else reads the buffer.
+    pub(crate) fn lend(&mut self) -> Buffer {
+        self.break_group();
+        std::mem::take(&mut self.buffer)
+    }
+
+    /// Takes the text model back from a Vim host, with what the key did (`steps`, in order,
+    /// made by the view `origin`): the parser and the other views hear of each step as of any
+    /// edit.
+    pub(crate) fn restore(
+        &mut self,
+        buffer: Buffer,
+        steps: Vec<crate::vim_host::HostStep>,
+        origin: EntityId,
+        cx: &mut Context<Self>,
+    ) {
+        self.buffer = buffer;
+        if steps.is_empty() {
+            return;
+        }
+        let mut reset = false;
+        for step in steps {
+            reset |= !self.announce(&step.before, &step.applied, Some(origin), step.kind, cx);
+        }
+        self.reparse(reset);
+        cx.notify();
+    }
+
     fn changed(
         &mut self,
         before: &Text,
@@ -462,20 +494,33 @@ impl FileBuffer {
         kind: EditKind,
         cx: &mut Context<Self>,
     ) {
+        let fed = self.announce(before, applied, origin, kind, cx);
+        self.reparse(!fed);
+        cx.notify();
+    }
+
+    /// A new version: the parser gets the edits of `applied` (no parse yet) and the views hear
+    /// of it. `false` when the edits could not be fed (the next parse starts over).
+    fn announce(
+        &mut self,
+        before: &Text,
+        applied: &Applied,
+        origin: Option<EntityId>,
+        kind: EditKind,
+        cx: &mut Context<Self>,
+    ) -> bool {
         self.version += 1;
+        let mut fed = true;
         if let Some(syntax) = &self.syntax {
             match hutan_syntax::edits_of_transaction(before, &applied.transaction) {
                 Ok(edits) => {
                     for edit in edits {
                         syntax.edit(self.version, edit);
                     }
-                    syntax.reparse(self.version, self.buffer.snapshot());
                 }
                 // Cannot happen for a transaction that applied to `before`; a fresh parse is
                 // the safe answer.
-                Err(_) => {
-                    syntax.reset(self.version, self.buffer.snapshot());
-                }
+                Err(_) => fed = false,
             }
         }
         cx.emit(BufferEdited {
@@ -484,7 +529,18 @@ impl FileBuffer {
             kind,
             version: self.version,
         });
-        cx.notify();
+        fed
+    }
+
+    /// Asks the parser for a tree of the current text: incrementally, or from scratch (`reset`).
+    fn reparse(&self, reset: bool) {
+        if let Some(syntax) = &self.syntax {
+            if reset {
+                syntax.reset(self.version, self.buffer.snapshot());
+            } else {
+                syntax.reparse(self.version, self.buffer.snapshot());
+            }
+        }
     }
 
     // ---- syntax ----------------------------------------------------------------------------

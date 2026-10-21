@@ -544,13 +544,26 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.split_pane_with_terminal_in(pane, edge, None, window, cx);
+    }
+
+    /// [`split_pane_with_terminal`](Self::split_pane_with_terminal), the terminal starting in
+    /// `dir` when given (Vim's `:term` from a file: the file's folder).
+    pub(crate) fn split_pane_with_terminal_in(
+        &mut self,
+        pane: PaneId,
+        edge: Edge,
+        dir: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.sessions.read(cx).connection_state() != hutan_client::ConnectionState::Connected {
             self.split_with_placeholder(pane, edge, cx);
             self.set_notice("Not connected to hutand: opened an empty pane", cx);
             return;
         }
         let (workspace, cwd) = self.split_target(pane, cx);
-        let spec = self.new_terminal_spec(workspace, cwd, cx);
+        let spec = self.new_terminal_spec(workspace, dir.or(cwd), cx);
         let task = self
             .sessions
             .update(cx, |store, cx| store.create_session(workspace, spec, cx));
@@ -1436,6 +1449,10 @@ impl Workbench {
         }
         if changes.contains("editor") {
             self.refresh_code_style(cx);
+            // `editor.vim_mode` is live in file tabs too (safe in the middle of a command).
+            for view in self.file_views.values() {
+                view.update(cx, |view, cx| view.sync_vim(cx));
+            }
         }
         if changes.contains("integrations") {
             self.on_integrations_setting_changed(cx);

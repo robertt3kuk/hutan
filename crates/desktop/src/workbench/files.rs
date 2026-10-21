@@ -51,6 +51,8 @@ impl FileOpen {
 
 pub(crate) struct Stored {
     pub(crate) buffer: Entity<FileBuffer>,
+    /// Vim's buffer number (`:b 2`, `:ls`): 1 for the first file opened in the window.
+    pub(crate) number: usize,
     pub(crate) picked: bool,
     load: Option<Task<()>>,
     /// The version of the file the buffer holds (read or last saved): the precondition of the
@@ -80,6 +82,8 @@ pub struct BufferStore {
     pub(crate) listener: Option<Task<()>>,
     /// `fs.changed` notices handled so far (tests wait on it).
     pub(crate) changes_seen: u64,
+    /// The number the last buffer got.
+    pub(crate) last_number: usize,
 }
 
 impl std::fmt::Debug for BufferStore {
@@ -143,6 +147,12 @@ impl Workbench {
     /// The buffers of the open files (tests, the status bar).
     pub fn buffers(&self) -> &BufferStore {
         &self.buffers
+    }
+
+    /// The `editor.position` and `editor.mode` status item views, once the status bar was
+    /// drawn (tests).
+    pub fn editor_items(&self) -> Option<&super::editor_status::EditorItems> {
+        self.editor_items.as_ref()
     }
 
     /// The view of the file tab of `path` in `pane`, if it was drawn.
@@ -232,7 +242,7 @@ impl Workbench {
             });
         }
         if let Some((pane, _)) = self.state.find_item(&item) {
-            let view = self.file_view(pane, &key, cx);
+            let view = self.file_view(pane, &key, window, cx);
             if let Some(line) = target.line {
                 let column = target.column.map(|c| c as usize);
                 let code = view.read(cx).code().clone();
@@ -255,10 +265,12 @@ impl Workbench {
         }
         let buffer = cx.new(|cx| FileBuffer::new(PathBuf::from(path), cx));
         let subscriptions = self.watch_buffer(path, &buffer, cx);
+        self.buffers.last_number += 1;
         self.buffers.buffers.insert(
             path.to_owned(),
             Stored {
                 buffer: buffer.clone(),
+                number: self.buffers.last_number,
                 picked,
                 load: None,
                 disk: None,
@@ -351,6 +363,7 @@ impl Workbench {
         &mut self,
         pane: PaneId,
         path: &str,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<FileView> {
         let key = (pane, path.to_owned());
@@ -363,19 +376,31 @@ impl Workbench {
         let settings = self.settings.clone();
         let regions = self.regions.clone();
         let view = cx.new(|cx| FileView::new(settings, regions, buffer, style, cx));
-        let subscription = cx.subscribe(&view, |this, _, event: &FileViewEvent, cx| match event {
-            FileViewEvent::OpenWithSystem(path) => super::open_link::open_with_system(path, cx),
-            FileViewEvent::OpenLarge(path) => this.open_large(path, cx),
-            FileViewEvent::Changed => cx.notify(),
-            FileViewEvent::Save(path) => this.save_file(&path.display().to_string(), None, cx),
-            FileViewEvent::Reload(path) => this.reload_file(&path.display().to_string(), cx),
-            FileViewEvent::Overwrite(path) => {
-                this.overwrite_file(&path.display().to_string(), cx);
-            }
-            FileViewEvent::FocusLost(path) => {
-                this.autosave_on_focus_change(&path.display().to_string(), cx);
-            }
-        });
+        // A caret move or an edit is no event here: the editor's status items read the code
+        // view themselves (`editor_status.rs`), so the workbench is not notified (B12a).
+        let subscription = cx.subscribe_in(
+            &view,
+            window,
+            move |this, view, event: &FileViewEvent, window, cx| match event {
+                FileViewEvent::OpenWithSystem(path) => {
+                    super::open_link::open_with_system(path, cx);
+                }
+                FileViewEvent::OpenLarge(path) => this.open_large(path, cx),
+                FileViewEvent::Save(path) => {
+                    this.save_file(&path.display().to_string(), None, cx);
+                }
+                FileViewEvent::Reload(path) => this.reload_file(&path.display().to_string(), cx),
+                FileViewEvent::Overwrite(path) => {
+                    this.overwrite_file(&path.display().to_string(), cx);
+                }
+                FileViewEvent::FocusLost(path) => {
+                    this.autosave_on_focus_change(&path.display().to_string(), cx);
+                }
+                FileViewEvent::Ex(command) => {
+                    this.run_file_command(pane, view, command.clone(), window, cx);
+                }
+            },
+        );
         self.file_subscriptions.insert(key.clone(), subscription);
         self.file_views.insert(key, view.clone());
         view
@@ -386,10 +411,11 @@ impl Workbench {
         &mut self,
         pane: PaneId,
         path: &str,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.rendered_files.insert((pane, path.to_owned()));
-        let view = self.file_view(pane, path, cx);
+        let view = self.file_view(pane, path, window, cx);
         super::render::cached_view(&self.regions, view)
     }
 
@@ -491,7 +517,8 @@ impl Workbench {
         }
     }
 
-    /// What the `editor.position` and `editor.language` status items show for the focused tab.
+    /// What the editor status items show at the workbench's level for the focused tab: its
+    /// language and whether Vim is on (its line, column and Vim mode are read by the items).
     pub(crate) fn editor_status(&self, cx: &gpui::App) -> Option<super::registry::EditorStatus> {
         let view = self.focused_file_view()?;
         let view = view.read(cx);
@@ -499,14 +526,13 @@ impl Workbench {
         if !buffer.is_ready() {
             return None;
         }
-        let (line, column) = view.code().read(cx).position(cx);
         let mut language = hutan_code_view::language_label(buffer.language()).to_owned();
         if buffer.is_large() {
             language.push_str(" · large file");
         }
         Some(super::registry::EditorStatus {
-            position: format!("Ln {line}, Col {column}"),
             language,
+            vim: self.vim_config().enabled,
         })
     }
 

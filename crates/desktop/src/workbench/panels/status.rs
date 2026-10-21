@@ -194,17 +194,33 @@ pub fn builtin_status_items() -> StatusItemRegistry {
         }),
     });
     registry.register(StatusItemSpec {
+        id: "editor.mode",
+        default_side: StatusSide::Right,
+        render: Rc::new(|ctx: &StatusContext<'_>| -> AnyElement {
+            match &ctx.data.editor {
+                Some(editor) if editor.vim => div()
+                    .id("status-editor-mode")
+                    .tooltip(tooltip(
+                        "Vim mode, and the keys of a command in progress (editor.vim_mode)"
+                            .to_owned(),
+                    ))
+                    .child(ctx.editor_items.mode(ctx.height))
+                    .into_any_element(),
+                _ => div().into_any_element(),
+            }
+        }),
+    });
+    registry.register(StatusItemSpec {
         id: "editor.position",
         default_side: StatusSide::Right,
         render: Rc::new(|ctx: &StatusContext<'_>| -> AnyElement {
             match &ctx.data.editor {
-                Some(editor) => div()
+                Some(_) => div()
                     .id("status-editor-position")
-                    .text_color(ctx.theme.muted)
                     .tooltip(tooltip(
                         "Line and column of the selection (or of the top line)".to_owned(),
                     ))
-                    .child(SharedString::from(editor.position.clone()))
+                    .child(ctx.editor_items.position(ctx.height))
                     .into_any_element(),
                 None => div().into_any_element(),
             }

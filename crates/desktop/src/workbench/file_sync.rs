@@ -528,7 +528,7 @@ impl Workbench {
 
     /// Whether closing one tab of `path` drops a buffer with unsaved changes: it is the only
     /// tab of the file.
-    fn closing_loses_changes(&self, path: &str, cx: &gpui::App) -> bool {
+    pub(crate) fn closing_loses_changes(&self, path: &str, cx: &gpui::App) -> bool {
         let dirty = self
             .buffers
             .buffers

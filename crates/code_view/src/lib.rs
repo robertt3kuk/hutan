@@ -1,4 +1,4 @@
-//! Hutan's code view (ADR 0012, slices E-5 and E-6): the file editor drawn by its own GPUI
+//! Hutan's code view (ADR 0012, slices E-5, E-6 and E-8): the file editor drawn by its own GPUI
 //! element.
 //!
 //! # Pieces
@@ -19,6 +19,10 @@
 //!   undo by steps; every command on every caret is one transaction.
 //! - [`FindQuery`] / [`FindState`]: find in file, searched in the background over a snapshot of
 //!   the rope, and replace (one match, or all as one undo step).
+//! - Vim (E-8, `modal.rs`): `hutan-vim` over the rope ([`BufferHost`]), one state per view,
+//!   modes with a block or bar caret, the Escape rule for input methods, and the text half of
+//!   the `:` line ([`ex`]: `:s :g :normal :set :N`); the owner draws the line and runs the
+//!   commands about files and windows.
 //!
 //! GPUI is linked here (a UI crate, ADR 0010); the text model and the parser are GPUI-free.
 
@@ -26,13 +30,16 @@ pub mod actions;
 mod buffer;
 mod editing;
 mod element;
+pub mod ex;
 mod find;
 mod input;
 mod layout;
+mod modal;
 mod motion;
 mod rules;
 mod style;
 mod view;
+mod vim_host;
 
 pub use actions::*;
 pub use buffer::{
@@ -40,12 +47,26 @@ pub use buffer::{
     TYPING_GROUP_PAUSE, file_name, language_label,
 };
 pub use find::{FindQuery, FindResult, FindState, MAX_FIND_MATCHES};
+pub use hutan_vim::{Key as VimKey, Mode as VimMode};
 pub use layout::TAB_SIZE;
+pub use modal::{ExRun, VimMessage, VimSettings, vim_key_of};
 pub use rules::IndentUnit;
 pub use style::{CodeStyle, rgb, rgba};
 pub use view::{
     CodeView, CodeViewEvent, Layout, MAX_COLUMN_LINES, OVERSCAN_LINES, PaintTimes, ViewStats,
 };
+pub use vim_host::{BufferHost, HostStep};
 
 /// The key context of a focused code view.
 pub const KEY_CONTEXT: &str = "CodeView";
+/// A second name of the same context, for keymaps written for editors in general.
+pub const EDITOR_CONTEXT: &str = "Editor";
+/// The key of the view's context that holds the Vim mode (`normal`, `insert`, `visual`) while
+/// `editor.vim_mode` is on.
+pub const VIM_MODE_KEY: &str = "vim_mode";
+/// Where the editor's own keys apply that Vim's Normal and Visual modes answer themselves
+/// (motions, Return, Tab, deletion, the ⌃ line keys): everywhere but there.
+pub const TYPING_CONTEXT: &str = "CodeView && vim_mode != normal && vim_mode != visual";
+/// Where the editor's own Escape applies (back to one caret): only without Vim, whose Escape
+/// leaves Insert and Visual.
+pub const PLAIN_CONTEXT: &str = "CodeView && !vim_mode";

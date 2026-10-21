@@ -187,7 +187,8 @@ impl EntityInputHandler for CodeView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.is_editable(cx) {
+        // Vim's Normal and Visual never take text, whatever the platform sends.
+        if !self.is_editable(cx) || !self.vim_accepts_text() {
             return;
         }
         // Return and Tab are keys (actions), not text: a platform that also reports them as
@@ -218,7 +219,7 @@ impl EntityInputHandler for CodeView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.is_editable(cx) {
+        if !self.is_editable(cx) || !self.vim_accepts_text() {
             return;
         }
         let text = self.buffer().read(cx).text().clone();
@@ -277,7 +278,7 @@ impl EntityInputHandler for CodeView {
     }
 
     fn accepts_text_input(&self, _window: &mut Window, cx: &mut Context<Self>) -> bool {
-        self.buffer().read(cx).is_editable()
+        self.buffer().read(cx).is_editable() && self.vim_accepts_text()
     }
 }
 
