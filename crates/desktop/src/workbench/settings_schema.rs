@@ -546,7 +546,9 @@ mod tests {
                 .collect()
         };
         assert_eq!(names("panels.").len(), 2);
-        assert_eq!(names("font"), ["terminal"]);
+        let mut font = names("font");
+        font.sort_unstable();
+        assert_eq!(font, ["editor", "terminal"], "code and terminal fonts");
         assert_eq!(names("density"), ["appearance"]);
         assert_eq!(names("on_last_window_close"), ["app"]);
         // What the sheet shows is what it finds: titles, help and choice labels.

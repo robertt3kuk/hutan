@@ -215,6 +215,7 @@ fn the_sessions_panel_lists_groups_and_filters(cx: &mut TestAppContext) {
             "Stop…",
             "Close session…",
             "Show in Resources",
+            "Open File…",
             "Copy Session ID"
         ]
     );

@@ -1193,6 +1193,21 @@ mod tests {
             "enter | setup::Continue | Setup",
             "escape | setup::Skip | Setup",
             "escape | workbench::CancelDockResize | DockResize",
+            "cmd-c | code_view::Copy | CodeView",
+            "cmd-a | code_view::SelectAll | CodeView",
+            "up | code_view::LineUp | CodeView",
+            "down | code_view::LineDown | CodeView",
+            "pageup | code_view::PageUp | CodeView",
+            "pagedown | code_view::PageDown | CodeView",
+            "space | code_view::PageDown | CodeView",
+            "shift-space | code_view::PageUp | CodeView",
+            "cmd-up | code_view::Top | CodeView",
+            "cmd-down | code_view::Bottom | CodeView",
+            "home | code_view::Top | CodeView",
+            "end | code_view::Bottom | CodeView",
+            "cmd-f | code_view::Find | FileView",
+            "cmd-g | code_view::FindNext | FileView",
+            "shift-cmd-g | code_view::FindPrevious | FileView",
         ]
         .map(str::to_owned)
         .to_vec();

@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)] // test helpers
 //! File tabs (slice E-5) over a real daemon: a file opens through `fs.stat`/`fs.read`, the same
 //! file in two panes shares one buffer, closing the last tab frees the buffer and its syntax
 //! tree, the layout round-trips with a file tab, a theme change restyles without a reparse,
