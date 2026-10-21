@@ -219,8 +219,8 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 
 | Token | Alpha | If not set | Used for |
 |---|---|---|---|
-| `ui.background` | may be translucent | required in a root pack | Window and center panes. |
-| `ui.sidebar.background` | may be translucent | required in a root pack | Left dock and the title bar strip. |
+| `ui.background` | may be translucent | required in a root pack | Window, center panes and the active tab of a pane. |
+| `ui.sidebar.background` | may be translucent | required in a root pack | Left dock, the title bar, the tab strips and the status bar. |
 | `ui.sidebar.selected` | may be translucent | required in a root pack | Selected nav row and active project card of the left sidebar. |
 | `ui.sidebar-right.background` | may be translucent | required in a root pack | The right sidebar surface. |
 | `ui.sidebar-right.selected` | may be translucent | required in a root pack | Hover and selected rows of the right sidebar. |

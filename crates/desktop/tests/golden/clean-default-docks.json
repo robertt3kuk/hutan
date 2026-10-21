@@ -1,0 +1,36 @@
+{
+  "left": {
+    "panels": [
+      "sessions",
+      "tasks"
+    ],
+    "active": "sessions",
+    "size": 280.0,
+    "visible": true,
+    "collapsed": false
+  },
+  "right": {
+    "panels": [
+      "changes",
+      "agents",
+      "history",
+      "inspector",
+      "resources"
+    ],
+    "active": "changes",
+    "size": 350.0,
+    "visible": true,
+    "collapsed": true,
+    "more": [
+      "inspector",
+      "resources"
+    ]
+  },
+  "bottom": {
+    "panels": [],
+    "active": null,
+    "size": 200.0,
+    "visible": false,
+    "collapsed": false
+  }
+}

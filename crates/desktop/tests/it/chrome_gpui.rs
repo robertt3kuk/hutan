@@ -19,11 +19,11 @@ use hutan_desktop::workbench::{Region, SAVE_DEBOUNCE, Workbench};
 use hutan_settings::SettingsStore;
 use std::path::{Path, PathBuf};
 
-fn open_at(
-    cx: &mut TestAppContext,
+fn open_at<'a>(
+    cx: &'a mut TestAppContext,
     settings: Option<SettingsStore>,
     path: &Path,
-) -> (Entity<Workbench>, SettingsStore, &mut VisualTestContext) {
+) -> (Entity<Workbench>, SettingsStore, &'a mut VisualTestContext) {
     let (connection, fresh_settings, _) = offline_connection();
     let settings = settings.unwrap_or(fresh_settings);
     let (view, cx) = open_with(cx, settings.clone(), connection, Some(path.to_owned()));
