@@ -1,0 +1,32 @@
+{
+  "vim": "VIM - Vi IMproved 9.1, patches 1-1752 (/usr/bin/vim -Nu NONE -i NONE -es)",
+  "cases": [
+    {"name": "mark and quote back", "lines": ["one","  two","three"], "cursor": [2,4], "keys": "maG'a", "expect": {"cursor":[2,3],"lines":["one","  two","three"],"registers":{}}},
+    {"name": "mark and backtick back", "lines": ["one","  two","three"], "cursor": [2,4], "keys": "maG`a", "expect": {"cursor":[2,4],"lines":["one","  two","three"],"registers":{}}},
+    {"name": "quote quote goes back", "lines": ["one","two","three"], "cursor": [1,2], "keys": "G''", "expect": {"cursor":[1,1],"lines":["one","two","three"],"registers":{}}},
+    {"name": "backtick backtick goes back exactly", "lines": ["one","two","three"], "cursor": [1,2], "keys": "G``", "expect": {"cursor":[1,2],"lines":["one","two","three"],"registers":{}}},
+    {"name": "quote quote twice returns", "lines": ["one","two","three"], "cursor": [1,2], "keys": "G''''", "expect": {"cursor":[3,1],"lines":["one","two","three"],"registers":{}}},
+    {"name": "d to a mark linewise", "lines": ["1","2","3","4"], "cursor": [1,1], "keys": "jjmaggd'a", "expect": {"cursor":[1,1],"lines":["4"],"registers":{"\"":["1\n2\n3\n","V"],"1":["1\n2\n3\n","V"]}}},
+    {"name": "d to a mark charwise", "lines": ["abc def ghi"], "cursor": [1,9], "keys": "ma0d`a", "expect": {"cursor":[1,1],"lines":["ghi"],"registers":{"\"":["abc def ","v"],"-":["abc def ","v"],"1":["abc def ","v"]}}},
+    {"name": "y to a mark", "lines": ["abc def ghi"], "cursor": [1,9], "keys": "ma0y`a", "expect": {"cursor":[1,1],"lines":["abc def ghi"],"registers":{"\"":["abc def ","v"],"0":["abc def ","v"]}}},
+    {"name": "unset mark fails", "lines": ["abc","def"], "cursor": [1,2], "keys": "'b", "expect": {"cursor":[1,2],"lines":["abc","def"],"registers":{}}},
+    {"name": "marks follow deleted lines above", "lines": ["1","2","3","4"], "cursor": [4,1], "keys": "maggdd'a", "expect": {"cursor":[3,1],"lines":["2","3","4"],"registers":{"\"":["1\n","V"],"1":["1\n","V"]}}},
+    {"name": "marks follow inserted lines", "lines": ["1","2","3"], "cursor": [3,1], "keys": "maggOnew<Esc>'a", "expect": {"cursor":[4,1],"lines":["new","1","2","3"],"registers":{".":["new","v"]}}},
+    {"name": "a deleted line takes its mark", "lines": ["1","2","3"], "cursor": [2,1], "keys": "madd'a", "expect": {"cursor":[2,1],"lines":["1","3"],"registers":{"\"":["2\n","V"],"1":["2\n","V"]}}},
+    {"name": "ctrl-o after G", "lines": ["1","2","3","4"], "cursor": [2,1], "keys": "G<C-o>", "expect": {"cursor":[2,1],"lines":["1","2","3","4"],"registers":{}}},
+    {"name": "ctrl-o then ctrl-i", "lines": ["1","2","3","4"], "cursor": [2,1], "keys": "G<C-o><C-i>", "expect": {"cursor":[4,1],"lines":["1","2","3","4"],"registers":{}}},
+    {"name": "ctrl-o twice", "lines": ["1","2","3","4","5"], "cursor": [1,1], "keys": "3GG<C-o><C-o>", "expect": {"cursor":[1,1],"lines":["1","2","3","4","5"],"registers":{}}},
+    {"name": "ctrl-o with nothing fails", "lines": ["1","2"], "cursor": [2,1], "keys": "<C-o>", "expect": {"cursor":[2,1],"lines":["1","2"],"registers":{}}},
+    {"name": "search is a jump", "lines": ["foo","bar","baz"], "cursor": [1,1], "keys": "/baz<CR><C-o>", "expect": {"cursor":[1,1],"lines":["foo","bar","baz"],"registers":{"/":["baz","v"]}}},
+    {"name": "percent is a jump", "lines": ["(","x",")"], "cursor": [1,1], "keys": "%''", "expect": {"cursor":[1,1],"lines":["(","x",")"],"registers":{}}},
+    {"name": "brace is a jump", "lines": ["a","b","","c"], "cursor": [1,1], "keys": "}``", "expect": {"cursor":[1,1],"lines":["a","b","","c"],"registers":{}}},
+    {"name": "backtick bracket after a yank", "lines": ["foo bar baz"], "cursor": [1,5], "keys": "yiw0`]", "expect": {"cursor":[1,7],"lines":["foo bar baz"],"registers":{"\"":["bar","v"],"0":["bar","v"]}}},
+    {"name": "quote bracket after a put", "lines": ["one","two","three"], "cursor": [1,1], "keys": "yjGp'[", "expect": {"cursor":[4,1],"lines":["one","two","three","one","two"],"registers":{"\"":["one\ntwo\n","V"],"0":["one\ntwo\n","V"]}}},
+    {"name": "backtick dot after a change", "lines": ["foo bar","baz"], "cursor": [1,5], "keys": "rXj`.", "expect": {"cursor":[1,5],"lines":["foo Xar","baz"],"registers":{".":["X","v"]}}},
+    {"name": "backtick caret after insert", "lines": ["foo","bar"], "cursor": [1,1], "keys": "Axy<Esc>j`^", "expect": {"cursor":[1,5],"lines":["fooxy","bar"],"registers":{".":["xy","v"]}}},
+    {"name": "visual marks", "lines": ["abc def","ghi"], "cursor": [1,2], "keys": "vl<Esc>j`<", "expect": {"cursor":[1,2],"lines":["abc def","ghi"],"registers":{}}},
+    {"name": "visual end mark", "lines": ["abc def","ghi"], "cursor": [1,2], "keys": "vll<Esc>0`>", "expect": {"cursor":[1,4],"lines":["abc def","ghi"],"registers":{}}},
+    {"name": "uppercase mark", "lines": ["one","two"], "cursor": [2,2], "keys": "mAgg`A", "expect": {"cursor":[2,2],"lines":["one","two"],"registers":{}}},
+    {"name": "m backtick sets the previous mark", "lines": ["one","two","three"], "cursor": [2,2], "keys": "m`G``", "expect": {"cursor":[2,2],"lines":["one","two","three"],"registers":{}}}
+  ]
+}

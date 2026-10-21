@@ -1085,7 +1085,9 @@ impl CodeView {
                 match mode {
                     hutan_vim::Mode::Normal => "normal",
                     hutan_vim::Mode::Insert => "insert",
-                    hutan_vim::Mode::Visual => "visual",
+                    hutan_vim::Mode::Visual
+                    | hutan_vim::Mode::VisualLine
+                    | hutan_vim::Mode::VisualBlock => "visual",
                 },
             );
         }

@@ -37,12 +37,13 @@ impl VimConfig {
         }
     }
 
-    /// The modal layer's options for a field.
+    /// The modal layer's options for a field. A field has no `:` / `/` / `?` line to show.
     pub fn options(self, single_line: bool, insert_passthrough: bool) -> Options {
         Options {
             single_line,
             insert_passthrough,
             use_system_clipboard: self.use_system_clipboard,
+            command_line: false,
         }
     }
 }

@@ -15,7 +15,10 @@ const KEYS: &[&str] = &[
     "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "^", "$", "G", "g", "f", "t", "F", "T",
     "d", "c", "y", "x", "X", "D", "C", "s", "S", "Y", "i", "a", "A", "I", "o", "O", "p", "P", "u",
     "v", "r", "~", ".", ";", ",", "1", "2", "3", "9", "0", " ", "a", "b", "é", "日", "ß", "\n",
-    "-", "_", "<Esc>", "<Esc>", "<CR>", "<BS>", "<Left>", "<C-r>",
+    "-", "_", "<Esc>", "<Esc>", "<CR>", "<BS>", "<Left>", "<C-r>", "V", "<C-v>", "q", "@", "m",
+    "'", "`", "\"", "%", "{", "}", "(", ")", "[[", "]]", ">", "<lt>", "=", "J", "gJ", "gu", "gU",
+    "g~", "g?", "ge", "gv", "gp", "*", "#", "n", "N", "/", "?", ":", "s/a/b/g", "g/a/d",
+    "normal x", "iw", "ap", "i(", "a\"", "<C-o>", "<C-i>", "&", "+", "|", "o",
 ];
 
 fn text() -> impl Strategy<Value = String> {
@@ -34,13 +37,14 @@ fn config() -> ProptestConfig {
 }
 
 fn options() -> impl Strategy<Value = Options> {
-    (any::<bool>(), any::<bool>(), any::<bool>()).prop_map(|(single_line, passthrough, clip)| {
-        Options {
+    (any::<bool>(), any::<bool>(), any::<bool>(), any::<bool>()).prop_map(
+        |(single_line, passthrough, clip, command_line)| Options {
             single_line,
             insert_passthrough: passthrough,
             use_system_clipboard: clip,
-        }
-    })
+            command_line,
+        },
+    )
 }
 
 fn rig(text: &str, at_end: bool, opts: Options) -> Rig {
@@ -64,10 +68,14 @@ proptest! {
                 r.key(key);
                 let (t, at) = (r.text(), r.host.cursor());
                 prop_assert!(at <= t.len() && t.is_char_boundary(at), "caret {at} in {t:?}");
-                if r.mode() == Mode::Visual {
+                if r.mode().is_visual() {
                     let sel = r.vim.selection(&r.host).unwrap();
                     prop_assert!(sel.start <= sel.end && sel.end <= t.len());
                     prop_assert!(t.is_char_boundary(sel.start) && t.is_char_boundary(sel.end));
+                    for range in r.vim.selections(&r.host) {
+                        prop_assert!(range.start <= range.end && range.end <= t.len());
+                        prop_assert!(t.is_char_boundary(range.start) && t.is_char_boundary(range.end));
+                    }
                 }
                 if r.mode() == Mode::Normal && r.vim.pending_keys().is_empty() {
                     prop_assert!(!r.host.is_grouped(), "a finished command leaves its group");

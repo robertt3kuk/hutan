@@ -1,0 +1,28 @@
+{
+  "vim": "VIM - Vi IMproved 9.1, patches 1-1752 (/usr/bin/vim -Nu NONE -i NONE -es)",
+  "cases": [
+    {"name": "record and play", "lines": ["a1","b2","c3"], "cursor": [1,1], "keys": "qaxjq@a", "expect": {"cursor":[3,1],"lines":["1","2","c3"],"registers":{"\"":["b","v"],"-":["b","v"],"a":["xj","v"]}}},
+    {"name": "play twice with @@", "lines": ["a1","b2","c3","d4"], "cursor": [1,1], "keys": "qaxjq@a@@", "expect": {"cursor":[4,1],"lines":["1","2","3","d4"],"registers":{"\"":["c","v"],"-":["c","v"],"a":["xj","v"]}}},
+    {"name": "count plays", "lines": ["a1","b2","c3","d4","e5"], "cursor": [1,1], "keys": "qaxjq3@a", "expect": {"cursor":[5,1],"lines":["1","2","3","4","e5"],"registers":{"\"":["d","v"],"-":["d","v"],"a":["xj","v"]}}},
+    {"name": "a failing motion stops the macro", "lines": ["a1","b2","c3"], "cursor": [1,1], "keys": "qaxjq10@a", "expect": {"cursor":[3,1],"lines":["1","2","3"],"registers":{"\"":["c","v"],"-":["c","v"],"a":["xj","v"]}}},
+    {"name": "macro with insert", "lines": ["one","two","three"], "cursor": [1,1], "keys": "qaI- <Esc>jq2@a", "expect": {"cursor":[3,2],"lines":["- one","- two","- three"],"registers":{".":["- ","v"],"a":["I- \u001bj","v"]}}},
+    {"name": "macro with A and escape", "lines": ["x","y"], "cursor": [1,1], "keys": "qaA;<Esc>jq@a", "expect": {"cursor":[2,2],"lines":["x;","y;"],"registers":{".":[";","v"],"a":["A;\u001bj","v"]}}},
+    {"name": "macro register text", "lines": ["foo bar"], "cursor": [1,1], "keys": "qqdwq", "expect": {"cursor":[1,1],"lines":["bar"],"registers":{"\"":["foo ","v"],"-":["foo ","v"],"q":["dw","v"]}}},
+    {"name": "append to a macro", "lines": ["abcdef"], "cursor": [1,1], "keys": "qaxqqAxq@a", "expect": {"cursor":[1,1],"lines":["ef"],"registers":{"\"":["d","v"],"-":["d","v"],"a":["xx","v"]}}},
+    {"name": "macro undo is one step", "lines": ["a1","b2","c3"], "cursor": [1,1], "keys": "qaxjq2@au", "expect": {"cursor":[2,1],"lines":["1","b2","c3"],"registers":{"\"":["c","v"],"-":["c","v"],"a":["xj","v"]}}},
+    {"name": "recursive macro to the end", "lines": ["1","2","3","4"], "cursor": [1,1], "keys": "qaqqaA.<Esc>j@aq@a", "expect": {"cursor":[4,2],"lines":["1.","2.","3.","4."],"registers":{".":[".","v"],"a":["A.\u001bj@a","v"]}}},
+    {"name": "macro with a search", "lines": ["x foo","y","z foo"], "cursor": [1,1], "keys": "qa/foo<CR>xq@a", "expect": {"cursor":[3,3],"lines":["x oo","y","z oo"],"registers":{"\"":["f","v"],"-":["f","v"],"/":["foo","v"],"a":["/foo\rx","v"]}}},
+    {"name": "macro with a colon command", "lines": ["aaa","aaa"], "cursor": [1,1], "keys": "qa:s/a/b/<CR>jq@a", "expect": {"cursor":[2,1],"lines":["baa","baa"],"registers":{"/":["a","v"],":":["s/a/b/","v"],"a":[":s/a/b/\rj","v"]}}},
+    {"name": "macro with a count inside", "lines": ["abcdefgh","abcdefgh"], "cursor": [1,1], "keys": "qa3xjq@a", "expect": {"cursor":[2,1],"lines":["defgh","defgh"],"registers":{"\"":["abc","v"],"-":["abc","v"],"a":["3xj","v"]}}},
+    {"name": "play a yanked macro", "lines": ["dd","keep","go"], "cursor": [1,1], "keys": "\"ay$j@a", "expect": {"cursor":[2,1],"lines":["dd","go"],"registers":{"\"":["keep\n","V"],"1":["keep\n","V"],"a":["dd","v"]}}},
+    {"name": "at colon repeats the last command line", "lines": ["a a","a a"], "cursor": [1,1], "keys": ":s/a/b/<CR>j@:", "expect": {"cursor":[2,1],"lines":["b a","b a"],"registers":{"/":["a","v"],":":["s/a/b/","v"]}}},
+    {"name": "dot inside a macro", "lines": ["a b c","d e f"], "cursor": [1,1], "keys": "dwqa.jq@a", "expect": {"cursor":[2,1],"lines":["c","e f"],"registers":{"\"":["d ","v"],"-":["d ","v"],"a":[".j","v"]}}},
+    {"name": "macro with visual", "lines": ["abc","def"], "cursor": [1,1], "keys": "qavlUjq@a", "expect": {"cursor":[2,1],"lines":["ABc","DEf"],"registers":{"a":["vlUj","v"]}}},
+    {"name": "macro with k that fails stops", "lines": ["a1","b2","c3"], "cursor": [3,1], "keys": "qaxkq5@a", "expect": {"cursor":[1,1],"lines":["1","2","3"],"registers":{"\"":["a","v"],"-":["a","v"],"a":["xk","v"]}}},
+    {"name": "uppercase play", "lines": ["abc","def"], "cursor": [1,1], "keys": "qbxjq@B", "expect": {"cursor":[2,1],"lines":["bc","ef"],"registers":{"\"":["d","v"],"-":["d","v"],"b":["xj","v"]}}},
+    {"name": "macro into a numbered register", "lines": ["abc","def"], "cursor": [1,1], "keys": "q1xjq@1", "expect": {"cursor":[2,1],"lines":["bc","ef"],"registers":{"\"":["d","v"],"-":["d","v"],"1":["xj","v"]}}},
+    {"name": "dot after a macro repeats the last change", "lines": ["a b c d"], "cursor": [1,1], "keys": "qadwq@a.", "expect": {"cursor":[1,1],"lines":["d"],"registers":{"\"":["c ","v"],"-":["c ","v"],"a":["dw","v"]}}},
+    {"name": "macro over ex normal", "lines": ["a","b","c"], "cursor": [1,1], "keys": "qaA!<Esc>q:%normal @a<CR>", "expect": {"cursor":[3,2],"lines":["a!!","b!","c!"],"registers":{".":["!","v"],":":["%normal @a","v"],"a":["A!\u001b","v"]}}},
+    {"name": "w at the end of the text stops a macro", "lines": ["a b","c"], "cursor": [1,1], "keys": "qawrxq5@a", "expect": {"cursor":[2,1],"lines":["a x","x"],"registers":{".":["x","v"],"a":["wrx","v"]}}}
+  ]
+}

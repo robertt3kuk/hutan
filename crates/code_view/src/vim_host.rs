@@ -64,17 +64,6 @@ impl BufferHost {
         self.group_open
     }
 
-    /// How many changes the host made so far.
-    pub fn step_count(&self) -> usize {
-        self.steps.len()
-    }
-
-    /// The transactions of the changes after the first `from`, in order.
-    pub fn transactions_since(&self, from: usize) -> impl Iterator<Item = &Transaction> + '_ {
-        self.steps[from.min(self.steps.len())..]
-            .iter()
-            .map(|s| &s.applied.transaction)
-    }
     /// The text model and what was done to it.
     pub fn finish(self) -> (Buffer, usize, bool, Vec<HostStep>) {
         (self.buffer, self.cursor, self.group_open, self.steps)

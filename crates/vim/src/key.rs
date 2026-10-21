@@ -1,6 +1,6 @@
 //! The vocabulary a view speaks to the modal layer.
 
-/// Vim's modes (Visual is charwise only).
+/// Vim's modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
     /// Typing inserts text.
@@ -8,8 +8,12 @@ pub enum Mode {
     Insert,
     /// Keys are commands.
     Normal,
-    /// Motions extend a selection; operators act on it.
+    /// Motions extend a selection of characters (`v`); operators act on it.
     Visual,
+    /// A selection of whole lines (`V`).
+    VisualLine,
+    /// A rectangle (`⌃V`).
+    VisualBlock,
 }
 
 impl Mode {
@@ -19,12 +23,19 @@ impl Mode {
             Mode::Insert => "INSERT",
             Mode::Normal => "NORMAL",
             Mode::Visual => "VISUAL",
+            Mode::VisualLine => "VISUAL LINE",
+            Mode::VisualBlock => "VISUAL BLOCK",
         }
     }
 
     /// Whether the caret is a block (Normal, Visual) rather than a bar (Insert).
     pub fn block_caret(self) -> bool {
         self != Mode::Insert
+    }
+
+    /// Any of the three Visual modes.
+    pub fn is_visual(self) -> bool {
+        matches!(self, Mode::Visual | Mode::VisualLine | Mode::VisualBlock)
     }
 }
 
@@ -67,4 +78,8 @@ pub struct Options {
     pub insert_passthrough: bool,
     /// Yanks and deletes also go to the system clipboard, and `p` pastes from it.
     pub use_system_clipboard: bool,
+    /// The field shows the `:`, `/` and `?` lines ([`Vim::pending_keys`](crate::Vim::pending_keys)
+    /// while they are typed). Without it those keys answer "Not supported" (a one-line field
+    /// has nowhere to show them); `n`, `*` and the rest of search still work.
+    pub command_line: bool,
 }

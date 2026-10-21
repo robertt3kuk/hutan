@@ -235,25 +235,85 @@ impl VimHost for StringHost {
 
     fn undo(&mut self) -> bool {
         self.grouped = false;
-        let Some((text, cursor)) = self.undo.pop() else {
+        let Some((text, saved)) = self.undo.pop() else {
             return false;
         };
-        self.redo
-            .push((std::mem::replace(&mut self.text, text), self.cursor));
-        self.cursor = cursor;
+        let before = std::mem::replace(&mut self.text, text);
+        let at = line_col(&self.text, saved);
+        self.cursor = vim_undo_cursor(&before, &self.text, at);
+        self.redo.push((before, saved));
         true
     }
 
     fn redo(&mut self) -> bool {
         self.grouped = false;
-        let Some((text, cursor)) = self.redo.pop() else {
+        let Some((text, saved)) = self.redo.pop() else {
             return false;
         };
-        self.undo
-            .push((std::mem::replace(&mut self.text, text), self.cursor));
-        self.cursor = cursor;
+        let at = line_col(&self.text, saved);
+        let before = std::mem::replace(&mut self.text, text);
+        self.cursor = vim_undo_cursor(&before, &self.text, at);
+        self.undo.push((before, saved));
         true
     }
+}
+
+/// The line and byte column of `at` in `text`.
+fn line_col(text: &str, at: usize) -> (usize, usize) {
+    let at = at.min(text.len());
+    let ls = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    (text[..at].matches('\n').count(), at - ls)
+}
+
+/// Where Vim puts the caret after an undo or redo that turned `before` into `after`
+/// (`:help undo`): on the caret the change started at (`saved`, line and column) when that is in
+/// or next to the changed lines, else on the first changed line, at its first non-blank.
+pub fn vim_undo_cursor(before: &str, after: &str, saved: (usize, usize)) -> usize {
+    let a: Vec<&str> = after.split('\n').collect();
+    let b: Vec<&str> = before.split('\n').collect();
+    let mut p = 0;
+    while p < a.len() && p < b.len() && a[p] == b[p] {
+        p += 1;
+    }
+    let mut s = 0;
+    while s < a.len() - p.min(a.len())
+        && s < b.len() - p.min(b.len())
+        && a[a.len() - 1 - s] == b[b.len() - 1 - s]
+    {
+        s += 1;
+    }
+    let newsize = a.len().saturating_sub(s + p);
+    let (sl, sc) = saved;
+    let mut line = if sl + 1 >= p && sl <= p + newsize {
+        sl
+    } else {
+        p
+    };
+    if sl + 1 == line && line > 0 {
+        line -= 1;
+    }
+    let line = line.min(a.len() - 1);
+    let start: usize = a[..line].iter().map(|l| l.len() + 1).sum();
+    let text = a[line];
+    let col = if sl == line {
+        // The saved column, on a character of the line.
+        let mut col = sc.min(text.len());
+        while !text.is_char_boundary(col) {
+            col -= 1;
+        }
+        if col >= text.len() && !text.is_empty() {
+            col = text.char_indices().next_back().map_or(0, |(i, _)| i);
+        }
+        col
+    } else {
+        let blanks = text.len() - text.trim_start_matches([' ', '\t']).len();
+        if blanks == text.len() && !text.is_empty() {
+            text.char_indices().next_back().map_or(0, |(i, _)| i)
+        } else {
+            blanks
+        }
+    };
+    start + col
 }
 
 /// An in-memory system clipboard.
@@ -338,25 +398,48 @@ pub fn run(text: &str, keys: &str) -> String {
     Rig::new(text).keys(keys).shown()
 }
 
-/// Keys written like Vim documents them: plain characters, `<Esc>`, `<CR>`, `<BS>`, `<Left>`,
-/// `<C-r>`.
+/// Keys written like Vim documents them: plain characters, `<Esc>`, `<CR>`, `<BS>`, `<Tab>`,
+/// `<Del>`, the arrows, `<Home>`, `<End>`, `<C-x>`, `<lt>`. A `<` that does not start a key
+/// name is itself.
 pub fn parse_keys(keys: &str) -> Vec<Key> {
     let mut out = Vec::new();
-    let mut chars = keys.chars();
-    while let Some(c) = chars.next() {
-        out.push(if c == '<' {
-            let name: String = chars.by_ref().take_while(|c| *c != '>').collect();
-            match name.as_str() {
-                "Esc" => Key::Escape,
-                "CR" => Key::Enter,
-                "BS" => Key::Backspace,
-                "Left" => Key::Left,
-                n if n.starts_with("C-") => Key::Ctrl(n.chars().nth(2).unwrap()),
-                n => panic!("unknown key <{n}>"),
+    let chars: Vec<char> = keys.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        i += 1;
+        if c == '<' {
+            let rest: String = chars[i..].iter().collect();
+            if let Some(end) = rest.find('>')
+                && end > 0
+                && rest[..end]
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-')
+            {
+                let name = &rest[..end];
+                i += name.chars().count() + 1;
+                out.push(match name.to_ascii_lowercase().as_str() {
+                    "esc" => Key::Escape,
+                    "cr" | "enter" | "return" => Key::Enter,
+                    "bs" => Key::Backspace,
+                    "tab" => Key::Tab,
+                    "del" => Key::Delete,
+                    "left" => Key::Left,
+                    "right" => Key::Right,
+                    "up" => Key::Up,
+                    "down" => Key::Down,
+                    "home" => Key::Home,
+                    "end" => Key::End,
+                    "lt" => Key::Char('<'),
+                    n if n.starts_with("c-") && n.len() == 3 => {
+                        Key::Ctrl(n.chars().nth(2).unwrap())
+                    }
+                    n => panic!("unknown key <{n}>"),
+                });
+                continue;
             }
-        } else {
-            Key::Char(c)
-        });
+        }
+        out.push(Key::Char(c));
     }
     out
 }

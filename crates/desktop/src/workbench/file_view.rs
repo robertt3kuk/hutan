@@ -15,12 +15,12 @@ use gpui::{
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
 use hutan_chat_view::diff::DiffLine;
-use hutan_code_view::ex::Ex;
 use hutan_code_view::{
     CloseFind, CodeStyle, CodeView, CodeViewEvent, Conflict, ExRun, FailReason, FileBuffer, Find,
     FindNext, FindPrevious, FindQuery, FindReplace, LoadState, Save, VimSettings,
 };
 use hutan_settings::SettingsStore;
+use hutan_vim::ex::Ex;
 
 use super::chat::vim::Outcome;
 use super::regions::Regions;

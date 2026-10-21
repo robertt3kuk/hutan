@@ -83,12 +83,30 @@ With `editor.vim_mode` on (live; ⌘K → *Editor: Toggle Vim Mode*), a file tab
 | `:N` | goes to line N |
 | `:term` | starts a Hutan terminal in the file's folder, in a split below |
 
-Anything else answers `Not supported: :…`. Patterns are Rust `regex` syntax (as find's regex mode), with `\<` `\>` taken as word boundaries; a replacement knows `&`, `\0`–`\9`, `\r`/`\n` and `\\`.
+Anything else answers `Not supported: :…`. Patterns are Vim patterns (E-7b, `hutan_vim::Pattern`; see the matrix below); a replacement knows `&`, `~`, `\0`–`\9`, `\u \l \U \L \E`, `\r`/`\n` (a line break; Vim's `\n` inserts a NUL) and `\\`. Every other text command (`:d :y :pu :m :t :j :> :< :k :u :red`, `:g` with them) runs through the Vim state; `:s` and `:g` with `d`, `s` or `normal` keep running on a background thread.
 
 - **Registers** follow `editor.vim_use_system_clipboard`: on, yanks and deletes also write the system clipboard and `p` pastes from it (lines stay lines); off, the register is private.
 - **Live toggle.** Turning `editor.vim_mode` off drops a pending command and closes an Insert session's undo step; turning it on puts every file tab in Normal mode.
 
 **Parity** (what changes in a file tab with Vim on): in Normal and Visual the unmodified arrows, Home/End, Return, Tab, Backspace/Delete, ⇧/⌥ arrow selections and motions, ⌥↑/⌥↓ line moves, ⌥⇧↑/↓ duplicates and ⌃A/⌃E/⌃K are Vim's (or do nothing) instead of the editor's; Escape leaves Insert/Visual instead of reducing to one caret. ⌘ shortcuts (⌘Z, ⌘C/⌘V/⌘X, ⌘A, ⌘D, ⌘S, ⌘F, ⌘/) keep their meaning in every mode. Without Vim nothing changes.
+
+## Vim command matrix (E-7b)
+
+`hutan-vim` is checked against Vim 9.1 (`/usr/bin/vim -Nu NONE -i NONE -es`, patches 1-1752) by 508 differential fixtures in `crates/vim/tests/fixtures/*.json`: each case gives a text, a caret and keys; the recorder (`cargo run -p hutan-vim --example record [file…]`, dev only, never in the gate) types the keys into the real Vim with `feedkeys(…, 'tx')` and stores the text, the caret and every non-empty register; `tests/it/fixtures.rs` replays every case on the reference host and fails on any difference. Behaviour is specified from Vim's documentation; no editor's Vim code was read.
+
+| Area | Supported | Not supported (answers "Not supported: …") |
+|---|---|---|
+| Motions | `h j k l` (arrows, Space, Backspace), `w b e ge W B E gE`, `0 ^ $ g_ \|`, `gg G` with a count, `N%`, `+ - _`, `f t F T ; ,`, `%` (brackets), `( )` sentences, `{ }` paragraphs, `[[ ]] [] ][` sections, `gj gk` (as `j k`); columns are display columns (tabs, CJK) | `H M L`, `zz`/`z…`, `gm go g0 g$`, `[(` `])` and other `[`/`]` pairs, forced motions (`dv`, `dV`) |
+| Operators | `d c y < > = g~ gu gU g?` with any motion or object, doubled for lines (`dd >> gUU g??`), `x X D C s S Y`, `J gJ` (with `'joinspaces'`), `r` (with a count, `r<CR>`), `~`, `.` with a new count; Vim's exclusive-linewise rule and the `d}` linewise rule | `!` filter, `gq gw g@`, `R` Replace mode, `U`, `⌃A ⌃X`; `=` indents by braces from the line above, not with Vim's full C-indenting |
+| Text objects | `iw aw iW aW`, `is as`, `ip ap`, `i( a( ib ab`, `i{ a{ iB aB`, `i[ a[`, `i< a<`, `i" a" i' a' i\` a\``, with counts | `it at` (tags; tree-sitter objects are E-9) |
+| Visual | `v V ⌃V`, switching between them, `o O gv`, every operator, `I A` (block: on every line, `$A`), block `c C D r ~`, `p P`, `J gJ r u U ~ > < =`, objects | `>`/`<` on a block |
+| Registers | unnamed, `"a`–`"z`, `"A`–`"Z` append, `"0`–`"9` (Vim 9.1 rules: a named delete also goes to `"1`; `%` `(` `)` `` ` `` `/` `?` `n` `N` `{` `}` deletes go to `"1` and `"-`), `"-`, `"_`, read-only `". ": "/`, `"+ "*` the system clipboard; `editor.vim_use_system_clipboard` makes the unnamed register mirror the clipboard | `"=` expression, `"#` `"%` |
+| Marks, jumps | `m{a-zA-Z}`, `' \``, `'' \`\``, `'[ '] '. '^ '< '>`, `⌃O ⌃I`; marks follow lines the layer adds or removes | `:marks`, `:jumps`, file marks across files |
+| Macros | `q{a-z0-9"}` (`qA` appends), `@x @@ @:` with counts; a failing command stops the macro; a macro is one undo step; in a file tab the text typed through the editor is recorded too | — |
+| Search | `/ ? n N * # g* g#`, offsets `e s b ±N` and line offsets, `'wrapscan' 'ignorecase' 'smartcase'`, `\c \C`, the magic levels `\v \m \M \V`, `\( \) \%( \|`, `\+ \= \? \{n,m} \{-}`, `\< \>`, `\zs \ze`, collections and the `\s \d \w \a \l \u \x \h \k …` classes; patterns match within a line | look-around `\@`, back references in a pattern, `\_x`, `\%` items other than `\%(`, matches across lines |
+| `:` line | ranges `% . $ N 'x /pat/ ?pat? \/ \?` with `±N`, `,` and `;`; `:s` (flags `g i I n e &`, a count, `~`), `:&` `:&&` `&`, `:g :g! :v` with any of these, `:normal`, `:d :y` (register, count), `:pu[!]`, `:m :t :co`, `:j[!]`, `:> :<`, `:k :mark`, `:u :red`, `:N`, `:noh`, `:set` (`number ignorecase smartcase wrapscan hlsearch incsearch expandtab shiftround joinspaces shiftwidth tabstop`, with `no inv ! ? =`) | everything else (`:w` and the other file and window commands are the file tab's, see above) |
+
+In text fields (composer, palette, forms) the same layer runs, except that `:`, `/` and `?` answer "Not supported here" (a field has no line to show them in); `n`, `*`, registers, marks, macros and the rest work. Differences from Vim kept on purpose: Return and Tab in Normal mode stay the field's (`+` moves down), Visual-mode changes are not repeated by `.`, and a typed line break in a `:s` replacement is a line break.
 
 ## Tests
 

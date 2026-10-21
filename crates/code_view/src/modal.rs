@@ -1,23 +1,29 @@
-//! Vim in the code view (slice E-8): the modal layer of `hutan-vim` over the file's rope
+//! Vim in the code view (slices E-8, E-7b): the modal layer of `hutan-vim` over the file's rope
 //! ([`BufferHost`]), one Vim state per view.
 //!
 //! - **Modes.** A file opens in Normal mode (block caret); Insert has a bar caret and types
 //!   through the platform's text input like the editor without Vim (auto-pairs, auto-indent,
-//!   input methods); Visual draws its selection from the Vim state. In Normal and Visual the
-//!   view refuses text input (`accepts_text_input` is false), so printable keys arrive as key
-//!   presses and are matched by the character they produce (a Dvorak or Cyrillic layout types
-//!   its own letters as commands), and never insert text, an input method or not.
+//!   input methods); Visual (charwise, linewise, blockwise) draws its selection from the Vim
+//!   state, one range per line for a block. In Normal and Visual the view refuses text input
+//!   (`accepts_text_input` is false), so printable keys arrive as key presses and are matched by
+//!   the character they produce (a Dvorak or Cyrillic layout types its own letters as
+//!   commands), and never insert text, an input method or not.
 //! - **Escape** in Insert first ends an input method's composition (the marked text stays);
 //!   only the next Escape leaves Insert.
-//! - **Keys.** The view's key context carries `vim_mode = normal | insert | visual`; the
-//!   editor's own bindings that would shadow a Vim key are bound outside Normal and Visual
-//!   (see the desktop's keymap). Every key that reaches the view's key handler goes to Vim
-//!   in Normal and Visual; in Insert only Escape does.
+//! - **Keys.** The view's key context carries `vim_mode = normal | insert | visual` (all three
+//!   Visual modes are `visual`); the editor's own bindings that would shadow a Vim key are bound
+//!   outside Normal and Visual (see the desktop's keymap). Every key that reaches the view's
+//!   key handler goes to Vim in Normal and Visual; in Insert only Escape does.
 //! - **The `:` line** is the owner's (the desktop draws it): `:` asks for it
-//!   ([`CodeViewEvent::CommandLine`]); [`CodeView::run_ex`] runs what concerns the text and
-//!   hands the rest (files, windows, terminals) back.
+//!   ([`CodeViewEvent::CommandLine`]); [`CodeView::run_command_line`] parses it with
+//!   `hutan_vim::ex`, runs `:s` and `:g` (with `d`, `s` or `normal`) on a background thread,
+//!   every other text command through the Vim state, and hands the rest (files, windows,
+//!   terminals, `:noh`) back. `/` and `?` are typed into the Vim state itself; the keys typed so
+//!   far show in the `editor.mode` status item ([`CodeView::vim_pending`]).
+//! - **Indentation.** `'tabstop'` is the view's tab width and `'shiftwidth'` / `'expandtab'`
+//!   follow the file's indentation, until a `:set` of one of them.
 //! - **Undo.** A Normal command, and an Insert session with the command that started it, is one
-//!   undo step; `:s`, `:g` and `:normal` are one step each.
+//!   undo step; a macro, `:s`, `:g` and `:normal` are one step each.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -25,13 +31,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{App, AppContext as _, ClipboardItem, Context, KeyDownEvent};
 use hutan_buffer::{Bias, Selection, Selections, Text, Transaction};
+use hutan_vim::ex::{
+    self as vim_ex, Ex, ExError, LineRef, LineSpec, OptionName, SetOption, Substitute, Toggle,
+};
 use hutan_vim::{Clipboard, Key, Mode, Options, Outcome, Vim, VimHost as _};
 
 use crate::buffer::Coalesce;
-use crate::ex::{
-    self, ALL_LINES, CURRENT_LINE, CaseOptions, Ex, ExError, GlobalCommand, LineSpec, Resolve,
-    SetOption, Substitute, Toggle,
-};
+use crate::ex;
+use crate::layout::TAB_SIZE;
+use crate::rules::IndentUnit;
 use crate::view::{CodeView, CodeViewEvent};
 use crate::vim_host::BufferHost;
 
@@ -56,13 +64,11 @@ pub(crate) struct VimState {
     options: Options,
     /// The Vim undo group the last key left open (an Insert session).
     group_open: bool,
-    /// The Visual selection as drawn (bytes, the character under the caret included).
-    visual: Option<Range<usize>>,
-    /// The lines (0-based) of the last Visual selection: `'<` and `'>`.
-    last_visual: Option<(usize, usize)>,
-    case: CaseOptions,
-    last_pattern: Option<String>,
+    /// The Visual selection as drawn (bytes, one range per line of a block).
+    visual: Vec<Range<usize>>,
     message: Option<VimMessage>,
+    /// `'tabstop'`, `'shiftwidth'` and `'expandtab'` follow the file until a `:set` of one.
+    indent_from_file: bool,
 }
 
 /// What [`CodeView::run_ex`] did with a command.
@@ -150,6 +156,19 @@ fn first_nonblank(text: &Text, line: usize) -> usize {
     at
 }
 
+/// The `:g` commands the view runs on a background thread (the rest run through the Vim state).
+fn global_in_background(command: &Ex) -> bool {
+    matches!(
+        command,
+        Ex::Delete {
+            lines: None,
+            register: None,
+            count: None,
+        } | Ex::Substitute { lines: None, .. }
+            | Ex::Normal { lines: None, .. }
+    )
+}
+
 impl CodeView {
     // ---- state -------------------------------------------------------------------------------
 
@@ -173,13 +192,12 @@ impl CodeView {
                         single_line: false,
                         insert_passthrough: true,
                         use_system_clipboard: settings.use_system_clipboard,
+                        command_line: true,
                     },
                     group_open: false,
-                    visual: None,
-                    last_visual: None,
-                    case: CaseOptions::default(),
-                    last_pattern: None,
+                    visual: Vec::new(),
                     message: None,
+                    indent_from_file: true,
                 });
                 // A new state is in Insert: Escape takes it to Normal like any other.
                 self.vim_key(Key::Escape, cx);
@@ -210,12 +228,19 @@ impl CodeView {
         self.vim.as_ref().map(|v| v.vim.mode())
     }
 
-    /// The keys typed so far of a command in progress (`2d`), for the pending-keys display.
+    /// What the `editor.mode` status item shows beside the mode: `recording @a` while a macro
+    /// is recorded, and the keys of a command in progress (`2d`) or the `/` / `?` line being
+    /// typed (`/foo`).
     pub fn vim_pending(&self) -> String {
-        self.vim
-            .as_ref()
-            .map(|v| v.vim.pending_keys())
-            .unwrap_or_default()
+        let Some(state) = &self.vim else {
+            return String::new();
+        };
+        let pending = state.vim.pending_keys();
+        match state.vim.recording() {
+            Some(name) if pending.is_empty() => format!("recording @{name}"),
+            Some(name) => format!("recording @{name} {pending}"),
+            None => pending,
+        }
     }
 
     /// The answer of the last `:` command, until the next key.
@@ -254,10 +279,11 @@ impl CodeView {
         self.show_numbers
     }
 
-    /// The selection to draw: the Visual selection in Visual mode, else the carets' selections.
+    /// The selection to draw: the Visual selection in a Visual mode, else the carets'
+    /// selections.
     pub(crate) fn drawn_selections(&self) -> Vec<Range<usize>> {
-        match self.vim.as_ref().and_then(|v| v.visual.clone()) {
-            Some(visual) => vec![visual],
+        match self.vim.as_ref().filter(|v| !v.visual.is_empty()) {
+            Some(state) => state.visual.clone(),
             None => self.selections.iter().map(Selection::range).collect(),
         }
     }
@@ -291,7 +317,11 @@ impl CodeView {
                 return true;
             }
         }
-        if mode != Mode::Insert && key == Key::Char(':') && self.vim_pending().is_empty() {
+        let idle = self
+            .vim
+            .as_ref()
+            .is_some_and(|v| v.vim.pending_keys().is_empty());
+        if mode != Mode::Insert && key == Key::Char(':') && idle {
             self.open_command_line(cx);
             return true;
         }
@@ -301,7 +331,7 @@ impl CodeView {
     /// `:` in Normal or Visual: Visual ends (its lines become `'<` and `'>`) and the owner opens
     /// the command line.
     fn open_command_line(&mut self, cx: &mut Context<Self>) {
-        let visual = self.vim_mode() == Some(Mode::Visual);
+        let visual = self.vim_mode().is_some_and(Mode::is_visual);
         if visual {
             self.vim_key(Key::Escape, cx);
         }
@@ -312,47 +342,46 @@ impl CodeView {
         cx.notify();
     }
 
-    /// Applies one key to Vim (Normal, Visual, or Escape in Insert): the text model is lent to a
-    /// [`BufferHost`] for the key and taken back with what it did.
-    pub fn vim_key(&mut self, key: Key, cx: &mut Context<Self>) -> Outcome {
-        // Before the file is in, its text is empty and read-only: a key changes only the mode
-        // (a new state goes to Normal this way while its file loads).
-        if self.vim.is_none() {
-            return Outcome::Ignored;
-        }
+    /// Runs `f` on the Vim state with the text model lent to a [`BufferHost`], and takes the
+    /// model back with what `f` did (the selection, the message and the caret follow). `None`
+    /// while Vim is off.
+    fn with_vim<R>(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut VimState, &mut BufferHost, &mut dyn Clipboard) -> R,
+    ) -> Option<R> {
+        self.vim.as_ref()?;
         let editable = self.is_editable(cx);
         let id = cx.entity_id();
-        let primary = self.selections.primary();
+        let head = self.selections.primary().head;
+        let unit = self.buffer().read(cx).indent_unit();
         let model = self.buffer().update(cx, |b, _| b.lend());
-        let Some(state) = self.vim.as_mut() else {
-            return Outcome::Ignored;
-        };
-        state.message = None;
-        let mut host = BufferHost::new(model, primary.head, editable, state.group_open);
-        let mut clip = AppClipboard(cx);
-        // A selection made with the mouse in Normal mode becomes a Visual one.
-        if state.vim.mode() == Mode::Normal && !primary.is_empty() && key != Key::Escape {
-            host.set_cursor(primary.anchor);
-            state
-                .vim
-                .key(&mut host, Key::Char('v'), state.options, &mut clip);
-            let head = if primary.head > primary.anchor {
-                host.text()
-                    .char_before(primary.head)
-                    .map_or(primary.head, |c| primary.head - c.len_utf8())
-            } else {
-                primary.head
-            };
-            host.set_cursor(head);
+        let state = self.vim.as_mut()?;
+        if state.indent_from_file {
+            let settings = state.vim.settings_mut();
+            settings.tab_stop = TAB_SIZE;
+            match unit {
+                IndentUnit::Tab => {
+                    settings.expand_tab = false;
+                    settings.shift_width = TAB_SIZE;
+                }
+                IndentUnit::Spaces(n) => {
+                    settings.expand_tab = true;
+                    settings.shift_width = n.max(1);
+                }
+            }
         }
-        let outcome = state.vim.key(&mut host, key, state.options, &mut clip);
-        state.visual = state.vim.selection(&host);
-        if let Some(visual) = &state.visual {
-            let text = host.text();
-            state.last_visual = Some((
-                line_of(text, visual.start),
-                line_of(text, visual.end.saturating_sub(1).max(visual.start)),
-            ));
+        let mut host = BufferHost::new(model, head, editable, state.group_open);
+        let result = {
+            let mut clip = AppClipboard(cx);
+            f(state, &mut host, &mut clip)
+        };
+        state.visual = state.vim.selections(&host);
+        if let Some(message) = state.vim.take_message() {
+            state.message = Some(VimMessage {
+                text: message.text,
+                error: message.error,
+            });
         }
         let (model, cursor, open, steps) = host.finish();
         state.group_open = open;
@@ -364,7 +393,33 @@ impl CodeView {
         self.reveal_head(cx);
         cx.emit(CodeViewEvent::Changed);
         cx.notify();
-        outcome
+        Some(result)
+    }
+
+    /// Applies one key to Vim (Normal, Visual, or Escape in Insert): the text model is lent to a
+    /// [`BufferHost`] for the key and taken back with what it did.
+    pub fn vim_key(&mut self, key: Key, cx: &mut Context<Self>) -> Outcome {
+        // Before the file is in, its text is empty and read-only: a key changes only the mode
+        // (a new state goes to Normal this way while its file loads).
+        let primary = self.selections.primary();
+        self.with_vim(cx, |state, host, clip| {
+            state.message = None;
+            // A selection made with the mouse in Normal mode becomes a Visual one.
+            if state.vim.mode() == Mode::Normal && !primary.is_empty() && key != Key::Escape {
+                host.set_cursor(primary.anchor);
+                state.vim.key(host, Key::Char('v'), state.options, clip);
+                let head = if primary.head > primary.anchor {
+                    host.text()
+                        .char_before(primary.head)
+                        .map_or(primary.head, |c| primary.head - c.len_utf8())
+                } else {
+                    primary.head
+                };
+                host.set_cursor(head);
+            }
+            state.vim.key(host, key, state.options, clip)
+        })
+        .unwrap_or(Outcome::Ignored)
     }
 
     // ---- the `:` line ------------------------------------------------------------------------
@@ -376,7 +431,11 @@ impl CodeView {
 
     /// Parses and runs one `:` line. What concerns the text runs here; the rest is handed back.
     pub fn run_command_line(&mut self, line: &str, cx: &mut Context<Self>) -> ExRun {
-        match ex::parse(line) {
+        if let Some(state) = &mut self.vim {
+            state.message = None;
+            state.vim.command_line_ran(line);
+        }
+        match vim_ex::parse(line) {
             Ok(Some(command)) => self.run_ex(command, cx),
             Ok(None) => ExRun::Done,
             Err(error) => {
@@ -386,29 +445,28 @@ impl CodeView {
         }
     }
 
-    /// Runs `command` if it concerns the text (`:s :g :v :normal :set :N`).
+    /// Runs `command` if it concerns the text; files, windows and the rest are the owner's.
     pub fn run_ex(&mut self, command: Ex, cx: &mut Context<Self>) -> ExRun {
+        if command.is_owners() {
+            return ExRun::Owner(command);
+        }
         let result = match command {
-            Ex::Set(options) => {
-                self.set_options(&options);
-                Ok(())
-            }
-            Ex::Goto(at) => self
-                .resolve(cx)
-                .line(at)
-                .map(|line| self.goto_line(line, cx)),
+            Ex::Set(options) => self.set_options(options, cx),
             Ex::Substitute { lines, command } => self.substitute(lines, command, cx),
             Ex::Global {
                 lines,
                 invert,
                 pattern,
                 command,
-            } => self.global(lines, invert, &pattern, command, cx),
-            Ex::Normal { lines, keys } => self
-                .resolve(cx)
-                .lines(lines, CURRENT_LINE)
-                .map(|lines| self.normal_on_lines(lines.collect(), &keys, cx)),
-            other => return ExRun::Owner(other),
+            } if global_in_background(&command) => {
+                self.global(lines, invert, &pattern, *command, cx)
+            }
+            other => {
+                self.with_vim(cx, |state, host, clip| {
+                    state.vim.run(host, other, state.options, clip);
+                });
+                Ok(())
+            }
         };
         if let Err(error) = result {
             self.say(error.0, true);
@@ -418,75 +476,53 @@ impl CodeView {
         ExRun::Done
     }
 
-    fn resolve(&self, cx: &App) -> Resolve {
-        let text = self.buffer().read(cx).text();
-        Resolve {
-            current: line_of(text, self.selections.primary().head),
-            line_count: text.line_count(),
-            visual: self.vim.as_ref().and_then(|v| v.last_visual),
-        }
-    }
-
-    fn set_options(&mut self, options: &[SetOption]) {
+    /// `:set`: `number` is the view's gutter; the rest are the Vim state's.
+    fn set_options(
+        &mut self,
+        options: Vec<SetOption>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ExError> {
         let mut answers = Vec::new();
+        let mut rest = Vec::new();
         for option in options {
-            let (name, value, toggle) = match option {
-                SetOption::Number(t) => ("number", &mut self.show_numbers, *t),
-                SetOption::IgnoreCase(t) => match &mut self.vim {
-                    Some(state) => ("ignorecase", &mut state.case.ignore_case, *t),
-                    None => continue,
-                },
-                SetOption::SmartCase(t) => match &mut self.vim {
-                    Some(state) => ("smartcase", &mut state.case.smart_case, *t),
-                    None => continue,
-                },
-            };
-            match toggle {
-                Toggle::On => *value = true,
-                Toggle::Off => *value = false,
-                Toggle::Invert => *value = !*value,
-                Toggle::Query => answers.push(if *value {
-                    format!("  {name}")
+            if option.name != OptionName::Number {
+                rest.push(option);
+                continue;
+            }
+            match option.toggle {
+                Toggle::On => self.show_numbers = true,
+                Toggle::Off => self.show_numbers = false,
+                Toggle::Invert => self.show_numbers = !self.show_numbers,
+                Toggle::Query => answers.push(if self.show_numbers {
+                    "  number".to_owned()
                 } else {
-                    format!("no{name}")
+                    "nonumber".to_owned()
                 }),
+                Toggle::Value(_) => {}
             }
         }
-        // The gutter changes width: every line is drawn again.
+        // The gutter may change width: every line is drawn again.
         self.lines.clear();
+        let indent = rest.iter().any(|o| {
+            matches!(
+                o.name,
+                OptionName::ShiftWidth | OptionName::TabStop | OptionName::ExpandTab
+            ) && o.toggle != Toggle::Query
+        });
+        if !rest.is_empty() {
+            self.with_vim(cx, |state, host, clip| {
+                if indent {
+                    state.indent_from_file = false;
+                }
+                state.vim.run(host, Ex::Set(rest), state.options, clip);
+            });
+        }
         if !answers.is_empty() {
+            let vim_answer = self.vim_message().map(|m| m.text.clone());
+            answers.extend(vim_answer);
             self.say(answers.join(" "), false);
         }
-    }
-
-    /// The caret to the first non-blank of 0-based `line`, brought into view.
-    fn goto_line(&mut self, line: usize, cx: &mut Context<Self>) {
-        let text = self.buffer().read(cx).text().clone();
-        let at = first_nonblank(&text, line);
-        self.selections = Selections::cursor(at);
-        self.goal = None;
-        self.buffer().update(cx, |b, _| b.break_group());
-        self.reveal_head(cx);
-    }
-
-    /// The pattern of `:s` / `:g`: the one given, else the last one (Vim's `:s//x/`).
-    fn pattern(&mut self, given: &str) -> Result<String, ExError> {
-        let state = self
-            .vim
-            .as_mut()
-            .ok_or_else(|| ExError("Vim mode is off".into()))?;
-        if given.is_empty() {
-            return state
-                .last_pattern
-                .clone()
-                .ok_or_else(|| ExError("E35: No previous regular expression".into()));
-        }
-        state.last_pattern = Some(given.to_owned());
-        Ok(given.to_owned())
-    }
-
-    fn case(&self) -> CaseOptions {
-        self.vim.as_ref().map(|v| v.case).unwrap_or_default()
+        Ok(())
     }
 
     /// `:s`: searched in the background over a snapshot of the rope, applied as one
@@ -497,18 +533,36 @@ impl CodeView {
         mut command: Substitute,
         cx: &mut Context<Self>,
     ) -> Result<(), ExError> {
-        let range = self.resolve(cx).lines(lines, CURRENT_LINE)?;
-        command.pattern = self.pattern(&command.pattern)?;
-        let regex = ex::compile(&command.pattern, command.ignore_case, self.case())?;
+        let prepared = self.with_vim(cx, |state, host, _| -> Result<_, ExError> {
+            let mut range =
+                state
+                    .vim
+                    .line_range(host, lines.as_ref(), &LineSpec::One(LineRef::CURRENT))?;
+            if let Some(n) = command.count {
+                let start = range.end - 1;
+                range = start..(start + n).min(host.line_count());
+            }
+            let pattern = state.vim.prepare_substitute(&mut command)?;
+            Ok((range, pattern))
+        });
+        let (range, pattern) = prepared.ok_or_else(|| ExError("Vim mode is off".into()))??;
+        let replacement = command.replacement.clone().unwrap_or_default();
         let (text, version) = self.snapshot(cx);
         let cancel = Arc::new(AtomicBool::new(false));
         let job = {
             let cancel = cancel.clone();
-            let command = command.clone();
+            let global = command.global;
+            let count_only = command.count_only;
             cx.background_spawn(async move {
-                ex::substitute(&text, range, &regex, &command, &|| {
-                    cancel.load(Ordering::Relaxed)
-                })
+                ex::substitute(
+                    &text,
+                    range,
+                    &pattern,
+                    &replacement,
+                    global,
+                    count_only,
+                    &|| cancel.load(Ordering::Relaxed),
+                )
             })
         };
         self.start_ex(cancel, cx, async move |this, cx| {
@@ -622,47 +676,54 @@ impl CodeView {
         true
     }
 
-    /// `:g/pat/cmd` and `:v/pat/cmd` (`invert`): the matching lines are found in the background;
-    /// `d` and `s` are one transaction, `normal` runs its keys on every line, in one undo step.
+    /// `:g/pat/cmd` and `:v/pat/cmd` (`invert`) with `d`, `s` or `normal`: the matching lines
+    /// are found in the background; `d` and `s` are one transaction, `normal` runs its keys on
+    /// every line, in one undo step.
     fn global(
         &mut self,
         lines: Option<LineSpec>,
         invert: bool,
         pattern: &str,
-        mut command: GlobalCommand,
+        mut command: Ex,
         cx: &mut Context<Self>,
     ) -> Result<(), ExError> {
-        let range = self.resolve(cx).lines(lines, ALL_LINES)?;
-        let pattern = self.pattern(pattern)?;
-        let regex = ex::compile(&pattern, None, self.case())?;
-        let sub = match &mut command {
-            GlobalCommand::Substitute(sub) => {
-                if sub.pattern.is_empty() {
-                    sub.pattern = pattern.clone();
+        let prepared = self.with_vim(cx, |state, host, _| -> Result<_, ExError> {
+            let range = state.vim.line_range(host, lines.as_ref(), &LineSpec::All)?;
+            let regex = state.vim.search_pattern(pattern)?;
+            let sub = match &mut command {
+                Ex::Substitute { command: sub, .. } => {
+                    let compiled = state.vim.prepare_substitute(sub)?;
+                    Some((compiled, sub.clone()))
                 }
-                Some(ex::compile(&sub.pattern, sub.ignore_case, self.case())?)
-            }
-            _ => None,
-        };
+                _ => None,
+            };
+            Ok((range, regex, sub))
+        });
+        let (range, regex, sub) = prepared.ok_or_else(|| ExError("Vim mode is off".into()))??;
+        let pattern = pattern.to_owned();
         let (text, version) = self.snapshot(cx);
         let cancel = Arc::new(AtomicBool::new(false));
+        let delete = matches!(command, Ex::Delete { .. });
         let job = {
             let cancel = cancel.clone();
-            let command = command.clone();
+            let sub = sub.clone();
             cx.background_spawn(async move {
                 let cancelled = || cancel.load(Ordering::Relaxed);
                 let lines = ex::matching_lines(&text, range, &regex, invert, &cancelled);
-                let edits = match (&command, &sub) {
-                    (GlobalCommand::Delete, _) => Some(ex::Substitution {
-                        edits: ex::delete_lines(&text, &lines),
-                        matches: lines.len(),
-                        lines: lines.len(),
-                        last_line: lines.first().copied(),
-                    }),
-                    (GlobalCommand::Substitute(s), Some(sub)) => {
+                let edits = match &sub {
+                    Some((compiled, s)) => {
+                        let replacement = s.replacement.clone().unwrap_or_default();
                         let mut all = ex::Substitution::default();
                         for &line in &lines {
-                            let one = ex::substitute(&text, line..line + 1, sub, s, &cancelled);
+                            let one = ex::substitute(
+                                &text,
+                                line..line + 1,
+                                compiled,
+                                &replacement,
+                                s.global,
+                                s.count_only,
+                                &cancelled,
+                            );
                             all.edits.extend(one.edits);
                             all.matches += one.matches;
                             all.lines += one.lines;
@@ -670,7 +731,13 @@ impl CodeView {
                         }
                         Some(all)
                     }
-                    _ => None,
+                    None if delete => Some(ex::Substitution {
+                        edits: ex::delete_lines(&text, &lines),
+                        matches: lines.len(),
+                        lines: lines.len(),
+                        last_line: lines.first().copied(),
+                    }),
+                    None => None,
                 };
                 (lines, edits)
             })
@@ -685,16 +752,16 @@ impl CodeView {
                     this.say(format!("E486: Pattern not found: {pattern}"), true);
                     return;
                 }
-                match (command, edits) {
-                    (GlobalCommand::Normal(keys), _) => this.normal_on_lines(lines, &keys, cx),
-                    (GlobalCommand::Delete, Some(found)) => {
+                match (command, edits, sub) {
+                    (Ex::Normal { keys, .. }, _, _) => this.normal_on_lines(&lines, &keys, cx),
+                    (Ex::Delete { .. }, Some(found), _) => {
                         let line = found.last_line.unwrap_or(0);
                         if this.apply_lines_edit(found.edits, line, cx) && found.lines > 2 {
                             this.say(format!("{} fewer lines", found.lines), false);
                         }
                     }
-                    (GlobalCommand::Substitute(sub), Some(found)) => {
-                        this.finish_substitute(found, version, &sub, cx);
+                    (Ex::Substitute { .. }, Some(found), Some((_, s))) => {
+                        this.finish_substitute(found, version, &s, cx);
                     }
                     _ => {}
                 }
@@ -704,61 +771,16 @@ impl CodeView {
         Ok(())
     }
 
-    /// `:normal keys` on each of `lines` (0-based, in order), as one undo step: the caret goes
-    /// to the start of the line, the keys run as typed in Normal mode (typed text included),
-    /// and whatever they leave unfinished (Insert, Visual, a pending operator) ends as with
-    /// Escape.
-    fn normal_on_lines(&mut self, lines: Vec<usize>, keys: &str, cx: &mut Context<Self>) {
-        if self.vim.is_none() || !self.buffer().read(cx).is_ready() {
+    /// `:g/…/normal keys` on each of `lines` (0-based, in order), as one undo step.
+    fn normal_on_lines(&mut self, lines: &[usize], keys: &str, cx: &mut Context<Self>) {
+        if !self.buffer().read(cx).is_ready() {
             return;
         }
-        let editable = self.is_editable(cx);
-        let id = cx.entity_id();
-        let cursor = self.selections.primary().head;
-        let mut model = self.buffer().update(cx, |b, _| b.lend());
-        let mut starts: Vec<usize> = lines
-            .iter()
-            .filter_map(|line| model.text().line_start(*line).ok())
-            .collect();
-        // One undo step around every command the keys run (the buffer's groups nest).
-        model.begin_group();
-        let Some(state) = self.vim.as_mut() else {
-            return;
-        };
-        let mut host = BufferHost::new(model, cursor, editable, false);
-        let mut clip = AppClipboard(cx);
-        let options = Options {
-            insert_passthrough: false,
-            ..state.options
-        };
-        settle(&mut state.vim, &mut host, options, &mut clip);
-        for i in 0..starts.len() {
-            host.set_cursor(starts[i]);
-            let done = host.step_count();
-            for c in keys.chars() {
-                state.vim.key(&mut host, Key::Char(c), options, &mut clip);
-            }
-            settle(&mut state.vim, &mut host, options, &mut clip);
-            // The lines below follow what the keys changed.
-            for transaction in host.transactions_since(done) {
-                for start in &mut starts[i + 1..] {
-                    *start = transaction.map_offset(*start, Bias::Left);
-                }
-            }
-        }
-        state.visual = None;
-        let (mut model, cursor, open, steps) = host.finish();
-        if open {
-            model.end_group();
-        }
-        model.end_group();
-        state.group_open = false;
-        self.buffer()
-            .update(cx, |b, cx| b.restore(model, steps, id, cx));
-        self.selections = Selections::cursor(cursor);
-        self.marked.clear();
-        self.goal = None;
-        self.reveal_head(cx);
+        self.with_vim(cx, |state, host, clip| {
+            state
+                .vim
+                .normal_on_lines(host, lines, keys, state.options, clip);
+        });
     }
 }
 
@@ -768,19 +790,4 @@ fn count_message(n: usize, lines: usize, one: &str, many: &str) -> String {
         if n == 1 { one } else { many },
         if lines == 1 { "" } else { "s" }
     )
-}
-
-/// Ends whatever keys left unfinished (Insert, Visual, a pending operator) as Escape would.
-fn settle(
-    vim: &mut Vim<BufferHost>,
-    host: &mut BufferHost,
-    options: Options,
-    clip: &mut dyn Clipboard,
-) {
-    for _ in 0..3 {
-        if vim.mode() == Mode::Normal && vim.pending_keys().is_empty() {
-            break;
-        }
-        vim.key(host, Key::Escape, options, clip);
-    }
 }

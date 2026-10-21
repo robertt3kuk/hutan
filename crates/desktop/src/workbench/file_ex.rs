@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{Context, Entity, Window};
-use hutan_code_view::ex::Ex;
+use hutan_vim::ex::Ex;
 
 use super::file_view::FileView;
 use super::files::FileOpen;
@@ -101,7 +101,17 @@ impl Workbench {
             | Ex::Goto(_)
             | Ex::Substitute { .. }
             | Ex::Global { .. }
-            | Ex::Normal { .. } => {}
+            | Ex::Normal { .. }
+            | Ex::Delete { .. }
+            | Ex::Yank { .. }
+            | Ex::Put { .. }
+            | Ex::Move { .. }
+            | Ex::Copy { .. }
+            | Ex::Join { .. }
+            | Ex::Shift { .. }
+            | Ex::Mark { .. }
+            | Ex::Undo
+            | Ex::Redo => {}
         }
     }
 

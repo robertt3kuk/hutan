@@ -10,8 +10,13 @@ repository.workspace = true
 autotests = false
 autoexamples = false
 
+[dependencies]
+regex.workspace = true
+unicode-width.workspace = true
+
 [dev-dependencies]
 proptest.workspace = true
+serde_json.workspace = true
 
 [[test]]
 name = "it"
@@ -23,3 +28,7 @@ path = "examples/size_probe.rs"
 
 [lints]
 workspace = true
+
+[[example]]
+name = "record"
+path = "examples/record.rs"

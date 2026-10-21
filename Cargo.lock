@@ -2848,6 +2848,9 @@ name = "hutan-vim"
 version = "0.1.0"
 dependencies = [
  "proptest 1.12.0",
+ "regex",
+ "serde_json",
+ "unicode-width",
 ]
 
 [[package]]

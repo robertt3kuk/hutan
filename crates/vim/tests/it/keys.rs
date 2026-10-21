@@ -34,10 +34,12 @@ fn vertical_motions_keep_the_column() {
 }
 
 #[test]
-fn columns_count_characters_not_bytes() {
-    assert_eq!(run("日本|語\nabcdef", "j"), "日本語\nab|cdef");
-    assert_eq!(run("日本語\nab|cdef", "k"), "日本|語\nabcdef");
+fn columns_are_display_columns() {
+    // Like Vim: a CJK character is two columns wide, a tab reaches the next tab stop.
+    assert_eq!(run("日本|語\nabcdef", "j"), "日本語\nabcd|ef");
+    assert_eq!(run("日本語\nab|cdef", "k"), "日|本語\nabcdef");
     assert_eq!(run("é|x\nðð", "j"), "éx\nð|ð");
+    assert_eq!(run("\t|ab\nabcdefghij", "j"), "\tab\nabcdefgh|ij");
 }
 
 #[test]

@@ -1,0 +1,30 @@
+{
+  "vim": "VIM - Vi IMproved 9.1, patches 1-1752 (/usr/bin/vim -Nu NONE -i NONE -es)",
+  "cases": [
+    {"name": "i", "lines": ["abc"], "cursor": [1,2], "keys": "iXY<Esc>", "expect": {"cursor":[1,3],"lines":["aXYbc"],"registers":{".":["XY","v"]}}},
+    {"name": "a", "lines": ["abc"], "cursor": [1,2], "keys": "aXY<Esc>", "expect": {"cursor":[1,4],"lines":["abXYc"],"registers":{".":["XY","v"]}}},
+    {"name": "a at the end", "lines": ["abc"], "cursor": [1,3], "keys": "aX<Esc>", "expect": {"cursor":[1,4],"lines":["abcX"],"registers":{".":["X","v"]}}},
+    {"name": "I", "lines": ["   abc"], "cursor": [1,6], "keys": "IX<Esc>", "expect": {"cursor":[1,4],"lines":["   Xabc"],"registers":{".":["X","v"]}}},
+    {"name": "gI", "lines": ["   abc"], "cursor": [1,6], "keys": "gIX<Esc>", "expect": {"cursor":[1,1],"lines":["X   abc"],"registers":{".":["X","v"]}}},
+    {"name": "A", "lines": ["abc","def"], "cursor": [1,1], "keys": "A!<Esc>", "expect": {"cursor":[1,4],"lines":["abc!","def"],"registers":{".":["!","v"]}}},
+    {"name": "o", "lines": ["abc","def"], "cursor": [1,2], "keys": "onew<Esc>", "expect": {"cursor":[2,3],"lines":["abc","new","def"],"registers":{".":["new","v"]}}},
+    {"name": "O", "lines": ["abc","def"], "cursor": [2,2], "keys": "Onew<Esc>", "expect": {"cursor":[2,3],"lines":["abc","new","def"],"registers":{".":["new","v"]}}},
+    {"name": "o on the last line", "lines": ["abc"], "cursor": [1,1], "keys": "oend<Esc>", "expect": {"cursor":[2,3],"lines":["abc","end"],"registers":{".":["end","v"]}}},
+    {"name": "3i", "lines": ["x"], "cursor": [1,1], "keys": "3iab<Esc>", "expect": {"cursor":[1,6],"lines":["abababx"],"registers":{".":["ab","v"]}}},
+    {"name": "2a", "lines": ["x"], "cursor": [1,1], "keys": "2a-<Esc>", "expect": {"cursor":[1,3],"lines":["x--"],"registers":{".":["-","v"]}}},
+    {"name": "3o", "lines": ["x","y"], "cursor": [1,1], "keys": "3oline<Esc>", "expect": {"cursor":[4,4],"lines":["x","line","line","line","y"],"registers":{".":["line","v"]}}},
+    {"name": "2O", "lines": ["x","y"], "cursor": [2,1], "keys": "2Oline<Esc>", "expect": {"cursor":[3,4],"lines":["x","line","line","y"],"registers":{".":["line","v"]}}},
+    {"name": "3A", "lines": ["x","y"], "cursor": [1,1], "keys": "3A.<Esc>", "expect": {"cursor":[1,4],"lines":["x...","y"],"registers":{".":[".","v"]}}},
+    {"name": "insert a line break", "lines": ["abcd"], "cursor": [1,3], "keys": "i<CR><Esc>", "expect": {"cursor":[2,1],"lines":["ab","cd"],"registers":{".":["\n","v"]}}},
+    {"name": "backspace in insert", "lines": ["abc"], "cursor": [1,3], "keys": "axyz<BS><BS>q<Esc>", "expect": {"cursor":[1,5],"lines":["abcxq"],"registers":{".":["xyz�kb�kbq","v"]}}},
+    {"name": "escape steps back", "lines": ["abc"], "cursor": [1,2], "keys": "i<Esc>", "expect": {"cursor":[1,1],"lines":["abc"],"registers":{}}},
+    {"name": "escape at the line start stays", "lines": ["abc"], "cursor": [1,1], "keys": "i<Esc>", "expect": {"cursor":[1,1],"lines":["abc"],"registers":{}}},
+    {"name": "dot repeats a counted insert", "lines": ["x","y"], "cursor": [1,1], "keys": "2ia<Esc>j.", "expect": {"cursor":[2,2],"lines":["aax","aay"],"registers":{".":["a","v"]}}},
+    {"name": "dot repeats o", "lines": ["x","y"], "cursor": [1,1], "keys": "onew<Esc>j.", "expect": {"cursor":[4,3],"lines":["x","new","y","new"],"registers":{".":["new","v"]}}},
+    {"name": "insert in an empty text", "lines": [""], "cursor": [1,1], "keys": "ihello<Esc>", "expect": {"cursor":[1,5],"lines":["hello"],"registers":{".":["hello","v"]}}},
+    {"name": "insert multibyte", "lines": ["ab"], "cursor": [1,1], "keys": "aé日<Esc>", "expect": {"cursor":[1,4],"lines":["aé日b"],"registers":{".":["é日","v"]}}},
+    {"name": "A then dot on another line", "lines": ["one","two","three"], "cursor": [1,1], "keys": "A;<Esc>jj.", "expect": {"cursor":[3,6],"lines":["one;","two","three;"],"registers":{".":[";","v"]}}},
+    {"name": "c with insert and undo", "lines": ["foo bar"], "cursor": [1,1], "keys": "cwbaz<Esc>u", "expect": {"cursor":[1,1],"lines":["foo bar"],"registers":{"\"":["foo","v"],"-":["foo","v"],".":["baz","v"]}}},
+    {"name": "S on an indented line", "lines": ["  abc","def"], "cursor": [1,3], "keys": "Sx<Esc>", "expect": {"cursor":[1,1],"lines":["x","def"],"registers":{"\"":["  abc\n","V"],".":["x","v"],"1":["  abc\n","V"]}}}
+  ]
+}
