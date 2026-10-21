@@ -1,6 +1,6 @@
 # 0019. Per-turn checkpoints of agent edits (hidden git refs, path-scoped undoable restore)
 
-- Status: proposed (2026-10-21; user decision D3 asked for "ADR + spike first"; the three questions of the spike §9 are open)
+- Status: **accepted** 2026-10-21 with the user: checkpoints are **off by default** (enabled per project or globally in settings); storage in hidden refs of the user's repository and the retention numbers below as proposed
 - Date: 2026-10-21
 - Milestone: UX (slice family CK-1…CK-7; card `UX-CHECKPOINT`)
 - Builds on: ADR 0001 (daemon owns state), ADR 0002 (additive protocol minor + capability), ADR 0012 amendment 2026-10-21 (file I/O and `fs.changed` origin through the daemon), ADR 0016 (one control surface; agent-originated requests)
@@ -36,7 +36,7 @@ Facts that shape the decision:
 9. **Conversation rewind is not promised.** No harness Hutan drives can rewind its conversation (spike §5.4). Every restore is labelled "files only — `<harness>` still remembers this turn", HEAD/branches/stash are not rewound, and the dialog offers to put a note in the composer. Real conversation rewind needs its own spike (CK-7) and, if feasible, an ADR amendment.
 10. **Who may call it** (ADR 0016): `checkpoint.list`, `.diff`, `.preview` are reads (also MCP tools `checkpoint_list`, `checkpoint_diff`); `checkpoint.restore` is `UserOnly` — an agent-originated connection gets `forbidden` regardless of `[control]`; `checkpoint.remove` follows `[control]`.
 11. **Surfaces:** `hutan checkpoint ls|diff|restore|undo|rm` (restore prints the preview, default answer No, `--yes` required without a terminal, conflicts need `--accept-conflicts`); desktop turn-footer *Rewind…* and `Restored — Undo`, a preview dialog whose default focus is *Cancel*, ⌘K commands, an Agents-page Checkpoints list, a Settings section; all gated on the capability.
-12. **Default** (pending D1): on for supported chat sessions, `[checkpoints] mode = "off"` globally and per project.
+12. **Default:** off (user decision 2026-10-21). `[checkpoints] mode = "off" | "on"` globally and per project; the turn footer of an eligible chat offers *Turn on checkpoints for this project* once.
 
 ## Consequences
 - The UX card's acceptance becomes testable: a turn editing three files including a new one → restore returns the exact tree, undoing the restore returns it again, a file edited after the turn is listed and needs acknowledgement.
