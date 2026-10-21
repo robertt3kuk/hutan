@@ -58,23 +58,11 @@ fn a_shell_write_of_an_agent_turn_reaches_the_open_file_and_the_ledger(cx: &mut 
         view.read_with(cx, |wb, cx| wb.sessions().read(cx).approvals().len() == 1)
     });
 
-    // The agent's shell rewrites line 5 (no file_diff names the file).
+    // The agent's shell rewrites line 5 (no file_diff names the file), once: the tab's watch,
+    // which the desktop registers after reading the file, may come after it, and the daemon
+    // still reports a change since that read (FX-FSWATCH).
     let after = base.replace("line 5\n", "line five\n");
-    // A watch the daemon registers asynchronously may miss a write that comes right after it
-    // started (FSEvents): write again until the buffer has it.
-    let mut polls = 0u32;
-    loop {
-        if polls.is_multiple_of(100) {
-            std::fs::write(&file, &after).unwrap();
-        }
-        draw(cx);
-        if buffer.read_with(cx, |b, _| b.text().to_string() == after) {
-            break;
-        }
-        polls += 1;
-        assert!(polls < 2000, "the buffer never took the agent's write");
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    std::fs::write(&file, &after).unwrap();
     wait_until(cx, "the agent's write in the ledger and the buffer", |cx| {
         view.read_with(cx, |wb, cx| {
             wb.agent_ledger().ledger().entry(&key).is_some()
