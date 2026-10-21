@@ -265,6 +265,59 @@ fn the_inline_composer_is_not_a_sheet_and_escape_keeps_it(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+fn switching_to_a_plain_terminal_keeps_the_primary_button_and_drops_the_task_fields(
+    cx: &mut TestAppContext,
+) {
+    let scripts = tempfile::tempdir().unwrap();
+    let daemon = daemon_with_harnesses(scripts.path());
+    let folders = tempfile::tempdir().unwrap();
+    let api = folder(folders.path(), "api");
+    let (view, cx) = open_first_launch(cx, &daemon);
+    wait_listing(&view, cx);
+    open_folder(&view, cx, api);
+    wait_until(cx, "the start composer", |cx| composer_open(&view, cx));
+    click(&view, cx, Region::Launcher("options"));
+    wait_drawn(&view, cx, Region::LauncherChoice("what", "chat"));
+
+    // An agent chat has a title and Start now / Queue as task; the Start button is in view.
+    assert!(drawn(&view, cx, Region::Launcher("title")));
+    assert!(drawn(&view, cx, Region::LauncherChoice("mode", "now")));
+    let start = |view: &Entity<Workbench>, cx: &mut VisualTestContext| {
+        draw(cx);
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Launcher("start")))
+            .expect("the primary button is drawn")
+    };
+    let before = start(&view, cx);
+
+    // A plain terminal: no Prompt and Agent rows, no task-only fields, and the primary button
+    // has not moved.
+    click(&view, cx, Region::LauncherChoice("what", "terminal"));
+    draw(cx);
+    assert!(!drawn(&view, cx, Region::Launcher("prompt")));
+    assert!(!drawn(&view, cx, Region::Launcher("title")));
+    assert!(!drawn(&view, cx, Region::LauncherChoice("mode", "now")));
+    assert!(!drawn(&view, cx, Region::LauncherChoice("mode", "queue")));
+    let after = start(&view, cx);
+    assert_eq!(
+        (after.top(), after.right()),
+        (before.top(), before.right()),
+        "the button stays where it was (its label is another one)"
+    );
+    view.read_with(cx, |wb, cx| {
+        let stops = wb.launcher_stops(cx);
+        assert!(!stops.contains(&LauncherStop::Title), "{stops:?}");
+        assert!(!stops.contains(&LauncherStop::Mode), "{stops:?}");
+        assert!(!wb.launcher().unwrap().queue());
+    });
+
+    // Back to a chat: they are back.
+    click(&view, cx, Region::LauncherChoice("what", "chat"));
+    assert!(drawn(&view, cx, Region::Launcher("title")));
+    assert!(drawn(&view, cx, Region::LauncherChoice("mode", "queue")));
+    assert_eq!(start(&view, cx).top(), before.top());
+}
+
+#[gpui::test]
 fn the_composer_asks_the_send_key_once_above_itself(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let folders = tempfile::tempdir().unwrap();

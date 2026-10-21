@@ -466,7 +466,12 @@ impl Launcher {
             model: (self.kind == LaunchKind::Chat && !matches!(self.agent, LaunchAgent::Direct(_)))
                 .then(|| self.model.clone())
                 .flatten(),
-            title: self.title.text().to_owned(),
+            // A plain terminal is not described: a title typed before switching is not used.
+            title: if self.kind.has_task_fields() {
+                self.title.text().to_owned()
+            } else {
+                String::new()
+            },
             prompt: self.prompt.text().to_owned(),
             command: self.command.text().to_owned(),
             shell: user_shell(),
@@ -481,7 +486,7 @@ impl Launcher {
                 },
             },
             after: self.after.iter().copied().collect(),
-            queue: self.queue,
+            queue: self.queue && self.kind.has_task_fields(),
         }
     }
 }
@@ -847,7 +852,9 @@ impl Workbench {
         if launcher.place == LaunchWhere::NewWorktree {
             stops.extend([LauncherStop::Branch, LauncherStop::Base]);
         }
-        stops.push(LauncherStop::Title);
+        if launcher.kind.has_task_fields() {
+            stops.push(LauncherStop::Title);
+        }
         stops.push(LauncherStop::More);
         if launcher.more_open {
             stops.push(LauncherStop::After);
@@ -855,7 +862,9 @@ impl Workbench {
                 stops.push(LauncherStop::System);
             }
         }
-        stops.push(LauncherStop::Mode);
+        if launcher.kind.has_task_fields() {
+            stops.push(LauncherStop::Mode);
+        }
         if !launcher.inline {
             return stops;
         }
@@ -1145,7 +1154,7 @@ impl Workbench {
             launcher.agent = LaunchAgent::Harness(String::new());
             launcher.agent_chosen = false;
         }
-        if kind == LaunchKind::Chat && direct {
+        if (kind == LaunchKind::Chat && direct) || !kind.has_task_fields() {
             launcher.queue = false;
         }
         if !self.launcher_stops(cx).contains(&self.launcher_stop()) {
@@ -1306,6 +1315,7 @@ impl Workbench {
         if let Some(launcher) = &mut self.launcher
             && !launcher.starting
             && !(queue && launcher.is_direct())
+            && !(queue && !launcher.kind.has_task_fields())
         {
             launcher.queue = queue;
             launcher.confirm = None;
@@ -2028,8 +2038,10 @@ impl Workbench {
                 LauncherStop::Prompt
             } else if launcher.kind == LaunchKind::Command {
                 LauncherStop::Command
-            } else {
+            } else if launcher.kind.has_task_fields() {
                 LauncherStop::Title
+            } else {
+                LauncherStop::What
             };
         }
         // A worktree the start made is a place now.

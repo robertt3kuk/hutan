@@ -57,6 +57,13 @@ impl LaunchKind {
         matches!(self, LaunchKind::Chat | LaunchKind::TerminalAgent)
     }
 
+    /// Whether the sheet shows what only a task has: its title (the name in the Tasks panel)
+    /// and *Start now / Queue as task*. A plain terminal is just opened; it is not described
+    /// or queued.
+    pub fn has_task_fields(self) -> bool {
+        self != LaunchKind::Terminal
+    }
+
     /// Whether an agent writes into the checkout (the shared-checkout warning applies).
     pub fn is_agent(self) -> bool {
         self.takes_prompt()

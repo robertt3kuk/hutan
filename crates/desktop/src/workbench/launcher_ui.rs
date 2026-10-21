@@ -58,6 +58,8 @@ impl Workbench {
         let starting = launcher.starting;
         let direct = launcher.is_direct();
         let more_open = launcher.more_open;
+        // What only a task has (its title, Start now / Queue as task): not for a plain terminal.
+        let task_fields = kind.has_task_fields();
 
         let label = |text: &'static str| {
             div()
@@ -812,10 +814,15 @@ impl Workbench {
                     .text_size(px(tokens.secondary_font_size))
                     .text_color(theme.warning)
                     .flex()
-                    .items_center()
+                    .items_start()
                     .gap(px(4.0))
-                    .child(crate::icons::glyph(crate::icons::Icon::VcsSharedWarning))
-                    .child(SharedString::from(warning))
+                    .child(
+                        div()
+                            .flex_none()
+                            .child(crate::icons::glyph(crate::icons::Icon::VcsSharedWarning)),
+                    )
+                    // The sentence wraps in the row's width instead of running out of it.
+                    .child(div().flex_1().min_w_0().child(SharedString::from(warning)))
                     .child(probe(&self.regions, Region::Launcher("shared-warning"))),
             );
         }
@@ -1215,9 +1222,9 @@ impl Workbench {
                     ))
                     .children(model_rows)
                     .children(where_rows)
-                    .child(title_row)
+                    .children(task_fields.then_some(title_row))
                     .children(more_rows)
-                    .child(mode_row);
+                    .children(task_fields.then_some(mode_row));
             }
             return Some(
                 div()
@@ -1225,13 +1232,8 @@ impl Workbench {
                     .key_context("Launcher")
                     .track_focus(&self.launcher_focus)
                     .size_full()
-                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .items_center()
-                    .pt(px(tokens.spacing * 12.0))
-                    .pb(px(tokens.spacing * 6.0))
-                    .px(px(tokens.spacing * 6.0))
                     .text_size(px(tokens.font_size))
                     .text_color(theme.fg)
                     // A click inside keeps the keyboard here: the pane behind must not take it.
@@ -1245,15 +1247,32 @@ impl Workbench {
                     .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                         this.launcher_key(event, window, cx);
                     }))
+                    // The form scrolls; the primary button stays at the bottom of the pane, so
+                    // it is always visible and does not move when rows come and go.
                     .child(
                         div()
-                            .w_full()
-                            .max_w(px(680.0))
+                            .id("launcher-inline-form")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
                             .flex()
                             .flex_col()
-                            .gap(px(tokens.spacing * 4.0))
-                            .child(column)
-                            .child(footer),
+                            .items_center()
+                            .pt(px(tokens.spacing * 12.0))
+                            .pb(px(tokens.spacing * 4.0))
+                            .px(px(tokens.spacing * 6.0))
+                            .child(div().w_full().max_w(px(680.0)).child(column)),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .justify_center()
+                            .px(px(tokens.spacing * 6.0))
+                            .py(px(tokens.spacing * 3.0))
+                            .border_t_1()
+                            .border_color(theme.border)
+                            .child(div().w_full().max_w(px(680.0)).child(footer)),
                     )
                     .child(probe(&self.regions, Region::Launcher("composer")))
                     .into_any_element(),
@@ -1279,9 +1298,9 @@ impl Workbench {
             .children(model_rows)
             .children(input_rows)
             .children(where_rows)
-            .child(title_row)
+            .children(task_fields.then_some(title_row))
             .children(more_rows)
-            .child(mode_row);
+            .children(task_fields.then_some(mode_row));
 
         Some(
             div()
