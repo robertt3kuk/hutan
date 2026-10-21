@@ -234,18 +234,34 @@ impl WatchHub {
         // what the connection was told of it may be older than the watch: a change since then
         // is fed to the path's watcher, which is running and now has the interest, so that it
         // is reported like any other (attribution included).
+        struct Added {
+            path: PathBuf,
+            known: Option<FileVersion>,
+            feed: Feed,
+            births: Arc<Mutex<Births>>,
+        }
         let mut served = self.take_served(conn.id(), &added);
-        let catch_up: Vec<(PathBuf, Option<FileVersion>, Feed, Arc<Mutex<Births>>)> = added
+        let added: Vec<Added> = added
             .into_iter()
             .filter_map(|(path, root)| {
                 let entry = state.roots.get(&root)?;
-                let known = served.remove(&path);
-                Some((path, known, entry.feed.clone(), entry.births.clone()))
+                Some(Added {
+                    known: served.remove(&path),
+                    path,
+                    feed: entry.feed.clone(),
+                    births: entry.births.clone(),
+                })
             })
             .collect();
         let watching = summary(&state, conn.id());
         drop(state);
-        for (path, known, feed, births) in catch_up {
+        for Added {
+            path,
+            known,
+            feed,
+            births,
+        } in added
+        {
             let meta = std::fs::symlink_metadata(&path).ok();
             if let Some(meta) = &meta {
                 births.lock().exists(&path, meta, false);
