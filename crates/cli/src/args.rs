@@ -509,6 +509,11 @@ pub enum NotifyCommand {
     Act(NotifyActArgs),
     /// Print the pending intents, then new ones as they are raised (until interrupted)
     Watch,
+    /// Silence a session's notifications: it raises none (no banner, no sound) until unmuted,
+    /// and what it has pending is withdrawn. It still shows as needing you in the app.
+    Mute(TargetArgs),
+    /// Let a muted session's notifications through again
+    Unmute(TargetArgs),
 }
 
 #[derive(Debug, Args)]

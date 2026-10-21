@@ -8,7 +8,7 @@
 //! so request handling never waits for the disk), and [`spawn`] rebuilds the state from what was
 //! stored (ADR 0009 step 1): live sessions come back as new terminals with the same ids.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -30,6 +30,7 @@ use hutan_protocol::messages::{
     WorkspaceKind, WorkspaceList, WorkspaceMove, WorkspaceOpen, WorkspaceOpened, WorkspacePin,
     WorkspaceRename,
 };
+use hutan_protocol::notify::NotifyMute;
 use hutan_protocol::project::{ProjectInfo, WorkspaceAssign, WorkspaceDelete};
 use hutan_protocol::provider::ChatSetModel;
 use hutan_protocol::recovery::{Lost, Recovery, RecoveryAck, RecoveryAcked, RecoveryKind};
@@ -64,6 +65,9 @@ use crate::tree::{self, TreeState};
 
 /// Commands waiting in the mailbox before senders wait their turn.
 const MAILBOX_CAPACITY: usize = 256;
+
+/// `app_meta` key of the muted sessions (`notify.mute`, protocol 0.34): a JSON list of ids.
+pub const MUTED_KEY: &str = "notify.muted";
 
 /// Why a session that was alive is listed, not started, under `restore_sessions = "stopped"`.
 const STOPPED_MODE_REASON: &str = "restore_sessions is \"stopped\"";
@@ -139,6 +143,8 @@ enum Command {
     StopSession(SessionId, Reply<SessionInfo>),
     RestartSession(SessionId, Reply<SessionInfo>),
     RenameSession(SessionRename, Reply<SessionInfo>),
+    /// `notify.mute` (protocol 0.34).
+    SetMuted(NotifyMute, Reply<SessionInfo>),
     /// Answered once no session is live any more. The flag removes the sessions from the
     /// restore set (`--forget`).
     StopAll {
@@ -515,6 +521,11 @@ impl RegistryHandle {
         self.ask(|r| Command::RenameSession(req, r)).await
     }
 
+    /// `notify.mute`: sets `SessionInfo.muted` and remembers it across restarts.
+    pub async fn set_muted(&self, req: NotifyMute) -> Result<SessionInfo, ErrorBody> {
+        self.ask(|r| Command::SetMuted(req, r)).await
+    }
+
     /// Terminates every live session concurrently and returns once all have ended.
     ///
     /// The stopped sessions stay in the restore set (the next daemon respawns them) unless
@@ -749,6 +760,9 @@ struct SessionRegistry {
     /// The sessions `session.close` removed, most recently closed first; their rows are kept in
     /// the database for `session.reopen`.
     closed: Vec<ClosedSession>,
+    /// The sessions the user muted (`notify.mute`), open and closed ones: a reopened session
+    /// is still muted. Stored whole under [`MUTED_KEY`] on every change.
+    muted: HashSet<SessionId>,
     stop_all_waiters: Vec<Reply<()>>,
     chats: Arc<ChatManager>,
     storage: Storage,
@@ -847,6 +861,7 @@ pub fn spawn(
         activity_interval: config.activity_interval,
         sessions: Vec::new(),
         closed: stored.closed_sessions,
+        muted: HashSet::new(),
         stop_all_waiters: Vec::new(),
         chats: chats.clone(),
         storage: config.storage,
@@ -1238,6 +1253,9 @@ impl SessionRegistry {
                 }
                 Command::RenameSession(req, reply) => {
                     let _ = reply.send(self.rename_session(req));
+                }
+                Command::SetMuted(req, reply) => {
+                    let _ = reply.send(self.set_muted(req));
                 }
                 Command::StopAll { forget, reply } => self.stop_all(forget, reply),
                 Command::TerminalMeta(terminal, meta) => self.on_meta(terminal, meta),
@@ -2082,6 +2100,7 @@ impl SessionRegistry {
             placement,
             folder: spec.cwd.clone(),
             recovery: None,
+            muted: false,
         };
         self.publish(&Event::SessionUpdated {
             session: info.clone(),
@@ -2435,6 +2454,9 @@ impl SessionRegistry {
             "reopening a session",
         );
         let index = self.sessions.len() - 1;
+        if self.muted.contains(&id) {
+            self.sessions[index].info.muted = true;
+        }
         self.touch_workspace(self.sessions[index].info.workspace_id);
         // Clients know the session before it starts; `start_restored` announces the rest.
         self.emit_session(index);
@@ -2548,6 +2570,69 @@ impl SessionRegistry {
         self.persist_session(index);
         self.retitle_workspace(info.workspace_id, None);
         Ok(info)
+    }
+
+    /// `notify.mute`.
+    fn set_muted(&mut self, req: NotifyMute) -> Result<SessionInfo, ErrorBody> {
+        let index = self.session_index(req.session_id)?;
+        if self.sessions[index].info.muted == req.muted {
+            return Ok(self.sessions[index].info.clone());
+        }
+        let mut info = self.sessions[index].info.clone();
+        info.muted = req.muted;
+        self.publish(&Event::SessionUpdated {
+            session: info.clone(),
+        })?;
+        self.sessions[index].info = info.clone();
+        if req.muted {
+            self.muted.insert(info.id);
+        } else {
+            self.muted.remove(&info.id);
+        }
+        self.store_mutes();
+        Ok(info)
+    }
+
+    /// Writes [`Self::muted`], without the sessions that are gone for good.
+    fn store_mutes(&mut self) {
+        let known: HashSet<SessionId> = self
+            .sessions
+            .iter()
+            .map(|s| s.info.id)
+            .chain(self.closed.iter().map(|c| c.session.id))
+            .collect();
+        self.muted.retain(|id| known.contains(id));
+        let mut muted: Vec<SessionId> = self.muted.iter().copied().collect();
+        muted.sort();
+        match serde_json::to_string(&muted) {
+            Ok(json) => log_write(
+                self.storage.app_meta().set(MUTED_KEY, &json),
+                "the muted sessions",
+            ),
+            Err(error) => warn!(%error, "could not encode the muted sessions"),
+        }
+    }
+
+    /// Reads what [`store_mutes`](Self::store_mutes) wrote and marks those sessions muted.
+    fn restore_mutes(&mut self) {
+        let json = match self.storage.app_meta().get(MUTED_KEY) {
+            Ok(Some(json)) => json,
+            Ok(None) => return,
+            Err(error) => {
+                warn!(%error, "could not read the muted sessions");
+                return;
+            }
+        };
+        self.muted = match serde_json::from_str(&json) {
+            Ok(muted) => muted,
+            Err(error) => {
+                warn!(%error, "the muted sessions are unreadable; none is muted");
+                return;
+            }
+        };
+        for session in &mut self.sessions {
+            session.info.muted = self.muted.contains(&session.info.id);
+        }
     }
 
     // Agent reports ---------------------------------------------------------------------------
@@ -3064,6 +3149,7 @@ impl SessionRegistry {
             placement: self.placement_of(Some(&req.cwd)),
             folder: Some(req.cwd.clone()),
             recovery: None,
+            muted: false,
         };
         self.publish(&Event::SessionUpdated {
             session: info.clone(),
@@ -3769,6 +3855,8 @@ impl SessionRegistry {
                 placement: None,
                 folder: row.cwd.clone(),
                 recovery,
+                // `restore_mutes` / `reopen_session` set it.
+                muted: false,
             },
             spec: TerminalSpec {
                 command: vec![spec.agent.clone()],
@@ -3851,6 +3939,7 @@ impl SessionRegistry {
         for row in rows {
             self.restore_row(row, mode, &context, &facts, &mut pending);
         }
+        self.restore_mutes();
         // What the sessions ran when the previous daemon ended is not running now.
         recovery::store_running_commands(&self.storage, std::iter::empty());
         // Before the respawns announce anything: the counts of a restored workspace are right
@@ -3993,6 +4082,7 @@ impl SessionRegistry {
                     placement: None,
                     folder: cwd,
                     recovery,
+                    muted: false,
                 },
                 spec,
                 default_title,

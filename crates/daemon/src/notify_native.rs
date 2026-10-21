@@ -135,12 +135,14 @@ pub struct NativeNotification {
     pub title: String,
     pub body: String,
     pub actions: Vec<NativeAction>,
+    /// Plays the system's notification sound (`notify.sound = "default"`).
+    pub sound: bool,
 }
 
 impl NativeNotification {
     /// The mapping. `destructive` lists the ids of the approval options that refuse (the
     /// intent itself only carries ids and labels). The title and body are the intent's:
-    /// already redacted and bounded.
+    /// already redacted and bounded. It plays the sound; see [`silent`](Self::silent).
     pub fn from_intent(intent: &NotificationIntent, destructive: &[String]) -> Self {
         let mut actions: Vec<NativeAction> = if intent.kind == IntentKind::ApprovalRequired {
             intent
@@ -174,7 +176,14 @@ impl NativeNotification {
             title: intent.title.clone(),
             body: intent.body.clone(),
             actions,
+            sound: true,
         }
+    }
+
+    /// The same notification without its sound (`notify.sound = "none"`).
+    pub fn silent(mut self, silent: bool) -> Self {
+        self.sound &= !silent;
+        self
     }
 }
 

@@ -409,6 +409,12 @@ fn build_specs() -> Vec<Spec> {
         live("notify.expire_secs", POSITIVE, Group::Notify, |c| {
             int_value(c.notify.expire_secs)
         }),
+        live(
+            "notify.sound",
+            Kind::Enum(&["default", "none"]),
+            Group::Notify,
+            |c| json!(c.notify.sound.as_str()),
+        ),
         restart("notify.native", Kind::Bool, |c| json!(c.notify.native)),
         restart(
             "terminal.env_inherit",
@@ -1455,6 +1461,7 @@ mod tests {
             kinds: _,
             expire_secs: _,
             native: _,
+            sound: _,
         } = notify;
         let config::TerminalSettings { env_inherit: _ } = terminal;
         let config::TasksSettings { max_parallel: _ } = tasks;
@@ -1497,6 +1504,7 @@ mod tests {
             "notify.kinds",
             "notify.expire_secs",
             "notify.native",
+            "notify.sound",
             "terminal.env_inherit",
             "tasks.max_parallel",
             "projects.auto",

@@ -594,6 +594,13 @@ const DAEMON_FIELDS: &[FieldText] = &[
     ),
     choice(
         "daemon",
+        "notify.sound",
+        "Sound",
+        "Whether a notification in the macOS notification centre plays the system's sound. A session you muted (its menu: Mute notifications) raises no notification at all, and a session you are looking at raises none either.",
+        &[("default", "The system's sound"), ("none", "No sound")],
+    ),
+    choice(
+        "daemon",
         "notify.kinds",
         "What to be told about",
         "The events that raise a notification. Remove the ones you do not want.",

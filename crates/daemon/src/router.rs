@@ -405,6 +405,13 @@ impl Router {
                 self.notify.set_focus(conn.id(), req.session_id);
                 ok(&Empty {})
             }
+            Request::NotifyMute(req) => {
+                let session = self.registry.set_muted(req).await?;
+                if session.muted {
+                    self.notify.session_muted(session.id);
+                }
+                ok(&SessionResult { session })
+            }
             Request::WorktreeCreate(req) => ok(&self.worktrees.create(req).await?),
             Request::WorktreeList(req) => ok(&self.worktrees.list(req).await?),
             Request::WorktreeRemove(req) => {
@@ -758,6 +765,9 @@ fn classification(request: &Request) -> (&'static str, Access) {
         // Acting on an intent can answer an approval.
         Request::NotifyAct(_) => ("notify.act", UserOnly),
         Request::ClientFocus(_) => ("client.focus", Read),
+        // What the user is told about is the user's: an agent must not silence its own
+        // approvals (protocol 0.34).
+        Request::NotifyMute(_) => ("notify.mute", UserOnly),
         Request::WorktreeCreate(_) => ("worktree.create", Mutate),
         Request::WorktreeList(_) => ("worktree.list", Read),
         Request::WorktreeRemove(_) => ("worktree.remove", Mutate),
@@ -919,6 +929,14 @@ mod classification_tests {
                 serde_json::json!({"action": "workbench::SplitRight"})
             ),
             Access::Mutate
+        );
+        assert_eq!(
+            access_of(
+                "notify.mute",
+                serde_json::json!({"session_id": id, "muted": true})
+            ),
+            Access::UserOnly,
+            "an agent never silences what the user is told"
         );
     }
 

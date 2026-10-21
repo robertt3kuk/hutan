@@ -159,6 +159,7 @@ fn the_notifications_page_lists_the_daemons_values_and_a_live_change_needs_no_re
         [
             "d:notify.enabled",
             "d:notify.native",
+            "d:notify.sound",
             "d:notify.kinds",
             "d:notify.min_turn_secs",
             "d:notify.expire_secs"

@@ -407,7 +407,10 @@ impl MainState {
         content.setBody(&NSString::from_str(&notification.body));
         content.setCategoryIdentifier(&NSString::from_str(&notification.category));
         content.setThreadIdentifier(&NSString::from_str(&notification.thread));
-        content.setSound(Some(&UNNotificationSound::defaultSound()));
+        // `notify.sound = "none"`: no sound; the banner (and the presentation option) stay.
+        if notification.sound {
+            content.setSound(Some(&UNNotificationSound::defaultSound()));
+        }
         let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
             &NSString::from_str(&notification.identifier),
             &content,

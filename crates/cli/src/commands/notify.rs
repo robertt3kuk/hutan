@@ -1,5 +1,5 @@
-//! `hutan notify ls|ack|act|watch`: the daemon's notification intents (protocol 0.13,
-//! `docs/protocol.md` § Notification intents).
+//! `hutan notify ls|ack|act|watch|mute|unmute`: the daemon's notification intents (protocol 0.13,
+//! `docs/protocol.md` § Notification intents) and per-session mute (protocol 0.34).
 
 use std::collections::HashSet;
 
@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::Ctx;
-use crate::args::{NotifyActArgs, NotifyCommand, NotifyIdArgs};
+use crate::args::{NotifyActArgs, NotifyCommand, NotifyIdArgs, TargetArgs};
 use crate::error::CliError;
 
 /// Shortest intent id prefix accepted.
@@ -22,7 +22,33 @@ impl Ctx {
             NotifyCommand::Ack(args) => self.notify_ack(args).await,
             NotifyCommand::Act(args) => self.notify_act(args).await,
             NotifyCommand::Watch => self.notify_watch().await,
+            NotifyCommand::Mute(args) => self.notify_mute(args, true).await,
+            NotifyCommand::Unmute(args) => self.notify_mute(args, false).await,
         }
+    }
+
+    /// `hutan notify mute|unmute <session>`. Prints the session (`--json`: its `SessionInfo`).
+    async fn notify_mute(&self, args: TargetArgs, muted: bool) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        if !client.supports_notify_mute() {
+            return Err(CliError::Failed(
+                "this daemon cannot mute notifications (it predates protocol 0.34); restart it \
+                 with `hutan daemon stop` and run the command again"
+                    .to_owned(),
+            ));
+        }
+        let session = self.resolve(&client, &args.target).await?;
+        let info = client
+            .notify_mute(session.id, muted)
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&info, || {
+            if info.muted {
+                format!("muted notifications of {} ({})", info.title, info.id)
+            } else {
+                format!("notifications of {} ({}) are on", info.title, info.id)
+            }
+        })
     }
 
     async fn notify_ls(&self) -> Result<(), CliError> {

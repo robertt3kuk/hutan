@@ -315,6 +315,7 @@ mod tests {
             placement: None,
             folder: None,
             recovery: None,
+            muted: false,
         }
     }
 

@@ -730,7 +730,9 @@ impl Workbench {
 
     /// *Mark as unread* / *Mark as read* and *Snooze until it changes* / *Unsnooze*, the two
     /// entries of the row `More` menu and the sidebar context menu (`UX-ATTENTION-CONTROLS`).
-    /// A session that does not need the user cannot be snoozed, and the entry says so.
+    /// A session that does not need the user cannot be snoozed, and the entry says so. With a
+    /// daemon that has `notify.mute` (protocol 0.34) a third: *Mute notifications* /
+    /// *Unmute notifications*.
     pub(crate) fn attention_entries(&self, session: SessionId, cx: &gpui::App) -> Vec<MenuEntry> {
         let store = self.sessions.read(cx);
         let unread = store.unread(session).is_some();
@@ -768,7 +770,41 @@ impl Workbench {
                 ..Self::entry("Snooze until it changes", |_, _, _| {})
             }
         };
-        vec![read, snooze]
+        let mut entries = vec![read, snooze];
+        if store.supports_mute() {
+            let muted = store.is_muted(session);
+            let label = if muted {
+                "Unmute notifications"
+            } else {
+                "Mute notifications"
+            };
+            entries.push(Self::entry(label, move |this, _, cx| {
+                this.set_session_muted(session, !muted, cx);
+            }));
+        }
+        entries
+    }
+
+    /// *Mute notifications* / *Unmute notifications* (`notify.mute`); a refusal is said in the
+    /// status line.
+    pub(crate) fn set_session_muted(
+        &mut self,
+        session: SessionId,
+        muted: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let task = self
+            .sessions
+            .update(cx, |store, cx| store.set_muted(session, muted, cx));
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = task.await {
+                this.update(cx, |this, cx| {
+                    this.set_notice(format!("Could not change the notifications: {error}"), cx);
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     /// Saves what the store holds of the attention marks (`attention` in the state file) when it

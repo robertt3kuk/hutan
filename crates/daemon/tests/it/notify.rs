@@ -22,7 +22,7 @@ use hutan_protocol::ErrorCode;
 use hutan_protocol::chat::{ApprovalRespond, ChatCreate};
 use hutan_protocol::messages::{
     AgentApplied, AgentReleaseRequest, AgentReportRequest, AgentState, ClientKind, Empty, Event,
-    Request, SessionInfo, SessionResult,
+    Request, SessionInfo, SessionList, SessionListFilter, SessionResult,
 };
 use hutan_protocol::notify::{
     ACTION_OPEN, ActRoute, BODY_MAX_CHARS, IntentKind, NotificationIntent,
@@ -1225,5 +1225,200 @@ async fn a_daemon_without_a_poster_still_raises_intents() {
         .next_intent("the intent", |i| i.session_id == failing.id)
         .await;
     assert_eq!(t.intents().await, vec![intent]);
+    t.stop().await;
+}
+
+// ---- notify.mute, focus and sound (protocol 0.34) ----------------------------------------------
+
+impl Env {
+    /// `session` as `session.list` reports it now.
+    async fn session(&self, session: SessionId) -> SessionInfo {
+        self.client
+            .call::<SessionList>(Request::SessionList(SessionListFilter::default()))
+            .await
+            .unwrap()
+            .sessions
+            .into_iter()
+            .find(|s| s.id == session)
+            .expect("the session is listed")
+    }
+
+    /// An idle session whose (reported) agent is now blocked on its subagent.
+    async fn blocked_session(&self) -> SessionInfo {
+        let session = create(&self.client, idle_session()).await;
+        report(
+            &self.client,
+            main_report(session.id, AgentState::Working, 1),
+        )
+        .await;
+        report(
+            &self.client,
+            sub_report(
+                session.id,
+                AgentState::Blocked,
+                2,
+                Some("wants to run tests"),
+            ),
+        )
+        .await;
+        session
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_muted_session_raises_nothing_keeps_needing_the_user_and_stays_muted_after_a_restart() {
+    let poster = FakePoster::new(Authorization::Grant);
+    let mut t = Env::start_with_poster("", None, Some(poster.clone())).await;
+    assert!(t.client.supports_notify_mute());
+
+    // A session with something pending is muted: the intent and its banner go.
+    let noisy = t.blocked_session().await;
+    let raised = t
+        .next_intent("the blocked intent", |i| i.session_id == noisy.id)
+        .await;
+    let posted = poster
+        .wait_for("the post", |calls| {
+            calls
+                .iter()
+                .any(|c| matches!(c, Call::Post(n) if n.identifier == raised.id))
+        })
+        .await;
+    assert!(
+        posted.iter().any(|c| matches!(c, Call::Post(n) if n.sound)),
+        "notify.sound defaults to the system's sound"
+    );
+    let muted = t.client.notify_mute(noisy.id, true).await.unwrap();
+    assert!(muted.muted);
+    wait_event(
+        &mut t.events,
+        "the muted session's update",
+        |event| match event {
+            Event::SessionUpdated { session } if session.id == noisy.id && session.muted => {
+                Some(())
+            }
+            _ => None,
+        },
+    )
+    .await;
+    poster
+        .wait_for("the removal after the mute", |calls| {
+            calls.contains(&Call::Remove(raised.id.clone()))
+        })
+        .await;
+    assert!(t.intents().await.is_empty());
+
+    // A muted session raises nothing; the next session's intent is the first to arrive.
+    let quiet = create(&t.client, idle_session()).await;
+    t.client.notify_mute(quiet.id, true).await.unwrap();
+    report(&t.client, main_report(quiet.id, AgentState::Working, 1)).await;
+    report(&t.client, main_report(quiet.id, AgentState::Blocked, 2)).await;
+    let loud = t.blocked_session().await;
+    let next = t.next_intent("the next intent", |_| true).await;
+    assert_eq!(
+        next.session_id, loud.id,
+        "the muted session raised {next:?}"
+    );
+    assert_eq!(
+        t.intents()
+            .await
+            .iter()
+            .map(|i| i.session_id)
+            .collect::<Vec<_>>(),
+        [loud.id]
+    );
+    // It still needs the user: its agent is reported blocked, which is what attention counts.
+    let listed = t.session(quiet.id).await;
+    assert!(listed.muted);
+    assert_eq!(
+        listed.agent.as_ref().map(|a| a.state),
+        Some(AgentState::Blocked)
+    );
+
+    // Unmuting is told the same way; an unknown session is `not_found`.
+    let unmuted = t.client.notify_mute(noisy.id, false).await.unwrap();
+    assert!(!unmuted.muted);
+    assert_eq!(
+        remote_code(t.client.notify_mute(SessionId::new(), true).await),
+        ErrorCode::NotFound
+    );
+
+    // The choice survives a daemon restart.
+    let Env {
+        daemon,
+        work: _work,
+        client,
+        events,
+    } = t;
+    drop((client, events));
+    let daemon = daemon.restart().await;
+    let client = daemon.connect().await;
+    let sessions = client
+        .call::<SessionList>(Request::SessionList(SessionListFilter::default()))
+        .await
+        .unwrap()
+        .sessions;
+    let muted_now = |id| sessions.iter().find(|s| s.id == id).map(|s| s.muted);
+    assert_eq!(muted_now(quiet.id), Some(true));
+    assert_eq!(muted_now(noisy.id), Some(false));
+    assert_eq!(muted_now(loud.id), Some(false));
+    drop(client);
+    daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn focusing_a_session_withdraws_its_intents_and_a_focused_session_raises_none() {
+    let poster = FakePoster::new(Authorization::Grant);
+    let mut t = Env::start_with_poster("", None, Some(poster.clone())).await;
+    let looked_at = t.blocked_session().await;
+    let raised = t
+        .next_intent("the blocked intent", |i| i.session_id == looked_at.id)
+        .await;
+
+    // A window shows the session: its intent and its banner go.
+    let window = t.daemon.connect_as(ClientKind::Desktop).await;
+    window.client_focus(Some(looked_at.id)).await.unwrap();
+    poster
+        .wait_for("the removal after the focus", |calls| {
+            calls.contains(&Call::Remove(raised.id.clone()))
+        })
+        .await;
+    assert!(t.intents().await.is_empty());
+
+    // While a session is focused, nothing it does raises an intent, of any kind.
+    let focused = create(&t.client, idle_session()).await;
+    window.client_focus(Some(focused.id)).await.unwrap();
+    report(&t.client, main_report(focused.id, AgentState::Working, 1)).await;
+    report(&t.client, main_report(focused.id, AgentState::Blocked, 2)).await;
+    let other = t.blocked_session().await;
+    let next = t.next_intent("the next intent", |_| true).await;
+    assert_eq!(
+        next.session_id, other.id,
+        "the focused session raised {next:?}"
+    );
+    drop(window);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn notify_sound_none_posts_silent_notifications() {
+    let poster = FakePoster::new(Authorization::Grant);
+    let mut t =
+        Env::start_with_poster("[notify]\nsound = \"none\"\n", None, Some(poster.clone())).await;
+    let failing = create(&t.client, sh("exit 1")).await;
+    let intent = t
+        .next_intent("the intent", |i| i.session_id == failing.id)
+        .await;
+    let calls = poster
+        .wait_for("the post", |calls| {
+            calls
+                .iter()
+                .any(|c| matches!(c, Call::Post(n) if n.identifier == intent.id))
+        })
+        .await;
+    for call in calls {
+        if let Call::Post(notification) = call {
+            assert!(!notification.sound, "{notification:?}");
+        }
+    }
     t.stop().await;
 }

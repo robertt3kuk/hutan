@@ -74,6 +74,7 @@ mod tests {
             placement,
             folder: None,
             recovery: None,
+            muted: false,
         }
     }
 

@@ -466,6 +466,30 @@ pub struct NotifySettings {
     /// `false` keeps intents off the system's notification centre even when the daemon could
     /// post them (it runs from `Hutan.app`); they stay available through `notify.list`.
     pub native: bool,
+    /// Whether a notification the daemon posts to the system plays the system's sound
+    /// (protocol 0.34).
+    pub sound: NotifySound,
+}
+
+/// `notify.sound`: what a posted notification sounds like.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotifySound {
+    /// The system's notification sound.
+    #[default]
+    Default,
+    /// Silent: the banner only.
+    None,
+}
+
+impl NotifySound {
+    /// The `daemon.toml` name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::None => "none",
+        }
+    }
 }
 
 impl Default for NotifySettings {
@@ -476,6 +500,7 @@ impl Default for NotifySettings {
             kinds: IntentKind::ALL.to_vec(),
             expire_secs: DEFAULT_EXPIRE_SECS,
             native: true,
+            sound: NotifySound::Default,
         }
     }
 }
@@ -1081,6 +1106,18 @@ mod tests {
         assert!(!notify.native);
         assert!(notify.enabled, "intents are still raised");
         assert!(DaemonSettings::parse("[notify]\nnative = 1\n", None).is_err());
+    }
+
+    #[test]
+    fn notify_sound_is_default_or_none() {
+        let notify = DaemonSettings::parse("", None).unwrap().notify;
+        assert_eq!(notify.sound, NotifySound::Default);
+        let silent = DaemonSettings::parse("[notify]\nsound = \"none\"\n", None)
+            .unwrap()
+            .notify;
+        assert_eq!(silent.sound, NotifySound::None);
+        assert!(DaemonSettings::parse("[notify]\nsound = \"loud\"\n", None).is_err());
+        assert!(DaemonSettings::parse("[notify]\nsound = false\n", None).is_err());
     }
 
     #[test]

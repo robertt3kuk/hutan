@@ -39,7 +39,7 @@ use hutan_protocol::memory::*;
 use hutan_protocol::messages::*;
 use hutan_protocol::notify::{
     ActRoute, ClientFocus, IntentAction, IntentKind, NotificationIntent, NotifyAck, NotifyAct,
-    NotifyActed, NotifyList,
+    NotifyActed, NotifyList, NotifyMute,
 };
 use hutan_protocol::project::*;
 use hutan_protocol::provider::*;
@@ -195,6 +195,7 @@ fn session_info() -> SessionInfo {
         placement: None,
         folder: None,
         recovery: None,
+        muted: false,
     }
 }
 
@@ -2677,6 +2678,20 @@ fn requests() -> Vec<(&'static str, Request)> {
                 paths: vec!["/repo/src/main.rs".into()],
             }),
         ),
+        (
+            "notify_mute",
+            Request::NotifyMute(NotifyMute {
+                session_id: sid(),
+                muted: true,
+            }),
+        ),
+        (
+            "notify_unmute",
+            Request::NotifyMute(NotifyMute {
+                session_id: sid(),
+                muted: false,
+            }),
+        ),
     ]
 }
 
@@ -4862,6 +4877,19 @@ fn responses_match_fixtures() {
                 16,
                 &SessionResult {
                     session: session_info(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "session_result_muted",
+            ControlMessage::ok(
+                34,
+                &SessionResult {
+                    session: SessionInfo {
+                        muted: true,
+                        ..session_info()
+                    },
                 },
             )
             .unwrap(),

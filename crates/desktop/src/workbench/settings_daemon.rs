@@ -62,6 +62,7 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
             keys: &[
                 "notify.enabled",
                 "notify.native",
+                "notify.sound",
                 "notify.kinds",
                 "notify.min_turn_secs",
                 "notify.expire_secs",

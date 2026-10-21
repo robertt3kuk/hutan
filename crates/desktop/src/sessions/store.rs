@@ -26,6 +26,7 @@ use hutan_protocol::messages::{
     WorkspaceInfo, WorkspaceKind, WorkspaceMove, WorkspaceOpen, WorkspaceOpened, WorkspacePin,
     WorkspaceRecent, WorkspaceRef, WorkspaceRename, WorkspaceRoot,
 };
+use hutan_protocol::notify::NotificationIntent;
 use hutan_protocol::project::{WorkspaceAssign, WorkspaceDelete};
 use hutan_protocol::recovery::{RecoveryAck, RecoveryAcked};
 use hutan_protocol::resources::{ResourceSample, ResourcesListRequest};
@@ -61,6 +62,10 @@ pub const REPLAY_WINDOW: Duration = Duration::from_millis(400);
 /// A `ui.open` older than this many milliseconds when it reaches the desktop is a replay of
 /// something the user did a while ago, not a request to move the window now.
 pub const UI_OPEN_MAX_AGE_MS: u64 = 15_000;
+
+/// Most notification intents remembered to acknowledge when their sessions are read (the
+/// daemon keeps at most this many pending).
+const MAX_SURFACED: usize = 100;
 
 /// What changed in the [`SessionsStore`], emitted with every notification so that a subscriber
 /// can ignore the ones that are not its business (a sidebar that lists sessions does not care
@@ -382,6 +387,10 @@ pub struct SessionsStore {
     /// The session marked unread while it was on screen: reading it is held off until the focus
     /// has been elsewhere.
     hold_unread: Option<SessionId>,
+    /// The notification intents raised for each session (`notify.intent`) since it was last
+    /// read: *Mark as read* acknowledges them, so their banners leave the notification centre.
+    /// At most [`MAX_SURFACED`] ids; the daemon forgets intents too.
+    surfaced: HashMap<SessionId, Vec<String>>,
     /// Terminals in which a known agent program runs that never reported, as the last process
     /// listing showed (`UX-ATTENTION-CONTROLS`); see [`SessionsStore::untracked_agent`].
     untracked: HashMap<SessionId, Untracked>,
@@ -496,6 +505,7 @@ impl SessionsStore {
             focus_task: None,
             assistant_focused: None,
             hold_unread: None,
+            surfaced: HashMap::new(),
             untracked: HashMap::new(),
             scan_task: None,
             scan_again: false,
@@ -810,12 +820,13 @@ impl SessionsStore {
             Notice::SessionClosed { session } => cx.emit(SessionClosed {
                 session_id: *session,
             }),
-            // Intents are for notifiers (M6-B) and `hutan notify watch`; the desktop shows
-            // approvals and agent state from its own state.
+            // The desktop shows approvals and agent state from its own state; it only notes the
+            // intents (M6-B notifiers and `hutan notify watch` show them) so that reading the
+            // session acknowledges them.
+            Notice::NotifyIntent { intent } => self.note_intent(intent),
             Notice::SessionExited { .. }
             | Notice::Bell { .. }
             | Notice::DaemonRestarted { .. }
-            | Notice::NotifyIntent { .. }
             // The desktop lists worktrees when a command asks for them.
             | Notice::WorktreesChanged { .. }
             // `workbench/remote.rs` follows `Connection::notices` itself.
@@ -1286,8 +1297,12 @@ impl SessionsStore {
             if self.hold_unread != session {
                 self.hold_unread = None;
             }
-            if session.is_some() {
+            if let Some(looked_at) = session {
                 self.last_focused = session;
+                // A daemon with `notify.mute` withdraws what the session has pending itself.
+                if self.connection.supports_notify_mute() {
+                    self.surfaced.remove(&looked_at);
+                }
             }
             self.report_focus(cx);
             self.changed(StoreChanged::FOCUS, cx);
@@ -1344,6 +1359,7 @@ impl SessionsStore {
     }
 
     /// *Mark as read*: what is unread about `session` is read, whether or not it is on screen.
+    /// The notification intents raised for it are acknowledged: their banners go.
     pub fn mark_read(&mut self, session: SessionId, cx: &mut Context<Self>) {
         if self.hold_unread == Some(session) {
             self.hold_unread = None;
@@ -1351,6 +1367,73 @@ impl SessionsStore {
         if self.attention.mark_read(session) {
             self.changed(StoreChanged::ATTENTION, cx);
         }
+        self.ack_surfaced(session, cx);
+    }
+
+    /// Remembers an intent raised for a session, to acknowledge it when the session is read.
+    fn note_intent(&mut self, intent: &NotificationIntent) {
+        let total: usize = self.surfaced.values().map(Vec::len).sum();
+        if total >= MAX_SURFACED {
+            // The oldest are forgotten with their session's whole list; the daemon lets intents
+            // expire on its own.
+            self.surfaced.clear();
+        }
+        self.surfaced
+            .entry(intent.session_id)
+            .or_default()
+            .push(intent.id.clone());
+    }
+
+    /// `notify.ack` for every intent noted for `session`. One that is gone already (acted on,
+    /// expired, withdrawn) answers `not_found`, which is fine.
+    fn ack_surfaced(&mut self, session: SessionId, cx: &mut Context<Self>) {
+        let Some(ids) = self.surfaced.remove(&session) else {
+            return;
+        };
+        if self.state.connection != ConnectionState::Connected {
+            return;
+        }
+        for id in ids {
+            let acked = self.call(
+                Request::NotifyAck(hutan_protocol::notify::NotifyAck { id }),
+                |_: hutan_protocol::messages::Empty| (),
+                cx,
+            );
+            cx.background_spawn(async move {
+                if let Err(error) = acked.await {
+                    tracing::debug!(%error, "an intent was not acknowledged");
+                }
+            })
+            .detach();
+        }
+    }
+
+    /// Whether notifications of `session` are muted (`notify.mute`, protocol 0.34).
+    pub fn is_muted(&self, session: SessionId) -> bool {
+        self.session(session).is_some_and(|info| info.muted)
+    }
+
+    /// Whether the daemon can mute a session's notifications.
+    pub fn supports_mute(&self) -> bool {
+        self.connection.supports_notify_mute()
+    }
+
+    /// `notify.mute`: silences the notifications of `session` (`muted`) or lets them through.
+    /// The session's `muted` follows from the daemon's `session.updated`.
+    pub fn set_muted(
+        &self,
+        session: SessionId,
+        muted: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<SessionInfo, String>> {
+        self.call(
+            Request::NotifyMute(hutan_protocol::notify::NotifyMute {
+                session_id: session,
+                muted,
+            }),
+            |result: SessionResult| result.session,
+            cx,
+        )
     }
 
     /// *Mark as unread*: `session` needs the user again until it is looked at. Ends a snooze.
@@ -2320,6 +2403,7 @@ mod tests {
             placement: None,
             folder: None,
             recovery: None,
+            muted: false,
         }
     }
 

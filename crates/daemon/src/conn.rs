@@ -65,6 +65,7 @@ pub const CAPABILITIES: &[&str] = &[
     "memory",
     "fs",
     "fs.watch",
+    "notify.mute",
 ];
 
 /// How long a closing connection may take to flush already queued messages.

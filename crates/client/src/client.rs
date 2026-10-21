@@ -39,7 +39,7 @@ use hutan_protocol::messages::{
     WorkspaceInfo, decode_result,
 };
 use hutan_protocol::notify::{
-    ClientFocus, NotificationIntent, NotifyAck, NotifyAct, NotifyActed, NotifyList,
+    ClientFocus, NotificationIntent, NotifyAck, NotifyAct, NotifyActed, NotifyList, NotifyMute,
 };
 use hutan_protocol::project::{WorkspaceAssign, WorkspaceDelete};
 use hutan_protocol::provider::{
@@ -151,6 +151,9 @@ pub(crate) const FS_CAPABILITY: &str = "fs";
 /// Capability for `fs.watch` / `fs.unwatch` and the `fs.changed` and `fs.generation` events
 /// (protocol 0.33).
 pub(crate) const FS_WATCH_CAPABILITY: &str = "fs.watch";
+/// Capability for `notify.mute`, `SessionInfo.muted`, intents withheld for a focused session and
+/// withdrawn when one is focused (protocol 0.34).
+pub(crate) const NOTIFY_MUTE_CAPABILITY: &str = "notify.mute";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -185,6 +188,7 @@ const CAPABILITIES: &[&str] = &[
     MEMORY_CAPABILITY,
     FS_CAPABILITY,
     FS_WATCH_CAPABILITY,
+    NOTIFY_MUTE_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -598,6 +602,27 @@ impl Client {
         self.call::<Empty>(Request::ClientFocus(ClientFocus { session_id }))
             .await
             .map(|_| ())
+    }
+
+    /// True when the daemon advertised capability `notify.mute` (protocol 0.34).
+    pub fn supports_notify_mute(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == NOTIFY_MUTE_CAPABILITY)
+    }
+
+    /// `notify.mute`: silences the session's notifications (`muted`), or lets them through
+    /// again; the session as it is now.
+    pub async fn notify_mute(
+        &self,
+        session_id: SessionId,
+        muted: bool,
+    ) -> Result<SessionInfo, ClientError> {
+        let result: SessionResult = self
+            .call(Request::NotifyMute(NotifyMute { session_id, muted }))
+            .await?;
+        Ok(result.session)
     }
 
     /// True when the daemon advertised capability `control` (protocol 0.21).

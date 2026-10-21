@@ -349,6 +349,7 @@ mod tests {
                 restarted_at_ms: 1_000,
                 lost: Vec::<Lost>::new(),
             }),
+            muted: false,
         }
     }
 

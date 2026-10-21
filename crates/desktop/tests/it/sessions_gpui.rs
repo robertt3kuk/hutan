@@ -209,6 +209,7 @@ fn the_sessions_panel_lists_groups_and_filters(cx: &mut TestAppContext) {
             "Open in Split Down",
             "Mark as unread",
             "Snooze until it changes (nothing needs you here)",
+            "Mute notifications",
             "Rename…",
             "Restart",
             "Stop…",

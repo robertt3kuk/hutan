@@ -5,6 +5,10 @@
 //! The daemon decides *that* something deserves the user's attention and says so with an intent;
 //! whoever can actually show a notification (a Notifier, the desktop, `hutan notify watch`)
 //! renders it and sends the user's choice back with `notify.act`.
+//!
+//! Protocol 0.34 (capability `notify.mute`): `notify.mute` silences one session, which
+//! `SessionInfo.muted` then says; a session some client has focused raises no intent of any kind,
+//! and focusing a session withdraws the intents it has pending.
 
 use hutan_core::{SessionId, WorkspaceId};
 use serde::{Deserialize, Serialize};
@@ -146,8 +150,24 @@ pub struct NotifyActed {
 /// replaced by the next report and dropped when the connection closes. A chat turn that
 /// finishes in a session some client has focused raises no `chat_turn_finished` intent.
 /// Answered with `Empty`. Unknown ids are accepted; they match nothing.
+///
+/// Protocol 0.34 (capability `notify.mute`): a session some client has focused raises no intent
+/// of any kind (its card is on screen), and reporting a session withdraws every intent it has
+/// pending (the user is looking at it), approvals and questions included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ClientFocus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
+}
+
+/// `notify.mute` (protocol 0.34, capability `notify.mute`): `muted: true` silences the session:
+/// it raises no intent of any kind (so no banner and no sound) and its pending intents are
+/// withdrawn; `false` lets it notify again. What the session needs from the user is unchanged:
+/// approvals still wait, and the desktop's attention list and Dock count still show it. The
+/// choice survives a daemon restart and is reported as `SessionInfo.muted`. Answered with
+/// `SessionResult`; `not_found` for an unknown session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotifyMute {
+    pub session_id: SessionId,
+    pub muted: bool,
 }

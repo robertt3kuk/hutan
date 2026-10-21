@@ -1,6 +1,6 @@
-//! `hutan notify ls|ack|act|watch` against a real daemon: the real `hutan` binary over the real
-//! socket, intents raised by real PTY sessions and by the fake Codex app server replaying a
-//! transcript recorded from codex 0.162.1.
+//! `hutan notify ls|ack|act|watch|mute|unmute` against a real daemon: the real `hutan` binary
+//! over the real socket, intents raised by real PTY sessions and by the fake Codex app server
+//! replaying a transcript recorded from codex 0.162.1.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -248,5 +248,35 @@ async fn usage_errors_exit_two_and_nothing_is_pending_at_first() {
     assert_eq!(missing.code, 2, "{missing:?}");
     let empty = t.hutan(&["notify", "ls", "--json"]).await.ok().json();
     assert!(empty["intents"].as_array().unwrap().is_empty());
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mute_silences_a_session_until_unmute_and_ls_says_so() {
+    let t = TestDaemon::start().await;
+    let session = t.new_session(&[], &["sleep", "600"]).await;
+    let muted_in_ls = |sessions: Vec<Value>| {
+        sessions
+            .iter()
+            .find(|s| s["id"] == session.as_str())
+            .map(|s| s["muted"].as_bool().unwrap_or(false))
+    };
+    assert_eq!(muted_in_ls(t.sessions().await), Some(false));
+
+    let muted = t
+        .hutan(&["notify", "mute", &session, "--json"])
+        .await
+        .ok()
+        .json();
+    assert_eq!(muted["id"], session.as_str());
+    assert_eq!(muted["muted"], true);
+    assert_eq!(muted_in_ls(t.sessions().await), Some(true));
+
+    let said = t.hutan(&["notify", "unmute", &session]).await.ok();
+    assert!(said.stdout.contains("are on"), "{said:?}");
+    assert_eq!(muted_in_ls(t.sessions().await), Some(false));
+
+    let unknown = t.hutan(&["notify", "mute", "no-such-session"]).await;
+    assert_eq!(unknown.code, 1, "{unknown:?}");
     t.stop().await;
 }

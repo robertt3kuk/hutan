@@ -473,6 +473,14 @@ impl Connection {
             .is_some_and(|client| client.supports_notify())
     }
 
+    /// True while connected to a daemon that advertised capability `notify.mute`
+    /// ([`Client::supports_notify_mute`]); false when disconnected.
+    pub fn supports_notify_mute(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_notify_mute())
+    }
+
     /// True while connected to a daemon that advertised capability `worktree`
     /// ([`Client::supports_worktrees`]); false when disconnected.
     pub fn supports_worktrees(&self) -> bool {

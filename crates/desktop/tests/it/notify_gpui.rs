@@ -393,3 +393,64 @@ fn a_focus_report_cut_off_by_a_connection_loss_is_made_again_on_the_next_connect
     });
     assert_eq!(intents(&daemon).len(), 1);
 }
+
+/// The labels of the open context menu.
+fn menu_labels(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
+    view.read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("a menu is open")
+        .into_iter()
+        .map(|(label, _)| label.to_string())
+        .collect()
+}
+
+fn show_session_menu(cx: &mut VisualTestContext, session: SessionId) {
+    use hutan_desktop::workbench::actions;
+    cx.dispatch_action(actions::ShowSessionMenu(actions::SessionMenuAt {
+        session: session.to_string(),
+        position: gpui::point(gpui::px(50.0), gpui::px(50.0)),
+    }));
+}
+
+/// Protocol 0.34: the session menu mutes and unmutes a session's notifications, and *Mark as
+/// read* acknowledges what the session raised.
+#[gpui::test]
+fn the_session_menu_mutes_notifications_and_reading_acknowledges_them(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let quiet = daemon.sh_titled("quiet", "sleep 300");
+    let (view, cx) = open(cx, &daemon, daemon.connection(), 1);
+    let muted = |view: &Entity<Workbench>, cx: &mut VisualTestContext| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).is_muted(quiet.id))
+    };
+
+    show_session_menu(cx, quiet.id);
+    let labels = menu_labels(&view, cx);
+    let at = labels
+        .iter()
+        .position(|l| l == "Mute notifications")
+        .unwrap_or_else(|| panic!("no mute entry in {labels:?}"));
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(at, window, cx));
+    wait_until(cx, "the session to be muted", |cx| muted(&view, cx));
+    assert!(daemon.session(quiet.id).muted);
+
+    show_session_menu(cx, quiet.id);
+    let labels = menu_labels(&view, cx);
+    let at = labels
+        .iter()
+        .position(|l| l == "Unmute notifications")
+        .unwrap_or_else(|| panic!("no unmute entry in {labels:?}"));
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(at, window, cx));
+    wait_until(cx, "the session to be unmuted", |cx| !muted(&view, cx));
+
+    // A session nobody looks at fails: its intent is pending until the user reads it.
+    let failing = daemon.sh_titled("failing", "exit 3");
+    wait_until(cx, "the exit intent", |_| {
+        intents(&daemon).iter().any(|i| i.session_id == failing.id)
+    });
+    wait_until(cx, "the intent to be acknowledged on read", |cx| {
+        view.update(cx, |wb, cx| {
+            wb.sessions()
+                .update(cx, |store, cx| store.mark_read(failing.id, cx));
+        });
+        intents(&daemon).iter().all(|i| i.session_id != failing.id)
+    });
+}

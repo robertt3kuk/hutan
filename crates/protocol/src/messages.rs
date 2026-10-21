@@ -33,7 +33,7 @@ use crate::memory::{
     MemoryHistoryRequest, MemoryList, MemoryProposalResolve, MemoryProposalsList, MemoryPropose,
     MemoryScope, MemoryTransition, MemoryUpdate, MemoryWrite,
 };
-use crate::notify::{ClientFocus, NotificationIntent, NotifyAck, NotifyAct};
+use crate::notify::{ClientFocus, NotificationIntent, NotifyAck, NotifyAct, NotifyMute};
 use crate::project::{ProjectInfo, WorkspaceAssign, WorkspaceDelete};
 use crate::provider::{
     ChatSetModel, ProviderAdd, ProviderRef, ProviderSetCredential, ProviderUpdate,
@@ -325,6 +325,10 @@ pub enum Request {
     /// answered with `Empty`.
     #[serde(rename = "client.focus")]
     ClientFocus(ClientFocus),
+    /// Capability `notify.mute` (protocol 0.34): silences a session's notifications, or lets
+    /// them through again; answered with `SessionResult`.
+    #[serde(rename = "notify.mute")]
+    NotifyMute(NotifyMute),
     /// Capability `worktree` (protocol 0.14): a git worktree for a branch; answered with
     /// `WorktreeCreated`.
     #[serde(rename = "worktree.create")]
@@ -983,6 +987,10 @@ pub struct SessionInfo {
     /// session did to it, until the user dismisses it or acts in the session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery: Option<Recovery>,
+    /// Protocol 0.34 (capability `notify.mute`): the user muted the session's notifications
+    /// (`notify.mute`): it raises no notification intent. It still counts as needing the user.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub muted: bool,
 }
 
 /// The latest report of a coding agent running in a session: the main agent, with the state

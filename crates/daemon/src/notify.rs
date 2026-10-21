@@ -10,15 +10,17 @@
 //! | `agent_blocked` | a node of a session's agent tree becomes `blocked` |
 //! | `agent_finished` | the main agent goes `working` → `idle` with outcome `completed` after `min_turn_secs` |
 //! | `session_exited_with_error` | a session's process exits with a non-zero code |
-//! | `chat_turn_finished` | a chat turn completes while no client has the session focused |
+//! | `chat_turn_finished` | a chat turn completes |
 //! | `task_done` / `task_failed` | a task (`task.updated`) changes into `done` / `failed`, for the session that ran it; exempt from the rate limit |
 //!
-//! Every candidate passes the same gate: the `[notify]` settings (`enabled`, `kinds`), dedup by
-//! `(kind, session, node)` against the pending intents, and a rate limit of one intent per
-//! session per [`RATE_LIMIT_MS`] (approvals and questions are exempt from it and never counted by it). Pending
-//! intents are kept in memory, at most [`MAX_PENDING`]; they are lost with the daemon, which is
-//! right for something that says "look now". An intent leaves the list when it is acknowledged,
-//! acted on, expires, or (approvals, questions) is resolved.
+//! Every candidate passes the same gate: the `[notify]` settings (`enabled`, `kinds`), the
+//! session's mute (`notify.mute`, protocol 0.34), the focus (a session some client has focused
+//! raises nothing: its card is on screen), dedup by `(kind, session, node)` against the pending
+//! intents, and a rate limit of one intent per session per [`RATE_LIMIT_MS`] (approvals and
+//! questions are exempt from it and never counted by it). Pending intents are kept in memory, at
+//! most [`MAX_PENDING`]; they are lost with the daemon, which is right for something that says
+//! "look now". An intent leaves the list when it is acknowledged, acted on, expires, (approvals,
+//! questions) is resolved, or its session is focused or muted.
 //!
 //! [`Core`] is the whole decision logic, synchronous and driven by explicit timestamps, so its
 //! rules are unit-tested without a clock; [`NotifyService`] feeds it from the event bus and
@@ -49,7 +51,7 @@ use tracing::{debug, info, warn};
 use ulid::Ulid;
 
 use crate::bus::EventBus;
-use crate::config::NotifySettings;
+use crate::config::{NotifySettings, NotifySound};
 use crate::conn::ConnId;
 use crate::notify_native::{
     self, NativeNotification, NativeOp, NativePoster, NativeResponse, ResponseAction,
@@ -71,11 +73,12 @@ const MAX_MEMOS: usize = 4096;
 /// daemon restart makes of a task that was running).
 const TASK_FRESH_MS: u64 = 60_000;
 
-/// What the session is called in an intent, and where it lives.
+/// What the session is called in an intent, where it lives, and whether the user muted it.
 #[derive(Debug, Clone, Default)]
 struct SessionMeta {
     title: Option<String>,
     workspace_id: Option<WorkspaceId>,
+    muted: bool,
 }
 
 /// Something that may become an intent: everything but the session's title, which is looked up
@@ -412,10 +415,14 @@ impl Core {
                 candidate.kind,
                 IntentKind::TaskDone | IntentKind::TaskFailed
             );
-        if candidate.kind == IntentKind::ChatTurnFinished
-            && self.focus.values().any(|s| *s == candidate.session)
-        {
-            debug!(session = %candidate.session, "chat turn finished in a focused session; no intent");
+        if meta.muted {
+            debug!(kind = candidate.kind.as_str(), session = %candidate.session, "the session is muted; no intent");
+            return None;
+        }
+        // The user is looking at the session: its card (approval, question, reply) is on screen,
+        // and a banner or a sound would only interrupt.
+        if self.focus.values().any(|s| *s == candidate.session) {
+            debug!(kind = candidate.kind.as_str(), session = %candidate.session, "the session is focused; no intent");
             return None;
         }
         if self.pending.iter().any(|e| {
@@ -512,6 +519,11 @@ impl Core {
         let before = self.withdrawn.len();
         self.withdraw_where(|e| e.intent.id == id);
         self.withdrawn.len() != before
+    }
+
+    /// Withdraws every pending intent of `session` (it is looked at, or was muted).
+    fn withdraw_session(&mut self, session: SessionId) {
+        self.withdraw_where(|e| e.intent.session_id == session);
     }
 }
 
@@ -789,10 +801,11 @@ impl NotifyService {
             // only be queued after it, never before.
             let raised = self.with_core(|core| {
                 let entry = core.offer(candidate, &meta, now_ms())?;
-                self.native_send(NativeOp::Post(NativeNotification::from_intent(
-                    &entry.intent,
-                    &entry.destructive,
-                )));
+                let silent = core.settings.sound == NotifySound::None;
+                self.native_send(NativeOp::Post(
+                    NativeNotification::from_intent(&entry.intent, &entry.destructive)
+                        .silent(silent),
+                ));
                 Some(entry)
             });
             if let Some(entry) = raised
@@ -818,6 +831,7 @@ impl NotifyService {
                 .map(|s| SessionMeta {
                     title: Some(s.title),
                     workspace_id: Some(s.workspace_id),
+                    muted: s.muted,
                 })
                 .unwrap_or_default(),
             Err(error) => {
@@ -954,17 +968,23 @@ impl NotifyService {
         self.publish_open(&entry).map(|_| ())
     }
 
-    /// `client.focus`.
+    /// `client.focus`. A session that is reported is looked at: what it has pending is
+    /// withdrawn (its banners leave the notification centre).
     pub fn set_focus(&self, conn: ConnId, session: Option<SessionId>) {
-        let mut core = self.core.lock();
-        match session {
+        self.with_core(|core| match session {
             Some(session) => {
                 core.focus.insert(conn, session);
+                core.withdraw_session(session);
             }
             None => {
                 core.focus.remove(&conn);
             }
-        }
+        });
+    }
+
+    /// `notify.mute` silenced `session`: what it has pending is withdrawn.
+    pub fn session_muted(&self, session: SessionId) {
+        self.with_core(|core| core.withdraw_session(session));
     }
 
     /// A connection closed: its focus goes with it.
@@ -998,6 +1018,7 @@ mod tests {
         SessionMeta {
             title: Some("api".to_owned()),
             workspace_id: Some(WorkspaceId::new()),
+            muted: false,
         }
     }
 
@@ -1091,6 +1112,62 @@ mod tests {
             .into_iter()
             .filter_map(|c| core.offer(c, &meta, now).map(|entry| entry.intent))
             .collect()
+    }
+
+    #[test]
+    fn a_muted_session_raises_nothing_of_any_kind() {
+        let mut core = core();
+        let session = SessionId::new();
+        let muted = SessionMeta {
+            muted: true,
+            ..meta()
+        };
+        let events = [
+            Event::ApprovalRequired {
+                approval: Box::new(approval(session)),
+            },
+            tree(
+                session,
+                vec![node("root", NodeKind::Main, NodeState::Blocked)],
+            ),
+            turn_completed(session, 3),
+        ];
+        for event in &events {
+            for candidate in core.plan(event, 1_000) {
+                assert!(core.offer(candidate, &muted, 1_000).is_none());
+            }
+        }
+        assert!(core.list(1_000).is_empty());
+        // The same approval in a session that is not muted is raised.
+        assert_eq!(raise(&mut core, &events[0], 1_000).len(), 1);
+    }
+
+    #[test]
+    fn a_focused_session_raises_nothing_and_focusing_withdraws_what_it_had() {
+        let mut core = core();
+        let (looked_at, elsewhere) = (SessionId::new(), SessionId::new());
+        let conn = ConnId(3);
+        core.focus.insert(conn, looked_at);
+        let asks = |session| Event::ApprovalRequired {
+            approval: Box::new(approval(session)),
+        };
+        assert!(raise(&mut core, &asks(looked_at), 1_000).is_empty());
+        let blocked = tree(
+            looked_at,
+            vec![node("root", NodeKind::Main, NodeState::Blocked)],
+        );
+        assert!(raise(&mut core, &blocked, 1_000).is_empty());
+        assert_eq!(raise(&mut core, &asks(elsewhere), 1_000).len(), 1);
+
+        // Looking at the other session takes its intents away, and only its.
+        core.focus.remove(&conn);
+        let kept = raise(&mut core, &asks(looked_at), 2_000);
+        assert_eq!(kept.len(), 1);
+        core.withdrawn.clear();
+        core.withdraw_session(elsewhere);
+        assert_eq!(core.withdrawn.len(), 1);
+        let pending: Vec<SessionId> = core.list(2_000).iter().map(|i| i.session_id).collect();
+        assert_eq!(pending, [looked_at]);
     }
 
     #[test]
