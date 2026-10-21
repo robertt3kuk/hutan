@@ -56,7 +56,7 @@ const NOTES_MAX: usize = 512;
 const NOTE_WINDOW: Duration = Duration::from_secs(15);
 /// Versions connections were told of files (reads, own writes), remembered for their watches.
 const SERVED_MAX: usize = 1024;
-/// Creations a watcher remembers having reported.
+/// Paths whose birth a watcher remembers, for telling created from modified.
 const BIRTHS_MAX: usize = 1024;
 
 /// What one watcher covers.
