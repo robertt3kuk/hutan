@@ -1106,12 +1106,17 @@ fn a_short_reconnect_during_an_approval_keeps_the_card_and_answers_afterwards(
     });
     let before = transcript(&model, cx, |t| t.len());
 
+    // The link stays down (new connections are closed at once) until the test has seen the
+    // drop: the first retry comes ~100 ms after it, and a loaded machine can leave the test
+    // thread busy for longer than that, so the drop would go unnoticed.
+    daemon.proxy().block(true);
     daemon.proxy().sever();
     pump(cx, "the connection to drop", |cx| {
         view.read_with(cx, |wb, cx| {
             wb.sessions().read(cx).connection_state() != hutan_client::ConnectionState::Connected
         })
     });
+    daemon.proxy().block(false);
     pump(cx, "the connection to return", |cx| {
         view.read_with(cx, |wb, cx| {
             wb.sessions().read(cx).connection_state() == hutan_client::ConnectionState::Connected
