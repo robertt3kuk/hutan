@@ -220,3 +220,88 @@ fn the_panel_moves_like_any_other_and_clear_asks_first(cx: &mut TestAppContext) 
     panel.update(cx, |p, cx| p.confirmed(cx));
     pump_until(cx, "the index to be empty", |cx| rows(cx) == 0);
 }
+
+/// *Search history…* on a fresh window makes the History panel, which has yet to read the index
+/// state from the daemon: the keys typed right after it go to its search field, not to the
+/// terminal that had the keyboard.
+#[gpui::test]
+fn typing_right_after_search_history_lands_in_the_history_field(cx: &mut TestAppContext) {
+    let env = HistoryEnv::new();
+    let daemon = TestDaemon::start_with_config(&env.daemon_toml(true));
+    let cat = daemon.create_session(&["cat"], None);
+    let (view, cx) = open(cx, &daemon);
+    view.update_in(cx, |wb, window, cx| wb.open_session(cat.id, window, cx));
+    let terminal = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |wb, cx| {
+            wb.terminal_view_of(cat.id)
+                .map(|v| gpui::Focusable::focus_handle(v.read(cx), cx))
+        })
+    };
+    wait_until(cx, "the terminal to have the keyboard", |cx| {
+        terminal(cx).is_some_and(|f| cx.update(|window, _| f.is_focused(window)))
+    });
+    assert!(
+        view.read_with(cx, |wb, _| wb.panel::<HistoryPanel>("history"))
+            .is_none(),
+        "the History panel is made by Search history…"
+    );
+
+    cx.dispatch_action(actions::SearchHistory);
+    // One frame, as a window draws before the next key arrives.
+    draw(cx);
+    cx.simulate_input("axolotl");
+
+    let panel = view
+        .read_with(cx, |wb, _| wb.panel::<HistoryPanel>("history"))
+        .expect("the History panel is drawn");
+    assert_eq!(panel.read_with(cx, |p, _| p.query().to_owned()), "axolotl");
+    let field = panel.read_with(cx, |p, cx| gpui::Focusable::focus_handle(p, cx));
+    let terminal = terminal(cx).expect("the terminal view is still there");
+    cx.update(|window, _| {
+        assert!(field.is_focused(window), "the History field has the keyboard");
+        assert!(!terminal.is_focused(window));
+    });
+}
+
+/// Refreshes asked while `history.status` is in flight do not cancel it: the answer already on
+/// its way lands, so the index state becomes known however often the panel is asked to refresh.
+#[gpui::test]
+fn refreshes_asked_while_the_status_is_read_do_not_cancel_it(cx: &mut TestAppContext) {
+    let env = HistoryEnv::new();
+    let daemon = TestDaemon::start_with_config(&env.daemon_toml(true));
+    let (connection, hold) = daemon.held_connection();
+    let (view, cx) = open_with(
+        cx,
+        SettingsStore::new(SettingsPaths::in_dir(daemon.home())),
+        connection,
+        None,
+    );
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    // The new panel reads the status; the daemon answers, and the answer is held on its way.
+    hold.answers(true);
+    cx.dispatch_action(actions::OpenPanel("history".into()));
+    draw(cx);
+    let panel = view
+        .read_with(cx, |wb, _| wb.panel::<HistoryPanel>("history"))
+        .expect("the History panel is drawn");
+    wait_until(cx, "the status answer on its way", |_| {
+        hold.holds_answer_with("\"db_bytes\"")
+    });
+    assert!(panel.read_with(cx, |p, _| p.status().is_none()));
+
+    // Three rapid refreshes while it is in flight; whatever they would send is held as well.
+    hold.requests(true);
+    for _ in 0..3 {
+        panel.update(cx, |p, cx| p.refresh_status(cx));
+        draw(cx);
+    }
+    hold.answers(false);
+    pump_until(cx, "the index state", |cx| {
+        panel.read_with(cx, |p, _| p.status().is_some())
+    });
+    assert!(panel.read_with(cx, |p, _| p.status().unwrap().enabled));
+}

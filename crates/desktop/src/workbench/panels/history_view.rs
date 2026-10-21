@@ -167,7 +167,14 @@ impl Render for HistoryPanel {
                 } else {
                     "Waiting for the daemon…"
                 };
-                self.render_note(text, &theme, &tokens)
+                // The field is there before the state is known, so what is typed right after
+                // *Search history…* lands in it instead of in whatever had the keyboard.
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(self.render_search(window, &theme, &tokens, cx))
+                    .child(self.render_note(text, &theme, &tokens))
+                    .into_any_element()
             }
             Index::Known(info) if !info.enabled => self.render_disabled(&theme, &tokens, cx),
             Index::Known(_) => self.render_enabled(window, &theme, &tokens, cx),

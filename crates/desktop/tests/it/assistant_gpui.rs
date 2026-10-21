@@ -816,15 +816,9 @@ fn a_history_hit_of_an_assistant_conversation_opens_it_in_the_panel_and_continue
         .read_with(cx, |wb, _| wb.panel::<HistoryPanel>("history"))
         .expect("the History panel is drawn");
     cx.dispatch_action(actions::SearchHistory);
-    // Since CL-CHROME the History panel is not the right rail's default, so it is made only
-    // now and asks the daemon for the index state first; *Search history…* puts the keyboard
-    // in its search field once the field is drawn (`HistoryPanel::focus_search`). Wait for
-    // that (the user's next keystroke), then type the query there.
-    pump_until(cx, "the History search field to have the keyboard", |cx| {
-        cx.update(|window, cx| {
-            gpui::Focusable::focus_handle(history_panel.read(cx), cx).is_focused(window)
-        })
-    });
+    // The keyboard is in the search field at once, also while the panel still reads the index
+    // state (`HistoryPanel::focus_search`): type right after one frame.
+    draw(cx);
     cx.simulate_input("quokkaquartz");
     assert_eq!(
         history_panel.read_with(cx, |p, _| p.query().to_owned()),

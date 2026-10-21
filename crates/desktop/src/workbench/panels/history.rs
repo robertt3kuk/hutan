@@ -179,7 +179,11 @@ pub struct HistoryPanel {
     search_task: Option<Task<()>>,
     catalog_task: Option<Task<()>>,
     rescan_task: Option<Task<()>>,
+    /// The `history.status` in flight. A refresh asked meanwhile does not replace it (a stream
+    /// of refreshes would then never let one answer land): it sets `status_again`, and one more
+    /// request goes out once this one is answered.
     status_task: Option<Task<()>>,
+    status_again: bool,
     settle_task: Option<Task<()>>,
     card_task: Option<Task<()>>,
     _timer: Task<()>,
@@ -317,6 +321,7 @@ impl HistoryPanel {
             catalog_task: None,
             rescan_task: None,
             status_task: None,
+            status_again: false,
             settle_task: None,
             card_task: None,
             _timer: timer,
@@ -514,16 +519,19 @@ impl HistoryPanel {
             .supports_history_sessions()
     }
 
-    /// Focuses the search field; while it is not on screen yet (the index state is still
-    /// unknown, or indexing is off) the focus moves there as soon as it appears. The index
-    /// state is read again, so a `hutan index enable` made meanwhile shows up.
+    /// Focuses the search field. It is on screen while indexing is on and while the index state
+    /// is still being read, so what is typed next lands in it; while indexing is off the focus
+    /// moves there as soon as the field appears. The index state is read again, so a `hutan
+    /// index enable` made meanwhile shows up.
     pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh_status(cx);
-        if self.status().is_some_and(|info| info.enabled) {
-            self.focus_wanted = false;
-            window.focus(&self.search_focus, cx);
-        } else {
-            self.focus_wanted = true;
+        match &self.index {
+            Index::Unknown => window.focus(&self.search_focus, cx),
+            Index::Known(info) if info.enabled => {
+                self.focus_wanted = false;
+                window.focus(&self.search_focus, cx);
+            }
+            Index::Known(_) | Index::Unsupported => self.focus_wanted = true,
         }
     }
 
@@ -1074,7 +1082,8 @@ impl HistoryPanel {
 
     // ---- the index -------------------------------------------------------------------------
 
-    /// Reads `history.status`.
+    /// Reads `history.status`; while a read is in flight, one more follows it (see
+    /// `status_again`).
     pub fn refresh_status(&mut self, cx: &mut Context<Self>) {
         let store = self.env.sessions.read(cx);
         let connection = store.connection().clone();
@@ -1086,15 +1095,23 @@ impl HistoryPanel {
             cx.notify();
             return;
         }
+        if self.status_task.is_some() {
+            self.status_again = true;
+            return;
+        }
         self.status_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move { connection.history_status().await })
                 .await;
             this.update(cx, |this, cx| {
+                this.status_task = None;
                 match result {
                     Ok(info) => this.status_arrived(info, cx),
                     Err(error) => this.error = Some(error.to_string()),
+                }
+                if std::mem::take(&mut this.status_again) {
+                    this.refresh_status(cx);
                 }
                 cx.notify();
             })

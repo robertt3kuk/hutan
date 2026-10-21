@@ -112,6 +112,78 @@ impl Drop for Proxy {
     }
 }
 
+/// The switches of [`TestDaemon::held_connection`]'s proxy.
+#[derive(Clone, Default)]
+pub struct Hold {
+    up: Valve,
+    down: Valve,
+}
+
+impl Hold {
+    /// Holds back (or lets go of) what the client sends.
+    pub fn requests(&self, held: bool) {
+        self.up.set(held);
+    }
+
+    /// Holds back (or lets go of) what the daemon sends.
+    pub fn answers(&self, held: bool) {
+        self.down.set(held);
+    }
+
+    /// Whether what the daemon sent and is held back contains `needle`.
+    pub fn holds_answer_with(&self, needle: &str) -> bool {
+        let held = self.down.0.held.lock().unwrap();
+        held.windows(needle.len()).any(|w| w == needle.as_bytes())
+    }
+}
+
+/// One direction of the held proxy: bytes read are kept while it is closed.
+#[derive(Clone, Default)]
+struct Valve(std::sync::Arc<ValveState>);
+
+#[derive(Default)]
+struct ValveState {
+    closed: std::sync::atomic::AtomicBool,
+    held: std::sync::Mutex<Vec<u8>>,
+    opened: tokio::sync::Notify,
+}
+
+impl Valve {
+    fn set(&self, closed: bool) {
+        self.0
+            .closed
+            .store(closed, std::sync::atomic::Ordering::SeqCst);
+        if !closed {
+            self.0.opened.notify_one();
+        }
+    }
+
+    async fn forward(
+        self,
+        mut from: tokio::net::unix::OwnedReadHalf,
+        mut to: tokio::net::unix::OwnedWriteHalf,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut chunk = vec![0u8; 64 * 1024];
+        loop {
+            tokio::select! {
+                read = from.read(&mut chunk) => match read {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => self.0.held.lock().unwrap().extend_from_slice(&chunk[..n]),
+                },
+                () = self.0.opened.notified() => {}
+            }
+            if self.0.closed.load(std::sync::atomic::Ordering::SeqCst) {
+                continue;
+            }
+            let out = std::mem::take(&mut *self.0.held.lock().unwrap());
+            if to.write_all(&out).await.is_err() {
+                return;
+            }
+        }
+    }
+}
+
 /// A daemon in this process on a fresh `HUTAN_HOME`.
 pub struct TestDaemon {
     pub dir: TempDir,
@@ -315,6 +387,35 @@ impl TestDaemon {
 
     pub fn proxy(&self) -> &Proxy {
         self.proxy.as_ref().expect("proxied_connection was called")
+    }
+
+    /// A connection through a proxy that holds back, while told to, what the client sends
+    /// ([`Hold::requests`]) or what the daemon sends back ([`Hold::answers`]), and passes it on
+    /// in order once let go: a test decides when a request is answered.
+    pub fn held_connection(&self) -> (Connection, Hold) {
+        use tokio::net::{UnixListener, UnixStream};
+        let path = self.dir.path().join("held.sock");
+        let upstream = self.paths.socket.clone();
+        let listener = {
+            let _guard = self.rt().enter();
+            UnixListener::bind(&path).unwrap()
+        };
+        let hold = Hold::default();
+        let held = hold.clone();
+        self.rt().spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                let Ok(daemon) = UnixStream::connect(&upstream).await else {
+                    return;
+                };
+                let (client_read, client_write) = client.into_split();
+                let (daemon_read, daemon_write) = daemon.into_split();
+                tokio::spawn(held.up.clone().forward(client_read, daemon_write));
+                tokio::spawn(held.down.clone().forward(daemon_read, client_write));
+            }
+        });
+        let mut options = self.options();
+        options.socket = Some(path);
+        (Connection::start(options), hold)
     }
 
     fn rt(&self) -> &tokio::runtime::Runtime {
