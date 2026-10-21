@@ -121,6 +121,18 @@ gpui::actions!(
         FindPrevious,
         /// Close find in file.
         CloseFind,
+        /// Put the base's text back in place of the agent's change at the caret (one undo step).
+        RejectAgentHunk,
+        /// Go to the agent's next change.
+        NextAgentHunk,
+        /// Go to the agent's previous change.
+        PreviousAgentHunk,
+        /// Keep every change the agent made to the file: its highlight goes (the owner of the
+        /// view drops the file from the pending ledger).
+        AcceptAgentChanges,
+        /// Scroll to the agent's newest change whenever it writes the file (the owner keeps the
+        /// toggle).
+        ToggleFollowAgent,
     ]
 );
 
@@ -192,5 +204,8 @@ pub(crate) fn register(root: Stateful<Div>, cx: &mut Context<CodeView>) -> State
     let root = run!(root, Copy, copy);
     let root = run!(root, Paste, paste);
     let root = run!(root, Undo, undo);
-    run!(root, Redo, redo)
+    let root = run!(root, Redo, redo);
+    let root = run!(root, RejectAgentHunk, reject_agent_hunk_at_caret);
+    let root = run!(root, NextAgentHunk, next_agent_hunk);
+    run!(root, PreviousAgentHunk, previous_agent_hunk)
 }

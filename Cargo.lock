@@ -2596,6 +2596,7 @@ dependencies = [
  "hutan-syntax",
  "hutan-vim",
  "regex",
+ "similar",
  "tracing",
  "unicode-width",
 ]

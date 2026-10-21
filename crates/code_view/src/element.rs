@@ -1,7 +1,8 @@
 //! The GPUI element that draws a [`CodeView`]: the gutter with line numbers, the lines that
 //! intersect the view (and only those: a frame never lays out the whole file), syntax colors,
-//! selections, carets, the input method's marked text, the matching bracket and find matches;
-//! the mouse; and the platform's text input while the view has the keyboard.
+//! selections, carets, the input method's marked text, the matching bracket and find matches,
+//! an agent's changes (E-10: a tint over the lines and a bar in the gutter, a mark where lines
+//! were removed); the mouse; and the platform's text input while the view has the keyboard.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -18,9 +19,19 @@ use gpui::{
 };
 use hutan_syntax::{HighlightSpan, SyntaxView};
 
+use crate::agent::HunkKind;
 use crate::layout::DisplayLine;
 use crate::style::{CodeStyle, rgba};
 use crate::view::{CodeView, Layout, OVERSCAN_LINES, line_window};
+
+/// How an agent's change marks a drawn line.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct AgentMarks {
+    /// The line is part of a change: tinted, with a bar of this color in the gutter.
+    pub bar: Option<Hsla>,
+    /// Lines were removed just above this one: a mark of this color on its top edge.
+    pub removed_above: Option<Hsla>,
+}
 
 /// Columns drawn past the right edge (and before the left one) of a horizontally scrolled view.
 const MARGIN_COLS: usize = 8;
@@ -58,6 +69,8 @@ struct LinePaint {
     carets: Vec<Range<f32>>,
     /// Column ranges of marked (composing) text, underlined.
     marked: Vec<Range<f32>>,
+    /// An agent's change on or above the line.
+    agent: AgentMarks,
 }
 
 pub(crate) struct Prepaint {
@@ -67,6 +80,8 @@ pub(crate) struct Prepaint {
     background: Hsla,
     gutter_background: Hsla,
     current_line: Option<Hsla>,
+    /// The tint of lines an agent changed.
+    agent_tint: Hsla,
     caret_color: Hsla,
     marked_color: Hsla,
     scroll_x: Pixels,
@@ -189,13 +204,14 @@ fn prepare(
 ) -> Prepaint {
     let style = view.style.clone();
     let (cell, line_h) = metrics(&style, window);
-    let (text, ready, editable, syntax) = {
+    let (text, ready, editable, syntax, hunks) = {
         let buffer = view.buffer().read(cx);
         (
             buffer.text().clone(),
             buffer.is_ready(),
             buffer.is_editable(),
             buffer.syntax_view(),
+            buffer.agent_hunks(),
         )
     };
     let line_count = if ready { text.line_count() } else { 0 };
@@ -241,6 +257,7 @@ fn prepare(
         background: rgba(theme.background),
         gutter_background: rgba(theme.gutter_background),
         current_line: None,
+        agent_tint: rgba(theme.agent_changed),
         caret_color: rgba(theme.cursor),
         marked_color: rgba(theme.foreground),
         scroll_x: px(view.scroll_x),
@@ -258,6 +275,7 @@ fn prepare(
     let offset = view.scroll_y - first as f32 * line_hf;
     let shown = (rows + 2 * OVERSCAN_LINES).min(line_count - first.min(line_count));
     let lines = first..first + shown;
+    let agent_marks = agent_marks(&text, &hunks, lines.clone(), theme);
     let visible_w = f32::from(bounds.right() - text_left).max(0.0);
     let from_col = ((view.scroll_x / f32::from(cell)).floor() as usize).saturating_sub(MARGIN_COLS);
     let to_col = from_col + (visible_w / f32::from(cell)).ceil() as usize + 2 * MARGIN_COLS;
@@ -495,6 +513,7 @@ fn prepare(
             fills,
             carets: if block { Vec::new() } else { carets },
             marked,
+            agent: agent_marks.get(line - first).copied().unwrap_or_default(),
         });
         if prepaint.current_line.is_some()
             && head_line == Some(line)
@@ -516,6 +535,54 @@ fn prepare(
     prepaint
 }
 
+/// The marks of an agent's changes (`hunks`, in byte order) on each line of `lines`.
+fn agent_marks(
+    text: &hutan_buffer::Text,
+    hunks: &[crate::agent::AgentHunk],
+    lines: Range<usize>,
+    theme: &hutan_settings::themes::EditorTheme,
+) -> Vec<AgentMarks> {
+    let mut marks = vec![AgentMarks::default(); lines.len()];
+    if hunks.is_empty() || lines.is_empty() {
+        return marks;
+    }
+    let view_start = text.line_start(lines.start).unwrap_or(0);
+    let view_end = text.line_range(lines.end - 1).map_or(text.len(), |r| r.end);
+    let first = hunks.partition_point(|h| h.bytes.end < view_start);
+    for hunk in hunks[first..]
+        .iter()
+        .take_while(|h| h.bytes.start <= view_end)
+    {
+        let start = hunk.bytes.start.min(text.len());
+        let Ok(start_line) = text.line_of_byte(text.floor_char_boundary(start)) else {
+            continue;
+        };
+        let kind = hunk.kind();
+        if kind == HunkKind::Removed {
+            if let Some(mark) = start_line
+                .checked_sub(lines.start)
+                .and_then(|i| marks.get_mut(i))
+            {
+                mark.removed_above = Some(rgba(theme.diff_removed));
+            }
+            continue;
+        }
+        // The hunk's bytes end after its last line break: that line is the last one it covers.
+        let end = hunk.bytes.end.min(text.len()).saturating_sub(1).max(start);
+        let end_line = text
+            .line_of_byte(text.floor_char_boundary(end))
+            .unwrap_or(start_line);
+        let color = rgba(if kind == HunkKind::Added {
+            theme.diff_added
+        } else {
+            theme.diff_modified
+        });
+        for line in start_line.max(lines.start)..=end_line.min(lines.end - 1) {
+            marks[line - lines.start].bar = Some(color);
+        }
+    }
+    marks
+}
 /// What identifies the syntax a frame colors with: the version of the tree and whether it is
 /// mapped across edits.
 fn syntax_key(syntax: Option<&SyntaxView>) -> (u64, bool) {
@@ -613,6 +680,16 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
     let x_of = |col: f32| layout.text_left + cell * col - state.scroll_x;
 
     window.with_content_mask(Some(ContentMask { bounds: text_area }), |window| {
+        // An agent's changed lines: tinted under everything else, across the text area.
+        for line in state.lines.iter().filter(|l| l.agent.bar.is_some()) {
+            window.paint_quad(fill(
+                Bounds::from_corners(
+                    point(text_area.left(), line.y),
+                    point(text_area.right(), line.y + line_h),
+                ),
+                state.agent_tint,
+            ));
+        }
         for line in &state.lines {
             for (cols, color) in &line.fills {
                 let (left, right, color) = if cols.start == f32::NEG_INFINITY {
@@ -661,6 +738,23 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
         if let Some(number) = &line.number {
             let origin = point(number_right - number.width, line.y);
             let _ = number.paint(origin, line_h, TextAlign::Left, None, window, cx);
+        }
+    }
+    // The gutter's marks of an agent's changes: a bar beside changed lines, a wedge where lines
+    // were removed.
+    let bar_left = state.gutter.left() + px(1.0);
+    for line in &state.lines {
+        if let Some(color) = line.agent.bar {
+            window.paint_quad(fill(
+                Bounds::new(point(bar_left, line.y), size(px(3.0), line_h)),
+                color,
+            ));
+        }
+        if let Some(color) = line.agent.removed_above {
+            window.paint_quad(fill(
+                Bounds::new(point(bar_left, line.y - px(1.5)), size(cell, px(3.0))),
+                color,
+            ));
         }
     }
 }

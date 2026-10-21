@@ -735,6 +735,91 @@ impl CodeView {
         cx.notify();
     }
 
+    // ---- an agent's changes (E-10) -----------------------------------------------------------
+
+    /// The agent's hunk the primary caret is in.
+    pub fn agent_hunk_at_caret(&self, cx: &App) -> Option<usize> {
+        let head = self.selections.primary().head;
+        self.buffer.read(cx).agent_hunk_at(head)
+    }
+
+    /// *Reject* on the hunk at the caret.
+    pub fn reject_agent_hunk_at_caret(&mut self, cx: &mut Context<Self>) {
+        if let Some(index) = self.agent_hunk_at_caret(cx) {
+            self.reject_agent_hunk(index, cx);
+        }
+    }
+
+    /// *Reject* on hunk `index`: the base's text goes back in its place as one undo step (undo
+    /// brings the agent's text and this view's carets back). Returns whether it did.
+    pub fn reject_agent_hunk(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
+        let id = cx.entity_id();
+        let before = self.selections.clone();
+        let applied = self
+            .buffer
+            .update(cx, |b, cx| b.reject_agent_hunk(index, id, Some(before), cx));
+        let Some(applied) = applied else {
+            return false;
+        };
+        let text = self.buffer.read(cx).text().clone();
+        if let Some(after) = applied.transaction.selection_after() {
+            self.selections = after.clamp(&text);
+        }
+        self.marked.clear();
+        self.goal = None;
+        self.reveal_head(cx);
+        cx.emit(CodeViewEvent::Changed);
+        cx.notify();
+        true
+    }
+
+    /// Moves the caret to the start of the agent's next hunk (wrapping around).
+    pub fn next_agent_hunk(&mut self, cx: &mut Context<Self>) {
+        self.step_agent_hunk(true, cx);
+    }
+
+    /// Moves the caret to the start of the agent's previous hunk (wrapping around).
+    pub fn previous_agent_hunk(&mut self, cx: &mut Context<Self>) {
+        self.step_agent_hunk(false, cx);
+    }
+
+    fn step_agent_hunk(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let hunks = self.buffer.read(cx).agent_hunks();
+        if hunks.is_empty() {
+            return;
+        }
+        let head = self.selections.primary().head;
+        let index = if forward {
+            hunks.iter().position(|h| h.bytes.start > head).unwrap_or(0)
+        } else {
+            hunks
+                .iter()
+                .rposition(|h| h.bytes.start < head && !h.bytes.contains(&head))
+                .unwrap_or(hunks.len() - 1)
+        };
+        self.reveal_agent_hunk(index, cx);
+    }
+
+    /// Puts the caret at the start of hunk `index` and scrolls it about a third from the top
+    /// (*Follow agent*, the hunk arrows).
+    pub fn reveal_agent_hunk(&mut self, index: usize, cx: &mut Context<Self>) {
+        let start = {
+            let buffer = self.buffer.read(cx);
+            let Some(hunk) = buffer.agent_hunks().get(index).cloned() else {
+                return;
+            };
+            buffer
+                .text()
+                .line_of_byte(hunk.bytes.start.min(buffer.text().len()))
+        };
+        let Ok(line) = start else {
+            return;
+        };
+        self.buffer.update(cx, |b, _| b.break_group());
+        self.reveal_line(line + 1, None, cx);
+        cx.emit(CodeViewEvent::Changed);
+    }
+
     // ---- find and replace -----------------------------------------------------------------
 
     pub fn find_state(&self) -> &FindState {

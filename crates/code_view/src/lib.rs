@@ -23,10 +23,15 @@
 //!   modes with a block or bar caret, the Escape rule for input methods, and the text half of
 //!   the `:` line ([`ex`]: `:s :g :normal :set :N`); the owner draws the line and runs the
 //!   commands about files and windows.
+//! - Agent changes (E-10, [`agent`]): the hunks an agent's turn left in the file (its base
+//!   rebased over the user's own edits, then diffed against the text), drawn as a tint and a
+//!   gutter bar, rejected one at a time as an undoable edit, recomputed in the background after
+//!   edits (less often for large or minified files).
 //!
 //! GPUI is linked here (a UI crate, ADR 0010); the text model and the parser are GPUI-free.
 
 pub mod actions;
+pub mod agent;
 mod buffer;
 mod editing;
 mod element;
@@ -42,6 +47,7 @@ mod view;
 mod vim_host;
 
 pub use actions::*;
+pub use agent::{AgentChanges, AgentHunk, AgentLabel, HunkKind};
 pub use buffer::{
     BufferEdited, Coalesce, Conflict, EditKind, FailReason, FileBuffer, LoadState,
     TYPING_GROUP_PAUSE, file_name, language_label,

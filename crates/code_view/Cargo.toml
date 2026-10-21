@@ -21,6 +21,7 @@ hutan-settings.workspace = true
 hutan-syntax.workspace = true
 hutan-vim.workspace = true
 regex.workspace = true
+similar.workspace = true
 tracing.workspace = true
 unicode-width.workspace = true
 

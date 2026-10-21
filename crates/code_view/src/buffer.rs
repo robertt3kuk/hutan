@@ -10,17 +10,24 @@
 //! a [`Syntax`] only while [`FileBuffer::set_syntax_active`] says a view of it is visible, and
 //! never for a file in large-file mode; the rope stays either way and the tree is parsed again on
 //! show.
+//!
+//! E-10: the owner may give the buffer an agent's changes ([`FileBuffer::set_agent_changes`]);
+//! the buffer then keeps the agent's hunks in its current text, recomputed in the background
+//! after every change (at once after a reload or a Reject, after a pause while the user types,
+//! after a longer one for a large or minified file) and carried across edits until then.
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt as _;
 use futures::channel::mpsc;
-use gpui::{Context, EntityId, EventEmitter, Task};
-use hutan_buffer::{Applied, Buffer, LineEnding, Text, Transaction};
+use gpui::{AppContext as _, Context, EntityId, EventEmitter, Task};
+use hutan_buffer::{Applied, Bias, Buffer, LineEnding, Selections, Text, Transaction};
 use hutan_syntax::{Language, Syntax, SyntaxStats, SyntaxView};
 
+use crate::agent::{self, AgentChanges, AgentHunk};
 use crate::rules::IndentUnit;
 
 /// Typing that pauses longer than this starts a new undo step.
@@ -117,6 +124,20 @@ struct OpenGroup {
     last: Instant,
 }
 
+/// An agent's changes to the file and where they are in the text now.
+struct AgentState {
+    changes: AgentChanges,
+    /// The hunks, computed for version `computed` and carried across the edits since.
+    hunks: Arc<[AgentHunk]>,
+    computed: u64,
+    /// A large or minified text: diffed again less often.
+    heavy: bool,
+    /// Bumped at every write of the agent (what *Follow agent* follows).
+    epoch: u64,
+    /// Where the agent's latest write starts, carried across edits.
+    newest: Option<usize>,
+}
+
 /// The text of one file and what is known about it.
 pub struct FileBuffer {
     path: PathBuf,
@@ -135,6 +156,14 @@ pub struct FileBuffer {
     group: Option<OpenGroup>,
     conflict: Option<Conflict>,
     saving: bool,
+    /// E-10: an agent's changes, while the owner says there are some.
+    agent: Option<AgentState>,
+    /// `editor.agent_highlight`: the hunks are computed (and drawn) only while it is on.
+    agent_highlight: bool,
+    /// The background diff that will bring the hunks up to date.
+    agent_task: Option<Task<()>>,
+    /// The span of the text the last reload changed (in the text after it).
+    last_reload: Option<Range<usize>>,
     /// Wakes the views when the parser published a tree.
     published: Arc<Mutex<mpsc::Sender<()>>>,
     _repaint: Task<()>,
@@ -183,6 +212,10 @@ impl FileBuffer {
             group: None,
             conflict: None,
             saving: false,
+            agent: None,
+            agent_highlight: true,
+            agent_task: None,
+            last_reload: None,
             published: Arc::new(Mutex::new(sender)),
             _repaint: repaint,
         }
@@ -320,6 +353,8 @@ impl FileBuffer {
         // A tree of the old text is of no use.
         self.syntax = None;
         self.sync_syntax();
+        self.last_reload = None;
+        self.schedule_agent_diff(None, cx);
         cx.notify();
     }
 
@@ -404,7 +439,7 @@ impl FileBuffer {
     /// The file changed on disk and the buffer takes its text (`text` exactly as on disk): the
     /// minimal difference is applied as one undo step, so selections in unchanged regions stay
     /// and undo steps back over it; the buffer is clean afterwards. Returns whether the text
-    /// changed.
+    /// changed; [`last_reload`](Self::last_reload) says where.
     pub fn reload(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
         if !self.is_ready() {
             return false;
@@ -413,6 +448,11 @@ impl FileBuffer {
         let before = self.buffer.snapshot();
         let changed = match self.buffer.apply_external(text) {
             Ok(Some(applied)) => {
+                let changes = applied.transaction.changes();
+                self.last_reload = changes
+                    .first()
+                    .zip(changes.last())
+                    .map(|(first, last)| first.new.start..last.new.end);
                 self.changed(&before, &applied, None, EditKind::Reload, cx);
                 true
             }
@@ -427,6 +467,11 @@ impl FileBuffer {
         self.conflict = None;
         cx.notify();
         changed
+    }
+
+    /// The span of the text (as it is after it) that the last reload changed.
+    pub fn last_reload(&self) -> Option<Range<usize>> {
+        self.last_reload.clone()
     }
 
     /// The bytes to write (byte-order mark and line endings as the file had them) and the
@@ -483,6 +528,7 @@ impl FileBuffer {
             reset |= !self.announce(&step.before, &step.applied, Some(origin), step.kind, cx);
         }
         self.reparse(reset);
+        self.schedule_agent_diff(Some(agent::DIFF_DELAY), cx);
         cx.notify();
     }
 
@@ -496,6 +542,9 @@ impl FileBuffer {
     ) {
         let fed = self.announce(before, applied, origin, kind, cx);
         self.reparse(!fed);
+        // A change from the disk is diffed at once; typing waits for a pause.
+        let delay = (kind != EditKind::Reload).then_some(agent::DIFF_DELAY);
+        self.schedule_agent_diff(delay, cx);
         cx.notify();
     }
 
@@ -510,6 +559,7 @@ impl FileBuffer {
         cx: &mut Context<Self>,
     ) -> bool {
         self.version += 1;
+        self.map_agent_hunks(&applied.transaction);
         let mut fed = true;
         if let Some(syntax) = &self.syntax {
             match hutan_syntax::edits_of_transaction(before, &applied.transaction) {
@@ -541,6 +591,221 @@ impl FileBuffer {
                 syntax.reparse(self.version, self.buffer.snapshot());
             }
         }
+    }
+
+    // ---- an agent's changes (E-10) -----------------------------------------------------------
+
+    /// Gives the buffer an agent's changes to the file (or takes them away): the hunks are
+    /// computed in the background, at once.
+    pub fn set_agent_changes(&mut self, changes: Option<AgentChanges>, cx: &mut Context<Self>) {
+        match (changes, &mut self.agent) {
+            (None, _) => {
+                self.agent = None;
+                self.agent_task = None;
+            }
+            (Some(changes), Some(state)) => {
+                if state.changes == changes {
+                    return;
+                }
+                state.changes = changes;
+            }
+            (Some(changes), None) => {
+                self.agent = Some(AgentState {
+                    changes,
+                    hunks: Arc::from(Vec::new()),
+                    computed: 0,
+                    heavy: false,
+                    epoch: 0,
+                    newest: None,
+                });
+            }
+        }
+        self.schedule_agent_diff(None, cx);
+        cx.notify();
+    }
+
+    /// The agent wrote the file again and the buffer took its text: `changes` are the turn's
+    /// changes now, and the latest write starts at byte `at` (what *Follow agent* scrolls to).
+    pub fn agent_wrote(
+        &mut self,
+        changes: AgentChanges,
+        at: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_agent_changes(Some(changes), cx);
+        if let Some(state) = &mut self.agent {
+            state.epoch += 1;
+            state.newest = at.map(|at| at.min(self.buffer.text().len()));
+        }
+        cx.notify();
+    }
+
+    /// The agent's changes the buffer was given, if any.
+    pub fn agent_changes(&self) -> Option<&AgentChanges> {
+        self.agent.as_ref().map(|s| &s.changes)
+    }
+
+    /// The agent's hunks in the current text (none while `editor.agent_highlight` is off).
+    /// Between an edit and the next diff they are carried across the edit.
+    pub fn agent_hunks(&self) -> Arc<[AgentHunk]> {
+        match &self.agent {
+            Some(state) if self.agent_highlight => state.hunks.clone(),
+            _ => Arc::from(Vec::new()),
+        }
+    }
+
+    /// Whether the hunks are those of the current text (tests wait on it).
+    pub fn agent_hunks_current(&self) -> bool {
+        self.agent_task.is_none()
+            && self
+                .agent
+                .as_ref()
+                .is_none_or(|s| !self.agent_highlight || s.computed == self.version)
+    }
+
+    /// Bumped at every write of the agent ([`agent_wrote`](Self::agent_wrote)).
+    pub fn agent_epoch(&self) -> u64 {
+        self.agent.as_ref().map_or(0, |s| s.epoch)
+    }
+
+    /// The hunk the agent's latest write is in (or the first one after it, else the last).
+    pub fn newest_agent_hunk(&self) -> Option<usize> {
+        let hunks = self.agent_hunks();
+        if hunks.is_empty() {
+            return None;
+        }
+        let at = self.agent.as_ref()?.newest?;
+        hunks
+            .iter()
+            .position(|h| h.bytes.end >= at)
+            .or(Some(hunks.len() - 1))
+    }
+
+    /// The hunk at byte `offset` (a removed hunk counts at its position).
+    pub fn agent_hunk_at(&self, offset: usize) -> Option<usize> {
+        self.agent_hunks().iter().position(|h| {
+            h.bytes.contains(&offset) || h.bytes.start == offset || h.bytes.end == offset
+        })
+    }
+
+    /// `editor.agent_highlight`: off, no hunk is computed or drawn.
+    pub fn set_agent_highlight(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.agent_highlight == on {
+            return;
+        }
+        self.agent_highlight = on;
+        if on {
+            self.schedule_agent_diff(None, cx);
+        } else {
+            self.agent_task = None;
+        }
+        cx.notify();
+    }
+
+    /// *Reject*: puts the base's text back in place of hunk `index`, as one undo step made by
+    /// the view `origin` (`selections`: that view's carets, restored by undo). Never deletes
+    /// the file: a file the agent created rejects to empty.
+    pub fn reject_agent_hunk(
+        &mut self,
+        index: usize,
+        origin: EntityId,
+        selections: Option<Selections>,
+        cx: &mut Context<Self>,
+    ) -> Option<Applied> {
+        let hunk = self.agent_hunks().get(index)?.clone();
+        if !self.agent_hunks_current() {
+            // Hunks carried across an edit are approximate; Reject waits for exact ones.
+            return None;
+        }
+        let after = Selections::cursor(hunk.bytes.start);
+        let transaction = Transaction::replace(hunk.bytes.clone(), hunk.base_text.to_string())
+            .ok()?
+            .with_selections(selections, Some(after));
+        let applied = self.edit(transaction, Coalesce::Step, origin, cx)?;
+        self.schedule_agent_diff(None, cx);
+        Some(applied)
+    }
+
+    /// The hunks follow an edit until the next diff replaces them.
+    fn map_agent_hunks(&mut self, transaction: &Transaction) {
+        let Some(state) = &mut self.agent else {
+            return;
+        };
+        let hunks: Vec<AgentHunk> = state
+            .hunks
+            .iter()
+            .map(|h| {
+                let start = transaction.map_offset(h.bytes.start, Bias::Right);
+                let end = transaction.map_offset(h.bytes.end, Bias::Left).max(start);
+                AgentHunk {
+                    bytes: start..end,
+                    base_text: h.base_text.clone(),
+                }
+            })
+            .collect();
+        state.hunks = Arc::from(hunks);
+        state.newest = state
+            .newest
+            .map(|at| transaction.map_offset(at, Bias::Left));
+    }
+
+    /// Computes the hunks again in the background, after `delay` (a longer one for a large
+    /// or minified text) or at once. A newer call replaces an older one.
+    fn schedule_agent_diff(&mut self, delay: Option<Duration>, cx: &mut Context<Self>) {
+        let Some(state) = &self.agent else {
+            return;
+        };
+        if !self.agent_highlight || self.large || !self.is_ready() {
+            self.agent_task = None;
+            return;
+        }
+        let delay = delay.map(|d| {
+            if state.heavy {
+                agent::SLOW_DIFF_DELAY
+            } else {
+                d
+            }
+        });
+        let base = state.changes.base.clone();
+        let agent_text = state.changes.agent.clone();
+        self.agent_task = Some(cx.spawn(async move |this, cx| {
+            if let Some(delay) = delay {
+                cx.background_executor().timer(delay).await;
+            }
+            let Ok((text, version)) = this.update(cx, |b, _| (b.buffer.snapshot(), b.version))
+            else {
+                return;
+            };
+            let computed = cx
+                .background_spawn(async move {
+                    let current = text.to_string();
+                    let heavy = agent::is_heavy(&current);
+                    (agent::agent_hunks(&base, &agent_text, &current), heavy)
+                })
+                .await;
+            this.update(cx, |b, cx| b.take_agent_hunks(version, computed, cx))
+                .ok();
+        }));
+    }
+
+    fn take_agent_hunks(
+        &mut self,
+        version: u64,
+        (hunks, heavy): (Vec<AgentHunk>, bool),
+        cx: &mut Context<Self>,
+    ) {
+        self.agent_task = None;
+        let Some(state) = &mut self.agent else {
+            return;
+        };
+        if version != self.version {
+            // Edited meanwhile; the edit asked for another diff.
+            return;
+        }
+        state.hunks = Arc::from(hunks);
+        state.computed = version;
+        state.heavy = heavy;
+        cx.notify();
     }
 
     // ---- syntax ----------------------------------------------------------------------------
