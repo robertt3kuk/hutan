@@ -170,14 +170,23 @@ impl FileService {
 
     // Reading ----------------------------------------------------------------------------------
 
-    /// `fs.read`. `trusted`: the request is not an agent's, so `picked` counts.
-    pub async fn read(&self, trusted: bool, req: FsRead) -> Result<FsFile, ErrorBody> {
+    /// `fs.read` of connection `conn`. `trusted`: the request is not an agent's, so `picked`
+    /// counts. The version read is remembered for the connection's watch of the file.
+    pub async fn read(
+        &self,
+        conn: ConnId,
+        trusted: bool,
+        req: FsRead,
+    ) -> Result<FsFile, ErrorBody> {
+        let hub = self.hub.clone();
         self.blocking(move |roots| {
             let resolved = resolve(&req.path, &roots, req.picked && trusted)?;
             let max = req
                 .max_bytes
                 .map_or(CHUNK_MAX_BYTES, |max| (max as usize).min(CHUNK_MAX_BYTES));
-            read::read(&resolved, req.offset.unwrap_or(0), max)
+            let file = read::read(&resolved, req.offset.unwrap_or(0), max)?;
+            hub.served(conn, &file.path, file.version);
+            Ok(file)
         })
         .await
     }
@@ -431,6 +440,8 @@ impl FileService {
         })
         .await
         .map_err(join_error)??;
+        // The writer knows the file as it wrote it, for its watch of the file.
+        self.hub.served(writer, &committed.0, committed.1);
         Ok(FsWritten {
             path: committed.0,
             version: committed.1,

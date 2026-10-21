@@ -1210,3 +1210,232 @@ async fn under_read_only_an_agent_cannot_write_and_under_allow_it_is_not_asked()
         env.stop().await;
     }
 }
+
+// ---- no change is lost once a file is watched (FX-FSWATCH) -------------------------------------
+
+async fn watch_picked(client: &Client, path: &Path) {
+    client
+        .fs_watch(FsWatch {
+            paths: vec![FsWatchPath {
+                path: path.to_owned(),
+                recursive: false,
+            }],
+            picked: true,
+        })
+        .await
+        .unwrap();
+}
+
+/// `text` of `size` bytes, so each write of a test is told apart by the version it produced.
+fn text_of(size: usize) -> String {
+    "x".repeat(size)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_write_right_after_fs_watch_is_reported_by_a_new_watcher_and_a_running_one() {
+    let mut env = Env::new().await;
+    // Outside the roots every directory is a watcher of its own, started by this watch; inside
+    // a root the first watch starts the root's watcher and the others join it.
+    for round in 0..20 {
+        for path in [
+            env.outside.join(format!("d{round}")).join("a.txt"),
+            env.at(&format!("in{round}.txt")),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "before").unwrap();
+            watch_picked(&env.client, &path).await;
+            std::fs::write(&path, text_of(100 + round)).unwrap();
+            let change = change_of(&mut env.events, &path, |c| {
+                c.version.is_some_and(|v| v.size == 100 + round as u64)
+            })
+            .await;
+            assert_eq!(change.origin, Some(FsOrigin::External));
+        }
+    }
+    env.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_write_between_a_read_and_the_watch_is_reported_and_an_own_write_is_not() {
+    let mut env = Env::new().await;
+    for (index, path) in [
+        env.at("read-then-watch.txt"),
+        env.outside.join("picked.txt"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        std::fs::write(&path, "as read").unwrap();
+        let read = env.client.fs_read_all(&path, true).await.unwrap();
+        // Somebody writes after the client read the file, before its watch is in place: the
+        // client still learns of it.
+        std::fs::write(&path, text_of(31)).unwrap();
+        watch_picked(&env.client, &path).await;
+        let change = change_of(&mut env.events, &path, |_| true).await;
+        assert_eq!(change.kind, ChangeKind::Modified, "{index}");
+        assert_ne!(change.version, Some(read.version));
+        assert_eq!(change.version.map(|v| v.size), Some(31));
+        assert_eq!(change.origin, Some(FsOrigin::External));
+    }
+
+    // The client's own write after its read moves what it knows: watching then reports
+    // nothing until the next change of somebody else.
+    let path = env.at("own.txt");
+    std::fs::write(&path, "as read").unwrap();
+    let read = env.client.fs_read_all(&path, false).await.unwrap();
+    env.client
+        .fs_write(begin(&path, Some(read.version), false), &text_of(12))
+        .await
+        .unwrap();
+    // Its own change may still be in the window: it is reported as `self`, never as news.
+    watch_file(&env.client, &path).await;
+    std::fs::write(&path, text_of(44)).unwrap();
+    let change = change_of(&mut env.events, &path, |c| {
+        !matches!(c.origin, Some(FsOrigin::Own { .. }))
+    })
+    .await;
+    assert_eq!(change.version.map(|v| v.size), Some(44));
+    env.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn writes_are_reported_while_other_roots_and_sessions_are_added() {
+    let mut env = Env::new().await;
+    let path = env.at("busy.txt");
+    std::fs::write(&path, "0").unwrap();
+    watch_file(&env.client, &path).await;
+    let other = env.t.connect().await;
+    for round in 0..10usize {
+        // Another connection watches a new directory (a watcher starts) while this file is
+        // written...
+        let dir = env.outside.join(format!("other{round}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let started = {
+            let other = other.clone();
+            let dir = dir.clone();
+            tokio::spawn(async move { watch_picked(&other, &dir).await })
+        };
+        std::fs::write(&path, text_of(200 + round)).unwrap();
+        started.await.unwrap();
+        // (each write is waited for before the next: two in one window are one change)
+        change_of(&mut env.events, &path, |c| {
+            c.version.is_some_and(|v| v.size == 200 + round as u64)
+        })
+        .await;
+        // ...then a session starts in the root and another workspace is opened.
+        let added = {
+            let (client, workspace, root) = (env.client.clone(), env.workspace, env.root.clone());
+            tokio::spawn(async move {
+                let mut spec = sh("sleep 60");
+                spec.cwd = Some(root);
+                let session = create_in(&client, Some(workspace), spec).await;
+                let _: WorkspaceOpened = client
+                    .call(Request::WorkspaceOpen(WorkspaceOpen {
+                        path: dir,
+                        created_by: None,
+                    }))
+                    .await
+                    .unwrap();
+                session
+            })
+        };
+        std::fs::write(&path, text_of(300 + round)).unwrap();
+        assert!(added.await.unwrap().state.is_live());
+        change_of(&mut env.events, &path, |c| {
+            c.version.is_some_and(|v| v.size == 300 + round as u64)
+        })
+        .await;
+    }
+    env.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_in_place_write_and_an_atomic_rename_are_both_reported() {
+    let mut env = Env::new().await;
+    let path = env.at("both.txt");
+    std::fs::write(&path, "0").unwrap();
+    watch_file(&env.client, &path).await;
+
+    // Truncated and written in place: same inode.
+    let before = std::fs::metadata(&path).unwrap();
+    std::fs::write(&path, text_of(10)).unwrap();
+    let in_place = change_of(&mut env.events, &path, |c| {
+        c.version.is_some_and(|v| v.size == 10)
+    })
+    .await;
+    assert_eq!(in_place.kind, ChangeKind::Modified);
+    assert_eq!(
+        in_place.version.map(|v| v.ino),
+        Some(std::os::unix::fs::MetadataExt::ino(&before))
+    );
+
+    // Written next to it and renamed over it, the way editors save: a new inode.
+    let temporary = env.at(".both.txt.swp");
+    std::fs::write(&temporary, text_of(20)).unwrap();
+    std::fs::rename(&temporary, &path).unwrap();
+    let renamed = change_of(&mut env.events, &path, |c| {
+        c.version.is_some_and(|v| v.size == 20)
+    })
+    .await;
+    assert_eq!(renamed.kind, ChangeKind::Modified);
+    assert_ne!(
+        renamed.version.map(|v| v.ino),
+        in_place.version.map(|v| v.ino)
+    );
+
+    // A file new to the watched folder is created; written again later, it is modified.
+    watch_file(&env.client, &env.root.clone()).await;
+    let fresh = env.at("fresh.txt");
+    std::fs::write(&fresh, text_of(30)).unwrap();
+    let created = change_of(&mut env.events, &fresh, |_| true).await;
+    assert_eq!(created.kind, ChangeKind::Created);
+    std::fs::write(&fresh, text_of(31)).unwrap();
+    let modified = change_of(&mut env.events, &fresh, |c| {
+        c.version.is_some_and(|v| v.size == 31)
+    })
+    .await;
+    assert_eq!(modified.kind, ChangeKind::Modified);
+    env.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_watched_through_a_symlinked_directory_is_reported_by_its_canonical_path() {
+    let mut env = Env::new().await;
+    // On macOS the temporary directory is below `/var`, a symlink to `/private/var`; elsewhere
+    // a symlink of the test's own stands in for it.
+    let real = env.outside.join("real");
+    std::fs::create_dir_all(&real).unwrap();
+    let linked = env.outside.join("linked");
+    std::os::unix::fs::symlink(&real, &linked).unwrap();
+    let system = tempfile::tempdir().unwrap();
+    let mut cases = vec![(linked.join("a.txt"), real.join("a.txt"))];
+    if system.path() != system.path().canonicalize().unwrap() {
+        // `/var/folders/…` as the user's tools write it, `/private/var/folders/…` on disk.
+        cases.push((
+            system.path().join("b.txt"),
+            system.path().canonicalize().unwrap().join("b.txt"),
+        ));
+    }
+    for (index, (asked, canonical)) in cases.into_iter().enumerate() {
+        std::fs::write(&asked, "0").unwrap();
+        let read = env.client.fs_read_all(&asked, true).await.unwrap();
+        assert_eq!(read.path, canonical);
+        watch_picked(&env.client, &asked).await;
+        std::fs::write(&asked, text_of(50 + index)).unwrap();
+        let change = change_of(&mut env.events, &canonical, |c| {
+            c.version.is_some_and(|v| v.size == 50 + index as u64)
+        })
+        .await;
+        assert_eq!(change.kind, ChangeKind::Modified);
+        // Unwatching by the path as asked releases it.
+        let after = env
+            .client
+            .fs_unwatch(FsUnwatch {
+                paths: vec![asked.clone()],
+            })
+            .await
+            .unwrap();
+        assert_eq!(after.watching, 0, "{index}");
+    }
+    env.stop().await;
+}

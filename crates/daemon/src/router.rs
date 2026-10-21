@@ -544,7 +544,7 @@ impl Router {
             }
             Request::FsRead(req) => {
                 let trusted = self.agent_origin(conn).await.is_none();
-                ok(&self.files.read(trusted, req).await?)
+                ok(&self.files.read(conn.id(), trusted, req).await?)
             }
             Request::FsStat(req) => {
                 let trusted = self.agent_origin(conn).await.is_none();

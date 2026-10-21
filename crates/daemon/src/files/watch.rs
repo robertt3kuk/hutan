@@ -10,12 +10,20 @@
 //! batches to a bounded channel and, when it is full, only remembers that something was lost;
 //! a flush lists at most 500 changes; a connection whose queue is full is told so in its next
 //! event (`overflow`) instead of being closed.
+//!
+//! Nothing a connection could have missed goes unreported (FX-FSWATCH): the version of a file
+//! a connection last read or wrote is remembered, and when it watches the file later, a
+//! change made in between is fed to the file's watcher as if the platform had reported it
+//! (a client reads a file first and watches it once it has it). And since FSEvents keeps a
+//! path's "created" flag for a while (a write of a file created shortly before, or a save that
+//! renames over a file, still says so), a path is reported `created` only when its file was
+//! born after the watcher started and nothing was known at the path yet (`Births`).
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant as StdInstant};
+use std::time::{Duration, Instant as StdInstant, SystemTime};
 
 use hutan_core::agent::Delivery;
 use hutan_core::{AgentEventKind, ItemId, SessionId};
@@ -30,7 +38,7 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 use super::confine::FsError;
 use super::find::is_noise_dir;
@@ -46,6 +54,10 @@ const OWN_WRITE_TTL: Duration = Duration::from_secs(10);
 /// Files agents reported changing, remembered, and how long before a change they still count.
 const NOTES_MAX: usize = 512;
 const NOTE_WINDOW: Duration = Duration::from_secs(15);
+/// Versions connections were told of files (reads, own writes), remembered for their watches.
+const SERVED_MAX: usize = 1024;
+/// Creations a watcher remembers having reported.
+const BIRTHS_MAX: usize = 1024;
 
 /// What one watcher covers.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -72,8 +84,28 @@ struct ConnWatch {
 struct RootEntry {
     /// Stops the platform watcher when dropped.
     _watcher: RecommendedWatcher,
+    /// The watcher's window, for changes found outside the platform's stream.
+    feed: Feed,
+    /// What the watcher knows exists, for telling created from modified.
+    births: Arc<Mutex<Births>>,
     generation: Arc<AtomicU64>,
     stop: CancellationToken,
+}
+
+/// Where a watcher's raw changes go: its window's bounded queue, and the flag that says some
+/// were lost because it was full.
+#[derive(Debug, Clone)]
+struct Feed {
+    raws: mpsc::Sender<Vec<Raw>>,
+    lost: Arc<AtomicBool>,
+}
+
+impl Feed {
+    fn send(&self, raws: Vec<Raw>) {
+        if !raws.is_empty() && self.raws.try_send(raws).is_err() {
+            self.lost.store(true, Ordering::Release);
+        }
+    }
 }
 
 impl std::fmt::Debug for RootEntry {
@@ -112,6 +144,14 @@ struct Note {
     at: StdInstant,
 }
 
+/// The version connection `conn` last read or wrote of `path`.
+#[derive(Debug, Clone)]
+struct Served {
+    conn: ConnId,
+    path: PathBuf,
+    version: FileVersion,
+}
+
 #[derive(Debug)]
 pub struct WatchHub {
     registry: RegistryHandle,
@@ -122,6 +162,7 @@ pub struct WatchHub {
     state: Mutex<State>,
     writes: Mutex<VecDeque<OwnWrite>>,
     notes: Mutex<VecDeque<Note>>,
+    served: Mutex<VecDeque<Served>>,
 }
 
 impl WatchHub {
@@ -139,6 +180,7 @@ impl WatchHub {
             state: Mutex::new(State::default()),
             writes: Mutex::new(VecDeque::new()),
             notes: Mutex::new(VecDeque::new()),
+            served: Mutex::new(VecDeque::new()),
         })
     }
 
@@ -177,10 +219,86 @@ impl WatchHub {
             paths: HashMap::new(),
             lagged: false,
         });
+        let mut added = Vec::new();
         for (path, recursive, root) in paths {
-            watch.paths.insert(path, Spec { recursive, root });
+            debug!(conn = ?conn.id(), path = %path.display(), recursive, root = %root.path.display(), "watch interest");
+            let spec = Spec {
+                recursive,
+                root: root.clone(),
+            };
+            if watch.paths.insert(path.clone(), spec).is_none() {
+                added.push((path, root));
+            }
         }
-        Ok(summary(&state, conn.id()))
+        // A newly watched path exists: a later platform "created" of it is no creation. And
+        // what the connection was told of it may be older than the watch: a change since then
+        // is fed to the path's watcher, which is running and now has the interest, so that it
+        // is reported like any other (attribution included).
+        let mut served = self.take_served(conn.id(), &added);
+        let catch_up: Vec<(PathBuf, Option<FileVersion>, Feed, Arc<Mutex<Births>>)> = added
+            .into_iter()
+            .filter_map(|(path, root)| {
+                let entry = state.roots.get(&root)?;
+                let known = served.remove(&path);
+                Some((path, known, entry.feed.clone(), entry.births.clone()))
+            })
+            .collect();
+        let watching = summary(&state, conn.id());
+        drop(state);
+        for (path, known, feed, births) in catch_up {
+            let meta = std::fs::symlink_metadata(&path).ok();
+            if let Some(meta) = &meta {
+                births.lock().exists(&path, meta, false);
+            }
+            let Some(known) = known else { continue };
+            let now = meta.filter(|m| m.is_file()).map(|m| version_of(&m));
+            if now == Some(known) {
+                continue;
+            }
+            debug!(path = %path.display(), ?known, ?now, "changed between the connection's read and its watch");
+            feed.send(vec![if now.is_some() {
+                Raw::Modified(path)
+            } else {
+                Raw::Removed(path)
+            }]);
+        }
+        Ok(watching)
+    }
+
+    /// Connection `conn` was told that `path` (canonical) has `version`: it read it, or wrote
+    /// it. A watch of the file it starts later reports a change since.
+    pub fn served(&self, conn: ConnId, path: &Path, version: FileVersion) {
+        let mut served = self.served.lock();
+        served.retain(|s| !(s.conn == conn && s.path == path));
+        if served.len() >= SERVED_MAX {
+            served.pop_front();
+        }
+        served.push_back(Served {
+            conn,
+            path: path.to_owned(),
+            version,
+        });
+    }
+
+    /// The versions connection `conn` was told of `paths`, forgotten from now on: the watch
+    /// reports what follows.
+    fn take_served(
+        &self,
+        conn: ConnId,
+        paths: &[(PathBuf, RootKey)],
+    ) -> HashMap<PathBuf, FileVersion> {
+        let mut known = HashMap::new();
+        if paths.is_empty() {
+            return known;
+        }
+        self.served.lock().retain(|s| {
+            let watched = s.conn == conn && paths.iter().any(|(path, _)| *path == s.path);
+            if watched {
+                known.insert(s.path.clone(), s.version);
+            }
+            !watched
+        });
+        known
     }
 
     /// Releases `paths` of the connection; a watcher nobody needs any more stops.
@@ -196,6 +314,7 @@ impl WatchHub {
     }
 
     pub fn connection_closed(&self, conn: ConnId) {
+        self.served.lock().retain(|s| s.conn != conn);
         let mut state = self.state.lock();
         state.conns.remove(&conn);
         prune(&mut state);
@@ -282,15 +401,17 @@ impl WatchHub {
     fn start_root(self: &Arc<Self>, key: &RootKey) -> Result<RootEntry, FsError> {
         let (tx, rx) = mpsc::channel::<Vec<Raw>>(RAW_QUEUE);
         let lost = Arc::new(AtomicBool::new(false));
-        let lost_in_callback = lost.clone();
+        let feed = Feed {
+            raws: tx,
+            lost: lost.clone(),
+        };
+        let from_platform = feed.clone();
         let root_for_log = key.path.clone();
         let mut watcher = notify::recommended_watcher(
             move |result: notify::Result<notify::Event>| match result {
                 Ok(event) => {
-                    let raws = raw_of(event);
-                    if !raws.is_empty() && tx.try_send(raws).is_err() {
-                        lost_in_callback.store(true, Ordering::Release);
-                    }
+                    trace!(root = %root_for_log.display(), kind = ?event.kind, paths = ?event.paths, "platform event");
+                    from_platform.send(raw_of(event));
                 }
                 Err(error) => warn!(root = %root_for_log.display(), %error, "file watcher error"),
             },
@@ -306,6 +427,8 @@ impl WatchHub {
         } else {
             RecursiveMode::NonRecursive
         };
+        // Files born before this are not created as far as this watcher's clients go.
+        let births = Arc::new(Mutex::new(Births::new(SystemTime::now())));
         watcher.watch(&key.path, mode).map_err(|e| {
             FsError::io(
                 format!("watching {}", key.path.display()),
@@ -321,10 +444,13 @@ impl WatchHub {
             lost,
             generation.clone(),
             stop.clone(),
+            births.clone(),
         ));
         debug!(root = %key.path.display(), recursive = key.recursive, "watching");
         Ok(RootEntry {
             _watcher: watcher,
+            feed,
+            births,
             generation,
             stop,
         })
@@ -381,11 +507,13 @@ impl WatchHub {
             }
         }
         for (handle, id, changes, overflow) in outgoing {
+            let count = changes.len();
             let Some(frame) = self.frame(&Event::FsChanged { changes, overflow }) else {
                 warn!("an fs.changed event does not fit a protocol frame; skipped");
                 continue;
             };
             let sent = handle.enqueue_local(frame);
+            debug!(conn = ?id, changes = count, overflow, ?sent, "fs.changed");
             let mut state = self.state.lock();
             match sent {
                 LocalSend::Queued => {
@@ -512,11 +640,10 @@ fn raw_of(event: notify::Event) -> Vec<Raw> {
     }
 }
 
-/// What one path went through in a window.
+/// What one path went through in a window (whether it is gone, disk tells).
 #[derive(Debug, Default, Clone)]
 struct Entry {
     created: bool,
-    removed: bool,
     from: Option<PathBuf>,
 }
 
@@ -543,6 +670,7 @@ impl Window {
 
     fn entry(&mut self, key: &RootKey, path: PathBuf) -> Option<&mut Entry> {
         if !accepted(key, &path) {
+            trace!(root = %key.path.display(), path = %path.display(), "change filtered");
             return None;
         }
         if !self.entries.contains_key(&path) && self.entries.len() >= self.capacity {
@@ -560,18 +688,11 @@ impl Window {
                         entry.created = true;
                     }
                 }
-                Raw::Removed(path) => {
-                    if let Some(entry) = self.entry(key, path) {
-                        entry.removed = true;
-                    }
-                }
-                Raw::Modified(path) | Raw::Name(path) => {
+                Raw::Removed(path) | Raw::Modified(path) | Raw::Name(path) => {
                     self.entry(key, path);
                 }
                 Raw::Renamed { from, to } => {
-                    if let Some(entry) = self.entry(key, from.clone()) {
-                        entry.removed = true;
-                    }
+                    self.entry(key, from.clone());
                     if let Some(entry) = self.entry(key, to) {
                         entry.from = Some(from);
                     }
@@ -669,7 +790,53 @@ struct Evidence {
     sessions: Vec<SessionInfo>,
 }
 
-fn prepare(window: Vec<(PathBuf, Entry)>, evidence: Evidence) -> Vec<Prepared> {
+/// Which of a watcher's platform "created" flags are news. FSEvents keeps a path's flags for a
+/// while, and a file renamed into place carries its own: a write of a file created shortly
+/// before, or a save that renames over a file, still says "created". A path is created only
+/// when its file was born after the watcher started and nothing was known at the path yet
+/// (from an earlier change, or because a connection watches it); otherwise it is modified.
+#[derive(Debug)]
+struct Births {
+    /// When the watcher started.
+    since: SystemTime,
+    /// The birth time of what is known at each path; cleared when full (a creation then may be
+    /// reported twice).
+    known: HashMap<PathBuf, SystemTime>,
+}
+
+impl Births {
+    fn new(since: SystemTime) -> Self {
+        Self {
+            since,
+            known: HashMap::new(),
+        }
+    }
+
+    /// `path` exists as `meta`, the platform said it was created (`flagged`) or not: whether
+    /// it is created as far as the watcher's clients go. Remembered either way.
+    fn exists(&mut self, path: &Path, meta: &std::fs::Metadata, flagged: bool) -> bool {
+        // Without a birth time the platform's word is all there is.
+        let Ok(born) = meta.created() else {
+            return flagged;
+        };
+        if self.known.len() >= BIRTHS_MAX && !self.known.contains_key(path) {
+            self.known.clear();
+        }
+        let before = self.known.insert(path.to_owned(), born);
+        flagged && born >= self.since && before.is_none()
+    }
+
+    /// `path` is gone: something born there later is created.
+    fn gone(&mut self, path: &Path) {
+        self.known.remove(path);
+    }
+}
+
+fn prepare(
+    window: Vec<(PathBuf, Entry)>,
+    evidence: Evidence,
+    births: &mut Births,
+) -> Vec<Prepared> {
     let folders = |session: &SessionInfo| -> Vec<PathBuf> {
         let mut folders: Vec<PathBuf> = [
             session.cwd.as_deref(),
@@ -728,22 +895,26 @@ fn prepare(window: Vec<(PathBuf, Entry)>, evidence: Evidence) -> Vec<Prepared> {
 
     window
         .into_iter()
-        .filter_map(|(path, entry)| {
+        .map(|(path, entry)| {
             let (kind, version) = match std::fs::symlink_metadata(&path) {
                 Ok(meta) => {
                     let version = meta.is_file().then(|| version_of(&meta));
+                    let created = births.exists(&path, &meta, entry.created);
                     let kind = if entry.from.is_some() {
                         ChangeKind::Renamed
-                    } else if entry.created {
+                    } else if created {
                         ChangeKind::Created
                     } else {
                         ChangeKind::Modified
                     };
                     (kind, version)
                 }
-                // Created and gone again inside the window: nothing a client ever saw.
-                Err(_) if entry.created => return None,
-                Err(_) => (ChangeKind::Removed, None),
+                // Even when the platform says it was created inside the window: the flag may
+                // be of an older creation (FSEvents), of a file a client knows.
+                Err(_) => {
+                    births.gone(&path);
+                    (ChangeKind::Removed, None)
+                }
             };
             let own = evidence
                 .writes
@@ -771,7 +942,7 @@ fn prepare(window: Vec<(PathBuf, Entry)>, evidence: Evidence) -> Vec<Prepared> {
             } else {
                 Attribution::External
             };
-            Some(Prepared {
+            Prepared {
                 change: FsChange {
                     path,
                     kind,
@@ -780,7 +951,7 @@ fn prepare(window: Vec<(PathBuf, Entry)>, evidence: Evidence) -> Vec<Prepared> {
                     origin: None,
                 },
                 attribution,
-            })
+            }
         })
         .collect()
 }
@@ -835,6 +1006,7 @@ async fn run_root(
     lost: Arc<AtomicBool>,
     generation: Arc<AtomicU64>,
     stop: CancellationToken,
+    births: Arc<Mutex<Births>>,
 ) {
     let mut window = Window::new(hub.changes_max);
     let mut flush_at: Option<Instant> = None;
@@ -851,7 +1023,7 @@ async fn run_root(
                     flush_at = None;
                     let taken = std::mem::replace(&mut window, Window::new(hub.changes_max));
                     let overflow = taken.overflow | lost.swap(false, Ordering::AcqRel);
-                    if flush(&hub, &key, taken, overflow).await {
+                    if flush(&hub, &key, taken, overflow, &births).await {
                         generation.fetch_add(1, Ordering::AcqRel);
                         let earliest = generation_sent.map_or(now, |sent| {
                             sent + Duration::from_millis(GENERATION_INTERVAL_MS)
@@ -877,7 +1049,13 @@ async fn run_root(
 }
 
 /// Looks at the window's paths on disk and delivers them. `true` when something was reported.
-async fn flush(hub: &Arc<WatchHub>, key: &RootKey, window: Window, overflow: bool) -> bool {
+async fn flush(
+    hub: &Arc<WatchHub>,
+    key: &RootKey,
+    window: Window,
+    overflow: bool,
+    births: &Arc<Mutex<Births>>,
+) -> bool {
     let mut paths: Vec<(PathBuf, Entry)> = window.entries.into_iter().collect();
     paths.sort_by(|a, b| a.0.cmp(&b.0));
     let mut overflow = overflow;
@@ -899,14 +1077,21 @@ async fn flush(hub: &Arc<WatchHub>, key: &RootKey, window: Window, overflow: boo
         notes: hub.notes.lock().iter().cloned().collect(),
         sessions,
     };
-    let prepared = match tokio::task::spawn_blocking(move || prepare(paths, evidence)).await {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            warn!(%error, "looking at changed files failed");
-            return false;
-        }
-    };
+    let births = births.clone();
+    let prepared =
+        match tokio::task::spawn_blocking(move || prepare(paths, evidence, &mut births.lock()))
+            .await
+        {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                warn!(%error, "looking at changed files failed");
+                return false;
+            }
+        };
     let any = !prepared.is_empty() || overflow;
+    for change in &prepared {
+        debug!(root = %key.path.display(), path = %change.change.path.display(), kind = ?change.change.kind, version = ?change.change.version, attribution = ?change.attribution, "change");
+    }
     if any {
         hub.deliver(key, &prepared, overflow);
     }
@@ -964,8 +1149,17 @@ mod tests {
         assert_eq!(window.entries.len(), 2 * CHANGES_MAX);
         assert!(window.overflow);
         // A path already in the window is still merged when the window is full.
-        window.add(&key, vec![Raw::Removed("/repo/f0".into())]);
-        assert!(window.entries[Path::new("/repo/f0")].removed);
+        window.add(
+            &key,
+            vec![Raw::Renamed {
+                from: "/repo/f0".into(),
+                to: "/repo/f1".into(),
+            }],
+        );
+        assert_eq!(
+            window.entries[Path::new("/repo/f1")].from.as_deref(),
+            Some(Path::new("/repo/f0"))
+        );
     }
 
     #[test]
@@ -994,7 +1188,7 @@ mod tests {
             window.entries[Path::new("/repo/new.rs")].from.as_deref(),
             Some(Path::new("/repo/old.rs"))
         );
-        assert!(window.entries[Path::new("/repo/old.rs")].removed);
+        assert!(window.entries.contains_key(Path::new("/repo/old.rs")));
     }
 
     #[test]
@@ -1025,50 +1219,92 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         std::fs::write(root.join("kept.rs"), "kept").unwrap();
+        std::fs::write(root.join("old.rs"), "old").unwrap();
         std::fs::write(root.join("new.rs"), "new!").unwrap();
         std::fs::create_dir(root.join("sub")).unwrap();
-        let entry = |created: bool, removed: bool| Entry {
+        // The watcher started after `old.rs` was born, before `new.rs` was.
+        let born = |name: &str| {
+            std::fs::metadata(root.join(name))
+                .unwrap()
+                .created()
+                .unwrap()
+        };
+        assert!(born("old.rs") < born("new.rs"));
+        let mut births = Births::new(born("new.rs"));
+        let entry = |created: bool| Entry {
             created,
-            removed,
             from: None,
         };
-        let window = vec![
-            (root.join("kept.rs"), entry(false, false)),
-            (root.join("new.rs"), entry(true, false)),
-            (root.join("gone.rs"), entry(false, true)),
-            // Created and gone again inside the window: no client ever saw it.
-            (root.join("flash.tmp"), entry(true, true)),
-            (root.join("sub"), entry(true, false)),
-        ];
-        let evidence = Evidence {
+        let window = || {
+            vec![
+                (root.join("kept.rs"), entry(false)),
+                // The platform's "created" of a file older than the watcher: modified.
+                (root.join("old.rs"), entry(true)),
+                (root.join("new.rs"), entry(true)),
+                (root.join("gone.rs"), entry(false)),
+                // Created and gone inside the window, or a file that was there before and
+                // carries an old flag: told as removed either way.
+                (root.join("flash.tmp"), entry(true)),
+                (root.join("sub"), entry(true)),
+            ]
+        };
+        let evidence = || Evidence {
             writes: Vec::new(),
             notes: Vec::new(),
             sessions: Vec::new(),
         };
-        let prepared = prepare(window, evidence);
-        let seen: Vec<(String, ChangeKind, Option<u64>)> = prepared
-            .iter()
-            .map(|p| {
-                (
-                    p.change
-                        .path
-                        .file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .into_owned(),
-                    p.change.kind,
-                    p.change.version.map(|v| v.size),
-                )
-            })
-            .collect();
+        let seen = |prepared: Vec<Prepared>| -> Vec<(String, ChangeKind, Option<u64>)> {
+            prepared
+                .iter()
+                .map(|p| {
+                    (
+                        p.change
+                            .path
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                        p.change.kind,
+                        p.change.version.map(|v| v.size),
+                    )
+                })
+                .collect()
+        };
         assert_eq!(
-            seen,
+            seen(prepare(window(), evidence(), &mut births)),
             [
                 ("kept.rs".to_owned(), ChangeKind::Modified, Some(4)),
+                ("old.rs".to_owned(), ChangeKind::Modified, Some(3)),
                 ("new.rs".to_owned(), ChangeKind::Created, Some(4)),
                 ("gone.rs".to_owned(), ChangeKind::Removed, None),
+                ("flash.tmp".to_owned(), ChangeKind::Removed, None),
                 ("sub".to_owned(), ChangeKind::Created, None),
             ]
+        );
+        // The same flags again in a later window: those creations were reported already.
+        let later = seen(prepare(window(), evidence(), &mut births));
+        assert_eq!(
+            later[2],
+            ("new.rs".to_owned(), ChangeKind::Modified, Some(4))
+        );
+        assert_eq!(later[5], ("sub".to_owned(), ChangeKind::Modified, None));
+        // Replaced inside one window (a save that renames over the file): modified...
+        std::fs::remove_file(root.join("new.rs")).unwrap();
+        std::fs::write(root.join("new.rs"), "again").unwrap();
+        let replaced = seen(prepare(window(), evidence(), &mut births));
+        assert_eq!(
+            replaced[2],
+            ("new.rs".to_owned(), ChangeKind::Modified, Some(5))
+        );
+        // ...gone in one window and born again in a later one: created.
+        std::fs::remove_file(root.join("new.rs")).unwrap();
+        let gone = seen(prepare(window(), evidence(), &mut births));
+        assert_eq!(gone[2], ("new.rs".to_owned(), ChangeKind::Removed, None));
+        std::fs::write(root.join("new.rs"), "born again").unwrap();
+        let again = seen(prepare(window(), evidence(), &mut births));
+        assert_eq!(
+            again[2],
+            ("new.rs".to_owned(), ChangeKind::Created, Some(10))
         );
     }
 
