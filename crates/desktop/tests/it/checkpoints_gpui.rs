@@ -230,7 +230,9 @@ fn sheet_ready(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
     wait_until(cx, "the preview", |cx| {
         view.read_with(cx, |wb, _| {
             wb.rewind_sheet()
-                .is_some_and(|s| matches!(s.phase, Phase::Ready) && !s.working)
+                // The turn's end may reach the daemon's session list after its footer: the
+                // plan is ready once no turn holds the checkout.
+                .is_some_and(|s| matches!(s.phase, Phase::Ready) && !s.working && !s.busy())
         })
     });
 }

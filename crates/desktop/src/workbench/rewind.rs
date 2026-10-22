@@ -628,6 +628,8 @@ impl Workbench {
                     Ok(preview) => {
                         sheet.install(preview);
                         this.load_selected_diff(cx);
+                        // The turn may have ended while this plan was on its way.
+                        this.recheck_rewind_busy(cx);
                     }
                     Err(error) if sheet.preview.is_some() => sheet.error = Some(error.to_string()),
                     Err(error) => sheet.phase = Phase::Failed(error.to_string()),
@@ -666,11 +668,15 @@ impl Workbench {
             return;
         }
         let store = self.sessions.read(cx);
+        // The daemon's rule (`occupants`): a chat with a turn running, or an agent at work. A
+        // session this window does not know counts as still running.
         let still = preview.busy.iter().any(|id| {
-            store
-                .session(*id)
-                .and_then(|s| s.chat.as_ref())
-                .is_some_and(|chat| chat.turn_active)
+            store.session(*id).is_none_or(|s| {
+                s.chat.as_ref().is_some_and(|chat| chat.turn_active)
+                    || s.agent
+                        .as_ref()
+                        .is_some_and(|a| a.state == hutan_protocol::messages::AgentState::Working)
+            })
         });
         if !still {
             self.refresh_preview(cx);
