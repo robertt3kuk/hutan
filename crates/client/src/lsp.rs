@@ -5,9 +5,8 @@
 use hutan_protocol::lsp::{
     DocChange, DocOpen, DocOpened, DocRef, LspCompletionItem, LspCompletionList,
     LspCompletionRequest, LspCompletionResolve, LspDiagnosticsRequest, LspDiagnosticsResult,
-    LspHover, LspLocations, LspPositionRequest, LspServerInfo, LspServerRef,
-    LspSignatureHelp, LspSignatureHelpRequest, LspStatus, LspStatusRequest, LspTrustRequest,
-    LspTrustResult,
+    LspHover, LspLocations, LspPositionRequest, LspServerInfo, LspServerRef, LspSignatureHelp,
+    LspSignatureHelpRequest, LspStatus, LspStatusRequest, LspTrustRequest, LspTrustResult,
 };
 use hutan_protocol::messages::{Empty, Request};
 

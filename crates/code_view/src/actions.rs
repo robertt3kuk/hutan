@@ -143,6 +143,19 @@ gpui::actions!(
         PreviousDiagnostic,
         /// Go back to where the last jump (go to definition) came from.
         GoBack,
+        /// Ask the language server for completions at the caret (⌃Space; ⌃N / ⌃P in Vim's
+        /// Insert mode).
+        ShowCompletions,
+        /// The next item of the completion popup (↓, ⌃N).
+        CompletionNext,
+        /// The previous item of the completion popup (↑, ⌃P).
+        CompletionPrevious,
+        /// Accept the selected completion (Return, Tab).
+        ConfirmCompletion,
+        /// The next tab stop of the snippet just inserted (Tab).
+        NextTabStop,
+        /// The previous tab stop of the snippet just inserted (⇧Tab).
+        PreviousTabStop,
     ]
 );
 
@@ -222,5 +235,11 @@ pub(crate) fn register(root: Stateful<Div>, cx: &mut Context<CodeView>) -> State
     let root = run!(root, ShowHover, show_hover_at_caret);
     let root = run!(root, NextDiagnostic, next_diagnostic);
     let root = run!(root, PreviousDiagnostic, previous_diagnostic);
+    let root = run!(root, ShowCompletions, show_completions);
+    let root = run!(root, CompletionNext, completion_next);
+    let root = run!(root, CompletionPrevious, completion_previous);
+    let root = run!(root, ConfirmCompletion, confirm_completion);
+    let root = run!(root, NextTabStop, next_tab_stop);
+    let root = run!(root, PreviousTabStop, previous_tab_stop);
     root.on_action(cx.listener(|_, _: &GoBack, _, cx| cx.emit(crate::CodeViewEvent::GoBack)))
 }

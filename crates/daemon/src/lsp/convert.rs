@@ -303,7 +303,10 @@ pub fn signature_help(help: &SignatureHelp) -> LspSignatureHelp {
                         }
                         // The first place after the parameter before.
                         ParameterLabel::Simple(name) => {
-                            match label.get(searched..).and_then(|rest| rest.find(name.as_str())) {
+                            match label
+                                .get(searched..)
+                                .and_then(|rest| rest.find(name.as_str()))
+                            {
                                 Some(at) if !name.is_empty() => {
                                     let start = searched + at;
                                     searched = start + name.len();

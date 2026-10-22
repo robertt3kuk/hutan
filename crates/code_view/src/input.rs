@@ -201,7 +201,9 @@ impl EntityInputHandler for CodeView {
         }
         if range_utf16.is_none() && self.marked.is_empty() {
             // Plain typing: the auto-pair rules apply.
-            self.type_text(new_text, cx);
+            if self.type_text(new_text, cx) {
+                self.after_typing(new_text, cx);
+            }
             return;
         }
         // The end of a composition, or a replacement (a press-and-hold accent).

@@ -26,6 +26,7 @@ mod launcher_ui;
 mod layout_offer;
 pub mod lsp;
 mod lsp_bar;
+mod lsp_complete;
 mod lsp_nav;
 mod mac;
 mod modal;

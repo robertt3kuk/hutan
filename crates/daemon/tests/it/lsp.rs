@@ -1104,11 +1104,20 @@ async fn completion_resolve_and_signature_help_run_through_the_daemon() {
             ("émoji", Some(LspCompletionKind::Variable), false, true),
         ]
     );
-    assert_eq!(list.items[0].insert_text.as_deref(), Some("push(${1:value})$0"));
-    assert_eq!(list.items[1].additional_edits[0].range.start, position(0, 0));
+    assert_eq!(
+        list.items[0].insert_text.as_deref(),
+        Some("push(${1:value})$0")
+    );
+    assert_eq!(
+        list.items[1].additional_edits[0].range.start,
+        position(0, 0)
+    );
     // The server's UTF-8 columns 3..4 are UTF-16 columns 2..3 on the wire.
     let edit = list.items[2].edit.clone().unwrap();
-    assert_eq!((edit.range.start, edit.range.end), (position(0, 2), position(0, 3)));
+    assert_eq!(
+        (edit.range.start, edit.range.end),
+        (position(0, 2), position(0, 3))
+    );
 
     let resolved = env
         .client
@@ -1118,8 +1127,14 @@ async fn completion_resolve_and_signature_help_run_through_the_daemon() {
         })
         .await
         .unwrap();
-    assert_eq!(resolved.documentation.as_deref(), Some("Appends **value**."));
-    assert_eq!(resolved.detail.as_deref(), Some("fn push(&mut self, value: T)"));
+    assert_eq!(
+        resolved.documentation.as_deref(),
+        Some("Appends **value**.")
+    );
+    assert_eq!(
+        resolved.detail.as_deref(),
+        Some("fn push(&mut self, value: T)")
+    );
     assert_eq!(
         error_code(
             env.client
@@ -1146,7 +1161,10 @@ async fn completion_resolve_and_signature_help_run_through_the_daemon() {
     let signature = &help.signatures[help.active_signature as usize];
     assert_eq!(signature.active_parameter, Some(1));
     let n = &signature.parameters[1];
-    assert_eq!(&signature.label[n.start as usize..n.end as usize], "n: usize");
+    assert_eq!(
+        &signature.label[n.start as usize..n.end as usize],
+        "n: usize"
+    );
     assert_eq!(signature.documentation.as_deref(), Some("Pushes."));
     // Outside a call there is none.
     let none = env
@@ -1221,7 +1239,9 @@ async fn a_newer_completion_supersedes_the_older_and_the_server_is_told() {
         l.starts_with("textDocument/completion ")
     })
     .await;
-    let first_id = asked.trim_start_matches("textDocument/completion ").to_owned();
+    let first_id = asked
+        .trim_start_matches("textDocument/completion ")
+        .to_owned();
     // …and the next one of the connection replaces it while it waits.
     let second = env
         .client

@@ -68,6 +68,22 @@ pub enum FileViewEvent {
     Definition { offset: usize },
     /// Go back to where the last jump came from (E-12a).
     GoBack,
+    /// The code view asks for completions (E-12b; see [`CodeViewEvent::CompletionRequested`]).
+    Completion {
+        request: u64,
+        offset: usize,
+        trigger: Option<char>,
+        incomplete: bool,
+    },
+    /// The code view asks for more about a completion item (E-12b).
+    CompletionResolve { list: u64, index: usize },
+    /// The code view asks for signature help (E-12b).
+    SignatureHelp {
+        request: u64,
+        offset: usize,
+        trigger: Option<char>,
+        retrigger: bool,
+    },
 }
 
 /// Vim's `:` line while it is open.
@@ -168,6 +184,34 @@ impl FileView {
                     cx.emit(FileViewEvent::Definition { offset: *offset });
                 }
                 CodeViewEvent::GoBack => cx.emit(FileViewEvent::GoBack),
+                CodeViewEvent::CompletionRequested {
+                    request,
+                    offset,
+                    trigger,
+                    incomplete,
+                } => cx.emit(FileViewEvent::Completion {
+                    request: *request,
+                    offset: *offset,
+                    trigger: *trigger,
+                    incomplete: *incomplete,
+                }),
+                CodeViewEvent::CompletionResolve { list, index } => {
+                    cx.emit(FileViewEvent::CompletionResolve {
+                        list: *list,
+                        index: *index,
+                    });
+                }
+                CodeViewEvent::SignatureHelpRequested {
+                    request,
+                    offset,
+                    trigger,
+                    retrigger,
+                } => cx.emit(FileViewEvent::SignatureHelp {
+                    request: *request,
+                    offset: *offset,
+                    trigger: *trigger,
+                    retrigger: *retrigger,
+                }),
             }),
         ];
         let mut this = Self {

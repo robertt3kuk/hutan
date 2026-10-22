@@ -656,9 +656,7 @@ impl Router {
             Request::LspCompletionResolve(req) => {
                 ok(&self.lsp.completion_resolve(conn.id(), req).await?)
             }
-            Request::LspSignatureHelp(req) => {
-                ok(&self.lsp.signature_help(conn.id(), req).await?)
-            }
+            Request::LspSignatureHelp(req) => ok(&self.lsp.signature_help(conn.id(), req).await?),
             Request::LspRestart(req) => {
                 let restarted = self.lsp.restart(&req.server_id).await;
                 audit(Actor::of(conn), "lsp.restart", &req.server_id, &restarted);

@@ -42,7 +42,7 @@ fn fake_bin() -> PathBuf {
 
 /// A daemon running `hutan-fake-lsp` with `script` for `*.fake` files below `root` (which has
 /// the root marker `fake.toml`), and a workbench on it.
-struct Env {
+pub(crate) struct Env {
     daemon: TestDaemon,
     root: PathBuf,
     _work: tempfile::TempDir,
@@ -51,7 +51,7 @@ struct Env {
 impl Env {
     /// `trust`: `[lsp] trust` (`"always"`, or `"ask"` for the trust bar); `script` gets the
     /// root (canonical), for scripts that name files.
-    fn new(trust: &str, script: impl FnOnce(&Path) -> Value) -> Self {
+    pub(crate) fn new(trust: &str, script: impl FnOnce(&Path) -> Value) -> Self {
         let work = tempfile::tempdir().unwrap();
         let base = work.path().canonicalize().unwrap();
         let root = base.join("repo");
@@ -73,11 +73,11 @@ impl Env {
         }
     }
 
-    fn file(&self, name: &str) -> PathBuf {
+    pub(crate) fn file(&self, name: &str) -> PathBuf {
         self.root.join(name)
     }
 
-    fn open<'a>(
+    pub(crate) fn open<'a>(
         &self,
         cx: &'a mut TestAppContext,
         settings_toml: &str,
@@ -96,17 +96,22 @@ impl Env {
     }
 }
 
-struct Tab {
-    path: String,
+pub(crate) struct Tab {
+    pub(crate) path: String,
     #[allow(dead_code)]
-    view: Entity<FileView>,
-    code: Entity<CodeView>,
-    buffer: Entity<FileBuffer>,
+    pub(crate) view: Entity<FileView>,
+    pub(crate) code: Entity<CodeView>,
+    pub(crate) buffer: Entity<FileBuffer>,
 }
 
 /// Writes `text` to `file`, opens it in a tab and waits until its text is in and the daemon
 /// has it as a document.
-fn open_file(view: &Entity<Workbench>, cx: &mut VisualTestContext, file: &Path, text: &str) -> Tab {
+pub(crate) fn open_file(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    file: &Path,
+    text: &str,
+) -> Tab {
     std::fs::write(file, text).unwrap();
     view.update_in(cx, |wb, window, cx| {
         wb.open_file(FileOpen::picked(file), window, cx);
@@ -150,7 +155,7 @@ fn diagnostics(
     })
 }
 
-fn caret(code: &Entity<CodeView>, cx: &mut VisualTestContext) -> usize {
+pub(crate) fn caret(code: &Entity<CodeView>, cx: &mut VisualTestContext) -> usize {
     code.read_with(cx, |c, _| c.selections().primary().head)
 }
 
@@ -162,7 +167,7 @@ fn focused_path(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<
 }
 
 /// Lets the debounce of `doc.change` run out (the test clock does not move by itself).
-fn flush_edits(cx: &mut VisualTestContext) {
+pub(crate) fn flush_edits(cx: &mut VisualTestContext) {
     cx.executor()
         .advance_clock(CHANGE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();

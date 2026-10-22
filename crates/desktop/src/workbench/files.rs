@@ -459,10 +459,26 @@ impl Workbench {
                     this.go_to_definition(view, *offset, window, cx);
                 }
                 FileViewEvent::GoBack => this.go_back(window, cx),
+                FileViewEvent::Completion {
+                    request,
+                    offset,
+                    trigger,
+                    incomplete,
+                } => this.lsp_completion(view, *request, *offset, *trigger, *incomplete, cx),
+                FileViewEvent::CompletionResolve { list, index } => {
+                    this.lsp_completion_resolve(view, *list, *index, cx);
+                }
+                FileViewEvent::SignatureHelp {
+                    request,
+                    offset,
+                    trigger,
+                    retrigger,
+                } => this.lsp_signature_help(view, *request, *offset, *trigger, *retrigger, cx),
             },
         );
         self.file_subscriptions.insert(key.clone(), subscription);
         self.file_views.insert(key, view.clone());
+        self.refresh_completion_triggers(cx);
         view
     }
 

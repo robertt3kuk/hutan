@@ -23,10 +23,10 @@ use hutan_lsp_client::ls_types::request::{
     Completion, GotoDefinition, HoverRequest, ResolveCompletionItem, SignatureHelpRequest,
 };
 use hutan_lsp_client::ls_types::{
-    CompletionContext, CompletionItem, CompletionParams, CompletionResponse,
-    CompletionTriggerKind, GotoDefinitionParams, GotoDefinitionResponse, HoverParams,
-    PartialResultParams, SignatureHelpContext, SignatureHelpParams, SignatureHelpTriggerKind,
-    TextDocumentIdentifier, TextDocumentPositionParams, Uri, WorkDoneProgressParams,
+    CompletionContext, CompletionItem, CompletionParams, CompletionResponse, CompletionTriggerKind,
+    GotoDefinitionParams, GotoDefinitionResponse, HoverParams, PartialResultParams,
+    SignatureHelpContext, SignatureHelpParams, SignatureHelpTriggerKind, TextDocumentIdentifier,
+    TextDocumentPositionParams, Uri, WorkDoneProgressParams,
 };
 use hutan_lsp_client::{
     FileDiagnostics, Launch, LspError, PositionEncoding, RestartPolicy, Server, ServerConfig,
@@ -36,13 +36,13 @@ use hutan_protocol::control::{ControlMessage, ErrorBody, ErrorCode};
 use hutan_protocol::lsp::{
     COMPLETION_DOC_MAX_BYTES, COMPLETION_ITEMS_MAX, DIAGNOSTICS_EVENT_INTERVAL_MS,
     DIAGNOSTICS_PER_FILE_MAX, DIAGNOSTICS_TOTAL_MAX, DOC_CHANGE_MAX_BYTES, DOC_EDITS_MAX,
-    DOC_MAX_BYTES, DOC_OPEN_TEXT_MAX_BYTES, DOCS_PER_CONNECTION_MAX, DocChange, DocOpen,
-    DocOpened, DocServer, HOVER_MAX_BYTES, LOCATIONS_MAX, LspCompletionItem, LspCompletionList,
+    DOC_MAX_BYTES, DOC_OPEN_TEXT_MAX_BYTES, DOCS_PER_CONNECTION_MAX, DocChange, DocOpen, DocOpened,
+    DocServer, HOVER_MAX_BYTES, LOCATIONS_MAX, LspCompletionItem, LspCompletionList,
     LspCompletionRequest, LspCompletionResolve, LspDiagnostic, LspDiagnosticsRequest,
     LspDiagnosticsResult, LspFileDiagnostics, LspHover, LspLocation, LspLocations,
     LspPositionRequest, LspServerBrief, LspServerInfo, LspServerState, LspSignatureHelp,
-    LspSignatureHelpRequest, LspStatus, LspStatusRequest, LspTrust, LspTrustEntry,
-    LspTrustPolicy, LspTrustRequest, LspTrustResult, TRIGGERS_MAX,
+    LspSignatureHelpRequest, LspStatus, LspStatusRequest, LspTrust, LspTrustEntry, LspTrustPolicy,
+    LspTrustRequest, LspTrustResult, TRIGGERS_MAX,
 };
 use hutan_protocol::messages::Event;
 use hutan_protocol::{Frame, MAX_PAYLOAD};
@@ -2090,42 +2090,37 @@ impl LspHub {
         conn: ConnId,
         req: LspCompletionResolve,
     ) -> Result<LspCompletionItem, ErrorBody> {
-        self.superseding(
-            conn,
-            Superseded::Resolve,
-            "lsp.completion_resolve",
-            async {
-                let (path, item) = {
-                    let lists = self.completions.lock();
-                    let list = lists
-                        .lists
-                        .iter()
-                        .find(|l| l.id == req.completion_id)
-                        .ok_or_else(|| {
-                            not_found(format!(
-                                "completion list {} is no longer kept",
-                                req.completion_id
-                            ))
-                        })?;
-                    let item = usize::try_from(req.index)
-                        .ok()
-                        .and_then(|i| list.items.get(i))
-                        .ok_or_else(|| not_found(format!("no item {}", req.index)))?;
-                    (list.path.clone(), item.clone())
-                };
-                let (server, text, _, encoding) = self.target(&path).await?;
-                let resolved = match server.request::<ResolveCompletionItem>(item.clone()).await {
-                    Ok(resolved) => resolved,
-                    Err(LspError::Unsupported { .. }) => item,
-                    Err(error) => return Err(request_error(error)),
-                };
-                let mut converted =
-                    convert::completion_item(&resolved, &text, encoding, HOVER_MAX_BYTES)
-                        .ok_or_else(|| bad("the resolved item is over the bounds of the wire"))?;
-                converted.resolvable = false;
-                Ok(converted)
-            },
-        )
+        self.superseding(conn, Superseded::Resolve, "lsp.completion_resolve", async {
+            let (path, item) = {
+                let lists = self.completions.lock();
+                let list = lists
+                    .lists
+                    .iter()
+                    .find(|l| l.id == req.completion_id)
+                    .ok_or_else(|| {
+                        not_found(format!(
+                            "completion list {} is no longer kept",
+                            req.completion_id
+                        ))
+                    })?;
+                let item = usize::try_from(req.index)
+                    .ok()
+                    .and_then(|i| list.items.get(i))
+                    .ok_or_else(|| not_found(format!("no item {}", req.index)))?;
+                (list.path.clone(), item.clone())
+            };
+            let (server, text, _, encoding) = self.target(&path).await?;
+            let resolved = match server.request::<ResolveCompletionItem>(item.clone()).await {
+                Ok(resolved) => resolved,
+                Err(LspError::Unsupported { .. }) => item,
+                Err(error) => return Err(request_error(error)),
+            };
+            let mut converted =
+                convert::completion_item(&resolved, &text, encoding, HOVER_MAX_BYTES)
+                    .ok_or_else(|| bad("the resolved item is over the bounds of the wire"))?;
+            converted.resolvable = false;
+            Ok(converted)
+        })
         .await
     }
 

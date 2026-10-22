@@ -52,6 +52,26 @@ pub enum CodeViewEvent {
     /// Go back to where the last jump into this file came from (`⌃O` at the start of the
     /// view's own jumps, or without Vim).
     GoBack,
+    /// Ask the language server for completions at byte `offset` (E-12b); the owner answers
+    /// request `request` with [`CodeView::set_completions`]. `trigger`: the trigger character
+    /// just typed; `incomplete`: asked again because the last answer was incomplete.
+    CompletionRequested {
+        request: u64,
+        offset: usize,
+        trigger: Option<char>,
+        incomplete: bool,
+    },
+    /// Ask the server for more about item `index` of completion list `list`; answered with
+    /// [`CodeView::set_resolved_completion`].
+    CompletionResolve { list: u64, index: usize },
+    /// Ask for the signature help at byte `offset`; answered with
+    /// [`CodeView::set_signature_help`].
+    SignatureHelpRequested {
+        request: u64,
+        offset: usize,
+        trigger: Option<char>,
+        retrigger: bool,
+    },
 }
 
 /// Where a pending reveal puts the caret: a 1-based line and column in characters (`hutan
@@ -234,6 +254,14 @@ pub struct CodeView {
     /// The view was reached by a jump from another file (go to definition) when Vim had
     /// pushed this many jumps: `⌃O` goes back there until Vim jumps on its own.
     pub(crate) jump_arrival: Option<u64>,
+    /// Completion and signature help (E-12b, `completion.rs`): what makes the view ask, the
+    /// popup, the debounce of typing, the snippet being filled in and the signature shown.
+    pub(crate) triggers: crate::completion::CompletionTriggers,
+    pub(crate) completion: Option<crate::completion::CompletionState>,
+    pub(crate) completion_task: Option<Task<()>>,
+    pub(crate) completion_seq: u64,
+    pub(crate) snippet: Option<crate::completion::SnippetSession>,
+    pub(crate) signature: Option<crate::completion::SignatureState>,
     _observe: Subscription,
     _edits: Subscription,
     /// Focus-out and window-activation watchers, made at the first render (they need the
@@ -308,6 +336,12 @@ impl CodeView {
             hover_task: None,
             hover_pointer: None,
             jump_arrival: None,
+            triggers: crate::completion::CompletionTriggers::default(),
+            completion: None,
+            completion_task: None,
+            completion_seq: 0,
+            snippet: None,
+            signature: None,
             _observe: observe,
             _edits: edits,
             focus_watch: Vec::new(),
@@ -432,6 +466,12 @@ impl CodeView {
         // The text under the popover changed.
         if self.hover.take().is_some() {
             self.hover_task = None;
+        }
+        self.map_snippet(&event.transaction, event.version);
+        if mine {
+            self.refilter_completion(cx);
+        } else {
+            self.dismiss_popups(cx);
         }
         cx.emit(CodeViewEvent::Changed);
         cx.notify();
@@ -1269,10 +1309,11 @@ impl Render for CodeView {
             .track_focus(&self.focus)
             .size_full()
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                // Escape closes the hover popover first (Vim's Escape is no binding).
+                // Escape closes the popups first (Vim's Escape is no binding), once an input
+                // method's composition is over.
                 if event.keystroke.key == "escape"
                     && this.marked.is_empty()
-                    && this.dismiss_hover(cx)
+                    && (this.dismiss_popups(cx) | this.dismiss_hover(cx))
                 {
                     cx.stop_propagation();
                     return;
@@ -1289,10 +1330,15 @@ impl Render for CodeView {
         }) {
             self.hover = None;
         }
+        self.check_popups(cx);
         let hover = self.render_hover(cx);
+        let completion = self.render_completion(cx);
+        let signature = self.render_signature(cx);
         crate::actions::register(root, cx)
             .child(CodeElement::new(cx.entity()))
             .children(hover)
+            .children(signature)
+            .children(completion)
     }
 }
 
@@ -1303,6 +1349,12 @@ impl CodeView {
         let mut context = KeyContext::default();
         context.add(crate::KEY_CONTEXT);
         context.add(crate::EDITOR_CONTEXT);
+        if self.completion.as_ref().is_some_and(|c| c.is_visible()) {
+            context.add(crate::COMPLETION_CONTEXT);
+        }
+        if self.snippet.is_some() {
+            context.add(crate::SNIPPET_CONTEXT);
+        }
         if let Some(mode) = self.vim_mode() {
             context.set(
                 crate::VIM_MODE_KEY,

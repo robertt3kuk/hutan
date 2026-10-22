@@ -26,8 +26,12 @@ impl Workbench {
 
     pub(crate) fn on_lsp_event(&mut self, event: &LspStoreEvent, cx: &mut Context<Self>) {
         match event {
-            // The status item counts the focused file's diagnostics.
-            LspStoreEvent::Changed => cx.notify(),
+            // The status item counts the focused file's diagnostics; servers that started
+            // bring their completion triggers.
+            LspStoreEvent::Changed => {
+                self.refresh_completion_triggers(cx);
+                cx.notify();
+            }
             LspStoreEvent::Notice(text) => self.set_notice(text.clone(), cx),
         }
     }

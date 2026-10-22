@@ -216,12 +216,13 @@ impl CodeView {
         self.after_selecting(cx);
     }
 
-    /// Escape: ends a composition first, then closes the hover popover; else one caret (the
-    /// primary) without a selection.
+    /// Escape: ends a composition first, then closes the popups (completion, signature help,
+    /// hover) and a snippet's tab stops; else one caret (the primary) without a selection.
     pub(crate) fn cancel(&mut self, cx: &mut Context<Self>) {
-        if self.end_composition(cx) || self.dismiss_hover(cx) {
+        if self.end_composition(cx) || (self.dismiss_popups(cx) | self.dismiss_hover(cx)) {
             return;
         }
+        self.snippet = None;
         let primary = self.selections.primary();
         self.selections = if self.selections.len() > 1 {
             Selections::single(primary)

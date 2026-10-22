@@ -25,17 +25,20 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use gpui::{AppContext as _, Context, Entity, EventEmitter, Task, WeakEntity};
 use hutan_buffer::{Change, Text, Utf16Point};
 use hutan_client::{ClientError, Connection, Notice};
-use hutan_code_view::{BufferEdited, DiagnosticInput, FileBuffer, Severity};
+use hutan_code_view::{BufferEdited, CompletionTriggers, DiagnosticInput, FileBuffer, Severity};
 use hutan_protocol::lsp::{
     DOC_CHANGE_MAX_BYTES, DOC_OPEN_TEXT_MAX_BYTES, DocChange, DocEdit, DocOpen, DocOpened,
-    DocServer, LspDiagnostic, LspDiagnosticsRequest, LspHover, LspLocations, LspPosition,
-    LspPositionRequest, LspServerInfo, LspServerState, LspSeverity, LspStatusRequest, LspTrust,
-    LspTrustRequest,
+    DocServer, LspCompletionItem, LspCompletionList, LspCompletionRequest, LspCompletionResolve,
+    LspDiagnostic, LspDiagnosticsRequest, LspHover, LspLocations, LspPosition, LspPositionRequest,
+    LspServerInfo, LspServerState, LspSeverity, LspSignatureHelp, LspSignatureHelpRequest,
+    LspStatusRequest, LspTrust, LspTrustRequest,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::oneshot;
@@ -164,6 +167,10 @@ pub struct LspStore {
     status: Option<Task<()>>,
     /// `doc.change` calls sent (tests: debouncing).
     changes_sent: u64,
+    /// Completion and signature help requests asked so far: one that waited for the edits
+    /// goes only if no newer one was asked meanwhile.
+    completion_asked: Arc<AtomicU64>,
+    signature_asked: Arc<AtomicU64>,
     /// Diagnostics notices applied (tests).
     diagnostics_seen: u64,
 }
@@ -323,6 +330,8 @@ impl LspStore {
             listener: None,
             status: None,
             changes_sent: 0,
+            completion_asked: Arc::new(AtomicU64::new(0)),
+            signature_asked: Arc::new(AtomicU64::new(0)),
             diagnostics_seen: 0,
         }
     }
@@ -969,6 +978,124 @@ impl LspStore {
         Some(cx.background_spawn(async move {
             let _ = ready.await;
             connection.lsp_definition(request).await
+        }))
+    }
+
+    /// What makes the code view of `path` ask for completion and signature help: on while
+    /// the daemon has `lsp.completion` and a server of the document announced completion; the
+    /// servers' single-character triggers.
+    pub fn completion_triggers(&self, path: &str) -> CompletionTriggers {
+        let Some(open) = self.docs.get(path).and_then(|d| d.open.as_ref()) else {
+            return CompletionTriggers::default();
+        };
+        if !self.connection.supports_lsp_completion() {
+            return CompletionTriggers::default();
+        }
+        let servers: Vec<&LspServerInfo> = open
+            .servers
+            .iter()
+            .filter_map(|s| self.servers.get(&s.server_id))
+            .collect();
+        let chars = |of: fn(&LspServerInfo) -> &Vec<String>| -> Vec<char> {
+            let mut out: Vec<char> = servers
+                .iter()
+                .flat_map(|s| of(s).iter())
+                .filter_map(|t| {
+                    let mut chars = t.chars();
+                    match (chars.next(), chars.next()) {
+                        (Some(c), None) => Some(c),
+                        _ => None,
+                    }
+                })
+                .collect();
+            out.sort_unstable();
+            out.dedup();
+            out
+        };
+        CompletionTriggers {
+            enabled: servers
+                .iter()
+                .any(|s| s.capabilities.iter().any(|c| c == "completion")),
+            completion: chars(|s| &s.completion_triggers),
+            signature: chars(|s| &s.signature_triggers),
+        }
+    }
+
+    /// `lsp.completion` at `position` of `path`, after its pending edits. `Ok(None)`: a newer
+    /// one was asked while this one waited for the edits, so it was not sent (requests that
+    /// wait together must not reach the daemon out of order: a newer one supersedes the older
+    /// there).
+    pub fn completion(
+        &mut self,
+        path: &str,
+        position: LspPosition,
+        trigger: Option<char>,
+        incomplete: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<Option<LspCompletionList>, ClientError>>> {
+        let ready = self.after_edits(path, cx)?;
+        let connection = self.connection.clone();
+        let request = LspCompletionRequest {
+            path: PathBuf::from(path),
+            position,
+            trigger: trigger.map(String::from),
+            incomplete,
+        };
+        let latest = self.completion_asked.clone();
+        let mine = latest.fetch_add(1, Ordering::SeqCst) + 1;
+        Some(cx.background_spawn(async move {
+            let _ = ready.await;
+            if latest.load(Ordering::SeqCst) != mine {
+                return Ok(None);
+            }
+            connection.lsp_completion(request).await.map(Some)
+        }))
+    }
+
+    /// `lsp.completion_resolve` of item `index` of list `completion_id`.
+    pub fn completion_resolve(
+        &self,
+        completion_id: u64,
+        index: u32,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<LspCompletionItem, ClientError>> {
+        let connection = self.connection.clone();
+        cx.background_spawn(async move {
+            connection
+                .lsp_completion_resolve(LspCompletionResolve {
+                    completion_id,
+                    index,
+                })
+                .await
+        })
+    }
+
+    /// `lsp.signature_help` at `position` of `path`, after its pending edits; `Ok(None)` as
+    /// for [`completion`](Self::completion).
+    pub fn signature_help(
+        &mut self,
+        path: &str,
+        position: LspPosition,
+        trigger: Option<char>,
+        retrigger: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<Option<LspSignatureHelp>, ClientError>>> {
+        let ready = self.after_edits(path, cx)?;
+        let connection = self.connection.clone();
+        let request = LspSignatureHelpRequest {
+            path: PathBuf::from(path),
+            position,
+            trigger: trigger.map(String::from),
+            retrigger,
+        };
+        let latest = self.signature_asked.clone();
+        let mine = latest.fetch_add(1, Ordering::SeqCst) + 1;
+        Some(cx.background_spawn(async move {
+            let _ = ready.await;
+            if latest.load(Ordering::SeqCst) != mine {
+                return Ok(None);
+            }
+            connection.lsp_signature_help(request).await.map(Some)
         }))
     }
 

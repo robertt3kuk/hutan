@@ -32,12 +32,17 @@
 //!   severity and the caret line's message after its end; the hover popover ([`HoverState`]);
 //!   `gd` / ⌘-click / F12, `]d` `[d` / F8, `K`, and `⌃O` back across files. The owner talks to
 //!   the daemon ([`CodeViewEvent::HoverRequested`], [`CodeViewEvent::GoToDefinition`]).
+//! - Completion and signature help (E-12b, `completion.rs`): the popup with kind glyphs,
+//!   client-side filtering and the selected item's documentation, the snippet subset with tab
+//!   stops, and signature help above the caret ([`CodeViewEvent::CompletionRequested`],
+//!   [`CodeViewEvent::SignatureHelpRequested`]).
 //!
 //! GPUI is linked here (a UI crate, ADR 0010); the text model and the parser are GPUI-free.
 
 pub mod actions;
 pub mod agent;
 mod buffer;
+mod completion;
 pub mod diagnostics;
 mod editing;
 mod element;
@@ -49,6 +54,7 @@ mod layout;
 mod modal;
 mod motion;
 mod rules;
+mod snippet;
 mod style;
 mod view;
 mod vim_host;
@@ -58,6 +64,10 @@ pub use agent::{AgentChanges, AgentHunk, AgentLabel, HunkKind};
 pub use buffer::{
     BufferEdited, Coalesce, Conflict, EditKind, FailReason, FileBuffer, LoadState,
     TYPING_GROUP_PAUSE, file_name, language_label,
+};
+pub use completion::{
+    COMPLETION_DEBOUNCE, COMPLETION_ROWS, CompletionEdit, CompletionItem, CompletionKind,
+    CompletionList, CompletionState, CompletionTriggers, Signature, SignatureHelp,
 };
 pub use diagnostics::{
     Diagnostic, DiagnosticCounts, DiagnosticInput, DrawnDiagnostic, GlyphShape, Severity,
@@ -80,6 +90,10 @@ pub use vim_host::{BufferHost, HostStep};
 pub const KEY_CONTEXT: &str = "CodeView";
 /// A second name of the same context, for keymaps written for editors in general.
 pub const EDITOR_CONTEXT: &str = "Editor";
+/// Set in the view's context while the completion popup shows: its keys (↑ ↓ ⌃N ⌃P Return Tab).
+pub const COMPLETION_CONTEXT: &str = "showing_completions";
+/// Set in the view's context while a snippet's tab stops are being filled in (Tab, ⇧Tab).
+pub const SNIPPET_CONTEXT: &str = "in_snippet";
 /// The key of the view's context that holds the Vim mode (`normal`, `insert`, `visual`) while
 /// `editor.vim_mode` is on.
 pub const VIM_MODE_KEY: &str = "vim_mode";

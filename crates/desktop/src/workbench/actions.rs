@@ -916,6 +916,9 @@ fn hutan_global_bindings() -> Vec<BindingSpec> {
 fn context_bindings() -> Vec<BindingSpec> {
     // The editor's own keys that Vim's Normal and Visual modes answer themselves.
     const TYPING: &str = hutan_code_view::TYPING_CONTEXT;
+    const VIM_INSERT: &str = "CodeView && vim_mode == insert && !showing_completions";
+    const COMPLETING: &str = "CodeView && showing_completions";
+    const SNIPPET: &str = "CodeView && in_snippet && !showing_completions";
     vec![
         bind::<hutan_terminal_view::Copy>("cmd-c", Some(hutan_terminal_view::KEY_CONTEXT)),
         bind::<hutan_terminal_view::Paste>("cmd-v", Some(hutan_terminal_view::KEY_CONTEXT)),
@@ -1053,6 +1056,19 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<hutan_code_view::NextDiagnostic>("f8", Some(hutan_code_view::KEY_CONTEXT)),
         bind::<hutan_code_view::PreviousDiagnostic>("shift-f8", Some(hutan_code_view::KEY_CONTEXT)),
         bind::<hutan_code_view::GoBack>("ctrl-o", Some(hutan_code_view::PLAIN_CONTEXT)),
+        // Completion (E-12b): ⌃Space asks; in Vim's Insert mode ⌃N / ⌃P ask too. While the
+        // popup shows its keys come last so that they win over the editor's ↑ ↓ Return Tab.
+        bind::<hutan_code_view::ShowCompletions>("ctrl-space", Some(TYPING)),
+        bind::<hutan_code_view::ShowCompletions>("ctrl-n", Some(VIM_INSERT)),
+        bind::<hutan_code_view::ShowCompletions>("ctrl-p", Some(VIM_INSERT)),
+        bind::<hutan_code_view::NextTabStop>("tab", Some(SNIPPET)),
+        bind::<hutan_code_view::PreviousTabStop>("shift-tab", Some(SNIPPET)),
+        bind::<hutan_code_view::CompletionNext>("down", Some(COMPLETING)),
+        bind::<hutan_code_view::CompletionNext>("ctrl-n", Some(COMPLETING)),
+        bind::<hutan_code_view::CompletionPrevious>("up", Some(COMPLETING)),
+        bind::<hutan_code_view::CompletionPrevious>("ctrl-p", Some(COMPLETING)),
+        bind::<hutan_code_view::ConfirmCompletion>("enter", Some(COMPLETING)),
+        bind::<hutan_code_view::ConfirmCompletion>("tab", Some(COMPLETING)),
     ]
 }
 
@@ -1478,6 +1494,17 @@ mod tests {
             "f8 | code_view::NextDiagnostic | CodeView",
             "shift-f8 | code_view::PreviousDiagnostic | CodeView",
             "ctrl-o | code_view::GoBack | CodeView && !vim_mode",
+            "ctrl-space | code_view::ShowCompletions | CodeView && vim_mode != normal && vim_mode != visual",
+            "ctrl-n | code_view::ShowCompletions | CodeView && vim_mode == insert && !showing_completions",
+            "ctrl-p | code_view::ShowCompletions | CodeView && vim_mode == insert && !showing_completions",
+            "tab | code_view::NextTabStop | CodeView && in_snippet && !showing_completions",
+            "shift-tab | code_view::PreviousTabStop | CodeView && in_snippet && !showing_completions",
+            "down | code_view::CompletionNext | CodeView && showing_completions",
+            "ctrl-n | code_view::CompletionNext | CodeView && showing_completions",
+            "up | code_view::CompletionPrevious | CodeView && showing_completions",
+            "ctrl-p | code_view::CompletionPrevious | CodeView && showing_completions",
+            "enter | code_view::ConfirmCompletion | CodeView && showing_completions",
+            "tab | code_view::ConfirmCompletion | CodeView && showing_completions",
         ]
         .map(str::to_owned)
         .to_vec();
