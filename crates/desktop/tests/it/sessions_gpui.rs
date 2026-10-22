@@ -1358,7 +1358,7 @@ fn terminal_tabs_in_every_pane_reattach_to_respawned_sessions_and_take_input(
                 .is_some_and(|v| v.read(cx).model().is_ready())
         })
     });
-    cx.simulate_keystrokes("cmd-d");
+    cx.dispatch_action(actions::SplitRight);
     wait_until(cx, "the split", |cx| state_of(&view, cx).panes().len() == 2);
     open_session(&view, cx, second.id);
     wait_until(cx, "both terminals to be ready", |cx| {
@@ -1700,8 +1700,9 @@ fn splits_start_a_terminal_in_the_focused_sessions_directory(cx: &mut TestAppCon
     wait_synced(&view, cx, 1);
     open_session(&view, cx, origin.id);
 
-    // ⌘D: a new pane with a NEW session, started where the focused one is.
-    cx.simulate_keystrokes("cmd-d");
+    // The pane split (the palette; ⌘D splits inside the tab now): a new pane with a NEW
+    // session, started where the focused one is.
+    cx.dispatch_action(actions::SplitRight);
     wait_until(cx, "the new session in the split", |cx| {
         state_of(&view, cx).panes().len() == 2
             && view
@@ -1712,8 +1713,8 @@ fn splits_start_a_terminal_in_the_focused_sessions_directory(cx: &mut TestAppCon
     assert_same_dir(daemon.session(right).cwd.as_deref(), dir.path());
     assert_eq!(state_of(&view, cx).active_pane().unwrap().items.len(), 1);
 
-    // ⌘⇧D from that one splits again, from its directory.
-    cx.simulate_keystrokes("cmd-shift-d");
+    // Split down from that one splits again, from its directory.
+    cx.dispatch_action(actions::SplitDown);
     wait_until(cx, "the third pane", |cx| {
         state_of(&view, cx).panes().len() == 3
     });
