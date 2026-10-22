@@ -3,9 +3,11 @@
 //! events arrive on [`Client::events`](Client::events).
 
 use hutan_protocol::lsp::{
-    DocChange, DocOpen, DocOpened, DocRef, LspDiagnosticsRequest, LspDiagnosticsResult, LspHover,
-    LspLocations, LspPositionRequest, LspServerInfo, LspServerRef, LspStatus, LspStatusRequest,
-    LspTrustRequest, LspTrustResult,
+    DocChange, DocOpen, DocOpened, DocRef, LspCompletionItem, LspCompletionList,
+    LspCompletionRequest, LspCompletionResolve, LspDiagnosticsRequest, LspDiagnosticsResult,
+    LspHover, LspLocations, LspPositionRequest, LspServerInfo, LspServerRef,
+    LspSignatureHelp, LspSignatureHelpRequest, LspStatus, LspStatusRequest, LspTrustRequest,
+    LspTrustResult,
 };
 use hutan_protocol::messages::{Empty, Request};
 
@@ -80,6 +82,31 @@ impl Client {
         req: LspPositionRequest,
     ) -> Result<LspLocations, ClientError> {
         self.call(Request::LspDefinition(req)).await
+    }
+
+    /// `lsp.completion` at a position of an open document; a newer one of this connection
+    /// supersedes it (`conflict`).
+    pub async fn lsp_completion(
+        &self,
+        req: LspCompletionRequest,
+    ) -> Result<LspCompletionList, ClientError> {
+        self.call(Request::LspCompletion(req)).await
+    }
+
+    /// `lsp.completion_resolve`: more about one item of a completion list.
+    pub async fn lsp_completion_resolve(
+        &self,
+        req: LspCompletionResolve,
+    ) -> Result<LspCompletionItem, ClientError> {
+        self.call(Request::LspCompletionResolve(req)).await
+    }
+
+    /// `lsp.signature_help` at a position of an open document.
+    pub async fn lsp_signature_help(
+        &self,
+        req: LspSignatureHelpRequest,
+    ) -> Result<LspSignatureHelp, ClientError> {
+        self.call(Request::LspSignatureHelp(req)).await
     }
 
     /// `lsp.restart`: starts a server again, or looks for its binary again.

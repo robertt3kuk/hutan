@@ -1,5 +1,6 @@
 //! The requests the client makes, typed with `ls-types`: hover, definition, references,
-//! completion, document symbols, formatting, rename (prepare and apply) and code actions.
+//! completion (and its resolve), signature help, document symbols, formatting, rename (prepare
+//! and apply) and code actions.
 //!
 //! Each one knows the capability it needs (the client refuses it without sending when the
 //! server did not announce it) and whether it is latency-critical (completion gets the short
@@ -7,7 +8,7 @@
 
 use ls_types::request::{
     CodeActionRequest, Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest,
-    PrepareRenameRequest, References, Rename, Request,
+    PrepareRenameRequest, References, Rename, Request, ResolveCompletionItem, SignatureHelpRequest,
 };
 use ls_types::{CodeActionProviderCapability, HoverProviderCapability, OneOf, ServerCapabilities};
 
@@ -55,6 +56,23 @@ impl TypedRequest for Completion {
     const LATENCY: Latency = Latency::Interactive;
     fn supported(capabilities: &ServerCapabilities) -> bool {
         capabilities.completion_provider.is_some()
+    }
+}
+
+impl TypedRequest for ResolveCompletionItem {
+    const LATENCY: Latency = Latency::Interactive;
+    fn supported(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .completion_provider
+            .as_ref()
+            .is_some_and(|c| c.resolve_provider == Some(true))
+    }
+}
+
+impl TypedRequest for SignatureHelpRequest {
+    const LATENCY: Latency = Latency::Interactive;
+    fn supported(capabilities: &ServerCapabilities) -> bool {
+        capabilities.signature_help_provider.is_some()
     }
 }
 

@@ -1315,6 +1315,33 @@ impl Connection {
         client.lsp_definition(req).await
     }
 
+    /// `lsp.completion` at a position of an open document.
+    pub async fn lsp_completion(
+        &self,
+        req: hutan_protocol::lsp::LspCompletionRequest,
+    ) -> Result<hutan_protocol::lsp::LspCompletionList, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.lsp_completion(req).await
+    }
+
+    /// `lsp.completion_resolve`: more about one item of a completion list.
+    pub async fn lsp_completion_resolve(
+        &self,
+        req: hutan_protocol::lsp::LspCompletionResolve,
+    ) -> Result<hutan_protocol::lsp::LspCompletionItem, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.lsp_completion_resolve(req).await
+    }
+
+    /// `lsp.signature_help` at a position of an open document.
+    pub async fn lsp_signature_help(
+        &self,
+        req: hutan_protocol::lsp::LspSignatureHelpRequest,
+    ) -> Result<hutan_protocol::lsp::LspSignatureHelp, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.lsp_signature_help(req).await
+    }
+
     /// `lsp.trust`: the user's decision about a folder (user-only).
     pub async fn lsp_trust(
         &self,

@@ -76,6 +76,7 @@ pub const CAPABILITIES: &[&str] = &[
     "doc.sync",
     "lsp",
     "checkpoint.restores",
+    "lsp.completion",
 ];
 
 /// How long a closing connection may take to flush already queued messages.
@@ -408,8 +409,15 @@ async fn handle_frame(frame: Frame, handle: &ConnHandle, ctx: &Arc<ConnContext>)
         ControlMessage::Request { id, method, params } => {
             let outcome = match Request::decode(&method, params) {
                 // A search runs for as long as it takes: on a task of its own, so that the
-                // connection goes on reading (its `fs.search.cancel` arrives meanwhile).
-                Ok(request @ Request::FsSearch(_)) => {
+                // connection goes on reading (its `fs.search.cancel` arrives meanwhile). So do
+                // completion and signature help: the next keystroke's `doc.change` must not
+                // wait behind them, and a newer one of them supersedes (cancels) the older.
+                Ok(
+                    request @ (Request::FsSearch(_)
+                    | Request::LspCompletion(_)
+                    | Request::LspCompletionResolve(_)
+                    | Request::LspSignatureHelp(_)),
+                ) => {
                     let (ctx, handle) = (ctx.clone(), handle.clone());
                     tokio::spawn(async move {
                         let outcome = ctx.router.dispatch(&handle, request).await;

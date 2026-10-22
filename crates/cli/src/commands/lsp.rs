@@ -306,6 +306,8 @@ mod tests {
             setting: None,
             trust_pending: false,
             capabilities: vec![],
+            completion_triggers: vec![],
+            signature_triggers: vec![],
         }
     }
 

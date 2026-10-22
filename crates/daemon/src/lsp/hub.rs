@@ -19,9 +19,13 @@ use std::time::{Duration, Instant};
 
 use hutan_buffer::{Buffer, Change, HistoryLimits, Text, Utf16Point};
 use hutan_core::WorkspaceId;
-use hutan_lsp_client::ls_types::request::{GotoDefinition, HoverRequest};
+use hutan_lsp_client::ls_types::request::{
+    Completion, GotoDefinition, HoverRequest, ResolveCompletionItem, SignatureHelpRequest,
+};
 use hutan_lsp_client::ls_types::{
-    GotoDefinitionParams, GotoDefinitionResponse, HoverParams, PartialResultParams,
+    CompletionContext, CompletionItem, CompletionParams, CompletionResponse,
+    CompletionTriggerKind, GotoDefinitionParams, GotoDefinitionResponse, HoverParams,
+    PartialResultParams, SignatureHelpContext, SignatureHelpParams, SignatureHelpTriggerKind,
     TextDocumentIdentifier, TextDocumentPositionParams, Uri, WorkDoneProgressParams,
 };
 use hutan_lsp_client::{
@@ -30,13 +34,15 @@ use hutan_lsp_client::{
 };
 use hutan_protocol::control::{ControlMessage, ErrorBody, ErrorCode};
 use hutan_protocol::lsp::{
-    DIAGNOSTICS_EVENT_INTERVAL_MS, DIAGNOSTICS_PER_FILE_MAX, DIAGNOSTICS_TOTAL_MAX,
-    DOC_CHANGE_MAX_BYTES, DOC_EDITS_MAX, DOC_MAX_BYTES, DOC_OPEN_TEXT_MAX_BYTES,
-    DOCS_PER_CONNECTION_MAX, DocChange, DocOpen, DocOpened, DocServer, LOCATIONS_MAX,
-    LspDiagnostic, LspDiagnosticsRequest, LspDiagnosticsResult, LspFileDiagnostics, LspHover,
-    LspLocation, LspLocations, LspPositionRequest, LspServerBrief, LspServerInfo, LspServerState,
-    LspStatus, LspStatusRequest, LspTrust, LspTrustEntry, LspTrustPolicy, LspTrustRequest,
-    LspTrustResult,
+    COMPLETION_DOC_MAX_BYTES, COMPLETION_ITEMS_MAX, DIAGNOSTICS_EVENT_INTERVAL_MS,
+    DIAGNOSTICS_PER_FILE_MAX, DIAGNOSTICS_TOTAL_MAX, DOC_CHANGE_MAX_BYTES, DOC_EDITS_MAX,
+    DOC_MAX_BYTES, DOC_OPEN_TEXT_MAX_BYTES, DOCS_PER_CONNECTION_MAX, DocChange, DocOpen,
+    DocOpened, DocServer, HOVER_MAX_BYTES, LOCATIONS_MAX, LspCompletionItem, LspCompletionList,
+    LspCompletionRequest, LspCompletionResolve, LspDiagnostic, LspDiagnosticsRequest,
+    LspDiagnosticsResult, LspFileDiagnostics, LspHover, LspLocation, LspLocations,
+    LspPositionRequest, LspServerBrief, LspServerInfo, LspServerState, LspSignatureHelp,
+    LspSignatureHelpRequest, LspStatus, LspStatusRequest, LspTrust, LspTrustEntry,
+    LspTrustPolicy, LspTrustRequest, LspTrustResult, TRIGGERS_MAX,
 };
 use hutan_protocol::messages::Event;
 use hutan_protocol::{Frame, MAX_PAYLOAD};
@@ -72,6 +78,8 @@ const SHUTDOWN_WAIT: Duration = Duration::from_secs(3);
 const START_WAIT: Duration = Duration::from_secs(10);
 /// How often idle servers are looked for when no tuning says otherwise.
 const IDLE_TICK: Duration = Duration::from_secs(5);
+/// Completion lists kept for `lsp.completion_resolve` (the newest ones, of every connection).
+const COMPLETION_LISTS_KEPT: usize = 16;
 
 /// What tests change; the defaults are what runs.
 #[derive(Debug, Clone, Default)]
@@ -192,7 +200,39 @@ pub struct LspHub {
     tuning: LspTuning,
     state: Mutex<State>,
     shutdown: CancellationToken,
+    /// The completion and signature help requests waiting, one per connection and kind.
+    inflight: Mutex<Inflight>,
+    /// The newest completion lists, as the servers sent them, for `lsp.completion_resolve`.
+    completions: Mutex<CompletionLists>,
     me: Weak<LspHub>,
+}
+
+/// The requests a newer one of the same connection and kind supersedes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Superseded {
+    Completion,
+    Resolve,
+    SignatureHelp,
+}
+
+#[derive(Debug, Default)]
+struct Inflight {
+    next: u64,
+    running: HashMap<(ConnId, Superseded), (u64, CancellationToken)>,
+}
+
+/// A completion list as the server sent it (only the items that went on the wire).
+#[derive(Debug)]
+struct KeptList {
+    id: u64,
+    path: PathBuf,
+    items: Vec<CompletionItem>,
+}
+
+#[derive(Debug, Default)]
+struct CompletionLists {
+    next: u64,
+    lists: std::collections::VecDeque<KeptList>,
 }
 
 fn bad(message: impl Into<String>) -> ErrorBody {
@@ -276,6 +316,37 @@ fn state_of(state: ServerState) -> LspServerState {
     }
 }
 
+/// The trigger characters of a server's completion and signature help, bounded.
+fn triggers_of(server: &Server) -> (Vec<String>, Vec<String>) {
+    let Some(caps) = server.capabilities() else {
+        return (Vec::new(), Vec::new());
+    };
+    let keep = |chars: Vec<String>| -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for c in chars {
+            if !c.is_empty() && c.len() <= 8 && !out.contains(&c) && out.len() < TRIGGERS_MAX {
+                out.push(c);
+            }
+        }
+        out
+    };
+    let completion = caps
+        .completion_provider
+        .as_ref()
+        .and_then(|c| c.trigger_characters.clone())
+        .unwrap_or_default();
+    let signature = caps
+        .signature_help_provider
+        .as_ref()
+        .map(|s| {
+            let mut all = s.trigger_characters.clone().unwrap_or_default();
+            all.extend(s.retrigger_characters.clone().unwrap_or_default());
+            all
+        })
+        .unwrap_or_default();
+    (keep(completion), keep(signature))
+}
+
 fn capabilities_of(server: &Server) -> Vec<String> {
     use hutan_lsp_client::ls_types::{HoverProviderCapability, OneOf};
     let Some(caps) = server.capabilities() else {
@@ -300,6 +371,7 @@ fn capabilities_of(server: &Server) -> Vec<String> {
     add("definition", on(caps.definition_provider.as_ref()));
     add("references", on(caps.references_provider.as_ref()));
     add("completion", caps.completion_provider.is_some());
+    add("signature_help", caps.signature_help_provider.is_some());
     add(
         "document_symbols",
         on(caps.document_symbol_provider.as_ref()),
@@ -331,6 +403,8 @@ impl Slot {
             setting: None,
             trust_pending: false,
             capabilities: Vec::new(),
+            completion_triggers: Vec::new(),
+            signature_triggers: Vec::new(),
         };
         match (&self.server, &self.down) {
             (Some(server), _) => {
@@ -340,6 +414,7 @@ impl Slot {
                 info.restarts = status.restarts;
                 info.reason = status.last_error.as_deref().map(summarize);
                 info.capabilities = capabilities_of(server);
+                (info.completion_triggers, info.signature_triggers) = triggers_of(server);
             }
             (None, Some(down)) => {
                 info.state = down.state;
@@ -424,6 +499,8 @@ impl LspHub {
                 ..State::default()
             }),
             shutdown,
+            inflight: Mutex::new(Inflight::default()),
+            completions: Mutex::new(CompletionLists::default()),
             me: me.clone(),
         });
         if hub.settings.enabled {
@@ -1877,6 +1954,229 @@ impl LspHub {
                 })
                 .collect(),
         })
+    }
+
+    /// Runs `work` as the request of kind `kind` of connection `conn`: a newer one of the same
+    /// kind cancels it (dropping the server's request sends `$/cancelRequest`), and it answers
+    /// `conflict` with `data.reason = "superseded"`.
+    async fn superseding<T>(
+        &self,
+        conn: ConnId,
+        kind: Superseded,
+        method: &str,
+        work: impl Future<Output = Result<T, ErrorBody>>,
+    ) -> Result<T, ErrorBody> {
+        let token = CancellationToken::new();
+        let id = {
+            let mut inflight = self.inflight.lock();
+            inflight.next += 1;
+            let id = inflight.next;
+            if let Some((_, older)) = inflight.running.insert((conn, kind), (id, token.clone())) {
+                older.cancel();
+            }
+            id
+        };
+        let result = tokio::select! {
+            biased;
+            () = token.cancelled() => {
+                let mut error = ErrorBody::new(
+                    ErrorCode::Conflict,
+                    format!("superseded by a newer `{method}`"),
+                );
+                error.data = Some(serde_json::json!({ "reason": "superseded" }));
+                Err(error)
+            }
+            result = work => result,
+        };
+        let mut inflight = self.inflight.lock();
+        if inflight
+            .running
+            .get(&(conn, kind))
+            .is_some_and(|(running, _)| *running == id)
+        {
+            inflight.running.remove(&(conn, kind));
+        }
+        result
+    }
+
+    /// `lsp.completion`.
+    pub async fn completion(
+        &self,
+        conn: ConnId,
+        req: LspCompletionRequest,
+    ) -> Result<LspCompletionList, ErrorBody> {
+        self.superseding(conn, Superseded::Completion, "lsp.completion", async {
+            let path = canonical(&req.path).await?;
+            let (server, text, uri, encoding) = self.target(&path).await?;
+            let trigger_kind = if req.incomplete {
+                CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS
+            } else if req.trigger.is_some() {
+                CompletionTriggerKind::TRIGGER_CHARACTER
+            } else {
+                CompletionTriggerKind::INVOKED
+            };
+            let response = server
+                .request::<Completion>(CompletionParams {
+                    text_document_position: Self::position_params(
+                        &uri,
+                        &text,
+                        encoding,
+                        req.position,
+                    ),
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                    context: Some(CompletionContext {
+                        trigger_kind,
+                        trigger_character: req.trigger.clone(),
+                    }),
+                })
+                .await
+                .map_err(request_error)?;
+            let (items, incomplete) = match response {
+                None => (Vec::new(), false),
+                Some(CompletionResponse::Array(items)) => (items, false),
+                Some(CompletionResponse::List(list)) => (list.items, list.is_incomplete),
+            };
+            let resolvable = server
+                .capabilities()
+                .and_then(|c| c.completion_provider)
+                .and_then(|c| c.resolve_provider)
+                == Some(true);
+            let mut truncated = false;
+            let mut kept = Vec::new();
+            let mut wire = Vec::new();
+            for item in items {
+                if wire.len() == COMPLETION_ITEMS_MAX {
+                    truncated = true;
+                    break;
+                }
+                match convert::completion_item(&item, &text, encoding, COMPLETION_DOC_MAX_BYTES) {
+                    Some(mut converted) => {
+                        converted.resolvable = resolvable;
+                        wire.push(converted);
+                        kept.push(item);
+                    }
+                    None => truncated = true,
+                }
+            }
+            let completion_id = {
+                let mut lists = self.completions.lock();
+                lists.next += 1;
+                let id = lists.next;
+                if lists.lists.len() == COMPLETION_LISTS_KEPT {
+                    lists.lists.pop_front();
+                }
+                lists.lists.push_back(KeptList {
+                    id,
+                    path,
+                    items: kept,
+                });
+                id
+            };
+            Ok(LspCompletionList {
+                completion_id,
+                items: wire,
+                incomplete,
+                truncated,
+            })
+        })
+        .await
+    }
+
+    /// `lsp.completion_resolve`: a server without `resolveProvider` answers with the item as
+    /// it was.
+    pub async fn completion_resolve(
+        &self,
+        conn: ConnId,
+        req: LspCompletionResolve,
+    ) -> Result<LspCompletionItem, ErrorBody> {
+        self.superseding(
+            conn,
+            Superseded::Resolve,
+            "lsp.completion_resolve",
+            async {
+                let (path, item) = {
+                    let lists = self.completions.lock();
+                    let list = lists
+                        .lists
+                        .iter()
+                        .find(|l| l.id == req.completion_id)
+                        .ok_or_else(|| {
+                            not_found(format!(
+                                "completion list {} is no longer kept",
+                                req.completion_id
+                            ))
+                        })?;
+                    let item = usize::try_from(req.index)
+                        .ok()
+                        .and_then(|i| list.items.get(i))
+                        .ok_or_else(|| not_found(format!("no item {}", req.index)))?;
+                    (list.path.clone(), item.clone())
+                };
+                let (server, text, _, encoding) = self.target(&path).await?;
+                let resolved = match server.request::<ResolveCompletionItem>(item.clone()).await {
+                    Ok(resolved) => resolved,
+                    Err(LspError::Unsupported { .. }) => item,
+                    Err(error) => return Err(request_error(error)),
+                };
+                let mut converted =
+                    convert::completion_item(&resolved, &text, encoding, HOVER_MAX_BYTES)
+                        .ok_or_else(|| bad("the resolved item is over the bounds of the wire"))?;
+                converted.resolvable = false;
+                Ok(converted)
+            },
+        )
+        .await
+    }
+
+    /// `lsp.signature_help`.
+    pub async fn signature_help(
+        &self,
+        conn: ConnId,
+        req: LspSignatureHelpRequest,
+    ) -> Result<LspSignatureHelp, ErrorBody> {
+        self.superseding(
+            conn,
+            Superseded::SignatureHelp,
+            "lsp.signature_help",
+            async {
+                let path = canonical(&req.path).await?;
+                let (server, text, uri, encoding) = self.target(&path).await?;
+                let trigger_kind = if req.trigger.is_some() {
+                    SignatureHelpTriggerKind::TRIGGER_CHARACTER
+                } else if req.retrigger {
+                    SignatureHelpTriggerKind::CONTENT_CHANGE
+                } else {
+                    SignatureHelpTriggerKind::INVOKED
+                };
+                let help = server
+                    .request::<SignatureHelpRequest>(SignatureHelpParams {
+                        context: Some(SignatureHelpContext {
+                            trigger_kind,
+                            trigger_character: req.trigger.clone(),
+                            is_retrigger: req.retrigger,
+                            active_signature_help: None,
+                        }),
+                        text_document_position_params: Self::position_params(
+                            &uri,
+                            &text,
+                            encoding,
+                            req.position,
+                        ),
+                        work_done_progress_params: WorkDoneProgressParams::default(),
+                    })
+                    .await
+                    .map_err(request_error)?;
+                Ok(help.map_or(
+                    LspSignatureHelp {
+                        signatures: Vec::new(),
+                        active_signature: 0,
+                    },
+                    |help| convert::signature_help(&help),
+                ))
+            },
+        )
+        .await
     }
 
     // Control ----------------------------------------------------------------------------------

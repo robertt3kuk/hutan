@@ -554,7 +554,23 @@ impl Shared {
                     "definition": { "linkSupport": true },
                     "references": {},
                     "completion": {
-                        "completionItem": { "snippetSupport": false, "documentationFormat": ["markdown", "plaintext"] },
+                        "completionItem": {
+                            "snippetSupport": true,
+                            "documentationFormat": ["markdown", "plaintext"],
+                            "deprecatedSupport": true,
+                            "preselectSupport": true,
+                            "tagSupport": { "valueSet": [1] },
+                            "resolveSupport": { "properties": ["documentation", "detail", "additionalTextEdits"] },
+                        },
+                        "completionItemKind": { "valueSet": (1..=25).collect::<Vec<u32>>() },
+                        "contextSupport": true,
+                    },
+                    "signatureHelp": {
+                        "signatureInformation": {
+                            "documentationFormat": ["markdown", "plaintext"],
+                            "parameterInformation": { "labelOffsetSupport": true },
+                            "activeParameterSupport": true,
+                        },
                         "contextSupport": true,
                     },
                     "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },

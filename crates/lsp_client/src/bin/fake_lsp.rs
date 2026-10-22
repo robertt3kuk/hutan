@@ -18,9 +18,20 @@
 //!   "stall": true,                  // stop reading stdin after initialized
 //!   "spawn_child": true,            // start a child process, log "child <pid>"
 //!   "configuration": ["fake.section"], // ask workspace/configuration, log the answer
-//!   "ignore_exit": true             // stay alive after exit (the client must kill)
+//!   "ignore_exit": true,            // stay alive after exit (the client must kill)
+//!   "completion": {"items": [...], "incomplete": false, "filter": true},
+//!   "resolve": {"<label>": {"documentation": "...", "additionalTextEdits": [...]}},
+//!   "signature_help": {"label": "f(a: i32, b: i32)", "parameters": ["a: i32", "b: i32"]},
+//!   "hang_once": ["textDocument/completion"], // only the first one is never answered
+//!   "journal": "/tmp/journal"       // appends "<method> <id>" per message received
 //! }
 //! ```
+//!
+//! `completion.items` are LSP `CompletionItem`s sent as they are; with `filter` only those
+//! whose label starts with the word before the position (case-insensitive). `resolve` adds
+//! fields to the item of that label on `completionItem/resolve`. `signature_help` answers
+//! inside a call (an open `(` before the position on its line), its `activeParameter` the
+//! number of `,` after that `(`.
 //!
 //! `crash.on` is a method name or `"start"`; without `times` it crashes every time, with it
 //! only that many times (counted in the `counter` file across restarts). `flood.method` is
@@ -53,6 +64,27 @@ struct Script {
     spawn_child: bool,
     configuration: Vec<String>,
     ignore_exit: bool,
+    completion: Option<CompletionScript>,
+    resolve: HashMap<String, Value>,
+    signature_help: Option<SignatureScript>,
+    hang_once: Vec<String>,
+    journal: Option<PathBuf>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct CompletionScript {
+    items: Vec<Value>,
+    incomplete: bool,
+    filter: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct SignatureScript {
+    label: String,
+    parameters: Vec<String>,
+    documentation: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,6 +359,110 @@ fn hover(script: &Script, docs: &HashMap<String, Doc>, params: &Value) -> Value 
     }
 }
 
+/// Appends `line` to the script's journal file.
+fn journal(script: &Script, line: &str) {
+    if let Some(path) = &script.journal
+        && let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+/// The text of the document's line before `position`.
+fn line_before(docs: &HashMap<String, Doc>, params: &Value, utf8: bool) -> String {
+    let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+    let Some(doc) = docs.get(uri) else {
+        return String::new();
+    };
+    let at = to_byte(&doc.text, &params["position"], utf8);
+    let start = doc.text[..at].rfind('\n').map_or(0, |i| i + 1);
+    doc.text[start..at].to_owned()
+}
+
+fn completion(script: &Script, docs: &HashMap<String, Doc>, params: &Value, utf8: bool) -> Value {
+    let Some(completion) = &script.completion else {
+        return Value::Null;
+    };
+    let before = line_before(docs, params, utf8);
+    let word: String = before
+        .chars()
+        .rev()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>()
+        .to_lowercase();
+    let items: Vec<Value> = completion
+        .items
+        .iter()
+        .filter(|item| {
+            !completion.filter
+                || item["label"]
+                    .as_str()
+                    .is_some_and(|l| l.to_lowercase().starts_with(&word))
+        })
+        .cloned()
+        .collect();
+    json!({"isIncomplete": completion.incomplete, "items": items})
+}
+
+fn resolve(script: &Script, params: &Value) -> Value {
+    let mut item = params.clone();
+    if let (Some(extra), Some(fields)) = (
+        params["label"].as_str().and_then(|l| script.resolve.get(l)),
+        item.as_object_mut(),
+    ) {
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            fields.insert(key.clone(), value.clone());
+        }
+    }
+    item
+}
+
+fn signature_help(
+    script: &Script,
+    docs: &HashMap<String, Doc>,
+    params: &Value,
+    utf8: bool,
+) -> Value {
+    let Some(signature) = &script.signature_help else {
+        return Value::Null;
+    };
+    let before = line_before(docs, params, utf8);
+    // Back from the position to the `(` of the call it is in, counting its commas.
+    let mut depth = 0i32;
+    let mut commas = 0;
+    let mut open = false;
+    for c in before.chars().rev() {
+        match c {
+            ')' => depth += 1,
+            '(' if depth == 0 => {
+                open = true;
+                break;
+            }
+            '(' => depth -= 1,
+            ',' if depth == 0 => commas += 1,
+            _ => {}
+        }
+    }
+    if !open {
+        return Value::Null;
+    }
+    json!({
+        "signatures": [{
+            "label": signature.label,
+            "documentation": signature.documentation,
+            "parameters": signature.parameters.iter().map(|p| json!({"label": p})).collect::<Vec<_>>(),
+        }],
+        "activeSignature": 0,
+        "activeParameter": commas,
+    })
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("--child") {
@@ -356,6 +492,7 @@ fn main() {
     let mut docs: HashMap<String, Doc> = HashMap::new();
     maybe_crash(&script, "start");
 
+    let mut hung_once: Vec<String> = Vec::new();
     while let Some(message) = read_message(&mut input) {
         let id = message.get("id").cloned();
         let params = message.get("params").cloned().unwrap_or(Value::Null);
@@ -368,6 +505,21 @@ fn main() {
         };
         maybe_crash(&script, method);
         maybe_flood(&script, method, &out);
+        match &id {
+            Some(id) => journal(&script, &format!("{method} {id}")),
+            None if method == "$/cancelRequest" => {
+                journal(&script, &format!("cancelled {}", params["id"]));
+            }
+            None => journal(&script, method),
+        }
+        if id.is_some()
+            && script.hang_once.iter().any(|m| m == method)
+            && !hung_once.iter().any(|m| m == method)
+        {
+            hung_once.push(method.to_owned());
+            eprintln!("fake-lsp: not answering this {method}");
+            continue;
+        }
         if let Some(id) = &id
             && script.hang.iter().any(|m| m == method)
         {
@@ -440,6 +592,21 @@ fn main() {
             "textDocument/hover" => {
                 if let Some(id) = &id {
                     reply(&out, id, hover(&script, &docs, &params));
+                }
+            }
+            "textDocument/completion" => {
+                if let Some(id) = &id {
+                    reply(&out, id, completion(&script, &docs, &params, utf8));
+                }
+            }
+            "completionItem/resolve" => {
+                if let Some(id) = &id {
+                    reply(&out, id, resolve(&script, &params));
+                }
+            }
+            "textDocument/signatureHelp" => {
+                if let Some(id) = &id {
+                    reply(&out, id, signature_help(&script, &docs, &params, utf8));
                 }
             }
             "textDocument/definition" => {

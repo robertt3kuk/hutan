@@ -6,13 +6,17 @@ use std::path::{Path, PathBuf};
 
 use hutan_buffer::Text;
 use hutan_lsp_client::ls_types::{
-    Diagnostic, DiagnosticSeverity, Hover, HoverContents, MarkedString, NumberOrString, Position,
-    Range, Uri,
+    CompletionItem, CompletionItemKind, CompletionItemTag, CompletionTextEdit, Diagnostic,
+    DiagnosticSeverity, Documentation, Hover, HoverContents, InsertTextFormat, MarkedString,
+    NumberOrString, ParameterLabel, Position, Range, SignatureHelp, TextEdit, Uri,
 };
 use hutan_lsp_client::position::{self, PositionEncoding};
 use hutan_protocol::lsp::{
-    DIAGNOSTIC_MESSAGE_MAX_BYTES, HOVER_MAX_BYTES, LspDiagnostic, LspPosition, LspRange,
-    LspRelated, LspSeverity, RELATED_MAX,
+    COMPLETION_DETAIL_MAX_BYTES, COMPLETION_DOC_MAX_BYTES, COMPLETION_EDITS_MAX,
+    COMPLETION_LABEL_MAX_BYTES, COMPLETION_TEXT_MAX_BYTES, DIAGNOSTIC_MESSAGE_MAX_BYTES,
+    HOVER_MAX_BYTES, LspCompletionItem, LspCompletionKind, LspDiagnostic, LspParameter,
+    LspPosition, LspRange, LspRelated, LspSeverity, LspSignature, LspSignatureHelp, LspTextEdit,
+    PARAMETERS_MAX, RELATED_MAX, SIGNATURES_MAX,
 };
 
 /// The texts positions are converted against, by canonical path: the open documents' mirrors and
@@ -139,6 +143,209 @@ pub fn hover_text(hover: &Hover) -> Option<String> {
         HoverContents::Markup(markup) => markup.value.clone(),
     };
     (!text.trim().is_empty()).then(|| clip(&text, HOVER_MAX_BYTES))
+}
+
+fn documentation(doc: &Documentation, max: usize) -> Option<String> {
+    let text = match doc {
+        Documentation::String(text) => text,
+        Documentation::MarkupContent(markup) => &markup.value,
+    };
+    (!text.trim().is_empty()).then(|| clip(text, max))
+}
+
+fn completion_kind(kind: CompletionItemKind) -> LspCompletionKind {
+    use LspCompletionKind as K;
+    const KINDS: [(CompletionItemKind, LspCompletionKind); 25] = [
+        (CompletionItemKind::TEXT, K::Text),
+        (CompletionItemKind::METHOD, K::Method),
+        (CompletionItemKind::FUNCTION, K::Function),
+        (CompletionItemKind::CONSTRUCTOR, K::Constructor),
+        (CompletionItemKind::FIELD, K::Field),
+        (CompletionItemKind::VARIABLE, K::Variable),
+        (CompletionItemKind::CLASS, K::Class),
+        (CompletionItemKind::INTERFACE, K::Interface),
+        (CompletionItemKind::MODULE, K::Module),
+        (CompletionItemKind::PROPERTY, K::Property),
+        (CompletionItemKind::UNIT, K::Unit),
+        (CompletionItemKind::VALUE, K::Value),
+        (CompletionItemKind::ENUM, K::Enum),
+        (CompletionItemKind::KEYWORD, K::Keyword),
+        (CompletionItemKind::SNIPPET, K::Snippet),
+        (CompletionItemKind::COLOR, K::Color),
+        (CompletionItemKind::FILE, K::File),
+        (CompletionItemKind::REFERENCE, K::Reference),
+        (CompletionItemKind::FOLDER, K::Folder),
+        (CompletionItemKind::ENUM_MEMBER, K::EnumMember),
+        (CompletionItemKind::CONSTANT, K::Constant),
+        (CompletionItemKind::STRUCT, K::Struct),
+        (CompletionItemKind::EVENT, K::Event),
+        (CompletionItemKind::OPERATOR, K::Operator),
+        (CompletionItemKind::TYPE_PARAMETER, K::TypeParameter),
+    ];
+    KINDS
+        .iter()
+        .find(|(lsp, _)| *lsp == kind)
+        .map_or(K::Other, |(_, wire)| *wire)
+}
+
+fn text_edit(
+    text: &Text,
+    encoding: PositionEncoding,
+    range: Range,
+    new_text: &str,
+) -> Option<LspTextEdit> {
+    (new_text.len() <= COMPLETION_TEXT_MAX_BYTES).then(|| LspTextEdit {
+        range: range_to_wire(Some(text), encoding, range),
+        new_text: new_text.to_owned(),
+    })
+}
+
+/// A completion item on the wire, bounded: `None` when what it inserts is over the bounds
+/// (cutting code would insert something else). `doc_max`: the most bytes of documentation
+/// kept ([`COMPLETION_DOC_MAX_BYTES`] in a list, [`HOVER_MAX_BYTES`] resolved).
+pub fn completion_item(
+    item: &CompletionItem,
+    text: &Text,
+    encoding: PositionEncoding,
+    doc_max: usize,
+) -> Option<LspCompletionItem> {
+    let edit = match &item.text_edit {
+        None => None,
+        Some(CompletionTextEdit::Edit(edit)) => {
+            Some(text_edit(text, encoding, edit.range, &edit.new_text)?)
+        }
+        // Hutan inserts (it does not announce `insertReplaceSupport`; a server may still send
+        // both ranges).
+        Some(CompletionTextEdit::InsertAndReplace(edit)) => {
+            Some(text_edit(text, encoding, edit.insert, &edit.new_text)?)
+        }
+    };
+    let insert_text = match &item.insert_text {
+        Some(insert) if insert.len() > COMPLETION_TEXT_MAX_BYTES => return None,
+        other => other.clone(),
+    };
+    let extra: &[TextEdit] = item.additional_text_edits.as_deref().unwrap_or_default();
+    if extra.len() > COMPLETION_EDITS_MAX {
+        return None;
+    }
+    let additional_edits = extra
+        .iter()
+        .map(|e| text_edit(text, encoding, e.range, &e.new_text))
+        .collect::<Option<Vec<_>>>()?;
+    let detail = item.detail.clone().or_else(|| {
+        item.label_details
+            .as_ref()
+            .and_then(|d| d.description.clone())
+    });
+    Some(LspCompletionItem {
+        label: clip(&item.label, COMPLETION_LABEL_MAX_BYTES),
+        kind: item.kind.map(completion_kind),
+        detail: detail
+            .filter(|d| !d.trim().is_empty())
+            .map(|d| clip(&d, COMPLETION_DETAIL_MAX_BYTES)),
+        documentation: item
+            .documentation
+            .as_ref()
+            .and_then(|d| documentation(d, doc_max)),
+        sort_text: item
+            .sort_text
+            .as_deref()
+            .map(|s| clip(s, COMPLETION_LABEL_MAX_BYTES)),
+        filter_text: item
+            .filter_text
+            .as_deref()
+            .map(|s| clip(s, COMPLETION_LABEL_MAX_BYTES)),
+        insert_text,
+        snippet: item.insert_text_format == Some(InsertTextFormat::SNIPPET),
+        edit,
+        additional_edits,
+        preselect: item.preselect == Some(true),
+        deprecated: item.deprecated == Some(true)
+            || item
+                .tags
+                .as_ref()
+                .is_some_and(|t| t.contains(&CompletionItemTag::DEPRECATED)),
+        resolvable: false,
+    })
+}
+
+/// Byte offset in `label` of `utf16` UTF-16 units (clamped to its end).
+fn label_byte(label: &str, utf16: u32) -> u32 {
+    let mut units = 0u32;
+    for (at, c) in label.char_indices() {
+        if units >= utf16 {
+            return u32::try_from(at).unwrap_or(u32::MAX);
+        }
+        units += u32::try_from(c.len_utf16()).unwrap_or(2);
+    }
+    u32::try_from(label.len()).unwrap_or(u32::MAX)
+}
+
+/// A signature help on the wire: at most [`SIGNATURES_MAX`] signatures of at most
+/// [`PARAMETERS_MAX`] parameters, each parameter a byte range of its signature's label.
+pub fn signature_help(help: &SignatureHelp) -> LspSignatureHelp {
+    let signatures: Vec<LspSignature> = help
+        .signatures
+        .iter()
+        .take(SIGNATURES_MAX)
+        .map(|signature| {
+            let label = clip(&signature.label, COMPLETION_DOC_MAX_BYTES);
+            let mut searched = 0usize;
+            let parameters = signature
+                .parameters
+                .iter()
+                .flatten()
+                .take(PARAMETERS_MAX)
+                .map(|p| {
+                    let (start, end) = match &p.label {
+                        ParameterLabel::LabelOffsets([a, b]) => {
+                            (label_byte(&label, *a), label_byte(&label, *b))
+                        }
+                        // The first place after the parameter before.
+                        ParameterLabel::Simple(name) => {
+                            match label.get(searched..).and_then(|rest| rest.find(name.as_str())) {
+                                Some(at) if !name.is_empty() => {
+                                    let start = searched + at;
+                                    searched = start + name.len();
+                                    (
+                                        u32::try_from(start).unwrap_or(u32::MAX),
+                                        u32::try_from(searched).unwrap_or(u32::MAX),
+                                    )
+                                }
+                                _ => (0, 0),
+                            }
+                        }
+                    };
+                    LspParameter {
+                        start,
+                        end: end.max(start),
+                        documentation: p
+                            .documentation
+                            .as_ref()
+                            .and_then(|d| documentation(d, COMPLETION_DETAIL_MAX_BYTES)),
+                    }
+                })
+                .collect();
+            LspSignature {
+                documentation: signature
+                    .documentation
+                    .as_ref()
+                    .and_then(|d| documentation(d, COMPLETION_DOC_MAX_BYTES)),
+                active_parameter: signature.active_parameter.or(help.active_parameter),
+                label,
+                parameters,
+            }
+        })
+        .collect();
+    let active = help.active_signature.unwrap_or(0);
+    LspSignatureHelp {
+        active_signature: if (active as usize) < signatures.len() {
+            active
+        } else {
+            0
+        },
+        signatures,
+    }
 }
 
 #[cfg(test)]

@@ -652,6 +652,13 @@ impl Router {
             Request::LspDiagnostics(req) => ok(&self.lsp.diagnostics(req).await?),
             Request::LspHover(req) => ok(&self.lsp.hover(req).await?),
             Request::LspDefinition(req) => ok(&self.lsp.definition(req).await?),
+            Request::LspCompletion(req) => ok(&self.lsp.completion(conn.id(), req).await?),
+            Request::LspCompletionResolve(req) => {
+                ok(&self.lsp.completion_resolve(conn.id(), req).await?)
+            }
+            Request::LspSignatureHelp(req) => {
+                ok(&self.lsp.signature_help(conn.id(), req).await?)
+            }
             Request::LspRestart(req) => {
                 let restarted = self.lsp.restart(&req.server_id).await;
                 audit(Actor::of(conn), "lsp.restart", &req.server_id, &restarted);
@@ -1040,6 +1047,9 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::LspDiagnostics(_) => ("lsp.diagnostics", Read),
         Request::LspHover(_) => ("lsp.hover", Read),
         Request::LspDefinition(_) => ("lsp.definition", Read),
+        Request::LspCompletion(_) => ("lsp.completion", Read),
+        Request::LspCompletionResolve(_) => ("lsp.completion_resolve", Read),
+        Request::LspSignatureHelp(_) => ("lsp.signature_help", Read),
         Request::LspRestart(_) => ("lsp.restart", Mutate),
         Request::LspStop(_) => ("lsp.stop", Mutate),
         Request::LspTrust(_) => ("lsp.trust", UserOnly),
