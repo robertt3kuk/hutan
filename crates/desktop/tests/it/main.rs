@@ -26,6 +26,7 @@ mod first_run_gpui;
 mod fx1_gpui;
 mod fx_e2e2_gpui;
 mod fx_e2e2c_gpui;
+mod fx_e2e4_gpui;
 mod fx_polish1_gpui;
 mod fx_tabs_res_gpui;
 mod harness_gpui;

@@ -250,11 +250,14 @@ impl Render for Workbench {
         )
         .child(status)
         .child(super::ui::keyboard_focus_observer())
+        // The dock handles come before every popover and menu: an overlay painted after them
+        // takes the hit-test and the hover over a handle it covers (the daemon popover's
+        // *Start* was dead where it crossed the bottom dock's edge).
+        .children(edge_targets)
+        .children(handles)
         .children(collapse_preview)
         .children(daemon_popover)
         .children(recovery)
-        .children(edge_targets)
-        .children(handles)
         .children(palette)
         .children(picker)
         .children(agent_picker)
