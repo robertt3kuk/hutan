@@ -192,6 +192,19 @@ impl Workbench {
                 selected: selected(panel.as_str()),
             });
         }
+        // One selected row: the center page on screen (Agents, Mawas Home) is the selection; a
+        // page of the sidebar (Tasks, Files, Search) swaps the list below the nav and marks its
+        // own row only while no center page does.
+        if entries
+            .iter()
+            .any(|e| e.selected && matches!(e.target, NavTarget::Agents | NavTarget::Assistant))
+        {
+            for entry in &mut entries {
+                if matches!(entry.target, NavTarget::Page(_)) {
+                    entry.selected = false;
+                }
+            }
+        }
         entries
     }
 

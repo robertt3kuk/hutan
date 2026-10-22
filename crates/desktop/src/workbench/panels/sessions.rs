@@ -123,6 +123,9 @@ pub struct SidebarRow {
     /// The row of the container or project the window shows.
     pub active: bool,
     pub selected: bool,
+    /// The row is drawn with the list's one selected fill: the focused session, or the active
+    /// project while no session under it is the focused one.
+    pub filled: bool,
     pub collapsed: bool,
     /// A session's second line; `None` is a one-line row.
     pub subtitle: Option<Subtitle>,
@@ -377,9 +380,12 @@ impl SessionsPanel {
     pub fn visible_rows(&self, cx: &gpui::App) -> Vec<SidebarRow> {
         let store = self.env.sessions.read(cx);
         let (active, project) = (store.active_workspace_id(), store.active_project_id());
-        self.entries(cx)
+        let entries = self.entries(cx);
+        let focused = store.focused();
+        entries
             .iter()
-            .filter_map(|entry| {
+            .enumerate()
+            .filter_map(|(ix, entry)| {
                 Some(match entry {
                     Entry::EmptyHint => return None,
                     Entry::Section { title, .. } => SidebarRow {
@@ -394,6 +400,7 @@ impl SessionsPanel {
                         needs: 0,
                         active: false,
                         selected: false,
+                        filled: false,
                         collapsed: false,
                         subtitle: None,
                         state: None,
@@ -411,35 +418,43 @@ impl SessionsPanel {
                         needs: 0,
                         active: false,
                         selected: false,
+                        filled: false,
                         collapsed: false,
                         subtitle: None,
                         state: None,
                         muted: false,
                     },
-                    Entry::Container(row) => SidebarRow {
-                        kind: match row.info.kind {
-                            WorkspaceKind::Workspace => RowKind::Workspace,
-                            WorkspaceKind::Project => RowKind::Project,
-                            WorkspaceKind::Home => RowKind::Home,
-                        },
-                        depth: row.depth,
-                        title: row.info.name.clone(),
-                        folder: (row.info.kind == WorkspaceKind::Project)
-                            .then(|| crate::workbench::workspaces::project_root_of(&row.info))
-                            .flatten()
-                            .map(|root| folder_label(&root)),
-                        badge: None,
-                        shared: false,
-                        pinned: row.info.pinned,
-                        count: count_text(&row.info),
-                        needs: row.needs,
-                        active: self.is_active(&row.info, active, project),
-                        selected: self.selection.contains(&row.info.id),
-                        collapsed: self.collapsed.contains(&row.info.id),
-                        subtitle: None,
-                        state: None,
-                        muted: false,
-                    },
+                    Entry::Container(row) => {
+                        let current = self.is_active(&row.info, active, project);
+                        let selected = self.selection.contains(&row.info.id);
+                        let child_selected =
+                            current && selected_session_below(&entries, ix, row, focused);
+                        SidebarRow {
+                            kind: match row.info.kind {
+                                WorkspaceKind::Workspace => RowKind::Workspace,
+                                WorkspaceKind::Project => RowKind::Project,
+                                WorkspaceKind::Home => RowKind::Home,
+                            },
+                            depth: row.depth,
+                            title: row.info.name.clone(),
+                            folder: (row.info.kind == WorkspaceKind::Project)
+                                .then(|| crate::workbench::workspaces::project_root_of(&row.info))
+                                .flatten()
+                                .map(|root| folder_label(&root)),
+                            badge: None,
+                            shared: false,
+                            pinned: row.info.pinned,
+                            count: count_text(&row.info),
+                            needs: row.needs,
+                            active: current,
+                            selected,
+                            filled: selected || (current && !child_selected),
+                            collapsed: self.collapsed.contains(&row.info.id),
+                            subtitle: None,
+                            state: None,
+                            muted: false,
+                        }
+                    }
                     Entry::Session(row) => {
                         let badge = row.subtitle.as_ref().and_then(|s| s.badge.as_ref());
                         SidebarRow {
@@ -453,7 +468,8 @@ impl SessionsPanel {
                             count: None,
                             needs: 0,
                             active: false,
-                            selected: store.focused() == Some(row.info.id),
+                            selected: focused == Some(row.info.id),
+                            filled: focused == Some(row.info.id),
                             collapsed: false,
                             subtitle: row.subtitle.clone(),
                             state: lane_word(&store.presentation(&row.info)),
@@ -1050,6 +1066,27 @@ impl SessionsPanel {
 
 /// The word of a session's state when its lane draws a glyph; an idle session draws nothing
 /// (the hollow circle every idle row used to start with said nothing).
+/// Whether the session the window shows is listed under the container at `ix`: the entries after
+/// it, up to the next container or section.
+fn selected_session_below(
+    entries: &[Entry],
+    ix: usize,
+    row: &ContainerRow,
+    focused: Option<SessionId>,
+) -> bool {
+    let Some(focused) = focused else {
+        return false;
+    };
+    entries[ix + 1..]
+        .iter()
+        .take_while(|entry| match entry {
+            Entry::Session(_) => true,
+            Entry::Container(next) => next.depth > row.depth,
+            _ => false,
+        })
+        .any(|entry| matches!(entry, Entry::Session(session) if session.info.id == focused))
+}
+
 fn lane_word(presentation: &crate::sessions::Presentation) -> Option<String> {
     (presentation.label != "idle").then(|| {
         presentation
@@ -1286,6 +1323,10 @@ impl SessionsPanel {
             Entry::NoWorkspace => self.render_no_workspace(cx),
             Entry::Container(row) => {
                 let current = self.is_active(&row.info, rows.active, rows.active_project);
+                // One selection fill per list: while a session under the row is the selected
+                // one, the row only keeps its text weight and colour.
+                let child_selected =
+                    current && selected_session_below(&rows.entries, ix, row, rows.focused);
                 let renaming = self
                     .renaming
                     .as_ref()
@@ -1295,6 +1336,7 @@ impl SessionsPanel {
                     row,
                     self.collapsed.contains(&row.info.id),
                     current,
+                    !child_selected,
                     rows.multi && self.selection.contains(&row.info.id),
                     rows.manual,
                     renaming,
@@ -1386,6 +1428,7 @@ impl SessionsPanel {
         row: &ContainerRow,
         collapsed: bool,
         current: bool,
+        filled: bool,
         selected: bool,
         manual: bool,
         renaming: Option<String>,
@@ -1447,7 +1490,9 @@ impl SessionsPanel {
             .cursor_pointer()
             // The current project is the dock's selected fill; a project picked for a bulk action
             // (⌘- or ⇧-click) is the list selection's `accent_soft` fill. No outline.
-            .when(current && !selected, move |s| s.bg(theme.sidebar_accent))
+            .when(current && filled && !selected, move |s| {
+                s.bg(theme.sidebar_accent)
+            })
             .when(selected, move |s| s.bg(theme.accent_soft))
             .when(!(current || selected), move |s| {
                 s.hover(move |s| s.bg(hover))

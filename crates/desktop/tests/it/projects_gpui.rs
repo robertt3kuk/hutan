@@ -642,6 +642,40 @@ fn session_rows_are_one_line_and_only_a_checkout_that_is_news_adds_a_second(
 }
 
 #[gpui::test]
+fn a_list_has_one_selected_fill_the_session_and_never_its_project_row_too(cx: &mut TestAppContext) {
+    let w = World::new();
+    let (view, cx) = w.synced(cx, None);
+    let panel = panel(&view, cx);
+
+    // Looking at a project (no session of it focused): the project row is the selection.
+    cx.dispatch_action(actions::OpenWorkspace(w.api.id.to_string()));
+    wait_until(cx, "the project to be active", |cx| {
+        active_project(&view, cx) == Some(w.api.id)
+    });
+    let listed = rows(&panel, cx);
+    assert!(row(&listed, "api").active);
+    assert!(
+        listed.iter().filter(|r| r.filled).count() <= 1,
+        "{listed:?}"
+    );
+
+    // A session under it focused: it takes the fill, the project row keeps none.
+    open_session(&view, cx, w.s_main.id);
+    wait_until(cx, "the session's fill", |cx| {
+        rows(&panel, cx)
+            .iter()
+            .any(|r| r.title == "s-main" && r.filled)
+    });
+    let listed = rows(&panel, cx);
+    let api_row = row(&listed, "api");
+    assert!(
+        api_row.active && !api_row.filled,
+        "the parent row of the selected session has no fill: {api_row:?}"
+    );
+    assert_eq!(listed.iter().filter(|r| r.filled).count(), 1, "{listed:?}");
+}
+
+#[gpui::test]
 fn the_filter_matches_workspaces_projects_folders_and_sessions(cx: &mut TestAppContext) {
     let w = World::new();
     let (view, cx) = w.synced(cx, None);

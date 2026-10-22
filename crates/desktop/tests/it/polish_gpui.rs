@@ -143,6 +143,35 @@ fn every_registered_panel_has_a_semantic_icon(cx: &mut TestAppContext) {
     assert_eq!(Icon::for_panel("resources"), Icon::PanelResources);
 }
 
+#[gpui::test]
+fn at_most_one_nav_row_is_selected_a_center_page_wins_over_a_page_of_the_sidebar(
+    cx: &mut TestAppContext,
+) {
+    let (view, cx) = open_offline(cx, true);
+    let selected = |view: &Entity<Workbench>, cx: &mut VisualTestContext| -> Vec<String> {
+        view.read_with(cx, |wb, cx| {
+            wb.nav_entries(cx)
+                .into_iter()
+                .filter(|e| e.selected)
+                .map(|e| e.key)
+                .collect()
+        })
+    };
+    // A page of the sidebar alone marks its own row.
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            s.open_panel(&PanelId::new("notifications"), DockPosition::Left);
+        });
+    });
+    assert_eq!(selected(&view, cx), ["notifications"]);
+    // The Agents page opens in the center: it is the one selected row, not a second one.
+    click(&view, cx, Region::Nav("agents"));
+    assert_eq!(selected(&view, cx), ["agents"]);
+    // Mawas Home likewise.
+    click(&view, cx, Region::Nav("assistant"));
+    assert_eq!(selected(&view, cx), ["assistant"]);
+}
+
 // ---- the Agents page ---------------------------------------------------------------------------
 
 #[gpui::test]
