@@ -530,3 +530,43 @@ fn typing_while_a_search_streams_over_a_hundred_thousand_files_stays_within_a_fr
     };
     assert!(worst <= budget, "worst {worst:?} over {budget:?}");
 }
+
+/// The header's ⇄ Replace, clicked: the replace field shows, and a second click hides it.
+#[gpui::test]
+fn clicking_the_headers_replace_button_shows_and_hides_the_replace_field(cx: &mut TestAppContext) {
+    use gpui::Modifiers;
+    use hutan_desktop::workbench::Region;
+
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    write(&root, "a.txt", "needle\n");
+    project(&view, cx, &root);
+    let panel = search_panel(&view, cx, false);
+    assert!(!panel.read_with(cx, |p, _| p.replace_shown()));
+    let click = |cx: &mut VisualTestContext| {
+        wait_until(cx, "the ⇄ Replace button", |cx| {
+            view.read_with(cx, |wb, _| {
+                wb.region_bounds(Region::Search("toggle-replace")).is_some()
+            })
+        });
+        let at = view
+            .read_with(cx, |wb, _| {
+                wb.region_bounds(Region::Search("toggle-replace"))
+            })
+            .unwrap()
+            .center();
+        cx.simulate_click(at, Modifiers::none());
+        draw(cx);
+    };
+    click(cx);
+    assert!(panel.read_with(cx, |p, _| p.replace_shown()));
+    wait_until(cx, "the replace field drawn", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Search("replace")).is_some()
+        })
+    });
+    click(cx);
+    assert!(!panel.read_with(cx, |p, _| p.replace_shown()));
+}
