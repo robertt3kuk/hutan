@@ -588,7 +588,7 @@ impl Workbench {
                 self.bring_forward(window, cx);
                 if self.sessions.read(cx).session(session).is_none() {
                     self.set_notice("That session no longer exists", cx);
-                } else if !self.show_assistant_session(session, window, cx) {
+                } else {
                     self.open_session(session, window, cx);
                 }
             }

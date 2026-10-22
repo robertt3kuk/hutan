@@ -392,13 +392,18 @@ impl Workbench {
     }
 
     /// Shows `session` in the focused pane: focuses its tab when open, else adds a tab (a pane
-    /// that only holds a placeholder gives the placeholder's place to the session).
+    /// that only holds a placeholder gives the placeholder's place to the session). One session
+    /// is one tab: a Mawas conversation is shown on Mawas Home (its only tab, whichever surface
+    /// asked), never in a chat tab of its own.
     pub fn open_session(
         &mut self,
         session: SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.show_assistant_session(session, window, cx) {
+            return;
+        }
         let item = self.item_for(session, cx);
         // A session of another workspace brings that workspace's layout along.
         self.show_workspace_of(session, cx);
@@ -436,6 +441,10 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A Mawas conversation has no split of its own: Home is its tab.
+        if self.show_assistant_session(session, window, cx) {
+            return;
+        }
         self.show_workspace_of(session, cx);
         let pane = self.state.active_pane_id();
         let item = self.item_for(session, cx);
@@ -938,6 +947,7 @@ impl Workbench {
     pub(crate) fn on_sessions_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let before = self.held.len();
         self.resolve_active_workspace(cx);
+        self.merge_session_tabs(window, cx);
         self.attach_open_items(cx);
         self.prune_collapsed(cx);
         self.sync_session_focus(cx);

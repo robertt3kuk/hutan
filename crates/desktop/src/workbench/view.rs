@@ -13,7 +13,7 @@ use super::model::{
     PaneId, PanelDest, PanelId, Responsive, WorkbenchState,
 };
 use super::palette::PaletteState;
-use super::panels::{builtin_panels, builtin_status_items};
+use super::panels::{AssistantPanel, builtin_panels, builtin_status_items};
 use super::persistence;
 use super::registry::{PanelEnv, PanelRegistry, StatusItemRegistry};
 use super::settings_sheet::SettingsSheet;
@@ -1380,10 +1380,31 @@ impl Workbench {
                     .and_then(|id| self.sessions.read(cx).session(id).cloned());
                 match info {
                     Some(info) => (
-                        crate::workbench::panels::kind_icon(info.kind),
+                        crate::workbench::panels::session_icon(&info),
                         info.title.into(),
                     ),
                     None => (crate::icons::Icon::SessionTerminal, "Terminal".into()),
+                }
+            }
+            // Mawas Home is the tab of a Mawas conversation: it wears that conversation's title
+            // and icon (the scope follows the name after ` · `), as every other surface does.
+            ItemRef::Panel { panel } if panel.as_str() == "assistant" => {
+                let shown = self
+                    .panel::<AssistantPanel>("assistant")
+                    .and_then(|view| view.read(cx).session(cx))
+                    .and_then(|session| self.sessions.read(cx).session(session).cloned());
+                match shown {
+                    Some(info) => (
+                        crate::workbench::panels::session_icon(&info),
+                        info.title.into(),
+                    ),
+                    None => (
+                        self.panels
+                            .get(panel)
+                            .map(|s| s.icon)
+                            .unwrap_or(crate::icons::Icon::StateInfo),
+                        self.panels.title(panel),
+                    ),
                 }
             }
             ItemRef::Panel { panel } => (
@@ -1471,7 +1492,7 @@ impl Workbench {
         result
     }
 
-    fn after_change(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn after_change(&mut self, cx: &mut Context<Self>) {
         self.notice = None;
         self.note_dock_modes();
         self.attach_open_items(cx);

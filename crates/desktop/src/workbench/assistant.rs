@@ -8,11 +8,12 @@
 //! chips describe a source and the daemon resolves them when the message is sent.
 
 use gpui::{Context, Entity, Window};
+use hutan_client::ConnectionState;
 use hutan_core::SessionId;
 
 use super::actions;
 use super::chat::ContextChip;
-use super::model::PanelId;
+use super::model::{PanelId, SessionTab};
 use super::panels::{AssistantPanel, MawasMode, MemoryPanel, ScopeKey};
 use super::view::Workbench;
 
@@ -308,6 +309,38 @@ impl Workbench {
             }
             shown
         })
+    }
+
+    /// Merges the duplicate tabs of a session in the layout (`WorkbenchState::merge_session_tabs`)
+    /// once the daemon has said what every session is: a Mawas conversation is shown by Home
+    /// only (its own chat tab, which older versions opened beside Home, goes; Home takes its
+    /// place when the layout has none), a session has the tab kind that matches it, and a pane
+    /// never holds two tabs of one session.
+    pub(crate) fn merge_session_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let assistant_on = self.assistant_enabled();
+        let merged = {
+            let store = self.sessions.read(cx);
+            if !store.synced() || store.connection_state() != ConnectionState::Connected {
+                return;
+            }
+            self.state.merge_session_tabs(&PanelId::new("assistant"), &|id| {
+                let info = store.session(id.parse().ok()?)?;
+                Some(match &info.chat {
+                    Some(chat) if assistant_on && chat.is_assistant() => SessionTab::Mawas,
+                    Some(_) => SessionTab::Chat,
+                    None => SessionTab::Terminal,
+                })
+            })
+        };
+        if !merged.changed {
+            return;
+        }
+        self.after_change(cx);
+        if merged.home_added
+            && let Some(session) = merged.mawas.first().and_then(|id| id.parse().ok())
+        {
+            self.show_assistant_session(session, window, cx);
+        }
     }
 
     /// Attaches `chip` to the composer of the assistant `session` and shows it.

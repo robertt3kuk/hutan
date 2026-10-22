@@ -274,8 +274,13 @@ pub fn recovery_chip(
         .into_any_element()
 }
 
-pub fn kind_icon(kind: SessionKind) -> Icon {
-    match kind {
+/// The icon of a session on every surface (tab, sidebar row, picker): Mawas's conversations
+/// wear the Mawas sparkle whatever backend runs them, every other session its kind's icon.
+pub fn session_icon(info: &SessionInfo) -> Icon {
+    if info.chat.as_ref().is_some_and(|chat| chat.is_assistant()) {
+        return Icon::PanelAssistant;
+    }
+    match info.kind {
         SessionKind::Terminal => Icon::SessionTerminal,
         SessionKind::Harness => Icon::SessionHarness,
         SessionKind::Direct => Icon::SessionDirect,

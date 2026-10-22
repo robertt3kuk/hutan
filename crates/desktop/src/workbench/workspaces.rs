@@ -986,7 +986,7 @@ impl Workbench {
                 command => format!(" · {command}"),
             };
             entries.push(PickerEntry {
-                icon: super::panels::kind_icon(session.kind),
+                icon: super::panels::session_icon(session),
                 title: session.title.clone().into(),
                 detail: format!("{label} · {folder}{badge} · {age}{command}").into(),
                 action: PickerAction::Session(session.id),

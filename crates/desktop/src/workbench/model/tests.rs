@@ -2345,3 +2345,131 @@ fn a_tab_kind_of_a_newer_binary_becomes_a_placeholder() {
         serde_json::from_value(serde_json::json!({"notebook": {"path": "/x.ipynb"}})).unwrap();
     assert!(matches!(unknown, ItemRef::Placeholder { .. }));
 }
+
+// ---- one session, one tab ------------------------------------------------------------------
+
+fn term(session: &str) -> ItemRef {
+    ItemRef::Terminal {
+        session: session.into(),
+    }
+}
+
+fn chat(session: &str) -> ItemRef {
+    ItemRef::Chat {
+        session: session.into(),
+    }
+}
+
+fn kinds(table: &'static [(&'static str, SessionTab)]) -> impl Fn(&str) -> Option<SessionTab> {
+    move |id| table.iter().find(|(s, _)| *s == id).map(|(_, k)| *k)
+}
+
+fn state_with(items: Vec<ItemRef>, active: usize) -> WorkbenchState {
+    let mut state = WorkbenchState::default();
+    let pane = state.first_pane_id();
+    state.center = PaneTree::Pane(Pane {
+        id: pane,
+        items,
+        active,
+    });
+    state.focus = FocusTarget::Pane(pane);
+    state
+}
+
+fn items_of(state: &WorkbenchState) -> Vec<ItemRef> {
+    state.panes().iter().flat_map(|p| p.items.clone()).collect()
+}
+
+#[test]
+fn a_mawas_chat_tab_beside_home_is_folded_into_home() {
+    let home = PanelId::new("assistant");
+    let mut state = state_with(
+        vec![
+            term("t"),
+            ItemRef::panel("assistant"),
+            chat("m"),
+            term("m"),
+        ],
+        2,
+    );
+    let merged = state.merge_session_tabs(
+        &home,
+        &kinds(&[("t", SessionTab::Terminal), ("m", SessionTab::Mawas)]),
+    );
+    assert!(merged.changed && !merged.home_added);
+    assert_eq!(merged.mawas, ["m", "m"]);
+    assert_eq!(items_of(&state), [term("t"), ItemRef::panel("assistant")]);
+    assert_eq!(state.panes()[0].active, 1, "the nearest survivor is active");
+}
+
+#[test]
+fn a_mawas_chat_tab_without_home_becomes_home_in_its_place() {
+    let home = PanelId::new("assistant");
+    let mut state = state_with(vec![term("t"), chat("m"), chat("n")], 1);
+    let merged = state.merge_session_tabs(
+        &home,
+        &kinds(&[
+            ("t", SessionTab::Terminal),
+            ("m", SessionTab::Mawas),
+            ("n", SessionTab::Mawas),
+        ]),
+    );
+    assert!(merged.home_added);
+    assert_eq!(merged.mawas.first().map(String::as_str), Some("m"));
+    assert_eq!(
+        items_of(&state),
+        [term("t"), ItemRef::panel("assistant")],
+        "one Home for both conversations"
+    );
+    assert_eq!(state.panes()[0].active, 1, "Home is the active tab");
+}
+
+#[test]
+fn a_session_gets_the_tab_kind_that_matches_it_and_one_tab_per_pane() {
+    let home = PanelId::new("assistant");
+    let mut state = state_with(vec![term("c"), chat("c"), term("t"), chat("t")], 1);
+    let merged = state.merge_session_tabs(
+        &home,
+        &kinds(&[("c", SessionTab::Chat), ("t", SessionTab::Terminal)]),
+    );
+    assert!(merged.changed && merged.mawas.is_empty());
+    assert_eq!(items_of(&state), [chat("c"), term("t")]);
+    assert_eq!(
+        state.panes()[0].active,
+        0,
+        "the active duplicate is its twin"
+    );
+}
+
+#[test]
+fn tabs_of_unknown_sessions_and_splits_of_one_session_stay() {
+    let home = PanelId::new("assistant");
+    let mut state = state_with(vec![chat("gone"), chat("c")], 0);
+    let pane = state.first_pane_id();
+    state.split_pane(pane, Edge::Right, chat("c")).unwrap();
+    let before = items_of(&state);
+    let merged = state.merge_session_tabs(&home, &kinds(&[("c", SessionTab::Chat)]));
+    assert!(!merged.changed);
+    assert_eq!(items_of(&state), before);
+}
+
+#[test]
+fn the_overview_stash_is_merged_too() {
+    let home = PanelId::new("assistant");
+    let mut state = state_with(vec![term("t")], 0);
+    let stash = state_with(vec![ItemRef::panel("assistant"), chat("m")], 1);
+    state.stashed = Some(Box::new(SavedLayout::of(&stash)));
+    let merged = state.merge_session_tabs(
+        &home,
+        &kinds(&[("t", SessionTab::Terminal), ("m", SessionTab::Mawas)]),
+    );
+    assert!(merged.changed);
+    let stashed = state.stashed.as_ref().unwrap();
+    let stashed_items: Vec<ItemRef> = stashed
+        .center
+        .panes()
+        .iter()
+        .flat_map(|p| p.items.clone())
+        .collect();
+    assert_eq!(stashed_items, [ItemRef::panel("assistant")]);
+}

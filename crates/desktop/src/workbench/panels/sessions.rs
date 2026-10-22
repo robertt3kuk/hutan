@@ -24,8 +24,8 @@ use hutan_core::{SessionId, WorkspaceId};
 use hutan_protocol::messages::{SessionInfo, WorkspaceInfo, WorkspaceKind};
 
 use super::common::{
-    age_label, agent_badge, kind_icon, panel_header_controls, placement, placement_badge,
-    recovery_chip, state_dot, time_tooltip,
+    age_label, agent_badge, panel_header_controls, placement, placement_badge, recovery_chip,
+    session_icon, state_dot, time_tooltip,
 };
 use crate::icons::{Icon, icon};
 use crate::sessions::StoreChanged;
@@ -1771,7 +1771,7 @@ impl SessionsPanel {
                     div()
                         .flex_none()
                         .text_color(theme.muted)
-                        .child(crate::icons::glyph(kind_icon(info.kind))),
+                        .child(crate::icons::glyph(session_icon(info))),
                 ),
                 "title" => line
                     .child(match renaming.as_deref() {

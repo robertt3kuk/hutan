@@ -8,6 +8,7 @@ mod ops;
 mod persist;
 mod preset;
 mod responsive;
+mod session_tabs;
 mod tree;
 mod types;
 mod workspace;
@@ -22,6 +23,7 @@ pub use responsive::{
     AUTO_COLLAPSE_HYSTERESIS, AUTO_COLLAPSE_LEFT_BELOW, AUTO_COLLAPSE_RIGHT_BELOW, AutoState,
     MIN_CENTER_WIDTH, Responsive,
 };
+pub use session_tabs::{MergedTabs, SessionTab};
 pub use tree::MIN_RATIO;
 pub use types::{
     Axis, Direction, Dock, DockMode, DockModes, DockPosition, Docks, Edge, FocusTarget, ItemRef,

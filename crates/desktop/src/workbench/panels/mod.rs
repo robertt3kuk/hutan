@@ -46,7 +46,7 @@ pub use changes::{
     REFRESH_AFTER as CHANGES_REFRESH,
 };
 pub use common::{
-    age_label, agent_badge, kind_icon, placement_badge, recovery_chip, state_dot, time_tooltip,
+    age_label, agent_badge, placement_badge, recovery_chip, session_icon, state_dot, time_tooltip,
     tone_color,
 };
 pub(crate) use common::{edit_text, field_box};

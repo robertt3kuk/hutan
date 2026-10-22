@@ -78,9 +78,7 @@ impl Workbench {
 
     /// Opens the session of a summary line, in its tab (an assistant in its panel).
     fn open_recovered(&mut self, session: SessionId, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.show_assistant_session(session, window, cx) {
-            self.open_session(session, window, cx);
-        }
+        self.open_session(session, window, cx);
     }
 
     pub(crate) fn render_recovery_summary(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {

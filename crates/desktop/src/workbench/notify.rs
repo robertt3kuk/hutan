@@ -85,11 +85,7 @@ impl Workbench {
         match live {
             Some(true) => {
                 self.bring_forward(window, cx);
-                // A Mawas conversation lives on Mawas Home, in its own scope; every
-                // other session in a tab.
-                if !self.show_assistant_session(event.session_id, window, cx) {
-                    self.open_session(event.session_id, window, cx);
-                }
+                self.open_session(event.session_id, window, cx);
             }
             Some(false) => {
                 self.bring_forward(window, cx);
