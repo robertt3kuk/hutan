@@ -2633,3 +2633,42 @@ fn files_moves_to_the_right_dock_once_and_only_from_the_built_in_left_dock() {
         ids(&["sessions", "tasks", "files"])
     );
 }
+
+#[test]
+fn files_still_moves_when_memory_joined_the_built_in_left_dock() {
+    let right = ["changes", "agents", "history"];
+    // A version 7 layout whose left dock is the built-in one plus the Memory page.
+    let seven = WorkbenchState::from_json(&saved_with(
+        7,
+        &["sessions", "tasks", "files", MEMORY_PAGE],
+        &right,
+    ))
+    .unwrap();
+    assert_eq!(
+        seven.docks.left.panels,
+        ids(&["sessions", "tasks", MEMORY_PAGE])
+    );
+    assert_eq!(
+        seven.docks.right.panels.first(),
+        Some(&PanelId::new("files"))
+    );
+
+    // A version 6 layout with a Memory tab in the center goes through both moves in order.
+    let mut old = WorkbenchState::default();
+    old.docks.left = Dock::new(&["sessions", "tasks", "files"], 280.0, true);
+    old.docks.right = Dock::new(&right, 350.0, true);
+    old.open_panel_in_center(&PanelId::new(MEMORY_PAGE));
+    let mut value: serde_json::Value = serde_json::from_str(&old.to_json().unwrap()).unwrap();
+    value["version"] = 6.into();
+    let migrated = WorkbenchState::from_json(&value.to_string()).unwrap();
+    check(&migrated);
+    assert_eq!(
+        migrated.docks.left.panels,
+        ids(&["sessions", "tasks", MEMORY_PAGE])
+    );
+    assert_eq!(
+        migrated.docks.right.panels,
+        ids(&["files", "changes", "agents", "history"])
+    );
+    assert!(!in_center(&migrated, &PanelId::new(MEMORY_PAGE)));
+}
