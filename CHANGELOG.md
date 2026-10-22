@@ -33,6 +33,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - Terminal: link hints, drop and paste of files, resize fixes, command toolbar off the command line.
 
 ### Reliability
+- When the background service cannot start, Hutan says why and offers the fitting action: data written by a newer Hutan → update command or *Start with empty data…* (old data kept in `backups/`); a stuck service → show or stop that process; anything else → logs and details. `hutan daemon status|why|reset-data`.
 - Many flaky tests fixed at their cause; a guard fails the test run if a test leaves a daemon behind.
 - File watching no longer misses a write made between reading a file and watching it.
 
