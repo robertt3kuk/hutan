@@ -61,14 +61,30 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
 /// A daemon whose OMP replays `plain-turn` and is logged in to `anthropic`; Claude Code's CLI
 /// reports a logged-out account unless `claude_cli` names a program that does not exist.
 fn daemon(scripts: &Path, claude_cli: Option<&Path>) -> TestDaemon {
+    daemon_with(scripts, claude_cli, None)
+}
+
+/// [`daemon`] whose OMP offers no models over ACP, so the catalog is `omp models`, which
+/// lists `models` (a comma-separated list of JSON objects).
+fn daemon_with_models(scripts: &Path, claude_cli: Option<&Path>, models: &str) -> TestDaemon {
+    daemon_with(scripts, claude_cli, Some(models))
+}
+
+fn daemon_with(scripts: &Path, claude_cli: Option<&Path>, models: Option<&str>) -> TestDaemon {
+    let custom = models.is_some();
+    let models = models.unwrap_or(
+        r#"{"provider":"anthropic","kind":"chat","id":"claude-opus-4-5","selector":"anthropic/claude-opus-4-5","name":"Claude Opus 4.5"}"#,
+    );
     let omp = script(
         scripts,
         "omp",
-        r#"case "$1" in
-  models) echo '{"models":[{"provider":"anthropic","kind":"chat","id":"claude-opus-4-5","selector":"anthropic/claude-opus-4-5","name":"Claude Opus 4.5"}]}' ;;
-  usage) echo '{"reports":[]}' ;;
+        &format!(
+            r#"case "$1" in
+  models) echo '{{"models":[{models}]}}' ;;
+  usage) echo '{{"reports":[]}}' ;;
   *) echo "fake omp $*" ;;
-esac"#,
+esac"#
+        ),
     );
     let claude = claude_cli.map(Path::to_path_buf).unwrap_or_else(|| {
         script(
@@ -77,10 +93,19 @@ esac"#,
             r#"if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn":false,"authMethod":"none"}'; else echo "fake claude $*"; fi"#,
         )
     });
+    let (acp, args) = if custom {
+        (script(scripts, "omp-acp", "exit 1"), String::new())
+    } else {
+        (
+            acp_bin(),
+            format!(
+                "args = [\"replay\", {:?}, \"acp\"]\n",
+                transcript("plain-turn")
+            ),
+        )
+    };
     TestDaemon::start_with_config(&format!(
-        "[terminal]\nenv_inherit = \"daemon\"\n\n[harness.omp]\nbin = {acp:?}\nargs = [\"replay\", {t:?}, \"acp\"]\ncli = {omp:?}\n\n[harness.claude]\nbin = {missing:?}\ncli = {claude:?}\n",
-        acp = acp_bin(),
-        t = transcript("plain-turn"),
+        "[terminal]\nenv_inherit = \"daemon\"\n\n[harness.omp]\nbin = {acp:?}\n{args}cli = {omp:?}\n\n[harness.claude]\nbin = {missing:?}\ncli = {claude:?}\n",
         missing = scripts.join("no-such-claude-code-acp"),
     ))
 }
@@ -136,10 +161,23 @@ impl Env {
 
     /// With `claude_missing`, Claude Code's CLI is not on the machine.
     fn with(claude_missing: bool) -> Self {
+        Self::build(claude_missing, None)
+    }
+
+    /// OMP offers `models` (see [`daemon_with_models`]).
+    fn with_models(models: &str) -> Self {
+        Self::build(false, Some(models))
+    }
+
+    fn build(claude_missing: bool, models: Option<&str>) -> Self {
         let scripts = tempfile::tempdir().unwrap();
         let folders = tempfile::tempdir().unwrap();
         let missing = scripts.path().join("no-such-claude");
-        let daemon = daemon(scripts.path(), claude_missing.then_some(missing.as_path()));
+        let claude = claude_missing.then_some(missing.as_path());
+        let daemon = match models {
+            Some(models) => daemon_with_models(scripts.path(), claude, models),
+            None => daemon(scripts.path(), claude),
+        };
         let api = repo(folders.path(), "api");
         let web = repo(folders.path(), "web");
         let api_id = daemon.create_workspace("api", &[&api]).id;
@@ -1774,4 +1812,112 @@ fn only_the_chosen_agent_says_why_it_cannot_start(cx: &mut TestAppContext) {
         view.read_with(cx, |wb, cx| wb.launcher_agent_status(cx)),
         None
     );
+}
+
+/// CL-POLISH-4 item 10: the Model row's list is a popover in front of the sheet (the form does
+/// not move), it opens on the model in use, a click picks and closes it, ↩ closes an open one.
+#[gpui::test]
+fn the_model_list_is_a_popover_that_opens_on_the_model_in_use(cx: &mut TestAppContext) {
+    let mut models = Vec::new();
+    for family in ["opus", "sonnet", "haiku"] {
+        for minor in 1..=8 {
+            models.push(format!(
+                r#"{{"provider":"anthropic","kind":"chat","id":"claude-{family}-4-{minor}","name":"Claude {family} 4.{minor}"}}"#
+            ));
+        }
+    }
+    let env = Env::with_models(&models.join(","));
+    let (view, cx) = open(cx, &env);
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            ..LauncherPreset::default()
+        },
+    );
+    ready(&view, cx);
+    view.update(cx, |wb, cx| wb.launcher_set_kind(LaunchKind::Chat, cx));
+    wait_until(cx, "the OMP models", |cx| {
+        view.read_with(
+            cx,
+            |wb, cx| matches!(wb.launcher_models(cx), Models::Ready(m) if m.len() == 24),
+        )
+    });
+    let rows = |cx: &VisualTestContext| {
+        view.read_with(cx, |wb, cx| {
+            let Models::Ready(list) = wb.launcher_models(cx) else {
+                panic!("the models are ready");
+            };
+            wb.launcher_model_rows(&list, cx)
+                .iter()
+                .map(|r| (r.model.id.clone(), r.current))
+                .collect::<Vec<_>>()
+        })
+    };
+    // The model in use is the last of the list (Haiku, the oldest of the family order).
+    let last = rows(cx).last().unwrap().0.clone();
+    assert!(last.contains("haiku"));
+    view.update(cx, |wb, cx| {
+        wb.launcher_choose_model(Some(last.clone()), cx)
+    });
+    common::settle(cx);
+    assert!(!region(&view, cx, Region::Launcher("model-popover")));
+    let start_before = bounds_of(&view, cx, Region::Launcher("start")).unwrap();
+
+    // A click on the field opens the list in front of the form.
+    click(&view, cx, Region::Launcher("model"));
+    common::settle(cx);
+    // The scroll to the row is applied once the rows were laid out: the next frame.
+    draw(cx);
+    draw(cx);
+    let popover = bounds_of(&view, cx, Region::Launcher("model-popover")).expect("the popover");
+    assert_eq!(
+        bounds_of(&view, cx, Region::Launcher("start")).unwrap(),
+        start_before,
+        "the form below does not move"
+    );
+    // Eight rows at most, so the 24 models scroll, and the one in use is in view.
+    assert!(popover.size.height < gpui::px(24.0 * 20.0));
+    let at = rows(cx).iter().position(|(_, current)| *current).unwrap();
+    let current = bounds_of(&view, cx, Region::LauncherItem("model", at)).expect("the row");
+    assert!(
+        current.top() >= popover.top() && current.bottom() <= popover.bottom(),
+        "the model in use ({current:?}) is inside the popover ({popover:?})"
+    );
+
+    // A click on a row picks it and closes the list, the keyboard stays on the row.
+    let target = at - 1;
+    click(&view, cx, Region::LauncherItem("model", target));
+    assert_eq!(rows(cx).iter().filter(|(_, c)| *c).count(), 1);
+    assert!(
+        rows(cx)[target].1,
+        "the clicked model is the one in use now"
+    );
+    let open_row =
+        |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.launcher().unwrap().open_row());
+    assert_eq!(open_row(cx), None);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.launcher().unwrap().stop()),
+        LauncherStop::Model
+    );
+    draw(cx);
+    assert!(!region(&view, cx, Region::Launcher("model-popover")));
+
+    // ↩ opens it again, arrows change the model, ↩ closes it; the sheet stays.
+    cx.simulate_keystrokes("enter");
+    assert_eq!(open_row(cx), Some(LauncherStop::Model));
+    cx.simulate_keystrokes("down");
+    assert!(rows(cx)[at].1);
+    cx.simulate_keystrokes("enter");
+    assert_eq!(open_row(cx), None);
+    assert!(launcher_open(&view, cx));
+    assert!(env.tasks().is_empty());
+
+    // A press outside the list closes it too.
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+    assert_eq!(open_row(cx), Some(LauncherStop::Model));
+    click(&view, cx, Region::Launcher("start"));
+    assert_eq!(open_row(cx), None);
 }

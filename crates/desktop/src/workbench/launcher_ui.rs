@@ -20,10 +20,14 @@ use super::view::{Region, Workbench};
 use super::vim_ui::VimConfig;
 use super::workspaces::tilde;
 use crate::sessions::launch::LaunchKind;
+use crate::sessions::models::row_child_index;
 use crate::theme::{DensityExt as _, Theme, Tokens};
 
 /// Width of the label column.
 const LABEL_WIDTH: f32 = 84.0;
+/// Width of the Model popover, and how many rows of it show before it scrolls.
+const MODEL_POPOVER_WIDTH: f32 = 460.0;
+const MODEL_POPOVER_ROWS: f32 = 8.0;
 
 fn id(text: impl Into<SharedString>) -> ElementId {
     ElementId::from(text.into())
@@ -119,7 +123,8 @@ impl Workbench {
         let regions = &self.regions;
         let ring = |row_stop: LauncherStop, body: AnyElement| {
             let active = stop == row_stop;
-            let open = open_row == Some(row_stop);
+            // The Model row's list is a popover of its own, not a tint of the row.
+            let open = open_row == Some(row_stop) && row_stop != LauncherStop::Model;
             div()
                 .relative()
                 .rounded(px(tokens.radius + 2.0))
@@ -467,10 +472,14 @@ impl Workbench {
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.launcher_focus_stop(LauncherStop::Model, window, cx);
-                                if let Some(launcher) = &mut this.launcher {
+                                let opened = this.launcher.as_mut().is_some_and(|launcher| {
                                     launcher.open_row = (launcher.open_row
                                         != Some(LauncherStop::Model))
                                     .then_some(LauncherStop::Model);
+                                    launcher.model_open()
+                                });
+                                if opened {
+                                    this.launcher_reveal_model(cx);
                                 }
                                 cx.notify();
                             }))
@@ -485,18 +494,30 @@ impl Workbench {
                             .child(probe(&self.regions, Region::Launcher("model"))),
                     );
                     if open {
+                        // A popover in front of the sheet (a surface and the one shadow, no
+                        // tint): the form below does not move, and it opens on the model in use.
                         let mut group: Option<Option<String>> = None;
+                        let rows = self.launcher_model_rows(list, cx);
+                        let reveal = launcher.model_reveal.get();
+                        if reveal > 0 {
+                            let at = rows.iter().position(|row| row.current).unwrap_or(0);
+                            launcher
+                                .model_scroll
+                                .scroll_to_item(row_child_index(&rows, at));
+                            launcher.model_reveal.set(reveal - 1);
+                            if reveal > 1 {
+                                let this = cx.entity();
+                                cx.defer(move |cx| this.update(cx, |_, cx| cx.notify()));
+                            }
+                        }
                         let mut items = div()
                             .id("launch-model-list")
                             .flex()
                             .flex_col()
-                            .max_h(px(tokens.sidebar_row * 7.0))
-                            .overflow_y_scroll()
-                            .rounded(px(tokens.radius))
-                            .border_1()
-                            .border_color(theme.border);
-                        for (at, row) in self.launcher_model_rows(list, cx).into_iter().enumerate()
-                        {
+                            .max_h(px(tokens.sidebar_row * MODEL_POPOVER_ROWS))
+                            .track_scroll(&launcher.model_scroll)
+                            .overflow_y_scroll();
+                        for (at, row) in rows.into_iter().enumerate() {
                             let model = row.model;
                             let model_group = row.group.clone();
                             if model_group.is_some() && group.as_ref() != Some(&model_group) {
@@ -523,12 +544,16 @@ impl Workbench {
                                     .gap(px(tokens.spacing * 2.0))
                                     .h(px(tokens.sidebar_row))
                                     .px(px(tokens.spacing * 2.0))
+                                    .rounded(px(tokens.radius))
                                     .cursor_pointer()
                                     .when(selected, |s| s.bg(theme.accent_soft))
                                     .hover(move |s| s.bg(hover))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(cx.listener(move |this, _, window, cx| {
                                         let direct =
                                             this.launcher.as_ref().is_some_and(|l| l.is_direct());
+                                        // The keyboard stays on the Model row: ↩ opens the list
+                                        // again, Tab moves on.
+                                        this.launcher_focus_stop(LauncherStop::Model, window, cx);
                                         this.launcher_choose_model(
                                             (direct || !is_default).then(|| mid.clone()),
                                             cx,
@@ -561,7 +586,57 @@ impl Workbench {
                                     .child(probe(&self.regions, Region::LauncherItem("model", at))),
                             );
                         }
-                        body = body.child(items);
+                        let regions = self.regions.clone();
+                        let popover = div()
+                            .id("launch-model-popover")
+                            .w(px(MODEL_POPOVER_WIDTH))
+                            .flex()
+                            .flex_col()
+                            .popover(&theme, &tokens)
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_mouse_down_out(cx.listener(
+                                move |this, event: &gpui::MouseDownEvent, _, cx| {
+                                    // The field toggles the list itself.
+                                    let on_field = regions
+                                        .get(Region::Launcher("model"))
+                                        .is_some_and(|bounds| bounds.contains(&event.position));
+                                    if !on_field
+                                        && let Some(launcher) = &mut this.launcher
+                                        && launcher.model_open()
+                                    {
+                                        launcher.open_row = None;
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                            .child(items)
+                            .child(
+                                div()
+                                    .px(px(tokens.spacing * 2.0))
+                                    .pt(px(tokens.spacing))
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(theme.muted)
+                                    .child("↑ ↓ change · ↩ or Esc done"),
+                            )
+                            .child(probe(&self.regions, Region::Launcher("model-popover")))
+                            .presented(
+                                "launch-model-motion",
+                                motion::Kind::Popover,
+                                true,
+                                motion::Slide::Drop,
+                            );
+                        body = body.child(
+                            div().absolute().top_full().left_0().size_0().child(
+                                gpui::deferred(
+                                    gpui::anchored()
+                                        .anchor(gpui::Anchor::TopLeft)
+                                        .offset(gpui::point(px(0.0), px(4.0)))
+                                        .snap_to_window_with_margin(px(8.0))
+                                        .child(popover),
+                                )
+                                .priority(10),
+                            ),
+                        );
                     }
                     Some(body.into_any_element())
                 }

@@ -31,7 +31,7 @@ use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, Button, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
-use crate::sessions::models::{ModelRow, picker_rows};
+use crate::sessions::models::{ModelRow, picker_rows, row_child_index};
 use crate::settings::ChatSettings;
 use crate::theme::DensityExt as _;
 
@@ -105,19 +105,9 @@ impl AgentPicker {
     /// Scrolls the list so the cursor's row shows. The list's children are the rows with a
     /// header before each provider's group (as [`Workbench::render_agent_picker`] draws them).
     pub(crate) fn reveal_selected(&self) {
-        let mut child = 0;
-        let mut group = None;
-        for (index, row) in self.rows().into_iter().enumerate() {
-            if row.group.is_some() && group.as_ref() != Some(&row.group) {
-                child += 1;
-            }
-            group = Some(row.group);
-            if index == self.selected {
-                self.scroll.scroll_to_item(child);
-                return;
-            }
-            child += 1;
-        }
+        let rows = self.rows();
+        self.scroll
+            .scroll_to_item(row_child_index(&rows, self.selected));
     }
 
     /// The model a new chat would start with.
@@ -711,15 +701,6 @@ impl Workbench {
             _ => None,
         };
         let can_start = picker.chosen().is_some() && !picker.creating;
-        let section = |text: &'static str| {
-            div()
-                .px(px(tokens.spacing * 2.0))
-                .pt(px(tokens.spacing * 2.0))
-                .text_size(px(tokens.section_font_size))
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(theme.muted)
-                .child(text)
-        };
         Some(
             div()
                 .id("agent-picker-backdrop")
@@ -775,23 +756,11 @@ impl Workbench {
                                 .child("Switch model"),
                         )
                         .children(providers)
-                        .child(section("Model"))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(tokens.spacing))
-                                .child(div().text_color(theme.muted).child("Filter:"))
-                                .children(if wanted {
-                                    self.overlay_parts(
-                                        OverlayField::Agent,
-                                        "Type to filter models",
-                                        cx,
-                                    )
-                                } else {
-                                    vec![div().child(picker.model_query.clone()).into_any_element()]
-                                }),
-                        )
+                        .child(div().flex().items_center().children(if wanted {
+                            self.overlay_parts(OverlayField::Agent, "Filter models", cx)
+                        } else {
+                            vec![div().child(picker.model_query.clone()).into_any_element()]
+                        }))
                         .child(
                             div()
                                 .id("agent-model-list")

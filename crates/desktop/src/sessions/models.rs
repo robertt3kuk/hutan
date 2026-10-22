@@ -307,6 +307,24 @@ pub fn picker_rows<'a>(
         .collect()
 }
 
+/// The position of row `at` among the children of a list that draws a header before each
+/// group (what a scroll to that row needs).
+pub fn row_child_index(rows: &[ModelRow<'_>], at: usize) -> usize {
+    let mut child = 0;
+    let mut group: Option<&Option<String>> = None;
+    for (index, row) in rows.iter().enumerate() {
+        if row.group.is_some() && group != Some(&row.group) {
+            child += 1;
+        }
+        group = Some(&row.group);
+        if index == at {
+            break;
+        }
+        child += 1;
+    }
+    child
+}
+
 /// `(20251001)` for a dated model whose display name another visible model has too; an
 /// undated twin of another undated one is told apart by its id.
 fn variant(model: &ModelInfo, visible: &[&ModelInfo]) -> Option<String> {
@@ -376,6 +394,23 @@ mod tests {
             model("anthropic/claude-opus-4-5", "Claude Opus 4.5", false),
             model("anthropic/gpt-oss", "GPT OSS", false),
         ]
+    }
+
+    #[test]
+    fn a_row_scrolls_to_its_place_among_the_headers_and_rows() {
+        let models = catalog();
+        let rows = picker_rows("omp", &models, "", None, true);
+        // The first provider's header comes before its first row; each next group adds one.
+        assert_eq!(row_child_index(&rows, 0), 1);
+        assert_eq!(row_child_index(&rows, 1), 2);
+        let second = rows
+            .iter()
+            .position(|r| r.group != rows[0].group)
+            .expect("a second provider");
+        assert_eq!(row_child_index(&rows, second), second + 2);
+        // A provider's own list (not grouped) has no headers.
+        let flat = picker_rows("direct", &models, "", None, false);
+        assert_eq!(row_child_index(&flat, 3), 3);
     }
 
     #[test]

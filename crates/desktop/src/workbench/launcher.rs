@@ -178,6 +178,10 @@ pub(crate) fn readiness_note(name: &str, readiness: &Readiness) -> Option<String
     }
 }
 
+/// How many frames the Model popover asks to scroll to the model in use: the first one only
+/// lays the list out.
+pub(crate) const MODEL_REVEAL_FRAMES: u8 = 2;
+
 /// The open sheet.
 #[derive(Debug)]
 pub struct Launcher {
@@ -199,6 +203,10 @@ pub struct Launcher {
     /// The row whose choices are open: ↑ ↓ change its value only then (↩ or Space opens it, Esc
     /// or Tab closes it), and ⌘↩ does not start while one is open.
     pub(crate) open_row: Option<LauncherStop>,
+    /// The Model popover's scroll: it opens on the model a start would use.
+    pub(crate) model_scroll: gpui::ScrollHandle,
+    /// Frames left in which the popover scrolls to the model in use.
+    pub(crate) model_reveal: std::cell::Cell<u8>,
     pub(crate) prompt: TextInput,
     pub(crate) title: TextInput,
     pub(crate) branch: TextInput,
@@ -337,6 +345,11 @@ impl Launcher {
     /// The row whose choices are open.
     pub fn open_row(&self) -> Option<LauncherStop> {
         self.open_row
+    }
+
+    /// The scroll of the Model popover (its offset says where the list opened).
+    pub fn model_scroll(&self) -> &gpui::ScrollHandle {
+        &self.model_scroll
     }
 
     /// Whether the Model row's list is open.
@@ -707,6 +720,15 @@ impl Workbench {
         crate::sessions::models::picker_rows(agent, list, "", current.as_deref(), ordered)
     }
 
+    /// Has the open Model popover scroll to the model a start would use. A list that was just
+    /// laid out for the first time ignores a scroll (GPUI knows its size and overflow only from
+    /// the frame before), so the sheet asks again on the next frame: see [`MODEL_REVEAL_FRAMES`].
+    pub(crate) fn launcher_reveal_model(&self, _cx: &gpui::App) {
+        if let Some(launcher) = &self.launcher {
+            launcher.model_reveal.set(MODEL_REVEAL_FRAMES);
+        }
+    }
+
     /// The warning that another live agent already works in the checkout the sheet would use.
     pub fn launcher_shared_warning(&self, cx: &gpui::App) -> Option<String> {
         let launcher = self.launcher.as_ref()?;
@@ -1039,6 +1061,8 @@ impl Workbench {
             agent_peek: None,
             model,
             open_row: None,
+            model_scroll: gpui::ScrollHandle::new(),
+            model_reveal: std::cell::Cell::new(0),
             prompt: TextInput::new(),
             title: TextInput::new(),
             branch: TextInput::new(),
@@ -2442,6 +2466,9 @@ impl Workbench {
         match key {
             "enter" | "space" => {
                 launcher.open_row = (!open).then_some(stop);
+                if !open && stop == LauncherStop::Model {
+                    self.launcher_reveal_model(cx);
+                }
                 cx.notify();
             }
             "left" | "right" | "up" | "down" if open => match stop {
@@ -2483,6 +2510,7 @@ impl Workbench {
             }
             launcher.open_row = Some(LauncherStop::Model);
         }
+        self.launcher_reveal_model(cx);
     }
 
     /// ↑ ↓ walk the After list, Space ticks.
