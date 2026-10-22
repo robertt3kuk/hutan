@@ -436,13 +436,16 @@ fn the_unread_dot_is_six_pixels_and_centred_on_the_row(cx: &mut TestAppContext) 
         dot.size.width >= px(6.0) && dot.size.height >= px(6.0),
         "{dot:?}"
     );
-    // On the row's first (text) line, not below it: the line's middle is the row's middle for a
-    // one-line row.
-    let first_line = view.read_with(cx, |wb, _| wb.density().ui().sidebar_row);
-    let off = (dot.center().y - (row.origin.y + px(first_line) / 2.0)).abs();
+    // The row is one line, so the dot's middle is the row's middle.
+    let line = view.read_with(cx, |wb, _| wb.density().ui().sidebar_row);
+    assert!(
+        row.size.height <= px(line) + px(2.0),
+        "a one-line row: {row:?} (line {line})"
+    );
+    let off = (dot.center().y - row.center().y).abs();
     assert!(
         off <= px(1.0),
-        "the dot is {off:?} off the line's middle: {dot:?} in {row:?}"
+        "the dot is {off:?} off the row's middle: {dot:?} in {row:?}"
     );
 }
 

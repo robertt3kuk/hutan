@@ -40,7 +40,7 @@ use hutan_client::{ConnectionState, Notice};
 use hutan_protocol::fs::{FileVersion, FsSearch, FsSearchResult, SearchHit};
 use tokio::sync::broadcast::error::RecvError;
 
-use super::common::{panel_header_with, scope_chip};
+use super::common::{panel_toolbar, scope_chip};
 use crate::icons::{Icon, icon};
 use crate::settings::SearchPanelSettings;
 use crate::theme::{DensityExt as _, Theme, Tokens};
@@ -1823,11 +1823,12 @@ impl Render for SearchPanel {
             .child(probe(&self.env.regions, Region::Search("toggle-replace")))
             .into_any_element();
         let scope = self.scope(cx);
-        let controls: Vec<AnyElement> = scope_chip(scope.as_ref(), "search", &self.env.regions, cx)
+        let lead: Vec<AnyElement> = scope_chip(scope.as_ref(), "search", &self.env.regions, cx)
             .into_iter()
-            .chain([replace_toggle])
             .collect();
-        let header = panel_header_with("Search", "panels.search", controls, cx);
+        // The dock tab (or the sidebar page) says Search, and so does the field's placeholder
+        // no more: the toolbar keeps the scope chip and the controls.
+        let header = panel_toolbar("panels.search", lead, vec![replace_toggle], cx);
 
         let toggles = vec![
             self.render_toggle(
@@ -1862,7 +1863,7 @@ impl Render for SearchPanel {
         let query_field = self.render_field(
             SearchField::Query,
             "search-query",
-            "Search",
+            "Find in files",
             toggles,
             window,
             &theme,

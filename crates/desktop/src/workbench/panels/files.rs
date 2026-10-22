@@ -1076,9 +1076,11 @@ impl Render for FilesPanel {
         .on_click(cx.listener(|this, _, _, cx| this.toggle_ignored(cx)))
         .into_any_element();
         let scope = self.scope(cx);
-        let lead: Vec<AnyElement> = scope_chip(scope.as_ref(), "files", &self.env.regions, cx)
-            .into_iter()
-            .collect();
+        let chip = scope_chip(scope.as_ref(), "files", &self.env.regions, cx);
+        // The chip names the project: the root's name is said under it only when there is no
+        // chip (a folder that is not a project), never twice.
+        let name_shown = chip.is_none();
+        let lead: Vec<AnyElement> = chip.into_iter().collect();
         // The dock tab says Files: the header keeps the scope chip and the controls.
         let header = panel_toolbar("panels.files", lead, vec![eye], cx);
         let name: Option<SharedString> = self.root().and_then(|root| {
@@ -1119,7 +1121,7 @@ impl Render for FilesPanel {
                 }
             }))
             .child(header)
-            .children(name.map(|name| {
+            .children(name.filter(|_| name_shown).map(|name| {
                 div()
                     .flex_none()
                     .px(px(tokens.spacing * 3.0))

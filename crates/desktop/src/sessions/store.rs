@@ -1541,6 +1541,15 @@ impl SessionsStore {
             .unwrap_or_default()
     }
 
+    /// When something last happened in `info`'s session, for the age a row shows: the last
+    /// report or node change of its agent, else when it was created.
+    pub fn last_activity_ms(&self, info: &SessionInfo) -> u64 {
+        self.agent_presentation()
+            .get(info.id)
+            .and_then(|record| record.updated_at_ms)
+            .map_or(info.created_at_ms, |at| at.max(info.created_at_ms))
+    }
+
     /// The one agent presentation (see [`presentation`]): every agent session, joined and
     /// reduced. Built from the daemon's state when it is first asked for after a change and
     /// shared until the next one; no polling, no rebuild per frame.

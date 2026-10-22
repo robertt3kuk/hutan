@@ -1966,11 +1966,9 @@ impl SessionsPanel {
             .into_any_element()
     }
 
-    /// One line: the state lane (a glyph unless the session is idle), kind icon, title, agent
-    /// badge, restart glyph, muted marker, age and the hover ×. A second line (muted, 11 px,
-    /// under the title) only when it says something new ([`Subtitle`]): the project of a row away
-    /// from its project row, a folder the session left its checkout for, and the placement badge
-    /// when the session is not in the main checkout.
+    /// One line: the state lane (a glyph unless the session is idle), kind icon, title, the
+    /// project of a row away from its project row, the placement badge, agent badge,
+    /// restart glyph, muted marker, age and the hover ×. Never a second line.
     fn render_row(
         &self,
         row: &SessionRow,
@@ -2073,6 +2071,33 @@ impl SessionsPanel {
         let lane = lane_word(&presentation);
         let gap = tokens.spacing * 1.5;
 
+        // One line, always. A row away from its project row (Requests, Ready for review) says
+        // whose it is in muted text after its title; a session off the main checkout wears its
+        // placement badge there too. A folder outside the checkout is in the title's tooltip.
+        let mut whose: Vec<AnyElement> = Vec::new();
+        if let Some(sub) = row.subtitle.as_ref() {
+            whose.extend(sub.container.clone().map(|container| {
+                div()
+                    .id(SharedString::from(format!("session-project-{id}")))
+                    .flex_none()
+                    .max_w(px(96.0))
+                    .truncate()
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.muted)
+                    .child(SharedString::from(container))
+                    .into_any_element()
+            }));
+            whose.extend(sub.badge.as_ref().map(|badge| {
+                placement_badge(
+                    &theme,
+                    badge,
+                    BadgeSite::Row,
+                    info.id,
+                    &self.env.regions,
+                    cx,
+                )
+            }));
+        }
         let mut line = div()
             .flex()
             .items_center()
@@ -2171,20 +2196,25 @@ impl SessionsPanel {
                             }
                         }
                     })
+                    .children(std::mem::take(&mut whose))
                     .children(badge.take())
                     .children(recovery.take())
                     .children(shared.take())
                     .children(review.take())
                     .children(muted.take()),
-                "age" => line.child(
-                    div()
-                        .id(SharedString::from(format!("row-age-{}", info.id)))
-                        .flex_none()
-                        .text_size(px(tokens.secondary_font_size))
-                        .text_color(theme.muted)
-                        .tooltip(time_tooltip(info.created_at_ms))
-                        .child(SharedString::from(age_label(info.created_at_ms))),
-                ),
+                "age" => {
+                    // Since something last happened in it, not since it was made.
+                    let active_ms = self.env.sessions.read(cx).last_activity_ms(info);
+                    line.child(
+                        div()
+                            .id(SharedString::from(format!("row-age-{}", info.id)))
+                            .flex_none()
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(theme.muted)
+                            .tooltip(time_tooltip(active_ms))
+                            .child(SharedString::from(age_label(active_ms))),
+                    )
+                }
                 _ => line,
             };
         }
@@ -2217,49 +2247,6 @@ impl SessionsPanel {
             );
         }
 
-        // Under the title: the project (a row away from its project row), a folder outside the
-        // session's checkout, and the placement badge off the main checkout.
-        let second = row.subtitle.as_ref().map(|sub| {
-            let text: Vec<&str> = [sub.container.as_deref(), sub.folder.as_deref()]
-                .into_iter()
-                .flatten()
-                .collect();
-            let tip: Option<SharedString> =
-                session_folder(info).map(|path| path.display().to_string().into());
-            div()
-                .flex()
-                .items_center()
-                .gap(px(gap))
-                .pl(px(STATUS_LANE + 14.0 + gap * 2.0))
-                .pb(px(tokens.spacing))
-                .text_size(px(tokens.secondary_font_size))
-                .when(!text.is_empty(), |s| {
-                    let element = div()
-                        .id(SharedString::from(format!("session-folder-{id}")))
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(theme.muted)
-                        .child(SharedString::from(text.join(" · ")));
-                    s.child(match tip {
-                        Some(tip) => element
-                            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
-                            .into_any_element(),
-                        None => element.into_any_element(),
-                    })
-                })
-                .children(sub.badge.as_ref().map(|badge| {
-                    placement_badge(
-                        &theme,
-                        badge,
-                        BadgeSite::Row,
-                        info.id,
-                        &self.env.regions,
-                        cx,
-                    )
-                }))
-        });
-
         div()
             .id(SharedString::from(format!("session-row-{id}")))
             .group(row_group)
@@ -2291,7 +2278,6 @@ impl SessionsPanel {
                 }),
             )
             .child(line)
-            .children(second)
             .child(probe(&self.env.regions, Region::SessionRow(info.id)))
             .into_any_element()
     }
