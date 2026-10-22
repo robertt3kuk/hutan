@@ -82,7 +82,7 @@ pub const CAPABILITIES: &[&str] = &[
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit
-/// it was built from (`HUTAN_GIT_SHA`, from the build script), its executable with symlinks
+/// it was built from (`$OUT_DIR/git_sha`, from the build script), its executable with symlinks
 /// resolved, and `started_at_ms`.
 pub fn daemon_build(started_at_ms: u64) -> DaemonBuild {
     let exe = std::env::current_exe().ok();
@@ -93,7 +93,7 @@ pub fn daemon_build(started_at_ms: u64) -> DaemonBuild {
         .unwrap_or_default();
     DaemonBuild {
         version: env!("CARGO_PKG_VERSION").to_owned(),
-        git_sha: Some(env!("HUTAN_GIT_SHA"))
+        git_sha: Some(include_str!(concat!(env!("OUT_DIR"), "/git_sha")))
             .filter(|sha| !sha.is_empty())
             .map(str::to_owned),
         exe_path,

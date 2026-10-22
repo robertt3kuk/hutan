@@ -19,7 +19,7 @@ pub const OWN_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The git commit this client was built from, when it was built in a checkout.
 pub fn own_git_sha() -> Option<&'static str> {
-    Some(env!("HUTAN_GIT_SHA")).filter(|sha| !sha.is_empty())
+    Some(include_str!(concat!(env!("OUT_DIR"), "/git_sha"))).filter(|sha| !sha.is_empty())
 }
 
 /// A daemon build: its version, commit and executable.

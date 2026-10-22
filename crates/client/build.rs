@@ -1,4 +1,4 @@
-// Compiles the git commit of the checkout into `HUTAN_GIT_SHA` (12 hex digits; empty outside
+// Writes the git commit of the checkout to `$OUT_DIR/git_sha` (12 hex digits; empty outside
 // git), the build id clients and the daemon compare (`docs/architecture.md` § Daemon
 // lifecycle). Also the daemon's build script (`crates/daemon/build.rs` includes this file), so
 // both sides of one build carry the same id. A set `HUTAN_GIT_SHA` wins (a build from a source
@@ -46,5 +46,14 @@ fn main() {
     // The worktree's own reflog moves on every commit, rebase or checkout made in it, also
     // when the branch ref itself is packed or lives in the common dir of a linked worktree.
     watch("logs/HEAD");
-    println!("cargo:rustc-env=HUTAN_GIT_SHA={sha}");
+    // A file, not `cargo:rustc-env`: sccache hashes the files a crate includes but not every
+    // variable `env!` reads, so a cached object could carry another checkout's commit.
+    if let Some(out) = std::env::var_os("OUT_DIR") {
+        let path = Path::new(&out).join("git_sha");
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(sha.as_str())
+            && let Err(error) = std::fs::write(&path, &sha)
+        {
+            println!("cargo:warning=could not write {}: {error}", path.display());
+        }
+    }
 }
