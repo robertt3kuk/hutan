@@ -939,14 +939,20 @@ fn paint_underline(
             let mut x = left;
             while x + dot <= right {
                 window.paint_quad(
-                    fill(Bounds::new(point(x, bottom - px(2.5)), size(dot, dot)), color)
-                        .corner_radii(dot / 2.0),
+                    fill(
+                        Bounds::new(point(x, bottom - px(2.5)), size(dot, dot)),
+                        color,
+                    )
+                    .corner_radii(dot / 2.0),
                 );
                 x += dot * 2.5;
             }
         }
         UnderlineStyle::Straight => window.paint_quad(fill(
-            Bounds::from_corners(point(left, bottom - px(2.0)), point(right, bottom - px(1.0))),
+            Bounds::from_corners(
+                point(left, bottom - px(2.0)),
+                point(right, bottom - px(1.0)),
+            ),
             color,
         )),
     }

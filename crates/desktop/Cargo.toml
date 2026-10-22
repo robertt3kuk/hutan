@@ -20,6 +20,7 @@ path = "src/main.rs"
 base64.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
+hutan-buffer.workspace = true
 hutan-chat-view.workspace = true
 hutan-client.workspace = true
 hutan-code-view.workspace = true

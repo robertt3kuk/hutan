@@ -857,7 +857,11 @@ impl SessionsStore {
             // The buffer store and the Files panel follow the file changes themselves
             // (`workbench/file_sync.rs`, `panels/files.rs`), the ⌘P finder the generations.
             | Notice::FsChanged { .. }
-            | Notice::FsGeneration { .. } => {}
+            | Notice::FsGeneration { .. }
+            // The file tabs' language servers (`workbench/lsp.rs`) and the Problems panel
+            // follow these themselves.
+            | Notice::LspState { .. }
+            | Notice::LspDiagnostics { .. } => {}
             // The resources panel listens for itself too; the sample also says which terminals
             // run an agent that never reported.
             Notice::ResourcesUpdated { sample } => self.apply_sample(sample, cx),

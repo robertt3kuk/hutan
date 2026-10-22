@@ -55,17 +55,17 @@ mod vim_host;
 
 pub use actions::*;
 pub use agent::{AgentChanges, AgentHunk, AgentLabel, HunkKind};
-pub use diagnostics::{
-    Diagnostic, DiagnosticCounts, DiagnosticInput, DrawnDiagnostic, GlyphShape, Severity,
-    UnderlineStyle,
-};
-pub use hover::{HOVER_DELAY, HoverBlock, HoverSource, HoverState, markdown_blocks};
-pub use hutan_buffer::Utf16Point;
 pub use buffer::{
     BufferEdited, Coalesce, Conflict, EditKind, FailReason, FileBuffer, LoadState,
     TYPING_GROUP_PAUSE, file_name, language_label,
 };
+pub use diagnostics::{
+    Diagnostic, DiagnosticCounts, DiagnosticInput, DrawnDiagnostic, GlyphShape, Severity,
+    UnderlineStyle,
+};
 pub use find::{FindQuery, FindResult, FindState, MAX_FIND_MATCHES};
+pub use hover::{HOVER_DELAY, HoverBlock, HoverSource, HoverState, markdown_blocks};
+pub use hutan_buffer::Utf16Point;
 pub use hutan_vim::{Key as VimKey, Mode as VimMode};
 pub use layout::TAB_SIZE;
 pub use modal::{ExRun, VimMessage, VimSettings, vim_key_of};

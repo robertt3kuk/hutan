@@ -608,6 +608,32 @@ impl Setting for FilesPanelSettings {
     const NAMESPACE: &'static str = "panels.files";
 }
 
+/// The least serious diagnostics the Problems panel lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProblemsSeverity {
+    /// Errors, warnings, information and hints.
+    #[default]
+    All,
+    /// Errors and warnings.
+    Warning,
+    /// Errors only.
+    Error,
+}
+
+/// The `panels.problems` namespace: the Problems panel (the language servers' diagnostics,
+/// E-12a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ProblemsPanelSettings {
+    /// The least serious diagnostics listed (the header's filter).
+    pub severity: ProblemsSeverity,
+}
+
+impl Setting for ProblemsPanelSettings {
+    const NAMESPACE: &'static str = "panels.problems";
+}
+
 /// How the sidebar orders workspaces, and the projects inside each level (pinned ones always
 /// come first).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
@@ -1388,6 +1414,7 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<SessionsPanelSettings>();
     store.register::<InspectorPanelSettings>();
     store.register::<FilesPanelSettings>();
+    store.register::<ProblemsPanelSettings>();
     store.register::<WorkspacesSettings>();
     store.register::<SidebarSettings>();
     store.register::<HistorySettings>();
@@ -1821,6 +1848,7 @@ mod tests {
             "panels.sessions",
             "panels.inspector",
             "panels.files",
+            "panels.problems",
             "workspaces",
             "history",
             "chat",

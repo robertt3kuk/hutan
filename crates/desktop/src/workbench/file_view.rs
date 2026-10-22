@@ -62,6 +62,12 @@ pub enum FileViewEvent {
     /// The agent bar's *Accept All*: keep the agent's changes to the file and stop tracking
     /// them (the pending ledger drops the file).
     AcceptAgentChanges(PathBuf),
+    /// The code view's hover popover opened at byte `offset`: ask the language server (E-12a).
+    Hover { offset: usize },
+    /// Go to the definition of the symbol at byte `offset` (E-12a).
+    Definition { offset: usize },
+    /// Go back to where the last jump came from (E-12a).
+    GoBack,
 }
 
 /// Vim's `:` line while it is open.
@@ -108,6 +114,8 @@ pub struct FileView {
     /// A bar (agent or conflict) showed in the last frame: when it goes, the text stays where
     /// it is on screen instead of jumping up by the bar's height.
     had_bar: bool,
+    /// The window's language servers, for the bar over the code (E-12a, `lsp_bar.rs`).
+    lsp: Option<Entity<super::lsp::LspStore>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -153,6 +161,13 @@ impl FileView {
                     cx.emit(FileViewEvent::FocusLost(path));
                 }
                 CodeViewEvent::CommandLine { visual } => this.open_command_line(*visual, cx),
+                CodeViewEvent::HoverRequested { offset } => {
+                    cx.emit(FileViewEvent::Hover { offset: *offset });
+                }
+                CodeViewEvent::GoToDefinition { offset } => {
+                    cx.emit(FileViewEvent::Definition { offset: *offset });
+                }
+                CodeViewEvent::GoBack => cx.emit(FileViewEvent::GoBack),
             }),
         ];
         let mut this = Self {
@@ -179,10 +194,30 @@ impl FileView {
             follow: false,
             followed_epoch: 0,
             had_bar: false,
+            lsp: None,
             _subscriptions: subscriptions,
         };
         this.sync_vim(cx);
         this
+    }
+
+    /// Shows the window's language servers' bar over the code (E-12a); the tab draws again
+    /// when they change.
+    pub fn set_lsp(&mut self, lsp: Entity<super::lsp::LspStore>, cx: &mut Context<Self>) {
+        self._subscriptions
+            .push(cx.observe(&lsp, |_, _, cx| cx.notify()));
+        self.lsp = Some(lsp);
+    }
+
+    /// What the language server's bar says, if it shows (tests).
+    pub fn lsp_bar_text(&self, cx: &App) -> Option<String> {
+        let lsp = self.lsp.as_ref()?;
+        let buffer = self.buffer.read(cx);
+        let bar = lsp.read(cx).bar(&buffer.path().display().to_string())?;
+        Some(super::lsp_bar::bar_text(
+            &bar,
+            hutan_code_view::language_label(buffer.language()),
+        ))
     }
 
     // ---- an agent's changes (E-10) -----------------------------------------------------------
@@ -1511,7 +1546,13 @@ impl Render for FileView {
         let agent_bar = ready
             .then(|| self.render_agent_bar(&theme, &tokens, cx))
             .flatten();
-        let has_bar = conflict_bar.is_some() || agent_bar.is_some();
+        let lsp_bar = self.lsp.as_ref().filter(|_| ready).and_then(|lsp| {
+            let buffer = self.buffer.read(cx);
+            let path = buffer.path().display().to_string();
+            let language = hutan_code_view::language_label(buffer.language());
+            super::lsp_bar::render(lsp, &path, language, &theme, &tokens, cx)
+        });
+        let has_bar = conflict_bar.is_some() || agent_bar.is_some() || lsp_bar.is_some();
         if self.had_bar && !has_bar {
             self.code.update(cx, |code, _| code.keep_text_in_place());
         }
@@ -1566,6 +1607,7 @@ impl Render for FileView {
             }))
             .children(conflict_bar)
             .children(agent_bar)
+            .children(lsp_bar)
             .children(diff)
             .children(find_bar)
             .children(replace_bar)

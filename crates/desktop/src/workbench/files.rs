@@ -242,7 +242,7 @@ impl Workbench {
 
     /// Shows the file at canonical `path` in a tab: focuses the tab that has it, else adds one to
     /// the focused pane (in place of a lone placeholder), or to a new split right of it.
-    fn show_file(
+    pub(crate) fn show_file(
         &mut self,
         path: &Path,
         size: u64,
@@ -421,6 +421,8 @@ impl Workbench {
         let settings = self.settings.clone();
         let regions = self.regions.clone();
         let view = cx.new(|cx| FileView::new(settings, regions, buffer, style, cx));
+        let lsp = self.lsp.clone();
+        view.update(cx, |view, cx| view.set_lsp(lsp, cx));
         // A caret move or an edit is no event here: the editor's status items read the code
         // view themselves (`editor_status.rs`), so the workbench is not notified (B12a).
         let subscription = cx.subscribe_in(
@@ -447,6 +449,11 @@ impl Workbench {
                 FileViewEvent::AcceptAgentChanges(path) => {
                     this.accept_agent_changes(&path.display().to_string(), cx);
                 }
+                FileViewEvent::Hover { offset } => this.lsp_hover(view, *offset, cx),
+                FileViewEvent::Definition { offset } => {
+                    this.go_to_definition(view, *offset, window, cx);
+                }
+                FileViewEvent::GoBack => this.go_back(window, cx),
             },
         );
         self.file_subscriptions.insert(key.clone(), subscription);
@@ -524,6 +531,7 @@ impl Workbench {
             .collect();
         for (path, watched, hunks_left) in dropped {
             self.buffers.buffers.remove(&path);
+            self.lsp.update(cx, |lsp, cx| lsp.close(&path, cx));
             if watched {
                 // The ledger keeps watching a file with an agent's changes.
                 self.ledger_tab_closed(&path, hunks_left, cx);
@@ -585,9 +593,11 @@ impl Workbench {
         if buffer.is_large() {
             language.push_str(" · large file");
         }
+        let path = buffer.path().display().to_string();
         Some(super::registry::EditorStatus {
             language,
             vim: self.vim_config().enabled,
+            diagnostics: self.editor_diagnostics(&path, cx),
         })
     }
 

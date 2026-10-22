@@ -617,6 +617,8 @@ pub struct Workbench {
     pub(crate) buffers: super::files::BufferStore,
     /// The pending ledger of agents' edits (see `agent_edits.rs`).
     pub(crate) agent_ledger: super::agent_edits::AgentLedger,
+    /// The file tabs' language servers: documents, diagnostics, servers, jumps (`lsp.rs`).
+    pub(crate) lsp: Entity<super::lsp::LspStore>,
     /// The view of every file tab, by pane and path.
     pub(crate) file_views: HashMap<(PaneId, String), Entity<super::file_view::FileView>>,
     pub(crate) file_subscriptions: HashMap<(PaneId, String), Subscription>,
@@ -760,6 +762,7 @@ impl Workbench {
             store.set_terminal_colors(DefaultColors::from(&terminal_style.palette), cx);
         });
         let regions = super::regions::Regions::default();
+        let lsp = cx.new(|cx| super::lsp::LspStore::new(sessions.read(cx).connection().clone()));
         let harnesses = cx.new(|cx| super::harnesses::HarnessDirectory::new(sessions.clone(), cx));
         let env = PanelEnv {
             sessions: sessions.clone(),
@@ -909,6 +912,9 @@ impl Workbench {
         };
         let checkpoint_store = sessions.read(cx).checkpoints().clone();
         let subscriptions = vec![
+            cx.subscribe(&lsp, |this, _, event: &super::lsp::LspStoreEvent, cx| {
+                this.on_lsp_event(event, cx);
+            }),
             modal_guard,
             focus_modality,
             cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
@@ -1117,6 +1123,7 @@ impl Workbench {
             changes_subscriptions: Vec::new(),
             buffers: super::files::BufferStore::default(),
             agent_ledger: super::agent_edits::AgentLedger::for_state(options.state_path.as_deref()),
+            lsp,
             file_views: HashMap::new(),
             editor_items: None,
             file_subscriptions: HashMap::new(),

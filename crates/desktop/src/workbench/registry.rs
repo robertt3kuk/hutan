@@ -168,6 +168,26 @@ pub struct EditorStatus {
     pub language: String,
     /// `editor.vim_mode` is on: `editor.mode` shows.
     pub vim: bool,
+    /// The file's diagnostics and its language server (`editor.diagnostics`, E-12a).
+    pub diagnostics: EditorDiagnostics,
+}
+
+/// What `editor.diagnostics` shows for the focused file tab.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EditorDiagnostics {
+    /// How many of each severity, once the file has a language server.
+    pub counts: Option<hutan_code_view::DiagnosticCounts>,
+    /// The file's language server and its state.
+    pub server: Option<EditorServer>,
+}
+
+/// A language server as the status item shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorServer {
+    pub name: String,
+    pub state: hutan_protocol::lsp::LspServerState,
+    /// Why (a failure's last error, idle, the setting to change), for the tooltip.
+    pub reason: Option<String>,
 }
 
 pub type StatusRender = Rc<dyn Fn(&StatusContext<'_>) -> AnyElement>;
@@ -232,6 +252,7 @@ impl Default for StatusBarLayout {
         Self {
             left: ["attention", "connection"].map(str::to_owned).to_vec(),
             right: [
+                "editor.diagnostics",
                 "editor.mode",
                 "editor.position",
                 "editor.language",

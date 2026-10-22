@@ -72,6 +72,8 @@ impl Workbench {
             if event.kind != EditKind::Reload {
                 this.schedule_autosave(&key, cx);
             }
+            // The daemon's mirror follows every edit, a reload too (E-12a).
+            this.lsp.update(cx, |lsp, cx| lsp.edited(&key, event, cx));
         });
         vec![dirty, edits]
     }
@@ -130,6 +132,12 @@ impl Workbench {
                 .buffer
                 .update(cx, |b, cx| b.set_agent_changes(Some(changes), cx));
         }
+        // The text is in: the language server gets the document (E-12a).
+        let buffer = stored.buffer.clone();
+        self.lsp.update(cx, |lsp, cx| lsp.open(path, &buffer, cx));
+        let Some(stored) = self.buffers.buffers.get_mut(path) else {
+            return;
+        };
         if stored.watched {
             return;
         }
@@ -266,6 +274,7 @@ impl Workbench {
                 stored.conflict_disk = None;
                 stored.disk_text = text;
                 buffer.update(cx, |b, cx| b.saved(version, size, cx));
+                self.lsp.update(cx, |lsp, cx| lsp.saved(path, cx));
                 if let Some(item) = then_close
                     && let Some((pane, index)) = self.state.find_item(&item)
                 {

@@ -346,7 +346,8 @@ mod tests {
                 UnderlineStyle::Straight
             ]
         );
-        let glyphs: std::collections::HashSet<_> = Severity::ALL.iter().map(|s| s.glyph()).collect();
+        let glyphs: std::collections::HashSet<_> =
+            Severity::ALL.iter().map(|s| s.glyph()).collect();
         assert_eq!(glyphs.len(), 4, "four shapes");
         let symbols: std::collections::HashSet<_> =
             Severity::ALL.iter().map(|s| s.symbol()).collect();
@@ -388,7 +389,10 @@ mod tests {
         let text = Text::from("a error b error c\n");
         let placed = place(
             &text,
-            vec![input(0, 2, 7, Severity::Error), input(0, 10, 15, Severity::Error)],
+            vec![
+                input(0, 2, 7, Severity::Error),
+                input(0, 10, 15, Severity::Error),
+            ],
         );
         assert_eq!(step(&placed, 0, true), Some(0));
         assert_eq!(step(&placed, 2, true), Some(1));

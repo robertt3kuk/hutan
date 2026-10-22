@@ -60,6 +60,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("sidebar", "Sidebar organization"),
     ("panels.inspector", "Requests"),
     ("panels.files", "Files"),
+    ("panels.problems", "Problems"),
     ("workspaces", "Workspaces"),
     ("history", "History"),
     ("chat", "Chat"),
@@ -390,6 +391,18 @@ const FIELDS: &[FieldText] = &[
         "auto_reveal",
         "Reveal the active file",
         "Selects the file of the tab you switch to in the Files panel, opening the folders it is in.",
+    ),
+    // ---- problems ----
+    choice(
+        "panels.problems",
+        "severity",
+        "Show",
+        "The least serious diagnostics the Problems panel lists; the panel's header switches it too.",
+        &[
+            ("all", "Everything"),
+            ("warning", "Errors and warnings"),
+            ("error", "Errors only"),
+        ],
     ),
     // ---- workspaces ----
     choice(

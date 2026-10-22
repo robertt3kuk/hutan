@@ -347,6 +347,7 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<SidebarSettings>().on_page(SessionsPanelSettings::NAMESPACE),
         CatalogEntry::of::<InspectorPanelSettings>(),
         CatalogEntry::of::<FilesPanelSettings>(),
+        CatalogEntry::of::<crate::settings::ProblemsPanelSettings>(),
         CatalogEntry::of::<WorkspacesSettings>(),
         CatalogEntry::custom("sessions_restore"),
         CatalogEntry::of::<HistorySettings>(),
@@ -546,7 +547,7 @@ mod tests {
                 .map(|e| e.namespace)
                 .collect()
         };
-        assert_eq!(names("panels.").len(), 3);
+        assert_eq!(names("panels.").len(), 4);
         let mut font = names("font");
         font.sort_unstable();
         assert_eq!(font, ["editor", "terminal"], "code and terminal fonts");

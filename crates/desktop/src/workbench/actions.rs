@@ -126,6 +126,8 @@ actions!(
         RevealActiveFile,
         RewindFocusedChat,
         UndoLastRestore,
+        /// Show the Problems panel (the language servers' diagnostics) with the keyboard in it.
+        ShowProblems,
     ]
 );
 
@@ -600,6 +602,15 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
             "Editor: Toggle Follow Agent",
             hutan_code_view::ToggleFollowAgent,
         ),
+        command("Editor: Go to Definition", hutan_code_view::GoToDefinition),
+        command("Editor: Go Back", hutan_code_view::GoBack),
+        command("Editor: Show Hover", hutan_code_view::ShowHover),
+        command("Editor: Next Problem", hutan_code_view::NextDiagnostic),
+        command(
+            "Editor: Previous Problem",
+            hutan_code_view::PreviousDiagnostic,
+        ),
+        command("Problems: Show Problems Panel", ShowProblems),
         command("App: Command Palette", TogglePalette),
         command("App: Settings…", OpenSettings),
         command("App: About Hutan", About),
@@ -858,6 +869,7 @@ fn hutan_global_bindings() -> Vec<BindingSpec> {
         bind::<OpenJump>("cmd-j", None),
         bind::<QuickOpen>("cmd-p", None),
         bind::<ShowFiles>("cmd-shift-e", None),
+        bind::<ShowProblems>("cmd-shift-m", None),
         bind::<OpenProject>("cmd-o", None),
         bind::<ToggleOverview>("cmd-shift-o", None),
         bind::<ToggleResources>("cmd-alt-r", None),
@@ -1011,6 +1023,11 @@ fn context_bindings() -> Vec<BindingSpec> {
             "cmd-alt-[",
             Some(super::file_view::KEY_CONTEXT),
         ),
+        // Language servers (E-12a); Vim's Normal mode has `gd`, `K`, `]d` `[d` and `⌃O` itself.
+        bind::<hutan_code_view::GoToDefinition>("f12", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::NextDiagnostic>("f8", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::PreviousDiagnostic>("shift-f8", Some(hutan_code_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::GoBack>("ctrl-o", Some(hutan_code_view::PLAIN_CONTEXT)),
     ]
 }
 
@@ -1073,6 +1090,9 @@ fn zed_global_bindings() -> Vec<BindingSpec> {
         bind::<TogglePalette>("cmd-shift-p", None),
         bind::<QuickOpen>("cmd-p", None),
         bind::<ShowFiles>("cmd-shift-e", None),
+        bind::<ShowProblems>("cmd-shift-m", None),
+        // Zed's hover chord; ⌘K alone is the palette in the Hutan base, so it has no chord.
+        bind::<hutan_code_view::ShowHover>("cmd-k cmd-i", Some(hutan_code_view::KEY_CONTEXT)),
         bind::<OpenProject>("cmd-o", None),
         bind::<OpenSettings>("cmd-,", None),
         bind::<NewWorkspace>("cmd-shift-n", None),
@@ -1302,6 +1322,7 @@ mod tests {
             "cmd-j | workbench::OpenJump | -",
             "cmd-p | workbench::QuickOpen | -",
             "shift-cmd-e | workbench::ShowFiles | -",
+            "shift-cmd-m | workbench::ShowProblems | -",
             "cmd-o | workbench::OpenProject | -",
             "shift-cmd-o | workbench::ToggleOverview | -",
             "alt-cmd-r | workbench::ToggleResources | -",
@@ -1418,6 +1439,10 @@ mod tests {
             "alt-cmd-z | code_view::RejectAgentHunk | FileView",
             "alt-cmd-] | code_view::NextAgentHunk | FileView",
             "alt-cmd-[ | code_view::PreviousAgentHunk | FileView",
+            "f12 | code_view::GoToDefinition | CodeView",
+            "f8 | code_view::NextDiagnostic | CodeView",
+            "shift-f8 | code_view::PreviousDiagnostic | CodeView",
+            "ctrl-o | code_view::GoBack | CodeView && !vim_mode",
         ]
         .map(str::to_owned)
         .to_vec();
@@ -1430,18 +1455,27 @@ mod tests {
         assert_eq!(rendered(&default_bindings(KeymapBase::Hutan)), expected);
     }
 
+    /// Context bindings are the same in both bases, except Zed's ⌘K ⌘I hover chord: ⌘K alone is
+    /// the Hutan base's palette, so a chord on it would delay the palette there.
     #[test]
     fn the_two_bases_share_every_context_binding() {
         let contextual = |bindings: &[BindingSpec]| -> Vec<BindingSpec> {
             bindings
                 .iter()
                 .filter(|b| b.context.is_some())
+                .filter(|b| b.action != hutan_code_view::ShowHover::name_for_type())
                 .cloned()
                 .collect()
         };
         assert_eq!(
             contextual(&default_bindings(KeymapBase::Zed)),
             contextual(&default_bindings(KeymapBase::Hutan))
+        );
+        assert!(
+            default_bindings(KeymapBase::Zed)
+                .iter()
+                .any(|b| b.action == hutan_code_view::ShowHover::name_for_type()
+                    && format_keys(&b.keys) == "cmd-k cmd-i")
         );
     }
 

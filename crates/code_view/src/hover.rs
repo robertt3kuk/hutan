@@ -386,7 +386,12 @@ impl CodeView {
                 div()
                     .flex()
                     .gap(px(6.0))
-                    .child(div().flex_none().text_color(color).child(d.severity.symbol()))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(color)
+                            .child(d.severity.symbol()),
+                    )
                     .child(
                         div()
                             .flex_1()

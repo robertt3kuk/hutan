@@ -978,6 +978,9 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::ShowFiles, window, cx| {
             this.show_files(window, cx);
         }))
+        .on_action(cx.listener(|this, _: &actions::ShowProblems, window, cx| {
+            this.show_problems(window, cx);
+        }))
         .on_action(
             cx.listener(|this, _: &actions::RevealActiveFile, window, cx| {
                 this.reveal_active_file(window, cx);

@@ -259,6 +259,16 @@ pub fn builtin_status_items() -> StatusItemRegistry {
         }),
     });
     registry.register(StatusItemSpec {
+        id: "editor.diagnostics",
+        default_side: StatusSide::Right,
+        render: Rc::new(|ctx: &StatusContext<'_>| -> AnyElement {
+            match ctx.data.editor.as_ref().and_then(diagnostics_item) {
+                Some(item) => render_diagnostics_item(item, ctx),
+                None => div().id("status-editor-diagnostics").into_any_element(),
+            }
+        }),
+    });
+    registry.register(StatusItemSpec {
         id: "density",
         default_side: StatusSide::Right,
         render: Rc::new(|ctx: &StatusContext<'_>| {
@@ -390,6 +400,104 @@ fn dock_tooltip(name: &str, state: DockState, hint: &str) -> String {
     }
 }
 
+/// What `editor.diagnostics` shows: the counts by severity (each with its glyph, a shape per
+/// severity) and the server's state while it is not simply ready.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticsItem {
+    /// (glyph, count, severity) for errors, warnings, and information with hints.
+    pub counts: Vec<(&'static str, usize, hutan_code_view::Severity)>,
+    /// `indexing`, `starting`, `failed`, … (nothing while ready).
+    pub state: Option<String>,
+    pub tooltip: String,
+}
+
+/// `None` when the focused file has no language server.
+pub fn diagnostics_item(
+    editor: &crate::workbench::registry::EditorStatus,
+) -> Option<DiagnosticsItem> {
+    use hutan_code_view::Severity;
+    use hutan_protocol::lsp::LspServerState;
+    let server = editor.diagnostics.server.as_ref()?;
+    let counts = editor.diagnostics.counts.unwrap_or_default();
+    let shown = vec![
+        (Severity::Error.symbol(), counts.errors, Severity::Error),
+        (
+            Severity::Warning.symbol(),
+            counts.warnings,
+            Severity::Warning,
+        ),
+        (
+            Severity::Info.symbol(),
+            counts.infos + counts.hints,
+            Severity::Info,
+        ),
+    ];
+    let state = match server.state {
+        LspServerState::Ready => None,
+        LspServerState::NotInstalled => Some("not installed".to_owned()),
+        other => Some(other.as_str().to_owned()),
+    };
+    let plural = |n: usize, one: &str| {
+        if n == 1 {
+            format!("{n} {one}")
+        } else {
+            format!("{n} {one}s")
+        }
+    };
+    let mut tooltip = format!(
+        "{}: {} · {}, {}",
+        server.name,
+        server.state.as_str().replace('_', " "),
+        plural(counts.errors, "error"),
+        plural(counts.warnings, "warning"),
+    );
+    if let Some(reason) = &server.reason {
+        tooltip.push_str(&format!(" · {reason}"));
+    }
+    tooltip.push_str(" · click for Problems");
+    Some(DiagnosticsItem {
+        counts: shown
+            .into_iter()
+            .filter(|(_, n, s)| *n > 0 || *s != Severity::Info)
+            .collect(),
+        state,
+        tooltip,
+    })
+}
+
+fn render_diagnostics_item(item: DiagnosticsItem, ctx: &StatusContext<'_>) -> AnyElement {
+    use hutan_code_view::Severity;
+    let color = |severity: Severity, n: usize| match severity {
+        _ if n == 0 => ctx.theme.muted,
+        Severity::Error => ctx.theme.danger,
+        Severity::Warning => ctx.theme.warning,
+        Severity::Info | Severity::Hint => ctx.theme.accent,
+    };
+    let mut row = clickable("status-editor-diagnostics", ctx)
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .text_color(ctx.theme.muted)
+        .tooltip(tooltip(item.tooltip))
+        .on_click(|_, window, cx| {
+            window.dispatch_action(Box::new(crate::workbench::actions::ShowProblems), cx);
+        });
+    for (glyph, n, severity) in item.counts {
+        row = row.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(3.0))
+                .child(div().text_color(color(severity, n)).child(glyph))
+                .child(div().text_color(ctx.theme.fg).child(n.to_string())),
+        );
+    }
+    if let Some(state) = item.state {
+        row = row.child(SharedString::from(state));
+    }
+    row.into_any_element()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +510,7 @@ mod tests {
         assert_eq!(
             bar.right,
             [
+                "editor.diagnostics",
                 "editor.mode",
                 "editor.position",
                 "editor.language",

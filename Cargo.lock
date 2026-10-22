@@ -2686,6 +2686,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "hutan-agents",
+ "hutan-buffer",
  "hutan-chat-view",
  "hutan-client",
  "hutan-code-view",
