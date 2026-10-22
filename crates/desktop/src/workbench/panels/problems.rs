@@ -503,6 +503,7 @@ impl ProblemsPanel {
                         }
                     }
                     div()
+                        .w_full()
                         .h(px(ROW_HEIGHT))
                         .flex()
                         .items_center()
@@ -559,14 +560,14 @@ impl ProblemsPanel {
                         ),
                     };
                     let place = format!("{}:{}", problem.line + 1, problem.character + 1);
-                    div()
+                    let row = div()
                         .id(SharedString::from(format!("problem-{index}")))
                         .relative()
+                        .w_full()
                         .h(px(ROW_HEIGHT))
                         .flex()
                         .items_center()
                         .gap(px(tokens.spacing * 2.0))
-                        .mx(px(tokens.spacing * 2.0))
                         .pl(px(tokens.spacing * 3.0))
                         .pr(px(tokens.spacing))
                         .rounded(px(tokens.radius))
@@ -607,7 +608,12 @@ impl ProblemsPanel {
                                 .text_color(theme.muted)
                                 .child(SharedString::from(place)),
                         )
-                        .child(probe(&self.env.regions, Region::ProblemsRow(index)))
+                        .child(probe(&self.env.regions, Region::ProblemsRow(index)));
+                    // The row's hover fill stops short of the panel's edges.
+                    div()
+                        .w_full()
+                        .px(px(tokens.spacing * 2.0))
+                        .child(row)
                         .into_any_element()
                 }
             })
