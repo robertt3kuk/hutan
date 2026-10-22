@@ -44,8 +44,10 @@ fn home_count(view: &Entity<Workbench>, cx: &VisualTestContext) -> usize {
 }
 
 fn info(view: &Entity<Workbench>, cx: &VisualTestContext, session: SessionId) -> SessionInfo {
-    view.read_with(cx, |wb, cx| wb.sessions().read(cx).session(session).cloned())
-        .expect("the session is known")
+    view.read_with(cx, |wb, cx| {
+        wb.sessions().read(cx).session(session).cloned()
+    })
+    .expect("the session is known")
 }
 
 #[gpui::test]
@@ -118,10 +120,20 @@ fn duplicate_mawas_tabs_of_a_saved_layout_merge_into_home(cx: &mut TestAppContex
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| {
             let pane = s.active_pane_id();
-            s.add_item(pane, ItemRef::Chat { session: id.clone() })
-                .unwrap();
-            s.add_item(pane, ItemRef::Terminal { session: id.clone() })
-                .unwrap();
+            s.add_item(
+                pane,
+                ItemRef::Chat {
+                    session: id.clone(),
+                },
+            )
+            .unwrap();
+            s.add_item(
+                pane,
+                ItemRef::Terminal {
+                    session: id.clone(),
+                },
+            )
+            .unwrap();
         });
     });
     // The layout is reconciled as soon as the store says anything (here: the focus moved).
@@ -135,8 +147,13 @@ fn duplicate_mawas_tabs_of_a_saved_layout_merge_into_home(cx: &mut TestAppContex
         wb.edit_layout(cx, |s| {
             s.close_panel(&PanelId::new("assistant")).unwrap();
             let pane = s.active_pane_id();
-            s.add_item(pane, ItemRef::Chat { session: id.clone() })
-                .unwrap();
+            s.add_item(
+                pane,
+                ItemRef::Chat {
+                    session: id.clone(),
+                },
+            )
+            .unwrap();
         });
     });
     wait_until(cx, "the chat tab to become Home", |cx| {

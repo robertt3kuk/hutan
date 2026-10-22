@@ -931,3 +931,173 @@ fn the_row_menu_opens_from_the_button_and_right_click_in_the_dock_and_as_a_tab(
     menu_and_kill_question(&view, cx, index, victim, "center tab");
     kill_session(&daemon, tree.id);
 }
+
+// ---- the table's columns ------------------------------------------------------------------------
+
+/// Puts the panel in the right dock `size` px wide and reveals it.
+fn show_in_right_dock(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    size: f32,
+) -> Entity<ResourcesPanel> {
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            s.move_panel(&"resources".into(), PanelDest::Dock(DockPosition::Right))
+                .unwrap();
+            s.docks.right.size = size;
+        });
+    });
+    cx.dispatch_action(actions::ShowResources);
+    draw(cx);
+    draw(cx);
+    view.read_with(cx, |wb, _| wb.panel::<ResourcesPanel>("resources"))
+        .expect("the resources panel is drawn in the right dock")
+}
+
+/// Every cell of every line of the table, and the header, laid out: the cells of a row stand side
+/// by side in column order and none of them reaches into the next; the runs of text inside the
+/// name column stay inside it and apart; and nothing of a row leaves the panel.
+fn assert_columns_do_not_overlap(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    panel: &Entity<ResourcesPanel>,
+    expect_wide: bool,
+) {
+    const COLUMNS: [&str; 6] = ["name", "pid", "cpu", "memory", "threads", "command"];
+    const RUNS: [&str; 3] = ["name.0", "name.1", "name.2"];
+    draw(cx);
+    draw(cx);
+    let bounds = |what: Region| region(view, cx, what);
+    let whole = bounds(Region::ResourceControl("panel")).expect("the panel is drawn");
+    let wide = f32::from(whole.size.width) >= 520.0;
+    assert_eq!(
+        wide, expect_wide,
+        "the panel is {:?} wide",
+        whole.size.width
+    );
+
+    // The header: its cells in order, apart.
+    let mut previous_right = whole.left();
+    for column in COLUMNS {
+        let Some(cell) = bounds(Region::ResourceHeader(column)) else {
+            assert!(
+                !wide || column != "threads" && column != "command",
+                "a wide table has a {column} header"
+            );
+            continue;
+        };
+        assert!(
+            cell.left() >= previous_right - gpui::px(0.5),
+            "header {column} starts at {:?}, the one before it ends at {previous_right:?}",
+            cell.left()
+        );
+        previous_right = cell.right();
+        assert!(cell.right() <= whole.right() + gpui::px(0.5));
+    }
+
+    let count = lines(panel, cx).len();
+    assert!(count > 3, "{count} lines are enough to look at");
+    let mut checked = 0;
+    for index in 0..count {
+        let Some(row) = bounds(Region::ResourceRow(index)) else {
+            continue; // a note, or a line the list scrolled away
+        };
+        checked += 1;
+        let mut previous_right = row.left();
+        for column in COLUMNS {
+            let Some(cell) = bounds(Region::ResourceCell(index, column)) else {
+                continue; // agent rows draw only some of the columns
+            };
+            assert!(
+                cell.left() >= previous_right - gpui::px(0.5),
+                "line {index}: {column} starts at {:?}, the cell before it ends at {previous_right:?}",
+                cell.left()
+            );
+            assert!(
+                cell.right() <= row.right() + gpui::px(0.5),
+                "line {index}: {column} ends at {:?}, the row at {:?}",
+                cell.right(),
+                row.right()
+            );
+            previous_right = cell.right();
+        }
+        // The runs of text in the name column stay in it, in order, apart.
+        if let Some(name) = bounds(Region::ResourceCell(index, "name")) {
+            let mut previous_right = name.left();
+            for run in RUNS {
+                let Some(text) = bounds(Region::ResourceCell(index, run)) else {
+                    continue;
+                };
+                assert!(
+                    text.left() >= previous_right - gpui::px(0.5),
+                    "line {index}: {run} starts at {:?}, the text before it ends at {previous_right:?}",
+                    text.left()
+                );
+                assert!(
+                    text.right() <= name.right() + gpui::px(0.5),
+                    "line {index}: {run} ends at {:?}, its column at {:?}",
+                    text.right(),
+                    name.right()
+                );
+                previous_right = text.right();
+            }
+        }
+    }
+    assert!(checked > 3, "{checked} rows were drawn");
+}
+
+#[gpui::test]
+fn the_columns_never_overlap_at_280_and_600_px_and_there_is_one_header(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    // A long title, a tree with agents (one with a long label), and the daemon's own row: the
+    // cases of the screenshot — a description running into the PID, an id across the CPU.
+    let long = daemon.sh_titled(
+        "a session whose title is much too long for a narrow panel to hold in one line",
+        TREE,
+    );
+    let short = daemon.sh_titled("short", "sleep 60");
+    let (view, cx) = open(cx, &daemon);
+    let panel = show_in_right_dock(&view, cx, 280.0);
+    let all = wait_lines(&panel, cx, "two sleeps", |l| {
+        processes(l, long.id, "sleep").len() == 2 && session_line(l, short.id).is_some()
+    });
+    let (_, worker_pid) = processes(&all, long.id, "sleep")[0];
+    report(
+        &daemon,
+        long.id,
+        1,
+        Some(node(
+            "a-subagent-with-a-label-longer-than-any-column",
+            NodeKind::Sub,
+        )),
+        Some(worker_pid),
+    );
+    report(
+        &daemon,
+        long.id,
+        2,
+        Some(node("thread-without-a-process", NodeKind::Sub)),
+        None,
+    );
+    wait_lines(&panel, cx, "the agent rows", |l| {
+        l.iter().any(|line| matches!(line, ResourceLine::Agent(_)))
+            && l.iter().any(
+                |line| matches!(line, ResourceLine::Process { line, .. } if line.agent.is_some()),
+            )
+    });
+    assert_columns_do_not_overlap(&view, cx, &panel, false);
+
+    // The title of "Resources" is the dock's: the panel has no header of its own with it. The one
+    // control of its top row is the settings gear.
+    assert!(
+        view.read_with(cx, |wb, _| wb
+            .region_bounds(Region::ResourceControl("title")))
+            .is_none()
+    );
+
+    // A wide table (the bottom dock spans the window): threads and command join the columns.
+    let panel = show(&view, cx);
+    assert_columns_do_not_overlap(&view, cx, &panel, true);
+    kill_session(&daemon, long.id);
+    kill_session(&daemon, short.id);
+}

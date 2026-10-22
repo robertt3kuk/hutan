@@ -410,17 +410,12 @@ pub fn panel_header(title: &str, namespace: &'static str, cx: &App) -> AnyElemen
     panel_header_with(title, namespace, Vec::new(), cx)
 }
 
-/// [`panel_header`] with `extra` controls between the title and the ⚙.
-pub fn panel_header_with(
-    title: &str,
-    namespace: &'static str,
-    extra: Vec<AnyElement>,
-    cx: &App,
-) -> AnyElement {
+/// The ⚙ of a panel's header: opens Settings at the panel's namespace.
+pub fn settings_gear(namespace: &'static str, cx: &App) -> AnyElement {
     let style = UiStyle::get(cx);
     let tokens = style.density.ui();
     let hover = style.theme.surface_hover;
-    let gear = div()
+    div()
         .id(SharedString::from(format!("gear-{namespace}")))
         .flex_none()
         .px(px(tokens.spacing * 1.5))
@@ -432,7 +427,17 @@ pub fn panel_header_with(
             window.dispatch_action(Box::new(OpenSettingsFor(namespace.to_owned())), cx);
         })
         .child(icon(Icon::ActionSettings, 14.0, style.theme.muted))
-        .into_any_element();
+        .into_any_element()
+}
+
+/// [`panel_header`] with `extra` controls between the title and the ⚙.
+pub fn panel_header_with(
+    title: &str,
+    namespace: &'static str,
+    extra: Vec<AnyElement>,
+    cx: &App,
+) -> AnyElement {
+    let gear = settings_gear(namespace, cx);
     panel_header_controls(title, extra.into_iter().chain([gear]).collect(), cx)
 }
 

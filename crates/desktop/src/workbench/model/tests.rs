@@ -2384,12 +2384,7 @@ fn items_of(state: &WorkbenchState) -> Vec<ItemRef> {
 fn a_mawas_chat_tab_beside_home_is_folded_into_home() {
     let home = PanelId::new("assistant");
     let mut state = state_with(
-        vec![
-            term("t"),
-            ItemRef::panel("assistant"),
-            chat("m"),
-            term("m"),
-        ],
+        vec![term("t"), ItemRef::panel("assistant"), chat("m"), term("m")],
         2,
     );
     let merged = state.merge_session_tabs(

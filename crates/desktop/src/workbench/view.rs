@@ -341,6 +341,12 @@ pub enum Region {
     /// A control of the resources panel (`panel`, `filter`, `sort-cpu`, `sort-memory`,
     /// `sort-name`).
     ResourceControl(&'static str),
+    /// A cell of line `index` of the resources panel's table, by column (`name`, `pid`, `cpu`,
+    /// `memory`, `threads`, `command`), and the runs of text inside the name column
+    /// (`name.0`, `name.1`, …): where each one is laid out.
+    ResourceCell(usize, &'static str),
+    /// A header cell of the resources panel's table, by column (as the cells).
+    ResourceHeader(&'static str),
     /// Entry `index` of the open context menu, top to bottom.
     MenuEntry(usize),
     /// The chip a restarted session wears (`respawned`, `resumed`, `interrupted`, `not

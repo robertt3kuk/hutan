@@ -323,14 +323,15 @@ impl Workbench {
             if !store.synced() || store.connection_state() != ConnectionState::Connected {
                 return;
             }
-            self.state.merge_session_tabs(&PanelId::new("assistant"), &|id| {
-                let info = store.session(id.parse().ok()?)?;
-                Some(match &info.chat {
-                    Some(chat) if assistant_on && chat.is_assistant() => SessionTab::Mawas,
-                    Some(_) => SessionTab::Chat,
-                    None => SessionTab::Terminal,
+            self.state
+                .merge_session_tabs(&PanelId::new("assistant"), &|id| {
+                    let info = store.session(id.parse().ok()?)?;
+                    Some(match &info.chat {
+                        Some(chat) if assistant_on && chat.is_assistant() => SessionTab::Mawas,
+                        Some(_) => SessionTab::Chat,
+                        None => SessionTab::Terminal,
+                    })
                 })
-            })
         };
         if !merged.changed {
             return;

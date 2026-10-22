@@ -28,7 +28,7 @@ use hutan_protocol::resources::{
     MIN_INTERVAL_MS, ProcessState, ResourceSample, ResourcesListRequest,
 };
 
-use super::common::{panel_header_with, placement};
+use super::common::{placement, settings_gear};
 use super::resources_model::{
     self as model, AgentLine, Command, Confirmation, Fold, Item, Line, Options, ProcessLine,
     SessionLine, SessionMeta, Target,
@@ -59,14 +59,69 @@ pub const MAX_INTERVAL_MS: u32 = 60_000;
 
 /// Narrower than this (previous frame), the threads and command columns are left out.
 const COMPACT_BELOW: f32 = 520.0;
+/// Narrower than this, the numeric columns are narrower too, so the name keeps some room.
+const NARROW_BELOW: f32 = 360.0;
 
-const COL_PID: f32 = 52.0;
-const COL_CPU: f32 = 92.0;
-const COL_MEMORY: f32 = 72.0;
 const COL_THREADS: f32 = 34.0;
 const COL_ACTION: f32 = 24.0;
 /// Space the process tree indents by, per level.
 const INDENT: f32 = 14.0;
+/// Levels of the process tree that indent; the deeper ones stand at the last step.
+const MAX_INDENT_LEVELS: usize = 6;
+
+/// How the table is laid out at the width the panel has: every column but the name is a fixed
+/// width, so the columns stand under their headers on every row, and the name column (which cuts
+/// its text at its edge) is what is left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tier {
+    /// Below [`NARROW_BELOW`]: name, PID, CPU, memory and the ⋯.
+    Narrow,
+    /// Below [`COMPACT_BELOW`]: the same, a little wider.
+    Medium,
+    /// Everything: threads and the command too.
+    Wide,
+}
+
+impl Tier {
+    fn of(width: gpui::Pixels) -> Self {
+        if width < px(NARROW_BELOW) {
+            Self::Narrow
+        } else if width < px(COMPACT_BELOW) {
+            Self::Medium
+        } else {
+            Self::Wide
+        }
+    }
+
+    fn pid(self) -> f32 {
+        match self {
+            Self::Narrow => 44.0,
+            Self::Medium => 52.0,
+            Self::Wide => 56.0,
+        }
+    }
+
+    fn cpu(self) -> f32 {
+        match self {
+            Self::Narrow => 52.0,
+            Self::Medium => 72.0,
+            Self::Wide => 92.0,
+        }
+    }
+
+    fn memory(self) -> f32 {
+        match self {
+            Self::Narrow => 60.0,
+            Self::Medium => 68.0,
+            Self::Wide => 72.0,
+        }
+    }
+
+    /// Whether the threads and command columns are shown.
+    fn wide(self) -> bool {
+        self == Self::Wide
+    }
+}
 
 /// How the panel stands with the daemon.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -629,7 +684,8 @@ impl ResourcesPanel {
 
 // ---- rendering ----------------------------------------------------------------------------------
 
-/// A sortable column header: the label, an arrow while it is the sort, a click that sorts.
+/// A sortable column header: the label, an arrow while it is the sort, a click that sorts. The
+/// label is cut with an ellipsis when its column is too narrow for it.
 #[allow(clippy::too_many_arguments)] // one call site per column
 fn header_cell(
     label: &'static str,
@@ -645,10 +701,10 @@ fn header_cell(
     let on = setting == sort_key;
     // Cpu and memory: the largest first is the unflipped order (▾); names run A to Z (▴).
     let descending = (sort_key != ResourcesSort::Name) != reversed;
-    let region = match sort_key {
-        ResourcesSort::Cpu => "sort-cpu",
-        ResourcesSort::Memory => "sort-memory",
-        ResourcesSort::Name => "sort-name",
+    let (region, column) = match sort_key {
+        ResourcesSort::Cpu => ("sort-cpu", "cpu"),
+        ResourcesSort::Memory => ("sort-memory", "memory"),
+        ResourcesSort::Name => ("sort-name", "name"),
     };
     div()
         .id(SharedString::from(format!("resources-header-{region}")))
@@ -656,6 +712,7 @@ fn header_cell(
         .flex()
         .items_center()
         .gap(px(2.0))
+        .overflow_hidden()
         .rounded(px(3.0))
         .cursor_pointer()
         .when(right, |s| s.justify_end())
@@ -665,27 +722,106 @@ fn header_cell(
         .hover(move |s| s.bg(hover))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _, _, cx| this.sort_by(sort_key, cx)))
-        .child(label)
+        .child(div().min_w_0().truncate().child(label))
         .when(on, |s| {
-            s.child(crate::icons::glyph(if descending {
+            s.child(div().flex_none().child(crate::icons::glyph(if descending {
                 crate::icons::Icon::ActionSortDescending
             } else {
                 crate::icons::Icon::ActionSortAscending
-            }))
+            })))
         })
         .child(probe(&panel.env.regions, Region::ResourceControl(region)))
+        .child(probe(&panel.env.regions, Region::ResourceHeader(column)))
         .into_any_element()
 }
 
-/// Text in a fixed-width right-aligned numeric column.
-fn number_cell(text: impl Into<SharedString>, width: f32, theme: &Theme) -> gpui::Div {
+/// A header cell without a sort: a fixed width (or the rest of the row), the label cut with an
+/// ellipsis, aligned like the cells under it.
+fn plain_header(
+    label: &'static str,
+    column: &'static str,
+    width: Option<f32>,
+    right: bool,
+    regions: &crate::workbench::regions::Regions,
+) -> gpui::Div {
     div()
-        .flex_none()
-        .w(px(width))
+        .relative()
         .flex()
-        .justify_end()
-        .text_color(theme.muted)
-        .child(text.into())
+        .overflow_hidden()
+        .when(right, |s| s.justify_end())
+        .when_some(width, |s, w| s.flex_none().w(px(w)))
+        .when(width.is_none(), |s| s.flex_1().min_w_0())
+        .child(div().min_w_0().truncate().child(label))
+        .child(probe(regions, Region::ResourceHeader(column)))
+}
+
+/// A run of text in a name column: it shrinks before the runs that matter more (`shrink` is its
+/// share of the squeeze), ends in an ellipsis, and reports where it is laid out.
+fn run(
+    index: usize,
+    name: &'static str,
+    shrink: f32,
+    regions: &crate::workbench::regions::Regions,
+) -> gpui::Div {
+    let mut run = div().relative().min_w_0().truncate();
+    run.style().flex_shrink = Some(shrink);
+    run.child(probe(regions, Region::ResourceCell(index, name)))
+}
+
+/// The name column of a line: the rest of the row after the fixed columns, never wider than its
+/// share — whatever is in it is cut at its edge, so no text reaches under the next column — with
+/// the full text of the line in its tooltip.
+fn name_cell(
+    index: usize,
+    indent: f32,
+    tip: impl Into<SharedString>,
+    regions: &crate::workbench::regions::Regions,
+    tokens: &Tokens,
+) -> gpui::Stateful<gpui::Div> {
+    let tip = tip.into();
+    div()
+        .id(SharedString::from(format!("resources-name-{index}")))
+        .relative()
+        .flex_1()
+        .min_w_0()
+        .overflow_hidden()
+        .flex()
+        .items_center()
+        .gap(px(tokens.spacing))
+        .pl(px(indent))
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .child(probe(regions, Region::ResourceCell(index, "name")))
+}
+
+/// The row above the table: `lead` (the totals) cut at its edge, and the ⚙. It has no title: the
+/// panel's name is on the dock, the rail or the tab that shows it.
+fn toolbar(lead: Option<AnyElement>, cx: &mut Context<ResourcesPanel>) -> AnyElement {
+    let style = UiStyle::get(cx);
+    let tokens = style.density.ui();
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_between()
+        .gap(px(tokens.spacing))
+        .h(px(32.0))
+        .px(px(tokens.spacing * 3.0))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .flex()
+                .children(lead),
+        )
+        .child(settings_gear("resources", cx))
+        .into_any_element()
+}
+
+/// The pixels a tree level indents its processes by: the deepest levels share the last step, so a
+/// deep tree never leaves its name without room.
+fn indent_of(depth: usize) -> f32 {
+    depth.min(MAX_INDENT_LEVELS) as f32 * INDENT
 }
 
 impl ResourcesPanel {
@@ -753,11 +889,72 @@ impl ResourcesPanel {
         )
     }
 
+    /// A right-aligned cell of a fixed width: the text cut with an ellipsis when it does not fit.
+    fn number_cell(
+        &self,
+        index: usize,
+        column: &'static str,
+        text: impl Into<SharedString>,
+        width: f32,
+        theme: &Theme,
+    ) -> gpui::Div {
+        div()
+            .relative()
+            .flex_none()
+            .w(px(width))
+            .overflow_hidden()
+            .flex()
+            .justify_end()
+            .text_color(theme.muted)
+            .child(div().min_w_0().truncate().child(text.into()))
+            .child(probe(
+                &self.env.regions,
+                Region::ResourceCell(index, column),
+            ))
+    }
+
+    /// The cell of the command (or of what stands for it): the rest of the row after the fixed
+    /// columns, one line cut with an ellipsis, the full text in the tooltip.
+    fn command_cell(
+        &self,
+        index: usize,
+        text: SharedString,
+        tooltip: bool,
+        theme: &Theme,
+        tokens: &Tokens,
+    ) -> AnyElement {
+        div()
+            .id(SharedString::from(format!("resources-command-{index}")))
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .truncate()
+            .pl(px(tokens.spacing))
+            .text_size(px(tokens.secondary_font_size))
+            .text_color(theme.muted)
+            .when(tooltip, |s| {
+                let text = text.clone();
+                s.tooltip(move |_, cx| cx.new(|_| TextTooltip(text.clone())).into())
+            })
+            .child(text)
+            .child(probe(
+                &self.env.regions,
+                Region::ResourceCell(index, "command"),
+            ))
+            .into_any_element()
+    }
+
+    /// An empty cell of a fixed width, to keep the columns under their headers.
+    fn spacer(width: f32) -> gpui::Div {
+        div().flex_none().w(px(width))
+    }
+
     fn render_line(
         &self,
         index: usize,
         line: &Line,
-        compact: bool,
+        tier: Tier,
         theme: &Theme,
         tokens: &Tokens,
         cx: &mut Context<Self>,
@@ -767,15 +964,13 @@ impl ResourcesPanel {
         let busy = target.as_ref().is_some_and(|t| self.busy.contains(t));
         let body = match line {
             Line::Daemon(process) => {
-                self.render_process(index, None, process, compact, theme, tokens, cx)
+                self.render_process(index, None, process, tier, theme, tokens, cx)
             }
             Line::Process { session, line } => {
-                self.render_process(index, Some(*session), line, compact, theme, tokens, cx)
+                self.render_process(index, Some(*session), line, tier, theme, tokens, cx)
             }
-            Line::Session(session) => {
-                self.render_session(index, session, compact, theme, tokens, cx)
-            }
-            Line::Agent(agent) => self.render_agent(index, agent, compact, theme, tokens),
+            Line::Session(session) => self.render_session(index, session, tier, theme, tokens, cx),
+            Line::Agent(agent) => self.render_agent(index, agent, tier, theme, tokens),
             Line::Note(text) => div()
                 .px(px(tokens.spacing * 3.0))
                 .py(px(tokens.spacing))
@@ -827,6 +1022,7 @@ impl ResourcesPanel {
             .h(px(tokens.sidebar_row - 4.0))
             .mx(px(tokens.spacing))
             .px(px(tokens.spacing))
+            .overflow_hidden()
             .rounded(px(tokens.radius))
     }
 
@@ -836,23 +1032,21 @@ impl ResourcesPanel {
         index: usize,
         session: Option<SessionId>,
         process: &ProcessLine,
-        compact: bool,
+        tier: Tier,
         theme: &Theme,
         tokens: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let regions = &self.env.regions;
         let hover = theme.surface_hover;
-        let indent = process.depth as f32 * INDENT;
         let stopped = process.state == ProcessState::Stopped;
         let dim = stopped || process.state == ProcessState::Zombie;
         let command = SharedString::from(process.command.clone());
-        let mut name = div()
-            .flex_1()
-            .min_w(px(110.0))
-            .flex()
-            .items_center()
-            .gap(px(tokens.spacing))
-            .pl(px(indent))
+        let tip = match session {
+            None => format!("{} — Hutan daemon\n{}", process.name, process.command),
+            Some(_) => format!("{}\n{}", process.name, process.command),
+        };
+        let mut name = name_cell(index, indent_of(process.depth), tip, regions, tokens)
             .child(match (session, process.foldable) {
                 (Some(session), true) => {
                     let fold = Fold::Process(session, process.pid);
@@ -870,23 +1064,20 @@ impl ResourcesPanel {
                         } else {
                             crate::icons::Icon::ActionExpand
                         }))
-                        .child(probe(&self.env.regions, Region::ResourceFold(index)))
+                        .child(probe(regions, Region::ResourceFold(index)))
                         .into_any_element()
                 }
                 _ => div().flex_none().w(px(12.0)).into_any_element(),
             })
             .child(
-                div()
-                    .flex_none()
-                    .max_w(px(180.0))
-                    .truncate()
+                run(index, "name.0", 1.0, regions)
                     .when(session.is_none(), |s| s.medium())
                     .child(SharedString::from(process.name.clone())),
             );
         if session.is_none() {
             name = name.child(
-                div()
-                    .flex_none()
+                run(index, "name.1", 4.0, regions)
+                    .max_w(px(120.0))
                     .text_size(px(tokens.secondary_font_size))
                     .text_color(theme.muted)
                     .child("Hutan daemon"),
@@ -925,19 +1116,34 @@ impl ResourcesPanel {
                     "subagent"
                 }
             ));
-            name = name.child(
-                div()
-                    .id(SharedString::from(format!("resources-agent-{index}")))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(px(4.0))
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.accent)
-                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
-                    .child(div().size(px(7.0)).rounded_full().bg(theme.accent))
-                    .child(SharedString::from(agent.label.clone())),
-            );
+            let mut chip = div()
+                .id(SharedString::from(format!("resources-agent-{index}")))
+                .relative()
+                .min_w_0()
+                .max_w(px(110.0))
+                .overflow_hidden()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(theme.accent)
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                .child(
+                    div()
+                        .flex_none()
+                        .size(px(7.0))
+                        .rounded_full()
+                        .bg(theme.accent),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .child(SharedString::from(agent.label.clone())),
+                )
+                .child(probe(regions, Region::ResourceCell(index, "name.2")));
+            chip.style().flex_shrink = Some(2.0);
+            name = name.child(chip);
         }
         let cpu_text = model::format_cpu(process.cpu);
         let bar = model::cpu_fraction(process.cpu);
@@ -946,17 +1152,19 @@ impl ResourcesPanel {
             .when(dim, |s| s.opacity(0.6))
             .hover(move |s| s.bg(hover))
             .child(name)
-            .child(number_cell(process.pid.to_string(), COL_PID, theme))
+            .child(self.number_cell(index, "pid", process.pid.to_string(), tier.pid(), theme))
             .child(
                 div()
                     .relative()
                     .flex_none()
-                    .w(px(COL_CPU))
+                    .w(px(tier.cpu()))
                     .h(px(tokens.font_size + 2.0))
+                    .overflow_hidden()
                     .flex()
                     .items_center()
                     .justify_end()
                     .pr(px(4.0))
+                    .text_color(theme.muted)
                     .child(
                         div()
                             .absolute()
@@ -967,42 +1175,37 @@ impl ResourcesPanel {
                             .rounded(px(2.0))
                             .bg(theme.accent_soft),
                     )
-                    .child(div().relative().child(cpu_text)),
+                    .child(div().relative().min_w_0().truncate().child(cpu_text))
+                    .child(probe(regions, Region::ResourceCell(index, "cpu"))),
             )
-            .child(number_cell(
+            .child(self.number_cell(
+                index,
+                "memory",
                 model::format_memory(process.rss),
-                COL_MEMORY,
+                tier.memory(),
                 theme,
             ));
-        if !compact {
+        if tier.wide() {
             row = row
-                .child(number_cell(process.threads.to_string(), COL_THREADS, theme))
-                .child(
-                    div()
-                        .id(SharedString::from(format!("resources-command-{index}")))
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .pl(px(tokens.spacing))
-                        .text_size(px(tokens.secondary_font_size))
-                        .text_color(theme.muted)
-                        .tooltip({
-                            let command = command.clone();
-                            move |_, cx| cx.new(|_| TextTooltip(command.clone())).into()
-                        })
-                        .child(command),
-                );
+                .child(self.number_cell(
+                    index,
+                    "threads",
+                    process.threads.to_string(),
+                    COL_THREADS,
+                    theme,
+                ))
+                .child(self.command_cell(index, command, true, theme, tokens));
         }
         let Some(session) = session else {
             return row
-                .child(div().flex_none().w(px(COL_ACTION)))
-                .child(probe(&self.env.regions, Region::ResourceRow(index)))
+                .child(Self::spacer(COL_ACTION))
+                .child(probe(regions, Region::ResourceRow(index)))
                 .into_any_element();
         };
         let node = None;
         let row = row
             .child(self.actions_cell(index, session, Some(process.pid), node.clone(), theme))
-            .child(probe(&self.env.regions, Region::ResourceRow(index)));
+            .child(probe(regions, Region::ResourceRow(index)));
         Self::menu_on_right_click(row, session, Some(process.pid), node).into_any_element()
     }
 
@@ -1010,20 +1213,26 @@ impl ResourcesPanel {
         &self,
         index: usize,
         line: &SessionLine,
-        compact: bool,
+        tier: Tier,
         theme: &Theme,
         tokens: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let regions = &self.env.regions;
         let session = line.session;
         let hover = theme.surface_hover;
         let highlighted = self.highlight == Some(session);
-        let mut name = div()
-            .flex_1()
-            .min_w(px(110.0))
-            .flex()
-            .items_center()
-            .gap(px(tokens.spacing))
+        // The title is the session's, never its id; the id is in the tooltip with the rest.
+        let mut tip = format!("{}\nSession {session}", line.title);
+        for part in [&line.workspace, &line.folder] {
+            if !part.is_empty() {
+                tip.push_str(&format!("\n{part}"));
+            }
+        }
+        if let Some(badge) = &line.placement {
+            tip.push_str(&format!("\n{}", badge.tooltip));
+        }
+        let mut name = name_cell(index, 0.0, tip, regions, tokens)
             .child(div().flex_none().w(px(12.0)).text_color(theme.muted).child(
                 crate::icons::glyph(if line.collapsed {
                     crate::icons::Icon::ActionDisclose
@@ -1032,18 +1241,14 @@ impl ResourcesPanel {
                 }),
             ))
             .child(
-                div()
-                    .min_w_0()
-                    .truncate()
+                run(index, "name.0", 1.0, regions)
                     .medium()
                     .child(SharedString::from(line.title.clone())),
             );
         if !line.folder.is_empty() {
             name = name.child(
-                div()
-                    .flex_none()
+                run(index, "name.1", 4.0, regions)
                     .max_w(px(140.0))
-                    .truncate()
                     .text_size(px(tokens.secondary_font_size))
                     .text_color(theme.muted)
                     .child(SharedString::from(line.folder.clone())),
@@ -1056,25 +1261,32 @@ impl ResourcesPanel {
                 (theme.muted, badge.text.clone())
             };
             let tip = SharedString::from(badge.tooltip.clone());
-            name = name.child(
-                div()
-                    .id(SharedString::from(format!("resources-placement-{index}")))
-                    .flex_none()
-                    .max_w(px(130.0))
-                    .truncate()
-                    .px(px(tokens.spacing * 2.0))
-                    .rounded(px(crate::theme::pill_radius()))
-                    .bg(color.opacity(if badge.shared { 0.14 } else { 0.0 }))
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(color)
-                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
-                    .child(SharedString::from(text)),
-            );
+            let mut chip = div()
+                .id(SharedString::from(format!("resources-placement-{index}")))
+                .relative()
+                .min_w_0()
+                .max_w(px(130.0))
+                .truncate()
+                .px(px(tokens.spacing * 2.0))
+                .rounded(px(crate::theme::pill_radius()))
+                .bg(color.opacity(if badge.shared { 0.14 } else { 0.0 }))
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(color)
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                .child(SharedString::from(text))
+                .child(probe(regions, Region::ResourceCell(index, "name.2")));
+            chip.style().flex_shrink = Some(4.0);
+            name = name.child(chip);
         }
-        let processes = match line.totals.processes {
-            1 => "1 proc".to_owned(),
-            n => format!("{n} procs"),
+        let processes = match (line.totals.processes, tier) {
+            (n, Tier::Narrow) => n.to_string(),
+            (1, _) => "1 proc".to_owned(),
+            (n, _) => format!("{n} procs"),
         };
+        let processes_tip = SharedString::from(match line.totals.processes {
+            1 => "1 process".to_owned(),
+            n => format!("{n} processes"),
+        });
         let mut row = self
             .row_base(index, tokens)
             .mt(px(tokens.spacing))
@@ -1090,32 +1302,39 @@ impl ResourcesPanel {
                 this.toggle_fold(Fold::Session(session), cx);
             }))
             .child(name)
-            .child(number_cell(processes, COL_PID, theme))
-            .child(number_cell(
+            .child(
+                self.number_cell(index, "pid", processes, tier.pid(), theme)
+                    .id(SharedString::from(format!("resources-procs-{index}")))
+                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(processes_tip.clone())).into()),
+            )
+            .child(self.number_cell(
+                index,
+                "cpu",
                 model::format_cpu(Some(line.totals.cpu_percent)),
-                COL_CPU,
+                tier.cpu(),
                 theme,
             ))
-            .child(number_cell(
+            .child(self.number_cell(
+                index,
+                "memory",
                 model::format_memory(line.totals.rss_bytes),
-                COL_MEMORY,
+                tier.memory(),
                 theme,
             ));
-        if !compact {
-            row = row.child(div().flex_none().w(px(COL_THREADS))).child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .pl(px(tokens.spacing))
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.muted)
-                    .child(SharedString::from(line.workspace.clone())),
-            );
+        if tier.wide() {
+            row = row
+                .child(Self::spacer(COL_THREADS))
+                .child(self.command_cell(
+                    index,
+                    SharedString::from(line.workspace.clone()),
+                    true,
+                    theme,
+                    tokens,
+                ));
         }
         let row = row
             .child(self.actions_cell(index, session, None, None, theme))
-            .child(probe(&self.env.regions, Region::ResourceRow(index)));
+            .child(probe(regions, Region::ResourceRow(index)));
         Self::menu_on_right_click(row, session, None, None).into_any_element()
     }
 
@@ -1123,10 +1342,11 @@ impl ResourcesPanel {
         &self,
         index: usize,
         line: &AgentLine,
-        compact: bool,
+        tier: Tier,
         theme: &Theme,
         tokens: &Tokens,
     ) -> AnyElement {
+        let regions = &self.env.regions;
         let session = line.session;
         let hover = theme.surface_hover;
         let node = line.mark.node_id.clone();
@@ -1135,56 +1355,51 @@ impl ResourcesPanel {
         } else {
             "subagent"
         };
-        let name = div()
-            .flex_1()
-            .min_w(px(110.0))
-            .flex()
-            .items_center()
-            .gap(px(tokens.spacing))
-            .pl(px(INDENT + 12.0 + tokens.spacing))
-            .text_color(theme.accent)
-            .child(
-                div()
-                    .flex_none()
-                    .size(px(7.0))
-                    .rounded_full()
-                    .bg(theme.accent),
-            )
-            .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .child(SharedString::from(line.mark.label.clone())),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.muted)
-                    .child(kind),
-            );
+        let name = name_cell(
+            index,
+            INDENT + 12.0 + tokens.spacing,
+            format!("{} ({kind})", line.mark.label),
+            regions,
+            tokens,
+        )
+        .text_color(theme.accent)
+        .child(
+            div()
+                .flex_none()
+                .size(px(7.0))
+                .rounded_full()
+                .bg(theme.accent),
+        )
+        .child(
+            run(index, "name.0", 1.0, regions).child(SharedString::from(line.mark.label.clone())),
+        )
+        .child(
+            run(index, "name.1", 4.0, regions)
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(theme.muted)
+                .child(kind),
+        );
         let mut row = self
             .row_base(index, tokens)
             .hover(move |s| s.bg(hover))
             .child(name)
-            .child(div().flex_none().w(px(COL_PID)))
-            .child(div().flex_none().w(px(COL_CPU)))
-            .child(div().flex_none().w(px(COL_MEMORY)));
-        if !compact {
-            row = row.child(div().flex_none().w(px(COL_THREADS))).child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .pl(px(tokens.spacing))
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.muted)
-                    .child("no process of its own"),
-            );
+            .child(Self::spacer(tier.pid()))
+            .child(Self::spacer(tier.cpu()))
+            .child(Self::spacer(tier.memory()));
+        if tier.wide() {
+            row = row
+                .child(Self::spacer(COL_THREADS))
+                .child(self.command_cell(
+                    index,
+                    "no process of its own".into(),
+                    false,
+                    theme,
+                    tokens,
+                ));
         }
         let row = row
             .child(self.actions_cell(index, session, None, Some(node.clone()), theme))
-            .child(probe(&self.env.regions, Region::ResourceRow(index)));
+            .child(probe(regions, Region::ResourceRow(index)));
         Self::menu_on_right_click(row, session, None, Some(node)).into_any_element()
     }
 }
@@ -1197,11 +1412,11 @@ impl Render for ResourcesPanel {
         let (theme, tokens) = (style.theme, style.density.ui());
         let lines = self.lines(cx);
         let link = self.link(cx);
-        let compact = self
+        let tier = self
             .env
             .regions
             .get(Region::ResourceControl("panel"))
-            .is_some_and(|bounds| bounds.size.width < px(COMPACT_BELOW));
+            .map_or(Tier::Wide, |bounds| Tier::of(bounds.size.width));
 
         // The headline numbers: what the sessions add up to.
         let (mut processes, mut cpu, mut rss) = (0u32, 0.0f64, 0u64);
@@ -1287,6 +1502,7 @@ impl Render for ResourcesPanel {
             ))
             .child(probe(&self.env.regions, Region::ResourceControl("filter")));
 
+        let regions = &self.env.regions;
         let columns = div()
             .flex()
             .flex_none()
@@ -1295,12 +1511,14 @@ impl Render for ResourcesPanel {
             .mx(px(tokens.spacing))
             .px(px(tokens.spacing))
             .h(px(tokens.sidebar_row - 4.0))
+            .overflow_hidden()
             .text_size(px(tokens.secondary_font_size))
             .text_color(theme.muted)
             .child(
                 div()
                     .flex_1()
-                    .min_w(px(110.0))
+                    .min_w_0()
+                    .overflow_hidden()
                     .flex()
                     .pl(px(INDENT))
                     .child(header_cell(
@@ -1313,17 +1531,10 @@ impl Render for ResourcesPanel {
                         cx,
                     )),
             )
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(COL_PID))
-                    .flex()
-                    .justify_end()
-                    .child("PID"),
-            )
+            .child(plain_header("PID", "pid", Some(tier.pid()), true, regions))
             .child(header_cell(
                 "CPU",
-                Some(COL_CPU),
+                Some(tier.cpu()),
                 ResourcesSort::Cpu,
                 true,
                 &theme,
@@ -1332,28 +1543,23 @@ impl Render for ResourcesPanel {
             ))
             .child(header_cell(
                 "Memory",
-                Some(COL_MEMORY),
+                Some(tier.memory()),
                 ResourcesSort::Memory,
                 true,
                 &theme,
                 self,
                 cx,
             ))
-            .when(!compact, |s| {
-                s.child(
-                    div()
-                        .flex_none()
-                        .w(px(COL_THREADS))
-                        .flex()
-                        .justify_end()
-                        .child("Thr"),
-                )
+            .when(tier.wide(), |s| {
+                s.child(plain_header(
+                    "Thr",
+                    "threads",
+                    Some(COL_THREADS),
+                    true,
+                    regions,
+                ))
                 .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .pl(px(tokens.spacing))
-                        .child("Command"),
+                    plain_header("Command", "command", None, false, regions).pl(px(tokens.spacing)),
                 )
             })
             .child(div().flex_none().w(px(COL_ACTION)));
@@ -1386,7 +1592,7 @@ impl Render for ResourcesPanel {
             {
                 scroll_index = Some(index);
             }
-            list = list.child(self.render_line(index, line, compact, &theme, &tokens, cx));
+            list = list.child(self.render_line(index, line, tier, &theme, &tokens, cx));
         }
         if let Some(index) = scroll_index {
             self.scroll_to = None;
@@ -1427,13 +1633,13 @@ impl Render for ResourcesPanel {
             .flex_col()
             .text_size(px(tokens.font_size))
             .text_color(theme.fg)
-            .child(panel_header_with(
-                "Resources",
-                "resources",
+            // The title ("Resources") is the dock's or the tab's: this row only carries the
+            // totals and the settings.
+            .child(toolbar(
                 if has_sessions {
-                    vec![summary.into_any_element()]
+                    Some(summary.into_any_element())
                 } else {
-                    Vec::new()
+                    None
                 },
                 cx,
             ))
@@ -1447,7 +1653,7 @@ impl Render for ResourcesPanel {
                 canvas(
                     |bounds, _, _| bounds,
                     move |_, bounds, window, cx| {
-                        if (bounds.size.width < px(COMPACT_BELOW)) != compact {
+                        if Tier::of(bounds.size.width) != tier {
                             cx.notify(window.current_view());
                         }
                     },

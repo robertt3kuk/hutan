@@ -522,7 +522,22 @@ pub fn lines(
 }
 
 fn title_of(session: &SessionResources, meta: &dyn Fn(SessionId) -> Option<SessionMeta>) -> String {
-    meta(session.session_id).map_or_else(|| session.session_id.to_string(), |m| m.title)
+    meta(session.session_id).map_or_else(|| unknown_title(session.session_id), |m| m.title)
+}
+
+/// What a session the store does not know (yet) is called: a few characters of its id, never the
+/// whole thing (the tooltip of its row has that).
+fn unknown_title(id: SessionId) -> String {
+    let id = id.to_string();
+    let tail: String = id
+        .chars()
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("Session {tail}")
 }
 
 fn contains(text: &str, filter: &str) -> bool {
@@ -574,7 +589,7 @@ fn session_lines(
     let info = meta(id);
     let title = info
         .as_ref()
-        .map_or_else(|| id.to_string(), |m| m.title.clone());
+        .map_or_else(|| unknown_title(id), |m| m.title.clone());
     let workspace = info
         .as_ref()
         .map(|m| m.workspace.clone())
