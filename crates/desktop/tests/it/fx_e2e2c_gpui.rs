@@ -4,10 +4,16 @@
 
 use crate::common;
 
-use common::{draw, offline_connection, open_with, wait_until};
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+
+use common::{TestDaemon, draw, offline_connection, open_with, wait_until};
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_desktop::workbench::model::ItemRef;
-use hutan_desktop::workbench::{Region, Workbench};
+use hutan_desktop::workbench::panels::{FileGitMark, FilesPanel};
+use hutan_desktop::workbench::{Region, Workbench, actions};
+use hutan_settings::{SettingsPaths, SettingsStore};
 
 fn open_offline(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) {
     let (connection, settings, _) = offline_connection();
@@ -93,5 +99,114 @@ fn the_active_tab_scrolls_into_view_when_the_strip_overflows_and_long_titles_are
     });
     wait_until(cx, "a middle tab in view", |cx| {
         tab_visible(&view, cx, pane, 7)
+    });
+}
+
+// Files panel git status -------------------------------------------------------------------------
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn settings_of(daemon: &TestDaemon) -> SettingsStore {
+    fs::write(
+        daemon.home().join("settings.toml"),
+        "[app]\nsetup_done = true\n",
+    )
+    .unwrap();
+    SettingsStore::new(SettingsPaths::in_dir(daemon.home()))
+}
+
+#[gpui::test]
+fn the_files_panel_marks_changed_files_and_their_folders_and_follows_fs_changes(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap().join("repo");
+    fs::create_dir_all(root.join("src/deep")).unwrap();
+    git(&root, &["init", "-q", "-b", "main"]);
+    for (key, value) in [
+        ("user.name", "Test"),
+        ("user.email", "test@example.com"),
+        ("commit.gpgsign", "false"),
+        ("core.hooksPath", "/dev/null"),
+    ] {
+        git(&root, &["config", key, value]);
+    }
+    for file in [
+        "app.py",
+        "notes.txt",
+        "clean.txt",
+        "src/lib.rs",
+        "src/deep/x.rs",
+    ] {
+        fs::write(root.join(file), "one\n").unwrap();
+    }
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "first"]);
+    // modified, staged-new, untracked (inside a folder), and a clean file.
+    fs::write(root.join("app.py"), "one\ntwo\n").unwrap();
+    fs::write(root.join("staged.txt"), "s\n").unwrap();
+    git(&root, &["add", "staged.txt"]);
+    fs::write(root.join("todo.md"), "t\n").unwrap();
+    fs::write(root.join("src/deep/new.rs"), "n\n").unwrap();
+
+    let (view, cx) = open_with(cx, settings_of(&daemon), daemon.connection(), None);
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).synced())
+    });
+    let wanted = root.clone();
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_project_path(wanted.clone(), window, cx);
+    });
+    wait_until(cx, "the project", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).files_root().as_deref() == Some(root.as_path())
+        })
+    });
+    cx.dispatch_action(actions::ShowFiles);
+    draw(cx);
+    let panel = view
+        .read_with(cx, |wb, _| wb.panel::<FilesPanel>("files"))
+        .expect("the Files panel is drawn");
+    wait_until(cx, "the git marks", |cx| {
+        panel.read_with(cx, |p, _| !p.git().is_empty())
+    });
+    panel.read_with(cx, |p, _| {
+        let git = p.git();
+        assert_eq!(git.mark(&root.join("app.py")), Some(FileGitMark::Modified));
+        assert_eq!(git.mark(&root.join("staged.txt")), Some(FileGitMark::Added));
+        assert_eq!(
+            git.mark(&root.join("todo.md")),
+            Some(FileGitMark::Untracked)
+        );
+        assert_eq!(
+            git.mark(&root.join("src/deep/new.rs")),
+            Some(FileGitMark::Untracked)
+        );
+        assert_eq!(git.mark(&root.join("clean.txt")), None);
+        assert!(git.has_changes_in(&root.join("src")), "a dot on src");
+        assert!(git.has_changes_in(&root.join("src/deep")));
+    });
+
+    // An edit of a clean file arrives as an fs.changed: the file gets its mark without a click.
+    fs::write(root.join("notes.txt"), "one\nedited\n").unwrap();
+    wait_until(cx, "the mark of the edited file", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.git().mark(&root.join("notes.txt")) == Some(FileGitMark::Modified)
+        })
     });
 }

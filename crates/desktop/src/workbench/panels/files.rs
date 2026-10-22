@@ -11,6 +11,13 @@
 //! - **Live.** Open folders are watched (`fs.watch`, at most [`MAX_WATCHED_DIRS`]): an
 //!   `fs.changed` lists the folder it happened in again; an `fs.generation` of the root lists
 //!   the open folders that are not watched; an overflow lists every open folder.
+//! - **Git status** (FX-E2E2-C, `files_git`). A file with uncommitted changes shows a letter
+//!   (`M` modified, `A` added and staged, `U` untracked, `D` deleted, `R` renamed) and a tint, a
+//!   folder that holds changes a dot. The marks come from the file list of `worktree.diff`
+//!   (no patches), read when the root is set, on `fs.changed` and when a checkout's activity
+//!   ends, one read at a time; a frame only looks them up. A root outside git has none. The
+//!   icon theme has one file icon, so file icons are not told apart by type. A deleted file has
+//!   no row to decorate; its folder still gets the dot.
 //! - **Keyboard.** ↑↓ move, → opens a folder (or steps into it), ← closes it (or steps to its
 //!   parent), Return opens a file and moves the keyboard to it, Space shows it and keeps the
 //!   keyboard in the tree. A click shows a file (the keyboard stays), a double click opens it.
@@ -29,10 +36,13 @@ use gpui::{
 };
 use hutan_client::{ClientError, Notice};
 use hutan_protocol::fs::{FsEntry, FsKind, FsList, FsListing};
+use hutan_protocol::worktree::WorktreeDiffRequest;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::common::panel_header_with;
+use super::files_git::GitStatus;
 use crate::icons::{Icon, icon};
+use crate::sessions::CheckoutActivity;
 use crate::settings::FilesPanelSettings;
 use crate::theme::DensityExt as _;
 use crate::workbench::actions::{ChosenFile, OpenChosenFile};
@@ -310,6 +320,15 @@ pub struct FilesPanel {
     rows_rendered: std::rc::Rc<Cell<usize>>,
     /// Listings answered so far (tests wait on it).
     listings_done: usize,
+    /// The git marks of the root (`worktree.diff`, the file list), refreshed on `fs.changed`
+    /// and when a checkout's activity ends; a frame only looks them up.
+    git: GitStatus,
+    /// A `worktree.diff` is in flight; a trigger meanwhile asks for one more afterwards.
+    git_task: Option<Task<()>>,
+    git_again: bool,
+    /// Reads of the git status answered so far (tests wait on it).
+    git_reads: usize,
+    _subscriptions: Vec<gpui::Subscription>,
 }
 
 impl std::fmt::Debug for FilesPanel {
@@ -323,8 +342,13 @@ impl std::fmt::Debug for FilesPanel {
 
 impl FilesPanel {
     pub fn new(env: PanelEnv, cx: &mut Context<Self>) -> Self {
-        cx.observe(&env.sessions, |this, _, cx| this.follow_root(cx))
-            .detach();
+        let subscriptions = vec![
+            cx.observe(&env.sessions, |this, _, cx| this.follow_root(cx)),
+            // A command or an agent's turn ended in a checkout: its files may have changed.
+            cx.subscribe(&env.sessions, |this, _, _: &CheckoutActivity, cx| {
+                this.refresh_git(cx);
+            }),
+        ];
         let mut panel = Self {
             env,
             focus: cx.focus_handle(),
@@ -338,6 +362,11 @@ impl FilesPanel {
             listener: None,
             rows_rendered: std::rc::Rc::new(Cell::new(0)),
             listings_done: 0,
+            git: GitStatus::default(),
+            git_task: None,
+            git_again: false,
+            git_reads: 0,
+            _subscriptions: subscriptions,
         };
         panel.follow_root(cx);
         panel
@@ -379,6 +408,21 @@ impl FilesPanel {
         self.listing.is_empty()
     }
 
+    /// The git marks of the root's files and folders.
+    pub fn git(&self) -> &GitStatus {
+        &self.git
+    }
+
+    /// Reads of the git status answered so far.
+    pub fn git_reads(&self) -> usize {
+        self.git_reads
+    }
+
+    /// No git status read is in flight.
+    pub fn git_settled(&self) -> bool {
+        self.git_task.is_none() && !self.git_again
+    }
+
     /// The folders watched for the tree.
     pub fn watched_dirs(&self) -> usize {
         self.watched.len()
@@ -394,6 +438,9 @@ impl FilesPanel {
         }
         self.unwatch_all(cx);
         self.listing.clear();
+        self.git = GitStatus::default();
+        self.git_task = None;
+        self.git_again = false;
         self.selected = None;
         self.pending_reveal = None;
         let show_ignored = self.env.settings.get::<FilesPanelSettings>().show_ignored;
@@ -403,6 +450,7 @@ impl FilesPanel {
                 self.listen(cx);
                 self.list(&root, cx);
                 self.watch(&root, cx);
+                self.refresh_git(cx);
                 if let Some(file) = self.active_file.clone() {
                     self.reveal(&file, cx);
                 }
@@ -459,6 +507,55 @@ impl FilesPanel {
         }
         self.keep_selection();
         cx.notify();
+    }
+
+    /// Reads which files of the root are changed (`worktree.diff` without patches), one read at a
+    /// time. A root outside git, or a daemon without worktree review, has no marks.
+    fn refresh_git(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.tree.as_ref().map(|t| t.root().to_owned()) else {
+            return;
+        };
+        if self.git_task.is_some() {
+            self.git_again = true;
+            return;
+        }
+        let store = self.env.sessions.read(cx);
+        if !store.connection().supports_worktree_review() {
+            return;
+        }
+        let read = self.env.sessions.update(cx, |store, cx| {
+            store.worktree_diff(
+                WorktreeDiffRequest {
+                    path: root.clone(),
+                    base: None,
+                    include_uncommitted: true,
+                },
+                cx,
+            )
+        });
+        self.git_task = Some(cx.spawn(async move |this, cx| {
+            let answer = read.await;
+            this.update(cx, |this, cx| {
+                this.git_task = None;
+                this.git_reads += 1;
+                if this.root() != Some(root.as_path()) {
+                    return;
+                }
+                let status = match answer {
+                    Ok(diff) => GitStatus::from_files(&root, &diff.files),
+                    // Not a git checkout (or unreadable): no decorations.
+                    Err(_) => GitStatus::default(),
+                };
+                if status != this.git {
+                    this.git = status;
+                    cx.notify();
+                }
+                if std::mem::take(&mut this.git_again) {
+                    this.refresh_git(cx);
+                }
+            })
+            .ok();
+        }));
     }
 
     fn watch(&mut self, dir: &Path, cx: &mut Context<Self>) {
@@ -548,6 +645,7 @@ impl FilesPanel {
         for dir in again {
             self.list(&dir, cx);
         }
+        self.refresh_git(cx);
     }
 
     // ---- what the user does ---------------------------------------------------------------
@@ -787,10 +885,17 @@ impl FilesPanel {
             .map(|(index, row)| {
                 let selected = focused_row.as_ref() == Some(&row.path);
                 let is_active = active.as_ref() == Some(&row.path);
+                // Git: a changed file gets a letter and a tint, a folder with changes a dot (never
+                // for ignored rows, which git does not track).
+                let mark = (!row.ignored && matches!(row.kind, RowKind::File | RowKind::Link))
+                    .then(|| self.git.mark(&row.path))
+                    .flatten();
+                let dotted =
+                    !row.ignored && row.kind == RowKind::Dir && self.git.has_changes_in(&row.path);
                 let color = match row.kind {
                     RowKind::More | RowKind::Failed => theme.muted,
                     _ if row.ignored => theme.faint,
-                    _ => theme.fg,
+                    _ => mark.map_or(theme.fg, |m| m.color(&theme)),
                 };
                 let chevron = match row.kind {
                     RowKind::Dir if row.expanded => Some(Icon::ActionExpand),
@@ -854,6 +959,37 @@ impl FilesPanel {
                                 .child("…"),
                         )
                     })
+                    .when(dotted, |s| {
+                        s.child(
+                            div()
+                                .id(("files-git-dot", index))
+                                .flex_none()
+                                .size(px(6.0))
+                                .rounded_full()
+                                .bg(theme.diff_modified)
+                                .tooltip(|_, cx| {
+                                    cx.new(|_| {
+                                        crate::workbench::style::TextTooltip(
+                                            "Contains changes".into(),
+                                        )
+                                    })
+                                    .into()
+                                }),
+                        )
+                    })
+                    .children(mark.map(|m| {
+                        div()
+                            .id(("files-git-mark", index))
+                            .flex_none()
+                            .w(px(12.0))
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(m.color(&theme))
+                            .child(m.letter())
+                            .tooltip(move |_, cx| {
+                                cx.new(|_| crate::workbench::style::TextTooltip(m.words().into()))
+                                    .into()
+                            })
+                    }))
                     .into_any_element()
             })
             .collect()
