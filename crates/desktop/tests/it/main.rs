@@ -15,6 +15,7 @@ mod close_gpui;
 mod common;
 mod completion_gpui;
 mod control_gpui;
+mod customize_gpui;
 mod daemon_gpui;
 mod daemon_menu_gpui;
 mod daemon_settings_gpui;

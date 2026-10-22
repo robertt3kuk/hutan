@@ -173,7 +173,8 @@ impl Render for Workbench {
         let close_toast = self.render_close_toast(cx);
         let attention_toasts = self.render_attention_toasts(window, cx);
         let restore_toast = self.render_restore_toast(cx);
-        let toasts = self.toast_stack(close_toast, attention_toasts, restore_toast);
+        let layout_toast = self.render_layout_toast(cx);
+        let toasts = self.toast_stack(close_toast, attention_toasts, restore_toast, layout_toast);
         let checkpoints_list = self.render_checkpoints_list(cx);
         let rewind_sheet = self.render_rewind_sheet(cx);
         let daemon_popover = self.render_daemon_popover(cx);
@@ -188,10 +189,11 @@ impl Render for Workbench {
         let resizing_docks = matches!(self.resizing, Some(Resizing::Dock { .. }));
         let root = div()
             .id("workbench")
-            .key_context(if resizing_docks {
-                "Workbench DockResize"
-            } else {
-                "Workbench"
+            .key_context(match (resizing_docks, self.layout_undo.is_some()) {
+                (true, true) => "Workbench DockResize LayoutToast",
+                (true, false) => "Workbench DockResize",
+                (false, true) => "Workbench LayoutToast",
+                (false, false) => "Workbench",
             })
             .track_focus(&self.focus_handle)
             .relative()
@@ -873,6 +875,9 @@ impl Workbench {
                 this.dismiss_attention_toasts(cx);
             }),
         )
+        .on_action(cx.listener(|this, _: &actions::UndoLayoutChange, _, cx| {
+            this.undo_layout_change(cx);
+        }))
         .on_action(
             cx.listener(|this, _: &actions::SaveLayoutAsPreset, window, cx| {
                 this.save_layout_as_preset(window, cx);
@@ -1367,7 +1372,7 @@ impl Workbench {
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            let entries = this.panel_menu(&menu_panel);
+                            let entries = this.panel_menu(&menu_panel, event.position);
                             this.open_menu(event.position, entries, window, cx);
                         }),
                     )
@@ -1439,6 +1444,10 @@ impl Workbench {
             DockPosition::Bottom => root.h(px(dock.size)).w_full().border_t_1(),
         };
 
+        let bottom_menu = (pos == DockPosition::Bottom)
+            .then(|| dock.active.clone())
+            .flatten()
+            .map(|panel| self.panel_menu_button(panel, "bottom", cx));
         let tab_header = (pos == DockPosition::Bottom).then(|| {
             div()
                 .flex()
@@ -1455,6 +1464,13 @@ impl Workbench {
                 .child(
                     div()
                         .id(id(format!("dock-tab-filler-{pos:?}")))
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                let entries = this.dock_checklist(pos, event.position);
+                                this.open_menu(event.position, entries, window, cx);
+                            }),
+                        )
                         .flex_1()
                         .h_full()
                         .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.18)))
@@ -1474,6 +1490,7 @@ impl Workbench {
                             );
                         })),
                 )
+                .children(bottom_menu)
         });
         let top: Vec<AnyElement> = match pos {
             DockPosition::Left => self.left_sidebar_top(&dock, window, cx),
@@ -1821,6 +1838,13 @@ impl Workbench {
             tabs.insert(index.min(tabs.len()), ghost);
         }
 
+        // The page the pane shows (Mawas Home, the Agents page, a panel opened as a tab) has
+        // the panel menu in its strip.
+        let center_menu = pane
+            .active_item()
+            .and_then(|item| item.as_panel().cloned())
+            .map(|panel| self.panel_menu_button(panel, "center", cx));
+
         // The strip is chrome (the `sidebar` tone, like the title bar above it); its hairline is
         // drawn first and the active tab, a `bg` fill reaching the strip's bottom, covers it: the
         // tab is connected to its pane (CL-CHROME).
@@ -1901,6 +1925,10 @@ impl Workbench {
                                 }),
                             ),
                     ),
+            )
+            .children(
+                center_menu
+                    .map(|menu| div().flex_none().h_full().flex().items_center().child(menu)),
             );
 
         let content = match pane.active_item() {

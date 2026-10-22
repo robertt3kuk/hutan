@@ -353,6 +353,8 @@ fn the_sort_menu_lists_modes_and_filters_with_their_state(cx: &mut TestAppContex
             "Organize: Projects",
             "Show All Sessions",
             "Projects Sidebar Settings…",
+            "Move to",
+            "Hide",
         ]
     );
     let checked: Vec<&str> = menu

@@ -811,7 +811,14 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entries = self.sort_menu();
+        let mut entries = self.sort_menu();
+        // The panel's own placement (Move to ▸, Hide); its settings are *Projects Sidebar
+        // Settings…* above.
+        entries.extend(
+            self.panel_menu(&super::model::PanelId::new("sessions"), position)
+                .into_iter()
+                .filter(|entry| entry.label != "Panel settings…"),
+        );
         self.open_menu(position, entries, window, cx);
     }
 

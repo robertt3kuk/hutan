@@ -178,6 +178,12 @@ pub enum Region {
     StatusBar,
     /// A status item, by registry id (`connection`, `sessions`, …).
     StatusItem(&'static str),
+    /// A control of the "Moved … · Undo" toast of a layout change (`undo`).
+    LayoutToast(&'static str),
+    /// The ⋯ of a panel's header, by where the panel is (`left`, `right`, `bottom`, `center`).
+    PanelMenu(&'static str),
+    /// A control of the panel settings popover (`popover`, `open`, `close`).
+    PanelSettings(&'static str),
     /// A control of the daemon popover, by element id (`daemon-stop`, `keep_running`, …).
     Popover(&'static str),
     Center,
@@ -733,6 +739,10 @@ pub struct Workbench {
     /// "Closed … · Undo" (`closing.rs`).
     pub(crate) close_toast: Option<super::closing::CloseToast>,
     pub(crate) toast_rev: u64,
+    /// "Moved Files to the left · Undo" and what undoes it (`customize.rs`).
+    pub(crate) layout_toast: Option<super::customize::LayoutToast>,
+    pub(crate) layout_undo: Option<super::customize::LayoutUndo>,
+    pub(crate) layout_toast_exit: super::ui::motion::Ghost<super::customize::LayoutToast>,
     /// The tab the × just closed, while it fades (`closing.rs`).
     pub(crate) closing_tab: Option<super::closing::ClosingTab>,
     /// Overlays while they leave (`ui::motion::Presences`).
@@ -1294,6 +1304,9 @@ impl Workbench {
             notice: None,
             close_toast: None,
             toast_rev: 0,
+            layout_toast: None,
+            layout_undo: None,
+            layout_toast_exit: super::ui::motion::Ghost::default(),
             closing_tab: None,
             overlays: super::ui::motion::Presences::default(),
             exits: super::overlay_exit::OverlayExits::default(),
@@ -1851,14 +1864,26 @@ impl Workbench {
     }
 
     /// Drop a dragged tab/panel on a target.
-    pub(crate) fn drop_item(
+    pub fn drop_item(
         &mut self,
         dragged: &DraggedItem,
         target: DropTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.try_mutate(cx, |s| s.move_item(dragged.source.clone(), target));
+        // A panel that leaves a dock or arrives in one is a change of the arrangement: kept in
+        // the current preset, with an Undo (`customize.rs`).
+        match dragged.item.as_panel() {
+            Some(panel)
+                if matches!(dragged.source, ItemSource::Dock { .. })
+                    || matches!(target, DropTarget::Dock { .. }) =>
+            {
+                self.drop_panel(panel, dragged.source.clone(), target, cx);
+            }
+            _ => {
+                self.try_mutate(cx, |s| s.move_item(dragged.source.clone(), target));
+            }
+        }
         self.focus_root(window, cx);
     }
 
@@ -2048,36 +2073,6 @@ impl Workbench {
         }
     }
 
-    /// Menu for a panel tab (in a dock or open as a center tab).
-    pub(crate) fn panel_menu(&self, panel: &PanelId) -> Vec<MenuEntry> {
-        let mut entries = Vec::new();
-        let here = self.state.find_panel(panel);
-        for pos in DockPosition::ALL {
-            let panel = panel.clone();
-            let already = matches!(&here, Some(ItemSource::Dock { pos: p, .. }) if *p == pos);
-            let mut e = Self::entry(
-                format!("Move to {} Dock", pos.label()),
-                move |this, _, cx| {
-                    this.try_mutate(cx, |s| s.move_panel(&panel, PanelDest::Dock(pos)));
-                },
-            );
-            e.checked = already;
-            entries.push(e);
-        }
-        // Memory lives in the left sidebar only.
-        if panel.as_str() != super::model::MEMORY_PAGE {
-            let p = panel.clone();
-            entries.push(Self::entry("Open as Tab", move |this, _, cx| {
-                this.try_mutate(cx, |s| s.move_panel(&p, PanelDest::Center));
-            }));
-        }
-        let p = panel.clone();
-        entries.push(Self::entry("Close", move |this, _, cx| {
-            this.try_mutate(cx, |s| s.close_panel(&p));
-        }));
-        entries
-    }
-
     /// Menu for a center tab.
     pub(crate) fn tab_menu(&self, pane: PaneId, index: usize) -> Vec<MenuEntry> {
         let mut entries = vec![
@@ -2114,10 +2109,15 @@ impl Workbench {
                 let panel = panel.clone();
                 entries.push(Self::entry(
                     format!("Move to {} Dock", pos.label()),
-                    move |this, _, cx| {
-                        this.try_mutate(cx, |s| s.move_panel(&panel, PanelDest::Dock(pos)));
-                    },
+                    move |this, _, cx| this.place_panel(&panel, PanelDest::Dock(pos), cx),
                 ));
+            }
+            if super::customize::panel_settings_page(panel.as_str()).is_some() {
+                let at = self.regions.get(Region::Tab(pane, index));
+                entries.push(Self::entry("Panel settings…", move |this, window, cx| {
+                    let anchor = at.map_or_else(Default::default, |b| b.bottom_left());
+                    this.open_panel_settings(&panel, anchor, window, cx);
+                }));
             }
         }
         let file = self

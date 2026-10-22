@@ -317,8 +317,9 @@ impl Workbench {
                     row = row.on_mouse_down(
                         MouseButton::Right,
                         cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            let entries = this.panel_menu(&panel);
+                            let entries = this.panel_menu(&panel, event.position);
                             this.open_menu(event.position, entries, window, cx);
+                            cx.stop_propagation();
                         }),
                     );
                 }
@@ -343,6 +344,13 @@ impl Workbench {
                 .into_any_element(),
             div()
                 .id("left-nav")
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        let entries = this.dock_checklist(DockPosition::Left, event.position);
+                        this.open_menu(event.position, entries, window, cx);
+                    }),
+                )
                 .flex()
                 .flex_col()
                 .flex_none()
@@ -352,36 +360,43 @@ impl Workbench {
                 .into_any_element(),
         ];
 
-        // A page other than Projects shows its way back.
-        if dock
-            .active
-            .as_ref()
-            .is_some_and(|a| a.as_str() != "sessions")
-        {
+        // A page other than Projects shows its way back, and the menu of the page's panel.
+        if let Some(page) = dock.active.clone().filter(|a| a.as_str() != "sessions") {
+            let menu = self.panel_menu_button(page, "left", cx);
             out.push(
                 div()
-                    .id("left-back")
-                    .relative()
+                    .id("left-back-row")
                     .flex()
                     .flex_none()
                     .items_center()
-                    .gap(px(6.0))
-                    .h(px(32.0))
+                    .gap(px(2.0))
                     .mx(px(8.0))
-                    .px(px(8.0))
-                    .rounded(px(tokens.radius + 2.0))
-                    .cursor_pointer()
-                    .text_size(px(12.0))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(theme.muted)
-                    .hover(move |s| s.bg(hover).text_color(theme.fg))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_panel("sessions", cx);
-                        this.focus_root(window, cx);
-                    }))
-                    .child(icon(Icon::ActionBack, 14.0, theme.muted))
-                    .child(div().min_w_0().truncate().child("Projects"))
-                    .child(probe(&self.regions, Region::Nav("projects")))
+                    .child(
+                        div()
+                            .id("left-back")
+                            .relative()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .items_center()
+                            .gap(px(6.0))
+                            .h(px(32.0))
+                            .px(px(8.0))
+                            .rounded(px(tokens.radius + 2.0))
+                            .cursor_pointer()
+                            .text_size(px(12.0))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(theme.muted)
+                            .hover(move |s| s.bg(hover).text_color(theme.fg))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_panel("sessions", cx);
+                                this.focus_root(window, cx);
+                            }))
+                            .child(icon(Icon::ActionBack, 14.0, theme.muted))
+                            .child(div().min_w_0().truncate().child("Projects"))
+                            .child(probe(&self.regions, Region::Nav("projects"))),
+                    )
+                    .child(menu)
                     .into_any_element(),
             );
         }
@@ -574,7 +589,19 @@ impl Workbench {
                     .p(px(RAIL_PAD))
                     .children(nav),
             )
-            .child(div().flex_1())
+            .child(
+                div()
+                    .id("left-rail-filler")
+                    .flex_1()
+                    .w_full()
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                            let entries = this.dock_checklist(DockPosition::Left, event.position);
+                            this.open_menu(event.position, entries, window, cx);
+                        }),
+                    ),
+            )
             .child(
                 div()
                     .flex()
@@ -594,7 +621,7 @@ impl Workbench {
     // ---- right ---------------------------------------------------------------------------------
 
     /// The row over the body of the right panel: the name of the panel it shows.
-    pub(super) fn right_header(&mut self, dock: &Dock, _cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn right_header(&mut self, dock: &Dock, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
         let title = dock
@@ -602,19 +629,27 @@ impl Workbench {
             .as_ref()
             .map(|panel| self.panels.title(panel))
             .unwrap_or_default();
+        let menu = dock
+            .active
+            .clone()
+            .map(|panel| self.panel_menu_button(panel, "right", cx));
         div()
             .flex()
             .flex_none()
             .items_center()
+            .justify_between()
+            .gap(px(4.0))
             .h(px(TITLEBAR_HEIGHT))
             .w_full()
-            .px(px(12.0))
+            .pl(px(12.0))
+            .pr(px(6.0))
             .border_b_1()
             .border_color(theme.border)
             .text_size(px(tokens.font_size))
             .font_weight(gpui::FontWeight::MEDIUM)
             .text_color(theme.fg)
             .child(div().min_w_0().truncate().child(title))
+            .children(menu)
             .into_any_element()
     }
 
@@ -695,7 +730,7 @@ impl Workbench {
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                        let entries = this.panel_menu(&menu_panel);
+                        let entries = this.panel_menu(&menu_panel, event.position);
                         this.open_menu(event.position, entries, window, cx);
                     }),
                 )
@@ -799,6 +834,13 @@ impl Workbench {
             .child(
                 div()
                     .id("strip-filler")
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            let entries = this.dock_checklist(pos, event.position);
+                            this.open_menu(event.position, entries, window, cx);
+                        }),
+                    )
                     .flex_1()
                     .w_full()
                     .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.18)))

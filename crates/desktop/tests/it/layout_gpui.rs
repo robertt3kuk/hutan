@@ -420,7 +420,7 @@ fn the_enabled_mawas_is_one_center_tab_opened_from_the_nav_and_closable(cx: &mut
         .into_iter()
         .map(|(label, _)| label.to_string())
         .collect();
-    assert!(labels.iter().any(|l| l == "Close"), "{labels:?}");
+    assert!(labels.iter().any(|l| l == "Hide"), "{labels:?}");
     cx.simulate_keystrokes("escape");
 }
 

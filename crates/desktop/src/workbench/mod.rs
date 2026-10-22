@@ -9,6 +9,7 @@ mod attention_toast;
 mod changes;
 pub mod chat;
 mod closing;
+mod customize;
 mod daemon;
 mod daemon_popover;
 mod docks;
@@ -88,6 +89,7 @@ pub use changes::{
     Scope, Selection, SendTarget, SnippetLine, StepTone, finish_step_lines, hunk_ranges,
     index_mark,
 };
+pub use customize::{LAYOUT_TOAST_CONTEXT, LAYOUT_TOAST_TIME, LayoutToast, PanelPopover};
 pub use daemon::{DaemonBusy, log_file as daemon_log_file};
 pub use docks::{COLLAPSE_DRAG, RESIZE_CONTEXT};
 pub use files::{BufferStore, FileOpen};

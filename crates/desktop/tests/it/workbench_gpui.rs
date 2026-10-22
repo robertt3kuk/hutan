@@ -821,19 +821,16 @@ fn right_click_menus_list_the_documented_entries(cx: &mut TestAppContext) {
         .read_with(cx, |wb, _| wb.context_menu_entries())
         .expect("menu open");
     let labels: Vec<&str> = entries.iter().map(|(l, _)| l.as_ref()).collect();
-    assert_eq!(
-        labels,
-        vec![
-            "Move to Left Dock",
-            "Move to Right Dock",
-            "Move to Bottom Dock",
-            "Open as Tab",
-            "Close"
-        ]
-    );
-    assert!(entries[0].1, "the current dock is checked");
+    assert_eq!(labels, vec!["Move to", "Hide", "Panel settings…"]);
 
-    // "Move to Bottom Dock".
+    // "Move to ▸ Bottom": the submenu lists the places with the current one checked.
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(0, window, cx));
+    let places = view
+        .read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("the placement menu is open");
+    let names: Vec<&str> = places.iter().map(|(l, _)| l.as_ref()).collect();
+    assert_eq!(names, vec!["Left", "Right", "Bottom", "Center tab"]);
+    assert!(places[0].1, "the current dock is checked");
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(2, window, cx));
     let s = state(&view, cx);
     assert_eq!(s.docks.bottom.panels, vec![PanelId::new("tasks")]);

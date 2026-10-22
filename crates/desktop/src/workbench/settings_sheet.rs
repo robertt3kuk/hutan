@@ -89,6 +89,9 @@ pub struct SettingsSheet {
     pub(super) pack_menu: Option<super::settings_themes::PackField>,
     /// What had the keyboard when the sheet opened; it gets it back when the sheet closes.
     pub(super) return_focus: Option<gpui::WeakFocusHandle>,
+    /// The sheet is the compact popover of one panel's settings (`customize.rs`): only that
+    /// namespace's rows, hanging near the panel's ⋯, without the page list.
+    pub(super) popover: Option<super::customize::PanelPopover>,
 }
 
 impl SettingsSheet {
@@ -222,6 +225,7 @@ impl Workbench {
             advanced_open: false,
             pack_menu: None,
             return_focus,
+            popover: None,
         });
         window.focus(&self.sheet_focus, cx);
         self.edits.sheet_query.reset();
@@ -889,7 +893,12 @@ impl Workbench {
 
     /// A key in the sheet: the search box or the value being edited takes it. Typed text arrives
     /// through the field's platform text input.
-    fn sheet_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn sheet_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(sheet) = &self.sheet else {
             return;
         };
@@ -1150,6 +1159,9 @@ impl Workbench {
         // A catalog generation or a settings change since the last frame refreshes the preview.
         if wanted {
             self.sync_pack_preview();
+        }
+        if self.sheet.as_ref().is_some_and(|s| s.popover.is_some()) {
+            return self.build_panel_popover(wanted, cx);
         }
         let sheet = self.sheet.as_ref()?;
         let scroll = sheet.scroll.clone();

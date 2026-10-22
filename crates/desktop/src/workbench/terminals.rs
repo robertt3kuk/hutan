@@ -1577,21 +1577,14 @@ impl Workbench {
     }
 
     fn apply_layout_settings(&mut self, cx: &mut Context<Self>) {
-        let layout = self.settings.get::<LayoutSettings>();
-        let previous = std::mem::replace(&mut self.layout_seen, layout.clone());
+        let previous = self.layout_seen.clone();
         let before = self
             .preset_defs
             .iter()
             .find(|d| d.layout.name == self.state.preset)
             .cloned();
-        self.preset_defs = layout.preset_defs();
-        self.presets = self.preset_defs.iter().map(|d| d.layout.clone()).collect();
-        self.commands = std::rc::Rc::new(actions::commands(
-            &self.presets,
-            &self.panels,
-            self.assistant_enabled(),
-        ));
-        self.refresh_menus(cx);
+        self.refresh_layout_defs(cx);
+        let layout = self.layout_seen.clone();
         if layout.preset != previous.preset {
             self.apply_preset_named(&layout.preset.clone(), cx);
         } else if let Some(before) = before
@@ -1605,6 +1598,23 @@ impl Workbench {
             let preset = after.layout;
             self.mutate(cx, |s| s.apply_preset(&preset));
         }
+    }
+
+    /// Reads `layout` again: the presets (and the status bars they carry), the palette's
+    /// commands and the View menu. Nothing is applied: a change the window made itself
+    /// (`customize.rs`) calls this after writing, so the settings' own notification that
+    /// follows finds nothing new and leaves the arrangement alone.
+    pub(crate) fn refresh_layout_defs(&mut self, cx: &mut Context<Self>) {
+        let layout = self.settings.get::<LayoutSettings>();
+        self.layout_seen = layout.clone();
+        self.preset_defs = layout.preset_defs();
+        self.presets = self.preset_defs.iter().map(|d| d.layout.clone()).collect();
+        self.commands = std::rc::Rc::new(actions::commands(
+            &self.presets,
+            &self.panels,
+            self.assistant_enabled(),
+        ));
+        self.refresh_menus(cx);
     }
 
     /// Opens a split of an existing tab: used by the pane header menus of terminal tabs.
