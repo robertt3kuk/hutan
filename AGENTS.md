@@ -48,6 +48,7 @@ macOS-first Rust agentic development environment: `hutand` (Tokio daemon, source
 - Quality gate: `just check` (fmt, clippy `-D warnings`, nextest, cargo-deny). Tools: `brew install just cargo-deny cargo-nextest`.
 - Protocol wire changes: bump `PROTOCOL_VERSION`, then `just update-golden`; fixture diffs are reviewed like code.
 - Real model/API calls never run in the default gate; use recorded fixtures.
+- `CHANGELOG.md`: newest on top — new entries go under **Unreleased** at the top, released versions stay below in order, never edited or reordered. The integration owner adds the user-facing lines when merging a slice (implementers don't, to avoid conflicts); a release renames **Unreleased** to `x.y.z — date` and opens a new **Unreleased** above it.
 
 ## Parallel work
 Anyone can work directly in the main checkout. Concurrent agents split by crate and get one worktree per slice (`../hutan-wt/<slice>` on `slice/<slice>`); a single agent may also run in the main checkout on a `slice/<slice>` branch when nothing else edits the repo (`process.md` § Implementer agents). Implementer = omp `implementer` agent (`.omp/agents/implementer.md`, Claude Sonnet 5.5), `implementer-sol` (GPT-6.1 Sol) or `implementer-gemini` (Gemini 4 Argon via OpenCode Go; its prompts may be used for training, so only public-repo work); all share the same instructions. The orchestrator (Claude Opus) only writes briefs, reviews, gates and merges; one integration owner merges into `master`; only the contract owner edits `core`/`protocol`.
