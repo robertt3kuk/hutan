@@ -70,6 +70,7 @@ mod settings_themes;
 mod setup;
 mod sidebars;
 mod start_failure;
+mod status_branch;
 pub mod style;
 mod terminals;
 pub mod text_field;

@@ -20,7 +20,9 @@ use tokio::sync::watch;
 
 use super::actions::daemon;
 use super::modal::{Modal, ModalChoice};
-use super::panels::{StatusTone, connection_label};
+use super::panels::{
+    CHIP_HINT, ChipKind, ConnectionChip, StatusTone, chip_of_connection, connection_label,
+};
 use super::view::Workbench;
 use crate::app::DaemonMenu;
 use crate::settings::{AppSettings, LastWindowClose};
@@ -30,6 +32,8 @@ const STOP_WAIT: Duration = Duration::from_secs(10);
 /// Longest wait for a started daemon to accept the connection.
 const START_WAIT: Duration = Duration::from_secs(20);
 const POLL: Duration = Duration::from_millis(25);
+/// The `connection` item's tooltip is read from a `daemon.status` at most this old.
+const STATUS_REFRESH: Duration = Duration::from_secs(30);
 /// The status item while the daemon is stopped on purpose: who stopped it and the way back.
 pub const STOPPED_BY_YOU: &str = "Stopped by you · Start";
 
@@ -52,6 +56,15 @@ impl DaemonBusy {
             DaemonBusy::Restarting => "restarting hutand…",
         }
     }
+
+    /// The `connection` item's word and tooltip while the operation runs.
+    fn chip(self) -> (&'static str, &'static str) {
+        match self {
+            DaemonBusy::Stopping => ("Stopping…", "Stopping hutand"),
+            DaemonBusy::Starting => ("Starting…", "Starting hutand"),
+            DaemonBusy::Restarting => ("Restarting…", "Restarting hutand"),
+        }
+    }
 }
 
 /// The last `daemon.status` answer and when it arrived (the uptime counts on from there).
@@ -70,6 +83,8 @@ pub(crate) struct DaemonControl {
     pub busy: Option<DaemonBusy>,
     pub popover: bool,
     pub status: Option<FetchedStatus>,
+    /// When `daemon.status` was last asked for (`None` while disconnected).
+    status_tried: Option<Instant>,
     fetching: bool,
     /// Quitting has started; nothing else may run.
     pub quitting: bool,
@@ -99,6 +114,7 @@ impl DaemonControl {
             busy: None,
             popover: false,
             status: None,
+            status_tried: None,
             fetching: false,
             quitting: false,
             menu: None,
@@ -344,6 +360,76 @@ impl Workbench {
         self.daemon_line(cx).0
     }
 
+    /// The `connection` status item, always drawn: a `state.ok` dot and `hutand` while the
+    /// daemon is up (the tooltip says its version, pid, uptime, sessions and clients), else the
+    /// state in its colour: `Reconnecting…`, `Starting…`, `Stopped · Start`,
+    /// `Can't start · Details`. A click opens the daemon popover.
+    pub fn connection_chip(&self, cx: &App) -> ConnectionChip {
+        if let Some(busy) = self.daemon.busy {
+            let (word, tip) = busy.chip();
+            return ConnectionChip {
+                kind: ChipKind::Busy,
+                word: word.to_owned(),
+                tooltip: format!("{tip} · {CHIP_HINT}"),
+            };
+        }
+        if self.daemon.stopped {
+            return ConnectionChip {
+                kind: ChipKind::Stopped,
+                word: "Stopped · Start".to_owned(),
+                tooltip: format!("You stopped hutand · {CHIP_HINT}"),
+            };
+        }
+        if let Some(kind) = self.start_failure_kind(cx) {
+            return ConnectionChip {
+                kind: ChipKind::Failed,
+                word: "Can't start · Details".to_owned(),
+                tooltip: format!("{} · {CHIP_HINT}", kind.status_text()),
+            };
+        }
+        let mut chip = chip_of_connection(self.sessions.read(cx).connection_state());
+        if chip.kind == ChipKind::Up {
+            chip.tooltip = self.up_tooltip(cx);
+        }
+        chip
+    }
+
+    /// Version, pid, uptime, sessions and clients of the daemon that is up, one per line.
+    fn up_tooltip(&self, cx: &App) -> String {
+        let (live, total) = {
+            let sessions = self.sessions.read(cx).sessions();
+            (
+                sessions.iter().filter(|s| s.state.is_live()).count(),
+                sessions.len(),
+            )
+        };
+        let mut lines = Vec::new();
+        match &self.daemon.status {
+            Some(status) => {
+                let info = &status.info;
+                lines.push(format!(
+                    "hutand {} · protocol {}.{}",
+                    info.daemon_version, info.protocol.major, info.protocol.minor
+                ));
+                lines.push(format!("PID {}", info.pid));
+                lines.push(format!(
+                    "Uptime {}",
+                    super::daemon_popover::uptime_text(
+                        Duration::from_millis(info.uptime_ms) + status.at.elapsed()
+                    )
+                ));
+                lines.push(format!("Sessions {live} live / {total} total"));
+                lines.push(format!("Clients {}", info.clients));
+            }
+            None => {
+                lines.push("hutand is running".to_owned());
+                lines.push(format!("Sessions {live} live / {total} total"));
+            }
+        }
+        lines.push(CHIP_HINT.to_owned());
+        lines.join("\n")
+    }
+
     // ---- menu bar ----------------------------------------------------------------------------
 
     pub(crate) fn menu_state(&self, cx: &App) -> DaemonMenu {
@@ -422,6 +508,7 @@ impl Workbench {
         }
         if !self.daemon_connected(cx) {
             self.daemon.status = None;
+            self.daemon.status_tried = None;
         } else {
             self.daemon.stuck_info = None;
         }
@@ -456,6 +543,7 @@ impl Workbench {
             return;
         }
         self.daemon.fetching = true;
+        self.daemon.status_tried = Some(Instant::now());
         let connection = self.connection(cx);
         self.daemon.fetch = Some(cx.spawn(async move |this, cx| {
             let info = connection
@@ -476,6 +564,18 @@ impl Workbench {
             })
             .ok();
         }));
+    }
+
+    /// The status bar is drawn: the `connection` tooltip reads a `daemon.status` that is at
+    /// most [`STATUS_REFRESH`] old. Asked once per interval, also when the answer is an error.
+    pub(crate) fn keep_daemon_status_fresh(&mut self, cx: &mut Context<Self>) {
+        let stale = self
+            .daemon
+            .status_tried
+            .is_none_or(|at| at.elapsed() > STATUS_REFRESH);
+        if stale && self.daemon_connected(cx) {
+            self.refresh_daemon_status(cx);
+        }
     }
 
     // ---- stop / start / restart --------------------------------------------------------------

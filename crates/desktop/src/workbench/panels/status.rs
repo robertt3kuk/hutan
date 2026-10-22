@@ -1,8 +1,9 @@
-//! Status bar items: `connection`, `workspace`, `sessions`, `attention`, `approvals`, `density`,
-//! `theme`, `palette_hint`, the editor's items, and the dock buttons `dock_left`, `dock_bottom`,
-//! `dock_right`. The built-in presets show `attention` and `connection` on the left and the
-//! editor's items and `palette_hint` on the right ([`StatusBarLayout`]); an item with nothing to
-//! say draws nothing.
+//! Status bar items: `connection`, `workspace`, `working`, `sessions`, `attention`, `approvals`,
+//! `density`, `theme`, `palette_hint`, the editor's items, and the dock buttons `dock_left`,
+//! `dock_bottom`, `dock_right`. The built-in presets show `connection`, `workspace` and
+//! `attention` on the left and the editor's items, `working` and `palette_hint` on the right
+//! ([`StatusBarLayout`]); an item with nothing to say draws nothing. `connection` always has
+//! something to say: the daemon's state is never only in a menu (FX-STATUSBAR).
 //!
 //! [`StatusBarLayout`]: crate::workbench::registry::StatusBarLayout
 
@@ -15,10 +16,11 @@ use gpui::{
 };
 use hutan_client::ConnectionState;
 
+use crate::icons::{Icon, glyph, icon};
 use crate::theme::DensityExt as _;
 use crate::workbench::actions::{
-    JumpToNextAttention, OpenJump, ReviewApprovals, ToggleBottomDock, ToggleDensity,
-    ToggleLeftDock, TogglePalette, ToggleRightDock, daemon,
+    JumpToNextAttention, OpenJump, ReviewApprovals, ShowAgentsPage, ToggleBottomDock,
+    ToggleDensity, ToggleLeftDock, TogglePalette, ToggleRightDock, daemon,
 };
 use crate::workbench::model::DockPosition;
 use crate::workbench::registry::{
@@ -26,7 +28,7 @@ use crate::workbench::registry::{
 };
 use crate::workbench::style::TextTooltip;
 
-/// Text and tone of the connection item.
+/// Text and tone of the connection state as the popover's headline says it.
 pub fn connection_label(state: ConnectionState) -> (String, Tone) {
     match state {
         ConnectionState::Connecting => ("connecting to hutand…".to_owned(), Tone::Muted),
@@ -39,11 +41,105 @@ pub fn connection_label(state: ConnectionState) -> (String, Tone) {
     }
 }
 
-/// The connection item says something only while the daemon is not simply up (connecting,
-/// reconnecting, restarting, stopped); a working connection is the normal state and draws
-/// nothing. The daemon's controls stay in the Daemon menu and the palette (*Daemon: Status*).
-pub fn connection_shown(tone: Tone) -> bool {
-    tone != Tone::Ok
+/// What the `connection` item is: one state of the daemon as the user sees it. The shape of
+/// the mark differs per state (a filled dot, a hollow dot, a triangle), so the colour is never
+/// the only signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChipKind {
+    /// Connected: a `success` dot and the daemon's name, muted.
+    Up,
+    /// Connecting for the first time.
+    Connecting,
+    /// Starting, stopping or restarting on the user's command.
+    Busy,
+    /// The connection dropped; the client is trying again.
+    Reconnecting,
+    /// Stopped (by the user, or the connection is closed): *Start* is in the popover.
+    Stopped,
+    /// The daemon could not start: *Details* are in the popover.
+    Failed,
+}
+
+impl ChipKind {
+    pub fn tone(self) -> Tone {
+        match self {
+            ChipKind::Up => Tone::Ok,
+            ChipKind::Connecting => Tone::Muted,
+            ChipKind::Busy | ChipKind::Reconnecting => Tone::Warn,
+            ChipKind::Stopped | ChipKind::Failed => Tone::Error,
+        }
+    }
+}
+
+/// The words of the `connection` item and its tooltip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionChip {
+    pub kind: ChipKind,
+    /// `hutand` while connected, else the state word: `Reconnecting…`, `Stopped · Start`,
+    /// `Can't start · Details`.
+    pub word: String,
+    pub tooltip: String,
+}
+
+/// The click's way to the daemon's controls, said in every tooltip.
+pub const CHIP_HINT: &str = "Click for the daemon controls";
+
+/// The chip of a connection that is not otherwise special: connecting, reconnecting, stopped.
+/// `Connected` is built by the workbench, which knows the daemon's version, pid and uptime.
+pub fn chip_of_connection(state: ConnectionState) -> ConnectionChip {
+    let (kind, word, tooltip) = match state {
+        ConnectionState::Connecting => (
+            ChipKind::Connecting,
+            "Connecting…".to_owned(),
+            "Connecting to hutand".to_owned(),
+        ),
+        ConnectionState::Connected => (ChipKind::Up, "hutand".to_owned(), "hutand".to_owned()),
+        ConnectionState::Reconnecting { attempt, retry_in } => (
+            ChipKind::Reconnecting,
+            "Reconnecting…".to_owned(),
+            format!(
+                "Lost the connection to hutand · attempt {attempt}, {}",
+                retry_text(retry_in)
+            ),
+        ),
+        ConnectionState::Stopped => (
+            ChipKind::Stopped,
+            "Stopped · Start".to_owned(),
+            "hutand is not running".to_owned(),
+        ),
+    };
+    ConnectionChip {
+        kind,
+        word,
+        tooltip: format!("{tooltip} · {CHIP_HINT}"),
+    }
+}
+
+/// The mark in front of the connection word: a dot (filled while the daemon is up or on its
+/// way, hollow while it is stopped) or, when it cannot start, a triangle.
+fn chip_mark(kind: ChipKind, color: gpui::Hsla) -> AnyElement {
+    const DOT: f32 = 7.0;
+    match kind {
+        ChipKind::Stopped => div()
+            .flex_none()
+            .size(px(DOT))
+            .rounded_full()
+            .border_1()
+            .border_color(color)
+            .into_any_element(),
+        ChipKind::Failed => icon(Icon::StatusAttention, 13.0, color).into_any_element(),
+        _ => div()
+            .flex_none()
+            .size(px(DOT))
+            .rounded_full()
+            .bg(color)
+            .into_any_element(),
+    }
+}
+
+/// The words of the `working` item: `1 working`, `3 working`.
+pub fn working_text(n: usize) -> String {
+    format!("{n} working")
 }
 
 /// The words of the `attention` item: `1 request`, `3 requests`, `99+ requests` — the sessions
@@ -90,46 +186,39 @@ fn tooltip(text: String) -> impl Fn(&mut gpui::Window, &mut gpui::App) -> AnyVie
     }
 }
 
-/// The eight built-in status items.
+/// The built-in status items.
 pub fn builtin_status_items() -> StatusItemRegistry {
     let mut registry = StatusItemRegistry::new();
     registry.register(StatusItemSpec {
         id: "connection",
         default_side: StatusSide::Left,
         render: Rc::new(|ctx: &StatusContext<'_>| {
-            let (text, tone) = ctx.data.connection_line.clone();
-            if !connection_shown(tone) {
-                return div().id("status-connection").into_any_element();
-            }
-            let color = match tone {
+            let chip = &ctx.data.connection;
+            let color = match chip.kind.tone() {
                 Tone::Ok => ctx.theme.success,
                 Tone::Warn => ctx.theme.warning,
                 Tone::Error => ctx.theme.danger,
                 Tone::Muted => ctx.theme.muted,
             };
-            let epoch = ctx.data.epoch.clone().map_or_else(
-                || "no daemon epoch yet".to_owned(),
-                |e| format!("daemon epoch {e}"),
-            );
+            // A daemon that is up is the normal state: its name stays muted. Any other state
+            // is its word in its colour.
+            let word_color = if chip.kind == ChipKind::Up {
+                ctx.theme.muted
+            } else {
+                color
+            };
             clickable("status-connection", ctx)
                 .flex()
                 .items_center()
-                .gap(px(5.0))
-                .text_color(ctx.theme.muted)
-                .tooltip(tooltip(format!("{epoch} · click for the daemon controls")))
+                .gap(px(6.0))
+                .tooltip(tooltip(chip.tooltip.clone()))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(daemon::Status), cx))
-                .child(crate::icons::icon(
-                    match ctx.data.connection {
-                        ConnectionState::Connected => crate::icons::Icon::StatusConnected,
-                        ConnectionState::Connecting | ConnectionState::Reconnecting { .. } => {
-                            crate::icons::Icon::StatusConnecting
-                        }
-                        ConnectionState::Stopped => crate::icons::Icon::StatusDisconnected,
-                    },
-                    14.0,
-                    color,
-                ))
-                .child(SharedString::from(text))
+                .child(chip_mark(chip.kind, color))
+                .child(
+                    div()
+                        .text_color(word_color)
+                        .child(SharedString::from(chip.word.clone())),
+                )
                 .into_any_element()
         }),
     });
@@ -137,20 +226,59 @@ pub fn builtin_status_items() -> StatusItemRegistry {
         id: "workspace",
         default_side: StatusSide::Left,
         render: Rc::new(|ctx: &StatusContext<'_>| {
-            let name = ctx
-                .data
-                .workspace
-                .clone()
-                .unwrap_or_else(|| "no workspace".to_owned());
-            clickable("status-workspace", ctx)
-                .text_color(ctx.theme.fg)
-                .tooltip(tooltip("Active workspace · click to jump".to_owned()))
+            let Some(name) = ctx.data.workspace.clone() else {
+                return div().id("status-workspace").into_any_element();
+            };
+            let branch = ctx.data.branch.clone();
+            let tip = match &branch {
+                Some(branch) => format!("{name} · branch {branch} · click to jump"),
+                None => format!("{name} · click to jump"),
+            };
+            let mut item = clickable("status-workspace", ctx)
+                .text_color(ctx.theme.muted)
+                .tooltip(tooltip(tip))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenJump), cx))
                 .flex()
                 .items_center()
                 .gap(px(4.0))
-                .child(crate::icons::glyph(crate::icons::Icon::StatusWorkspace))
-                .child(SharedString::from(name))
+                .child(
+                    div()
+                        .min_w_0()
+                        .max_w(px(200.0))
+                        .truncate()
+                        .child(SharedString::from(name)),
+                );
+            if let Some(branch) = branch {
+                item = item.child("·").child(glyph(Icon::VcsBranch)).child(
+                    div()
+                        .min_w_0()
+                        .max_w(px(160.0))
+                        .truncate()
+                        .child(SharedString::from(branch)),
+                );
+            }
+            item.into_any_element()
+        }),
+    });
+    registry.register(StatusItemSpec {
+        id: "working",
+        default_side: StatusSide::Right,
+        render: Rc::new(|ctx: &StatusContext<'_>| {
+            let n = ctx.data.working;
+            if n == 0 {
+                return div().id("status-working").into_any_element();
+            }
+            clickable("status-working", ctx)
+                .text_color(ctx.theme.muted)
+                .tooltip(tooltip(
+                    "Agents at work · click for the Agents page".to_owned(),
+                ))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowAgentsPage), cx))
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .child(icon(Icon::StateWorking, 14.0, ctx.theme.accent))
+                .child(working_text(n))
                 .into_any_element()
         }),
     });
@@ -496,10 +624,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_default_status_bar_is_attention_and_connection_then_the_palette_key() {
+    fn the_default_status_bar_is_connection_workspace_attention_then_working_and_the_palette_key() {
         use crate::workbench::registry::StatusBarLayout;
         let bar = StatusBarLayout::default();
-        assert_eq!(bar.left, ["attention", "connection"]);
+        assert_eq!(bar.left, ["connection", "workspace", "attention"]);
         assert_eq!(
             bar.right,
             [
@@ -507,18 +635,18 @@ mod tests {
                 "editor.mode",
                 "editor.position",
                 "editor.language",
+                "working",
                 "palette_hint"
             ]
         );
-        // Every item the built-in bar names is registered, and so is every item it no longer
-        // shows: a preset that lists them still gets them.
+        // Every item the built-in bar names is registered, and so is every item it does not
+        // show: a preset that lists them still gets them.
         let registry = builtin_status_items();
         let registered: Vec<&str> = registry.iter().map(|spec| spec.id).collect();
         for id in bar.left.iter().chain(&bar.right) {
             assert!(registered.contains(&id.as_str()), "{id} is registered");
         }
         for id in [
-            "workspace",
             "sessions",
             "approvals",
             "density",
@@ -536,15 +664,36 @@ mod tests {
     }
 
     #[test]
-    fn the_connection_item_speaks_only_while_the_daemon_is_not_up() {
-        let shown = |state| connection_shown(connection_label(state).1);
-        assert!(!shown(ConnectionState::Connected));
-        assert!(shown(ConnectionState::Connecting));
-        assert!(shown(ConnectionState::Stopped));
-        assert!(shown(ConnectionState::Reconnecting {
-            attempt: 1,
-            retry_in: Duration::from_secs(2),
-        }));
+    fn every_connection_state_has_its_word_and_a_distinct_mark() {
+        let reconnecting = chip_of_connection(ConnectionState::Reconnecting {
+            attempt: 3,
+            retry_in: Duration::from_millis(400),
+        });
+        assert_eq!(
+            (reconnecting.kind, reconnecting.word.as_str()),
+            (ChipKind::Reconnecting, "Reconnecting…")
+        );
+        assert!(
+            reconnecting.tooltip.contains("attempt 3, retry in 400 ms"),
+            "{}",
+            reconnecting.tooltip
+        );
+        let stopped = chip_of_connection(ConnectionState::Stopped);
+        assert_eq!(
+            (stopped.kind, stopped.word.as_str()),
+            (ChipKind::Stopped, "Stopped · Start")
+        );
+        let connecting = chip_of_connection(ConnectionState::Connecting);
+        assert_eq!(connecting.word, "Connecting…");
+        let up = chip_of_connection(ConnectionState::Connected);
+        assert_eq!((up.kind, up.word.as_str()), (ChipKind::Up, "hutand"));
+        // The tone is the state's colour; the daemon being up is the only `Ok`.
+        assert_eq!(ChipKind::Up.tone(), Tone::Ok);
+        assert_eq!(ChipKind::Reconnecting.tone(), Tone::Warn);
+        assert_eq!(ChipKind::Busy.tone(), Tone::Warn);
+        assert_eq!(ChipKind::Stopped.tone(), Tone::Error);
+        assert_eq!(ChipKind::Failed.tone(), Tone::Error);
+        assert_eq!(working_text(2), "2 working");
     }
 
     #[test]

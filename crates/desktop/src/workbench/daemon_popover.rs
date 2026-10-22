@@ -22,7 +22,7 @@ use crate::theme::DensityExt as _;
 const WIDTH: f32 = 440.0;
 
 /// `3d 4h`, `2h 5m`, `7m 12s`, `9s`.
-fn uptime_text(uptime: Duration) -> String {
+pub(super) fn uptime_text(uptime: Duration) -> String {
     let secs = uptime.as_secs();
     match secs {
         0..=59 => format!("{secs}s"),

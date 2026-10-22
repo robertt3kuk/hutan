@@ -4,7 +4,6 @@ use super::model::{DockPosition, PanelId};
 use crate::sessions::SessionsStore;
 use crate::theme::{Density, Theme};
 use gpui::{AnyElement, AnyView, App, Entity, SharedString, Window};
-use hutan_client::ConnectionState;
 use hutan_settings::SettingsStore;
 use std::rc::Rc;
 
@@ -137,17 +136,17 @@ pub struct StatusContext<'a> {
 /// Live numbers the status items show.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusData {
-    pub connection: ConnectionState,
-    /// What the connection item says: the connection state, or that the user stopped the
-    /// daemon, or the daemon operation in progress.
-    pub connection_line: (String, super::panels::StatusTone),
-    /// Epoch of the daemon the state describes, for the connection tooltip.
-    pub epoch: Option<String>,
+    /// The `connection` item: the daemon's state as a mark, a word and a tooltip.
+    pub connection: super::panels::ConnectionChip,
     pub sessions: usize,
-    /// Name of the workspace the window shows.
+    /// Name of the project the user works in (else the workspace the window shows).
     pub workspace: Option<String>,
+    /// The branch checked out there, once the daemon said.
+    pub branch: Option<String>,
     /// Sessions with a request waiting (the *Requests* group).
     pub requests: usize,
+    /// Agent sessions at work (the *Working* group): a turn runs, or the agent says so.
+    pub working: usize,
     /// Permission requests of agent chats waiting for an answer.
     pub approvals: usize,
     /// Name of the terminal theme in effect.
@@ -243,19 +242,22 @@ pub struct StatusBarLayout {
 }
 
 impl Default for StatusBarLayout {
-    /// The quiet status bar of the built-in presets (CL-CHROME): the requests that wait and the
-    /// connection while it is not up on the left, the editor's items while a file tab has
-    /// focus and the palette's key on the right. The other items (`workspace`, `sessions`,
-    /// `approvals`, `density`, `theme`, the dock buttons) stay registered for presets that
-    /// name them.
+    /// The status bar of the built-in presets (FX-STATUSBAR): the daemon's state, the project
+    /// and its branch and the requests that wait on the left; the editor's items while a file
+    /// tab has focus, the agents at work and the palette's key on the right. The other items
+    /// (`sessions`, `approvals`, `density`, `theme`, the dock buttons) stay registered for
+    /// presets that name them.
     fn default() -> Self {
         Self {
-            left: ["attention", "connection"].map(str::to_owned).to_vec(),
+            left: ["connection", "workspace", "attention"]
+                .map(str::to_owned)
+                .to_vec(),
             right: [
                 "editor.diagnostics",
                 "editor.mode",
                 "editor.position",
                 "editor.language",
+                "working",
                 "palette_hint",
             ]
             .map(str::to_owned)

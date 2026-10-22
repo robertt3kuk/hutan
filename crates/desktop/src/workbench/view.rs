@@ -641,6 +641,8 @@ pub struct Workbench {
     pub(crate) sheet_focus: FocusHandle,
     pub(crate) daemon_focus: FocusHandle,
     pub(crate) daemon: DaemonControl,
+    /// The branch of the active project, for the `workspace` status item.
+    pub(crate) status_branch: super::status_branch::StatusBranch,
     pub(crate) mac: MacControl,
     pub(crate) setup: super::setup::SetupControl,
     pub(crate) first_run: super::first_run::FirstRunControl,
@@ -1083,6 +1085,14 @@ impl Workbench {
             cx.subscribe(&sessions, |this, _, _: &RecoverySummaryDue, cx| {
                 this.show_recovery_summary(cx);
             }),
+            // A command or a turn ended in a checkout: the branch may have changed.
+            cx.subscribe(
+                &sessions,
+                |this, _, _: &crate::sessions::CheckoutActivity, cx| {
+                    this.status_branch.mark_stale();
+                    cx.notify();
+                },
+            ),
             cx.subscribe_in(
                 &sessions,
                 window,
@@ -1207,6 +1217,7 @@ impl Workbench {
             sheet_focus,
             daemon_focus,
             daemon: DaemonControl::new(options.own_daemon),
+            status_branch: super::status_branch::StatusBranch::default(),
             mac,
             setup: super::setup::SetupControl::new(cx.focus_handle(), options.cli_link),
             first_run: super::first_run::FirstRunControl::default(),

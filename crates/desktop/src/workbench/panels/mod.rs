@@ -86,7 +86,10 @@ pub use resources_model::{
 };
 pub use search::{ReplaceCount, ResultFile, SearchField, SearchPanel, SearchRow, SearchStatus};
 pub use sessions::{DraggedProject, DraggedWorkspace, RowKind, SessionsPanel, SidebarRow};
-pub use status::{Tone as StatusTone, builtin_status_items, connection_label};
+pub use status::{
+    CHIP_HINT, ChipKind, ConnectionChip, Tone as StatusTone, builtin_status_items,
+    chip_of_connection, connection_label,
+};
 pub use tasks::{CascadeAsk, TICK as TASKS_TICK, TasksPanel};
 
 /// A panel that renders its name and a short description.

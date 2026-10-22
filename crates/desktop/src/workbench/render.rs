@@ -2203,38 +2203,46 @@ impl Workbench {
 
     // ---- status bar --------------------------------------------------------------------------
 
+    /// What the status items show right now.
+    pub fn status_data(&self, cx: &gpui::App) -> StatusData {
+        let store = self.sessions.read(cx);
+        StatusData {
+            connection: self.connection_chip(cx),
+            sessions: store.sessions().len(),
+            workspace: self.workspace_label(cx),
+            branch: self.workspace_branch(cx),
+            requests: store.requests().len(),
+            working: store
+                .agent_presentation()
+                .counts(crate::sessions::Scope::All)
+                .working,
+            approvals: store.approvals().len(),
+            terminal_theme: self.terminal_theme_name.clone(),
+            docks: {
+                let state = |pos: DockPosition| {
+                    let dock = self.state.docks.get(pos);
+                    DockState {
+                        // The body is what the button shows and hides.
+                        visible: self.dock_mode(pos) == DockMode::Expanded,
+                        has_panels: !dock.panels.is_empty(),
+                    }
+                };
+                PerDock {
+                    left: state(DockPosition::Left),
+                    right: state(DockPosition::Right),
+                    bottom: state(DockPosition::Bottom),
+                }
+            },
+            editor: self.editor_status(cx),
+        }
+    }
+
     fn render_status_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
-        let data = {
-            let store = self.sessions.read(cx);
-            StatusData {
-                connection: store.connection_state(),
-                connection_line: self.daemon_line(cx),
-                epoch: store.state().epoch.map(|e| e.to_string()),
-                sessions: store.sessions().len(),
-                workspace: store.active_workspace().map(|w| w.name.clone()),
-                requests: store.requests().len(),
-                approvals: store.approvals().len(),
-                terminal_theme: self.terminal_theme_name.clone(),
-                docks: {
-                    let state = |pos: DockPosition| {
-                        let dock = self.state.docks.get(pos);
-                        DockState {
-                            // The body is what the button shows and hides.
-                            visible: self.dock_mode(pos) == DockMode::Expanded,
-                            has_panels: !dock.panels.is_empty(),
-                        }
-                    };
-                    PerDock {
-                        left: state(DockPosition::Left),
-                        right: state(DockPosition::Right),
-                        bottom: state(DockPosition::Bottom),
-                    }
-                },
-                editor: self.editor_status(cx),
-            }
-        };
+        self.keep_daemon_status_fresh(cx);
+        self.follow_status_branch(cx);
+        let data = self.status_data(cx);
         let hint = |action: &dyn Action| key_hint(window, action).unwrap_or_default();
         let workbench = cx.entity();
         let editor_items = self
