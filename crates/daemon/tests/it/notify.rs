@@ -1,6 +1,6 @@
 //! Notification intents (protocol 0.13) end to end: a real daemon on a temporary `HUTAN_HOME`,
 //! real client connections to its socket, real PTY sessions, and `hutan-codex-fixture replay`
-//! standing in for `codex app-server`. Every trigger, the gate (dedup, rate limit, settings,
+//! standing in for `codex app-server`. Every trigger, the gate (dedup, finished bursts, settings,
 //! expiry), focus suppression and the routing of `notify.act` are exercised over the wire.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -546,10 +546,10 @@ async fn only_a_non_zero_exit_raises_an_intent_and_ack_removes_it() {
     t.stop().await;
 }
 
-// ---- agent_blocked, agent_finished: dedup and rate limit ---------------------------------------
+// ---- agent_blocked, agent_finished: dedup and bursts -------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_node_becoming_blocked_raises_one_bounded_redacted_intent_per_window() {
+async fn a_node_becoming_blocked_raises_one_bounded_redacted_intent_until_it_is_unblocked() {
     let mut t = Env::plain().await;
     let session = create(&t.client, idle_session()).await;
     report(&t.client, main_report(session.id, AgentState::Working, 1)).await;
@@ -599,13 +599,15 @@ async fn a_node_becoming_blocked_raises_one_bounded_redacted_intent_per_window()
         sub_report(session.id, AgentState::Blocked, 5, None),
     )
     .await;
-    t.no_intent(Duration::from_millis(600)).await;
-    assert!(
-        t.intents().await.is_empty(),
-        "limited to one per ten seconds"
-    );
+    // A request is never held back: blocked again, it calls again, at once.
+    let again = t
+        .next_intent("the second blocked intent", |i| {
+            i.kind == IntentKind::AgentBlocked && i.id != intent.id
+        })
+        .await;
+    assert_eq!(again.session_id, session.id);
 
-    // Another session has its own window.
+    // Another session raises its own.
     let other = create(&t.client, idle_session()).await;
     report(
         &t.client,
@@ -1438,5 +1440,57 @@ async fn notify_sound_none_posts_silent_notifications() {
             assert!(!notification.sound, "{notification:?}");
         }
     }
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_or_failure_plays_the_sound_and_finished_work_is_a_silent_banner() {
+    let poster = FakePoster::new(Authorization::Grant);
+    let mut t = Env::start_with_poster("", Some("plain-turn"), Some(poster.clone())).await;
+    let chat = t.chat(None, None).await;
+    t.send(chat.id, "Say hi").await;
+    let finished = t
+        .next_intent("the finished intent", |i| {
+            i.kind == IntentKind::ChatTurnFinished
+        })
+        .await;
+    let failing = create(&t.client, sh("exit 1")).await;
+    let failed = t
+        .next_intent("the failed intent", |i| i.session_id == failing.id)
+        .await;
+    let calls = poster
+        .wait_for("both posts", |calls| {
+            [&finished.id, &failed.id].iter().all(|id| {
+                calls
+                    .iter()
+                    .any(|c| matches!(c, Call::Post(n) if &n.identifier == *id))
+            })
+        })
+        .await;
+    for call in calls {
+        if let Call::Post(notification) = call {
+            if notification.identifier == finished.id {
+                assert!(!notification.sound, "finished work is silent");
+            } else if notification.identifier == failed.id {
+                assert!(notification.sound, "a failure plays the sound");
+            }
+        }
+    }
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn notify_finished_false_raises_nothing_for_finished_work_but_still_for_failures() {
+    let mut t = Env::start("[notify]\nfinished = false\n", Some("plain-turn")).await;
+    let chat = t.chat(None, None).await;
+    t.send(chat.id, "Say hi").await;
+    t.turn_end(chat.id).await;
+    let failing = create(&t.client, sh("exit 1")).await;
+    let failed = t
+        .next_intent("the failed intent", |i| i.session_id == failing.id)
+        .await;
+    assert_eq!(failed.kind, IntentKind::SessionExitedWithError);
+    let pending = t.intents().await;
+    assert_eq!(pending.len(), 1, "{pending:?}");
     t.stop().await;
 }

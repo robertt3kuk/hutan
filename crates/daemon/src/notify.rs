@@ -13,11 +13,12 @@
 //! | `chat_turn_finished` | a chat turn completes |
 //! | `task_done` / `task_failed` | a task (`task.updated`) changes into `done` / `failed`, for the session that ran it; exempt from the rate limit |
 //!
-//! Every candidate passes the same gate: the `[notify]` settings (`enabled`, `kinds`), the
-//! session's mute (`notify.mute`, protocol 0.34), the focus (a session some client has focused
-//! raises nothing: its card is on screen), dedup by `(kind, session, node)` against the pending
-//! intents, and a rate limit of one intent per session per [`RATE_LIMIT_MS`] (approvals and
-//! questions are exempt from it and never counted by it). Pending intents are kept in memory, at
+//! Every candidate passes the same gate: the `[notify]` settings (`enabled`, `kinds`, and
+//! `finished` for finished work), the session's mute (`notify.mute`, protocol 0.34), the focus
+//! (a session some client has focused raises nothing: its card is on screen), dedup by
+//! `(kind, session, node)` against the pending intents, and, for the finished turns of one
+//! session only, a burst limit of one intent per [`FINISHED_BURST_MS`]: requests and failures
+//! always call. Only they play the system's sound. Pending intents are kept in memory, at
 //! most [`MAX_PENDING`]; they are lost with the daemon, which is right for something that says
 //! "look now". An intent leaves the list when it is acknowledged, acted on, expires, (approvals,
 //! questions) is resolved, or its session is focused or muted.
@@ -58,8 +59,36 @@ use crate::notify_native::{
 };
 use crate::registry::{RegistryHandle, now_ms};
 
-/// Shortest time between two intents of one session (approvals excepted).
-pub const RATE_LIMIT_MS: u64 = 10_000;
+/// A session's finished turns come in bursts: after one raised an intent (`agent_finished`,
+/// `chat_turn_finished`), the others of the session within this long raise none.
+pub const FINISHED_BURST_MS: u64 = 90_000;
+
+/// How hard an intent calls for the user (UX-ATTN-3, the three groups of the desktop).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Urgency {
+    /// Something waits for an answer: a *Request*. Never held back, plays the sound.
+    Request,
+    /// Something failed. Never held back, plays the sound.
+    Failure,
+    /// Work is finished: *Ready for review*. Quiet (no sound), at most once per burst, and
+    /// switched off by `notify.finished`.
+    Finished,
+}
+
+impl Urgency {
+    const fn of(kind: IntentKind) -> Self {
+        match kind {
+            IntentKind::ApprovalRequired
+            | IntentKind::QuestionRequired
+            | IntentKind::AgentBlocked => Self::Request,
+            IntentKind::SessionExitedWithError | IntentKind::TaskFailed => Self::Failure,
+            IntentKind::AgentFinished | IntentKind::ChatTurnFinished | IntentKind::TaskDone => {
+                Self::Finished
+            }
+        }
+    }
+}
+
 /// Most pending intents; the oldest is dropped to make room.
 pub const MAX_PENDING: usize = 100;
 /// Expired intents are swept out at least this often (their native notifications go with them).
@@ -125,7 +154,8 @@ struct NodeMemo {
 struct Core {
     settings: NotifySettings,
     pending: VecDeque<Entry>,
-    last_raised: HashMap<SessionId, u64>,
+    /// When the last finished-turn intent of each session was raised (`FINISHED_BURST_MS`).
+    last_finished: HashMap<SessionId, u64>,
     nodes: HashMap<(SessionId, String), NodeMemo>,
     /// The latest finished assistant message of each chat, already redacted and bounded.
     last_message: HashMap<SessionId, String>,
@@ -144,12 +174,18 @@ impl Core {
             settings,
             pending: VecDeque::new(),
             withdrawn: Vec::new(),
-            last_raised: HashMap::new(),
+            last_finished: HashMap::new(),
             nodes: HashMap::new(),
             last_message: HashMap::new(),
             tasks: HashMap::new(),
             focus: HashMap::new(),
         }
+    }
+
+    /// Whether the system's notification for an intent of `kind` plays a sound: only a request
+    /// or a failure does (and only while `notify.sound` allows it); finished work is a banner.
+    fn plays_sound(&self, kind: IntentKind) -> bool {
+        self.settings.sound != NotifySound::None && Urgency::of(kind) != Urgency::Finished
     }
 
     // Planning --------------------------------------------------------------------------------
@@ -197,7 +233,7 @@ impl Core {
             Event::SessionClosed { session_id } => {
                 // Nothing is left to open: what was raised about the session goes with it.
                 self.forget_session(*session_id);
-                self.last_raised.remove(session_id);
+                self.last_finished.remove(session_id);
                 let session = *session_id;
                 self.withdraw_where(|e| e.intent.session_id == session);
                 Vec::new()
@@ -402,19 +438,24 @@ impl Core {
             return None;
         }
         self.expire(now_ms);
-        // An approval and a question wait for the user: they are not rate limited (the second of
-        // two in a row matters as much as the first) and live as long as what they are about.
+        let urgency = Urgency::of(candidate.kind);
+        // Finished work is a quiet call: one setting turns it off for good.
+        if urgency == Urgency::Finished && !self.settings.finished {
+            return None;
+        }
+        // An approval and a question wait for the user: they live as long as what they are about
+        // (the second of two in a row matters as much as the first).
         let approval = matches!(
             candidate.kind,
             IntentKind::ApprovalRequired | IntentKind::QuestionRequired
         );
-        // A task ends once; the gate's rate limit is about chatty sessions, and a finished task
-        // should not be lost because the session's own exit raised an intent a moment before.
-        let rate_limited = !approval
-            && !matches!(
-                candidate.kind,
-                IntentKind::TaskDone | IntentKind::TaskFailed
-            );
+        // Only a session's finished turns come in bursts: a request or a failure always calls,
+        // and a task ends once, so a finished task is not lost because the session's own finish
+        // raised an intent a moment before.
+        let bursty = matches!(
+            candidate.kind,
+            IntentKind::AgentFinished | IntentKind::ChatTurnFinished
+        );
         if meta.muted {
             debug!(kind = candidate.kind.as_str(), session = %candidate.session, "the session is muted; no intent");
             return None;
@@ -433,13 +474,13 @@ impl Core {
             debug!(kind = candidate.kind.as_str(), session = %candidate.session, "duplicate intent dropped");
             return None;
         }
-        if rate_limited
+        if bursty
             && self
-                .last_raised
+                .last_finished
                 .get(&candidate.session)
-                .is_some_and(|last| now_ms.saturating_sub(*last) < RATE_LIMIT_MS)
+                .is_some_and(|last| now_ms.saturating_sub(*last) < FINISHED_BURST_MS)
         {
-            debug!(kind = candidate.kind.as_str(), session = %candidate.session, "intent rate-limited");
+            debug!(kind = candidate.kind.as_str(), session = %candidate.session, "finished intent held back: the session's burst");
             return None;
         }
         let title = clean(
@@ -463,11 +504,11 @@ impl Core {
             created_at_ms: now_ms,
             expires_at_ms,
         };
-        if rate_limited {
-            self.last_raised.insert(candidate.session, now_ms);
-            if self.last_raised.len() > MAX_MEMOS {
-                self.last_raised
-                    .retain(|_, last| now_ms.saturating_sub(*last) < RATE_LIMIT_MS);
+        if bursty {
+            self.last_finished.insert(candidate.session, now_ms);
+            if self.last_finished.len() > MAX_MEMOS {
+                self.last_finished
+                    .retain(|_, last| now_ms.saturating_sub(*last) < FINISHED_BURST_MS);
             }
         }
         let entry = Entry {
@@ -801,7 +842,7 @@ impl NotifyService {
             // only be queued after it, never before.
             let raised = self.with_core(|core| {
                 let entry = core.offer(candidate, &meta, now_ms())?;
-                let silent = core.settings.sound == NotifySound::None;
+                let silent = !core.plays_sound(entry.intent.kind);
                 self.native_send(NativeOp::Post(
                     NativeNotification::from_intent(&entry.intent, &entry.destructive)
                         .silent(silent),
@@ -1579,25 +1620,23 @@ mod tests {
     }
 
     #[test]
-    fn one_intent_per_session_per_ten_seconds_except_approvals() {
+    fn a_sessions_finished_turns_come_once_per_burst_but_requests_and_failures_always_call() {
         let mut core = core();
         let session = SessionId::new();
-        let exited = |code| Event::SessionExited {
-            session_id: session,
-            code: Some(code),
-            signal: None,
-        };
-        assert_eq!(raise(&mut core, &exited(1), 1_000).len(), 1);
-        // A different kind in the same session, inside the window.
+        assert_eq!(
+            raise(&mut core, &turn_completed(session, 1), 1_000).len(),
+            1
+        );
+        // A second finished turn inside the 90 s burst raises nothing.
         assert!(
             raise(
                 &mut core,
-                &turn_completed(session, 1),
-                1_000 + RATE_LIMIT_MS - 1
+                &turn_completed(session, 2),
+                1_000 + FINISHED_BURST_MS - 1
             )
             .is_empty()
         );
-        // Approvals are not limited, and do not use up the window either.
+        // Requests and failures are not held back by the burst, and do not start one.
         for _ in 0..3 {
             assert_eq!(
                 raise(
@@ -1611,19 +1650,92 @@ mod tests {
                 1
             );
         }
-        // Another session is not limited by this one.
+        let exit = Event::SessionExited {
+            session_id: session,
+            code: Some(1),
+            signal: None,
+        };
+        assert_eq!(raise(&mut core, &exit, 1_002).len(), 1);
+        // Another session has its own burst.
         let other = SessionId::new();
         assert_eq!(raise(&mut core, &turn_completed(other, 1), 1_001).len(), 1);
-        // The window ends after exactly RATE_LIMIT_MS.
+        // The burst ends after exactly FINISHED_BURST_MS.
         assert_eq!(
             raise(
                 &mut core,
-                &turn_completed(session, 2),
-                1_000 + RATE_LIMIT_MS
+                &turn_completed(session, 3),
+                1_000 + FINISHED_BURST_MS
             )
             .len(),
             1
         );
+    }
+
+    #[test]
+    fn a_request_or_failure_does_not_wait_for_the_burst_of_a_finish_before_it() {
+        let mut core = core();
+        let session = SessionId::new();
+        let exit = Event::SessionExited {
+            session_id: session,
+            code: Some(1),
+            signal: None,
+        };
+        // A failure, then a blocked agent a moment later: both call.
+        assert_eq!(raise(&mut core, &exit, 1_000).len(), 1);
+        let blocked = tree(
+            session,
+            vec![node("root", NodeKind::Main, NodeState::Blocked)],
+        );
+        assert_eq!(raise(&mut core, &blocked, 1_001).len(), 1);
+    }
+
+    #[test]
+    fn finished_work_is_off_with_notify_finished_and_requests_and_failures_stay() {
+        let mut core = Core::new(NotifySettings {
+            finished: false,
+            ..NotifySettings::default()
+        });
+        let session = SessionId::new();
+        assert!(raise(&mut core, &turn_completed(session, 1), 1_000).is_empty());
+        assert_eq!(
+            raise(
+                &mut core,
+                &Event::ApprovalRequired {
+                    approval: Box::new(approval(session)),
+                },
+                1_001,
+            )
+            .len(),
+            1
+        );
+        let exit = Event::SessionExited {
+            session_id: session,
+            code: Some(2),
+            signal: None,
+        };
+        assert_eq!(raise(&mut core, &exit, 1_002).len(), 1);
+    }
+
+    #[test]
+    fn only_requests_and_failures_play_a_sound() {
+        let loud = Core::new(NotifySettings::default());
+        for kind in IntentKind::ALL {
+            let calls = matches!(
+                kind,
+                IntentKind::ApprovalRequired
+                    | IntentKind::QuestionRequired
+                    | IntentKind::AgentBlocked
+                    | IntentKind::SessionExitedWithError
+                    | IntentKind::TaskFailed
+            );
+            assert_eq!(loud.plays_sound(kind), calls, "{kind:?}");
+        }
+        // `notify.sound = "none"` silences them all.
+        let silent = Core::new(NotifySettings {
+            sound: NotifySound::None,
+            ..NotifySettings::default()
+        });
+        assert!(IntentKind::ALL.iter().all(|k| !silent.plays_sound(*k)));
     }
 
     #[test]
@@ -1998,7 +2110,7 @@ mod tests {
     }
 
     #[test]
-    fn task_intents_pass_the_settings_and_dedup_but_not_the_session_rate_limit() {
+    fn task_intents_pass_the_settings_and_dedup() {
         let session = SessionId::new();
         let mut core = core();
         // The session's own failed exit raised an intent a moment ago.
@@ -2019,14 +2131,14 @@ mod tests {
         task.outcome = Some("exited 1".to_owned());
         let event = Event::TaskUpdated { task: task.clone() };
         let raised = raise(&mut core, &event, 75_100);
-        assert_eq!(raised.len(), 1, "not lost to the rate limit: {raised:?}");
+        assert_eq!(raised.len(), 1, "{raised:?}");
         // One event, one notification: the task's intent replaces the session's exit intent.
         assert_eq!(core.withdrawn, [exit[0].id.clone()]);
         assert_eq!(
             core.list(75_100).iter().map(|i| i.kind).collect::<Vec<_>>(),
             [IntentKind::TaskFailed]
         );
-        // A task intent does not start the session's rate limit either.
+        // A failure is never held back: the exit raises its own intent again.
         let again = raise(
             &mut core,
             &Event::SessionExited {
@@ -2036,7 +2148,7 @@ mod tests {
             },
             75_200,
         );
-        assert!(again.is_empty(), "the exit intent's own window still holds");
+        assert_eq!(again.len(), 1, "failures always call: {again:?}");
 
         // The settings gate them like any kind.
         let mut quiet = Core::new(NotifySettings {

@@ -739,14 +739,20 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "daemon",
         "notify.native",
         "Show in the macOS notification centre",
-        "Also post notifications to the system. Only the Hutan app can do this; the daemon of a development build posts nothing.",
+        "Also post notifications to the system. Only the Hutan app can do this; the daemon of a development build posts nothing. A request or a failure notifies when Hutan is behind other windows or the session is not the one on screen; a request that arrives for another session while Hutan is in front also shows a toast in the window.",
     ),
     choice(
         "daemon",
         "notify.sound",
         "Sound",
-        "Whether a notification in the macOS notification centre plays the system's sound. A session you muted (its menu: Mute notifications) raises no notification at all, and a session you are looking at raises none either.",
+        "Whether a request or a failure plays the system's sound when it reaches the macOS notification centre (the system's Focus and Do Not Disturb still decide whether you hear it). Finished work never makes a sound. A session you muted (its menu: Mute notifications) raises no notification at all, and a session you are looking at raises none either.",
         &[("default", "The system's sound"), ("none", "No sound")],
+    ),
+    field(
+        "daemon",
+        "notify.finished",
+        "Tell me when work is finished",
+        "Also notify, quietly, when an agent finishes a turn or a task: no sound, at most once every 90 seconds for a session, and never for a session you are looking at. Off, only requests and failures notify. The sidebar's Ready for review group is the same either way.",
     ),
     choice(
         "daemon",
@@ -1330,7 +1336,10 @@ pub fn page_keywords(page: &str) -> &'static str {
             "Index sessions indexing on off sources index size Hutan Claude Code Codex OMP \
              how far back range days transcript folders"
         }
-        "notifications" => "Notify notifications alerts native notification centre",
+        "notifications" => {
+            "Notify notifications alerts native notification centre Dock badge sound toast \
+             requests failures finished ready for review"
+        }
         "sessions_restore" => {
             "Restore sessions restart respawn home folder environment login shell projects"
         }

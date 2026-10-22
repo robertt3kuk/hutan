@@ -72,6 +72,8 @@
 //!          "chat_turn_finished", "task_done", "task_failed"]   # which intents are raised
 //! expire_secs = 3600             # a pending intent (not an approval's) lapses after this long
 //! native = true                  # also post intents to the system's notification centre (only from Hutan.app)
+//! sound = "default"              # "default": requests and failures play the system's sound; "none": no sound
+//! finished = true                # finished work (a turn, a task) raises an intent too, quietly and at most once per 90 s per session
 //!
 //! [tasks]                        # tasks with dependencies (protocol 0.16, docs/orchestration.md)
 //! max_parallel = 3               # tasks with `auto_start` start by themselves up to this many at once
@@ -512,8 +514,12 @@ pub struct NotifySettings {
     /// post them (it runs from `Hutan.app`); they stay available through `notify.list`.
     pub native: bool,
     /// Whether a notification the daemon posts to the system plays the system's sound
-    /// (protocol 0.34).
+    /// (protocol 0.34). Only a request or a failure ever does; finished work is a banner.
     pub sound: NotifySound,
+    /// `false` raises no intent for finished work (`agent_finished`, `chat_turn_finished`,
+    /// `task_done`: *Ready for review*); requests and failures are unaffected. A session's
+    /// finished turns raise at most one intent per 90 s.
+    pub finished: bool,
 }
 
 /// `notify.sound`: what a posted notification sounds like.
@@ -546,6 +552,7 @@ impl Default for NotifySettings {
             expire_secs: DEFAULT_EXPIRE_SECS,
             native: true,
             sound: NotifySound::Default,
+            finished: true,
         }
     }
 }

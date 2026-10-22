@@ -157,9 +157,11 @@ fn the_notifications_page_lists_the_daemons_values_and_a_live_change_needs_no_re
     assert_eq!(
         rows,
         [
+            "f:dock_badge",
             "d:notify.enabled",
             "d:notify.native",
             "d:notify.sound",
+            "d:notify.finished",
             "d:notify.kinds",
             "d:notify.min_turn_secs",
             "d:notify.expire_secs"
@@ -618,8 +620,11 @@ fn an_older_daemon_gets_the_update_note_and_the_file_path(cx: &mut TestAppContex
     wait_until(cx, "the capability to be found missing", |cx| {
         view.read_with(cx, |wb, _| wb.daemon_settings().unsupported())
     });
-    // No rows to change; the way to the file instead.
-    assert!(view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx).is_empty()));
+    // No daemon rows to change (the Dock badge is the desktop's own); the way to the file instead.
+    assert_eq!(
+        view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx)),
+        ["f:dock_badge"]
+    );
     assert!(drawn(&view, cx, Region::Settings("open-daemon-toml")));
     assert_eq!(
         view.read_with(cx, |wb, _| wb.daemon_toml_path()),
