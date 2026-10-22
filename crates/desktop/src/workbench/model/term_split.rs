@@ -324,6 +324,58 @@ impl WorkbenchState {
         Ok(leaf)
     }
 
+    /// Puts `closed` back where it was in the tab of splits `before` (the tab as it stood when
+    /// `closed` was closed): the same place in the tree with the same shares, focused. Only when
+    /// that tab is still there with exactly the other splits it had then, and `closed` shows
+    /// nowhere; returns `false` otherwise and changes nothing.
+    pub fn restore_term_split(&mut self, closed: &str, before: &TermSplit) -> bool {
+        let Some(leaf) = before.leaf_of(closed) else {
+            return false;
+        };
+        if self.find_session_tab(closed).is_some() {
+            return false;
+        }
+        let mut others: Vec<&str> = before
+            .sessions()
+            .into_iter()
+            .filter(|session| *session != closed)
+            .collect();
+        others.sort_unstable();
+        let Some(first) = others.first() else {
+            return false;
+        };
+        let Some((pane, index)) = self.find_session_tab(first) else {
+            return false;
+        };
+        let now: Vec<&str> = match self.center.pane(pane).and_then(|p| p.items.get(index)) {
+            Some(ItemRef::Terminal { session }) => vec![session.as_str()],
+            Some(ItemRef::TerminalSplit { split }) => {
+                let mut sessions = split.sessions();
+                sessions.sort_unstable();
+                sessions
+            }
+            _ => return false,
+        };
+        if now != others {
+            return false;
+        }
+        let mut restored = before.clone();
+        restored.zoomed = before.zoomed && before.focus == leaf;
+        restored.focus = leaf;
+        let Ok(item) = self.term_item_mut(pane, index) else {
+            return false;
+        };
+        *item = ItemRef::TerminalSplit {
+            split: Box::new(restored),
+        };
+        if let Some(p) = self.center.pane_mut(pane) {
+            p.active = index;
+        }
+        self.focus = FocusTarget::Pane(pane);
+        self.normalize();
+        true
+    }
+
     /// Gives the keyboard to the split of `session` in tab `index` of `pane`.
     pub fn focus_term_split(
         &mut self,
@@ -696,6 +748,60 @@ mod tests {
         assert!((ratios[0] - 0.6).abs() < 1e-4, "{ratios:?}");
         // Vertical keys have no divider in a horizontal split.
         assert!(!state.resize_term_split(Direction::Down, 0.1));
+    }
+
+    #[test]
+    fn a_closed_split_comes_back_in_its_place_with_its_share() {
+        let (mut state, pane) = with_terminal("a");
+        state
+            .split_terminal(pane, 0, None, Edge::Right, "b")
+            .unwrap();
+        state
+            .split_terminal(pane, 0, None, Edge::Bottom, "c")
+            .unwrap();
+        state.set_term_divider(pane, &[], 0, 0.3, 0.1).unwrap();
+        state.focus_term_split(pane, 0, "b").unwrap();
+        let before = split_of(&state, pane, 0);
+        state.remove_session_tabs("b");
+        assert!(state.find_session_tab("b").is_none());
+        assert!(state.restore_term_split("b", &before));
+        let after = split_of(&state, pane, 0);
+        assert_eq!(after, before, "same tree, shares and focus");
+        assert_eq!(state.find_session_tab("b"), Some((pane, 0)));
+
+        // The tab of two: closing one turns it into a plain terminal; the restore splits again.
+        let (mut state, pane) = with_terminal("a");
+        state
+            .split_terminal(pane, 0, None, Edge::Right, "b")
+            .unwrap();
+        let before = split_of(&state, pane, 0);
+        state.remove_session_tabs("b");
+        assert!(matches!(
+            state.pane(pane).unwrap().items[0],
+            ItemRef::Terminal { .. }
+        ));
+        assert!(state.restore_term_split("b", &before));
+        assert_eq!(split_of(&state, pane, 0), before);
+    }
+
+    #[test]
+    fn a_split_is_not_restored_into_a_tab_that_changed() {
+        let (mut state, pane) = with_terminal("a");
+        state
+            .split_terminal(pane, 0, None, Edge::Right, "b")
+            .unwrap();
+        let before = split_of(&state, pane, 0);
+        state.remove_session_tabs("b");
+        // "a" went too: nothing to put it back next to.
+        state.remove_session_tabs("a");
+        assert!(!state.restore_term_split("b", &before));
+        // Shown elsewhere already.
+        let (mut state, pane) = with_terminal("a");
+        state
+            .split_terminal(pane, 0, None, Edge::Right, "b")
+            .unwrap();
+        let before = split_of(&state, pane, 0);
+        assert!(!state.restore_term_split("b", &before), "b is still shown");
     }
 
     #[test]

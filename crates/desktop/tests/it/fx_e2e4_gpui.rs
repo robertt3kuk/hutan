@@ -6,9 +6,11 @@ use crate::common;
 use common::{ProcessDaemon, TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
 use hutan_client::{Connection, ConnectionState};
+use hutan_core::SessionId;
 use hutan_desktop::workbench::actions;
-use hutan_desktop::workbench::model::DockPosition;
+use hutan_desktop::workbench::model::{DockPosition, TermSplit};
 use hutan_desktop::workbench::{Region, Workbench};
+use hutan_protocol::messages::{Request, SessionCreate, SessionResult, SessionSpec, TerminalSpec};
 use hutan_settings::{SettingsPaths, SettingsStore};
 use hutan_terminal_view::ViewStatus;
 
@@ -158,6 +160,98 @@ fn the_stopped_chip_starts_the_daemon_at_once_without_a_restart_card(cx: &mut Te
             !view.read_with(cx, |wb, _| wb.recovery_summary_open()),
             "no restart card after the user's own stop and start"
         );
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .sessions()
+                .iter()
+                .all(|s| s.recovery.is_none())
+        })
+    });
+}
+
+// ---- 3. F5: Undo of Close Split ----------------------------------------------------------------
+
+fn terminal(daemon: &TestDaemon) -> SessionId {
+    let created: SessionResult = daemon.call(Request::SessionCreate(SessionCreate {
+        workspace_id: None,
+        spec: SessionSpec::Terminal(TerminalSpec {
+            command: vec!["sh".into(), "-c".into(), "sleep 120".into()],
+            env: [("PS1".to_owned(), "$ ".to_owned())].into(),
+            ..TerminalSpec::default()
+        }),
+    }));
+    created.session.id
+}
+
+fn split_tab(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<TermSplit> {
+    view.read_with(cx, |wb, _| {
+        wb.state()
+            .panes()
+            .into_iter()
+            .flat_map(|p| p.items.iter())
+            .find_map(|i| i.as_term_split().cloned())
+    })
+}
+
+fn tab_count(view: &Entity<Workbench>, cx: &VisualTestContext) -> usize {
+    view.read_with(cx, |wb, _| {
+        wb.state().panes().into_iter().map(|p| p.items.len()).sum()
+    })
+}
+
+/// Undo after ⌘W in a split puts the session back into the split, in its place and with its
+/// share, with no tab of its own and no restart card.
+#[gpui::test]
+fn undo_of_close_split_puts_the_session_back_in_its_split(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let a = terminal(&daemon);
+    let (view, cx) = open(cx, &daemon);
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    view.update_in(cx, |wb, window, cx| wb.open_session(a, window, cx));
+    wait_until(cx, "the terminal", |cx| {
+        view.read_with(cx, |wb, _| wb.terminal_view_of(a).is_some())
+    });
+    cx.simulate_keystrokes("cmd-d");
+    wait_until(cx, "two splits", |cx| {
+        split_tab(&view, cx).is_some_and(|s| s.len() == 2)
+    });
+    // Make the shares uneven so that "the same size" means something.
+    cx.simulate_keystrokes("ctrl-cmd-right");
+    draw(cx);
+    let before = split_tab(&view, cx).unwrap();
+    let tabs_before = tab_count(&view, cx);
+
+    cx.simulate_keystrokes("cmd-w");
+    wait_until(cx, "the split to close", |cx| {
+        split_tab(&view, cx).is_none()
+    });
+    wait_until(cx, "the Undo toast", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::CloseToast("undo")).is_some()
+        })
+    });
+    let undo = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::CloseToast("undo")))
+        .unwrap();
+    cx.simulate_click(undo.center(), Modifiers::none());
+    wait_until(cx, "the split to come back", |cx| {
+        split_tab(&view, cx).is_some()
+    });
+    assert_eq!(
+        split_tab(&view, cx).unwrap(),
+        before,
+        "same place, same shares"
+    );
+    assert_eq!(tab_count(&view, cx), tabs_before, "no tab of its own");
+
+    // The reopen is not a restart: no card, and no chip once the acknowledgement is back.
+    wait_until(cx, "the recovery to be acknowledged", |cx| {
+        assert!(!view.read_with(cx, |wb, _| wb.recovery_summary_open()));
         view.read_with(cx, |wb, cx| {
             wb.sessions()
                 .read(cx)

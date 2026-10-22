@@ -12,6 +12,7 @@ use gpui::{
 use hutan_core::SessionId;
 use hutan_protocol::messages::SessionBusy;
 
+use super::model::{ItemRef, TermSplit};
 use super::render::probe;
 use super::ui::motion;
 use super::ui::{Button, StyledExt as _};
@@ -26,6 +27,9 @@ pub const TOAST_TIME: Duration = Duration::from_secs(5);
 pub struct CloseToast {
     pub session: SessionId,
     pub title: SharedString,
+    /// The tab of terminal splits the session was in, as it stood: Undo puts the session back
+    /// into it, in its place, instead of opening a tab of its own.
+    split: Option<TermSplit>,
     rev: u64,
 }
 
@@ -173,6 +177,7 @@ impl Workbench {
         };
         let title = info.title.clone();
         let neighbour = self.neighbour_of(session, cx);
+        let split_before = self.split_of_session(session);
         let was_focused = self.focused_session() == Some(session);
         let task = self
             .sessions
@@ -182,7 +187,7 @@ impl Workbench {
             this.update_in(cx, |this, window, cx| match result {
                 Ok(()) => {
                     this.on_session_closed(session, window, cx);
-                    this.show_close_toast(session, title, cx);
+                    this.show_close_toast(session, title, split_before, cx);
                     if was_focused
                         && this.focused_session().is_none()
                         && let Some(next) = neighbour
@@ -208,6 +213,15 @@ impl Workbench {
             .ok();
         })
         .detach();
+    }
+
+    /// The tab of terminal splits `session` is one of, as it stands now.
+    fn split_of_session(&self, session: SessionId) -> Option<TermSplit> {
+        let (pane, index) = self.state.find_session_tab(&session.to_string())?;
+        match self.state.pane(pane)?.items.get(index)? {
+            ItemRef::TerminalSplit { split } => Some((**split).clone()),
+            _ => None,
+        }
     }
 
     /// The session the sidebar selects when `session` goes: the next one of its project, else
@@ -238,12 +252,19 @@ impl Workbench {
         cx.notify();
     }
 
-    fn show_close_toast(&mut self, session: SessionId, title: String, cx: &mut Context<Self>) {
+    fn show_close_toast(
+        &mut self,
+        session: SessionId,
+        title: String,
+        split: Option<TermSplit>,
+        cx: &mut Context<Self>,
+    ) {
         self.toast_rev += 1;
         let rev = self.toast_rev;
         self.close_toast = Some(CloseToast {
             session,
             title: title.into(),
+            split,
             rev,
         });
         cx.spawn(async move |this, cx| {
@@ -263,7 +284,7 @@ impl Workbench {
     /// Undo of the toast: reopens the session.
     pub fn undo_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(toast) = self.close_toast.take() {
-            self.reopen_session(toast.session, window, cx);
+            self.reopen_session_into(toast.session, toast.split, window, cx);
         }
         cx.notify();
     }
@@ -275,13 +296,34 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.reopen_session_into(session, None, window, cx);
+    }
+
+    /// [`reopen_session`](Self::reopen_session); a session that was a split of a tab goes back
+    /// into that tab (same place, same share) when the tab still has the splits it had.
+    fn reopen_session_into(
+        &mut self,
+        session: SessionId,
+        split: Option<TermSplit>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let task = self
             .sessions
             .update(cx, |store, cx| store.reopen(session, cx));
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             this.update_in(cx, |this, window, cx| match result {
-                Ok(info) => this.open_session(info.id, window, cx),
+                Ok(info) => {
+                    if let Some(before) = &split {
+                        this.show_workspace_of(info.id, cx);
+                        let id = info.id.to_string();
+                        this.mutate(cx, |s| {
+                            s.restore_term_split(&id, before);
+                        });
+                    }
+                    this.open_session(info.id, window, cx)
+                }
                 Err(error) => this.set_notice(format!("Cannot reopen the session: {error}"), cx),
             })
             .ok();
