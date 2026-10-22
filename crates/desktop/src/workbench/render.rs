@@ -2212,10 +2212,15 @@ impl Workbench {
             workspace: self.workspace_label(cx),
             branch: self.workspace_branch(cx),
             requests: store.requests().len(),
-            working: store
-                .agent_presentation()
-                .counts(crate::sessions::Scope::All)
-                .working,
+            // The agents at work as of the last time the daemon said so: not while it is gone.
+            working: if self.daemon_connected(cx) {
+                store
+                    .agent_presentation()
+                    .counts(crate::sessions::Scope::All)
+                    .working
+            } else {
+                0
+            },
             approvals: store.approvals().len(),
             terminal_theme: self.terminal_theme_name.clone(),
             docks: {

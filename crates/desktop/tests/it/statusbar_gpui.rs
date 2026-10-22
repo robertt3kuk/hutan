@@ -396,6 +396,27 @@ fn the_working_count_appears_with_agents_at_work_and_goes_when_they_stop(cx: &mu
     claude.release(&daemon, None, None);
     wait_until(cx, "nobody working", |cx| working(cx) == 0);
     assert!(!drawn(&view, cx, "working"), "hidden again at 0");
+
+    // Agents at work when the daemon last said so are not counted while it is gone.
+    omp.report(&daemon, Node::main("root").working().name("omp"));
+    wait_until(cx, "one agent working again", |cx| working(cx) == 1);
+    assert!(drawn(&view, cx, "working"));
+    cx.dispatch_action(daemon_actions::Stop);
+    cx.run_until_parked();
+    wait_until(cx, "the Stop confirmation", |cx| {
+        view.read_with(cx, |wb, _| wb.modal_open())
+    });
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
+    wait_until(cx, "the daemon to stop", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.daemon_stopped() && wb.daemon_busy().is_none()
+        })
+    });
+    assert_eq!(working(cx), 0);
+    assert!(
+        !drawn(&view, cx, "working"),
+        "no count while the daemon is stopped"
+    );
 }
 
 // ---- the presets' bars -----------------------------------------------------------------------
