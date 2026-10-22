@@ -236,6 +236,33 @@ the formula intentionally does not invent an SPDX identifier) and review
 dependency redistribution obligations. Developer ID signing and notarization
 remain open distribution decisions (ADR 0007/0008).
 
+## When the daemon does not start (troubleshooting)
+
+A `hutand` that cannot start says why in three places (architecture.md § Start errors):
+its log (`hutand.log`, the whole error chain), a small record next to the socket
+(`hutand-start-error.json`) and, when the app or the CLI started it, what it printed
+(`hutand-start.log` next to `hutand.log`). The app shows the reason in one line under the
+title bar, in the daemon popover and in the *Daemon* menu; `hutan daemon start` prints it and
+exits non-zero; `hutan daemon status` adds it while the daemon is down; `hutan daemon why`
+prints the record and the ends of both logs.
+
+- **Data from a newer Hutan (downgrades).** Migrations only go forward: a database written by
+  a newer Hutan is refused, never rewritten ("Your Hutan data was written by a newer Hutan
+  (database version 13; this build reads up to 12). Update Hutan: `brew upgrade --cask
+  hutan`."). Updating is the fix. If the newer version is gone for good, *Start with Empty
+  Data…* (app) or `hutan daemon reset-data --yes` (CLI) moves `hutan.db` and its `-wal`/`-shm`
+  into `backups/hutan-<ms>-v<found>-newer.db` next to it and starts with empty data: no
+  workspaces, sessions or chats. Nothing is deleted, pruning of the migration backups never
+  touches these files, and a newer Hutan can open the moved database again (move it back to
+  `hutan.db` while no daemon runs). Both refuse while a daemon holds the lock.
+- **Another `hutand` holds the lock but does not answer.** The record names its pid. The app
+  offers *Show the Process* (pid and executable) and *Stop It…* (SIGTERM to exactly that pid,
+  after a confirmation, only if it is a `hutand`), then starts a new daemon. From a terminal:
+  `hutan daemon why`, then `kill <pid>`.
+- **Anything else** (a socket path that is too long, permissions, a migration error, a broken
+  `daemon.toml`): the message, *Open Logs* and *Copy Details* in the app; `hutan daemon why`
+  in a terminal.
+
 ## What is still open
 
 - The Keychain behavior across rebuilds.

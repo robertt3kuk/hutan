@@ -264,11 +264,22 @@ Implemented by `hutan_client::Connection` (M2.2): one `hutan-client` thread with
 | What | Path |
 |---|---|
 | Socket, lock | `~/Library/Application Support/Hutan/hutand.sock`, `hutand.lock` |
-| Database | `~/Library/Application Support/Hutan/hutan.db` |
+| Start-error record | `hutand-start-error.json` next to the socket (§ Start errors) |
+| Database | `~/Library/Application Support/Hutan/hutan.db` (moved-aside data in `backups/`) |
 | Desktop UI state | `~/Library/Application Support/Hutan/desktop-state.json` |
-| Logs | `~/Library/Logs/Hutan/hutand.log`, `desktop.log` |
+| Logs | `~/Library/Logs/Hutan/hutand.log`, `desktop.log`, `hutand-start.log` (stderr of the last autostart) |
 | Checkpoint private indexes | `~/Library/Application Support/Hutan/checkpoints/<repo>/<worktree>.index` (the snapshots themselves are refs and objects in the user's repository) |
-| Override for dev/tests | `HUTAN_HOME` (all of the above under one dir) |
+| Override for dev/tests | `HUTAN_HOME` (all of the above under one dir; logs in `logs/`) |
+
+## Start errors
+
+A daemon that cannot start has no protocol to say why in, so it says it outside (FX-DAEMON-START):
+
+- **`hutand`** (`crates/daemon/src/main.rs`, `start_error.rs`) writes every startup error to stderr, to `hutand.log` (`error!` with the whole chain) and to `hutand-start-error.json` next to the socket, atomically: `{at_ms, pid, version, kind, message}` with `kind` = `schema_too_new` (+ `found`, `supported`, `db`), `already_running` (+ `holder_pid` from the lock file, `lock`) or `other`. A successful start removes it, and so does a normal stop (a record written meanwhile came from a start that found this daemon's lock). Errors after the start are logged, not recorded. Log lines go to stderr only while starting; once serving, a stderr that is not a terminal gets nothing, and never more than 64 KiB.
+- **Autostart** (`hutan-client`, `client.rs` `dial`) points the child's stderr at `hutand-start.log` (in the log directory: `~/Library/Logs/Hutan` for the standard socket, `logs/` next to any other; truncated per start) and keeps the child: exiting with a failure ends the wait at once; exit 0 or 2 (another daemon holds the lock) keeps waiting for the socket. A child that fails, or a wait that times out (15 s), returns `ClientError::DaemonStart(StartFailure)`: the record if this child wrote it (`at_ms` not before the spawn), else the stderr tail, and the outcome. `StartFailure` (`start_failure.rs`) is the one type every client uses; `sentence()` is the one sentence they show.
+- **`Connection`** publishes it as `StoreState::daemon_start`: an autostart's failure as is; on any other unreachable dial (held autostart, launchd's daemon, the autostart interval) the record on disk. Cleared on connect. `Connection::start_daemon_now` starts again without waiting for the interval.
+- **Clients.** The desktop shows the sentence under the title bar, in the daemon popover and the *Daemon* menu, with the action of its kind (`workbench/start_failure.rs`); the CLI prints it from every autostart (exit 3), and `hutan daemon status` / `hutan daemon why` read the record.
+- **Start with empty data** (`move_data_aside`, user-only: the app's confirmed action or `hutan daemon reset-data --yes`): under the daemon's lock (so it refuses while a daemon runs and none can start halfway) the database the record names, with its `-wal`/`-shm`, moves to `backups/hutan-<ms>-v<found>-newer.db` (else `hutan-<ms>-reset.db`); nothing is deleted and migration-backup pruning ignores these names. Downgrade migrations do not exist.
 
 ## Extensibility path
 - External clients use the published JSON Schema (`protocol` → `xtask schema`).
