@@ -285,7 +285,7 @@ Rollups: session → workspace header (requests only) → sidebar groups (*Reque
 
 - **Chrome**: transparent titlebar with inset traffic lights over the `sidebar` color; light/dark follows macOS unless pinned (`appearance = "system" | "light" | "dark"`). The accent is the brand orange, not the system accent.
 - **Themes** (ADR 0018, `docs/themes.md`): a color pack is a data-only TOML file (`theme.toml`) that drives chrome tokens, the terminal palette, state and diff roles, the code editor (`editor.*` surface roles and the 22 `syntax.*` token colors, all derived when a pack omits them; E-4), fonts, density and effects; the built-in `hutan-light` and `hutan-dark` are packs parsed by the same loader as the user's own in `<data dir>/themes/`. `appearance.appearance` keeps choosing light or dark; `appearance.light_theme` / `appearance.dark_theme` choose the pack of each. The desktop reports the active terminal colors to the daemon so OSC 10/11 replies match what the user sees, once per committed theme change.
-- **Motion**: ≤ 150 ms ease-out for hover, popovers and expanding cards; no motion on terminal content; respects Reduce Motion.
+- **Motion**: smooth, short, never in the way (§ Motion): 100 / 150 / 200 ms tokens, ease-out, no motion on terminal content, typing or keyboard actions; Reduce Motion is live.
 
 ## Settings
 
@@ -323,6 +323,7 @@ appearance = "system"          # system | light | dark (pre-v2 files call this k
 light_theme = "hutan-light"    # color pack of light windows (docs/themes.md)
 dark_theme = "hutan-dark"      # color pack of dark windows
 icon_theme = "phosphor"        # independent monochrome icon pack (docs/themes.md § Icon packs)
+reduce_motion = "system"       # system | on | off: system follows macOS Reduce Motion live (§ Motion)
 
 [terminal]
 font_family = "Menlo"
@@ -874,12 +875,44 @@ With `editor.vim_mode` on, every field Vim runs in carries its mode in its key c
 
 A binding in `keymap.toml` wins over Vim on its key: that is how to give a ⌃ key to an action again, everywhere (no `context`) or only in one mode (`context = "… && vim_mode == insert"`). `editor.vim_mappings` changes what keys Vim reads; it never reaches past Vim to the window's bindings.
 
+## Motion (UX-MOTION)
+
+The user asked for "animations — just smooth". Evidence and the limits of GPUI: `docs/spikes/2026-10-22-ui-polish/motion.md`. The code is `workbench::ui::motion` (`crates/desktop/src/workbench/ui/motion.rs`); views never spell a duration or a curve.
+
+**Rules.** Motion explains a change of state and never delays input: nothing waits for it, a transition that is reversed mid-flight continues from the value on screen, and a settled transition requests no frames, so an idle window stays idle (`motion_gpui::motion_adds_frames_only_while_something_moves`). Exit is shorter than enter, every curve is an ease-out (no ease-in). GPUI has no transform: a slide is a margin offset of a floating surface, a collapse is a clipped height, a fade is `opacity`.
+
+**Never animated:** keyboard-initiated changes (a shortcut that opens a sheet, Escape that closes it: while the last input was a key, popovers, sheets, groups and chips change instantly; toasts and the hover colour are exempt, `Kind::follows_keyboard`), typing, scrolling content, terminal output and the block gutter (apart from its existing pulse), theme switches, the keyboard focus ring, context menus opening, and rows of busy virtualized lists (the sidebar, the Agents list, the chat transcript: a row that appears or folds changes the measured list, so tool cards, approval cards, the Finished group and sidebar groups stay instant).
+
+| Token | ms | Used by |
+|---|---|---|
+| `INSTANT` | 0 | keyboard actions, focus ring, context menus |
+| `FAST` | 100 | hover and pressed colour, popover close, tab close |
+| `BASE` | 150 | popover open, collapse, chips, sheet and toast close |
+| `SLOW` | 200 | sheet and toast enter |
+| `MAX` | 250 | ceiling, nothing uses it |
+
+| What moves | Enter | Exit | Curve | Travel | Reduce Motion |
+|---|---|---|---|---|---|
+| Hover and pressed fill (`motion::hover_fade`; the `ui::Button` component adopts it when UX-BUTTONS merges, rows keep their instant `hover` fill) | 100 | 100 | ease | none | colour fade stays (100) |
+| Popover, menu, picker, dropdown (`Kind::Popover`) | 150 | 100 | ease-out | 4 px | no slide, fade ≤ 150 |
+| Sheet and its scrim, modal, Start sheet, Settings, Rewind, Setup (`Kind::Sheet`) | 200 | 150 | drawer `cubic-bezier(0.32, 0.72, 0, 1)` in, ease-out out | 8 px | no slide, fade ≤ 150 |
+| Toast (`Kind::Toast`) | 200 | 150 | ease-out | 8 px | no slide, fade ≤ 150 |
+| Group that folds (`motion::expand`; the Start sheet's More rows) | 150 | 150 | ease-out | clipped height | instant |
+| Queue chip (`Kind::Chip`) | 150 | — | ease-out | none | fade ≤ 150 |
+| Tab closed with the × (`Kind::TabClose`) | — | 100 | ease-out | none | fade ≤ 100 |
+
+Exits need the owner to keep drawing what left: `motion::Presences` (overlays whose state survives their closing: the daemon popover, the recovery summary, the Start sheet's More rows), `motion::Ghost` (a toast, whose state is cleared at dismissal) and `Workbench::closing_tab`. Pickers, sheets and the palette drop their state when they close, so they leave instantly; queue chips leave instantly for the same reason.
+
+**Reduce Motion.** `appearance.reduce_motion = system | on | off` (default `system`). `system` is `NSWorkspace.accessibilityDisplayShouldReduceMotion`, read at start and again on every `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification`, so toggling it in System Settings takes effect in the running app; `HUTAN_REDUCE_MOTION=0|1` stands in for the system flag. The effective value is mirrored into GPUI (`cx.set_reduce_motion`) and read by the helpers, the agent and task pulses and the terminal's block gutter. Reduced: nothing slides or changes height, fades stay at most 150 ms, pulses are steady.
+
+**Tests.** `crates/desktop/tests/it/motion_gpui.rs` runs every motion on the test clock: it reaches its end state at the token duration, a reversal continues from the current value, Reduce Motion removes movement and caps fades, an exit is drawn for its duration and then not, a settled window adds no frames, typing lands while the sheet is still moving.
+
 ## Accessibility
 
 - All chrome reachable by keyboard; visible focus rings (system style).
 - State never conveyed by color alone: dot shape/fill + text subtitle.
 - VoiceOver labels for panels, panes, session rows; terminal content exposed later (M6 a11y pass).
-- Respect Reduce Motion, Increase Contrast.
+- Respect Reduce Motion (live, § Motion), Increase Contrast.
 
 ## Open design questions
 
