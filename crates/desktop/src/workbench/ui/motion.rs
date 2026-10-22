@@ -1063,32 +1063,29 @@ struct Pointer {
     pressed: Cell<bool>,
 }
 
-/// Fades the background of a button or row between `rest`, `hover` and `pressed` over 100 ms
-/// (the pointer state is tracked here; the element needs a stateful id). Keyboard focus is not
-/// part of it: the focus ring stays instant. `pressed` is optional: without it a press keeps the
-/// hover colour.
-///
-/// Call it last: `motion::hover_fade(id, element.on_click(..), rest, hover, None, window, cx)`.
-pub fn hover_fade<E>(
+/// Starts tracking the pointer over `element` (it needs a stateful id) and returns it with the
+/// transition value of [`tint`] it is at now: `0` at rest, `1` hovered, `2` pressed (only when
+/// `can_press`, else a press keeps the hover value). For a surface that is drawn by a child of
+/// the element that takes the pointer (an icon button's face inside its larger hit region); the
+/// owner feeds the value to [`transition`] on the child.
+pub fn track_pointer<E>(
     id: impl Into<ElementId>,
     element: E,
-    rest: Hsla,
-    hover: Hsla,
-    pressed: Option<Hsla>,
+    can_press: bool,
     window: &mut Window,
     cx: &mut App,
-) -> Transition<E>
+) -> (E, f32)
 where
-    E: IntoElement + Styled + InteractiveElement + StatefulInteractiveElement + 'static,
+    E: InteractiveElement + StatefulInteractiveElement,
 {
     let id = id.into();
     let view = window.current_view();
     let pointer = window
-        .use_keyed_state(id.clone(), cx, |_, _| Rc::new(Pointer::default()))
+        .use_keyed_state(id, cx, |_, _| Rc::new(Pointer::default()))
         .read(cx)
         .clone();
-    let target = match (pointer.hovered.get(), pointer.pressed.get(), pressed) {
-        (true, true, Some(_)) => 2.0,
+    let target = match (pointer.hovered.get(), pointer.pressed.get(), can_press) {
+        (true, true, true) => 2.0,
         (true, _, _) => 1.0,
         _ => 0.0,
     };
@@ -1112,6 +1109,29 @@ where
                 cx.notify(view);
             }
         });
+    (element, target)
+}
+
+/// Fades the background of a button or row between `rest`, `hover` and `pressed` over 100 ms
+/// (the pointer state is tracked here; the element needs a stateful id). Keyboard focus is not
+/// part of it: the focus ring stays instant. `pressed` is optional: without it a press keeps the
+/// hover colour.
+///
+/// Call it last: `motion::hover_fade(id, element.on_click(..), rest, hover, None, window, cx)`.
+pub fn hover_fade<E>(
+    id: impl Into<ElementId>,
+    element: E,
+    rest: Hsla,
+    hover: Hsla,
+    pressed: Option<Hsla>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Transition<E>
+where
+    E: IntoElement + Styled + InteractiveElement + StatefulInteractiveElement + 'static,
+{
+    let id = id.into();
+    let (element, target) = track_pointer(id.clone(), element, pressed.is_some(), window, cx);
     transition(
         ElementId::from((id, "hover")),
         Kind::Hover,

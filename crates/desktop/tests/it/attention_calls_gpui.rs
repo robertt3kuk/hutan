@@ -221,6 +221,29 @@ fn at_most_two_toasts_stay_five_seconds_and_a_hovered_one_waits(cx: &mut TestApp
 }
 
 #[gpui::test]
+fn a_dismissed_toast_is_drawn_for_its_exit_and_then_not(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, ids) = open(cx, &daemon, &["shown", "b"]);
+    blocked(&daemon, ids[1]);
+    wait_until(cx, "the toast", |cx| toasts(&view, cx).len() == 1);
+    draw(cx);
+    let drawn = |cx: &mut VisualTestContext| {
+        draw(cx);
+        view.read_with(cx, |wb, _| wb.attention_toasts_drawn())
+    };
+    assert_eq!(drawn(cx), 1);
+
+    view.update(cx, |wb, cx| wb.dismiss_attention_toasts(cx));
+    assert!(toasts(&view, cx).is_empty());
+    assert_eq!(drawn(cx), 1, "it leaves over 150 ms, not at once");
+    cx.executor().advance_clock(Duration::from_millis(149));
+    assert_eq!(drawn(cx), 1);
+    cx.executor().advance_clock(Duration::from_millis(1));
+    assert_eq!(drawn(cx), 0, "gone once the exit is over");
+    drop(daemon);
+}
+
+#[gpui::test]
 fn escape_dismisses_the_toasts_and_review_opens_the_session(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx, ids) = open(cx, &daemon, &["shown", "b", "c"]);

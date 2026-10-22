@@ -17,7 +17,8 @@ use hutan_protocol::notify::{IntentKind, NotificationIntent};
 use super::model::LayoutPreset;
 use super::render::{key_hint, probe};
 use super::terminals::session_of_item;
-use super::ui::{self, StyledExt as _};
+use super::ui::motion::{self, PresentExt as _};
+use super::ui::{Button, IconButton, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::sessions::RequestCalled;
 use crate::sessions::calls::{self, Toast, ToastStack};
@@ -26,19 +27,28 @@ use crate::theme::DensityExt as _;
 /// The key context the root has while a toast shows: Escape dismisses the toasts then.
 pub const TOAST_CONTEXT: &str = "AttentionToast";
 
-/// The toasts on screen and the timer of the next one to go.
+/// The toasts on screen, the timer of the next one to go, and the ones on their way out.
 #[derive(Default)]
 pub struct AttentionToasts {
     stack: ToastStack,
     timer: Option<Task<()>>,
     /// Focus of the toasts' container; created with the first frame that shows one.
     focus: Option<gpui::FocusHandle>,
+    /// The toasts of the last frame: one missing from the next has left and is drawn for its
+    /// exit.
+    drawn: Vec<Toast>,
+    leaving: Vec<(Toast, motion::Presence)>,
 }
 
 impl Workbench {
     /// The toasts on screen, oldest first.
     pub fn attention_toasts(&self) -> Vec<Toast> {
         self.attention_toasts.stack.toasts().cloned().collect()
+    }
+
+    /// How many toasts the last frame drew: the ones on screen and the ones on their way out.
+    pub fn attention_toasts_drawn(&self) -> usize {
+        self.attention_toasts.drawn.len() + self.attention_toasts.leaving.len()
     }
 
     /// The focus of the toasts' container (`None` before one was shown): Escape dismisses the
@@ -207,13 +217,33 @@ impl Workbench {
         self.open_session(session, window, cx);
     }
 
-    /// The toasts, bottom right above the status bar. The newest is lowest.
+    /// The toasts, bottom right above the status bar. The newest is lowest. A toast that went
+    /// (dismissed, answered, expired, replaced) is drawn for its exit, without input.
     pub(crate) fn render_attention_toasts(
         &mut self,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if self.attention_toasts.stack.is_empty() {
+        let current: Vec<Toast> = self.attention_toasts.stack.toasts().cloned().collect();
+        let now = cx.background_executor().now();
+        for toast in std::mem::take(&mut self.attention_toasts.drawn) {
+            let gone = !current.iter().any(|t| t.id == toast.id);
+            let leaving = self
+                .attention_toasts
+                .leaving
+                .iter()
+                .any(|(t, _)| t.id == toast.id);
+            if gone && !leaving {
+                let mut presence = motion::Presence::new(true);
+                presence.set(false, motion::Kind::Toast, cx);
+                self.attention_toasts.leaving.push((toast, presence));
+            }
+        }
+        self.attention_toasts.leaving.retain(|(toast, presence)| {
+            presence.draws(now) && !current.iter().any(|t| t.id == toast.id)
+        });
+        self.attention_toasts.drawn = current.clone();
+        if current.is_empty() && self.attention_toasts.leaving.is_empty() {
             return None;
         }
         let (theme, tokens) = (self.theme, self.density.ui());
@@ -224,46 +254,56 @@ impl Workbench {
             .clone();
         let review_key: SharedString =
             key_hint(window, &super::actions::ReviewRequest).unwrap_or_else(|| "".into());
-        let toasts: Vec<Toast> = self.attention_toasts.stack.toasts().cloned().collect();
-        let rows: Vec<AnyElement> = toasts
+        let regions = self.regions.clone();
+        // Live toasts first by their place in the stack (the probes index them), then the ones
+        // that leave; every row keeps its own element id, so a row's motion survives the others.
+        let mut shown: Vec<(Toast, Option<usize>)> = current
             .into_iter()
             .enumerate()
-            .map(|(index, toast)| {
+            .map(|(index, toast)| (toast, Some(index)))
+            .collect();
+        shown.extend(
+            self.attention_toasts
+                .leaving
+                .iter()
+                .map(|(toast, _)| (toast.clone(), None)),
+        );
+        shown.sort_by_key(|(toast, _)| toast.id);
+        let rows: Vec<AnyElement> = shown
+            .into_iter()
+            .map(|(toast, live)| {
                 let id = toast.id;
-                let mut review = ui::button(
-                    format!("attn-toast-review-{id}"),
-                    "Review",
-                    ui::ButtonKind::Ghost,
-                    true,
+                let mut review =
+                    Button::new(format!("attn-toast-review-{id}"), "Review", &theme, &tokens)
+                        .ghost()
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let session = this
+                                .attention_toasts
+                                .stack
+                                .toasts()
+                                .find(|t| t.id == id)
+                                .map(|t| t.session);
+                            if let Some(session) = session {
+                                this.attention_toasts.stack.dismiss_session(session);
+                                this.arm_toast_timer(cx);
+                                this.open_session(session, window, cx);
+                            }
+                        }));
+                if !review_key.is_empty() {
+                    review = review.shortcut(review_key.clone());
+                }
+                let mut dismiss = IconButton::new(
+                    format!("attn-toast-dismiss-{id}"),
+                    crate::icons::Icon::ActionClose,
+                    "Dismiss",
                     &theme,
                     &tokens,
                 )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    let session = this
-                        .attention_toasts
-                        .stack
-                        .toasts()
-                        .find(|t| t.id == id)
-                        .map(|t| t.session);
-                    if let Some(session) = session {
-                        this.attention_toasts.stack.dismiss_session(session);
-                        this.arm_toast_timer(cx);
-                        this.open_session(session, window, cx);
-                    }
-                }))
-                .child(probe(
-                    &self.regions,
-                    Region::AttentionToast(index, "review"),
-                ));
-                if !review_key.is_empty() {
-                    review = review.child(ui::key_hint(
-                        review_key.clone(),
-                        ui::ButtonKind::Ghost,
-                        &theme,
-                        &tokens,
-                    ));
-                }
-                div()
+                .compact()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.dismiss_attention_toast(id, cx);
+                }));
+                let mut row = div()
                     .id(("attn-toast", id as usize))
                     .flex()
                     .items_center()
@@ -271,32 +311,25 @@ impl Workbench {
                     .popover(&theme, &tokens)
                     .px(px(tokens.spacing * 3.0))
                     .py(px(tokens.spacing * 2.0))
-                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                        this.toast_hover(id, *hovered, cx);
-                    }))
-                    .child(SharedString::from(toast.text))
-                    .child(review)
-                    .child(
-                        div()
-                            .id(("attn-toast-dismiss", id as usize))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(tokens.font_size + 4.0))
-                            .rounded(px(tokens.radius))
-                            .cursor_pointer()
-                            .text_color(theme.muted)
-                            .hover(move |s| s.bg(theme.surface_hover).text_color(theme.fg))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.dismiss_attention_toast(id, cx);
-                            }))
-                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
-                            .child(probe(
-                                &self.regions,
-                                Region::AttentionToast(index, "dismiss"),
-                            )),
+                    .child(SharedString::from(toast.text));
+                if let Some(index) = live {
+                    review = review.child(probe(&regions, Region::AttentionToast(index, "review")));
+                    dismiss =
+                        dismiss.child(probe(&regions, Region::AttentionToast(index, "dismiss")));
+                    row = row
+                        .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                            this.toast_hover(id, *hovered, cx);
+                        }))
+                        .child(probe(&regions, Region::AttentionToast(index, "toast")));
+                }
+                row.child(review)
+                    .child(dismiss)
+                    .presented(
+                        ("attn-toast-motion", id as usize),
+                        motion::Kind::Toast,
+                        live.is_some(),
+                        motion::Slide::Rise,
                     )
-                    .child(probe(&self.regions, Region::AttentionToast(index, "toast")))
                     .into_any_element()
             })
             .collect();

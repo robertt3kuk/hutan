@@ -485,6 +485,96 @@ fn a_hover_fade_runs_for_100_ms_after_the_pointer_moves_and_then_rests(cx: &mut 
     assert_eq!(frame(cx), 0, "arrived: no more frames");
 }
 
+/// `ui::Button` and `ui::IconButton` fade their fill like [`Fader`] (UX-BUTTONS): the pointer
+/// moves the transition, which stops asking for frames once it arrived.
+struct ButtonFader;
+
+impl Render for ButtonFader {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        use hutan_desktop::theme::DensityExt as _;
+        let theme = hutan_desktop::theme::Theme::dark();
+        let tokens = hutan_desktop::theme::Density::Compact.ui();
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div().h(px(40.0)).child(
+                    hutan_desktop::workbench::ui::Button::new(
+                        "fade-button",
+                        "Save",
+                        &theme,
+                        &tokens,
+                    )
+                    .on_click(|_, _, _| {}),
+                ),
+            )
+            .child(
+                div().h(px(40.0)).child(
+                    hutan_desktop::workbench::ui::IconButton::new(
+                        "fade-icon",
+                        hutan_desktop::icons::Icon::ActionClose,
+                        "Close",
+                        &theme,
+                        &tokens,
+                    )
+                    .on_click(|_, _, _| {}),
+                ),
+            )
+    }
+}
+
+/// Moves the pointer off the buttons, lets the fade out finish, moves it onto the one at `y` and
+/// checks the fade in: more frames than at rest while it runs, the frames of rest once it
+/// arrived within 100 ms. The icon button's glyph holds one frame callback per paint (the
+/// raster cache keeps its image until the next frame), so rest is measured, not assumed zero.
+fn fade_cycle(cx: &mut TestAppContext, reduced: bool, y: f32) {
+    set_reduce(cx, reduced);
+    let (_view, cx) = cx.add_window_view(|_, _| ButtonFader);
+    frame(cx);
+    cx.simulate_mouse_move(
+        gpui::point(px(500.0), px(300.0)),
+        None,
+        gpui::Modifiers::none(),
+    );
+    frame(cx);
+    advance(cx, Duration::from_millis(150));
+    frame(cx);
+    frame(cx);
+    frame(cx);
+    let rest = frame(cx);
+    assert_eq!(frame(cx), rest, "at rest the frames do not change");
+    cx.simulate_mouse_move(gpui::point(px(10.0), px(y)), None, gpui::Modifiers::none());
+    frame(cx);
+    assert!(frame(cx) > rest, "the fill is fading in");
+    advance(cx, Duration::from_millis(100));
+    frame(cx);
+    frame(cx);
+    assert_eq!(frame(cx), rest, "arrived within 100 ms");
+}
+
+#[gpui::test]
+fn a_button_fades_over_100_ms_and_then_rests(cx: &mut TestAppContext) {
+    fade_cycle(cx, false, 20.0);
+}
+
+#[gpui::test]
+fn an_icon_button_fades_over_100_ms_and_then_rests(cx: &mut TestAppContext) {
+    fade_cycle(cx, false, 60.0);
+}
+
+#[gpui::test]
+fn a_button_fade_is_still_a_fade_of_at_most_100_ms_under_reduce_motion(cx: &mut TestAppContext) {
+    fade_cycle(cx, true, 20.0);
+}
+
+#[gpui::test]
+fn an_icon_button_fade_is_still_a_fade_of_at_most_100_ms_under_reduce_motion(
+    cx: &mut TestAppContext,
+) {
+    fade_cycle(cx, true, 60.0);
+}
+
 // ---- the places that move, in a workbench -----------------------------------------------------
 
 mod places {

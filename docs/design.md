@@ -308,7 +308,7 @@ Every button of the desktop is a `ui::Button` (text, optional leading icon and s
 
 - **Hierarchy**: one primary per surface and it is the default commit of that surface; everything else is secondary or ghost. The primary goes last (trailing) in a row of buttons, Cancel first. Return runs the default, Escape the cancel; a **destructive** confirm is never the default (Return cancels it) and never accent-colored.
 - **Sizes**: default 28 px (`control.height`: forms, dialogs, empty states, page headers) and compact 24 px (`button.height-compact`: bars, panel headers, rows, cards). An icon button's hit region is 28 px (24 compact) around a 16 px glyph; `.round()` makes the composer's circles.
-- **States**: rest, hover and pressed fills (`button.*` tokens), keyboard focus ring (only after the keyboard moved focus; a `Button` with a focus handle is a Tab stop and Return or Space click it), disabled (opacity 0.45, default cursor, no hover, no click: a disabled button explains itself in its tooltip when it can), loading (a spinner replaces the leading icon, the width does not change, no click). `selected` / `toggled` is the `accent_soft` fill of the chosen one of a group (a filter, a dock shown).
+- **States**: rest, hover and pressed fills (`button.*` tokens; the fill fades over 100 ms, `motion::hover_fade`, and under Reduce Motion stays a fade of at most that), keyboard focus ring (only after the keyboard moved focus, instant; a `Button` with a focus handle is a Tab stop and Return or Space click it), disabled (opacity 0.45, default cursor, no hover, no click: a disabled button explains itself in its tooltip when it can), loading (a spinner replaces the leading icon, the width does not change, no click). `selected` / `toggled` is the `accent_soft` fill of the chosen one of a group (a filter, a dock shown).
 - **Labels**: verb first, sentence case, no "OK" (`Start agent…`, `Copy command`, `Keep mine (overwrite)`); an ellipsis when the click opens something that asks for more. The native menu bar and the command palette keep Title Case, as macOS does.
 
 | Variant | Look | Where |
@@ -932,10 +932,10 @@ The user asked for "animations — just smooth". Evidence and the limits of GPUI
 
 | What moves | Enter | Exit | Curve | Travel | Reduce Motion |
 |---|---|---|---|---|---|
-| Hover and pressed fill (`motion::hover_fade`; the `ui::Button` component adopts it when UX-BUTTONS merges, rows keep their instant `hover` fill) | 100 | 100 | ease | none | colour fade stays (100) |
+| Hover and pressed fill (`motion::hover_fade`; `ui::Button` fades its fill, `ui::IconButton` fades the fill of its face through `motion::track_pointer`; rows keep their instant `hover` fill) | 100 | 100 | ease | none | colour fade stays (100) |
 | Popover, menu, picker, dropdown (`Kind::Popover`) | 150 | 100 | ease-out | 4 px | no slide, fade ≤ 150 |
 | Sheet and its scrim, modal, Start sheet, Settings, Rewind, Setup (`Kind::Sheet`) | 200 | 150 | drawer `cubic-bezier(0.32, 0.72, 0, 1)` in, ease-out out | 8 px | no slide, fade ≤ 150 |
-| Toast (`Kind::Toast`) | 200 | 150 | ease-out | 8 px | no slide, fade ≤ 150 |
+| Toast (`Kind::Toast`) — the close and restore toasts and each of the attention toasts, which leave one by one | 200 | 150 | ease-out | 8 px | no slide, fade ≤ 150 |
 | Group that folds (`motion::expand`; the Start sheet's More rows) | 150 | 150 | ease-out | clipped height | instant |
 | Queue chip (`Kind::Chip`) | 150 | — | ease-out | none | fade ≤ 150 |
 | Tab closed with the × (`Kind::TabClose`) | — | 100 | ease-out | none | fade ≤ 100 |

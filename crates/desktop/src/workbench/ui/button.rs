@@ -24,7 +24,7 @@ use gpui::{
     canvas, div, point, prelude::FluentBuilder as _, px,
 };
 
-use super::{FocusRingExt as _, StyledExt as _};
+use super::{FocusRingExt as _, StyledExt as _, motion};
 use crate::icons::Icon;
 use crate::theme::{Theme, Tokens, metrics, pill_radius};
 use crate::workbench::style::TextTooltip;
@@ -288,7 +288,7 @@ impl ParentElement for Button {
 }
 
 impl RenderOnce for Button {
-    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
             id,
             label,
@@ -340,6 +340,7 @@ impl RenderOnce for Button {
             (pad - 2.0).clamp(6.0, 10.0)
         };
         let spinner_id = (id.clone(), "spinner");
+        let fade_id = id.clone();
 
         let mut button = div()
             .id(id)
@@ -372,11 +373,7 @@ impl RenderOnce for Button {
                 .when(kind == ButtonKind::Destructive, |s| {
                     s.border_1().border_color(theme.danger)
                 })
-                .when(!inert, |s| {
-                    s.cursor_pointer()
-                        .hover(move |s| s.bg(hover))
-                        .active(move |s| s.bg(pressed))
-                }),
+                .when(!inert, |s| s.cursor_pointer()),
         };
         if block {
             button = button.w_full();
@@ -400,7 +397,7 @@ impl RenderOnce for Button {
             button = button.on_click(handler);
         }
         let leading_icon = icon.is_some();
-        button
+        let button = button
             .when(loading && leading_icon, |s| {
                 s.child(spinner(spinner_id.clone(), 14.0, text))
             })
@@ -435,7 +432,19 @@ impl RenderOnce for Button {
                 )
             })
             .children(children)
-            .focus_ring(focused && kind != ButtonKind::Link, &theme, &tokens)
+            .focus_ring(focused && kind != ButtonKind::Link, &theme, &tokens);
+        // The fill fades between rest, hover and pressed over 100 ms (`motion::hover_fade`; a
+        // link underlines instead, an inert button has no hover at all).
+        if kind == ButtonKind::Link || inert {
+            return button.into_any_element();
+        }
+        let rest_fill = match kind {
+            ButtonKind::Primary => theme.accent,
+            _ if selected => theme.accent_soft,
+            _ => Hsla { a: 0.0, ..hover },
+        };
+        motion::hover_fade(fade_id, button, rest_fill, hover, Some(pressed), window, cx)
+            .into_any_element()
     }
 }
 
@@ -566,7 +575,7 @@ impl ParentElement for IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
             id,
             icon,
@@ -618,41 +627,13 @@ impl RenderOnce for IconButton {
             ),
         };
         let rest = if toggled { theme.fg } else { rest };
-        let group: SharedString = format!("icon-button-{id}").into();
         let spinner_id = (id.clone(), "spinner");
+        let pointer_id = id.clone();
+        let hover_id = (id.clone(), "face-hover");
         let radius = if round { pill_radius() } else { tokens.radius };
 
-        let mut face = div()
-            .id((id.clone(), "face"))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .size(px(hit - 2.0 * inset))
-            .rounded(px(radius))
-            .text_color(rest)
-            .when(kind == ButtonKind::Primary, |s| s.bg(theme.accent))
-            .when(kind == ButtonKind::Secondary && !toggled, |s| {
-                s.outlined(&theme, &tokens).rounded(px(radius))
-            })
-            .when(toggled && kind != ButtonKind::Primary, |s| {
-                s.bg(theme.accent_soft)
-            })
-            .when(!inert, |s| {
-                s.group_hover(group.clone(), move |s| s.bg(hover).text_color(hover_text))
-                    .group_active(group.clone(), move |s| s.bg(pressed))
-            });
-        if kind == ButtonKind::Destructive {
-            face = face.border_1().border_color(theme.danger);
-        }
-        let face = face
-            .when(loading, |s| s.child(spinner(spinner_id, glyph, rest)))
-            .when(!loading, |s| s.child(crate::icons::sized(icon, glyph)))
-            .children(children);
-
         let mut button = div()
-            .id(id)
-            .group(group)
+            .id(id.clone())
             .flex_none()
             .flex()
             .items_center()
@@ -674,6 +655,57 @@ impl RenderOnce for IconButton {
         if !inert && let Some(handler) = on_click {
             button = button.on_click(handler);
         }
+        // The pointer is taken by the whole hit region; the fill of its face (2 px inside)
+        // fades between rest, hover and pressed over 100 ms (`motion::track_pointer`).
+        let (button, pointer) = if inert {
+            (button, 0.0)
+        } else {
+            motion::track_pointer(pointer_id, button, true, window, cx)
+        };
+
+        let mut face = div()
+            .id((id, "face"))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(hit - 2.0 * inset))
+            .rounded(px(radius))
+            .text_color(rest)
+            .when(kind == ButtonKind::Primary, |s| s.bg(theme.accent))
+            .when(kind == ButtonKind::Secondary && !toggled, |s| {
+                s.outlined(&theme, &tokens).rounded(px(radius))
+            })
+            .when(toggled && kind != ButtonKind::Primary, |s| {
+                s.bg(theme.accent_soft)
+            });
+        if kind == ButtonKind::Destructive {
+            face = face.border_1().border_color(theme.danger);
+        }
+        let face = face
+            .when(loading, |s| s.child(spinner(spinner_id, glyph, rest)))
+            .when(!loading, |s| s.child(crate::icons::sized(icon, glyph)))
+            .children(children);
+        let face = if inert {
+            face.into_any_element()
+        } else {
+            let rest_fill = match kind {
+                ButtonKind::Primary => theme.accent,
+                _ if toggled => theme.accent_soft,
+                _ => Hsla { a: 0.0, ..hover },
+            };
+            motion::transition(
+                hover_id,
+                motion::Kind::Hover,
+                pointer,
+                face,
+                move |face, frame| {
+                    face.bg(motion::tint(frame.value, rest_fill, hover, Some(pressed)))
+                        .text_color(motion::mix(rest, hover_text, frame.value.min(1.0)))
+                },
+            )
+            .into_any_element()
+        };
         button.child(face).focus_ring(focused, &theme, &tokens)
     }
 }
