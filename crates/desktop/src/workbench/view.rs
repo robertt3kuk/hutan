@@ -623,6 +623,10 @@ pub struct Workbench {
     pub(crate) modal_return: Option<gpui::WeakFocusHandle>,
     pub(crate) sheet: Option<SettingsSheet>,
     pub(crate) resizing: Option<Resizing>,
+    /// The scroll of each pane's tab strip, and which tab the strip was last scrolled to show
+    /// (`(active index, tabs)`): a changed active tab or tab count scrolls it into view once.
+    pub(crate) tab_scrolls: std::collections::HashMap<PaneId, gpui::ScrollHandle>,
+    pub(crate) tab_revealed: std::collections::HashMap<PaneId, (usize, usize)>,
     /// What the window itself does to the side docks: the transient auto-collapse
     /// (`layout.auto_collapse`), never saved.
     pub(crate) responsive: Responsive,
@@ -1150,6 +1154,8 @@ impl Workbench {
             modal_return: None,
             sheet: None,
             resizing: None,
+            tab_scrolls: std::collections::HashMap::new(),
+            tab_revealed: std::collections::HashMap::new(),
             responsive: Responsive::default(),
             dock_modes_seen,
             dock_focus,

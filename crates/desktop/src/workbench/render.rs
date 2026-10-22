@@ -36,6 +36,10 @@ const HANDLE_THICKNESS: f32 = 6.0;
 /// Room above a center pane's tabs in their strip; a tab reaches the strip's bottom, so the
 /// active one is connected to its pane.
 const TAB_TOP_INSET: f32 = 6.0;
+/// A tab's title is cut with an ellipsis beyond this width (the tooltip has it in full).
+const TAB_TITLE_MAX: f32 = 180.0;
+/// A title this long is likely cut, so its tab gets the title as a tooltip when it has none.
+const TAB_TITLE_TOOLTIP_CHARS: usize = 20;
 
 /// How a tab of a center pane is drawn (CL-CHROME). The strip is chrome (`sidebar`); the active
 /// tab is a `bg` fill connected to its pane; the other tabs have no fill (a hover fill only).
@@ -1731,6 +1735,14 @@ impl Workbench {
         let focused = self.state.focus == FocusTarget::Pane(pane_id);
         let dragging = cx.has_active_drag();
 
+        // Every activation (and every new tab) brings the active tab into view; a strip the
+        // user scrolled by hand stays where it is until then.
+        let tab_scroll = self.tab_scrolls.entry(pane_id).or_default().clone();
+        let reveal = (pane.active, pane.items.len());
+        if self.tab_revealed.get(&pane_id) != Some(&reveal) {
+            self.tab_revealed.insert(pane_id, reveal);
+            tab_scroll.scroll_to_item(pane.active);
+        }
         let tabs: Vec<AnyElement> = pane
             .items
             .iter()
@@ -1763,45 +1775,62 @@ impl Workbench {
                     .h(px(1.0))
                     .bg(theme.border),
             )
-            .children(tabs)
             .child(
                 div()
-                    .id(id(format!("pane-strip-filler-{pane_id}")))
+                    .id(id(format!("pane-strip-scroll-{pane_id}")))
+                    .flex()
                     .flex_1()
+                    .min_w_0()
+                    .items_end()
                     .h_full()
-                    .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.18)))
-                    .on_drop({
-                        let append = pane.items.len();
-                        cx.listener(move |this, d: &DraggedItem, window, cx| {
-                            this.drop_item(
-                                d,
-                                DropTarget::Pane {
-                                    pane: pane_id,
-                                    index: append,
-                                },
-                                window,
-                                cx,
-                            );
-                        })
-                    })
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            let entries = vec![
-                                Workbench::entry("Split Right", move |this, window, cx| {
-                                    this.split_pane_with_terminal(pane_id, Edge::Right, window, cx);
-                                }),
-                                Workbench::entry("Split Down", move |this, window, cx| {
-                                    this.split_pane_with_terminal(
-                                        pane_id,
-                                        Edge::Bottom,
+                    .gap(px(2.0))
+                    .overflow_x_scroll()
+                    .track_scroll(&tab_scroll)
+                    .children(tabs)
+                    .child(
+                        div()
+                            .id(id(format!("pane-strip-filler-{pane_id}")))
+                            .flex_1()
+                            .h_full()
+                            .drag_over::<DraggedItem>(move |s, _, _, _| s.bg(accent.opacity(0.18)))
+                            .on_drop({
+                                let append = pane.items.len();
+                                cx.listener(move |this, d: &DraggedItem, window, cx| {
+                                    this.drop_item(
+                                        d,
+                                        DropTarget::Pane {
+                                            pane: pane_id,
+                                            index: append,
+                                        },
                                         window,
                                         cx,
                                     );
+                                })
+                            })
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                    let entries = vec![
+                                        Workbench::entry("Split Right", move |this, window, cx| {
+                                            this.split_pane_with_terminal(
+                                                pane_id,
+                                                Edge::Right,
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                        Workbench::entry("Split Down", move |this, window, cx| {
+                                            this.split_pane_with_terminal(
+                                                pane_id,
+                                                Edge::Bottom,
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                    ];
+                                    this.open_menu(event.position, entries, window, cx);
                                 }),
-                            ];
-                            this.open_menu(event.position, entries, window, cx);
-                        }),
+                            ),
                     ),
             );
 
@@ -1928,7 +1957,10 @@ impl Workbench {
         let hover = theme.sidebar_hover;
         let look = TabLook::of(&theme, active, pane_focused);
         let (icon, title) = self.item_icon_and_title(item, cx);
-        let tab_tip = self.item_tooltip(item, cx).map(SharedString::from);
+        let tab_tip = self
+            .item_tooltip(item, cx)
+            .map(SharedString::from)
+            .or_else(|| (title.chars().count() > TAB_TITLE_TOOLTIP_CHARS).then(|| title.clone()));
         let agent_badge =
             session_of_item(item).map(|id| (id, self.sessions.read(cx).agent_badge(id)));
         // One attention mark per tab: the agent badge's warning glyph already says "blocked",
@@ -2022,7 +2054,7 @@ impl Workbench {
                 );
             }))
             .child(crate::icons::glyph(icon))
-            .child(title)
+            .child(div().max_w(px(TAB_TITLE_MAX)).truncate().child(title))
             .children(badge)
             .children(attention.map(|p| {
                 div()
