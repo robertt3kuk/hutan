@@ -481,6 +481,7 @@ impl ChangesView {
                         this.refresh_error = None;
                         this.refresh_patches(cx);
                         this.review_listed(cx);
+                        this.refill_finish(cx);
                     }
                     Err(error) if !replace && matches!(this.listing, Listing::Ready(_)) => {
                         this.refresh_error = Some(error);

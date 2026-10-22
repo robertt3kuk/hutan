@@ -1691,9 +1691,7 @@ fn the_scope_says_what_a_merge_takes_and_commit_all_brings_the_rest(cx: &mut Tes
 }
 
 #[gpui::test]
-fn finishing_takes_the_task_title_commits_the_rest_and_marks_the_task_merged(
-    cx: &mut TestAppContext,
-) {
+fn finishing_names_the_files_commits_the_rest_and_marks_the_task_merged(cx: &mut TestAppContext) {
     let env = Env::new();
     let (task, wt) = awaiting_task(&env, "Fix login");
     let (view, cx) = open(cx, &env);
@@ -1702,10 +1700,11 @@ fn finishing_takes_the_task_title_commits_the_rest_and_marks_the_task_merged(
         changes.read_with(cx, |c, cx| c.can_review(cx))
     });
     finish_locally(&view, cx, &changes);
-    // The message starts as the task's title, and stays editable.
+    // The message starts as what the merge delivers in git's words (a.txt changed, b.txt and
+    // untracked.txt new: three files), then the task whose run changed them, and stays editable.
     assert_eq!(
         changes.read_with(cx, |c, _| c.finish_message()),
-        Some("Fix login".to_owned())
+        Some("Update 3 files\n\nTask: Fix login".to_owned())
     );
     click(&view, cx, Region::Changes("finish-confirm"));
     wait_until(cx, "the merge result", |cx| {
@@ -1714,11 +1713,11 @@ fn finishing_takes_the_task_title_commits_the_rest_and_marks_the_task_merged(
     let merged = changes.read_with(cx, |c, _| c.merged().cloned().unwrap());
     assert!(
         !merged.source_dirty,
-        "untracked.txt was committed with the task's title before the merge"
+        "untracked.txt was committed with the message before the merge"
     );
     assert_eq!(
         git_out(&wt, &["log", "-1", "--format=%s"]).trim(),
-        "Fix login"
+        "Update 3 files"
     );
 
     // The task is merged, with the commit the merge made.
@@ -2042,16 +2041,14 @@ fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAp
         })
     });
 
-    // Finish: the message is the chat that edited files; the work is merged and nothing waits.
+    // Finish: the subject says what changed (a.txt edited, b.txt new), the body the chat that
+    // edited them — never the one that only looked; the work is merged and nothing waits.
     let changes = open_changes(&view, cx, &env.root);
     click(&view, cx, Region::Changes("finish"));
+    let title = sessions.read_with(cx, |s, _| s.session(session).unwrap().title.clone());
     assert_eq!(
         changes.read_with(cx, |c, _| c.finish_message()),
-        Some("Change the greeting".to_owned())
-    );
-    assert_eq!(
-        changes.read_with(cx, |c, _| c.finish_hint().map(str::to_owned)),
-        None
+        Some(format!("Update a.txt and b.txt\n\nAgent: Codex — {title}"))
     );
     changes.update(cx, |c, cx| {
         c.set_finish_push(false, cx);

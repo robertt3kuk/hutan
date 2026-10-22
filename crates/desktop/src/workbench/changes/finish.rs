@@ -2,9 +2,10 @@
 //! action for both placements. A main checkout is committed (everything listed, untracked files
 //! included) and its branch pushed to its upstream; a worktree is committed, merged into the
 //! main checkout's branch with one of the three merge modes, and that branch pushed. The message
-//! starts as the title of the task whose turn changed files in the checkout most recently, with
-//! one line naming the others the commit delivers (never a chat that changed nothing), and
-//! stays editable; *Push* starts as `[finish] push` of `daemon.toml`.
+//! starts as what the commit changes, in git's own words (`Update app.py`, `Add todo.md`,
+//! `Update 4 files in src/`; FX-E2E2-A), with one body line per task whose turns changed files
+//! in the checkout (`Agent: OMP — Fix the greeting`, newest first; never a chat that changed
+//! nothing), and stays editable; *Push* starts as `[finish] push` of `daemon.toml`.
 //!
 //! The daemon does the work (`worktree.finish`) and answers step by step; the view shows one
 //! line per step with git's own reason when one failed (no upstream, a push that would not be a
@@ -16,13 +17,14 @@ use gpui::{
     MouseDownEvent, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div,
     prelude::*, px,
 };
-use hutan_core::{DeliveryState, SessionId, TaskRun};
+use hutan_core::{SessionId, TaskRun};
 use hutan_protocol::worktree::{
-    FinishCommit, FinishMerge, FinishPush, MergeStrategy, StepReason, StepStatus, WorktreeFinish,
-    WorktreeFinished, WorktreeMerged,
+    DiffFile, DiffStatus, FinishCommit, FinishMerge, FinishPush, MergeStrategy, StepReason,
+    StepStatus, WorktreeFinish, WorktreeFinished, WorktreeMerged,
 };
 
 use super::{ChangesEvent, ChangesView, Merged};
+use crate::sessions::presentation::harness_label;
 use crate::theme::{Theme, Tokens};
 use crate::workbench::chat::vim::{Outcome, Vim};
 use crate::workbench::chat::{Look, TextInput};
@@ -42,8 +44,8 @@ pub(super) struct FinishForm {
     /// How a worktree's branch is merged (ignored for a main checkout).
     strategy: MergeStrategy,
     message: TextInput,
-    /// The other work the commit delivers besides the one the message names.
-    hint: Option<String>,
+    /// What the message was prefilled with: until the user edits it, it follows the listing.
+    prefilled: String,
     /// Vim's modal state over the message (`editor.vim_mode`).
     vim: Vim,
     /// Push after committing (and merging).
@@ -64,6 +66,74 @@ fn files(n: u32) -> String {
         "1 file".to_owned()
     } else {
         format!("{n} files")
+    }
+}
+
+/// The subject of a Finish commit in git's own words, from the files it takes: `Update app.py`,
+/// `Update app.py and store.rs`, `Update 4 files in src/` (the directory they share, if any);
+/// `Add …` when every file is new (untracked), `Delete …` when every file goes. Empty without
+/// files.
+pub fn commit_subject(files: &[&DiffFile]) -> String {
+    let verb = if files.iter().all(|f| f.status == DiffStatus::Added) {
+        "Add"
+    } else if files.iter().all(|f| f.status == DiffStatus::Deleted) {
+        "Delete"
+    } else {
+        "Update"
+    };
+    let name = |file: &DiffFile| -> String {
+        file.path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&file.path)
+            .to_owned()
+    };
+    match files {
+        [] => String::new(),
+        [one] => format!("{verb} {}", name(one)),
+        [a, b] => {
+            let (first, second) = (name(a), name(b));
+            // Two files of the same name say where they are.
+            if first == second {
+                format!("{verb} {} and {}", a.path, b.path)
+            } else {
+                format!("{verb} {first} and {second}")
+            }
+        }
+        many => match common_dir(many.iter().map(|f| f.path.as_str())) {
+            Some(dir) => format!("{verb} {} files in {dir}/", many.len()),
+            None => format!("{verb} {} files", many.len()),
+        },
+    }
+}
+
+/// The directory every one of `paths` (`/`-separated, relative) is in; `None` at the top level.
+fn common_dir<'a>(paths: impl Iterator<Item = &'a str>) -> Option<String> {
+    let mut common: Option<Vec<&str>> = None;
+    for path in paths {
+        let mut dirs: Vec<&str> = path.split('/').collect();
+        dirs.pop();
+        common = Some(match common {
+            None => dirs,
+            Some(so_far) => so_far
+                .into_iter()
+                .zip(dirs)
+                .take_while(|(a, b)| a == b)
+                .map(|(a, _)| a)
+                .collect(),
+        });
+    }
+    common
+        .filter(|dirs| !dirs.is_empty())
+        .map(|dirs| dirs.join("/"))
+}
+
+/// A body line of the Finish message naming who made a change: `Agent: OMP — Fix the
+/// greeting` (the harness and the chat's title); `Task: <title>` when no harness is known.
+pub fn agent_line(harness: Option<&str>, title: &str) -> String {
+    match harness {
+        Some(harness) => format!("Agent: {harness} — {title}"),
+        None => format!("Task: {title}"),
     }
 }
 
@@ -225,13 +295,23 @@ impl ChangesView {
         self.finished.as_ref()
     }
 
-    /// What the message starts as, and the line naming the other work the commit delivers.
-    /// The message is the title of the task whose turn changed files here most recently (a
-    /// task's work is open only after a turn that changed files, FX-REVIEW): the task the view
-    /// was opened for or the worktree's branch names, or one whose chat ran in this checkout.
-    /// Never a chat that changed nothing. Without any, the title of an agent session working
-    /// here that ran no task (there is no evidence either way for it).
-    fn finish_prefill(&self, cx: &App) -> (String, Option<String>) {
+    /// What the message starts as: the subject names the files the commit takes
+    /// ([`commit_subject`]; a main checkout commits its uncommitted files, a worktree delivers
+    /// everything listed), and the body has one [`agent_line`] per task whose turns changed files
+    /// here, the most recent change first (a task's work is open only after a turn that changed
+    /// files, FX-REVIEW): the task the view was opened for or the worktree's branch names, or
+    /// one whose chat ran in this checkout. No model is asked.
+    fn finish_prefill(&self, cx: &App) -> String {
+        let listed = self.files();
+        let mut files: Vec<&DiffFile> = if self.can_merge() {
+            listed.iter().collect()
+        } else {
+            listed.iter().filter(|file| file.uncommitted).collect()
+        };
+        if files.is_empty() {
+            files = listed.iter().collect();
+        }
+        let subject = commit_subject(&files);
         let store = self.env.sessions.read(cx);
         let here = |session: SessionId| {
             store
@@ -240,39 +320,38 @@ impl ChangesView {
                 .is_some_and(|p| p.root == self.canonical || p.root == self.path)
         };
         let named = self.task(cx).map(|task| task.id);
-        let open = store.tasks().open_work(|task| {
-            Some(task.id) == named || task.sessions.iter().any(|session| here(*session))
-        });
-        if let Some((newest, others)) = open.split_first() {
-            let hint = (!others.is_empty()).then(|| {
-                let titles: Vec<&str> = others.iter().map(|task| task.title.as_str()).collect();
-                format!("Also changed here: {}", titles.join(", "))
-            });
-            return (newest.title.clone(), hint);
-        }
-        // The task of the view (a worktree's) whose work was delivered already, or a run that
-        // never says what it changed; a chat that changed nothing has nothing to name.
-        if let Some(task) = self.task(cx).filter(|task| {
-            task.delivery != DeliveryState::None || !matches!(task.run, Some(TaskRun::Chat { .. }))
-        }) {
-            return (task.title, None);
-        }
-        let untasked = store
-            .sessions()
-            .iter()
-            .filter(|s| {
-                s.agent.is_some() || s.chat.as_ref().is_some_and(|chat| !chat.is_assistant())
+        let lines: Vec<String> = store
+            .tasks()
+            .open_work(|task| {
+                Some(task.id) == named || task.sessions.iter().any(|session| here(*session))
             })
-            .filter(|s| here(s.id) && !store.tasks().ran_a_task(s.id))
-            .max_by_key(|s| s.created_at_ms)
-            .map(|s| s.title.clone());
-        (untasked.unwrap_or_default(), None)
-    }
-
-    /// The line under the message naming the other work the commit delivers, while the form
-    /// is open.
-    pub fn finish_hint(&self) -> Option<&str> {
-        self.finish.as_ref().and_then(|f| f.hint.as_deref())
+            .into_iter()
+            .map(|task| {
+                let session = task.sessions.last().and_then(|id| store.session(*id));
+                let agent = session
+                    .and_then(|s| {
+                        s.chat
+                            .as_ref()
+                            .map(|chat| chat.agent.clone())
+                            .or_else(|| s.agent.as_ref().map(|report| report.agent.clone()))
+                    })
+                    .or_else(|| match &task.run {
+                        Some(TaskRun::Chat { agent, .. }) => Some(agent.clone()),
+                        _ => None,
+                    });
+                // A chat's title is what the user called it (its first prompt, or a rename); a
+                // task that ran a command is named by the task.
+                let title = session
+                    .filter(|s| s.chat.is_some())
+                    .map_or(task.title.as_str(), |s| s.title.as_str());
+                agent_line(agent.as_deref().map(harness_label).as_deref(), title)
+            })
+            .collect();
+        if lines.is_empty() {
+            subject
+        } else {
+            format!("{subject}\n\n{}", lines.join("\n"))
+        }
     }
 
     // ---- actions --------------------------------------------------------------------------
@@ -284,13 +363,13 @@ impl ChangesView {
         }
         self.delivery.close();
         if self.finish.is_none() {
+            let prefilled = self.finish_prefill(cx);
             let mut message = TextInput::new();
-            let (prefill, hint) = self.finish_prefill(cx);
-            message.set(&prefill);
+            message.set(&prefilled);
             self.finish = Some(FinishForm {
                 strategy: MergeStrategy::Merge,
                 message,
-                hint,
+                prefilled,
                 vim: Vim::new(),
                 push: true,
                 push_chosen: false,
@@ -301,6 +380,25 @@ impl ChangesView {
         }
         window.focus(&self.message_focus, cx);
         cx.notify();
+    }
+
+    /// A new listing while the form is open: a message the user has not edited follows it (the
+    /// form may have opened before the files were listed).
+    pub(super) fn refill_finish(&mut self, cx: &App) {
+        if !self
+            .finish
+            .as_ref()
+            .is_some_and(|f| !f.running && f.message.text() == f.prefilled)
+        {
+            return;
+        }
+        let prefilled = self.finish_prefill(cx);
+        if let Some(form) = &mut self.finish
+            && form.prefilled != prefilled
+        {
+            form.message.set(&prefilled);
+            form.prefilled = prefilled;
+        }
     }
 
     /// Reads `[finish] push` so the form shows what the daemon will do.
@@ -600,17 +698,6 @@ impl ChangesView {
             )
             .child(probe(&self.env.regions, Region::Changes("finish-message"))),
         );
-        if let Some(also) = &form.hint {
-            body = body.child(
-                div()
-                    .relative()
-                    .text_color(theme.muted)
-                    .text_size(px(tokens.secondary_font_size))
-                    .truncate()
-                    .child(SharedString::from(also.clone()))
-                    .child(probe(&self.env.regions, Region::Changes("finish-hint"))),
-            );
-        }
         let push_target = if worktree { &target } else { &branch };
         body = body.child(
             div()
@@ -833,5 +920,79 @@ mod tests {
             step_lines(&local)[1].1,
             "Not pushed: push was off. The commit stays local."
         );
+    }
+
+    fn file(path: &str, status: DiffStatus) -> DiffFile {
+        DiffFile {
+            path: path.into(),
+            old_path: None,
+            status,
+            additions: 1,
+            deletions: 0,
+            binary: false,
+            committed: false,
+            uncommitted: true,
+            staged: false,
+            unstaged: true,
+        }
+    }
+
+    fn subject(files: &[DiffFile]) -> String {
+        commit_subject(&files.iter().collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn the_subject_names_what_the_commit_changes_in_gits_words() {
+        use DiffStatus::{Added, Deleted, Modified, Renamed};
+        assert_eq!(subject(&[]), "");
+        assert_eq!(subject(&[file("app.py", Modified)]), "Update app.py");
+        assert_eq!(
+            subject(&[file("app.py", Modified), file("src/store.rs", Added)]),
+            "Update app.py and store.rs"
+        );
+        assert_eq!(
+            subject(&[
+                file("src/a/mod.rs", Modified),
+                file("src/b/mod.rs", Modified)
+            ]),
+            "Update src/a/mod.rs and src/b/mod.rs"
+        );
+        assert_eq!(
+            subject(&[
+                file("src/a.rs", Modified),
+                file("src/b.rs", Added),
+                file("src/c/d.rs", Renamed),
+                file("src/e.rs", Deleted),
+            ]),
+            "Update 4 files in src/"
+        );
+        assert_eq!(
+            subject(&[
+                file("app.py", Modified),
+                file("src/b.rs", Modified),
+                file("web/c.js", Modified),
+            ]),
+            "Update 3 files"
+        );
+        // Only new (untracked) files are added; only removed ones deleted.
+        assert_eq!(subject(&[file("todo.md", Added)]), "Add todo.md");
+        assert_eq!(
+            subject(&[
+                file("docs/a.md", Added),
+                file("docs/b/c.md", Added),
+                file("docs/d.md", Added)
+            ]),
+            "Add 3 files in docs/"
+        );
+        assert_eq!(subject(&[file("old.txt", Deleted)]), "Delete old.txt");
+    }
+
+    #[test]
+    fn a_body_line_names_the_harness_and_the_chat() {
+        assert_eq!(
+            agent_line(Some("OMP"), "Fix the greeting"),
+            "Agent: OMP — Fix the greeting"
+        );
+        assert_eq!(agent_line(None, "Fix login"), "Task: Fix login");
     }
 }
