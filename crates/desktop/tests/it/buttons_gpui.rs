@@ -6,8 +6,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    AppContext as _, Context, FocusHandle, InteractiveElement as _, IntoElement, Modifiers,
-    ParentElement as _, Render, Styled as _, TestAppContext, Window, div, px,
+    Context, FocusHandle, InteractiveElement as _, IntoElement, Modifiers, ParentElement as _,
+    Render, Styled as _, TestAppContext, Window, div, px,
 };
 use hutan_desktop::icons::Icon;
 use hutan_desktop::theme::{Density, DensityExt as _, Theme};
