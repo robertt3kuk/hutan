@@ -1124,10 +1124,10 @@ mod folds {
         .map_or(0.0, |bounds| f32::from(bounds.size.height))
     }
 
-    fn open_settings<'a>(
-        cx: &'a mut TestAppContext,
+    fn open_settings(
+        cx: &mut TestAppContext,
         reduced: bool,
-    ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+    ) -> (Entity<Workbench>, &mut VisualTestContext) {
         let (connection, settings, _) = offline_connection();
         settings
             .write_user(
