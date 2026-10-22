@@ -39,5 +39,8 @@ fn main() {
         watch(&branch);
     }
     watch("packed-refs");
+    // The worktree's own reflog moves on every commit, rebase or checkout made in it, also
+    // when the branch ref itself is packed or lives in the common dir of a linked worktree.
+    watch("logs/HEAD");
     println!("cargo:rustc-env=HUTAN_GIT_SHA={sha}");
 }
