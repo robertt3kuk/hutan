@@ -9,7 +9,7 @@
 //! never call the framework.
 
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 /// File name of the agent plist inside `Contents/Library/LaunchAgents`.
@@ -56,10 +56,17 @@ pub trait LoginItem {
     fn available(&self) -> bool;
     /// The current status; cheap, safe to call whenever the window activates.
     fn status(&self) -> LoginItemStatus;
-    /// `SMAppService.register()`. The error is the system's own message.
+    /// `SMAppService.register()`. The error is the system's own message. A registration
+    /// records the bundle it was made from ([`registered_bundle`](Self::registered_bundle)).
     fn register(&self) -> Result<(), String>;
     /// `SMAppService.unregister()`.
     fn unregister(&self) -> Result<(), String>;
+    /// The app bundle the registered agent belongs to, as recorded when it was registered;
+    /// `None` when unknown (nothing registered, or registered before the record existed).
+    /// The system does not say where a registered agent's bundle is.
+    fn registered_bundle(&self) -> Option<PathBuf>;
+    /// The app bundle this process runs from.
+    fn running_bundle(&self) -> Option<PathBuf>;
     /// `SMAppService.openSystemSettingsLoginItems()`.
     fn open_login_items_settings(&self);
 }
@@ -85,6 +92,14 @@ impl LoginItem for Unavailable {
         Ok(())
     }
 
+    fn registered_bundle(&self) -> Option<PathBuf> {
+        None
+    }
+
+    fn running_bundle(&self) -> Option<PathBuf> {
+        None
+    }
+
     fn open_login_items_settings(&self) {}
 }
 
@@ -104,6 +119,10 @@ struct FakeState {
     after_register: LoginItemStatus,
     register_error: Option<String>,
     unregister_error: Option<String>,
+    /// The bundle this "process" runs from.
+    running: Option<PathBuf>,
+    /// The bundle recorded by the last registration.
+    registered: Option<PathBuf>,
     calls: Vec<LoginItemCall>,
 }
 
@@ -114,7 +133,8 @@ pub struct FakeLoginItem {
 }
 
 impl FakeLoginItem {
-    /// Available, not registered; registering makes it `Enabled`.
+    /// Available, not registered; registering makes it `Enabled`. It runs from
+    /// [`FAKE_BUNDLE`].
     pub fn new() -> Self {
         Self {
             state: Rc::new(RefCell::new(FakeState {
@@ -122,9 +142,19 @@ impl FakeLoginItem {
                 after_register: LoginItemStatus::Enabled,
                 register_error: None,
                 unregister_error: None,
+                running: Some(PathBuf::from(FAKE_BUNDLE)),
+                registered: None,
                 calls: Vec::new(),
             })),
         }
+    }
+
+    /// An agent registered earlier from `bundle` (an app since moved or reinstalled
+    /// elsewhere), with `status`.
+    pub fn set_registered_from(&self, bundle: &Path, status: LoginItemStatus) {
+        let mut state = self.state.borrow_mut();
+        state.registered = Some(bundle.to_owned());
+        state.status = status;
     }
 
     /// The system changes the status behind the app's back (the user answers in Login Items).
@@ -153,6 +183,9 @@ impl FakeLoginItem {
     }
 }
 
+/// Where a [`FakeLoginItem`] says the app runs from.
+pub const FAKE_BUNDLE: &str = "/Applications/Hutan.app";
+
 impl Default for FakeLoginItem {
     fn default() -> Self {
         Self::new()
@@ -175,6 +208,7 @@ impl LoginItem for FakeLoginItem {
             return Err(error);
         }
         state.status = state.after_register;
+        state.registered = state.running.clone();
         Ok(())
     }
 
@@ -185,7 +219,16 @@ impl LoginItem for FakeLoginItem {
             return Err(error);
         }
         state.status = LoginItemStatus::NotRegistered;
+        state.registered = None;
         Ok(())
+    }
+
+    fn registered_bundle(&self) -> Option<PathBuf> {
+        self.state.borrow().registered.clone()
+    }
+
+    fn running_bundle(&self) -> Option<PathBuf> {
+        self.state.borrow().running.clone()
     }
 
     fn open_login_items_settings(&self) {
@@ -218,11 +261,19 @@ pub use system::SystemLoginItem;
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)] // Objective-C calls; each block says why it is sound.
 mod system {
+    use std::path::PathBuf;
+
     use objc2::rc::Retained;
-    use objc2_foundation::{NSBundle, NSString};
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{NSBundle, NSString, NSUserDefaults};
     use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
     use super::{AGENT_PLIST, BUNDLE_ID, LoginItem, LoginItemStatus, inside_app_bundle};
+
+    /// The app's user default (`defaults read dev.hutan.Hutan LoginItemBundle`) that records
+    /// the bundle a registration was made from: `SMAppService` does not say it, and every
+    /// copy of Hutan.app shares the defaults of its bundle identifier.
+    const REGISTERED_BUNDLE_KEY: &str = "LoginItemBundle";
 
     /// `SMAppService.agent(plistName:)` of the bundled daemon agent.
     pub struct SystemLoginItem {
@@ -277,13 +328,37 @@ mod system {
         fn register(&self) -> Result<(), String> {
             // SAFETY: the NSError out-parameter is handled by the generated binding.
             unsafe { self.service.registerAndReturnError() }
-                .map_err(|error| error.localizedDescription().to_string())
+                .map_err(|error| error.localizedDescription().to_string())?;
+            if let Some(bundle) = self.running_bundle() {
+                let value = NSString::from_str(&bundle.to_string_lossy());
+                let object: &AnyObject = &value;
+                // SAFETY: an NSString is a property-list object, which user defaults store.
+                unsafe {
+                    NSUserDefaults::standardUserDefaults()
+                        .setObject_forKey(Some(object), &NSString::from_str(REGISTERED_BUNDLE_KEY));
+                }
+            }
+            Ok(())
         }
 
         fn unregister(&self) -> Result<(), String> {
             // SAFETY: as for `register`.
             unsafe { self.service.unregisterAndReturnError() }
-                .map_err(|error| error.localizedDescription().to_string())
+                .map_err(|error| error.localizedDescription().to_string())?;
+            NSUserDefaults::standardUserDefaults()
+                .removeObjectForKey(&NSString::from_str(REGISTERED_BUNDLE_KEY));
+            Ok(())
+        }
+
+        fn registered_bundle(&self) -> Option<PathBuf> {
+            NSUserDefaults::standardUserDefaults()
+                .stringForKey(&NSString::from_str(REGISTERED_BUNDLE_KEY))
+                .map(|path| PathBuf::from(path.to_string()))
+        }
+
+        fn running_bundle(&self) -> Option<PathBuf> {
+            let path = PathBuf::from(NSBundle::mainBundle().bundlePath().to_string());
+            Some(path.canonicalize().unwrap_or(path))
         }
 
         fn open_login_items_settings(&self) {
@@ -318,14 +393,20 @@ mod tests {
     fn the_fake_records_calls_and_follows_its_script() {
         let item = FakeLoginItem::new();
         assert_eq!(item.status(), LoginItemStatus::NotRegistered);
+        assert_eq!(item.registered_bundle(), None);
+        assert_eq!(item.running_bundle(), Some(PathBuf::from(FAKE_BUNDLE)));
         item.set_after_register(LoginItemStatus::RequiresApproval);
         item.register().unwrap();
         assert_eq!(item.status(), LoginItemStatus::RequiresApproval);
         assert!(item.status().registered());
+        // A registration records the bundle it was made from; unregistering forgets it.
+        assert_eq!(item.registered_bundle(), item.running_bundle());
         item.unregister().unwrap();
+        assert_eq!(item.registered_bundle(), None);
         item.fail_register("boom");
         assert_eq!(item.register(), Err("boom".to_owned()));
         assert_eq!(item.status(), LoginItemStatus::NotRegistered);
+        assert_eq!(item.registered_bundle(), None);
         assert_eq!(
             item.calls(),
             [

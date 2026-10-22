@@ -40,6 +40,8 @@ pub(crate) struct MacControl {
     /// tried again, so a write-back (ours, or another window's on the same file) cannot start a
     /// register / refuse / write-back loop. An explicit toggle forgets it.
     refused: Option<(bool, LoginItemStatus)>,
+    /// Whether the registered agent's bundle was compared with this app's (once per window).
+    bundle_checked: bool,
     /// What the Dock badge shows now (`None` until it was set once).
     badge: Option<usize>,
     /// What the menu bar item shows now (`None`: not on the menu bar).
@@ -83,6 +85,7 @@ impl MacControl {
                 in_menu_bar: false,
                 login_status,
                 refused: None,
+                bundle_checked: false,
                 badge: None,
                 item: None,
                 shortcut_tried: None,
@@ -225,7 +228,8 @@ impl Workbench {
 
     /// Makes the launch agent match `app.start_at_login`: registers it when the setting is on
     /// and nothing is registered, unregisters it when the setting is off and something is.
-    /// A failure is shown and the setting goes back to what is true.
+    /// A failure is shown and the setting goes back to what is true. An agent registered from
+    /// another copy of Hutan.app is registered again from this one.
     pub(crate) fn sync_start_at_login(&mut self, cx: &mut Context<Self>) {
         if self.start_at_login_available() {
             let wanted = self.start_at_login_enabled();
@@ -238,9 +242,41 @@ impl Workbench {
                     self.unregister_launch_agent(cx)
                 };
                 self.mac.refused = refused.then_some((wanted, status));
+            } else if wanted && status.registered() && !self.mac.bundle_checked {
+                self.mac.bundle_checked = true;
+                self.follow_moved_bundle(cx);
             }
         }
         self.refresh_login_status(cx);
+    }
+
+    /// The agent is registered from another copy of Hutan.app (the app was moved, or
+    /// reinstalled elsewhere), so launchd would start that copy's `hutand`, or none: register
+    /// it again from this one. Nothing happens when the registration's bundle is not known.
+    fn follow_moved_bundle(&mut self, cx: &mut Context<Self>) {
+        let item = &self.mac.login_item;
+        let (Some(registered), Some(running)) = (item.registered_bundle(), item.running_bundle())
+        else {
+            return;
+        };
+        if registered == running {
+            return;
+        }
+        tracing::info!(
+            registered = %registered.display(),
+            running = %running.display(),
+            "the login item was registered from another Hutan.app; registering it from this one"
+        );
+        if let Err(error) = self.mac.login_item.unregister() {
+            let message = format!(
+                "Cannot move the login item from {} to this app: {error}",
+                registered.display()
+            );
+            tracing::warn!("{message}");
+            self.set_notice(message, cx);
+            return;
+        }
+        self.register_launch_agent(cx);
     }
 
     /// Registers the launch agent; `true` when that failed (the setting was written back).

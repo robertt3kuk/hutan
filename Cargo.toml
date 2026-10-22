@@ -59,7 +59,7 @@ objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
 # the daemon's stop confirmation, the keyboard focus indicator color (`ui.focus`), the Open panel
 # that starts in the project (E-13a): AppKit, macOS only.
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSAlert", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSCell", "NSColor", "NSColorSpace", "NSControl", "NSDockTile", "NSEvent", "NSGraphicsContext", "NSImage", "NSImageRep", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSWindow", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSArray", "NSBundle", "NSDate", "NSError", "NSObject", "NSObjCRuntime", "NSRunLoop", "NSSet", "NSString", "NSTimer", "NSURL"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSArray", "NSBundle", "NSDate", "NSError", "NSObject", "NSObjCRuntime", "NSRunLoop", "NSSet", "NSString", "NSTimer", "NSURL", "NSUserDefaults"] }
 objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationAction", "UNNotificationCategory", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 # `SMAppService`, the "keep running" launch agent registration (M6-C), macOS only.
 objc2-service-management = { version = "0.3.2", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }

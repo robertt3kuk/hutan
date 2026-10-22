@@ -31,7 +31,7 @@ use tokio::sync::mpsc;
 
 pub use dock::{DockBadge, FakeDock};
 pub use hotkey::{FakeHotkey, GlobalHotkey, HotkeyError, Shortcut};
-pub use login_item::{FakeLoginItem, LoginItem, LoginItemCall, LoginItemStatus};
+pub use login_item::{FAKE_BUNDLE, FakeLoginItem, LoginItem, LoginItemCall, LoginItemStatus};
 pub use notifications::{FakeNotifications, NotificationAnswer, NotificationPermission};
 pub use open_panel::{FakeOpenPanel, OpenPanel};
 pub use presence::{FakePresence, Presence, PresenceCall};

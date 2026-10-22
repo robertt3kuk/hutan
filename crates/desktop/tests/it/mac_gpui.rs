@@ -6,7 +6,7 @@
 use crate::common;
 
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use common::chat::ChatEnv;
@@ -18,8 +18,8 @@ use hutan_core::SessionId;
 use hutan_desktop::app::start_connection;
 use hutan_desktop::macos::status_item::START_AT_LOGIN;
 use hutan_desktop::macos::{
-    FakeLoginItem, LoginItemCall, LoginItemStatus, MacEvent, MacServices, MenuCommand, MenuSpec,
-    PresenceCall, event_channel,
+    FAKE_BUNDLE, FakeLoginItem, LoginItem as _, LoginItemCall, LoginItemStatus, MacEvent,
+    MacServices, MenuCommand, MenuSpec, PresenceCall, event_channel,
 };
 use hutan_desktop::sessions::AttentionKind;
 use hutan_desktop::workbench::actions::{self, daemon as daemon_actions};
@@ -234,6 +234,66 @@ fn the_setting_in_the_file_and_the_settings_sheet_drive_the_same_registration(
         view.read_with(cx, |wb, _| wb.start_at_login_status()),
         LoginItemStatus::Enabled
     );
+}
+
+#[gpui::test]
+fn a_login_item_registered_from_another_copy_of_the_app_is_registered_again(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let fakes = Fakes::new();
+    // Registered by Hutan.app when it still ran from Downloads; it now runs from
+    // /Applications.
+    let old = Path::new("/Users/me/Downloads/Hutan.app");
+    fakes
+        .login
+        .set_registered_from(old, LoginItemStatus::Enabled);
+    write_settings(&daemon, "[app]\nstart_at_login = true\n");
+    let (view, cx) = open(cx, &daemon, &fakes);
+    wait_synced(&view, cx, 0);
+    assert_eq!(
+        fakes.login.calls(),
+        [LoginItemCall::Unregister, LoginItemCall::Register]
+    );
+    assert_eq!(
+        fakes.login.registered_bundle(),
+        Some(PathBuf::from(FAKE_BUNDLE))
+    );
+    assert!(start_at_login_setting(&view, cx));
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.start_at_login_status()),
+        LoginItemStatus::Enabled
+    );
+    // Once: a settings reload does not register it again.
+    set(&view, cx, "app.dock_badge", toml::Value::Boolean(false));
+    assert_eq!(fakes.login.calls().len(), 2);
+}
+
+#[gpui::test]
+fn a_login_item_of_this_app_or_of_unknown_origin_is_left_alone(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let fakes = Fakes::new();
+    fakes
+        .login
+        .set_registered_from(Path::new(FAKE_BUNDLE), LoginItemStatus::Enabled);
+    write_settings(&daemon, "[app]\nstart_at_login = true\n");
+    let (view, cx) = open(cx, &daemon, &fakes);
+    wait_synced(&view, cx, 0);
+    assert_eq!(fakes.login.calls(), []);
+
+    // Registered before the bundle was recorded: nothing tells where from, so it stays.
+    let unknown = Fakes::new();
+    unknown.login.set_status(LoginItemStatus::RequiresApproval);
+    let options = WorkbenchOptions::builtin(
+        SettingsStore::new(SettingsPaths::in_dir(daemon.home())),
+        daemon.connection(),
+        None,
+    )
+    .with_mac(unknown.services());
+    let (second, cx) = open_options(&mut *cx, options);
+    wait_synced(&second, cx, 0);
+    assert_eq!(unknown.login.calls(), []);
+    assert_eq!(unknown.login.registered_bundle(), None);
 }
 
 #[gpui::test]
