@@ -212,6 +212,7 @@ impl TestDaemon {
             None,
             hutan_daemon::GatewayConfig::default(),
             Some(login_shell.to_owned()),
+            |_| {},
         )
     }
 
@@ -220,8 +221,24 @@ impl TestDaemon {
         Self::start_inner(None, Some(codex))
     }
 
+    /// Like [`start_with_codex`](Self::start_with_codex), with the daemon's configuration
+    /// changed by `tweak` before it starts (checkpoints' git environment, say).
+    #[allow(dead_code)]
+    pub fn start_with_codex_tweaked(
+        codex: hutan_agents::CodexConfig,
+        tweak: impl FnOnce(&mut DaemonConfig),
+    ) -> Self {
+        Self::start_configured(
+            None,
+            Some(codex),
+            hutan_daemon::GatewayConfig::default(),
+            None,
+            tweak,
+        )
+    }
+
     pub fn start_with_gateway(gateway: hutan_daemon::GatewayConfig) -> Self {
-        Self::start_configured(None, None, gateway, None)
+        Self::start_configured(None, None, gateway, None, |_| {})
     }
 
     pub fn http_mock(&self) -> hutan_gateway::testing::MockServer {
@@ -239,6 +256,7 @@ impl TestDaemon {
             codex,
             hutan_daemon::GatewayConfig::default(),
             None,
+            |_| {},
         )
     }
 
@@ -247,6 +265,7 @@ impl TestDaemon {
         codex: Option<hutan_agents::CodexConfig>,
         gateway: hutan_daemon::GatewayConfig,
         login_shell: Option<PathBuf>,
+        tweak: impl FnOnce(&mut DaemonConfig),
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::in_home(dir.path());
@@ -291,6 +310,7 @@ impl TestDaemon {
         // machine that can take longer than the 5 s a real window gets. No desktop test is about
         // the timeout itself (the daemon's own tests cover it).
         config.ui_command_timeout = std::time::Duration::from_secs(30);
+        tweak(&mut config);
         let daemon = runtime.block_on(hutan_daemon::start(config)).unwrap();
         Self {
             dir,
@@ -313,6 +333,14 @@ impl TestDaemon {
     /// (protocol 0.29): the panel then falls back to the search alone.
     pub fn connection_without_history_sessions(&mut self) -> Connection {
         self.connection_without("history.sessions", "no-sessions.sock")
+    }
+
+    /// A connection to this daemon as if it predated the capability `checkpoint` (protocol
+    /// 0.37). The welcome lists `checkpoint` before `checkpoint.restore`, so the first match
+    /// of the quoted prefix is the former.
+    #[allow(dead_code)]
+    pub fn connection_without_checkpoints(&mut self) -> Connection {
+        self.connection_without("\"checkpoint", "no-checkpoints.sock")
     }
 
     /// A connection through a proxy that renames `capability` in the daemon's welcome (to a name

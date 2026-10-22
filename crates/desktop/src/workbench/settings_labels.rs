@@ -876,7 +876,7 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "Push after Finish",
         "Finish in Changes commits (and merges a worktree), then pushes the branch to its upstream with your own git credentials; it never force-pushes. Off, the commit stays on this Mac until you push it yourself. Agents can never Finish.",
     ),
-    // ---- checkpoints (ADR 0019; the Settings section itself is CK-5) ----
+    // ---- checkpoints (ADR 0019; Settings → Agents & tools → Checkpoints, CK-5) ----
     field(
         "daemon",
         "checkpoints.mode",
@@ -1264,7 +1264,7 @@ pub fn page_keywords(page: &str) -> &'static str {
         }
         "agents_tools" => {
             "OMP Claude Code Codex program arguments environment MCP servers gateway context \
-             tasks parallel"
+             tasks parallel checkpoints rewind restore undo retention"
         }
         "assistant" => {
             "Mawas backend model default inherit global workspace permissions files terminal output \
@@ -1415,6 +1415,11 @@ pub mod words {
         SEC_MCP = "MCP servers";
         SEC_LIMITS = "Limits";
         SEC_FINISH = "Finish";
+        SEC_CHECKPOINTS = "Checkpoints";
+        SEC_CHECKPOINTS_HELP = "What an agent chat's turns record, so their files can be rewound (Rewind… in a turn's footer).";
+        SEC_CHECKPOINTS_KEPT = "Checkpoints kept";
+        CHECKPOINT_PROJECTS = "A project can differ: [checkpoints.projects.<name or id>] in daemon.toml sets its mode and the four snapshot bounds.";
+        CHECKPOINT_CHATS_NOT_ON = "Chats without checkpoints now:";
         SEC_ASSISTANT_PANEL = "Mawas";
         SEC_ASSISTANT_ACT = "What Mawas may do";
         SEC_ASSISTANT_ACT_HELP = "Ask before acting: Mawas can change things, and every change asks you first (grants answer for what you allowed). Advisor: Mawas reads and advises, and cannot change anything. A change of mode applies from the next message.";

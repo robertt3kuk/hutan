@@ -53,6 +53,9 @@ pub(super) struct Section {
 }
 
 pub(super) const MCP_KEYS: &str = "mcp.*";
+/// Stands for the per-project overrides of `[checkpoints]` and the chats whose checkpoints are
+/// not on.
+pub(super) const CHECKPOINT_PROJECT_KEYS: &str = "checkpoints.projects.*";
 
 /// The sections of a page that shows daemon settings; empty for the other pages.
 pub(super) fn sections(page: &str) -> &'static [Section] {
@@ -149,6 +152,29 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
                 keys: &[MCP_KEYS],
             },
             Section {
+                title: words::SEC_CHECKPOINTS,
+                help: words::SEC_CHECKPOINTS_HELP,
+                keys: &[
+                    "checkpoints.mode",
+                    CHECKPOINT_PROJECT_KEYS,
+                    "checkpoints.max_file_bytes",
+                    "checkpoints.snapshot_budget_bytes",
+                    "checkpoints.max_files",
+                    "checkpoints.max_untracked_files",
+                    "checkpoints.exclude",
+                ],
+            },
+            Section {
+                title: words::SEC_CHECKPOINTS_KEPT,
+                help: "",
+                keys: &[
+                    "checkpoints.keep_turns",
+                    "checkpoints.keep_days",
+                    "checkpoints.max_repo_bytes",
+                    "checkpoints.max_repo_refs",
+                ],
+            },
+            Section {
                 title: words::SEC_LIMITS,
                 help: "",
                 keys: &["gateway.max_context_chars", "tasks.max_parallel"],
@@ -233,7 +259,11 @@ pub(super) fn search_text(page: &str) -> String {
     for section in sections(page) {
         text.push_str(section.title);
         text.push(' ');
-        for key in section.keys.iter().filter(|k| **k != MCP_KEYS) {
+        for key in section
+            .keys
+            .iter()
+            .filter(|k| **k != MCP_KEYS && **k != CHECKPOINT_PROJECT_KEYS)
+        {
             text.push_str(&daemon_field_search_text(key));
             text.push(' ');
         }
@@ -1080,9 +1110,61 @@ impl Workbench {
         for key in section.keys {
             if *key == MCP_KEYS {
                 rows.extend(self.render_mcp_rows(cx));
+            } else if *key == CHECKPOINT_PROJECT_KEYS {
+                rows.extend(self.render_checkpoint_projects(cx));
             } else if let Some(entry) = self.daemon_settings.entry(key).cloned() {
                 rows.push(self.render_daemon_row(&entry, cx));
             }
+        }
+        rows
+    }
+
+    /// Under *Checkpoints*: where a project's own mode lives, and the chats whose checkpoints
+    /// are not on right now, with their project and why (what `ChatInfo.checkpoints` says; the
+    /// daemon does not list `[checkpoints.projects.*]` itself).
+    fn render_checkpoint_projects(&self, cx: &gpui::App) -> Vec<AnyElement> {
+        use hutan_core::CheckpointAvailability;
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let store = self.sessions.read(cx);
+        let mut lines: Vec<String> = store
+            .sessions()
+            .iter()
+            .filter_map(|info| {
+                let status = info.chat.as_ref()?.checkpoints.as_ref()?;
+                let state = match status.state {
+                    CheckpointAvailability::On => return None,
+                    CheckpointAvailability::Off => "off",
+                    CheckpointAvailability::Unsupported => "unsupported",
+                };
+                let project = store
+                    .workspaces()
+                    .iter()
+                    .find(|w| w.id == info.workspace_id)
+                    .map(|w| w.name.clone())
+                    .unwrap_or_default();
+                let reason = status
+                    .reason
+                    .as_deref()
+                    .map(|r| format!(": {r}"))
+                    .unwrap_or_default();
+                Some(format!("{} ({project}) — {state}{reason}", info.title))
+            })
+            .collect();
+        lines.sort();
+        let mut rows = vec![
+            note(words::CHECKPOINT_PROJECTS, &theme, &tokens)
+                .relative()
+                .child(probe(&self.regions, Region::Settings("checkpoint-projects")))
+                .into_any_element(),
+        ];
+        if !lines.is_empty() {
+            rows.push(note(words::CHECKPOINT_CHATS_NOT_ON, &theme, &tokens).into_any_element());
+            rows.extend(
+                lines
+                    .into_iter()
+                    .map(|line| note(line, &theme, &tokens).pl(px(tokens.spacing * 3.0)).into_any_element()),
+            );
         }
         rows
     }

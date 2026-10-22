@@ -79,6 +79,7 @@ impl AssistantEnv {
                 discovery: Some(Vec::new()),
             },
             None,
+            |_| {},
         );
         let mock = daemon.http_mock();
         let _: ProviderResult = daemon.call(Request::ProviderAdd(ProviderAdd {

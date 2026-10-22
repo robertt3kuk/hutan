@@ -1,0 +1,475 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)] // test helpers
+//! Checkpoints in the desktop (ADR 0019, slice CK-5) over a real daemon whose Codex is
+//! `hutan-codex-fixture replay`, in a temporary git repository: the turn footer's *Rewind…* only
+//! on a turn that changed files, the preview sheet's groups and ticks as the daemon plans them,
+//! Esc and Return (on *Cancel*) writing nothing, a conflict restored only through its own box,
+//! *Restore* writing the files with the toast and the footer's `Restored — Undo`, an open file
+//! tab showing the restored text, the toast's *Undo* restoring again; a folder outside git saying
+//! why once, in the chat's ⋯ menu; and nothing at all without the capability.
+
+use crate::common;
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use common::chat::ChatEnv;
+use common::{TestDaemon, draw, open_with, wait_until};
+use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+use hutan_chat_view::Body;
+use hutan_core::{CheckpointAvailability, SessionId};
+use hutan_desktop::workbench::chat::LoadStatus;
+use hutan_desktop::workbench::rewind::{Group, Phase, SheetFocus};
+use hutan_desktop::workbench::{FileOpen, Region, Workbench};
+use hutan_protocol::checkpoint::{CheckpointPreview, CheckpointPreviewRequest};
+use hutan_protocol::chat::{ChatSend, ChatSent};
+use hutan_protocol::messages::Request;
+use hutan_settings::{SettingsPaths, SettingsStore};
+use serde_json::json;
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+        .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"])
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn git_env() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("GIT_CONFIG_GLOBAL".to_owned(), "/dev/null".to_owned()),
+        ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
+    ])
+}
+
+/// `<dir>/repo`: a repository on `main` with one commit of `a.txt` and `b.txt`.
+fn repository(dir: &Path) -> PathBuf {
+    git(dir, &["init", "-q", "-b", "main", "repo"]);
+    let root = dir.join("repo");
+    fs::write(root.join("a.txt"), "alpha\n").unwrap();
+    fs::write(root.join("b.txt"), "beta\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "init"]);
+    root
+}
+
+/// `plain-turn` with its turn repeated once per gate, each held after `turn/started` until its
+/// gate exists (the test edits files meanwhile, as the agent would); each turn has ids of its
+/// own.
+fn held_turns(dir: &Path, gates: &[PathBuf]) -> PathBuf {
+    let real = fs::read_to_string(common::chat::fixtures().join("plain-turn.jsonl")).unwrap();
+    let lines: Vec<&str> = real.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains("\"method\":\"turn/start\""))
+        .unwrap();
+    let mut out: Vec<String> = lines[..at].iter().map(|l| (*l).to_owned()).collect();
+    for (n, gate) in gates.iter().enumerate() {
+        for line in &lines[at..] {
+            let line = line
+                .replace(
+                    "01a00000-0000-7000-8000-000000000002",
+                    &format!("01a00000-0000-7000-8000-0000000010{n:02}"),
+                )
+                .replace(
+                    "01a00000-0000-7000-8000-000000000003",
+                    &format!("01a00000-0000-7000-8000-0000000020{n:02}"),
+                )
+                .replace("msg_fixture_1", &format!("msg_fixture_t{n}"));
+            let started = line.contains("\"method\":\"turn/started\"");
+            out.push(line);
+            if started {
+                out.push(json!({"dir": "hold", "file": gate}).to_string());
+            }
+        }
+    }
+    let transcript = dir.join("held-turns.jsonl");
+    fs::write(&transcript, out.join("\n") + "\n").unwrap();
+    transcript
+}
+
+/// A workspace with a Codex chat in `cwd` whose turns wait on `gates`.
+struct Setup {
+    env: ChatEnv,
+    daemon: TestDaemon,
+    session: SessionId,
+    gates: Vec<PathBuf>,
+}
+
+fn setup(turns: usize, in_git: bool) -> (Setup, PathBuf) {
+    let env = ChatEnv::new();
+    let base = env.cwd();
+    let cwd = if in_git {
+        repository(&base)
+    } else {
+        let plain = base.join("plain");
+        fs::create_dir(&plain).unwrap();
+        fs::write(plain.join("a.txt"), "alpha\n").unwrap();
+        plain
+    };
+    let gates: Vec<PathBuf> = (0..turns).map(|n| base.join(format!("gate-{n}"))).collect();
+    let transcript = held_turns(&base, &gates);
+    let daemon = TestDaemon::start_with_codex_tweaked(env.replay(&transcript), |c| {
+        c.checkpoints.git_env = git_env();
+    });
+    let session = daemon.create_chat(&cwd).id;
+    (
+        Setup {
+            env,
+            daemon,
+            session,
+            gates,
+        },
+        cwd,
+    )
+}
+
+fn open<'a>(
+    cx: &'a mut TestAppContext,
+    daemon: &TestDaemon,
+    connection: hutan_client::Connection,
+) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+    let (view, cx) = open_with(
+        cx,
+        SettingsStore::new(SettingsPaths::in_dir(daemon.home())),
+        connection,
+        None,
+    );
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    (view, cx)
+}
+
+fn show_chat(view: &Entity<Workbench>, cx: &mut VisualTestContext, session: SessionId) {
+    view.update_in(cx, |wb, window, cx| wb.open_session(session, window, cx));
+    wait_until(cx, "the chat to load", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.chat_model_of(session)
+                .is_some_and(|m| *m.read(cx).status() == LoadStatus::Ready)
+                && wb.chat_view_of(session).is_some()
+        })
+    });
+}
+
+/// Footers of the chat's transcript, oldest first, by entry index.
+fn footers(view: &Entity<Workbench>, cx: &VisualTestContext, session: SessionId) -> Vec<usize> {
+    view.read_with(cx, |wb, cx| {
+        wb.chat_model_of(session)
+            .map(|m| {
+                m.read(cx)
+                    .transcript()
+                    .entries()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| matches!(e.body, Body::Footer(_)))
+                    .map(|(at, _)| at)
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// Sends a message, lets `edit` change files while the turn runs, ends the turn and waits for
+/// its footer.
+fn turn(
+    s: &Setup,
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    n: usize,
+    edit: impl FnOnce(),
+) {
+    let before = footers(view, cx, s.session).len();
+    let _: ChatSent = s.daemon.call(Request::ChatSend(ChatSend {
+        session_id: s.session,
+        text: format!("turn {n}"),
+        attachments: vec![],
+    }));
+    edit();
+    fs::write(&s.gates[n], "").unwrap();
+    wait_until(cx, "the turn's footer", |cx| {
+        footers(view, cx, s.session).len() > before
+    });
+}
+
+fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, target: Region) {
+    wait_until(cx, &format!("{target:?} to be drawn"), |cx| {
+        view.read_with(cx, |wb, _| wb.region_bounds(target).is_some())
+    });
+    let bounds = view
+        .read_with(cx, |wb, _| wb.region_bounds(target))
+        .unwrap();
+    cx.simulate_click(bounds.center(), Modifiers::none());
+    draw(cx);
+}
+
+fn drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext, target: Region) -> bool {
+    draw(cx);
+    view.read_with(cx, |wb, _| wb.region_bounds(target).is_some())
+}
+
+fn sheet_ready(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    wait_until(cx, "the preview", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.rewind_sheet()
+                .is_some_and(|s| matches!(s.phase, Phase::Ready) && !s.working)
+        })
+    });
+}
+
+/// `(path, group, ticked)` of the sheet's files.
+fn sheet_rows(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<(String, Group, bool)> {
+    view.read_with(cx, |wb, _| {
+        wb.rewind_sheet()
+            .unwrap()
+            .rows
+            .iter()
+            .map(|r| (r.entry.path.clone(), r.group, r.checked))
+            .collect()
+    })
+}
+
+fn restore_label(view: &Entity<Workbench>, cx: &VisualTestContext) -> String {
+    view.read_with(cx, |wb, _| wb.rewind_sheet().unwrap().restore_label())
+}
+
+#[gpui::test]
+fn rewind_previews_restores_a_turns_files_and_undo_brings_them_back(cx: &mut TestAppContext) {
+    let (s, root) = setup(2, true);
+    let (view, cx) = open(cx, &s.daemon, s.daemon.connection());
+    show_chat(&view, cx, s.session);
+    let a = root.join("a.txt");
+    let c = root.join("c.txt");
+
+    // Turn 0 edits a.txt and creates c.txt; turn 1 changes nothing.
+    turn(&s, &view, cx, 0, || {
+        fs::write(&a, "edited by the agent\n").unwrap();
+        fs::write(&c, "created by the agent\n").unwrap();
+    });
+    turn(&s, &view, cx, 1, || {});
+    let footer = footers(&view, cx, s.session);
+    assert_eq!(footer.len(), 2);
+    // Only the turn with changes says so and offers Rewind….
+    wait_until(cx, "turn 0's Rewind…", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::ChatRewind(footer[0])).is_some()
+        })
+    });
+    assert!(!drawn(&view, cx, Region::ChatRewind(footer[1])));
+    assert!(!drawn(&view, cx, Region::ChatCheckpoint(footer[1])));
+    let store = view.read_with(cx, |wb, cx| wb.sessions().read(cx).checkpoints().clone());
+    let checkpoint = store.read_with(cx, |store, _| {
+        let list = store.of(s.session);
+        assert_eq!(list.len(), 1, "one checkpoint keeps files: {list:?}");
+        assert_eq!(list[0].files_changed, 2);
+        list[0].id
+    });
+
+    // a.txt is open in a file tab; the chat is shown again.
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_file(FileOpen::picked(&a), window, cx);
+    });
+    let key = a.display().to_string();
+    wait_until(cx, "a.txt's tab", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.buffers()
+                .get(&key)
+                .is_some_and(|b| b.read(cx).text().to_string() == "edited by the agent\n")
+        })
+    });
+    let buffer = view.read_with(cx, |wb, _| wb.buffers().get(&key).unwrap().clone());
+    show_chat(&view, cx, s.session);
+
+    // The user changes c.txt after the turn: a conflict.
+    fs::write(&c, "the user's change\n").unwrap();
+
+    // The sheet shows the daemon's plan: a.txt clean and ticked, c.txt edited after, unticked.
+    click(&view, cx, Region::ChatRewind(footer[0]));
+    sheet_ready(&view, cx);
+    let daemon_plan: CheckpointPreview =
+        s.daemon
+            .call(Request::CheckpointPreview(CheckpointPreviewRequest {
+                checkpoint_id: checkpoint,
+                through: None,
+                paths: vec![],
+            }));
+    let mut planned: Vec<(String, Group)> = daemon_plan
+        .entries
+        .iter()
+        .map(|e| (e.path.clone(), Group::of(e)))
+        .collect();
+    planned.sort();
+    let mut shown: Vec<(String, Group)> = sheet_rows(&view, cx)
+        .into_iter()
+        .map(|(path, group, _)| (path, group))
+        .collect();
+    shown.sort();
+    assert_eq!(shown, planned);
+    assert_eq!(
+        sheet_rows(&view, cx),
+        [
+            ("a.txt".to_owned(), Group::Clean, true),
+            ("c.txt".to_owned(), Group::After, false),
+        ]
+    );
+    // Cancel has the keyboard; Restore is never the default.
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.rewind_sheet().unwrap().focus),
+        SheetFocus::Cancel
+    );
+    assert_eq!(restore_label(&view, cx), "Restore 1 file");
+
+    // Esc cancels: nothing written.
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(view.read_with(cx, |wb, _| wb.rewind_sheet().is_none()));
+    assert_eq!(fs::read_to_string(&a).unwrap(), "edited by the agent\n");
+
+    // Return presses the focused button, Cancel: nothing written either.
+    click(&view, cx, Region::ChatRewind(footer[0]));
+    sheet_ready(&view, cx);
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+    assert!(view.read_with(cx, |wb, _| wb.rewind_sheet().is_none()));
+    assert_eq!(fs::read_to_string(&a).unwrap(), "edited by the agent\n");
+
+    // The conflict counts only through its own box.
+    click(&view, cx, Region::ChatRewind(footer[0]));
+    sheet_ready(&view, cx);
+    click(&view, cx, Region::RewindFile(1));
+    assert_eq!(restore_label(&view, cx), "Restore 2 files");
+    click(&view, cx, Region::RewindFile(1));
+    assert_eq!(restore_label(&view, cx), "Restore 1 file");
+    // Restore all, including edited-after, takes two clicks: the first only arms it.
+    click(&view, cx, Region::Rewind("restore-all"));
+    assert!(view.read_with(cx, |wb, _| wb.rewind_sheet().unwrap().armed_all));
+    assert_eq!(fs::read_to_string(&c).unwrap(), "the user's change\n");
+
+    // Restore writes the clean file only, and says so.
+    click(&view, cx, Region::Rewind("restore"));
+    wait_until(cx, "the restore's toast", |cx| {
+        view.read_with(cx, |wb, _| wb.restore_toast().is_some() && wb.rewind_sheet().is_none())
+    });
+    assert_eq!(fs::read_to_string(&a).unwrap(), "alpha\n");
+    assert_eq!(fs::read_to_string(&c).unwrap(), "the user's change\n");
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.restore_toast().unwrap().text()),
+        "Restored 1 file"
+    );
+    // The open tab reloads the restored text.
+    wait_until(cx, "the tab to show the restored text", |cx| {
+        buffer.read_with(cx, |b, _| b.text().to_string() == "alpha\n")
+    });
+    // The footer of the restored turn: Restored — Undo.
+    assert!(store.read_with(cx, |store, _| store.restored_by(checkpoint).is_some()));
+    assert!(drawn(&view, cx, Region::ChatRewind(footer[0])));
+    // The note for the agent waits in the composer.
+    let draft = view.read_with(cx, |wb, cx| {
+        wb.chat_model_of(s.session)
+            .unwrap()
+            .read(cx)
+            .input()
+            .text()
+            .to_owned()
+    });
+    assert!(
+        draft.starts_with("Hutan restored these files to before the turn") && draft.contains("a.txt"),
+        "{draft}"
+    );
+
+    // The toast's Undo restores the restore: the agent's text is back.
+    click(&view, cx, Region::RestoreToast("undo"));
+    wait_until(cx, "the undo", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.restore_toast().is_some_and(|t| t.undid)
+        })
+    });
+    assert_eq!(fs::read_to_string(&a).unwrap(), "edited by the agent\n");
+    assert!(store.read_with(cx, |store, _| store.restored_by(checkpoint).is_none()));
+    wait_until(cx, "the tab to show the agent's text again", |cx| {
+        buffer.read_with(cx, |b, _| b.text().to_string() == "edited by the agent\n")
+    });
+    let _ = &s.env;
+}
+
+#[gpui::test]
+fn a_chat_outside_git_says_why_once_in_its_menu_and_nothing_per_turn(cx: &mut TestAppContext) {
+    let (s, cwd) = setup(1, false);
+    let (view, cx) = open(cx, &s.daemon, s.daemon.connection());
+    show_chat(&view, cx, s.session);
+    turn(&s, &view, cx, 0, || {
+        fs::write(cwd.join("a.txt"), "edited by the agent\n").unwrap();
+    });
+    wait_until(cx, "the chat's checkpoint state", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .session(s.session)
+                .and_then(|info| info.chat.as_ref()?.checkpoints.clone())
+                .is_some_and(|status| status.state == CheckpointAvailability::Unsupported)
+        })
+    });
+    let footer = footers(&view, cx, s.session);
+    assert!(!drawn(&view, cx, Region::ChatCheckpoint(footer[0])));
+    assert!(!drawn(&view, cx, Region::ChatRewind(footer[0])));
+
+    click(&view, cx, Region::Chat("menu"));
+    let entries = view.read_with(cx, |wb, _| wb.context_menu_entries().unwrap());
+    let said: Vec<String> = entries
+        .iter()
+        .map(|(label, _)| label.to_string())
+        .filter(|label| label.starts_with("Checkpoints"))
+        .collect();
+    assert_eq!(said.len(), 1, "{entries:?}");
+    assert!(said[0].starts_with("Checkpoints: "), "{said:?}");
+    assert!(
+        view.read_with(cx, |wb, _| wb.context_menu_disabled())
+            .iter()
+            .any(|label| label.as_ref() == said[0]),
+        "the reason is greyed: {said:?}"
+    );
+}
+
+#[gpui::test]
+fn without_the_capability_nothing_of_checkpoints_is_drawn(cx: &mut TestAppContext) {
+    let (mut s, root) = setup(1, true);
+    let connection = s.daemon.connection_without_checkpoints();
+    let (view, cx) = open(cx, &s.daemon, connection);
+    show_chat(&view, cx, s.session);
+    turn(&s, &view, cx, 0, || {
+        fs::write(root.join("a.txt"), "edited by the agent\n").unwrap();
+    });
+    // The daemon recorded the turn, but this client cannot tell.
+    wait_until(cx, "the daemon's checkpoint", |_| {
+        let list: hutan_protocol::checkpoint::CheckpointList =
+            s.daemon
+                .call(Request::CheckpointList(Default::default()));
+        !list.checkpoints.is_empty()
+    });
+    let footer = footers(&view, cx, s.session);
+    assert!(!drawn(&view, cx, Region::ChatCheckpoint(footer[0])));
+    assert!(!drawn(&view, cx, Region::ChatRewind(footer[0])));
+    click(&view, cx, Region::Chat("menu"));
+    let entries = view.read_with(cx, |wb, _| wb.context_menu_entries().unwrap());
+    assert!(
+        !entries.iter().any(|(label, _)| label.starts_with("Checkpoints")),
+        "{entries:?}"
+    );
+    cx.simulate_keystrokes("escape");
+    // The palette's commands say so instead of acting.
+    view.update_in(cx, |wb, window, cx| wb.rewind_focused_chat(window, cx));
+    assert!(view.read_with(cx, |wb, _| wb.checkpoints_list().is_none()));
+}
