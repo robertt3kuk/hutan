@@ -99,8 +99,10 @@ pub enum FileViewEvent {
 struct CommandLine {
     text: String,
     edit: FieldEdit,
-    /// Where ↑ / ↓ are in the history (`None`: the line being typed).
+    /// Where ↑ / ↓ / ⌃P / ⌃N are in the history (`None`: the line being typed).
     at: Option<usize>,
+    /// `⌃R` waits for a register's name.
+    register: bool,
 }
 
 /// One tab of a file.
@@ -551,6 +553,7 @@ impl FileView {
             text,
             edit,
             at: None,
+            register: false,
         });
         self.focus_command_on_render = true;
         cx.notify();
@@ -629,43 +632,86 @@ impl FileView {
             return;
         };
         let vim_key = hutan_code_view::vim_key_of_keystroke(ks, |_| true);
-        match ks.key.as_str() {
-            "enter" if plain => {
+        // `⌃R {reg}`: the register's text goes in at the caret.
+        if command.register {
+            command.register = false;
+            let text = match vim_key {
+                Some(VimKey::Char(name)) => self.code.read(cx).vim_register(name, cx),
+                _ => None,
+            };
+            if let Some(text) = text.filter(|t| !t.is_empty()) {
+                command
+                    .edit
+                    .with(&mut command.text, false, false, &mut |f| {
+                        f.input.insert(&text)
+                    });
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        let history_key = match vim_key {
+            Some(VimKey::Up | VimKey::Ctrl('p')) => Some(true),
+            Some(VimKey::Down | VimKey::Ctrl('n')) => Some(false),
+            _ => None,
+        };
+        match vim_key {
+            Some(VimKey::Enter) if plain => {
                 let line = command.text.clone();
                 self.run_command(&line, window, cx);
                 cx.stop_propagation();
                 return;
             }
             // Escape, `⌃[` and `⌃C` leave the line without running it.
-            _ if matches!(vim_key, Some(VimKey::Escape | VimKey::Ctrl('c'))) => {
+            Some(VimKey::Escape | VimKey::Ctrl('c')) => {
                 self.close_command_line(window, cx);
                 cx.stop_propagation();
                 return;
             }
-            // Backspace on an empty line closes it, as in Vim.
-            "backspace" if plain && command.text.is_empty() => {
+            // Backspace or `⌃H` on an empty line closes it, as in Vim.
+            Some(VimKey::Backspace | VimKey::Ctrl('h')) if command.text.is_empty() => {
                 self.close_command_line(window, cx);
                 cx.stop_propagation();
                 return;
             }
-            "up" | "down" if plain && !self.history.is_empty() => {
-                let last = self.history.len() - 1;
-                command.at = match (ks.key.as_str(), command.at) {
-                    ("up", None) => Some(last),
-                    ("up", Some(at)) => Some(at.saturating_sub(1)),
-                    ("down", Some(at)) if at < last => Some(at + 1),
-                    _ => None,
-                };
-                command.text = command
-                    .at
-                    .and_then(|at| self.history.get(at).cloned())
-                    .unwrap_or_default();
-                command.edit = FieldEdit::new();
+            Some(key @ VimKey::Ctrl('h' | 'w' | 'u')) => {
+                command
+                    .edit
+                    .with(&mut command.text, false, false, &mut |f| match key {
+                        VimKey::Ctrl('h') => f.input.backspace(),
+                        VimKey::Ctrl('w') => f.input.delete_word_back(),
+                        _ => f.input.delete_to_line_start(),
+                    });
+                command.at = None;
                 cx.notify();
                 cx.stop_propagation();
                 return;
             }
+            Some(VimKey::Ctrl('r')) => {
+                command.register = true;
+                cx.stop_propagation();
+                return;
+            }
             _ => {}
+        }
+        if let Some(older) = history_key
+            && !self.history.is_empty()
+        {
+            let last = self.history.len() - 1;
+            command.at = match (older, command.at) {
+                (true, None) => Some(last),
+                (true, Some(at)) => Some(at.saturating_sub(1)),
+                (false, Some(at)) if at < last => Some(at + 1),
+                _ => None,
+            };
+            command.text = command
+                .at
+                .and_then(|at| self.history.get(at).cloned())
+                .unwrap_or_default();
+            command.edit = FieldEdit::new();
+            cx.notify();
+            cx.stop_propagation();
+            return;
         }
         let config = VimConfig {
             enabled: false,

@@ -323,6 +323,16 @@ impl CodeView {
         self.vim.as_ref().and_then(|v| v.message.as_ref())
     }
 
+    /// The text of register `name` (`"+` / `"*`: the system clipboard), for `⌃R {reg}` on the
+    /// owner's `:` line; `None` while it is empty or Vim is off.
+    pub fn vim_register(&self, name: char, cx: &App) -> Option<String> {
+        let state = self.vim.as_ref()?;
+        match name {
+            '+' | '*' => cx.read_from_clipboard().and_then(|item| item.text()),
+            _ => state.vim.register_of(name).map(|r| r.text),
+        }
+    }
+
     /// Shows `text` under the code (the owner's answer to a command it ran).
     pub fn set_vim_message(
         &mut self,

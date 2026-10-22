@@ -227,6 +227,58 @@ fn ctrl_bracket_and_ctrl_c_are_escape_in_a_file_tab(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_ex_line_of_a_file_tab_takes_ctrl_w_h_u_r_and_ctrl_p_n_history(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
+    let dir = tempfile::tempdir().unwrap();
+    let tab = open_text(&view, cx, dir.path(), "a.txt", "one two\nthree\n");
+    // `"ayiw`: register a holds `one`.
+    cx.simulate_input("\"ayiw");
+
+    cx.simulate_input(":");
+    draw(cx);
+    cx.simulate_input("echo foo bar");
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":echo foo bar"));
+    cx.simulate_keystrokes("ctrl-w");
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":echo foo "));
+    cx.simulate_keystrokes("ctrl-h");
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":echo foo"));
+    cx.simulate_keystrokes("ctrl-u");
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":"));
+    cx.simulate_keystrokes("ctrl-r a");
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":one"));
+    cx.simulate_keystrokes("ctrl-h ctrl-h ctrl-h");
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":"));
+    // ⌃H on the empty line closes it, as Backspace does.
+    cx.simulate_keystrokes("ctrl-h");
+    assert_eq!(bar(&tab, cx), None);
+    assert_eq!(text(&tab.buffer, cx), "one two\nthree\n");
+
+    // ⌃P / ⌃N walk the history like ↑ / ↓.
+    for line in ["2", "1"] {
+        cx.simulate_input(":");
+        draw(cx);
+        cx.simulate_input(line);
+        cx.simulate_keystrokes("enter");
+        draw(cx);
+    }
+    cx.simulate_input(":");
+    draw(cx);
+    cx.simulate_keystrokes("ctrl-p");
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":1"));
+    cx.simulate_keystrokes("ctrl-p");
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":2"));
+    cx.simulate_keystrokes("ctrl-n");
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":1"));
+    cx.simulate_keystrokes("ctrl-n");
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":"));
+    cx.simulate_keystrokes("up");
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":1"));
+    cx.simulate_keystrokes("escape");
+    assert_eq!(bar(&tab, cx), None);
+}
+
+#[gpui::test]
 fn ctrl_bracket_and_ctrl_c_leave_insert_in_the_composer(cx: &mut TestAppContext) {
     let env = ChatEnv::new();
     let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
