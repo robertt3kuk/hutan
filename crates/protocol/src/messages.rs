@@ -661,6 +661,12 @@ pub struct DaemonShutdown {
     /// `stop_sessions`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub forget: bool,
+    /// Protocol 0.42 (capability `daemon.stopping`): the caller starts a daemon again right
+    /// after this one is gone (a restart, also onto another build). The daemon announces the
+    /// stop with `restart: true`, so other clients do not take it for a stop the user wants
+    /// kept. Older daemons ignore it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restart: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1005,6 +1011,40 @@ pub struct Welcome {
     pub epoch: Epoch,
     pub capabilities: Vec<String>,
     pub resume: ResumeOutcome,
+    /// Protocol 0.42 (capability `daemon.identity`): which build answers, and from where. A
+    /// client compares it with the `hutand` it would start itself (`docs/architecture.md`
+    /// § Daemon lifecycle). Absent from older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daemon_build: Option<DaemonBuild>,
+}
+
+/// The build of a running `hutand` (protocol 0.42, capability `daemon.identity`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DaemonBuild {
+    /// Its version (`CARGO_PKG_VERSION`), as in `Welcome.daemon_version`.
+    pub version: String,
+    /// The git commit it was built from (12 hex digits); absent for a build outside git.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_sha: Option<String>,
+    /// The executable that runs, with symlinks resolved.
+    pub exe_path: PathBuf,
+    /// When this process started (Unix ms).
+    pub started_at_ms: u64,
+}
+
+/// Who asked a daemon to stop (`daemon.stopping`, protocol 0.42).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopBy {
+    /// `daemon.shutdown` from the desktop app.
+    Desktop,
+    /// `daemon.shutdown` from the CLI (`hutan daemon stop|restart`, an agent through it).
+    Cli,
+    /// *Stop daemon…* of the daemon's own menu bar item.
+    MenuBar,
+    /// Any other client (also a value this build does not know yet).
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1384,6 +1424,17 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         truncated: bool,
     },
+    /// Capability `daemon.stopping` (protocol 0.42): the daemon stops because someone asked
+    /// (`daemon.shutdown`, its menu bar item's *Stop daemon…*), sent to every subscribed
+    /// connection before it closes them. Without `restart` it is a stop the user wants kept: a
+    /// client that would start a missing daemon by itself does not, until the user starts it.
+    /// A stop by signal or a crash is not announced.
+    #[serde(rename = "daemon.stopping")]
+    DaemonStopping {
+        by: StopBy,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        restart: bool,
+    },
 }
 
 impl Event {
@@ -1450,6 +1501,7 @@ impl Event {
         "checkpoint.state",
         "lsp.state",
         "lsp.diagnostics",
+        "daemon.stopping",
     ];
 }
 

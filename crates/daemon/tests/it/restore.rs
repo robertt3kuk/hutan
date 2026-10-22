@@ -294,6 +294,7 @@ async fn a_shutdown_request_keeps_stopped_sessions_for_the_next_start_unless_for
             .call::<Empty>(Request::DaemonShutdown(DaemonShutdown {
                 stop_sessions: true,
                 forget,
+                restart: false,
             }))
             .await
             .unwrap();

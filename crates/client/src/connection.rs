@@ -169,9 +169,12 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// Returns immediately. Connects (starting `hutand` per `opts.autostart`, at most once per
-    /// 10 s) and reconnects with exponential backoff (100 ms doubling to 5 s, ±20 % jitter)
-    /// until dropped or shut down.
+    /// Returns immediately. Connects (starting `hutand` per `opts.autostart`; after a start that
+    /// failed the next waits 1 s, doubling to 60 s, and after [`crate::AUTOSTART_GIVE_UP`]
+    /// failures of one kind in a row none follows until [`start_daemon_now`](Self::start_daemon_now))
+    /// and reconnects with exponential backoff (100 ms doubling to 5 s, ±20 % jitter) until
+    /// dropped or shut down. A daemon that announces a stop someone asked for
+    /// ([`StoreState::stopped_by`]) turns autostart off.
     pub fn start(opts: ConnectOptions) -> Connection {
         let autostart = opts.autostart.is_some();
         Self::start_with(opts, autostart)
@@ -256,7 +259,7 @@ impl Connection {
     /// Allows or forbids starting `hutand` when nothing listens (it has no effect without
     /// [`ConnectOptions::autostart`]). Forbidding keeps the connection retrying quietly, so a
     /// daemon the user stopped is not brought back; allowing it again reconnects at once and
-    /// starts the daemon without waiting for the autostart interval.
+    /// starts the daemon without waiting out the backoff of earlier failed starts.
     pub fn set_autostart(&self, enabled: bool) {
         let was = self.shared.autostart.swap(enabled, Ordering::AcqRel);
         if enabled && !was {
@@ -264,8 +267,8 @@ impl Connection {
         }
     }
 
-    /// Allows autostart and dials now, starting `hutand` without waiting for the autostart
-    /// interval: what *Start* does after the cause of a failed start was dealt with.
+    /// Allows autostart and dials now, starting `hutand` from scratch (no backoff, a halted
+    /// autostart and an announced stop forgotten): what *Start* and *Retry* do.
     pub fn start_daemon_now(&self) {
         self.shared.autostart.store(true, Ordering::Release);
         self.shared.kick.notify_one();

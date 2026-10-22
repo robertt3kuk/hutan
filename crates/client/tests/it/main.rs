@@ -4,4 +4,5 @@ mod autostart_held;
 mod autostart_toggle;
 mod common;
 mod connection;
+mod lifecycle;
 mod shutdown;

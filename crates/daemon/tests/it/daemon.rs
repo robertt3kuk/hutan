@@ -229,10 +229,27 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "doc.sync",
             "lsp",
             "checkpoint.restores",
-            "lsp.completion"
+            "lsp.completion",
+            "daemon.identity",
+            "daemon.stopping"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);
+    // Protocol 0.42: which build answers, from which executable (this test binary here).
+    let build = welcome.daemon_build.as_ref().expect("an identity");
+    assert_eq!(build.version, welcome.daemon_version);
+    assert_eq!(
+        build.exe_path,
+        std::env::current_exe().unwrap().canonicalize().unwrap()
+    );
+    assert!(build.started_at_ms > 0);
+    assert!(
+        build
+            .git_sha
+            .as_ref()
+            .is_none_or(|sha| sha.len() == 12 && sha.chars().all(|c| c.is_ascii_hexdigit())),
+        "{build:?}"
+    );
 
     let status: DaemonStatusInfo = client.call(Request::DaemonStatus(Empty {})).await.unwrap();
     assert_eq!(status.epoch, t.daemon.epoch());
@@ -660,6 +677,7 @@ async fn shutdown_replies_removes_socket_and_releases_lock() {
         .call::<Empty>(Request::DaemonShutdown(DaemonShutdown {
             stop_sessions: false,
             forget: false,
+            restart: false,
         }))
         .await;
     assert!(reply.is_ok(), "shutdown must be acknowledged: {reply:?}");
@@ -799,6 +817,7 @@ async fn client_autostarts_hutand_when_the_socket_is_absent() {
         .call::<Empty>(Request::DaemonShutdown(DaemonShutdown {
             stop_sessions: false,
             forget: false,
+            restart: false,
         }))
         .await
         .unwrap();

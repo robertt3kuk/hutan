@@ -12,7 +12,7 @@ use std::time::Duration;
 use futures::{SinkExt, StreamExt};
 use hutan_core::SessionId;
 use hutan_protocol::control::{ErrorBody, ErrorCode};
-use hutan_protocol::messages::{ClientInfo, ClientKind, Hello, Request, Welcome};
+use hutan_protocol::messages::{ClientInfo, ClientKind, DaemonBuild, Hello, Request, Welcome};
 use hutan_protocol::{
     ControlMessage, Frame, FrameCodec, FrameKind, MAX_PAYLOAD, PROTOCOL_VERSION, ProtocolError,
 };
@@ -77,7 +77,29 @@ pub const CAPABILITIES: &[&str] = &[
     "lsp",
     "checkpoint.restores",
     "lsp.completion",
+    "daemon.identity",
+    "daemon.stopping",
 ];
+
+/// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit
+/// it was built from (`HUTAN_GIT_SHA`, from the build script), its executable with symlinks
+/// resolved, and `started_at_ms`.
+pub fn daemon_build(started_at_ms: u64) -> DaemonBuild {
+    let exe = std::env::current_exe().ok();
+    let exe_path = exe
+        .as_deref()
+        .and_then(|exe| exe.canonicalize().ok())
+        .or(exe)
+        .unwrap_or_default();
+    DaemonBuild {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        git_sha: Some(env!("HUTAN_GIT_SHA"))
+            .filter(|sha| !sha.is_empty())
+            .map(str::to_owned),
+        exe_path,
+        started_at_ms,
+    }
+}
 
 /// How long a closing connection may take to flush already queued messages.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -224,6 +246,8 @@ pub struct ConnContext {
     pub desktops: DesktopPresence,
     /// How long a new connection may stay silent before `hello` arrives.
     pub handshake_timeout: Duration,
+    /// What `welcome` says about this daemon's build.
+    pub build: DaemonBuild,
     next_conn_id: AtomicU64,
 }
 
@@ -246,6 +270,7 @@ impl ConnContext {
             daemon_uid,
             desktops: DesktopPresence::default(),
             handshake_timeout,
+            build: daemon_build(crate::registry::now_ms()),
             next_conn_id: AtomicU64::new(1),
         }
     }
@@ -522,6 +547,7 @@ async fn handshake(
                 epoch,
                 capabilities: CAPABILITIES.iter().map(|c| (*c).to_owned()).collect(),
                 resume,
+                daemon_build: Some(ctx.build.clone()),
             },
         )?
         .to_frame()

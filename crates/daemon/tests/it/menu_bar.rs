@@ -21,6 +21,7 @@ use hutan_daemon::menu_bar::{MenuChoice, MenuModel, Need, OPEN_SETTINGS_ACTION, 
 use hutan_protocol::chat::ChatCreate;
 use hutan_protocol::messages::{
     AgentReportRequest, AgentState, ClientKind, Empty, Event, Request, SessionInfo, SessionResult,
+    StopBy,
 };
 use hutan_protocol::ui::{
     AppearanceSummary, DockSummary, FocusSummary, LayoutSummary, PaneItem, PaneSummary, UiAction,
@@ -673,10 +674,25 @@ async fn stop_daemon_stops_a_daemon_with_nothing_running_without_asking() {
     let t = Env::start().await;
     t.shown("the item", |_| true).await;
     let token = t.daemon.daemon.shutdown_token();
+    // A CLI that listens (a desktop would hide the item).
+    let (_listener, mut events) = t.daemon.connect_subscribed().await;
     t.item.click(MenuChoice::StopDaemon);
     timeout(WAIT, token.cancelled())
         .await
         .expect("the daemon did not stop");
+    // Protocol 0.42: every client hears it was a stop the user asked for.
+    let announced = timeout(WAIT, async {
+        loop {
+            match events.recv().await {
+                Ok((_, Event::DaemonStopping { by, restart })) => return (by, restart),
+                Ok(_) => {}
+                Err(error) => panic!("no daemon.stopping: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("the stop was announced");
+    assert_eq!(announced, (StopBy::MenuBar, false));
     assert!(
         !t.item
             .calls()

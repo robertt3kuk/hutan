@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`messages`] also carries which daemon answers — `Welcome.daemon_build` (protocol 0.42,
+//!   capability `daemon.identity`) — and a stop someone asked for — the `daemon.stopping` event
+//!   and `daemon.shutdown`'s `restart` (protocol 0.42, capability `daemon.stopping`).
 //! - [`lsp`]: language servers in the daemon — `doc.open|change|save|close` (capability
 //!   `doc.sync`), `lsp.status|diagnostics|hover|definition|restart|stop|trust` and the events
 //!   `lsp.state` and `lsp.diagnostics` (protocol 0.39, capability `lsp`), completion and
@@ -101,7 +104,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 41,
+    minor: 42,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

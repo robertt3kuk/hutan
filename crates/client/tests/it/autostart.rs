@@ -1,4 +1,5 @@
-//! `Connection` starts `hutand` when the socket is absent, and not more than once per 10 s.
+//! `Connection` starts `hutand` when the socket is absent, and again when the daemon it runs
+//! goes away without being asked to (a stop someone asked for is kept: `lifecycle.rs`).
 //!
 //! Own test binary: it sets `HUTAN_HOME` for the daemon process it spawns.
 
@@ -9,14 +10,12 @@
 use crate::common;
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use common::*;
 use hutan_client::{ConnectOptions, Connection, ConnectionState};
 use hutan_protocol::messages::{
     ClientInfo, ClientKind, DaemonShutdown, DaemonStatusInfo, Empty, Request,
 };
-use tokio::time::{sleep, timeout};
 
 /// `hutand` next to the test binaries (same profile). Tests never build it: `just test`
 /// builds the workspace binaries first.
@@ -32,7 +31,7 @@ fn hutand() -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn autostarts_a_missing_daemon_at_most_once_per_interval() {
+async fn autostarts_a_missing_daemon_and_again_after_it_died() {
     let binary = hutand();
     let home = tempfile::tempdir().unwrap();
     // Stops the daemons the connection starts, also when the test fails half-way.
@@ -58,31 +57,16 @@ async fn autostarts_a_missing_daemon_at_most_once_per_interval() {
         .await
         .unwrap();
 
-    // Stop the daemon it started. The connection wants it back, but the interval since the
-    // last autostart has not passed, so it must not be started again.
-    connection
-        .call::<Empty>(Request::DaemonShutdown(DaemonShutdown {
-            stop_sessions: true,
-            forget: false,
-        }))
-        .await
-        .unwrap();
+    // The daemon goes away unasked (a signal: no `daemon.stopping`). The connection wants it
+    // back and starts a new one.
+    let pid = i32::try_from(first.pid).unwrap();
+    // SAFETY: a plain syscall on the pid of the hutand this test started.
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
     wait_reconnecting(&mut state).await;
-    timeout(WAIT, async {
-        while socket.exists() {
-            sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the daemon never removed its socket");
-    sleep(Duration::from_millis(2500)).await;
-    assert!(!socket.exists(), "autostarted again within the interval");
-    assert!(matches!(
-        state.borrow().connection,
-        ConnectionState::Reconnecting { .. }
-    ));
+    assert_eq!(state.borrow().stopped_by, None);
+    assert!(connection.autostart());
 
-    // After the interval the next attempt starts a daemon again: a new epoch.
+    // The next attempt starts a daemon again: a new epoch.
     let state_after = wait_state(&mut state, "second autostart", |s| {
         s.connection == ConnectionState::Connected
     })
@@ -98,6 +82,7 @@ async fn autostarts_a_missing_daemon_at_most_once_per_interval() {
         .call::<Empty>(Request::DaemonShutdown(DaemonShutdown {
             stop_sessions: true,
             forget: false,
+            restart: false,
         }))
         .await
         .unwrap();

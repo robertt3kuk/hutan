@@ -4,14 +4,15 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use hutan_client::identity::{self, DaemonIdentity, Mismatch};
 use hutan_client::{
     Client, ClientError, ConnectOptions, DaemonFiles, StartFailure, default_socket_path,
     move_data_aside, start_failure,
 };
 use hutan_protocol::ErrorBody;
 use hutan_protocol::messages::{
-    ClientInfo, ClientKind, DaemonShutdown, DaemonStatusInfo, Empty, Event, Request, SessionList,
-    SessionListFilter, SessionSnapshot, Subscribed,
+    ClientInfo, ClientKind, DaemonBuild, DaemonShutdown, DaemonStatusInfo, Empty, Event, Request,
+    SessionList, SessionListFilter, SessionSnapshot, Subscribed,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -216,7 +217,7 @@ impl Ctx {
         let info: DaemonStatusInfo = self.call(&client, Request::DaemonStatus(Empty {})).await?;
         Ok(StartOut {
             started,
-            status: StatusOut::new(&self.socket, info),
+            status: StatusOut::new(&self.socket, info, &client),
         })
     }
 
@@ -258,7 +259,7 @@ impl Ctx {
             Err(e) => return Err(e),
         };
         let info: DaemonStatusInfo = self.call(&client, Request::DaemonStatus(Empty {})).await?;
-        let out = StatusOut::new(&self.socket, info);
+        let out = StatusOut::new(&self.socket, info, &client);
         self.print(&out, || out.human())
     }
 
@@ -364,24 +365,27 @@ impl Ctx {
 
     async fn daemon_stop(&self, stop_sessions: bool, forget: bool) -> Result<(), CliError> {
         let client = self.connect().await?;
-        self.shutdown_daemon(client, stop_sessions, forget).await?;
+        self.shutdown_daemon(client, stop_sessions, forget, false)
+            .await?;
         self.print(&serde_json::json!({"stopped": true}), || {
             "hutand stopped".to_owned()
         })
     }
 
     /// Asks the connected daemon to shut down and waits until its socket is gone, so a new
-    /// daemon can start.
+    /// daemon can start. `restart`: one is started right after (other clients are told so).
     async fn shutdown_daemon(
         &self,
         client: Client,
         stop_sessions: bool,
         forget: bool,
+        restart: bool,
     ) -> Result<(), CliError> {
         match client
             .call::<Value>(Request::DaemonShutdown(DaemonShutdown {
                 stop_sessions,
                 forget,
+                restart,
             }))
             .await
         {
@@ -424,7 +428,8 @@ impl Ctx {
                         )));
                     }
                 }
-                self.shutdown_daemon(client, stop_sessions, false).await?;
+                self.shutdown_daemon(client, stop_sessions, false, true)
+                    .await?;
                 true
             }
             Err(CliError::Unreachable(_)) => false,
@@ -526,20 +531,88 @@ struct StatusOut {
     socket: PathBuf,
     #[serde(flatten)]
     info: DaemonStatusInfo,
+    /// Which build answers (protocol 0.42; absent from older daemons).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    build: Option<DaemonBuild>,
+    /// How it differs from the `hutand` this CLI starts; absent when it does not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mismatch: Option<MismatchOut>,
+}
+
+#[derive(Serialize)]
+struct MismatchOut {
+    /// `foreign`: another executable; `different`: another build of it; `newer`: a newer
+    /// build than this CLI.
+    kind: &'static str,
+    /// What this CLI would start: its version, commit and `hutand`.
+    cli_version: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cli_git_sha: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cli_hutand: Option<PathBuf>,
+    note: String,
+}
+
+impl MismatchOut {
+    /// How the daemon behind `client` differs from the `hutand` beside this CLI.
+    fn of(client: &Client) -> Option<Self> {
+        let hutand = find_hutand().ok();
+        let own = DaemonIdentity::own(hutand.as_deref());
+        let running = DaemonIdentity::of(client.welcome());
+        let restart = "`hutan daemon restart` starts the one beside this CLI";
+        let (kind, note) = match identity::compare(&own, &running)? {
+            Mismatch::Foreign { path } => (
+                "foreign",
+                format!(
+                    "this is not the hutand beside this CLI ({}) but {}; {restart}",
+                    own.exe_path
+                        .as_deref()
+                        .map_or_else(|| "none".into(), |p| p.display().to_string()),
+                    path.display()
+                ),
+            ),
+            Mismatch::Different => (
+                "different",
+                format!(
+                    "this CLI is Hutan {}, the daemon runs {}; {restart}",
+                    own.build_text(),
+                    running.build_text()
+                ),
+            ),
+            Mismatch::Newer => (
+                "newer",
+                format!(
+                    "the daemon runs Hutan {}, newer than this CLI ({}); update Hutan: `{}`",
+                    running.build_text(),
+                    own.build_text(),
+                    start_failure::UPDATE_COMMAND
+                ),
+            ),
+        };
+        Some(Self {
+            kind,
+            cli_version: identity::OWN_VERSION,
+            cli_git_sha: identity::own_git_sha(),
+            cli_hutand: own.exe_path,
+            note,
+        })
+    }
 }
 
 impl StatusOut {
-    fn new(socket: &Path, info: DaemonStatusInfo) -> Self {
+    fn new(socket: &Path, info: DaemonStatusInfo, client: &Client) -> Self {
         Self {
             running: true,
             socket: socket.to_owned(),
             info,
+            build: client.welcome().daemon_build.clone(),
+            mismatch: MismatchOut::of(client),
         }
     }
 
     fn human(&self) -> String {
         let i = &self.info;
-        format!(
+        let mut out = format!(
             "hutand {} (protocol {}.{}) pid {}, up {}, {} session(s), {} client(s)\nsocket {}\nepoch  {}",
             i.daemon_version,
             i.protocol.major,
@@ -550,7 +623,23 @@ impl StatusOut {
             i.clients,
             self.socket.display(),
             i.epoch,
-        )
+        );
+        if let Some(build) = &self.build {
+            out.push_str(&format!(
+                "\nbuild  {}{}\nbinary {}",
+                build.version,
+                build
+                    .git_sha
+                    .as_deref()
+                    .map(|sha| format!(" ({sha})"))
+                    .unwrap_or_default(),
+                build.exe_path.display()
+            ));
+        }
+        if let Some(mismatch) = &self.mismatch {
+            out.push_str(&format!("\nnote   {}", mismatch.note));
+        }
+        out
     }
 }
 

@@ -37,10 +37,12 @@ use tracing::{debug, info, warn};
 
 use crate::chat::ChatUpdate;
 use crate::client::{
-    AutostartThrottle, COLORS_CAPABILITY, Client, ConnectOptions, Resumed, is_unreachable,
+    AUTOSTART_GIVE_UP, AutostartThrottle, COLORS_CAPABILITY, Client, ConnectOptions, Resumed,
+    is_unreachable,
 };
 use crate::connection::Shared;
 use crate::error::ClientError;
+use crate::identity::DaemonIdentity;
 use crate::socket::default_socket_path;
 use crate::start_failure::{DaemonFiles, StartFailure};
 use crate::store::{ConnectionState, Effects, Notice, StoreState};
@@ -377,7 +379,9 @@ impl Supervisor {
             match self.dial(resume).await {
                 None => break,
                 Some(Ok(resumed)) => {
+                    self.throttle.succeeded();
                     self.state.daemon_start = None;
+                    self.state.autostart_halted = false;
                     match self.serve(resumed).await {
                         Served::Stopped => break,
                         Served::Lost { connected } => {
@@ -390,6 +394,15 @@ impl Supervisor {
                 }
                 Some(Err(error)) => {
                     debug!(%error, "connecting to hutand failed");
+                    self.throttle.failed(&error);
+                    if self.throttle.halted() && !self.state.autostart_halted {
+                        warn!(
+                            %error,
+                            "hutand failed to start the same way {AUTOSTART_GIVE_UP} times; not \
+                             starting it again until asked"
+                        );
+                    }
+                    self.state.autostart_halted = self.throttle.halted();
                     self.note_failure(error).await;
                     attempt += 1;
                 }
@@ -489,7 +502,10 @@ impl Supervisor {
                 _ = self.cancel.cancelled() => return false,
                 () = &mut timer => return true,
                 () = self.shared.kick.notified() => {
-                    self.throttle = AutostartThrottle::default();
+                    // The user asked for a start (or allowed one again): now, from scratch.
+                    self.throttle.reset();
+                    self.state.autostart_halted = false;
+                    self.state.stopped_by = None;
                     return true;
                 }
                 Some(command) = self.commands.recv() => {
@@ -524,6 +540,9 @@ impl Supervisor {
             }
         };
         self.shared.set_client(Some(client.clone()));
+        // A daemon answers: whatever stop was announced is over.
+        self.state.daemon = Some(DaemonIdentity::of(client.welcome()));
+        self.state.stopped_by = None;
         self.complete_sync(synced);
         tokio::select! {
             biased;
@@ -675,6 +694,15 @@ impl Supervisor {
 
     /// Notices and terminal consequences of folded events; always after `publish`.
     fn dispatch(&mut self, effects: Effects) {
+        if let Some(by) = self.state.stopped_by
+            && self.shared.autostart.swap(false, Ordering::AcqRel)
+        {
+            // Before the connection drops: nothing may bring this daemon back by itself.
+            info!(
+                ?by,
+                "hutand is stopping on request; not starting it again until asked"
+            );
+        }
         for notice in effects.notices {
             // No receivers is fine.
             let _ = self.shared.notices.send(notice);

@@ -1297,6 +1297,7 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::DaemonShutdown(DaemonShutdown {
                 stop_sessions: true,
                 forget: false,
+                restart: false,
             }),
         ),
         ("events_subscribe", Request::EventsSubscribe(Empty {})),
@@ -1412,6 +1413,7 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::DaemonShutdown(DaemonShutdown {
                 stop_sessions: true,
                 forget: true,
+                restart: false,
             }),
         ),
         (
@@ -3119,6 +3121,14 @@ fn requests() -> Vec<(&'static str, Request)> {
                 retrigger: false,
             }),
         ),
+        (
+            "daemon_shutdown_restart",
+            Request::DaemonShutdown(DaemonShutdown {
+                stop_sessions: true,
+                forget: false,
+                restart: true,
+            }),
+        ),
     ]
 }
 
@@ -4279,6 +4289,20 @@ fn events() -> Vec<(&'static str, Event)> {
                 checkpoint: Box::new(restore_checkpoint_fixture()),
             },
         ),
+        (
+            "daemon_stopping",
+            Event::DaemonStopping {
+                by: StopBy::MenuBar,
+                restart: false,
+            },
+        ),
+        (
+            "daemon_stopping_restart",
+            Event::DaemonStopping {
+                by: StopBy::Cli,
+                restart: true,
+            },
+        ),
     ]
 }
 
@@ -4520,6 +4544,7 @@ fn responses_match_fixtures() {
                     epoch: epoch(),
                     capabilities: vec!["terminal.render.v1".into()],
                     resume: ResumeOutcome::SnapshotRequired,
+                    daemon_build: None,
                 },
             )
             .unwrap(),
@@ -6617,6 +6642,26 @@ fn responses_match_fixtures() {
                     data: Some(serde_json::json!({"reason": "superseded"})),
                 },
             ),
+        ),
+        (
+            "welcome_identity",
+            ControlMessage::ok(
+                1,
+                &Welcome {
+                    protocol: PROTOCOL_VERSION,
+                    daemon_version: "0.2.0".into(),
+                    epoch: epoch(),
+                    capabilities: vec!["daemon.identity".into(), "daemon.stopping".into()],
+                    resume: ResumeOutcome::SnapshotRequired,
+                    daemon_build: Some(DaemonBuild {
+                        version: "0.2.0".into(),
+                        git_sha: Some("0123456789ab".into()),
+                        exe_path: "/Applications/Hutan.app/Contents/MacOS/hutand".into(),
+                        started_at_ms: 1_791_894_170_000,
+                    }),
+                },
+            )
+            .unwrap(),
         ),
     ];
     for (name, message) in cases {

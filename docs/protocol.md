@@ -1,8 +1,10 @@
-# Hutan IPC Protocol — v0.40
+# Hutan IPC Protocol — v0.42
 
 Normative decisions: ADR 0002 (transport, framing, sequencing) and ADR 0004 (terminal render stream). This file is the message catalog; the `protocol` crate (`PROTOCOL_VERSION`) is the source of truth and this document must match it.
 
-Latest: 0.40 — what a restore restored (capability `checkpoint.restores`, slice FX-SMALL-1): a `restore` checkpoint's `CheckpointInfo.restores` (the checkpoint it rewound to before: a turn's, or an earlier restore's for an Undo) and `restores_through` (the last of its chain), from its stored row (schema v18), so every client, and one started after a restart, knows which turns stand restored. See § Checkpoints.
+Latest: 0.42 — which daemon answers, and a stop the user wants kept (slice FX-DAEMON-LIFECYCLE). Capability `daemon.identity`: `Welcome.daemon_build {version, git_sha?, exe_path, started_at_ms}` — the daemon's version, the git commit it was built from (absent outside git), its executable with symlinks resolved, and when it started; clients compare it with the `hutand` they would start themselves (`docs/architecture.md` § Daemon lifecycle). Capability `daemon.stopping`: the event `daemon.stopping {by: desktop|cli|menu_bar|other, restart?}`, sent to every subscribed connection before a daemon that was asked to stop (`daemon.shutdown`, its menu bar item's *Stop daemon…*) closes them, and `daemon.shutdown {restart?}`, which a caller sets when it starts a daemon again right away. A client that would start a missing daemon by itself does not after a `daemon.stopping` without `restart`, until the user starts it. A stop by signal, by a deleted socket or by a crash is not announced. Older peers ignore both.
+
+Also 0.40 — what a restore restored (capability `checkpoint.restores`, slice FX-SMALL-1): a `restore` checkpoint's `CheckpointInfo.restores` (the checkpoint it rewound to before: a turn's, or an earlier restore's for an Undo) and `restores_through` (the last of its chain), from its stored row (schema v18), so every client, and one started after a restart, knows which turns stand restored. See § Checkpoints.
 
 Also 0.39 — language servers in the daemon (capabilities `doc.sync`, `lsp`, slice E-11b, ADR 0012 amendment 2026-10-21 points 4–5): the document mirrors `doc.open|change|save|close`, `lsp.status`, `lsp.diagnostics`, `lsp.hover`, `lsp.definition`, `lsp.restart|stop`, the user-only `lsp.trust`, the events `lsp.state` and `lsp.diagnostics`, and `ResourceSample.services` (the servers as `service` nodes). See § LSP and `docs/lsp.md`.
 
@@ -48,7 +50,7 @@ Header: `u32 length (big-endian, excludes header) | u8 kind`. Max payload 4 MiB.
 {"id": 0, "result": {"protocol": {"major": 0, "minor": 1}, "daemon_version": "0.1.0", "epoch": "6f1c…", "capabilities": ["terminal.render.v1"], "resume": "replayed"}}
 ```
 
-`resume` is `replayed` (events after `seq` follow immediately) or `snapshot_required`.
+`resume` is `replayed` (events after `seq` follow immediately) or `snapshot_required`. Since 0.42 (capability `daemon.identity`) the welcome also carries `daemon_build {version, git_sha?, exe_path, started_at_ms}`.
 
 ## Methods
 
@@ -58,7 +60,7 @@ Milestone tag = when the method lands.
 |---|---|---|---|
 | `hello` | handshake | see above | M1 |
 | `daemon.status` | query | → version, uptime, epoch, counts | M1 |
-| `daemon.shutdown` | command | `{stop_sessions: bool, forget?: bool}`; `forget` (capability `session.restore`) drops the stopped sessions from the restore set | M1 |
+| `daemon.shutdown` | command | `{stop_sessions: bool, forget?: bool, restart?: bool}`; `forget` (capability `session.restore`) drops the stopped sessions from the restore set; `restart` (0.42, capability `daemon.stopping`) says the caller starts a daemon again at once. Announced with `daemon.stopping` before the connections close | M1 |
 | `session.recovery_ack` | command | `{session_id?}` → `{sessions: [SessionId]}`; capability `session.recovery` (0.26): dismisses what the last daemon start did to one session, or to every session without `session_id`; the sessions that had nothing to dismiss are not listed; `not_found` for an unknown session; never allowed to an agent-originated connection | RR-1 |
 | `events.subscribe` | command | `{topics?: [...]}` → current `seq` | M1 |
 | `workspace.create` / `.list` / `.rename` / `.close` | cmd/query | `create`: `{name, paths?, project_ids?, created_by?: user\|cli\|agent}` → `WorkspaceInfo` of kind `workspace` with the projects of the folders and ids (0.19; `roots` is read as `paths`); `list` → `{workspaces}` in `position` order; `rename` → `WorkspaceInfo`; `close` → `{}` (a workspace is deleted, a project closed) | M1 |
@@ -195,6 +197,7 @@ Milestone tag = when the method lands.
 | `checkpoint.created` / `checkpoint.removed` / `checkpoint.state` | `{checkpoint: CheckpointInfo}` when a turn's checkpoint is recorded (states `ok`, `late`, `failed`, `off`), or a restore's (kind `restore`, 0.38; with `restores` and `restores_through`, 0.40) / `{ids}` (`checkpoint.remove`, retention) / `{session_id, state: on\|off\|unsupported, reason?}`, also in the session's `ChatInfo.checkpoints` (0.37, capability `checkpoint`) | CK-3 |
 | `session.exited` | session id, exit code/signal | M1 |
 | `session.closed` | session id; the session is gone from `session.list` (0.30, capability `session.close`) | CL-1 |
+| `daemon.stopping` | `{by: desktop\|cli\|menu_bar\|other, restart?}`: the daemon was asked to stop (`daemon.shutdown`, the menu bar item's *Stop daemon…*) and closes the connections next; without `restart` clients start no daemon by themselves until the user does (0.42, capability `daemon.stopping`) | FX-DAEMON-LIFECYCLE |
 | `memory.changed` | `{scope, workspace_id?, scope_revision}`: an entry was written, updated, archived or restored (`scope_revision` is the scope's new counter), or a proposal arrived or was answered (unchanged); clients list again (capability `memory`, 0.32) | MW-2 |
 | `terminal.bell` / `terminal.title` / `terminal.notification` | from OSC sniffer | M1 |
 | `terminal.block` | `{terminal_id, block}`: a block started, changed state or was truncated (capability `terminal.blocks`) | M10 |

@@ -15,6 +15,7 @@ mod client;
 mod connection;
 mod error;
 mod fs;
+pub mod identity;
 mod lsp;
 pub mod recovery;
 mod socket;
@@ -26,10 +27,11 @@ pub mod time;
 
 pub use blocks::BlockList;
 pub use chat::{ChatUpdate, CheckpointUpdate};
-pub use client::{Client, ConnectOptions, Resumed};
+pub use client::{AUTOSTART_GIVE_UP, Client, ConnectOptions, Resumed};
 pub use connection::Connection;
 pub use error::ClientError;
 pub use fs::FsText;
+pub use identity::{DaemonIdentity, Mismatch};
 pub use socket::default_socket_path;
 pub use start_failure::{
     DaemonFiles, MovedData, ResetError, StartErrorKind, StartErrorRecord, StartFailure,

@@ -11,7 +11,7 @@ use hutan_protocol::chat::{ChatQueued, ChatSent};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::grants::ControlGrants;
 use hutan_protocol::messages::{
-    ClientKind, DaemonStatusInfo, Empty, Request, SessionResult, Subscribed,
+    ClientKind, DaemonStatusInfo, Empty, Event, Request, SessionResult, StopBy, Subscribed,
 };
 use hutan_protocol::notify::NotifyList;
 use hutan_protocol::task::TaskResult;
@@ -19,7 +19,7 @@ use hutan_protocol::{Frame, PROTOCOL_VERSION, ProtocolError};
 use serde::Serialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::accounts::AccountService;
 use crate::assistant::{AssistantService, Origin};
@@ -174,9 +174,23 @@ impl Router {
                     conn = %conn.id(),
                     stop_sessions = params.stop_sessions,
                     forget = params.forget,
+                    restart = params.restart,
                     "shutdown requested by client"
                 );
                 self.forget.store(params.forget, Ordering::Release);
+                // Protocol 0.42: every client hears who stopped it before the connections
+                // close (they flush their queues first), so none starts it again by itself.
+                let by = match conn.client_kind() {
+                    Some(ClientKind::Desktop) => StopBy::Desktop,
+                    Some(ClientKind::Cli) => StopBy::Cli,
+                    _ => StopBy::Other,
+                };
+                if let Err(error) = self.bus.publish(&Event::DaemonStopping {
+                    by,
+                    restart: params.restart,
+                }) {
+                    warn!(%error, "could not announce the shutdown");
+                }
                 // The connection task queues the response before it next looks at the token,
                 // and closing connections flush their queues first.
                 self.shutdown.cancel();

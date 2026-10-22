@@ -186,6 +186,10 @@ pub(crate) const DOC_SYNC_CAPABILITY: &str = "doc.sync";
 /// Capability for `lsp.*`, the `lsp.state` and `lsp.diagnostics` events and
 /// `ResourceSample.services` (protocol 0.39).
 pub(crate) const LSP_CAPABILITY: &str = "lsp";
+/// Capability for `Welcome.daemon_build` (protocol 0.42).
+pub(crate) const IDENTITY_CAPABILITY: &str = "daemon.identity";
+/// Capability for the `daemon.stopping` event and `daemon.shutdown`'s `restart` (protocol 0.42).
+pub(crate) const STOPPING_CAPABILITY: &str = "daemon.stopping";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -230,6 +234,8 @@ const CAPABILITIES: &[&str] = &[
     CHECKPOINT_RESTORE_CAPABILITY,
     DOC_SYNC_CAPABILITY,
     LSP_CAPABILITY,
+    IDENTITY_CAPABILITY,
+    STOPPING_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -238,8 +244,13 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// well under a second, so the wait only costs time when the daemon really is slow or broken.
 const AUTOSTART_WAIT: Duration = Duration::from_secs(15);
 const AUTOSTART_POLL: Duration = Duration::from_millis(25);
-/// A missing socket triggers at most one autostart per this interval when dialing repeatedly.
-const AUTOSTART_INTERVAL: Duration = Duration::from_secs(10);
+/// The first wait after a failed autostart; it doubles with each failure in a row.
+const AUTOSTART_BACKOFF_START: Duration = Duration::from_secs(1);
+/// The longest wait between two autostarts that keep failing.
+const AUTOSTART_BACKOFF_MAX: Duration = Duration::from_secs(60);
+/// Autostarts that failed the same way in a row before a reconnecting connection stops starting
+/// the daemon by itself ([`StoreState::autostart_halted`](crate::StoreState::autostart_halted)).
+pub const AUTOSTART_GIVE_UP: u32 = 3;
 /// Events buffered per [`Client::events`] receiver before it starts lagging.
 const EVENT_BUFFER: usize = 1024;
 /// Terminal render messages buffered per [`Client::terminal_frames`] receiver.
@@ -1866,25 +1877,91 @@ pub(crate) fn is_unreachable(e: &io::Error) -> bool {
     )
 }
 
-/// Limits autostart attempts to one per [`AUTOSTART_INTERVAL`]; used by reconnecting callers
-/// that dial repeatedly.
+/// Paces the autostarts of a connection that dials repeatedly: after a start that failed, the
+/// next waits 1 s, doubling to 60 s while starts keep failing; after [`AUTOSTART_GIVE_UP`]
+/// failures of the same kind in a row it allows none (halted) until [`reset`](Self::reset). A
+/// start that brought a daemon up resets it too.
 #[derive(Debug, Default)]
 pub(crate) struct AutostartThrottle {
-    last: Option<Instant>,
+    /// No autostart before this.
+    next: Option<Instant>,
+    /// Failed autostarts in a row, whatever their kind.
+    failures: u32,
+    /// The kind of the last failure and how often in a row it happened.
+    kind: Option<(String, u32)>,
+    /// A permit was handed out for the dial in progress.
+    pending: bool,
+    halted: bool,
 }
 
 impl AutostartThrottle {
-    /// `true` (and starts a new interval) if an autostart is allowed now.
+    /// `true` (and the dial in progress counts as an autostart) if one is allowed now. Two
+    /// autostarts are at least 1 s apart even when the first one worked (a daemon that dies
+    /// right after it answered is not started in a tight loop).
     pub(crate) fn permit(&mut self) -> bool {
         let now = Instant::now();
-        if self
-            .last
-            .is_some_and(|last| now.duration_since(last) < AUTOSTART_INTERVAL)
-        {
+        if self.halted || self.next.is_some_and(|next| now < next) {
             return false;
         }
-        self.last = Some(now);
+        self.pending = true;
+        self.next = Some(now + AUTOSTART_BACKOFF_START);
         true
+    }
+
+    /// The dial ended with `error`; counts only when it started the daemon.
+    pub(crate) fn failed(&mut self, error: &ClientError) {
+        if !std::mem::take(&mut self.pending) {
+            return;
+        }
+        self.failures = self.failures.saturating_add(1);
+        let kind = failure_kind(error);
+        let repeats = match &self.kind {
+            Some((last, repeats)) if *last == kind => repeats.saturating_add(1),
+            _ => 1,
+        };
+        self.halted = repeats >= AUTOSTART_GIVE_UP;
+        self.kind = Some((kind, repeats));
+        let delay = AUTOSTART_BACKOFF_START
+            .saturating_mul(1 << self.failures.saturating_sub(1).min(16))
+            .min(AUTOSTART_BACKOFF_MAX);
+        self.next = Some(Instant::now() + delay);
+    }
+
+    /// Whether autostarts stopped after failing the same way [`AUTOSTART_GIVE_UP`] times.
+    pub(crate) fn halted(&self) -> bool {
+        self.halted
+    }
+
+    /// A daemon answered: failures so far are forgotten (the spacing of [`permit`] stays).
+    ///
+    /// [`permit`]: Self::permit
+    pub(crate) fn succeeded(&mut self) {
+        *self = Self {
+            next: self.next,
+            ..Self::default()
+        };
+    }
+
+    /// Starts afresh, now: the user asked for a start.
+    pub(crate) fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// What kind of failure `error` is, for "failed the same way": the start-error record's kind,
+/// else how the started process ended, else the error's kind.
+fn failure_kind(error: &ClientError) -> String {
+    use crate::start_failure::StartErrorKind;
+    match error {
+        ClientError::DaemonStart(failure) => match (failure.kind(), failure.outcome) {
+            (Some(StartErrorKind::SchemaTooNew { .. }), _) => "schema_too_new".to_owned(),
+            (Some(StartErrorKind::AlreadyRunning { .. }), _) => "already_running".to_owned(),
+            (Some(StartErrorKind::Other), _) => "other".to_owned(),
+            (None, StartOutcome::Exited { code }) => format!("exited {code:?}"),
+            (None, outcome) => format!("{outcome:?}"),
+        },
+        ClientError::Io(error) => format!("io {:?}", error.kind()),
+        other => format!("{:?}", std::mem::discriminant(other)),
     }
 }
 
@@ -1907,10 +1984,11 @@ async fn dial(
     };
     let files = DaemonFiles::for_socket(socket);
     let spawned_ms = crate::time::now_ms();
-    let mut child = spawn_daemon(binary, socket_explicit.then_some(socket), &files)?;
-    let outcome = match timeout(AUTOSTART_WAIT, wait_for_socket(socket, &mut child)).await {
+    let spawn = || spawn_daemon(binary, socket_explicit.then_some(socket), &files);
+    let child = spawn()?;
+    let outcome = match timeout(AUTOSTART_WAIT, wait_for_socket(socket, child, spawn)).await {
         Ok(Ok(stream)) => return Ok(stream),
-        Ok(Err(Waited::Io(e))) => return Err(e.into()),
+        Ok(Err(Waited::Failed(e))) => return Err(e),
         Ok(Err(Waited::Exited(code))) => StartOutcome::Exited { code },
         Err(_) => StartOutcome::TimedOut,
     };
@@ -1921,21 +1999,29 @@ async fn dial(
 
 /// `hutand`'s exit code when another daemon holds the lock (`crates/daemon/src/main.rs`).
 const EXIT_ALREADY_RUNNING: i32 = 2;
+/// Starts within one autostart after the daemon that held the lock went away.
+const AUTOSTART_RESPAWNS: u32 = 5;
 
 enum Waited {
-    Io(io::Error),
+    Failed(ClientError),
     Exited(Option<i32>),
 }
 
 /// Polls `socket` until it answers. A `child` that fails ends the wait at once; one that exits
 /// cleanly or because another daemon holds the lock does not, since that other daemon may
-/// still bring the socket up.
-async fn wait_for_socket(socket: &Path, child: &mut Child) -> Result<UnixStream, Waited> {
+/// still bring the socket up. When that other daemon was on its way out instead (its socket
+/// is gone, a stop that had not finished), `respawn` starts ours again (a few times at most).
+async fn wait_for_socket(
+    socket: &Path,
+    mut child: Child,
+    mut respawn: impl FnMut() -> Result<Child, ClientError>,
+) -> Result<UnixStream, Waited> {
     let mut running = true;
+    let mut respawns = 0;
     loop {
         tokio::select! {
             status = child.wait(), if running => {
-                let status = status.map_err(Waited::Io)?;
+                let status = status.map_err(|e| Waited::Failed(e.into()))?;
                 match status.code() {
                     Some(0 | EXIT_ALREADY_RUNNING) => running = false,
                     code => return Err(Waited::Exited(code)),
@@ -1945,8 +2031,18 @@ async fn wait_for_socket(socket: &Path, child: &mut Child) -> Result<UnixStream,
         }
         match UnixStream::connect(socket).await {
             Ok(stream) => return Ok(stream),
+            Err(e)
+                if e.kind() == io::ErrorKind::NotFound
+                    && !running
+                    && respawns < AUTOSTART_RESPAWNS =>
+            {
+                debug!("the daemon that held the lock is gone; starting hutand again");
+                respawns += 1;
+                child = respawn().map_err(Waited::Failed)?;
+                running = true;
+            }
             Err(e) if is_unreachable(&e) => {}
-            Err(e) => return Err(Waited::Io(e)),
+            Err(e) => return Err(Waited::Failed(e.into())),
         }
     }
 }

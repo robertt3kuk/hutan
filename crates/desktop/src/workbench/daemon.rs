@@ -132,6 +132,7 @@ async fn shutdown_and_wait(
         .call::<Value>(Request::DaemonShutdown(DaemonShutdown {
             stop_sessions,
             forget: false,
+            restart: false,
         }))
         .await
     {
@@ -652,6 +653,7 @@ impl Workbench {
                     .call::<Value>(Request::DaemonShutdown(DaemonShutdown {
                         stop_sessions: false,
                         forget: false,
+                        restart: false,
                     }))
                     .await;
             }

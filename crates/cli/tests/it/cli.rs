@@ -505,6 +505,70 @@ async fn daemon_restart_without_sessions_gives_a_new_daemon() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn daemon_status_names_the_build_and_a_daemon_from_elsewhere_then_restart_replaces_it() {
+    let ours = hutand_dir().join("hutand").canonicalize().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    // Another install's daemon: the same build copied elsewhere.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let _guard = DaemonReaper::new(home.path());
+    let other = elsewhere.path().join("hutand");
+    std::fs::copy(&ours, &other).unwrap();
+    let other = other.canonicalize().unwrap();
+    let mut spawned = tokio::process::Command::new(&other);
+    spawned
+        .env("HUTAN_HOME", home.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+    let _child = spawned.spawn().unwrap();
+    let run = |args: &'static [&'static str]| {
+        let mut cmd = command(Path::new(HUTAN), None, args);
+        cmd.env("HUTAN_HOME", home.path());
+        finish(cmd)
+    };
+    let deadline = std::time::Instant::now() + WAIT;
+    while run(&["daemon", "status"]).await.code != 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the other hutand came up"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let status = run(&["daemon", "status", "--json"]).await.ok().json();
+    assert_eq!(status["build"]["exe_path"], other.to_str().unwrap());
+    assert_eq!(status["build"]["version"], status["daemon_version"]);
+    assert_eq!(status["mismatch"]["kind"], "foreign");
+    assert_eq!(status["mismatch"]["cli_hutand"], ours.to_str().unwrap());
+    let human = run(&["daemon", "status"]).await.ok();
+    assert!(
+        human
+            .stdout
+            .contains(&format!("binary {}", other.display())),
+        "{human:?}"
+    );
+    assert!(
+        human.stdout.contains(&format!(
+            "note   this is not the hutand beside this CLI ({}) but {}; `hutan daemon restart` \
+             starts the one beside this CLI",
+            ours.display(),
+            other.display()
+        )),
+        "{human:?}"
+    );
+
+    // Restart replaces it with the hutand beside the CLI.
+    let restarted = run(&["daemon", "restart", "--json"]).await.ok().json();
+    assert_eq!(restarted["was_running"], true);
+    assert_eq!(restarted["build"]["exe_path"], ours.to_str().unwrap());
+    assert_eq!(restarted.get("mismatch"), None, "{restarted}");
+    let human = run(&["daemon", "status"]).await.ok();
+    assert!(!human.stdout.contains("note"), "{human:?}");
+    assert_eq!(run(&["daemon", "stop"]).await.code, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn daemon_restart_refuses_live_sessions_unless_asked_to_stop_them() {
     hutand_dir();
     let home = tempfile::tempdir().unwrap();

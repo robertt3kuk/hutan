@@ -10,10 +10,11 @@ use hutan_core::{
 };
 use hutan_protocol::blocks::Block;
 use hutan_protocol::chat::{ApprovalInfo, QuestionInfo};
-use hutan_protocol::messages::{Event, SessionInfo, SessionSnapshot, WorkspaceInfo};
+use hutan_protocol::messages::{Event, SessionInfo, SessionSnapshot, StopBy, WorkspaceInfo};
 use hutan_protocol::notify::NotificationIntent;
 use hutan_protocol::resources::ResourceSample;
 
+use crate::identity::DaemonIdentity;
 use crate::start_failure::StartFailure;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +53,20 @@ pub struct StoreState {
     /// Why the daemon is not there, while it is not: the failure of the last autostart, or the
     /// start-error record a daemon left next to the socket. `None` while connected.
     pub daemon_start: Option<StartFailure>,
+    /// Starting the daemon failed the same way [`AUTOSTART_GIVE_UP`](crate::AUTOSTART_GIVE_UP)
+    /// times in a row: the connection no longer starts it by itself (it still dials) until
+    /// [`Connection::start_daemon_now`](crate::Connection::start_daemon_now) (*Retry*) or a
+    /// daemon that answers.
+    pub autostart_halted: bool,
+    /// The daemon this state describes (its `welcome`, protocol 0.42); the last one while
+    /// disconnected, `None` before the first connection.
+    pub daemon: Option<DaemonIdentity>,
+    /// The daemon announced a stop someone asked for (`daemon.stopping` without `restart`,
+    /// protocol 0.42): who. The connection then starts no daemon by itself until
+    /// [`Connection::start_daemon_now`](crate::Connection::start_daemon_now) or
+    /// [`Connection::set_autostart`](crate::Connection::set_autostart); `None` again once a
+    /// daemon connects.
+    pub stopped_by: Option<StopBy>,
 }
 
 /// Transient events that are not part of [`StoreState`].
@@ -229,6 +244,9 @@ impl StoreState {
             questions: Vec::new(),
             trees: BTreeMap::new(),
             daemon_start: None,
+            autostart_halted: false,
+            daemon: None,
+            stopped_by: None,
         }
     }
 
@@ -537,6 +555,13 @@ impl StoreState {
                 action,
                 args,
             }),
+            // Protocol 0.42: a stop the user wants kept. A restart is followed by a daemon at
+            // once and changes nothing here.
+            Event::DaemonStopping { by, restart } => {
+                if !restart {
+                    self.stopped_by = Some(by);
+                }
+            }
         }
         effects
     }

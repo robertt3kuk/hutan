@@ -138,6 +138,7 @@ async fn a_newer_database_fails_the_autostart_with_the_record_until_the_data_is_
         .call::<Empty>(Request::DaemonShutdown(DaemonShutdown {
             stop_sessions: true,
             forget: false,
+            restart: false,
         }))
         .await
         .unwrap();

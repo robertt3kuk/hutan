@@ -48,7 +48,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use hutan_core::{SessionId, SessionState, WorkspaceId};
-use hutan_protocol::messages::{AgentState, Event, SessionListFilter};
+use hutan_protocol::messages::{AgentState, Event, SessionListFilter, StopBy};
 use hutan_protocol::notify::IntentKind;
 use hutan_protocol::ui::UiRun;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -783,6 +783,13 @@ impl Service {
             live_sessions = live,
             "the daemon is stopped from its menu bar item"
         );
+        // Protocol 0.42: a stop the user wants kept; connected apps do not start it again.
+        if let Err(error) = self.bus.publish(&Event::DaemonStopping {
+            by: StopBy::MenuBar,
+            restart: false,
+        }) {
+            warn!(%error, "could not announce the stop");
+        }
         self.shutdown.cancel();
     }
 }
