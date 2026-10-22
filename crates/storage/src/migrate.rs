@@ -253,13 +253,16 @@ fn backup_name(stamp_ms: u64, from: u32) -> String {
     format!("hutan-{stamp_ms:013}-v{from}.db")
 }
 
+/// The stamp of a backup this module made (`hutan-<stamp>-v<version>.db`); `None` for any
+/// other file, which pruning then leaves alone: a database a newer Hutan wrote, moved aside by
+/// "start with empty data" (`hutan-<stamp>-v<found>-newer.db`), is never deleted.
 fn backup_stamp(name: &str) -> Option<u64> {
-    name.strip_prefix("hutan-")?
+    let (stamp, version) = name
+        .strip_prefix("hutan-")?
         .strip_suffix(".db")?
-        .split_once("-v")?
-        .0
-        .parse()
-        .ok()
+        .split_once("-v")?;
+    version.parse::<u32>().ok()?;
+    stamp.parse().ok()
 }
 
 fn prune_backups(dir: &Path) {
@@ -299,5 +302,23 @@ mod tests {
         assert_eq!(backup_stamp(&name), Some(1_791_894_164_332));
         assert!(backup_name(999, 1) < backup_name(1_000, 1));
         assert_eq!(backup_stamp("other.db"), None);
+    }
+
+    #[test]
+    fn pruning_never_counts_a_database_moved_aside() {
+        assert_eq!(backup_stamp("hutan-0001791894164332-v13-newer.db"), None);
+        assert_eq!(backup_stamp("hutan-0001791894164332-reset.db"), None);
+        let dir = tempfile::tempdir().unwrap();
+        let newer = dir.path().join("hutan-0000000000001-v13-newer.db");
+        std::fs::write(&newer, "kept").unwrap();
+        for stamp in 2..=(2 + 2 * 5_u64) {
+            std::fs::write(dir.path().join(backup_name(stamp, 12)), "").unwrap();
+        }
+        prune_backups(dir.path());
+        assert!(newer.exists(), "the moved-aside database survives pruning");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            BACKUPS_KEPT + 1
+        );
     }
 }

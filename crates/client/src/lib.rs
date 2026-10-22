@@ -18,6 +18,7 @@ mod fs;
 mod lsp;
 pub mod recovery;
 mod socket;
+pub mod start_failure;
 mod store;
 mod supervisor;
 mod terminal;
@@ -30,5 +31,9 @@ pub use connection::Connection;
 pub use error::ClientError;
 pub use fs::FsText;
 pub use socket::default_socket_path;
+pub use start_failure::{
+    DaemonFiles, MovedData, ResetError, StartErrorKind, StartErrorRecord, StartFailure,
+    StartOutcome, move_data_aside,
+};
 pub use store::{ConnectionState, Notice, StoreState};
 pub use terminal::{GoneReason, TerminalHandle, TerminalUpdate};

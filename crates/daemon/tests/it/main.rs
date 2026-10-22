@@ -32,6 +32,7 @@ mod restore;
 mod session_env;
 mod session_names;
 mod sessions;
+mod start_error;
 mod task_delivery;
 mod tasks;
 mod workspaces;
