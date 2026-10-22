@@ -77,11 +77,12 @@ fn main() -> ExitCode {
     match run(&paths, &started) {
         Ok(()) => ExitCode::SUCCESS,
         Err(failure) => {
-            eprintln!("hutand: {failure:#}");
+            let text = start_error::chain_text(&failure);
+            eprintln!("hutand: {text}");
             if started.load(Ordering::Acquire) {
-                error!(error = %format!("{failure:#}"), "hutand failed");
+                error!(error = %text, "hutand failed");
             } else {
-                error!(error = %format!("{failure:#}"), "hutand could not start");
+                error!(error = %text, "hutand could not start");
                 start_error::write(&paths, &failure);
             }
             let already_running = failure.chain().any(|cause| {

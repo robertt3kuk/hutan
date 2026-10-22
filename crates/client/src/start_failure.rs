@@ -203,34 +203,37 @@ impl StartFailure {
         }
     }
 
-    /// Everything known, for *Copy details*, `hutan daemon why` and bug reports.
+    /// Everything known, for *Copy details*, the CLI and bug reports: the sentence, the record
+    /// (or, without one, the end of what the daemon printed) and how the start ended.
     pub fn details(&self) -> String {
         let mut out = self.sentence();
         out.push('\n');
         if let Some(record) = &self.record {
             out.push_str(&format!(
-                "\nhutand {} (pid {}) failed at {}\n{}\n",
+                "\nhutand {} (pid {}) failed at {}:\n{}\n",
                 record.version,
                 record.pid,
                 local_time_seconds_text(record.at_ms),
                 record.message
             ));
-        }
-        match self.outcome {
-            StartOutcome::Exited { code } => {
-                out.push_str(&format!("\nThe started hutand {}.\n", exit_text(code)));
-            }
-            StartOutcome::TimedOut => {
-                out.push_str("\nThe started hutand did not answer in time.\n");
-            }
-            StartOutcome::Recorded => {}
-        }
-        if let Some(tail) = self.stderr_tail.as_deref().filter(|t| !t.trim().is_empty()) {
+        } else if let Some(tail) = self.stderr_tail.as_deref().filter(|t| !t.trim().is_empty()) {
             out.push_str(&format!(
                 "\nEnd of {}:\n{}\n",
                 self.start_log.display(),
                 tail.trim_end()
             ));
+        }
+        match self.outcome {
+            StartOutcome::Exited { code } => {
+                out.push_str(&format!(
+                    "\nThe hutand started now exited ({}).\n",
+                    exit_text(code)
+                ));
+            }
+            StartOutcome::TimedOut => {
+                out.push_str("\nThe hutand started now did not answer in time.\n");
+            }
+            StartOutcome::Recorded => {}
         }
         out
     }

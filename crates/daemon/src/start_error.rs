@@ -36,6 +36,23 @@ pub fn record_path(paths: &Paths) -> PathBuf {
     paths.socket.with_file_name(START_ERROR_FILE)
 }
 
+/// The whole chain of `error`, once: like `{error:#}`, but a cause that its parent's message
+/// already ends with (errors that print their source and also return it) is not repeated.
+pub fn chain_text(error: &anyhow::Error) -> String {
+    let mut text = String::new();
+    for cause in error.chain() {
+        let part = cause.to_string();
+        if text.ends_with(&part) {
+            continue;
+        }
+        if !text.is_empty() {
+            text.push_str(": ");
+        }
+        text.push_str(&part);
+    }
+    text
+}
+
 /// The record for `error` as JSON.
 pub fn record(error: &anyhow::Error, at_ms: u64) -> Value {
     let mut record = json!({
@@ -43,7 +60,7 @@ pub fn record(error: &anyhow::Error, at_ms: u64) -> Value {
         "pid": std::process::id(),
         "version": env!("CARGO_PKG_VERSION"),
         "kind": "other",
-        "message": format!("{error:#}"),
+        "message": chain_text(error),
     });
     for cause in error.chain() {
         // The storage error sits boxed inside `DaemonError::Storage`, so the chain yields the
@@ -155,7 +172,7 @@ mod tests {
         assert_eq!(record["at_ms"], 7);
         assert_eq!(record["version"], env!("CARGO_PKG_VERSION"));
         let message = record["message"].as_str().unwrap();
-        assert!(message.contains("schema version 13"), "{message}");
+        assert_eq!(message.matches("schema version 13").count(), 1, "{message}");
     }
 
     #[test]
