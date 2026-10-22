@@ -21,7 +21,7 @@ use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_chat_view::Body;
 use hutan_core::{CheckpointAvailability, SessionId};
 use hutan_desktop::workbench::chat::LoadStatus;
-use hutan_desktop::workbench::rewind::{Group, Phase, SheetFocus};
+use hutan_desktop::workbench::rewind::{DiffState, Group, Phase, SheetFocus};
 use hutan_desktop::workbench::{FileOpen, Region, Workbench};
 use hutan_protocol::chat::{ChatSend, ChatSent};
 use hutan_protocol::checkpoint::{CheckpointPreview, CheckpointPreviewRequest};
@@ -227,6 +227,21 @@ fn drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext, target: Region) -
     view.read_with(cx, |wb, _| wb.region_bounds(target).is_some())
 }
 
+/// The selected file's diff is in (or failed): it is drawn above the buttons, so the buttons
+/// move down when it arrives. A click that straddles that frame lands its press on the button
+/// and its release beside it, which is no click at all.
+fn diff_shown(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    wait_until(cx, "the selected file's diff", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.rewind_sheet().is_some_and(|s| {
+                s.rows.get(s.selected).is_none_or(|row| {
+                    !matches!(s.diffs.get(&row.entry.path), Some(DiffState::Loading))
+                })
+            })
+        })
+    });
+}
+
 fn sheet_ready(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
     wait_until(cx, "the preview", |cx| {
         view.read_with(cx, |wb, _| {
@@ -236,6 +251,7 @@ fn sheet_ready(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
                 .is_some_and(|s| matches!(s.phase, Phase::Ready) && !s.working && !s.busy())
         })
     });
+    diff_shown(view, cx);
 }
 
 /// `(path, group, ticked)` of the sheet's files.
@@ -358,6 +374,7 @@ fn rewind_previews_restores_a_turns_files_and_undo_brings_them_back(cx: &mut Tes
     click(&view, cx, Region::ChatRewind(footer[0]));
     sheet_ready(&view, cx);
     click(&view, cx, Region::RewindFile(1));
+    diff_shown(&view, cx);
     assert_eq!(restore_label(&view, cx), "Restore 2 files");
     click(&view, cx, Region::RewindFile(1));
     assert_eq!(restore_label(&view, cx), "Restore 1 file");
@@ -519,6 +536,7 @@ fn a_busy_checkout_waits_for_the_turn_and_a_stale_plan_is_replaced(cx: &mut Test
                 .is_some_and(|s| !s.busy() && s.can_restore())
         })
     });
+    diff_shown(&view, cx);
 
     // a.txt changes after the preview: the restore writes nothing and shows the new plan.
     fs::write(&a, "changed after the preview\n").unwrap();
