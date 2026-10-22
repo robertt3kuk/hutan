@@ -146,7 +146,7 @@ With `editor.vim_mode` on (live; ⌘K → *Editor: Toggle Vim Mode*), a file tab
 - **Rope-native host.** `BufferHost` (`code_view/src/vim_host.rs`) implements `VimHost` on `hutan_buffer::Buffer`: reads are `O(log n)` on the rope, and every Vim transaction is one `hutan_buffer::Transaction` carrying the caret before and after it. For one key the view lends the buffer's text model to the host (`FileBuffer::lend`) and takes it back with the steps the key made (`FileBuffer::restore`), which reach the parser and the other views like any edit. A Normal command is one undo step; an Insert session is one step with the command that started it; `:s`, `:g` and `:normal` are one step each.
 - **Modes.** A file opens in Normal mode with a block caret; Insert has a bar caret and types through the editor's own path (auto-pairs, auto-indent, input methods); Visual draws its selection from the Vim state. A mouse selection made in Normal mode becomes a Visual one at the next key; a click past the end of a line in Normal mode puts the caret on its last character, as in Vim. Vim state is per view, so two panes of one file can be in different modes.
 - **Keys and input methods.** In Normal and Visual the view refuses text input (`accepts_text_input` is false, and `replace_text_in_range` drops anything a platform still sends), so printable keys arrive as key presses and never insert text, with or without an input method. A key is matched by the character it produces (a Dvorak layout types its own letters as commands); when that character is not ASCII (Russian, Greek, …) by its place on the keyboard instead, the US character macOS names the key by (`hutan_code_view::vim_key_of`), so `вв` on a Russian layout is `dd` and `:` is the key of `Ж` with ⇧. The character itself is kept where Vim waits for text: after `f t F T r`, on the `/` `?` line, and in Insert (`hutan_vim::Vim::takes_text`). Text fields read keys the same way. In Insert, Escape first ends a composition (the marked text stays); the next Escape leaves Insert.
-- **Keymap contexts.** The code view's context is `CodeView Editor` plus `vim_mode = normal | insert | visual` while Vim is on. The editor's keys that Vim answers in Normal and Visual (arrows, Home/End, Return, Tab, Backspace/Delete, ⌥/⇧ motions, ⌃A ⌃E ⌃K, line moves) are bound in `CodeView && vim_mode != normal && vim_mode != visual`; its Escape (back to one caret) only in `CodeView && !vim_mode`.
+- **Keymap contexts.** The code view's context is `CodeView Editor` plus `vim_mode = normal | insert | visual` while Vim is on. The editor's keys that Vim answers in Normal and Visual (arrows, Home/End, Return, Tab, Backspace/Delete, ⌥/⇧ motions, ⌃K, line moves) are bound in `CodeView && vim_mode != normal && vim_mode != visual`; its Escape (back to one caret) only in `CodeView && !vim_mode`. ⌃A / ⌃E (line start / end) and ⌃O (*Go Back*) are bound only with Vim off (`CodeView && !vim_mode`): with Vim on they are Vim's in every mode. Vim's own ⌃ keys are read before the window's other keys (`workbench/vim_keys.rs`, `docs/design.md` § Vim's keys and the keymap); a `keymap.toml` binding on such a key still wins.
 - **Status items.** `editor.mode` shows `NORMAL` / `INSERT` / `VISUAL` and the keys of a command in progress (`2d`); `editor.position` shows `Ln, Col`. Both are cached views that read the focused code view (`editor_status.rs`); each observes the code view it read and the workbench, so every key, caret move and tab switch draws them again (a cached view is drawn again only when it is notified itself).
 - **The `:` line** opens under the code (`'<,'>` after a Visual selection), with ↑ ↓ history; Escape or Backspace on an empty line closes it. Answers and errors show on the same line until the next key. The **`/` and `?` line** shows on the same line while it is typed (`/foo`, with a caret); Return searches, Escape or Backspace on an empty line ends it.
 
@@ -171,7 +171,7 @@ Anything else answers `Not supported: :…`. Patterns are Vim patterns (E-7b, `h
 - **Registers** follow `editor.vim_use_system_clipboard`: on, yanks and deletes also write the system clipboard and `p` pastes from it (lines stay lines); off, the register is private.
 - **Live toggle.** Turning `editor.vim_mode` off drops a pending command and closes an Insert session's undo step; turning it on puts every file tab in Normal mode.
 
-**Parity** (what changes in a file tab with Vim on): in Normal and Visual the unmodified arrows, Home/End, Return, Tab, Backspace/Delete, ⇧/⌥ arrow selections and motions, ⌥↑/⌥↓ line moves, ⌥⇧↑/↓ duplicates and ⌃A/⌃E/⌃K are Vim's (or do nothing) instead of the editor's; Escape leaves Insert/Visual instead of reducing to one caret. ⌘ shortcuts (⌘Z, ⌘C/⌘V/⌘X, ⌘A, ⌘D, ⌘S, ⌘F, ⌘/) keep their meaning in every mode. Without Vim nothing changes.
+**Parity** (what changes in a file tab with Vim on): in Normal and Visual the unmodified arrows, Home/End, Return, Tab, Backspace/Delete, ⇧/⌥ arrow selections and motions, ⌥↑/⌥↓ line moves, ⌥⇧↑/↓ duplicates and ⌃K are Vim's (or do nothing) instead of the editor's; ⌃A / ⌃E are Vim's in every mode (Insert: the last insert, the character below; Normal: increment, scroll) and bind line start / end only with Vim off (`keymap.toml` can bind them back, `docs/design.md` § Vim's keys and the keymap); ⌃O is Vim's jump list instead of *Go Back*; Escape leaves Insert/Visual instead of reducing to one caret. ⌘ shortcuts (⌘Z, ⌘C/⌘V/⌘X, ⌘A, ⌘D, ⌘S, ⌘F, ⌘/) keep their meaning in every mode. Without Vim nothing changes.
 
 ## Vim command matrix (E-7b)
 
@@ -180,7 +180,7 @@ Anything else answers `Not supported: :…`. Patterns are Vim patterns (E-7b, `h
 | Area | Supported | Not supported (answers "Not supported: …") |
 |---|---|---|
 | Motions | `h j k l` (arrows, Space, Backspace), `w b e ge W B E gE`, `0 ^ $ g_ \|`, `gg G` with a count, `N%`, `+ - _`, `f t F T ; ,`, `%` (brackets), `( )` sentences, `{ }` paragraphs, `[[ ]] [] ][` sections, `gj gk` (as `j k`); columns are display columns (tabs, CJK) | `H M L`, `zz`/`z…`, `gm go g0 g$`, `[(` `])` and other `[`/`]` pairs, forced motions (`dv`, `dV`) |
-| Operators | `d c y < > = g~ gu gU g?` with any motion or object, doubled for lines (`dd >> gUU g??`), `x X D C s S Y`, `J gJ` (with `'joinspaces'`), `r` (with a count, `r<CR>`), `~`, `.` with a new count; Vim's exclusive-linewise rule and the `d}` linewise rule | `!` filter, `gq gw g@`, `R` Replace mode, `U`, `⌃A ⌃X`; `=` indents by braces from the line above, not with Vim's full C-indenting |
+| Operators | `d c y < > = g~ gu gU g?` with any motion or object, doubled for lines (`dd >> gUU g??`), `x X D C s S Y`, `J gJ` (with `'joinspaces'`), `r` (with a count, `r<CR>`), `~`, `.` with a new count; Vim's exclusive-linewise rule and the `d}` linewise rule | `!` filter, `gq gw g@`, `R` Replace mode, `U`; `=` indents by braces from the line above, not with Vim's full C-indenting |
 | Text objects | `iw aw iW aW`, `is as`, `ip ap`, `i( a( ib ab`, `i{ a{ iB aB`, `i[ a[`, `i< a<`, `i" a" i' a' i\` a\``, with counts | `it at` (tags; tree-sitter objects are E-9) |
 | Visual | `v V ⌃V`, switching between them, `o O gv`, every operator, `I A` (block: on every line, `$A`), block `c C D r ~`, `p P`, `J gJ r u U ~ > < =`, objects | `>`/`<` on a block |
 | Registers | unnamed, `"a`–`"z`, `"A`–`"Z` append, `"0`–`"9` (Vim 9.1 rules: a named delete also goes to `"1`; `%` `(` `)` `` ` `` `/` `?` `n` `N` `{` `}` deletes go to `"1` and `"-`), `"-`, `"_`, read-only `". ": "/`, `"+ "*` the system clipboard; `editor.vim_use_system_clipboard` makes the unnamed register mirror the clipboard | `"=` expression, `"#` `"%` |
@@ -190,6 +190,50 @@ Anything else answers `Not supported: :…`. Patterns are Vim patterns (E-7b, `h
 | `:` line | ranges `% . $ N 'x /pat/ ?pat? \/ \?` with `±N`, `,` and `;`; `:s` (flags `g i I n e &`, a count, `~`), `:&` `:&&` `&`, `:g :g! :v` with any of these, `:normal`, `:d :y` (register, count), `:pu[!]`, `:m :t :co`, `:j[!]`, `:> :<`, `:k :mark`, `:u :red`, `:N`, `:noh`, `:set` (`number ignorecase smartcase wrapscan hlsearch incsearch expandtab shiftround joinspaces shiftwidth tabstop`, with `no inv ! ? =`) | everything else (`:w` and the other file and window commands are the file tab's, see above) |
 
 In text fields (composer, palette, forms) the same layer runs, except that `:`, `/` and `?` answer "Not supported here" (a field has no line to show them in); `n`, `*`, registers, marks, macros and the rest work. Differences from Vim kept on purpose: Return and Tab in Normal mode stay the field's (`+` moves down), Visual-mode changes are not repeated by `.`, and a typed line break in a `:s` replacement is a line break.
+
+## Vim's control keys (FX-VIM-2)
+
+Vim's ⌃ keys, read by US key name (`⌃[` is the key under `х` on a Russian layout) in every field Vim runs in, before the window's other keys. ✓ = implemented; the Settings Keyboard page lists the same keys (`vim_keys::BUILTIN_KEYS`). The keys that act on text are checked against Vim 9.1 by differential fixtures (`crates/vim/tests/fixtures/{insert,control,increment,scroll}.json`), the rest by GPUI tests with real key events (`crates/desktop/tests/it/vim_keys_gpui.rs`). Keys marked *file tabs* need a file tab (panes, jumps, language server).
+
+| Key | Mode | What it does | |
+|---|---|---|---|
+| `⌃[` | all modes | Escape, also on a Russian layout | ✓ |
+| `⌃C` | all modes | leaves Insert or Visual, cancels a command or the `:` / `?` line | ✓ |
+| `⌃W` | Insert | deletes the word before the caret | ✓ |
+| `⌃U` | Insert | deletes back to where the insert began, then to the line start | ✓ |
+| `⌃H` | Insert | Backspace | ✓ |
+| `⌃J` `⌃M` | Insert | new line | ✓ |
+| `⌃T` `⌃D` | Insert | indents / dedents the line | ✓ |
+| `⌃O` | Insert | runs one Normal command, then back to Insert | ✓ |
+| `⌃R {register}` | Insert | inserts the register's text | ✓ |
+| `⌃A` | Insert | inserts the text of the last insert | ✓ |
+| `⌃E` `⌃Y` | Insert | copies the character below / above | ✓ |
+| `⌃N` `⌃P` | Insert (file tabs) | completion (E-12b) | ✓ |
+| `⌃D` `⌃U` | Normal, Visual | scrolls half a page down / up | ✓ |
+| `⌃F` `⌃B` | Normal, Visual | scrolls a page down / up | ✓ |
+| `⌃E` `⌃Y` | Normal, Visual | scrolls a line down / up, the caret stays | ✓ |
+| `⌃A` `⌃X` | Normal | adds / subtracts 1 (or the count) to the number at or after the caret (decimal, `0x` hex, negative) | ✓ |
+| `⌃A` `⌃X` `g⌃A` `g⌃X` | Visual | adds / subtracts on every selected line; `g` makes a sequence | ✓ |
+| `⌃R` | Normal | redo | ✓ |
+| `⌃O` `⌃I` | Normal | older / newer place in the jump list | ✓ |
+| `⌃V` | Normal | Visual block | ✓ |
+| `⌃^` | Normal (file tabs) | the file shown before this one | ✓ |
+| `⌃G` | Normal (file tabs) | the file's name, state and position | ✓ |
+| `⌃]` `⌃T` | Normal (file tabs) | goes to the definition (language server, as `gd`) / back | ✓ |
+| `⌃L` | Normal | redraw (nothing to do) | ✓ |
+| `⌃W s` `⌃W v` | Normal (file tabs) | splits the pane down / right | ✓ |
+| `⌃W h` `j` `k` `l` | Normal (file tabs) | focuses the pane to the left, below, above, right | ✓ |
+| `⌃W w` `⌃W W` | Normal (file tabs) | the next / previous pane | ✓ |
+| `⌃W q` `⌃W c` | Normal (file tabs) | closes the tab, as `:q` | ✓ |
+| `⌃W o` | Normal (file tabs) | zooms the pane (the others stay open, not closed as in Vim) | ✓ |
+| `⌃W =` | Normal (file tabs) | makes the panes the same size | ✓ |
+| `⌃W` | `:` / `?` lines | deletes the word before the caret | ✓ |
+| `⌃U` | `:` / `?` lines | deletes what was typed | ✓ |
+| `⌃H` | `:` / `?` lines | Backspace; on an empty line closes it | ✓ |
+| `⌃R {register}` | `:` / `?` lines | inserts the register's text | ✓ |
+| `⌃P` `⌃N` `↑` `↓` | `:` / `?` lines | older / newer lines typed before | ✓ |
+
+**User mappings.** `editor.vim_mappings.insert`, `.normal` and `.visual` (settings tables, key sequence → key sequence, written as in Vim: `jk`, `<Esc>`, `<C-w>`, `<CR>`, `<Nop>`) work like `inoremap` / `nnoremap` / `vnoremap`: not recursive, and a sequence that is the start of a longer one waits `editor.vim_timeout_ms` (default 1000) for the next key, then the held keys go through as typed. They apply in every field that carries `vim_mode` (file tabs, composer, Start sheet, palette, pickers, dialogs, Settings), not in terminals, the `:` line or the `/` `?` line. A bad entry is a Problems entry under `editor.vim_mappings.<mode>`; the Keyboard page lists the mappings and the keys above.
 
 ## Tests
 
