@@ -415,24 +415,31 @@ fn the_right_rail_checklist_shows_and_hides_panels_and_stays_open(cx: &mut TestA
         .filter(|(_, on)| *on)
         .map(|(l, _)| l.as_str())
         .collect();
-    // In the order of the registry, which does not change while the list is used.
-    assert_eq!(
-        shown,
-        [
-            "Files",
-            "History",
-            "Changes",
-            "Requests",
-            "Agents",
-            "Resources"
-        ]
+    // In the order of the rail, the shown ones first, then the ones that are not on it.
+    let rail: Vec<String> = view.read_with(cx, |wb, cx| {
+        wb.rail_tooltips(DockPosition::Right, cx)
+            .into_iter()
+            .map(|(_, title)| title.to_string())
+            .collect()
+    });
+    assert_eq!(shown, rail, "{entries:?}");
+    let first_unchecked = entries
+        .iter()
+        .position(|(_, on)| !on && entries[0].0 != "x");
+    assert!(
+        entries[1..=rail.len()].iter().all(|(_, on)| *on),
+        "{first_unchecked:?} {entries:?}"
     );
     assert!(
         entries.iter().any(|(l, on)| l == "Search" && !on),
         "an available panel that is not on the rail is unchecked"
     );
     assert!(
-        entries.last().unwrap().0.starts_with("Reset layout to"),
+        entries
+            .last()
+            .unwrap()
+            .0
+            .starts_with("Reset to built-in layout"),
         "{entries:?}"
     );
 
@@ -808,7 +815,13 @@ fn the_left_sidebars_sections_hide_move_and_reset_with_an_undo(cx: &mut TestAppC
         .position(|(l, _)| l == "Sidebar sections")
         .unwrap();
     assert!(entries[at + 1..].iter().any(|(l, on)| l == "Mawas" && *on));
-    assert!(entries.last().unwrap().0.starts_with("Reset layout to"));
+    assert!(
+        entries
+            .last()
+            .unwrap()
+            .0
+            .starts_with("Reset to built-in layout")
+    );
 
     // Hide Memory: the row goes, the list stays open, the key is in the user's file.
     run_entry(&view, cx, "Memory");
@@ -832,7 +845,7 @@ fn the_left_sidebars_sections_hide_move_and_reset_with_an_undo(cx: &mut TestAppC
     assert!(settings.get::<SidebarSettings>().show_projects);
 
     // Reset layout to preset brings every section back.
-    view.update(cx, |wb, cx| wb.reset_to_preset(cx));
+    view.update(cx, |wb, cx| wb.reset_to_builtin(cx));
     assert_eq!(keys(cx), ["agents", "assistant", "mawas-memory"]);
     assert_eq!(
         settings.get::<SidebarSettings>(),

@@ -2710,11 +2710,14 @@ impl Workbench {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.run_menu_entry(i, window, cx);
                     }))
+                    // A check mark you can see: the accent, bold, in a column of its own.
                     .child(
-                        div().w(px(12.0)).children(
-                            (entry.checked)
-                                .then(|| crate::icons::glyph(crate::icons::Icon::StateCompleted)),
-                        ),
+                        div()
+                            .w(px(14.0))
+                            .flex_none()
+                            .text_color(theme.accent)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .when(entry.checked, |s| s.child("✓")),
                     )
                     .child(div().flex_1().child(entry.label))
                     .when(entry.submenu, |s| {

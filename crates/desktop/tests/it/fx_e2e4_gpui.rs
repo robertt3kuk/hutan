@@ -519,3 +519,38 @@ fn rail_tooltips_follow_the_icons_when_the_panels_are_reordered(cx: &mut TestApp
     let expected: Vec<_> = before.into_iter().rev().collect();
     assert_eq!(after, expected, "every icon says its own panel");
 }
+
+// ---- 8. F4: the rail's checklist ---------------------------------------------------------------
+
+/// *Reset to built-in layout* from a Custom preset goes back to the built-in Default layout:
+/// the panel moved away is back where Default has it.
+#[gpui::test]
+fn reset_to_built_in_layout_leaves_a_custom_preset_for_the_default_one(cx: &mut TestAppContext) {
+    let (connection, settings, _) = offline_connection();
+    let (view, cx) = open_with(cx, settings, connection, None);
+    view.update(cx, |wb, cx| {
+        wb.place_panel(
+            &PanelId::new("changes"),
+            PanelDest::Dock(DockPosition::Left),
+            cx,
+        );
+    });
+    let (preset, left) = view.read_with(cx, |wb, _| {
+        (
+            wb.state().preset.clone(),
+            wb.state().docks.left.panels.clone(),
+        )
+    });
+    assert_eq!(preset, "custom");
+    assert!(left.contains(&PanelId::new("changes")));
+
+    view.update(cx, |wb, cx| wb.reset_to_builtin(cx));
+    let (preset, left) = view.read_with(cx, |wb, _| {
+        (
+            wb.state().preset.clone(),
+            wb.state().docks.left.panels.clone(),
+        )
+    });
+    assert_eq!(preset, "default", "the built-in layout, not Custom again");
+    assert!(!left.contains(&PanelId::new("changes")));
+}

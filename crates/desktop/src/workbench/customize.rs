@@ -274,7 +274,7 @@ impl Workbench {
 
     /// The checklist of the panels of dock `pos` (right click on the right rail, the bottom
     /// dock's tab strip or the left sidebar's nav): every available panel with a check while
-    /// it is shown there, and *Reset layout to preset*. A choice keeps the list open at
+    /// it is shown there, in the dock's order, and *Reset to built-in layout*. A choice keeps the list open at
     /// `position`, so several panels can be switched in a row.
     pub(crate) fn dock_checklist(
         &self,
@@ -286,7 +286,19 @@ impl Workbench {
             DockPosition::Right => "Right rail panels",
             DockPosition::Bottom => "Bottom panels",
         })];
-        for (panel, title) in self.checklist_panels() {
+        // The panels of this dock first, in the order the dock draws them (the rail's icons,
+        // the strip's tabs), then the ones that are not shown here.
+        let mut panels = self.checklist_panels();
+        let place = |panel: &PanelId| {
+            self.state
+                .docks
+                .get(pos)
+                .panels
+                .iter()
+                .position(|shown| shown == panel)
+        };
+        panels.sort_by_key(|(panel, _)| place(panel).unwrap_or(usize::MAX));
+        for (panel, title) in panels {
             let shown = self.state.docks.find(&panel) == Some(pos);
             let mut entry = Self::entry(title, move |this, window, cx| {
                 this.toggle_dock_panel(&panel, pos, cx);
@@ -300,18 +312,29 @@ impl Workbench {
         entries
     }
 
-    /// *Reset layout to preset*: the docks go back to what the current preset says.
+    /// *Reset to built-in layout*: the docks go back to what the built-in layout says. A
+    /// built-in preset is its own built-in layout; a preset of the user's (Custom) goes back to
+    /// the Default one, which it was made from.
     fn reset_entry(&self) -> MenuEntry {
-        Self::entry(
-            format!("Reset layout to {}", preset_label(&self.state.preset)),
-            |this, _, cx| this.reset_to_preset(cx),
-        )
+        Self::entry("Reset to built-in layout", |this, _, cx| {
+            this.reset_to_builtin(cx)
+        })
     }
 
-    /// The current preset applied again: its panels, modes and sizes, whatever the window drifted
+    /// The built-in layout that stands for the current preset ([`reset_entry`](Self::reset_entry)).
+    fn builtin_layout_name(&self) -> String {
+        let current = &self.state.preset;
+        if LayoutPreset::builtin().iter().any(|p| p.name == *current) {
+            current.clone()
+        } else {
+            LayoutPreset::DEFAULT.to_owned()
+        }
+    }
+
+    /// The built-in layout applied again: its panels, modes and sizes, whatever the window drifted
     /// to. The center and every open session stay.
-    pub fn reset_to_preset(&mut self, cx: &mut Context<Self>) {
-        let name = self.state.preset.clone();
+    pub fn reset_to_builtin(&mut self, cx: &mut Context<Self>) {
+        let name = self.builtin_layout_name();
         self.apply_preset_named(&name, cx);
         // The sidebar's sections go back to theirs too.
         for key in ["nav_rows", "show_projects"] {
@@ -319,7 +342,13 @@ impl Workbench {
                 tracing::warn!("cannot reset sidebar.{key}: {error}");
             }
         }
-        self.set_notice(format!("Layout reset to {}", preset_label(&name)), cx);
+        self.set_notice(
+            format!(
+                "Layout reset to the built-in {} layout",
+                preset_label(&name)
+            ),
+            cx,
+        );
     }
 
     /// A checked panel of a checklist is hidden, an unchecked one shown in the dock.
