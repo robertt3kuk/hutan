@@ -220,12 +220,13 @@ fn return_confirms_a_primary_dialog_and_escape_cancels_it(cx: &mut TestAppContex
         wb.rename_workspace(workspace, window, cx);
     });
     draw(cx);
-    assert!(view.read_with(cx, |wb, _| {
-        wb.modal().is_some_and(|m| !m.destructive)
-    }));
+    assert!(view.read_with(cx, |wb, _| { wb.modal().is_some_and(|m| !m.destructive) }));
     cx.simulate_keystrokes("escape");
     draw(cx);
-    assert!(view.read_with(cx, |wb, _| !wb.modal_open()), "Escape cancels");
+    assert!(
+        view.read_with(cx, |wb, _| !wb.modal_open()),
+        "Escape cancels"
+    );
 
     view.update_in(cx, |wb, window, cx| {
         wb.rename_workspace(workspace, window, cx);
