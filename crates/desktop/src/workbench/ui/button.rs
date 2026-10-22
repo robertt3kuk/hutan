@@ -830,6 +830,11 @@ mod audit {
             "an inspector tab and a block row",
         ),
         (
+            "desktop/src/workbench/panels/memory.rs",
+            2,
+            "an entry row and the text of a proposal card",
+        ),
+        (
             "desktop/src/workbench/panels/problems.rs",
             1,
             "a problem row",

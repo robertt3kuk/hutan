@@ -445,6 +445,22 @@ impl WorkbenchState {
         self.normalize();
     }
 
+    /// Show `panel` in the dock `pos` and nowhere else: a panel that is open in another dock or
+    /// as a tab of the center moves there first (Memory is a body of the left sidebar however
+    /// the user arranged it before), then it is revealed and focused like [`Self::open_panel`].
+    pub fn open_panel_in_dock(&mut self, panel: &PanelId, pos: DockPosition) {
+        let elsewhere = match self.find_panel(panel) {
+            Some(ItemSource::Dock { pos: at, .. }) => at != pos,
+            Some(ItemSource::Pane { .. }) => true,
+            None => false,
+        };
+        if elsewhere {
+            // Moving an open panel to a dock cannot fail: the panel was just found.
+            let _ = self.move_panel(panel, PanelDest::Dock(pos));
+        }
+        self.open_panel(panel, pos);
+    }
+
     /// Show `panel` as a tab of the active pane: reveal and focus it where it is open (a dock or
     /// a tab), otherwise open it as the active pane's last tab, which becomes the active one.
     /// For a panel that is a page of the center, like Mawas Home.

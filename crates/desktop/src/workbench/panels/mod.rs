@@ -69,7 +69,8 @@ pub use history_model::{
 };
 pub use inspector::{BlockRow, InspectorPanel};
 pub use memory::{
-    EditorTarget as MemoryEditorTarget, MemoryPanel, ScopeChoice as MemoryScopeChoice,
+    Cursor as MemoryCursor, EditorTarget as MemoryEditorTarget, MemoryPanel,
+    ScopeChoice as MemoryScopeChoice,
 };
 pub use problems::{
     Problem, ProblemRow, Problems, ProblemsPanel, filter_label as problems_filter_label,

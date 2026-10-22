@@ -1,18 +1,23 @@
 //! The **Memory** page of Mawas (MW-2, `docs/assistant.md` § Memory): what Mawas remembers
-//! because you approved it, as a tab of the center (one instance).
+//! because you approved it, as a body of the left sidebar (MEM-SIDEBAR; one instance, it
+//! replaces Projects until *‹ Projects*).
 //!
-//! The page lists the entries grouped by category (Profile, Facts, Notes) with where each
-//! applies (Global, or a workspace), whether a model wrote it and you have not confirmed it yet
-//! (*inferred*), and where it came from; adds, edits, archives and restores them; shows the
-//! history of an entry; and puts the proposals agents made on top, each with **Approve**,
-//! **Edit & approve** and **Reject**. Every change is a request to the daemon: nothing shows as
-//! saved before the daemon's receipt came back, and the list is read again from the daemon
-//! after each answer and whenever it says the memory changed (`memory.changed`), so a hidden
-//! page does no work: it hears of changes only when it is shown.
+//! One column for 240–480 px: a header with **Add**, the scope filter, the proposals agents made
+//! (*Waiting for you*: what, where, **Reject** / **Edit** / **Approve**), then the entries grouped
+//! by category (Profile, Facts, Notes) as one-line rows. A selected entry shows its whole text,
+//! where it applies, whether a model wrote it and you have not confirmed it yet (*inferred*),
+//! where it came from, and its actions (**Confirm**, **Edit**, **Archive** / **Restore**,
+//! **History**); editing opens under the row, never in a modal. Keyboard: ↑↓ entries (or
+//! proposals), Tab between the two, Return edits, ⌘Return saves (or approves a proposal), Esc
+//! closes the editor, ⌘⌫ archives an entry (asked first) or rejects a proposal. Every change is
+//! a request to the daemon: nothing shows as saved before the daemon's receipt came back, and
+//! the list is read again from the daemon after each answer and whenever it says the memory
+//! changed (`memory.changed`), so a hidden page does no work: it hears of changes only when it
+//! is shown.
 
 use gpui::{
-    AnyElement, App, Context, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Render, SharedString,
+    AnyElement, App, ClickEvent, Context, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Render, ScrollHandle, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Window, div, prelude::*, px,
 };
 use hutan_client::ConnectionState;
@@ -24,7 +29,8 @@ use hutan_protocol::memory::{
 };
 use hutan_protocol::messages::WorkspaceKind;
 
-use super::common::{edit_text, field_box};
+use super::common::{edit_text, field_box, panel_header_controls};
+use crate::icons::Icon;
 use crate::sessions::MemoryChanged;
 use crate::workbench::chat::vim::Vim;
 use crate::workbench::chat::{Look, TextInput};
@@ -32,12 +38,12 @@ use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::text_field::{FieldMut, FieldRef};
 use crate::workbench::ui;
-use crate::workbench::ui::Button;
+use crate::workbench::ui::{Button, StyledExt as _};
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::VimConfig;
 
-/// The widest the list gets (46 rem).
-const PAGE_WIDTH: f32 = 736.0;
+/// The widest a workspace's name gets on a filter chip before it is cut with "…".
+const FILTER_NAME_MAX: f32 = 120.0;
 
 /// Which entries the page lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,8 +67,19 @@ pub enum EditorTarget {
     Proposal(ApprovalId),
 }
 
+/// What the keyboard (and the last click) is on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cursor {
+    /// A proposal waiting for the user.
+    Proposal(ApprovalId),
+    /// An entry, by id.
+    Entry(String),
+}
+
 struct Editor {
     target: EditorTarget,
+    /// The text the editor opened with: what tells an edit from a look.
+    original: String,
     input: TextInput,
     vim: Vim,
     /// Where a new entry applies.
@@ -90,6 +107,9 @@ pub struct MemoryPanel {
     filter: ScopeChoice,
     show_archived: bool,
     editor: Option<Editor>,
+    cursor: Option<Cursor>,
+    /// The entry whose archiving waits for the user's answer.
+    confirm_archive: Option<String>,
     history: Option<Shown>,
     /// The failure of the last control, in the daemon's words.
     error: Option<String>,
@@ -101,6 +121,9 @@ pub struct MemoryPanel {
     refresh_again: bool,
     focus: FocusHandle,
     focus_wanted: bool,
+    scroll: ScrollHandle,
+    /// Scroll the selection into view when next drawn (the keyboard moved it).
+    scroll_wanted: bool,
     /// A proposal whose editor opens once the proposals are listed ("Edit & approve" in Today).
     edit_when_loaded: Option<ApprovalId>,
     renders: usize,
@@ -151,6 +174,8 @@ impl MemoryPanel {
             filter: ScopeChoice::All,
             show_archived: false,
             editor: None,
+            cursor: None,
+            confirm_archive: None,
             history: None,
             error: None,
             visible: false,
@@ -159,6 +184,8 @@ impl MemoryPanel {
             refresh_again: false,
             focus: cx.focus_handle(),
             focus_wanted: false,
+            scroll: ScrollHandle::new(),
+            scroll_wanted: false,
             edit_when_loaded: None,
             renders: 0,
             _subscriptions: vec![observed, changed],
@@ -186,6 +213,16 @@ impl MemoryPanel {
 
     pub fn shows_archived(&self) -> bool {
         self.show_archived
+    }
+
+    /// What the keyboard is on.
+    pub fn cursor(&self) -> Option<&Cursor> {
+        self.cursor.as_ref()
+    }
+
+    /// The entry the archive question is about.
+    pub fn archive_question(&self) -> Option<&str> {
+        self.confirm_archive.as_deref()
     }
 
     pub fn editor_target(&self) -> Option<&EditorTarget> {
@@ -333,6 +370,7 @@ impl MemoryPanel {
                         this.proposals = proposals;
                         this.loaded = true;
                         this.unsupported = false;
+                        this.settle_cursor();
                         if let Some(id) = this.edit_when_loaded.take() {
                             this.edit_proposal(id, cx);
                         }
@@ -371,7 +409,30 @@ impl MemoryPanel {
 
     // ---- the editor ------------------------------------------------------------------------
 
+    /// Whether the editor holds text the user wrote and did not save.
+    fn editor_dirty(&self) -> bool {
+        self.editor
+            .as_ref()
+            .is_some_and(|e| e.input.text() != e.original)
+    }
+
+    /// Opens `editor` (the one that is open and has unsaved text is never dropped without a
+    /// word: the user saves or cancels it first).
     fn open_editor(&mut self, editor: Editor, cx: &mut Context<Self>) {
+        if self
+            .editor
+            .as_ref()
+            .is_some_and(|open| open.target != editor.target)
+            && self.editor_dirty()
+        {
+            self.error = Some(
+                "Save or cancel what you are writing first (⌘↵ saves, Esc cancels).".to_owned(),
+            );
+            self.focus_wanted = true;
+            cx.notify();
+            return;
+        }
+        self.confirm_archive = None;
         self.editor = Some(editor);
         self.error = None;
         self.focus_wanted = true;
@@ -381,11 +442,13 @@ impl MemoryPanel {
     fn new_editor(&self, target: EditorTarget, text: &str, cx: &App) -> Editor {
         let mut input = TextInput::new();
         input.reset_to(text);
+        let original = text.to_owned();
         // Where a new entry applies: the workspace the page is filtered to, else global.
         let workspace = self.workspace(cx).map(|(id, _)| id);
         let scoped = matches!(self.filter, ScopeChoice::Workspace) && workspace.is_some();
         Editor {
             target,
+            original,
             input,
             vim: Vim::default(),
             scope: if scoped {
@@ -414,8 +477,21 @@ impl MemoryPanel {
             return;
         };
         let (id, revision, body) = (found.id.clone(), found.revision, found.body.clone());
-        let editor = self.new_editor(EditorTarget::Entry { id, revision }, &body, cx);
+        let editor = self.new_editor(
+            EditorTarget::Entry {
+                id: id.clone(),
+                revision,
+            },
+            &body,
+            cx,
+        );
         self.open_editor(editor, cx);
+        if self
+            .editor_target()
+            .is_some_and(|t| matches!(t, EditorTarget::Entry { id: open, .. } if *open == id))
+        {
+            self.cursor = Some(Cursor::Entry(id));
+        }
     }
 
     /// Opens "Edit & approve" on a proposal's text.
@@ -426,6 +502,9 @@ impl MemoryPanel {
         let body = found.body.clone();
         let editor = self.new_editor(EditorTarget::Proposal(proposal), &body, cx);
         self.open_editor(editor, cx);
+        if self.editor_target() == Some(&EditorTarget::Proposal(proposal)) {
+            self.cursor = Some(Cursor::Proposal(proposal));
+        }
     }
 
     /// "Edit & approve" from Today, by the proposal's id as text: opens when the proposal is
@@ -442,8 +521,11 @@ impl MemoryPanel {
         }
     }
 
+    /// Closes the editor without saving; the keyboard stays on the list.
     pub fn cancel_editor(&mut self, cx: &mut Context<Self>) {
         self.editor = None;
+        self.error = None;
+        self.focus_wanted = true;
         cx.notify();
     }
 
@@ -567,7 +649,41 @@ impl MemoryPanel {
         self.transition(entry, false, cx);
     }
 
+    /// Asks whether to archive an entry, under its row: Archive answers, Cancel (or Return, or
+    /// Esc) does not; archiving never happens by one stray key.
+    pub fn ask_archive(&mut self, entry: &str, cx: &mut Context<Self>) {
+        if self
+            .entry(entry)
+            .is_none_or(|e| e.state == MemoryState::Archived)
+        {
+            return;
+        }
+        self.cursor = Some(Cursor::Entry(entry.to_owned()));
+        self.confirm_archive = Some(entry.to_owned());
+        self.focus_wanted = true;
+        cx.notify();
+    }
+
+    /// Withdraws the archive question.
+    pub fn cancel_archive(&mut self, cx: &mut Context<Self>) {
+        if self.confirm_archive.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Closes the editor when it is the one of `entry`: its text is about to be superseded.
+    fn close_editor_of(&mut self, entry: &str) {
+        if matches!(
+            self.editor_target(),
+            Some(EditorTarget::Entry { id, .. }) if id == entry
+        ) {
+            self.editor = None;
+        }
+    }
+
     fn transition(&mut self, entry: &str, archive: bool, cx: &mut Context<Self>) {
+        self.confirm_archive = None;
+        self.close_editor_of(entry);
         let Some(found) = self.entry(entry) else {
             return;
         };
@@ -598,6 +714,7 @@ impl MemoryPanel {
 
     /// Confirms an inferred entry: saves its text as it is, as the user's own revision.
     pub fn confirm(&mut self, entry: &str, cx: &mut Context<Self>) {
+        self.close_editor_of(entry);
         let Some(found) = self.entry(entry) else {
             return;
         };
@@ -707,6 +824,157 @@ impl MemoryPanel {
         .detach();
     }
 
+    // ---- selection -------------------------------------------------------------------------
+
+    /// The entries in the order the page draws them: Profile, Facts, Notes.
+    fn rows(&self) -> Vec<&MemoryEntry> {
+        MemoryCategory::ALL
+            .into_iter()
+            .flat_map(|category| self.entries.iter().filter(move |e| e.category == category))
+            .collect()
+    }
+
+    /// Drops a cursor whose target is gone (answered, archived out of the view).
+    fn settle_cursor(&mut self) {
+        let gone = match &self.cursor {
+            Some(Cursor::Proposal(id)) => !self.proposals.iter().any(|p| p.id == *id),
+            Some(Cursor::Entry(id)) => !self.entries.iter().any(|e| e.id == *id),
+            None => false,
+        };
+        if gone {
+            self.cursor = None;
+        }
+        if self
+            .confirm_archive
+            .as_ref()
+            .is_some_and(|id| !self.entries.iter().any(|e| e.id == *id))
+        {
+            self.confirm_archive = None;
+        }
+    }
+
+    /// Puts the keyboard on the page (the nav row, ⌘K, the Today rail): the list takes keys
+    /// until an editor opens.
+    pub fn request_focus(&mut self, cx: &mut Context<Self>) {
+        self.focus_wanted = true;
+        cx.notify();
+    }
+
+    /// Selects an entry (it shows its whole text and its actions). One with unsaved edits open
+    /// elsewhere stays where it is.
+    pub fn select_entry(&mut self, entry: &str, cx: &mut Context<Self>) {
+        if self.entry(entry).is_none() || !self.leave_editor(Some(entry), cx) {
+            return;
+        }
+        if self.confirm_archive.as_deref() != Some(entry) {
+            self.confirm_archive = None;
+        }
+        self.cursor = Some(Cursor::Entry(entry.to_owned()));
+        self.focus_wanted = true;
+        self.scroll_wanted = true;
+        cx.notify();
+    }
+
+    /// Selects a proposal.
+    pub fn select_proposal(&mut self, proposal: ApprovalId, cx: &mut Context<Self>) {
+        if !self.proposals.iter().any(|p| p.id == proposal) || !self.leave_editor(None, cx) {
+            return;
+        }
+        self.confirm_archive = None;
+        self.cursor = Some(Cursor::Proposal(proposal));
+        self.focus_wanted = true;
+        self.scroll_wanted = true;
+        cx.notify();
+    }
+
+    /// A click on an entry's row: selects it and opens its editor under it.
+    pub fn click_entry(&mut self, entry: &str, cx: &mut Context<Self>) {
+        let editing = matches!(
+            self.editor_target(),
+            Some(EditorTarget::Entry { id, .. }) if id == entry
+        );
+        let archived = self
+            .entry(entry)
+            .is_some_and(|e| e.state == MemoryState::Archived);
+        self.select_entry(entry, cx);
+        if !editing && !archived && self.cursor == Some(Cursor::Entry(entry.to_owned())) {
+            self.start_edit(entry, cx);
+        }
+    }
+
+    /// Closes the open editor before the selection moves, unless it holds unsaved text (the
+    /// user is told to save or cancel) or is the one of `keep`. Whether the selection may move.
+    fn leave_editor(&mut self, keep: Option<&str>, cx: &mut Context<Self>) -> bool {
+        let Some(editor) = &self.editor else {
+            return true;
+        };
+        let same =
+            matches!(&editor.target, EditorTarget::Entry { id, .. } if Some(id.as_str()) == keep);
+        if same {
+            return true;
+        }
+        if self.editor_dirty() {
+            self.error = Some(
+                "Save or cancel what you are writing first (⌘↵ saves, Esc cancels).".to_owned(),
+            );
+            self.focus_wanted = true;
+            cx.notify();
+            return false;
+        }
+        self.editor = None;
+        true
+    }
+
+    /// Moves the keyboard one step through the proposals or the entries, whichever it is on
+    /// (the entries when it is on neither).
+    pub fn move_cursor(&mut self, step: isize, cx: &mut Context<Self>) {
+        // From nowhere, down goes to the topmost thing (the first proposal) and up to the last
+        // entry.
+        let on_proposals = matches!(self.cursor, Some(Cursor::Proposal(_)))
+            || (self.cursor.is_none() && step > 0 && !self.proposals.is_empty());
+        let count = if on_proposals {
+            self.proposals.len()
+        } else {
+            self.rows().len()
+        };
+        if count == 0 {
+            return;
+        }
+        let at = match &self.cursor {
+            Some(Cursor::Proposal(id)) => self.proposals.iter().position(|p| p.id == *id),
+            Some(Cursor::Entry(id)) => self.rows().iter().position(|e| e.id == *id),
+            None => None,
+        };
+        let to = match at {
+            Some(at) => (at as isize + step).clamp(0, count as isize - 1) as usize,
+            None if step < 0 => count - 1,
+            None => 0,
+        };
+        if on_proposals {
+            let id = self.proposals[to].id;
+            self.select_proposal(id, cx);
+        } else {
+            let id = self.rows()[to].id.clone();
+            self.select_entry(&id, cx);
+        }
+    }
+
+    /// Tab: from the proposals to the entries and back (to the first of the other group).
+    pub fn switch_group(&mut self, cx: &mut Context<Self>) {
+        let on_proposals = matches!(self.cursor, Some(Cursor::Proposal(_)));
+        if on_proposals {
+            if let Some(first) = self.rows().first().map(|e| e.id.clone()) {
+                self.select_entry(&first, cx);
+            }
+        } else if let Some(first) = self.proposals.first().map(|p| p.id) {
+            self.select_proposal(first, cx);
+        } else if let Some(first) = self.rows().first().map(|e| e.id.clone())
+            && self.cursor.is_none()
+        {
+            self.select_entry(&first, cx);
+        }
+    }
+
     // ---- keys ------------------------------------------------------------------------------
 
     fn field(&self, cx: &Context<Self>) -> FieldRef {
@@ -723,28 +991,69 @@ impl MemoryPanel {
         })
     }
 
-    fn on_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+    /// Whether the key was the page's: the editor's while one is open, the list's otherwise.
+    fn on_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
+        if self.editor.is_some() {
+            return self.on_editor_key(event, cx);
+        }
+        let ks = &event.keystroke;
+        let m = ks.modifiers;
+        let plain = !m.platform && !m.control && !m.alt;
+        // The archive question takes the keys that answer it; Return is not an answer (a
+        // destructive question is never confirmed by the default key).
+        if let Some(entry) = self.confirm_archive.clone() {
+            match ks.key.as_str() {
+                "backspace" if m.platform => self.archive(&entry, cx),
+                "enter" | "escape" => self.cancel_archive(cx),
+                _ => return false,
+            }
+            return true;
+        }
+        match ks.key.as_str() {
+            "down" if plain => self.move_cursor(1, cx),
+            "up" if plain => self.move_cursor(-1, cx),
+            "tab" if plain => {
+                let before = self.cursor.clone();
+                self.switch_group(cx);
+                if self.cursor == before {
+                    return false;
+                }
+            }
+            "enter" if plain => match self.cursor.clone() {
+                Some(Cursor::Entry(id)) => self.start_edit(&id, cx),
+                Some(Cursor::Proposal(id)) => self.edit_proposal(id, cx),
+                None => return false,
+            },
+            "enter" if m.platform => match self.cursor {
+                Some(Cursor::Proposal(id)) => self.approve(id, cx),
+                _ => return false,
+            },
+            "backspace" if m.platform => match self.cursor.clone() {
+                Some(Cursor::Entry(id)) => self.ask_archive(&id, cx),
+                Some(Cursor::Proposal(id)) => self.reject(id, cx),
+                None => return false,
+            },
+            _ => return false,
+        }
+        true
+    }
+
+    fn on_editor_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
         let config = VimConfig::of(&self.env.settings);
         let Some(editor) = &mut self.editor else {
-            return;
+            return false;
         };
         if edit_text(&mut editor.input, &mut editor.vim, config, event, true, cx) {
             cx.notify();
-            cx.stop_propagation();
-            return;
+            return true;
         }
         let ks = &event.keystroke;
         match ks.key.as_str() {
-            "enter" if ks.modifiers.platform => {
-                self.save_editor(cx);
-                cx.stop_propagation();
-            }
-            "escape" => {
-                self.cancel_editor(cx);
-                cx.stop_propagation();
-            }
-            _ => {}
+            "enter" if ks.modifiers.platform => self.save_editor(cx),
+            "escape" => self.cancel_editor(cx),
+            _ => return false,
         }
+        true
     }
 }
 
@@ -764,6 +1073,9 @@ impl Focusable for MemoryPanel {
 
 // ---- drawing -------------------------------------------------------------------------------
 
+/// The text of the archive question.
+const ARCHIVE_QUESTION: &str = "Archive this entry? It stays in its history and can be restored.";
+
 impl MemoryPanel {
     fn chip(
         &self,
@@ -782,10 +1094,14 @@ impl MemoryPanel {
             &tokens,
         )
         .compact()
+        .ghost()
         .selected(selected)
         .disabled(!enabled)
     }
 
+    /// The page's header (the sidebar's 32 px section header with **Add**) and the scope filter
+    /// under it: *All · Global · the workspace*, *Show archived*; the row wraps when the sidebar
+    /// is narrow.
     fn render_header(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
         let workspace = self.workspace(cx);
@@ -828,113 +1144,120 @@ impl MemoryPanel {
             ScopeChoice::Workspace,
             workspace.is_some(),
             cx,
-        );
+        )
+        .max_width(FILTER_NAME_MAX);
         let archived = self
             .chip("archived", "Show archived", self.show_archived, true, look)
             .on_click(cx.listener(|this, _, _, cx| this.toggle_archived(cx)))
             .child(probe(&self.env.regions, Region::Memory("archived")));
+        let add = Button::new("memory-add", "Add", &theme, &tokens)
+            .compact()
+            .icon(Icon::ActionAdd)
+            .disabled(!self.connected(cx))
+            .on_click(cx.listener(|this, _, _, cx| this.start_add(cx)))
+            .child(probe(&self.env.regions, Region::Memory("add")))
+            .into_any_element();
         div()
             .relative()
-            .flex_none()
             .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(tokens.spacing * 2.0))
-            .px(px(tokens.spacing * 4.0))
-            .py(px(tokens.spacing * 2.0))
-            .border_b_1()
-            .border_color(theme.border)
+            .flex_col()
+            .flex_none()
+            .child(panel_header_controls("Memory", vec![add], cx))
             .child(
                 div()
+                    .relative()
                     .flex()
+                    .flex_wrap()
                     .items_center()
-                    .gap(px(tokens.spacing * 2.0))
-                    .child(
-                        div()
-                            .text_size(px(tokens.section_font_size))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child("Memory"),
-                    )
+                    .gap(px(tokens.spacing))
+                    .px(px(tokens.spacing * 3.0))
+                    .pb(px(tokens.spacing * 2.0))
                     .child(all)
                     .child(global)
                     .child(here)
-                    .child(archived),
-            )
-            .child(
-                Button::new("memory-add", "Add", &look.theme, &look.tokens)
-                    .primary()
-                    .disabled(!(self.connected(cx)))
-                    .on_click(cx.listener(|this, _, _, cx| this.start_add(cx)))
-                    .child(probe(&self.env.regions, Region::Memory("add"))),
+                    .child(archived)
+                    .child(probe(&self.env.regions, Region::Memory("filters"))),
             )
             .child(probe(&self.env.regions, Region::Memory("header")))
             .into_any_element()
     }
 
+    fn selected_fill(&self, selected: bool, look: &Look) -> gpui::Hsla {
+        if selected {
+            look.theme.sidebar_accent
+        } else {
+            look.theme.surface
+        }
+    }
+
+    /// A waiting proposal as a compact card: what, where, the text, and **Reject**, **Edit**,
+    /// **Approve** (the primary last).
     fn render_proposal(
         &self,
         index: usize,
         proposal: &MemoryProposal,
+        window: &Window,
         look: &Look,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
         let id = proposal.id;
+        let selected = self.cursor == Some(Cursor::Proposal(id));
         let action = match proposal.operation {
             MemoryOp::Create => format!(
-                "remember a {}",
+                "Remember a {}",
                 category_word(proposal.category).to_lowercase()
             ),
             MemoryOp::Update => format!(
-                "change a {}",
+                "Change a {}",
                 category_word(proposal.category).to_lowercase()
             ),
-            MemoryOp::Archive => "archive an entry".to_owned(),
-            MemoryOp::Restore => "use an archived entry again".to_owned(),
+            MemoryOp::Archive => "Archive an entry".to_owned(),
+            MemoryOp::Restore => "Use an archived entry again".to_owned(),
         };
         let place = match (proposal.scope, proposal.workspace_id) {
             (MemoryScope::Workspace, Some(workspace)) => self.workspace_name(workspace, cx),
             _ => "Global".to_owned(),
         };
         let editable = matches!(proposal.operation, MemoryOp::Create | MemoryOp::Update);
-        let mut card = div()
+        let editing = self.editor_target() == Some(&EditorTarget::Proposal(id));
+        let mut text = div()
             .id(SharedString::from(format!("memory-proposal-{index}")))
             .relative()
             .flex()
             .flex_col()
-            .gap(px(tokens.spacing))
-            .p(px(tokens.spacing * 3.0))
-            .rounded(px(tokens.radius))
-            .bg(theme.surface)
+            .gap(px(tokens.spacing / 2.0))
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.select_proposal(id, cx);
+            }))
             .child(
                 div()
                     .text_color(theme.muted)
                     .text_size(px(tokens.secondary_font_size))
-                    .child(SharedString::from(format!(
-                        "Mawas proposes to {action} · {place}"
-                    ))),
+                    .child(SharedString::from(format!("{action} · {place}"))),
             )
-            .child(div().child(SharedString::from(proposal.body.clone())));
+            .child(
+                div()
+                    .when(!selected, |s| s.clamp_lines(3))
+                    .child(SharedString::from(proposal.body.clone())),
+            );
         if let Some(current) = &proposal.current_body {
-            card = card.child(
+            text = text.child(
                 div()
                     .text_color(theme.muted)
                     .text_size(px(tokens.secondary_font_size))
+                    .when(!selected, |s| s.clamp_lines(2))
                     .child(SharedString::from(format!("Now: {current}"))),
             );
         }
-        card = card.child(
-            div()
-                .text_color(theme.muted)
-                .text_size(px(tokens.secondary_font_size))
-                .child("Nothing is saved unless you approve."),
-        );
         let approve = Button::new(
             SharedString::from(format!("memory-approve-{index}")),
             "Approve",
             &look.theme,
             &look.tokens,
         )
+        .compact()
         .primary()
         .on_click(cx.listener(move |this, _, _, cx| this.approve(id, cx)))
         .child(probe(
@@ -943,10 +1266,11 @@ impl MemoryPanel {
         ));
         let edit = Button::new(
             SharedString::from(format!("memory-edit-approve-{index}")),
-            "Edit & approve",
+            "Edit",
             &look.theme,
             &look.tokens,
         )
+        .compact()
         .disabled(!editable)
         .when(editable, |b| {
             b.on_click(cx.listener(move |this, _, _, cx| this.edit_proposal(id, cx)))
@@ -961,27 +1285,45 @@ impl MemoryPanel {
             &look.theme,
             &look.tokens,
         )
+        .compact()
         .on_click(cx.listener(move |this, _, _, cx| this.reject(id, cx)))
         .child(probe(
             &self.env.regions,
             Region::MemoryItem("reject", index),
         ));
-        card.child(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap(px(tokens.spacing))
-                .child(approve)
-                .child(edit)
-                .child(reject),
-        )
-        .child(probe(
-            &self.env.regions,
-            Region::MemoryItem("proposal", index),
-        ))
-        .into_any_element()
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .gap(px(tokens.spacing * 2.0))
+            .p(px(tokens.spacing * 2.0))
+            .rounded(px(tokens.radius))
+            .bg(self.selected_fill(selected, look))
+            .child(text)
+            .when(editing, |card| {
+                card.children(self.render_editor(window, look, cx))
+            })
+            .when(!editing, |card| {
+                card.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(tokens.spacing))
+                        .child(reject)
+                        .child(edit)
+                        .child(approve),
+                )
+            })
+            .child(probe(
+                &self.env.regions,
+                Region::MemoryItem("proposal", index),
+            ))
+            .into_any_element()
     }
 
+    /// The editor, under the row, card or header it belongs to: a field, where a new entry
+    /// applies (while adding), what the keys do, **Cancel** and **Save**.
     fn render_editor(
         &self,
         window: &Window,
@@ -990,11 +1332,6 @@ impl MemoryPanel {
     ) -> Option<AnyElement> {
         let editor = self.editor.as_ref()?;
         let (theme, tokens) = (look.theme, look.tokens);
-        let title = match &editor.target {
-            EditorTarget::Add => "Remember something".to_owned(),
-            EditorTarget::Entry { .. } => "Edit this entry".to_owned(),
-            EditorTarget::Proposal(_) => "Edit the proposal, then approve it".to_owned(),
-        };
         let focused = self.focus.is_focused(window);
         let vim = VimConfig::of(&self.env.settings);
         let field = field_box(
@@ -1010,21 +1347,10 @@ impl MemoryPanel {
         );
         let mut card = div()
             .id("memory-editor")
-            .key_context("MemoryEditor")
-            .track_focus(&self.focus)
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| this.on_key(event, cx)))
             .relative()
             .flex()
             .flex_col()
-            .gap(px(tokens.spacing * 2.0))
-            .p(px(tokens.spacing * 3.0))
-            .rounded(px(tokens.radius))
-            .bg(theme.surface)
-            .child(
-                div()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .child(SharedString::from(title)),
-            );
+            .gap(px(tokens.spacing * 2.0));
         if editor.target == EditorTarget::Add {
             let workspace = self.workspace(cx);
             let scope_chip = |id: &'static str,
@@ -1055,36 +1381,51 @@ impl MemoryPanel {
                     }))
                     .child(probe(&self.env.regions, Region::Memory(id)))
                 };
-            card = card.child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(tokens.spacing))
-                    .child(scope_chip(
-                        "editor-global",
-                        "Global".to_owned(),
-                        editor.scope == MemoryScope::Global,
-                        true,
-                        MemoryScope::Global,
-                        cx,
-                    ))
-                    .child(scope_chip(
-                        "editor-workspace",
-                        workspace
-                            .as_ref()
-                            .map_or_else(|| "This workspace".to_owned(), |(_, name)| name.clone()),
-                        editor.scope == MemoryScope::Workspace,
-                        workspace.is_some(),
-                        MemoryScope::Workspace,
-                        cx,
-                    ))
-                    .child(div().w(px(tokens.spacing * 2.0)))
-                    .child(category_chip("editor-profile", MemoryCategory::Profile, cx))
-                    .child(category_chip("editor-fact", MemoryCategory::Fact, cx))
-                    .child(category_chip("editor-note", MemoryCategory::Note, cx)),
-            );
+            card = card
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(tokens.spacing))
+                        .child(scope_chip(
+                            "editor-global",
+                            "Global".to_owned(),
+                            editor.scope == MemoryScope::Global,
+                            true,
+                            MemoryScope::Global,
+                            cx,
+                        ))
+                        .child(
+                            scope_chip(
+                                "editor-workspace",
+                                workspace.as_ref().map_or_else(
+                                    || "This workspace".to_owned(),
+                                    |(_, name)| name.clone(),
+                                ),
+                                editor.scope == MemoryScope::Workspace,
+                                workspace.is_some(),
+                                MemoryScope::Workspace,
+                                cx,
+                            )
+                            .max_width(FILTER_NAME_MAX),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(tokens.spacing))
+                        .child(category_chip("editor-profile", MemoryCategory::Profile, cx))
+                        .child(category_chip("editor-fact", MemoryCategory::Fact, cx))
+                        .child(category_chip("editor-note", MemoryCategory::Note, cx)),
+                );
         }
+        let save_label = match editor.target {
+            EditorTarget::Proposal(_) => "Approve with this text",
+            _ => "Save",
+        };
         card = card
             .child(
                 div()
@@ -1101,36 +1442,124 @@ impl MemoryPanel {
                     .text_color(theme.muted)
                     .text_size(px(tokens.secondary_font_size))
                     .child(SharedString::from(format!(
-                        "At most {} KiB. Memory is not a secret store: keys, tokens and passwords are refused. ⌘↵ saves, Esc cancels.",
+                        "At most {} KiB; not a secret store (keys and passwords are refused). ⌘↵ saves, Esc cancels.",
                         BODY_MAX_BYTES / 1024
                     ))),
             )
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .justify_end()
                     .gap(px(tokens.spacing))
                     .child(
-                        Button::new("memory-save", match editor.target {
-                                EditorTarget::Proposal(_) => "Approve with this text",
-                                _ => "Save",
-                            }, &look.theme, &look.tokens).primary()
-                        .on_click(cx.listener(|this, _, _, cx| this.save_editor(cx)))
-                        .child(probe(&self.env.regions, Region::Memory("save"))),
-                    )
-                    .child(
                         Button::new("memory-cancel", "Cancel", &look.theme, &look.tokens)
+                            .compact()
+                            .ghost()
                             .on_click(cx.listener(|this, _, _, cx| this.cancel_editor(cx)))
                             .child(probe(&self.env.regions, Region::Memory("cancel"))),
+                    )
+                    .child(
+                        Button::new("memory-save", save_label, &look.theme, &look.tokens)
+                            .compact()
+                            .primary()
+                            .on_click(cx.listener(|this, _, _, cx| this.save_editor(cx)))
+                            .child(probe(&self.env.regions, Region::Memory("save"))),
                     ),
             )
             .child(probe(&self.env.regions, Region::Memory("editor")));
         Some(card.into_any_element())
     }
 
+    /// An entry: a one-line row (the whole text in a tooltip); selected, its whole text, where
+    /// it applies, where it came from and its actions; editing, the editor under it.
     fn render_entry(
         &self,
         index: usize,
         entry: &MemoryEntry,
+        window: &Window,
+        look: &Look,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (theme, tokens) = (look.theme, look.tokens);
+        let id = entry.id.clone();
+        let archived = entry.state == MemoryState::Archived;
+        let selected = self.cursor == Some(Cursor::Entry(id.clone()));
+        let editing = matches!(
+            self.editor_target(),
+            Some(EditorTarget::Entry { id: open, .. }) if *open == id
+        );
+        let hover = theme.sidebar_hover;
+        let body = SharedString::from(entry.body.clone());
+        let click_id = id.clone();
+        let mut line = div()
+            .id(SharedString::from(format!("memory-entry-{index}")))
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(tokens.spacing))
+            .min_h(px(tokens.sidebar_row - 4.0))
+            .px(px(tokens.spacing * 2.0))
+            .py(px(tokens.spacing / 2.0))
+            .rounded(px(tokens.radius))
+            .cursor_pointer()
+            .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.click_entry(&click_id, cx);
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .when(archived, |s| s.text_color(theme.muted))
+                    .when(!selected, |s| s.truncate())
+                    .child(body.clone()),
+            );
+        if !selected {
+            if entry.inferred {
+                line = line.child(ui::pill("inferred", &theme, &tokens));
+            }
+            let tip = body;
+            line = line.tooltip(move |_, cx| {
+                cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
+                    .into()
+            });
+        }
+        let line = line.child(probe(&self.env.regions, Region::MemoryItem("entry", index)));
+        let mut block = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .gap(px(tokens.spacing))
+            .rounded(px(tokens.radius))
+            .when(selected, |s| s.bg(theme.sidebar_accent))
+            .child(line);
+        if editing {
+            block = block.child(
+                div()
+                    .px(px(tokens.spacing * 2.0))
+                    .pb(px(tokens.spacing))
+                    .children(self.render_editor(window, look, cx)),
+            );
+        }
+        if selected {
+            block = block.child(self.render_entry_details(index, entry, editing, look, cx));
+        }
+        if let Some(shown) = self.history.as_ref().filter(|h| h.entry == entry.id) {
+            block = block.child(self.render_history(shown, look));
+        }
+        block
+            .child(probe(&self.env.regions, Region::MemoryItem("block", index)))
+            .into_any_element()
+    }
+
+    /// Under a selected entry: where it applies, where it came from, and what can be done.
+    fn render_entry_details(
+        &self,
+        index: usize,
+        entry: &MemoryEntry,
+        editing: bool,
         look: &Look,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1162,13 +1591,6 @@ impl MemoryPanel {
         if archived {
             meta = meta.child(ui::pill("archived", &theme, &tokens));
         }
-        meta = meta.child(
-            div()
-                .text_color(theme.muted)
-                .text_size(px(tokens.secondary_font_size))
-                .truncate()
-                .child(SharedString::from(entry.provenance.summary())),
-        );
         let action = |name: &'static str,
                       label: &'static str,
                       cx: &mut Context<Self>,
@@ -1180,53 +1602,114 @@ impl MemoryPanel {
                 &look.theme,
                 &look.tokens,
             )
+            .compact()
             .ghost()
             .on_click(cx.listener(move |this, _, _, cx| run(this, &id, cx)))
             .child(probe(&self.env.regions, Region::MemoryItem(name, index)))
         };
-        let mut actions = div().flex().flex_wrap().gap(px(tokens.spacing / 2.0));
+        let mut actions = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(tokens.spacing / 2.0))
+            .ml(px(-tokens.spacing));
         if entry.inferred && !archived {
             actions = actions.child(action("confirm", "Confirm", cx, Self::confirm));
         }
         if !archived {
-            actions = actions.child(action("edit", "Edit", cx, Self::start_edit));
-            actions = actions.child(action("archive", "Archive", cx, Self::archive));
+            if !editing {
+                actions = actions.child(action("edit", "Edit", cx, Self::start_edit));
+            }
+            actions = actions.child(action("archive", "Archive", cx, Self::ask_archive));
         } else {
             actions = actions.child(action("restore", "Restore", cx, Self::restore));
         }
         actions = actions.child(action("history", "History", cx, Self::toggle_history));
-        let mut row = div()
-            .id(SharedString::from(format!("memory-entry-{index}")))
+        let asking = self.confirm_archive.as_deref() == Some(entry.id.as_str());
+        div()
             .relative()
             .flex()
             .flex_col()
             .gap(px(tokens.spacing))
-            .px(px(tokens.spacing * 3.0))
-            .py(px(tokens.spacing * 2.0))
-            .rounded(px(tokens.radius))
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.surface)
+            .px(px(tokens.spacing * 2.0))
+            .pb(px(tokens.spacing * 2.0))
+            .child(meta)
             .child(
                 div()
-                    .when(archived, |s| s.text_color(theme.muted))
-                    .child(SharedString::from(entry.body.clone())),
+                    .text_color(theme.muted)
+                    .text_size(px(tokens.secondary_font_size))
+                    .child(SharedString::from(entry.provenance.summary())),
             )
-            .child(meta)
-            .child(actions);
-        if let Some(shown) = self.history.as_ref().filter(|h| h.entry == entry.id) {
-            row = row.child(self.render_history(shown, look));
-        }
-        row.child(probe(&self.env.regions, Region::MemoryItem("entry", index)))
+            .child(actions)
+            .when(asking, |details| {
+                details.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(tokens.spacing))
+                        .child(
+                            div()
+                                .text_size(px(tokens.secondary_font_size))
+                                .child(ARCHIVE_QUESTION),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .gap(px(tokens.spacing))
+                                .child(
+                                    Button::new(
+                                        SharedString::from(format!(
+                                            "memory-archive-cancel-{index}"
+                                        )),
+                                        "Cancel",
+                                        &look.theme,
+                                        &look.tokens,
+                                    )
+                                    .compact()
+                                    .ghost()
+                                    .on_click(cx.listener(|this, _, _, cx| this.cancel_archive(cx)))
+                                    .child(probe(
+                                        &self.env.regions,
+                                        Region::MemoryItem("archive-cancel", index),
+                                    )),
+                                )
+                                .child({
+                                    let id = entry.id.clone();
+                                    Button::new(
+                                        SharedString::from(format!("memory-archive-yes-{index}")),
+                                        "Archive",
+                                        &look.theme,
+                                        &look.tokens,
+                                    )
+                                    .compact()
+                                    .destructive()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.archive(&id, cx);
+                                    }))
+                                    .child(probe(
+                                        &self.env.regions,
+                                        Region::MemoryItem("archive-yes", index),
+                                    ))
+                                }),
+                        ),
+                )
+            })
+            .child(probe(
+                &self.env.regions,
+                Region::MemoryItem("details", index),
+            ))
             .into_any_element()
     }
 
     fn render_history(&self, shown: &Shown, look: &Look) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
         let mut list = div()
+            .relative()
             .flex()
             .flex_col()
             .gap(px(tokens.spacing / 2.0))
+            .mx(px(tokens.spacing * 2.0))
+            .mb(px(tokens.spacing * 2.0))
             .pt(px(tokens.spacing))
             .border_t_1()
             .border_color(theme.border);
@@ -1260,67 +1743,36 @@ impl MemoryPanel {
             .into_any_element()
     }
 
-    fn render_body(&self, window: &Window, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+    /// The scrolling column: the failure of the last control, a new entry's editor, the
+    /// proposals, then the entries by category. Returns the sections and the index of the one
+    /// the keyboard is on.
+    fn render_sections(
+        &self,
+        window: &Window,
+        look: &Look,
+        cx: &mut Context<Self>,
+    ) -> (Vec<AnyElement>, Option<usize>) {
         let (theme, tokens) = (look.theme, look.tokens);
         let message = |text: &str| {
             div()
+                .px(px(tokens.spacing))
                 .text_color(theme.muted)
                 .child(SharedString::from(text.to_owned()))
                 .into_any_element()
         };
+        let label = |text: String| {
+            ui::section_label(text, &theme, &tokens)
+                .px(px(tokens.spacing))
+                .pt(px(tokens.spacing))
+                .into_any_element()
+        };
         let mut sections: Vec<AnyElement> = Vec::new();
-        if !self.connected(cx) {
-            sections.push(message("Not connected to the Hutan daemon."));
-        } else if self.unsupported {
-            sections.push(message(
-                "This daemon has no memory (it is older than protocol 0.32): restart it with `hutan daemon restart`.",
-            ));
-        } else {
-            if !self.proposals.is_empty() {
-                sections.push(
-                    ui::section_label(
-                        format!("Waiting for you ({})", self.proposals.len()),
-                        &theme,
-                        &tokens,
-                    )
-                    .into_any_element(),
-                );
-                for (index, proposal) in self.proposals.iter().enumerate() {
-                    sections.push(self.render_proposal(index, proposal, look, cx));
-                }
-            }
-            if let Some(editor) = self.render_editor(window, look, cx) {
-                sections.push(editor);
-            }
-            let mut index = 0;
-            for category in MemoryCategory::ALL {
-                let rows: Vec<&MemoryEntry> = self
-                    .entries
-                    .iter()
-                    .filter(|e| e.category == category)
-                    .collect();
-                if rows.is_empty() {
-                    continue;
-                }
-                sections.push(
-                    ui::section_label(category_title(category), &theme, &tokens).into_any_element(),
-                );
-                for entry in rows {
-                    sections.push(self.render_entry(index, entry, look, cx));
-                    index += 1;
-                }
-            }
-            if self.entries.is_empty() && self.loaded {
-                sections.push(message(
-                    "Nothing is remembered yet. Mawas remembers what you approve: add something, or approve what it proposes.",
-                ));
-            }
-        }
+        let mut at_cursor = None;
         if let Some(error) = &self.error {
-            sections.insert(
-                0,
+            sections.push(
                 div()
                     .relative()
+                    .px(px(tokens.spacing))
                     .text_color(theme.danger)
                     .text_size(px(tokens.secondary_font_size))
                     .child(SharedString::from(error.clone()))
@@ -1328,25 +1780,59 @@ impl MemoryPanel {
                     .into_any_element(),
             );
         }
-        div()
-            .id("memory-body")
-            .relative()
-            .flex()
-            .flex_1()
-            .min_h_0()
-            .justify_center()
-            .overflow_y_scroll()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .w_full()
-                    .max_w(px(PAGE_WIDTH))
-                    .gap(px(tokens.spacing * 2.0))
-                    .p(px(tokens.spacing * 4.0))
-                    .children(sections),
-            )
-            .into_any_element()
+        if !self.connected(cx) {
+            sections.push(message("Not connected to the Hutan daemon."));
+        } else if self.unsupported {
+            sections.push(message(
+                "This daemon has no memory (it is older than protocol 0.32): restart it with `hutan daemon restart`.",
+            ));
+        } else {
+            let rows = self.rows();
+            // A new entry's editor, and one whose row or card is not on the page (a filter hid
+            // it), show on top.
+            let placed = match self.editor_target() {
+                Some(EditorTarget::Entry { id, .. }) => rows.iter().any(|e| e.id == *id),
+                Some(EditorTarget::Proposal(id)) => self.proposals.iter().any(|p| p.id == *id),
+                Some(EditorTarget::Add) | None => false,
+            };
+            if self.editor.is_some() && !placed {
+                sections.extend(self.render_editor(window, look, cx));
+            }
+            if !self.proposals.is_empty() {
+                sections.push(label(format!("Waiting for you ({})", self.proposals.len())));
+                for (index, proposal) in self.proposals.iter().enumerate() {
+                    if self.cursor == Some(Cursor::Proposal(proposal.id)) {
+                        at_cursor = Some(sections.len());
+                    }
+                    sections.push(self.render_proposal(index, proposal, window, look, cx));
+                }
+            }
+            let mut index = 0;
+            for category in MemoryCategory::ALL {
+                let in_category: Vec<&MemoryEntry> = rows
+                    .iter()
+                    .copied()
+                    .filter(|e| e.category == category)
+                    .collect();
+                if in_category.is_empty() {
+                    continue;
+                }
+                sections.push(label(category_title(category).to_owned()));
+                for entry in in_category {
+                    if self.cursor == Some(Cursor::Entry(entry.id.clone())) {
+                        at_cursor = Some(sections.len());
+                    }
+                    sections.push(self.render_entry(index, entry, window, look, cx));
+                    index += 1;
+                }
+            }
+            if self.entries.is_empty() && self.loaded {
+                sections.push(message(
+                    "Nothing is remembered yet: add something, or approve what Mawas proposes.",
+                ));
+            }
+        }
+        (sections, at_cursor)
     }
 }
 
@@ -1359,18 +1845,53 @@ impl Render for MemoryPanel {
             window.focus(&self.focus, cx);
         }
         let look = Look::of(cx);
-        let header = self.render_header(&look, cx);
-        let body = self.render_body(window, &look, cx);
         let (theme, tokens) = (look.theme, look.tokens);
+        let header = self.render_header(&look, cx);
+        let (sections, at_cursor) = self.render_sections(window, &look, cx);
+        if std::mem::take(&mut self.scroll_wanted)
+            && let Some(at) = at_cursor
+        {
+            self.scroll.scroll_to_item(at);
+        }
+        let sections: Vec<AnyElement> = sections
+            .into_iter()
+            .map(|section| div().flex_none().child(section).into_any_element())
+            .collect();
         div()
             .id("memory-panel")
+            .key_context(if self.editor.is_some() {
+                "MemoryEditor"
+            } else {
+                "MemoryPanel"
+            })
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if this.on_key(event, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .relative()
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme.bg)
             .text_color(theme.fg)
             .text_size(px(tokens.font_size))
             .child(header)
-            .child(body)
+            .child(
+                div()
+                    .id("memory-body")
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .gap(px(tokens.spacing))
+                    .px(px(tokens.spacing * 2.0))
+                    .pb(px(tokens.spacing * 2.0))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .children(sections),
+            )
+            .child(probe(&self.env.regions, Region::Memory("panel")))
     }
 }

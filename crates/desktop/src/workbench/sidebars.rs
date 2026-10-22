@@ -41,7 +41,7 @@ pub enum NavTarget {
     Assistant,
     /// Open (or focus) the Agents page, a tab of the center.
     Agents,
-    /// Show this panel as a page of the left sidebar.
+    /// Show this panel as a page of the left sidebar (Memory among them, under Mawas).
     Page(PanelId),
 }
 
@@ -152,6 +152,15 @@ impl Workbench {
                 target: NavTarget::Assistant,
                 selected: self.state.active_center_item().as_ref() == Some(&home),
             });
+            // Memory is a body of this sidebar: the row is selected while it replaces Projects.
+            entries.push(NavEntry {
+                key: super::model::MEMORY_PAGE.to_owned(),
+                label: "Memory".into(),
+                icon: Icon::PanelMawasMemory,
+                badge: None,
+                target: NavTarget::Page(PanelId::new(super::model::MEMORY_PAGE)),
+                selected: selected(super::model::MEMORY_PAGE),
+            });
         }
         // Tasks has a row once there is a task (or while its page is open). It goes below the
         // others: appearing with the first terminal, it moves nothing that was already there.
@@ -171,7 +180,11 @@ impl Workbench {
         for panel in &dock.panels {
             let named = matches!(
                 panel.as_str(),
-                "sessions" | "tasks" | "assistant" | super::model::AGENTS_PAGE
+                "sessions"
+                    | "tasks"
+                    | "assistant"
+                    | super::model::AGENTS_PAGE
+                    | super::model::MEMORY_PAGE
             ) || (matches!(panel.as_str(), "files" | "search")
                 && !selected(panel.as_str()));
             if named {
@@ -240,6 +253,7 @@ impl Workbench {
                     "tasks" => "tasks",
                     "agents" => "agents",
                     "assistant" => "assistant",
+                    super::model::MEMORY_PAGE => "memory",
                     _ => "page",
                 };
                 let target = entry.target.clone();
@@ -441,6 +455,12 @@ impl Workbench {
         }
         match target {
             NavTarget::Assistant => self.open_assistant(window, cx),
+            // Memory takes the keyboard (↑↓ entries, Return edits): no `focus_root` after it.
+            NavTarget::Page(panel) if panel.as_str() == super::model::MEMORY_PAGE => {
+                self.toggle_memory(window, cx);
+                cx.notify();
+                return;
+            }
             NavTarget::Page(panel) => self.toggle_left_page(panel, cx),
             NavTarget::Agents => {}
         }
@@ -982,6 +1002,7 @@ fn nav_region_key(key: &str) -> &'static str {
         "tasks" => "tasks",
         "agents" => "agents",
         "assistant" => "assistant",
+        super::model::MEMORY_PAGE => "memory",
         _ => "page",
     }
 }

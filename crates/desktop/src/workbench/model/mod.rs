@@ -36,6 +36,11 @@ pub use workspace::WorkspaceLayout;
 /// migrated when read.)
 pub const AGENTS_PAGE: &str = "agents-dashboard";
 
+/// The id of Mawas's Memory page: a body of the left sidebar, never a tab of the center.
+/// (Layouts saved before MEM-SIDEBAR could hold it as a center tab; they are migrated when
+/// read.)
+pub const MEMORY_PAGE: &str = "mawas-memory";
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 

@@ -1,8 +1,8 @@
 //! Versioned JSON (de)serialization of [`WorkbenchState`].
 
 use super::{
-    AGENTS_PAGE, DockPosition, Docks, ItemRef, LayoutPreset, ModelError, PaneTree, PanelId,
-    WorkbenchState,
+    AGENTS_PAGE, DockPosition, Docks, ItemRef, LayoutPreset, MEMORY_PAGE, ModelError, PaneTree,
+    PanelId, WorkbenchState,
 };
 
 /// The saved layout's version. 2 is the Orca-style relayout (OL-2): Projects, Tasks and the
@@ -20,9 +20,10 @@ use super::{
 /// read (see [`migrate_v1`], then [`migrate_v2`], then [`migrate_v3`]), a version 2 file by
 /// [`migrate_v2`] and [`migrate_v3`], a version 3 file by [`migrate_v3`]; a version 4 file needs
 /// no rewrite (`visible` already is Expanded/Hidden, `collapsed` defaults to off, the sizes are
-/// clamped like every loaded layout); every file older than 6 goes through [`migrate_v5`]; the
-/// next save writes version 6.
-pub const STATE_VERSION: u32 = 6;
+/// clamped like every loaded layout); every file older than 6 goes through [`migrate_v5`]. 7
+/// (MEM-SIDEBAR) makes Mawas's Memory a body of the left sidebar: a `mawas-memory` tab of the
+/// center moves into the left dock ([`migrate_v6`]); the next save writes version 7.
+pub const STATE_VERSION: u32 = 7;
 
 /// Result of reading a saved state.
 #[derive(Debug)]
@@ -33,7 +34,7 @@ pub struct LoadOutcome {
 }
 
 impl WorkbenchState {
-    /// `{ "version": 6, "docks": …, "center": …, … }`, pretty-printed.
+    /// `{ "version": 7, "docks": …, "center": …, … }`, pretty-printed.
     pub fn to_json(&self) -> Result<String, ModelError> {
         let mut value =
             serde_json::to_value(self).map_err(|e| ModelError::Invalid(e.to_string()))?;
@@ -49,7 +50,7 @@ impl WorkbenchState {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| ModelError::Invalid(e.to_string()))?;
         let version = match value.get("version").and_then(serde_json::Value::as_u64) {
-            Some(v @ (1..=6)) => v,
+            Some(v @ (1..=7)) => v,
             Some(v) => return Err(ModelError::Invalid(format!("unsupported version {v}"))),
             None => return Err(ModelError::Invalid("missing version".to_owned())),
         };
@@ -66,6 +67,9 @@ impl WorkbenchState {
         }
         if version <= 5 {
             migrate_v5(&mut state);
+        }
+        if version <= 6 {
+            migrate_v6(&mut state);
         }
         state.normalize();
         Ok(state)
@@ -84,6 +88,61 @@ impl WorkbenchState {
             },
         }
     }
+}
+
+/// The one-time move of a layout older than version 7 to Memory in the sidebar: a `mawas-memory`
+/// tab of the center (the live layout, the Agents overview stash, every parked workspace layout)
+/// is removed and the page joins the left dock instead, which shows it when the tab was the one
+/// on screen in its pane. Logged once per read, only when something moved.
+pub fn migrate_v6(state: &mut WorkbenchState) {
+    let mut moved = usize::from(memory_to_sidebar(&mut state.docks, &mut state.center));
+    if let Some(saved) = state.stashed.as_deref_mut() {
+        moved += usize::from(memory_to_sidebar(&mut saved.docks, &mut saved.center));
+    }
+    for parked in state.parked.values_mut() {
+        moved += usize::from(memory_to_sidebar(
+            &mut parked.layout.docks,
+            &mut parked.layout.center,
+        ));
+        if let Some(saved) = parked.stashed.as_deref_mut() {
+            moved += usize::from(memory_to_sidebar(&mut saved.docks, &mut saved.center));
+        }
+    }
+    if moved > 0 {
+        tracing::info!(
+            layouts = moved,
+            "saved layout: the Memory tab of the center moved into the left sidebar"
+        );
+    }
+}
+
+/// Moves the center's Memory tabs into the left dock; whether there was one.
+fn memory_to_sidebar(docks: &mut Docks, center: &mut PaneTree) -> bool {
+    let page = PanelId::new(MEMORY_PAGE);
+    let mut found = false;
+    let mut shown = false;
+    for pane in center.panes_mut() {
+        while let Some(index) = pane.items.iter().position(|i| i.as_panel() == Some(&page)) {
+            pane.items.remove(index);
+            found = true;
+            shown |= index == pane.active;
+            if index < pane.active {
+                pane.active -= 1;
+            }
+            pane.active = pane.active.min(pane.items.len().saturating_sub(1));
+        }
+    }
+    if !found {
+        return false;
+    }
+    let left = docks.get_mut(DockPosition::Left);
+    if !left.panels.contains(&page) {
+        left.panels.push(page.clone());
+    }
+    if shown {
+        left.active = Some(page);
+    }
+    true
 }
 
 /// The one-time move of a layout older than version 6 to the Agents page: the `overview` panel

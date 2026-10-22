@@ -139,8 +139,8 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     // The right sidebar is a column of its own: its strip is the title bar row of that side.
     assert!((f32::from(right.origin.y) - f32::from(titlebar.origin.y)).abs() <= 1.0);
 
-    // The left nav: Search, Tasks, Agents and Mawas, which is on by default.
-    assert_eq!(nav_keys(&view, cx), ["agents", "assistant"]);
+    // The left nav: Agents, Mawas (on by default) and Memory under it.
+    assert_eq!(nav_keys(&view, cx), ["agents", "assistant", "mawas-memory"]);
     assert_eq!(
         selected_nav(&view, cx),
         Vec::<String>::new(),
@@ -257,7 +257,10 @@ fn a_panel_left_in_the_left_dock_gets_its_own_nav_row(cx: &mut TestAppContext) {
             .unwrap();
         });
     });
-    assert_eq!(nav_keys(&view, cx), ["agents", "assistant", "resources"]);
+    assert_eq!(
+        nav_keys(&view, cx),
+        ["agents", "assistant", "mawas-memory", "resources"]
+    );
     assert_eq!(
         selected_nav(&view, cx),
         ["resources"],
@@ -332,14 +335,14 @@ impl LayoutPresetName {
 fn the_enabled_mawas_is_one_center_tab_opened_from_the_nav_and_closable(cx: &mut TestAppContext) {
     let (view, _settings, cx) = open_in(cx, Some(true), None);
     assert!(view.read_with(cx, |wb, _| wb.assistant_enabled()));
-    assert_eq!(nav_keys(&view, cx), ["agents", "assistant"]);
+    assert_eq!(nav_keys(&view, cx), ["agents", "assistant", "mawas-memory"]);
     let labels: Vec<String> = view.read_with(cx, |wb, cx| {
         wb.nav_entries(cx)
             .into_iter()
             .map(|e| e.label.to_string())
             .collect()
     });
-    assert_eq!(labels.last().map(String::as_str), Some("Mawas"));
+    assert_eq!(labels.last().map(String::as_str), Some("Memory"));
     // Enabled is not open: no preset places it, nothing opened it.
     assert!(
         state(&view, cx)
@@ -644,7 +647,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
         ]
     );
 
-    // The next save is version 6, and loading that again changes nothing.
+    // The next save is version 7, and loading that again changes nothing.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| s.toggle_dock(DockPosition::Bottom))
     });
@@ -653,7 +656,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
     view.update(cx, |wb, _| wb.flush_save());
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 6);
+    assert_eq!(on_disk["version"], 7);
     let reloaded = load_state(&path);
     assert_eq!(reloaded.docks, state(&view, cx).docks);
     assert_eq!(reloaded.center, state(&view, cx).center);

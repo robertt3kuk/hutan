@@ -176,7 +176,7 @@ fn a_saved_layout_is_untouched_and_offered_the_new_default_once(cx: &mut TestApp
             ));
         }
 
-        // Saving writes the same docks back (version 6, no `more`).
+        // Saving writes the same docks back (version 7, no `more`).
         view.update(cx, |wb, cx| {
             wb.edit_layout(cx, |s| {
                 let pane = s.first_pane_id();
@@ -185,7 +185,7 @@ fn a_saved_layout_is_untouched_and_offered_the_new_default_once(cx: &mut TestApp
         });
         save(&view, cx);
         let after = on_disk(&path);
-        assert_eq!(after["version"], 6);
+        assert_eq!(after["version"], 7);
         assert_eq!(
             after["docks"], before["docks"],
             "the saved layout is untouched"

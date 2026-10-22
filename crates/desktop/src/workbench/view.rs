@@ -188,7 +188,7 @@ pub enum Region {
     /// Panel tab `index` of a dock (for the right dock: icon `index` of its strip).
     DockTab(DockPosition, usize),
     /// An entry of the left sidebar's nav, by name (`search`, `tasks`, `agents`, `assistant`,
-    /// `projects` for the back affordance of a page) or by panel id for any other page.
+    /// `memory`, `projects` for the back affordance of a page) or by panel id for any other page.
     Nav(&'static str),
     /// A control of the left sidebar's bottom toolbar (`new`, `settings`).
     Toolbar(&'static str),
@@ -257,12 +257,15 @@ pub enum Region {
     /// A repeated control of Mawas Home's Today rail: its name (`today-row`, `today-option`,
     /// `today-open`, `today-working`) and index (the row; for an option `row * 8 + option`).
     AssistantItem(&'static str, usize),
-    /// A control of the Memory page, by name (`add`, `scope-all`, `scope-global`,
-    /// `scope-workspace`, `archived`, `editor`, `save`, `cancel`, `error`, …).
+    /// A control of the Memory page (a body of the left sidebar), by name (`panel`, `header`,
+    /// `filters`, `add`, `scope-all`, `scope-global`, `scope-workspace`, `archived`, `editor`,
+    /// `save`, `cancel`, `error`, …).
     Memory(&'static str),
-    /// A repeated control of the Memory page: its name (`entry`, `edit`, `archive`, `restore`,
-    /// `confirm`, `history`, `proposal`, `approve`, `edit-approve`, `reject`) and the index of
-    /// its row (entries and proposals count separately, in the order drawn).
+    /// A repeated control of the Memory page: its name (`entry` the one-line row, `block` the
+    /// row with everything under it, `details`, `edit`, `archive`, `archive-yes`,
+    /// `archive-cancel`, `restore`, `confirm`, `history`, `proposal`, `approve`, `edit-approve`,
+    /// `reject`) and the index of its row (entries and proposals count separately, in the order
+    /// drawn).
     MemoryItem(&'static str, usize),
     /// The control that opens or closes part `part` of entry `index` (a command's output, a
     /// file's diff, reasoning).
@@ -1784,8 +1787,14 @@ impl Workbench {
             return;
         }
         let id = PanelId::new(id);
-        // Mawas Home, its Memory and the Agents page are pages of the center: a tab of the
-        // active pane (one instance, shown where it is when it is open), not a dock's panel.
+        // Memory is a body of the left sidebar (it replaces Projects until ‹ Projects), never a
+        // tab of the center: it comes back to the left dock from wherever it was left.
+        if id.as_str() == super::model::MEMORY_PAGE {
+            self.mutate(cx, |s| s.open_panel_in_dock(&id, DockPosition::Left));
+            return;
+        }
+        // Mawas Home and the Agents page are pages of the center: a tab of the active pane
+        // (one instance, shown where it is when it is open), not a dock's panel.
         if actions::is_mawas_page(id.as_str()) || id.as_str() == super::model::AGENTS_PAGE {
             self.mutate(cx, |s| s.open_panel_in_center(&id));
             return;
@@ -2021,10 +2030,13 @@ impl Workbench {
             e.checked = already;
             entries.push(e);
         }
-        let p = panel.clone();
-        entries.push(Self::entry("Open as Tab", move |this, _, cx| {
-            this.try_mutate(cx, |s| s.move_panel(&p, PanelDest::Center));
-        }));
+        // Memory lives in the left sidebar only.
+        if panel.as_str() != super::model::MEMORY_PAGE {
+            let p = panel.clone();
+            entries.push(Self::entry("Open as Tab", move |this, _, cx| {
+                this.try_mutate(cx, |s| s.move_panel(&p, PanelDest::Center));
+            }));
+        }
         let p = panel.clone();
         entries.push(Self::entry("Close", move |this, _, cx| {
             this.try_mutate(cx, |s| s.close_panel(&p));

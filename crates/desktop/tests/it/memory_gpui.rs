@@ -1,8 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-//! Mawas's Memory page (MW-2): the page in the center with its entries, editor, history and
-//! proposals, its entry points (⌘K "Mawas: Memory", the Today rail), the pending proposals under
-//! Requests, and Settings → Mawas, against a real in-process daemon with the in-memory
-//! credential store and a loopback provider. Nothing calls a model.
+//! Mawas's Memory page (MW-2, MEM-SIDEBAR): the page as a body of the left sidebar with its entries,
+//! inline editor, history, proposals and keyboard, its entry points (⌘K "Mawas: Memory", the
+//! *Memory* nav row, the Today rail), the pending proposals under Requests, the migration of a
+//! layout that had it as a tab of the center, the layout at 240 and 480 px, and Settings →
+//! Mawas, against a real in-process daemon with the in-memory credential store and a loopback
+//! provider. Nothing calls a model.
 
 use crate::common;
 
@@ -11,10 +13,13 @@ use common::{draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::{ApprovalId, SessionId, WorkspaceId};
 use hutan_desktop::workbench::actions;
-use hutan_desktop::workbench::model::{ItemRef, PanelId};
-use hutan_desktop::workbench::panels::{
-    AssistantPanel, MemoryEditorTarget, MemoryPanel, MemoryScopeChoice, TodayKind,
+use hutan_desktop::workbench::model::{
+    DockMode, DockPosition, ItemRef, PanelDest, PanelId, WorkbenchState,
 };
+use hutan_desktop::workbench::panels::{
+    AssistantPanel, MemoryCursor, MemoryEditorTarget, MemoryPanel, MemoryScopeChoice, TodayKind,
+};
+use hutan_desktop::workbench::persistence::STATE_FILE;
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_protocol::chat::{ApprovalList, ApprovalListRequest};
 use hutan_protocol::memory::{
@@ -40,8 +45,8 @@ fn started() -> AssistantEnv {
     })
 }
 
-fn page() -> ItemRef {
-    ItemRef::panel("mawas-memory")
+fn page() -> PanelId {
+    PanelId::new("mawas-memory")
 }
 
 fn remember(
@@ -166,24 +171,66 @@ fn row_of(panel: &Entity<MemoryPanel>, cx: &VisualTestContext, id: &str) -> usiz
     })
 }
 
+/// Tabs of the center that are the Memory page: there is never one.
 fn center_pages(view: &Entity<Workbench>, cx: &VisualTestContext) -> usize {
     view.read_with(cx, |wb, _| {
         wb.state()
-            .all_items()
-            .into_iter()
-            .filter(|i| *i == page())
+            .panes()
+            .iter()
+            .flat_map(|pane| pane.items.iter())
+            .filter(|item| item.as_panel() == Some(&page()))
             .count()
     })
+}
+
+/// The page is the body of the left sidebar: in its dock, the dock's page, expanded.
+fn in_sidebar(view: &Entity<Workbench>, cx: &VisualTestContext) -> bool {
+    view.read_with(cx, |wb, _| {
+        let state = wb.state();
+        state.docks.find(&page()) == Some(DockPosition::Left)
+            && state.docks.left.active == Some(page())
+            && state.docks.left.mode() == DockMode::Expanded
+    })
+}
+
+fn left_page(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<PanelId> {
+    view.read_with(cx, |wb, _| wb.state().docks.left.active.clone())
+}
+
+/// The entry ids in the order the page draws them (profile, facts, notes).
+fn entry_ids(panel: &Entity<MemoryPanel>, cx: &VisualTestContext) -> Vec<String> {
+    panel.read_with(cx, |p, _| {
+        let mut ids = Vec::new();
+        for category in MemoryCategory::ALL {
+            ids.extend(
+                p.entries()
+                    .iter()
+                    .filter(|e| e.category == category)
+                    .map(|e| e.id.clone()),
+            );
+        }
+        ids
+    })
+}
+
+fn cursor(panel: &Entity<MemoryPanel>, cx: &VisualTestContext) -> Option<MemoryCursor> {
+    panel.read_with(cx, |p, _| p.cursor().cloned())
+}
+
+fn editing(panel: &Entity<MemoryPanel>, cx: &VisualTestContext) -> Option<MemoryEditorTarget> {
+    panel.read_with(cx, |p, _| p.editor_target().cloned())
 }
 
 // ---- entry points ---------------------------------------------------------------------------
 
 #[gpui::test]
-fn the_palette_and_the_today_rail_open_one_memory_page_in_the_center(cx: &mut TestAppContext) {
+fn every_entry_point_opens_memory_in_the_sidebar_and_never_as_a_center_tab(
+    cx: &mut TestAppContext,
+) {
     let env = started();
     let (view, cx) = open(cx, &env.daemon);
 
-    // ⌘K lists it, and its action opens one tab of the center, in no dock.
+    // ⌘K lists it, and its action shows Memory as the body of the left sidebar.
     let titles: Vec<String> = view.read_with(cx, |wb, _| {
         wb.commands().iter().map(|c| c.title.to_string()).collect()
     });
@@ -197,52 +244,89 @@ fn the_palette_and_the_today_rail_open_one_memory_page_in_the_center(cx: &mut Te
     }));
     cx.simulate_keystrokes("escape");
     let panel = open_memory(&view, cx);
-    assert_eq!(center_pages(&view, cx), 1);
-    assert_eq!(
-        view.read_with(cx, |wb, _| wb.state().active_center_item()),
-        Some(page())
+    assert!(in_sidebar(&view, cx), "the left dock's page");
+    assert_eq!(center_pages(&view, cx), 0, "not a tab");
+    assert_ne!(
+        view.read_with(cx, |wb, cx| wb.active_title(cx)),
+        "Memory",
+        "the page a sidebar shows never becomes the window's title"
     );
-    assert!(
-        view.read_with(cx, |wb, _| wb
-            .state()
-            .docks
-            .find(&PanelId::new("mawas-memory")))
-            .is_none(),
-        "a tab of the center, in no dock"
-    );
-    assert_eq!(view.read_with(cx, |wb, cx| wb.active_title(cx)), "Memory");
-    // Again: still one instance.
+    // Again: still one instance, still no tab.
     cx.dispatch_action(actions::OpenMawasMemory);
-    assert_eq!(center_pages(&view, cx), 1);
+    assert_eq!(center_pages(&view, cx), 0);
     assert!(panel.read_with(cx, |p, _| p.entries().is_empty()));
     draw(cx);
-    // An empty memory says what it is for.
-    for region in ["add", "scope-all", "scope-global", "archived"] {
+    for region in [
+        "panel",
+        "header",
+        "add",
+        "scope-all",
+        "scope-global",
+        "archived",
+    ] {
         assert!(
             view.read_with(cx, |wb, _| wb.region_bounds(Region::Memory(region)))
                 .is_some(),
-            "{region} is in the header"
+            "{region} is on the page"
         );
     }
 
-    // Mawas Home links to it from the Today rail.
+    // It replaced Projects and shows the way back (‹ Projects); the row under Mawas toggles it.
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Nav("projects")))
+            .is_some()
+    );
+    click(&view, cx, Region::Nav("projects"));
+    assert_eq!(left_page(&view, cx), Some(PanelId::new("sessions")));
+    click(&view, cx, Region::Nav("memory"));
+    assert!(in_sidebar(&view, cx), "the Memory row opens it");
+    click(&view, cx, Region::Nav("memory"));
+    assert_eq!(
+        left_page(&view, cx),
+        Some(PanelId::new("sessions")),
+        "and closes it again"
+    );
+
+    // ⌘K → Panel: Open Memory.
+    cx.dispatch_action(actions::OpenPanel("mawas-memory".into()));
+    assert!(in_sidebar(&view, cx));
+    assert_eq!(center_pages(&view, cx), 0);
+
+    // A Memory the user left in the center by hand comes back to the sidebar.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| {
-            s.close_panel(&PanelId::new("mawas-memory")).unwrap();
+            s.move_panel(&page(), PanelDest::Center).unwrap();
         })
     });
+    assert_eq!(center_pages(&view, cx), 1);
+    cx.dispatch_action(actions::OpenMawasMemory);
+    assert!(in_sidebar(&view, cx));
     assert_eq!(center_pages(&view, cx), 0);
+
+    // A compact sidebar (the icon rail) expands to show it.
+    cx.dispatch_action(actions::ToggleLeftDock);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.state().docks.left.mode()),
+        DockMode::Compact
+    );
+    cx.dispatch_action(actions::OpenMawasMemory);
+    assert!(in_sidebar(&view, cx));
+
+    // Mawas Home links to it from the Today rail.
+    click(&view, cx, Region::Nav("projects"));
     let _home = open_assistant(&view, cx);
     click(&view, cx, Region::Assistant("today-memory"));
     wait_until(cx, "the Memory page to open", |cx| {
         draw(cx);
-        center_pages(&view, cx) == 1
-            && view.read_with(cx, |wb, _| wb.state().active_center_item()) == Some(page())
+        in_sidebar(&view, cx)
     });
+    assert_eq!(center_pages(&view, cx), 0);
 }
 
 #[gpui::test]
-fn turning_mawas_off_takes_the_memory_page_and_its_command_with_it(cx: &mut TestAppContext) {
+fn turning_mawas_off_takes_the_memory_page_its_row_and_its_command_with_it(
+    cx: &mut TestAppContext,
+) {
     let env = started();
     let settings =
         common::with_assistant(SettingsStore::new(SettingsPaths::in_dir(env.daemon.home())));
@@ -253,7 +337,13 @@ fn turning_mawas_off_takes_the_memory_page_and_its_command_with_it(cx: &mut Test
         })
     });
     open_memory(&view, cx);
-    assert_eq!(center_pages(&view, cx), 1);
+    assert!(in_sidebar(&view, cx));
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Nav("memory")))
+            .is_some(),
+        "the row under Mawas"
+    );
     settings
         .write_user("assistant.enabled", toml::Value::Boolean(false))
         .unwrap();
@@ -262,6 +352,17 @@ fn turning_mawas_off_takes_the_memory_page_and_its_command_with_it(cx: &mut Test
             !wb.assistant_enabled() && !wb.panel_open("mawas-memory")
         })
     });
+    draw(cx);
+    assert_eq!(
+        left_page(&view, cx),
+        Some(PanelId::new("sessions")),
+        "Projects is back"
+    );
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Nav("memory")))
+            .is_none(),
+        "the row went with Mawas"
+    );
     let titles: Vec<String> = view.read_with(cx, |wb, _| {
         wb.commands().iter().map(|c| c.title.to_string()).collect()
     });
@@ -269,6 +370,59 @@ fn turning_mawas_off_takes_the_memory_page_and_its_command_with_it(cx: &mut Test
         !titles.iter().any(|t| t.contains("Memory")),
         "no command still opens it: {titles:?}"
     );
+}
+
+#[gpui::test]
+fn a_saved_layout_with_the_old_memory_tab_opens_with_memory_in_the_sidebar(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(STATE_FILE);
+    // A version 6 file: Memory was a tab of the center, the one on screen.
+    let mut old = WorkbenchState::default();
+    old.open_panel_in_center(&page());
+    assert_eq!(
+        old.active_center_item(),
+        Some(ItemRef::panel("mawas-memory"))
+    );
+    let mut value: serde_json::Value = serde_json::from_str(&old.to_json().unwrap()).unwrap();
+    value["version"] = 6.into();
+    std::fs::write(&path, value.to_string()).unwrap();
+
+    let settings =
+        common::with_assistant(SettingsStore::new(SettingsPaths::in_dir(env.daemon.home())));
+    let (view, cx) = open_with(cx, settings, env.daemon.connection(), Some(path.clone()));
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    draw(cx);
+    assert!(in_sidebar(&view, cx), "the page moved into the sidebar");
+    assert_eq!(center_pages(&view, cx), 0, "and left the center");
+    let panel = view
+        .read_with(cx, |wb, _| wb.panel::<MemoryPanel>("mawas-memory"))
+        .expect("the page is drawn in the sidebar");
+    wait_until(cx, "the page to list", |cx| {
+        draw(cx);
+        panel.read_with(cx, |p, _| p.is_loaded())
+    });
+
+    // The next save is version 7 and keeps it there: nothing moves twice.
+    cx.dispatch_action(actions::SplitRight);
+    view.update(cx, |wb, _| wb.flush_save());
+    let saved = WorkbenchState::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(on_disk["version"], 7);
+    assert!(
+        saved
+            .panes()
+            .iter()
+            .all(|p| p.items.iter().all(|i| i.as_panel() != Some(&page())))
+    );
+    assert_eq!(saved.docks.left.active, Some(page()));
 }
 
 // ---- entries --------------------------------------------------------------------------------
@@ -340,14 +494,30 @@ fn the_page_lists_adds_edits_archives_confirms_and_shows_history(cx: &mut TestAp
         kite.inferred,
         "a model wrote it and the user has not edited it"
     );
+    // Selecting a row (a click) opens its editor under it and shows what one line cannot:
+    // where it applies, the inferred badge and the actions.
+    let kite_row = row_of(&panel, cx, &kite.id);
+    click(&view, cx, Region::MemoryItem("entry", kite_row));
+    assert_eq!(
+        cursor(&panel, cx),
+        Some(MemoryCursor::Entry(kite.id.clone()))
+    );
+    assert_eq!(
+        editing(&panel, cx),
+        Some(MemoryEditorTarget::Entry {
+            id: kite.id.clone(),
+            revision: kite.revision
+        })
+    );
+    draw(cx);
     assert!(
-        view.read_with(cx, |wb, _| wb.region_bounds(Region::MemoryItem(
-            "inferred",
-            row_of(&panel, cx, &kite.id)
-        )))
-        .is_some(),
+        view.read_with(cx, |wb, _| wb
+            .region_bounds(Region::MemoryItem("inferred", kite_row)))
+            .is_some(),
         "the inferred badge is drawn"
     );
+    click(&view, cx, Region::Memory("cancel"));
+    assert_eq!(editing(&panel, cx), None);
 
     // Add: the editor opens, Save sends it, the page lists the daemon's entry.
     click(&view, cx, Region::Memory("add"));
@@ -383,7 +553,7 @@ fn the_page_lists_adds_edits_archives_confirms_and_shows_history(cx: &mut TestAp
 
     // Edit: the editor holds the entry's text; saving makes revision 2.
     let uses = row_of(&panel, cx, &old.entry_id);
-    click(&view, cx, Region::MemoryItem("edit", uses));
+    click(&view, cx, Region::MemoryItem("entry", uses));
     assert_eq!(
         panel
             .read_with(cx, |p, _| p.editor_text().map(str::to_owned))
@@ -424,6 +594,7 @@ fn the_page_lists_adds_edits_archives_confirms_and_shows_history(cx: &mut TestAp
 
     // Confirm: saves the text as it is as the user's own; no longer inferred.
     let kite_row = row_of(&panel, cx, &kite.id);
+    click(&view, cx, Region::MemoryItem("entry", kite_row));
     click(&view, cx, Region::MemoryItem("confirm", kite_row));
     wait_until(cx, "the confirmed entry", |_| {
         stored(&env, false)
@@ -439,8 +610,21 @@ fn the_page_lists_adds_edits_archives_confirms_and_shows_history(cx: &mut TestAp
     });
 
     // Archive hides it; the archived view shows it, with Restore.
+    // Archive asks first: Cancel leaves it, Archive archives it.
     let kite_row = row_of(&panel, cx, &kite.id);
     click(&view, cx, Region::MemoryItem("archive", kite_row));
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.archive_question().map(str::to_owned)),
+        Some(kite.id.clone())
+    );
+    click(&view, cx, Region::MemoryItem("archive-cancel", kite_row));
+    assert!(!panel.read_with(cx, |p, _| p.archive_question().is_some()));
+    assert!(
+        stored(&env, false).iter().any(|e| e.id == kite.id),
+        "Cancel archived nothing"
+    );
+    click(&view, cx, Region::MemoryItem("archive", kite_row));
+    click(&view, cx, Region::MemoryItem("archive-yes", kite_row));
     wait_until(cx, "the archive", |_| {
         stored(&env, false).iter().all(|e| e.id != kite.id)
     });
@@ -456,6 +640,8 @@ fn the_page_lists_adds_edits_archives_confirms_and_shows_history(cx: &mut TestAp
         })
     });
     let kite_row = row_of(&panel, cx, &kite.id);
+    click(&view, cx, Region::MemoryItem("entry", kite_row));
+    assert_eq!(editing(&panel, cx), None, "an archived entry is not edited");
     click(&view, cx, Region::MemoryItem("restore", kite_row));
     wait_until(cx, "the restore", |_| {
         stored(&env, false).iter().any(|e| e.id == kite.id)
@@ -498,12 +684,14 @@ fn the_page_lists_adds_edits_archives_confirms_and_shows_history(cx: &mut TestAp
             wb.sessions().read(cx).active_project().is_some()
         })
     });
-    // The workspace has a layout of its own: the page opens there too (one instance).
+    // The workspace has a layout of its own: the page opens there too (one instance), in its
+    // sidebar.
     cx.dispatch_action(actions::OpenMawasMemory);
     wait_until(cx, "the page in the workspace's layout", |cx| {
         draw(cx);
-        view.read_with(cx, |wb, _| wb.state().active_center_item()) == Some(page())
+        in_sidebar(&view, cx)
     });
+    assert_eq!(center_pages(&view, cx), 0);
     click(&view, cx, Region::Memory("scope-workspace"));
     wait_until(cx, "the workspace's notes", |cx| {
         draw(cx);
@@ -682,7 +870,7 @@ fn a_card_under_requests_approves_a_proposal_and_edit_and_approve_opens_the_page
     click(&view, cx, Region::AssistantItem("today-edit-approve", 0));
     wait_until(cx, "the Memory page", |cx| {
         draw(cx);
-        view.read_with(cx, |wb, _| wb.state().active_center_item()) == Some(page())
+        in_sidebar(&view, cx)
     });
     let panel = view
         .read_with(cx, |wb, _| wb.panel::<MemoryPanel>("mawas-memory"))
@@ -716,13 +904,8 @@ fn a_hidden_memory_page_does_no_work_and_catches_up_when_shown(cx: &mut TestAppC
     draw(cx);
     assert!(panel.read_with(cx, |p, _| p.is_visible()));
 
-    // Another tab takes the pane: the page is hidden.
-    view.update(cx, |wb, cx| {
-        wb.edit_layout(cx, |s| {
-            let pane = s.active_pane_id();
-            s.add_item(pane, ItemRef::placeholder("Elsewhere")).unwrap();
-        })
-    });
+    // Back to Projects: the page leaves the screen and is hidden.
+    click(&view, cx, Region::Nav("projects"));
     wait_until(cx, "the page to be hidden", |cx| {
         draw(cx);
         !panel.read_with(cx, |p, _| p.is_visible())
@@ -760,17 +943,422 @@ fn a_hidden_memory_page_does_no_work_and_catches_up_when_shown(cx: &mut TestAppC
     );
 
     // Shown again, it lists and draws.
-    view.update(cx, |wb, cx| {
-        wb.edit_layout(cx, |s| {
-            s.open_panel_in_center(&PanelId::new("mawas-memory"));
-        })
-    });
+    cx.dispatch_action(actions::OpenMawasMemory);
     wait_until(cx, "the page to catch up", |cx| {
         draw(cx);
         panel.read_with(cx, |p, _| {
             p.is_visible() && p.render_count() > before && p.entries().len() == 1
         })
     });
+}
+// ---- keyboard -------------------------------------------------------------------------------
+
+#[gpui::test]
+fn the_keyboard_moves_through_proposals_and_entries_edits_saves_archives_and_answers(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    let (view, cx) = open(cx, &env.daemon);
+    let profile = remember(
+        &env,
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Profile,
+        "Prefers short answers.",
+    );
+    let jj = remember(
+        &env,
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Fact,
+        "Uses jj.",
+    );
+    remember(
+        &env,
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Fact,
+        "Deploys on friday.",
+    );
+    let home = home_panel(&view, cx);
+    let mawas = home.read_with(cx, |p, cx| p.session(cx).unwrap());
+    propose(&env, mawas, "one", "Staging is called kite.");
+    propose(&env, mawas, "two", "REJECTED-CLAIM");
+
+    let panel = open_memory(&view, cx);
+    wait_proposals(&panel, cx, 2);
+    wait_global(&panel, cx, 3);
+    draw(cx);
+    let waiting: Vec<ApprovalId> =
+        panel.read_with(cx, |p, _| p.proposals().iter().map(|p| p.id).collect());
+    let ids = entry_ids(&panel, cx);
+    assert_eq!(ids[0], profile.entry_id, "profile first");
+    assert_eq!(cursor(&panel, cx), None);
+
+    // ↓ goes to the topmost thing (the first proposal) and stops at the last; ↑ goes back.
+    cx.simulate_keystrokes("down");
+    assert_eq!(cursor(&panel, cx), Some(MemoryCursor::Proposal(waiting[0])));
+    cx.simulate_keystrokes("down");
+    assert_eq!(cursor(&panel, cx), Some(MemoryCursor::Proposal(waiting[1])));
+    cx.simulate_keystrokes("down");
+    assert_eq!(cursor(&panel, cx), Some(MemoryCursor::Proposal(waiting[1])));
+    cx.simulate_keystrokes("up");
+    assert_eq!(cursor(&panel, cx), Some(MemoryCursor::Proposal(waiting[0])));
+
+    // Tab moves between the proposals and the entries; ↓↑ stay in the group they are in.
+    cx.simulate_keystrokes("tab");
+    assert_eq!(
+        cursor(&panel, cx),
+        Some(MemoryCursor::Entry(ids[0].clone()))
+    );
+    cx.simulate_keystrokes("down");
+    assert_eq!(
+        cursor(&panel, cx),
+        Some(MemoryCursor::Entry(ids[1].clone()))
+    );
+    cx.simulate_keystrokes("tab");
+    assert_eq!(cursor(&panel, cx), Some(MemoryCursor::Proposal(waiting[0])));
+    cx.simulate_keystrokes("tab");
+    assert_eq!(
+        cursor(&panel, cx),
+        Some(MemoryCursor::Entry(ids[0].clone()))
+    );
+    assert_eq!(editing(&panel, cx), None, "moving only selects");
+
+    // Return edits; ⌘Return saves; the editor closes with the daemon's receipt.
+    cx.simulate_keystrokes("down");
+    cx.simulate_keystrokes("enter");
+    let revision = panel.read_with(cx, |p, _| {
+        p.entries()
+            .iter()
+            .find(|e| e.id == ids[1])
+            .unwrap()
+            .revision
+    });
+    assert_eq!(
+        editing(&panel, cx),
+        Some(MemoryEditorTarget::Entry {
+            id: ids[1].clone(),
+            revision
+        })
+    );
+    assert!(
+        panel
+            .read_with(cx, |p, _| p.editor_text().map(str::to_owned))
+            .is_some_and(|t| !t.is_empty()),
+        "the editor holds the entry's text"
+    );
+    panel.update(cx, |p, cx| {
+        p.set_editor_text("Edited from the keyboard.", cx)
+    });
+    cx.simulate_keystrokes("cmd-enter");
+    wait_until(cx, "the saved revision", |_| {
+        stored(&env, false)
+            .iter()
+            .any(|e| e.body == "Edited from the keyboard." && e.revision == 2)
+    });
+    wait_until(cx, "the editor to close", |cx| {
+        draw(cx);
+        editing(&panel, cx).is_none()
+    });
+
+    // Esc closes the editor and leaves the entry as it was.
+    let before = stored(&env, false).len();
+    cx.simulate_keystrokes("enter");
+    assert!(editing(&panel, cx).is_some());
+    panel.update(cx, |p, cx| p.set_editor_text("Never saved.", cx));
+    cx.simulate_keystrokes("escape");
+    assert_eq!(editing(&panel, cx), None);
+    assert!(stored(&env, false).iter().all(|e| e.body != "Never saved."));
+    assert_eq!(stored(&env, false).len(), before);
+    assert!(cursor(&panel, cx).is_some(), "the selection stays");
+
+    // Writing something and clicking another row does not lose it.
+    cx.simulate_keystrokes("enter");
+    panel.update(cx, |p, cx| p.set_editor_text("Half a thought", cx));
+    click(&view, cx, Region::MemoryItem("entry", 0));
+    assert!(
+        panel.read_with(cx, |p, _| p.error().is_some()),
+        "told to save or cancel first"
+    );
+    assert_eq!(
+        panel
+            .read_with(cx, |p, _| p.editor_text().map(str::to_owned))
+            .as_deref(),
+        Some("Half a thought")
+    );
+    cx.simulate_keystrokes("escape");
+
+    // ⌘⌫ asks first; Return does not answer yes; the second ⌘⌫ archives.
+    let victim = match cursor(&panel, cx) {
+        Some(MemoryCursor::Entry(id)) => id,
+        other => panic!("an entry is selected: {other:?}"),
+    };
+    cx.simulate_keystrokes("cmd-backspace");
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.archive_question().map(str::to_owned)),
+        Some(victim.clone())
+    );
+    cx.simulate_keystrokes("enter");
+    assert!(
+        !panel.read_with(cx, |p, _| p.archive_question().is_some()),
+        "Return cancels the question"
+    );
+    assert!(stored(&env, false).iter().any(|e| e.id == victim));
+    cx.simulate_keystrokes("cmd-backspace");
+    cx.simulate_keystrokes("cmd-backspace");
+    wait_until(cx, "the archive", |_| {
+        stored(&env, false).iter().all(|e| e.id != victim)
+    });
+    let _ = jj;
+
+    // On a proposal: ⌘Return approves it as proposed, ⌘⌫ rejects it.
+    wait_until(cx, "the cursor to settle", |cx| {
+        draw(cx);
+        cursor(&panel, cx).is_none()
+    });
+    cx.simulate_keystrokes("tab");
+    assert_eq!(cursor(&panel, cx), Some(MemoryCursor::Proposal(waiting[0])));
+    cx.simulate_keystrokes("cmd-enter");
+    wait_until(cx, "the approved entry", |_| {
+        stored(&env, false)
+            .iter()
+            .any(|e| e.body == "Staging is called kite.")
+    });
+    wait_proposals(&panel, cx, 1);
+    cx.simulate_keystrokes("down");
+    assert_eq!(cursor(&panel, cx), Some(MemoryCursor::Proposal(waiting[1])));
+    cx.simulate_keystrokes("cmd-backspace");
+    wait_proposals(&panel, cx, 0);
+    assert!(
+        stored(&env, true)
+            .iter()
+            .all(|e| !e.body.contains("REJECTED")),
+        "a rejected proposal stores nothing"
+    );
+}
+
+// ---- layout ---------------------------------------------------------------------------------
+
+fn rect(
+    view: &Entity<Workbench>,
+    cx: &VisualTestContext,
+    region: Region,
+) -> gpui::Bounds<gpui::Pixels> {
+    view.read_with(cx, |wb, _| wb.region_bounds(region))
+        .unwrap_or_else(|| panic!("{region:?} is laid out"))
+}
+
+fn px_of(value: gpui::Pixels) -> f32 {
+    f32::from(value)
+}
+
+#[track_caller]
+fn assert_inside(what: &str, inner: gpui::Bounds<gpui::Pixels>, outer: gpui::Bounds<gpui::Pixels>) {
+    assert!(
+        px_of(inner.left()) >= px_of(outer.left()) - 0.5
+            && px_of(inner.right()) <= px_of(outer.right()) + 0.5,
+        "{what} {inner:?} leaves {outer:?}"
+    );
+}
+
+#[track_caller]
+fn assert_apart(what: &str, a: gpui::Bounds<gpui::Pixels>, b: gpui::Bounds<gpui::Pixels>) {
+    let apart = px_of(a.right()) <= px_of(b.left()) + 0.5
+        || px_of(b.right()) <= px_of(a.left()) + 0.5
+        || px_of(a.bottom()) <= px_of(b.top()) + 0.5
+        || px_of(b.bottom()) <= px_of(a.top()) + 0.5;
+    assert!(apart, "{what}: {a:?} overlaps {b:?}");
+}
+
+#[gpui::test]
+fn the_page_fits_the_sidebar_at_240_and_480_px_without_overlap(cx: &mut TestAppContext) {
+    let env = started();
+    let (view, cx) = open(cx, &env.daemon);
+    let project = env.project("a-project-with-a-rather-long-name");
+    let workspace = env
+        .daemon
+        .create_workspace("a-workspace-with-a-rather-long-name-indeed", &[&project]);
+    let long = "Prefers answers that are short, with the reason first and the command after it, never a table.";
+    remember(
+        &env,
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Profile,
+        long,
+    );
+    remember(
+        &env,
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Fact,
+        "Uses jj.",
+    );
+    remember(
+        &env,
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Fact,
+        "Staging is reached through the bastion host named kite-with-a-long-name.internal.example.org",
+    );
+    remember(
+        &env,
+        MemoryScope::Workspace,
+        Some(workspace.id),
+        MemoryCategory::Note,
+        "Releases come from trunk, never from a branch, and are tagged by hand.",
+    );
+    let home = home_panel(&view, cx);
+    let mawas = home.read_with(cx, |p, cx| p.session(cx).unwrap());
+    propose(
+        &env,
+        mawas,
+        "one",
+        "Staging is called kite and lives behind a bastion host that only the platform team may reach.",
+    );
+    propose(
+        &env,
+        mawas,
+        "two",
+        "A-single-unbroken-claim-without-any-spaces-that-is-longer-than-the-sidebar",
+    );
+    view.update_in(cx, |wb, window, cx| {
+        wb.switch_workspace(workspace.id, window, cx)
+    });
+    wait_until(cx, "the workspace to be active", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).active_project().is_some()
+        })
+    });
+    let panel = open_memory(&view, cx);
+    wait_proposals(&panel, cx, 2);
+    wait_entries(&panel, cx, 4);
+
+    for width in [240.0_f32, 480.0] {
+        view.update(cx, |wb, cx| {
+            wb.edit_layout(cx, |s| s.docks.left.size = width)
+        });
+        // Nothing selected: one-line rows.
+        click(&view, cx, Region::MemoryItem("entry", 0));
+        click(&view, cx, Region::Memory("cancel"));
+        draw(cx);
+        draw(cx);
+        let dock = rect(&view, cx, Region::Dock(DockPosition::Left));
+        assert!(
+            (px_of(dock.size.width) - width).abs() <= 2.0,
+            "the sidebar is {width} wide, not {:?}",
+            dock.size.width
+        );
+        let page = rect(&view, cx, Region::Memory("panel"));
+        assert_inside("the page", page, dock);
+
+        // The header and the filter: all in the page, none on another.
+        let header = rect(&view, cx, Region::Memory("header"));
+        assert_inside("the header", header, page);
+        let add = rect(&view, cx, Region::Memory("add"));
+        let filters = rect(&view, cx, Region::Memory("filters"));
+        assert_inside("Add", add, page);
+        assert_inside("the filters", filters, page);
+        assert_apart("Add and the filters", add, filters);
+        let chips = ["scope-all", "scope-global", "scope-workspace", "archived"]
+            .map(|name| (name, rect(&view, cx, Region::Memory(name))));
+        for (name, bounds) in &chips {
+            assert_inside(name, *bounds, filters);
+        }
+        for (i, (a_name, a)) in chips.iter().enumerate() {
+            for (b_name, b) in &chips[i + 1..] {
+                assert_apart(&format!("{a_name} and {b_name}"), *a, *b);
+            }
+        }
+
+        // The proposals: cards one above the other, their buttons inside and apart.
+        let mut above: Option<gpui::Bounds<gpui::Pixels>> = None;
+        for index in 0..2 {
+            let card = rect(&view, cx, Region::MemoryItem("proposal", index));
+            assert_inside("a proposal", card, page);
+            if let Some(above) = above {
+                assert_apart("two proposals", above, card);
+            }
+            above = Some(card);
+            let buttons = ["reject", "edit-approve", "approve"]
+                .map(|name| (name, rect(&view, cx, Region::MemoryItem(name, index))));
+            for (name, bounds) in &buttons {
+                assert_inside(name, *bounds, card);
+            }
+            for (i, (a_name, a)) in buttons.iter().enumerate() {
+                for (b_name, b) in &buttons[i + 1..] {
+                    assert_apart(&format!("{a_name} and {b_name}"), *a, *b);
+                }
+            }
+        }
+
+        // The entries: one line each unless selected, however long the text.
+        let mut above: Option<gpui::Bounds<gpui::Pixels>> = None;
+        for index in 0..4 {
+            let block = rect(&view, cx, Region::MemoryItem("block", index));
+            let line = rect(&view, cx, Region::MemoryItem("entry", index));
+            assert_inside("an entry", block, page);
+            assert_inside("an entry's line", line, block);
+            // Entry 0 holds the selection (the click above): its whole text shows.
+            assert!(
+                index == 0 || px_of(line.size.height) <= 40.0,
+                "entry {index} is one line at {width} px: {line:?}"
+            );
+            if let Some(above) = above {
+                assert_apart("two entries", above, block);
+            }
+            above = Some(block);
+        }
+
+        // A selected entry: its whole text and its editor under the row, all inside the page.
+        click(&view, cx, Region::MemoryItem("entry", 0));
+        draw(cx);
+        let block = rect(&view, cx, Region::MemoryItem("block", 0));
+        let editor = rect(&view, cx, Region::Memory("editor"));
+        let save = rect(&view, cx, Region::Memory("save"));
+        let cancel = rect(&view, cx, Region::Memory("cancel"));
+        assert_inside("the block", block, page);
+        assert_inside("the editor", editor, block);
+        assert_inside("Save", save, editor);
+        assert_inside("Cancel", cancel, editor);
+        assert_apart("Save and Cancel", save, cancel);
+        let details = rect(&view, cx, Region::MemoryItem("details", 0));
+        assert_inside("the details", details, block);
+        assert_apart("the editor and the details", editor, details);
+        let next = rect(&view, cx, Region::MemoryItem("block", 1));
+        assert_apart("the open entry and the next", block, next);
+        for name in ["edit", "archive", "history"] {
+            if let Some(bounds) =
+                view.read_with(cx, |wb, _| wb.region_bounds(Region::MemoryItem(name, 0)))
+            {
+                assert_inside(name, bounds, details);
+            }
+        }
+
+        // Add: its editor, scope and category choices fit as well.
+        click(&view, cx, Region::Memory("cancel"));
+        click(&view, cx, Region::Memory("add"));
+        draw(cx);
+        let editor = rect(&view, cx, Region::Memory("editor"));
+        assert_inside("the new entry's editor", editor, page);
+        let choices = [
+            "editor-global",
+            "editor-workspace",
+            "editor-profile",
+            "editor-fact",
+            "editor-note",
+        ]
+        .map(|name| (name, rect(&view, cx, Region::Memory(name))));
+        for (name, bounds) in &choices {
+            assert_inside(name, *bounds, editor);
+        }
+        for (i, (a_name, a)) in choices.iter().enumerate() {
+            for (b_name, b) in &choices[i + 1..] {
+                assert_apart(&format!("{a_name} and {b_name}"), *a, *b);
+            }
+        }
+        click(&view, cx, Region::Memory("cancel"));
+    }
 }
 
 // ---- settings -------------------------------------------------------------------------------

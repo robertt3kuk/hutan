@@ -106,10 +106,11 @@ fn nav_rows_are_thirty_pixels_with_a_real_icon(cx: &mut TestAppContext) {
         [
             ("agents".to_owned(), Icon::NavAgents),
             ("assistant".to_owned(), Icon::NavMawas),
+            ("mawas-memory".to_owned(), Icon::PanelMawasMemory),
         ]
     );
     let mut previous_bottom = None;
-    for key in ["agents", "assistant"] {
+    for key in ["agents", "assistant", "memory"] {
         let row = bounds(&view, cx, Region::Nav(key));
         let height = f32::from(row.size.height);
         assert!(

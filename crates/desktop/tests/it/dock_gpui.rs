@@ -747,7 +747,7 @@ fn the_dock_modes_are_saved_and_restored(cx: &mut TestAppContext) {
     view.update(cx, |wb, _| wb.flush_save());
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 6);
+    assert_eq!(on_disk["version"], 7);
     assert_eq!(on_disk["docks"]["left"]["collapsed"], true);
     assert_eq!(on_disk["docks"]["right"]["collapsed"], true);
     let loaded = load_state(&path);

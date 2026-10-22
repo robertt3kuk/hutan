@@ -3,7 +3,7 @@
 //! agent" of a terminal block becomes a structured block attachment when the target is Mawas.
 //!
 //! Home is a registered panel like the others (`panels::assistant`), shown as one tab of the
-//! center; the workbench only reveals it, tells it whether it is on screen, hands it a session
+//! center (Memory is a body of the left sidebar instead); the workbench only reveals it, tells it whether it is on screen, hands it a session
 //! or a chip, and puts the keyboard in its composer. Nothing here reads a terminal or a file:
 //! chips describe a source and the daemon resolves them when the message is sent.
 
@@ -77,13 +77,33 @@ impl Workbench {
         });
     }
 
-    /// ⌘K "Mawas: Memory" (and the Today rail's link): the Memory page, a tab of the center (one
-    /// instance, shown where it is when it is open already), listing what Mawas remembers.
+    /// ⌘K "Mawas: Memory", the *Memory* nav row and the Today rail's link: the Memory page as the
+    /// body of the left sidebar (it replaces Projects until *‹ Projects*; one instance, brought
+    /// back to the sidebar from wherever it was left), listing what Mawas remembers, with the
+    /// keyboard on it.
     pub fn open_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(panel) = self.memory_panel(window, cx) else {
             return;
         };
-        panel.update(cx, |panel, cx| panel.refresh(cx));
+        panel.update(cx, |panel, cx| {
+            panel.refresh(cx);
+            panel.request_focus(cx);
+        });
+    }
+
+    /// The *Memory* nav row: shows the page, or goes back to Projects while it is showing.
+    pub(crate) fn toggle_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let panel = PanelId::new(super::model::MEMORY_PAGE);
+        let left = &self.state.docks.left;
+        let showing = self.dock_mode(super::model::DockPosition::Left)
+            == super::model::DockMode::Expanded
+            && left.active.as_ref() == Some(&panel);
+        if showing {
+            self.open_panel("sessions", cx);
+            self.focus_root(window, cx);
+        } else {
+            self.open_memory(window, cx);
+        }
     }
 
     /// "Edit & approve" of a memory proposal in Today: the Memory page with that proposal's
@@ -93,7 +113,10 @@ impl Workbench {
             return;
         };
         let id = id.to_owned();
-        panel.update(cx, |panel, cx| panel.edit_proposal_by_id(&id, cx));
+        panel.update(cx, |panel, cx| {
+            panel.edit_proposal_by_id(&id, cx);
+            panel.request_focus(cx);
+        });
     }
 
     fn memory_panel(
@@ -105,8 +128,8 @@ impl Workbench {
             self.set_notice("Mawas is off (assistant.enabled)", cx);
             return None;
         }
-        self.open_panel("mawas-memory", cx);
-        let view = self.panel_view(&PanelId::new("mawas-memory"), window, cx)?;
+        self.open_panel(super::model::MEMORY_PAGE, cx);
+        let view = self.panel_view(&PanelId::new(super::model::MEMORY_PAGE), window, cx)?;
         view.downcast::<MemoryPanel>().ok()
     }
 

@@ -1377,7 +1377,7 @@ fn json_roundtrip_preserves_state() {
         .unwrap();
     let json = state.to_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 6);
+    assert_eq!(value["version"], 7);
     let back = WorkbenchState::from_json(&json).unwrap();
     assert_eq!(back, state);
     check(&back);
@@ -1754,11 +1754,116 @@ fn as_version_1_json(state: &WorkbenchState) -> String {
 }
 
 #[test]
-fn the_state_version_is_six() {
+fn the_state_version_is_seven() {
     let value: serde_json::Value =
         serde_json::from_str(&WorkbenchState::default().to_json().unwrap()).unwrap();
-    assert_eq!(value["version"], 6);
-    assert_eq!(STATE_VERSION, 6);
+    assert_eq!(value["version"], 7);
+    assert_eq!(STATE_VERSION, 7);
+}
+
+/// Whether a tab of the center is `panel`.
+fn in_center(state: &WorkbenchState, panel: &PanelId) -> bool {
+    state
+        .panes()
+        .iter()
+        .any(|p| p.items.iter().any(|i| i.as_panel() == Some(panel)))
+}
+
+fn as_version_6_json(state: &WorkbenchState) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
+    value["version"] = 6.into();
+    value.to_string()
+}
+
+#[test]
+fn a_version_6_layout_moves_the_memory_tab_into_the_left_dock_once() {
+    let memory = PanelId::new(MEMORY_PAGE);
+    let mut old = grid();
+    old.open_panel_in_center(&memory);
+    check(&old);
+    assert!(
+        old.find_panel(&memory)
+            .is_some_and(|s| matches!(s, ItemSource::Pane { .. }))
+    );
+
+    let migrated = WorkbenchState::from_json(&as_version_6_json(&old)).unwrap();
+    check(&migrated);
+    assert!(
+        !in_center(&migrated, &memory),
+        "no tab of the center names Memory any more"
+    );
+    assert_eq!(
+        migrated.docks.find(&memory),
+        Some(DockPosition::Left),
+        "the left dock has it"
+    );
+    assert_eq!(
+        migrated.docks.left.active,
+        Some(memory.clone()),
+        "and shows it: the tab was the one on screen"
+    );
+    let again = WorkbenchState::from_json(&migrated.to_json().unwrap()).unwrap();
+    assert_eq!(again, migrated, "a current file is read as it is");
+
+    // The layout the overview stashed and the one of a workspace that is not shown move too.
+    let presets = default_presets();
+    let mut parked = grid();
+    parked.adopt_workspace("a");
+    parked.open_panel_in_center(&memory);
+    parked.switch_workspace("b");
+    parked.open_panel_in_center(&memory);
+    parked.toggle_preset("overview", &presets).unwrap();
+    let migrated = WorkbenchState::from_json(&as_version_6_json(&parked)).unwrap();
+    check(&migrated);
+    let stash = migrated.stashed.as_deref().expect("the overview stash");
+    assert!(
+        stash
+            .center
+            .panes()
+            .iter()
+            .all(|p| p.items.iter().all(|i| i.as_panel() != Some(&memory)))
+    );
+    assert!(stash.docks.left.panels.contains(&memory));
+    let other = &migrated.parked["a"].layout;
+    assert!(
+        other
+            .center
+            .panes()
+            .iter()
+            .all(|p| p.items.iter().all(|i| i.as_panel() != Some(&memory)))
+    );
+    assert!(other.docks.left.panels.contains(&memory));
+
+    // A tab that was behind another one only joins the dock: the page on screen stays.
+    let mut behind = grid();
+    behind.open_panel_in_center(&memory);
+    let pane = behind.first_pane_id();
+    behind.set_active_item(pane, 0).unwrap();
+    let migrated = WorkbenchState::from_json(&as_version_6_json(&behind)).unwrap();
+    check(&migrated);
+    assert!(migrated.docks.left.panels.contains(&memory));
+    assert_ne!(migrated.docks.left.active, Some(memory.clone()));
+
+    // A layout without it is left alone.
+    let plain = grid();
+    let migrated = WorkbenchState::from_json(&as_version_6_json(&plain)).unwrap();
+    assert_eq!(migrated, plain);
+}
+
+#[test]
+fn opening_memory_in_the_left_dock_brings_it_back_from_anywhere() {
+    let memory = PanelId::new(MEMORY_PAGE);
+    for start in [PanelDest::Center, PanelDest::Dock(DockPosition::Right)] {
+        let mut state = WorkbenchState::default();
+        state.open_panel(&memory, DockPosition::Left);
+        state.move_panel(&memory, start).unwrap();
+        state.open_panel_in_dock(&memory, DockPosition::Left);
+        check(&state);
+        assert_eq!(state.docks.find(&memory), Some(DockPosition::Left));
+        assert_eq!(state.docks.left.active, Some(memory.clone()));
+        assert_eq!(state.focus, FocusTarget::Dock(DockPosition::Left));
+        assert!(!in_center(&state, &memory), "never a tab");
+    }
 }
 
 fn as_version_3_json(state: &WorkbenchState) -> String {
