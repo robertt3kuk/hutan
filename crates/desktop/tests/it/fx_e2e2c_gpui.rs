@@ -14,7 +14,7 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_desktop::macos::{FakeOpenPanel, MacServices};
 use hutan_desktop::workbench::model::ItemRef;
 use hutan_desktop::workbench::panels::{FileGitMark, FilesPanel};
-use hutan_desktop::workbench::{Region, Workbench, WorkbenchOptions, actions};
+use hutan_desktop::workbench::{Region, SheetFocus, Workbench, WorkbenchOptions, actions};
 use hutan_settings::{SettingsPaths, SettingsStore};
 
 fn open_offline(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) {
@@ -244,4 +244,54 @@ fn the_first_runs_open_folder_panel_starts_at_home_and_opens_the_choice(cx: &mut
             wb.sessions().read(cx).files_root().as_deref() == Some(chosen.as_path())
         })
     });
+}
+
+// Settings row help ------------------------------------------------------------------------------
+
+fn row_height(view: &Entity<Workbench>, cx: &mut VisualTestContext, index: usize) -> Option<f32> {
+    draw(cx);
+    bounds(view, cx, Region::SettingsItem("row", index)).map(|b| f32::from(b.size.height))
+}
+
+/// FX-E2E2-C item 7: a help line cut with "…" shows whole while the keyboard is on its row (its
+/// tooltip is `SheetRow`'s other half; hover cannot be driven here).
+#[gpui::test]
+fn a_cut_help_line_shows_whole_while_the_keyboard_is_on_its_row(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open_with(cx, settings_of(&daemon), daemon.connection(), None);
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    cx.simulate_resize(gpui::size(gpui::px(900.0), gpui::px(700.0)));
+    cx.dispatch_action(actions::OpenSettingsFor("terminal".into()));
+    draw(cx);
+    let rows = (0..8)
+        .take_while(|&i| row_height(&view, cx, i).is_some())
+        .count();
+    assert!(rows >= 4, "the Terminal page has rows: {rows}");
+    let resting: Vec<f32> = (0..rows)
+        .map(|i| row_height(&view, cx, i).unwrap())
+        .collect();
+
+    // The keyboard walks the rows (search, pages, controls); the row it is on grows when its
+    // help was cut.
+    cx.simulate_keystrokes("tab tab");
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.sheet_focus_zone()),
+        Some(SheetFocus::Controls)
+    );
+    let mut grown = Vec::new();
+    for (i, rest) in resting.iter().enumerate() {
+        let focused = row_height(&view, cx, i).unwrap();
+        if focused > rest + 1.0 {
+            grown.push(i);
+        }
+        cx.simulate_keystrokes("down");
+    }
+    assert!(
+        !grown.is_empty(),
+        "some row's help is cut at rest and whole under the keyboard: {resting:?}"
+    );
 }
