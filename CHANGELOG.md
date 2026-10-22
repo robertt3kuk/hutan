@@ -11,6 +11,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - Completion from the language server: popup on trigger characters, while typing or with ⌃Space (⌃N/⌃P in Vim Insert), documentation beside the list, snippet tab stops, auto-imports applied in the same undo step; signature help on `(` and `,`.
 - ⌘P opens files by name (`path:line:col` works) with sessions below; Files panel (⌘⇧E) in the left dock; *Open File…* starts in the project folder.
 - Project search and replace (⌘⇧F / ⌘⇧H): case, word, regex, include/exclude globs, replace with one undo step per file; files changed since the search are skipped and listed. Session-history search moved to ⌘Y in the Zed keymap.
+- Files panel shows git status (M/A/U/R letters, folders with changes marked); the tab strip scrolls to the active tab and caps long titles; the Changes view lists every changed file and its panel row shows the count.
 - Language servers run in the daemon, shared by the editor and agents: found on your machine, never downloaded; a folder must be trusted first. Diagnostics with distinct underline styles and gutter shapes, hover (`K`), go to definition (`gd`, F12, ⌘-click) and back (`⌃O`), Problems panel (⌘⇧M). `hutan lsp`, `hutan diagnostics`, MCP `diagnostics`.
 - Agent-aware editing: files an agent changes reload in open tabs as one undo step, changed lines are highlighted with per-change Reject (⌘⌥Z), Accept All and Follow; a buffer with unsaved edits gets a conflict bar instead of being overwritten. Terminal paths open in the editor.
 
