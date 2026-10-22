@@ -412,7 +412,7 @@ impl ChatView {
                         let echoed = alone
                             && (same_words(&field.label, &question.spec.title)
                                 || same_words(&field.label, &question.spec.prompt));
-                        self.question_field(id, at, field, form, echoed, look, cx)
+                        self.question_field(id, at, field, form, echoed, cx)
                     })
                     .collect()
             }
@@ -585,9 +585,9 @@ impl ChatView {
         field: &QuestionField,
         form: &QuestionForm,
         label_echoes_question: bool,
-        look: &Look,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let look = &Look::of(cx);
         let (theme, tokens) = (&look.theme, &look.tokens);
         let focused = form.focus == Some(at);
         let label = format!("{}{}", field.label, if field.required { " *" } else { "" });
