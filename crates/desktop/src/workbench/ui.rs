@@ -200,6 +200,9 @@ pub fn keyboard_focus_observer() -> impl IntoElement {
         |_, _, _| {},
         |_, _, window, _| {
             window.on_mouse_event(|_: &MouseDownEvent, phase, window, _| {
+                if phase == DispatchPhase::Capture {
+                    motion::note_input(false);
+                }
                 if phase == DispatchPhase::Capture && set_keyboard_focus(false) {
                     window.refresh();
                 }

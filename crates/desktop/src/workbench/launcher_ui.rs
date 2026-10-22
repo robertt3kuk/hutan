@@ -14,6 +14,7 @@ use super::launcher::{
 use super::panels::field_box;
 use super::render::probe;
 use super::send_key::send_key_control;
+use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, ButtonKind, FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::VimConfig;
@@ -1335,7 +1336,19 @@ impl Workbench {
                         }))
                         .child(launcher_header(&theme, &tokens))
                         .child(body)
-                        .child(footer),
+                        .child(footer)
+                        .presented(
+                            "launcher-motion",
+                            motion::Kind::Sheet,
+                            true,
+                            motion::Slide::Rise,
+                        ),
+                )
+                .presented(
+                    "launcher-scrim",
+                    motion::Kind::Sheet,
+                    true,
+                    motion::Slide::None,
                 )
                 .into_any_element(),
         )

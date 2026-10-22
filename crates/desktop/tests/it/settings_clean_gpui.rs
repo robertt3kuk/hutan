@@ -8,7 +8,7 @@ use crate::common;
 
 use std::path::Path;
 
-use common::{TestDaemon, draw, open_with, wait_until};
+use common::{TestDaemon, draw, open_with, settle, wait_until};
 use gpui::{Bounds, Entity, Pixels, TestAppContext, VisualTestContext};
 use hutan_desktop::workbench::settings_schema::NavGroup;
 use hutan_desktop::workbench::{PackField, Region, SheetFocus, Workbench, actions};
@@ -34,6 +34,8 @@ fn open<'a>(
 fn open_page(view: &Entity<Workbench>, cx: &mut VisualTestContext, page: &str) {
     cx.dispatch_action(actions::OpenSettingsFor(page.into()));
     draw(cx);
+    // The sheet slides in; the tests below measure where its parts sit.
+    settle(cx);
     assert_eq!(
         view.read_with(cx, |wb, _| wb
             .settings_sheet()

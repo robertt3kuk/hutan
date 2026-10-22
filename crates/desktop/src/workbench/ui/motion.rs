@@ -250,6 +250,13 @@ impl Kind {
         }
     }
 
+    /// Whether a keyboard-initiated change of this kind skips the motion (a shortcut that opens a
+    /// sheet, Escape that closes it, Cmd-arrow that folds a group): everything but the hover
+    /// colour, which a key cannot cause, and toasts, which report something that already happened.
+    pub const fn follows_keyboard(self) -> bool {
+        !matches!(self, Self::Hover | Self::Toast)
+    }
+
     /// How long the exit of this kind takes now: how long an owner keeps drawing something that
     /// left (see [`Presence`]).
     pub fn exit_duration(self, reduce: bool) -> Duration {
@@ -257,8 +264,40 @@ impl Kind {
     }
 }
 
+impl Spec {
+    /// The same kind with no duration and no travel.
+    pub const fn instant(self) -> Self {
+        Self {
+            enter: INSTANT,
+            exit: INSTANT,
+            travel: 0.0,
+            ..self
+        }
+    }
+}
+
 const fn min_duration(a: Duration, b: Duration) -> Duration {
     if a.as_nanos() <= b.as_nanos() { a } else { b }
+}
+
+// ---- keyboard-initiated changes ---------------------------------------------------------------
+
+static KEYBOARD: AtomicBool = AtomicBool::new(false);
+
+/// Records whether the last input was a key (`true`) or a pointer press (`false`): while it was
+/// a key, the kinds that [`follow the keyboard`](Kind::follows_keyboard) change instantly. The
+/// workbench calls it from its keystroke interceptor and its mouse-down observer.
+pub fn note_input(from_keyboard: bool) {
+    KEYBOARD.store(from_keyboard, Ordering::Relaxed);
+}
+
+fn spec_now(kind: Kind, reduce: bool) -> Spec {
+    let spec = kind.spec(reduce);
+    if kind.follows_keyboard() && KEYBOARD.load(Ordering::Relaxed) {
+        spec.instant()
+    } else {
+        spec
+    }
 }
 
 // ---- Reduce Motion ---------------------------------------------------------------------------
@@ -551,6 +590,23 @@ pub fn present<E: IntoElement + Styled + 'static>(
     .from(0.0)
 }
 
+/// [`present`] as the last link of an element chain, so a surface built as one long expression
+/// gets its motion by appending a line instead of wrapping the expression.
+pub trait PresentExt: IntoElement + Styled + Sized + 'static {
+    /// `element.presented(id, kind, wanted, slide)` is [`present`]`(id, kind, wanted, slide, element)`.
+    fn presented(
+        self,
+        id: impl Into<ElementId>,
+        kind: Kind,
+        wanted: bool,
+        slide: Slide,
+    ) -> Transition<Self> {
+        present(id, kind, wanted, slide, self)
+    }
+}
+
+impl<E: IntoElement + Styled + 'static> PresentExt for E {}
+
 impl<E: IntoElement + 'static> IntoElement for Transition<E> {
     type Element = Self;
 
@@ -592,7 +648,7 @@ impl<E: IntoElement + 'static> Element for Transition<E> {
         };
         let now = cx.background_executor().now();
         let reduce = cx.reduce_motion();
-        let spec = self.kind.spec(reduce);
+        let spec = spec_now(self.kind, reduce);
         let (target, initial) = (self.target, self.initial);
         let draw = |tween: &mut Tween, window: &mut Window| {
             tween.retarget(target, spec, now);
@@ -734,7 +790,7 @@ impl<E: IntoElement + 'static> Element for Collapse<E> {
             return (shown.request_layout(window, cx), shown);
         };
         let now = cx.background_executor().now();
-        let spec = Kind::Collapse.spec(cx.reduce_motion());
+        let spec = spec_now(Kind::Collapse, cx.reduce_motion());
         let target = if self.open { 1.0 } else { 0.0 };
         window.with_element_state(global_id, |state, window| {
             let mut state = state.unwrap_or_else(|| CollapseState {
@@ -932,6 +988,30 @@ impl<T: Clone> Ghost<T> {
             value,
             wanted: false,
         })
+    }
+}
+
+/// The [`Presence`] of every overlay a view owns, by name: one field instead of one per overlay.
+#[derive(Debug, Default)]
+pub struct Presences {
+    by_name: std::collections::HashMap<&'static str, Presence>,
+}
+
+impl Presences {
+    /// Call once per render of the overlay `name` with whether it is wanted. `Some(wanted)` while
+    /// it is drawn (`false`: it is leaving), `None` when nothing is drawn.
+    pub fn track<V: 'static>(
+        &mut self,
+        name: &'static str,
+        wanted: bool,
+        kind: Kind,
+        cx: &mut Context<V>,
+    ) -> Option<bool> {
+        let presence = self.by_name.entry(name).or_default();
+        presence.set(wanted, kind, cx);
+        presence
+            .draws(cx.background_executor().now())
+            .then_some(wanted)
     }
 }
 

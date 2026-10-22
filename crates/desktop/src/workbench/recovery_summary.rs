@@ -12,6 +12,7 @@ use hutan_core::SessionId;
 
 use super::panels::{time_tooltip, tone_color};
 use super::render::probe;
+use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::sessions::Tone;
@@ -161,6 +162,12 @@ impl Workbench {
                         .child(probe(&regions, Region::Recovery("dismiss-all"))),
                     )
                     .child(probe(&regions, Region::Recovery("sheet")))
+                    .presented(
+                        "recovery-motion-row",
+                        motion::Kind::Popover,
+                        true,
+                        motion::Slide::Rise,
+                    )
                     .into_any_element(),
             );
         }
@@ -381,6 +388,12 @@ impl Workbench {
                     ),
                 )
                 .child(probe(&regions, Region::Recovery("sheet")))
+                .presented(
+                    "recovery-motion",
+                    motion::Kind::Popover,
+                    true,
+                    motion::Slide::Rise,
+                )
                 .into_any_element(),
         )
     }

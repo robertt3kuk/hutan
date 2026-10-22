@@ -26,6 +26,7 @@ use hutan_settings::{AppearanceMode, Density, SettingsStore};
 use super::actions::{InstallHarness, setup as setup_actions};
 use super::harnesses::{Detection, HARNESSES, Harness, login_summary};
 use super::render::probe;
+use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, ButtonKind, Mascot, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::cli_link::{CliLink, Manual, Plan};
@@ -1075,7 +1076,19 @@ impl Workbench {
                                 .child(body),
                         )
                         .child(footer)
-                        .child(probe(&self.regions, Region::Setup("sheet"))),
+                        .child(probe(&self.regions, Region::Setup("sheet")))
+                        .presented(
+                            "setup-motion",
+                            motion::Kind::Sheet,
+                            true,
+                            motion::Slide::Rise,
+                        ),
+                )
+                .presented(
+                    "setup-scrim",
+                    motion::Kind::Sheet,
+                    true,
+                    motion::Slide::None,
                 )
                 .into_any_element(),
         )

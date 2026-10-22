@@ -696,6 +696,14 @@ pub fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
+/// Lets every motion run out (the longest is 250 ms, `ui::motion`) and draws: for a test that
+/// measures geometry right after something opened, which slides in while it opens.
+pub fn settle(cx: &mut VisualTestContext) {
+    cx.executor().advance_clock(Duration::from_millis(300));
+    draw(cx);
+    draw(cx);
+}
+
 /// Pumps GPUI (and draws) until `condition` holds; panics with `what` after [`WAIT`].
 pub fn wait_until(
     cx: &mut VisualTestContext,

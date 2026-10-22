@@ -12,6 +12,7 @@ use gpui::{
 use super::actions::daemon;
 use super::panels::StatusTone;
 use super::render::probe;
+use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::macos::LoginItemStatus;
@@ -285,6 +286,12 @@ impl Workbench {
                                     Box::new(daemon::OpenLoginItems),
                                 ))
                             },
+                        )
+                        .presented(
+                            "daemon-popover-motion",
+                            motion::Kind::Popover,
+                            true,
+                            motion::Slide::Rise,
                         ),
                 )
                 .into_any_element(),

@@ -8,6 +8,7 @@ use super::model::{
 use super::panels::AgentsRequest;
 use super::registry::{DockState, PerDock, StatusContext, StatusData};
 use super::terminals::session_of_item;
+use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, Mascot, StyledExt as _};
 use super::view::{ContextMenu, DragPreview, DraggedItem, Region, Resizing, Workbench, steps};
 use super::vim_ui::OverlayField;
@@ -2401,7 +2402,13 @@ impl Workbench {
                                     .text_color(theme.muted)
                                     .child("No matching commands"),
                             )
-                        }),
+                        })
+                        .presented(
+                            "palette-motion",
+                            motion::Kind::Popover,
+                            true,
+                            motion::Slide::Drop,
+                        ),
                 )
                 .into_any_element(),
         )

@@ -30,6 +30,7 @@ use super::palette::fuzzy_score;
 use super::panels::HistoryResume;
 use super::terminals::session_of_item;
 use super::ui::StyledExt as _;
+use super::ui::motion::{self, PresentExt as _};
 use super::view::{MenuEntry, Workbench};
 use super::vim_ui::OverlayField;
 use crate::settings::{SidebarOrganize, SidebarSettings, WorkspaceSort, WorkspacesSettings};
@@ -1368,7 +1369,13 @@ impl Workbench {
                                     .text_color(theme.muted)
                                     .child(hint),
                             )
-                        }),
+                        })
+                        .presented(
+                            "picker-motion",
+                            motion::Kind::Popover,
+                            true,
+                            motion::Slide::Drop,
+                        ),
                 )
                 .into_any_element(),
         )

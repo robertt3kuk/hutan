@@ -18,7 +18,7 @@ use super::harnesses::harness_name;
 use super::render::probe;
 use super::rewind::{DiffState, Group, Phase, RewindHeader, SheetFocus};
 use super::style::TextTooltip;
-use super::ui::motion;
+use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::workspaces::tilde;
@@ -574,9 +574,11 @@ impl Workbench {
                                     })
                                     .child(probe(&regions, Region::Rewind("restore"))),
                                 ),
-                        ),
+                        )
+.presented("rewind-sheet-motion", motion::Kind::Sheet, true, motion::Slide::Rise),
                 )
-                .into_any_element(),
+                .presented("rewind-scrim", motion::Kind::Sheet, true, motion::Slide::None)
+.into_any_element(),
         )
     }
 
@@ -789,9 +791,11 @@ impl Workbench {
                                      before it, after a preview. Newest first.",
                                 ),
                         )
-                        .child(body),
+                        .child(body)
+.presented("checkpoints-motion", motion::Kind::Sheet, true, motion::Slide::Rise),
                 )
-                .into_any_element(),
+                .presented("checkpoints-scrim", motion::Kind::Sheet, true, motion::Slide::None)
+.into_any_element(),
         )
     }
 

@@ -27,6 +27,7 @@ use super::panels::AssistantPanel;
 use super::persistence;
 use super::render::probe;
 use super::terminals::session_of_item;
+use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
@@ -816,6 +817,12 @@ impl Workbench {
                                     })
                                     .child(probe(&self.regions, Region::AgentPicker("start"))),
                                 ),
+                        )
+                        .presented(
+                            "agent-picker-motion",
+                            motion::Kind::Popover,
+                            true,
+                            motion::Slide::Drop,
                         ),
                 )
                 .into_any_element(),

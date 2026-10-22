@@ -10,6 +10,7 @@ use gpui::{
 };
 
 use super::actions::modal as modal_actions;
+use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, FocusRingExt as _, StyledExt as _};
 use super::view::Workbench;
 use super::vim_ui::OverlayField;
@@ -459,7 +460,19 @@ impl Workbench {
                                         },
                                     )),
                                 ),
+                        )
+                        .presented(
+                            "modal-motion",
+                            motion::Kind::Sheet,
+                            true,
+                            motion::Slide::Rise,
                         ),
+                )
+                .presented(
+                    "modal-scrim",
+                    motion::Kind::Sheet,
+                    true,
+                    motion::Slide::None,
                 )
                 .into_any_element(),
         )

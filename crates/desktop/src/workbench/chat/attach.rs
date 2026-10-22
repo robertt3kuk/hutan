@@ -32,6 +32,7 @@ use crate::workbench::panels::{HISTORY_DEBOUNCE, hit_title, source_label};
 use crate::workbench::render::probe;
 use crate::workbench::text_field::{EditableText, FieldMut, FieldRef, FieldState};
 use crate::workbench::ui::StyledExt as _;
+use crate::workbench::ui::motion::{self, PresentExt as _};
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::{self, VimConfig};
 
@@ -838,6 +839,12 @@ impl ChatView {
                 .p(px(tokens.spacing * 2.5))
                 .child(header)
                 .child(body)
+                .presented(
+                    "attach-motion",
+                    motion::Kind::Popover,
+                    true,
+                    motion::Slide::None,
+                )
                 .into_any_element(),
         )
     }

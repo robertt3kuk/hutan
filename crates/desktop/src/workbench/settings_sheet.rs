@@ -32,6 +32,7 @@ use super::settings_schema::{
     search, value_at,
 };
 use super::style::TextTooltip;
+use super::ui::motion::{self, PresentExt as _};
 use super::ui::{FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
@@ -1463,7 +1464,19 @@ impl Workbench {
                                     .border_color(theme.border)
                                     .children(problem_lines),
                             )
-                        }),
+                        })
+                        .presented(
+                            "settings-sheet-motion",
+                            motion::Kind::Sheet,
+                            true,
+                            motion::Slide::Rise,
+                        ),
+                )
+                .presented(
+                    "settings-scrim",
+                    motion::Kind::Sheet,
+                    true,
+                    motion::Slide::None,
                 )
                 .into_any_element(),
         )
