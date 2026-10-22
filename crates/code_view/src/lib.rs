@@ -78,7 +78,7 @@ pub use hover::{HOVER_DELAY, HoverBlock, HoverSource, HoverState, markdown_block
 pub use hutan_buffer::Utf16Point;
 pub use hutan_vim::{Key as VimKey, Mode as VimMode};
 pub use layout::TAB_SIZE;
-pub use modal::{ExRun, VimMessage, VimSettings, vim_key_of};
+pub use modal::{ExRun, VimMessage, VimSettings, vim_key_of, vim_key_of_keystroke};
 pub use rules::IndentUnit;
 pub use style::{CodeStyle, rgb, rgba};
 pub use view::{

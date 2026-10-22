@@ -91,9 +91,16 @@ pub enum ExRun {
 /// (a Russian or Greek layout) is matched by the key's place on the keyboard instead, the way
 /// macOS names the key (`d` for the key that types `в`), unless `takes_text` says the
 /// character itself is wanted there (Insert mode, the search line, the character after `f` or
-/// `r`: [`hutan_vim::Vim::takes_text`]).
+/// `r`: [`hutan_vim::Vim::takes_text`]). `⌃[` is Escape, as in a terminal.
 pub fn vim_key_of(event: &KeyDownEvent, takes_text: impl FnOnce(char) -> bool) -> Option<Key> {
-    let ks = &event.keystroke;
+    vim_key_of_keystroke(&event.keystroke, takes_text)
+}
+
+/// [`vim_key_of`] for a keystroke.
+pub fn vim_key_of_keystroke(
+    ks: &gpui::Keystroke,
+    takes_text: impl FnOnce(char) -> bool,
+) -> Option<Key> {
     let mods = &ks.modifiers;
     if mods.platform || mods.function {
         return None;
@@ -116,9 +123,22 @@ pub fn vim_key_of(event: &KeyDownEvent, takes_text: impl FnOnce(char) -> bool) -
         return (!mods.control && !mods.alt).then_some(key);
     }
     if mods.control {
+        if mods.alt {
+            return None;
+        }
         let mut chars = ks.key.chars();
-        return match (chars.next(), chars.next()) {
-            (Some(c), None) if c.is_ascii_alphabetic() && !mods.alt => Some(Key::Ctrl(c)),
+        let c = match (chars.next(), chars.next()) {
+            (Some(c), None) => c,
+            _ => return None,
+        };
+        // A layout that is not Latin names a few keys by its own letter (`х` for `[`).
+        let c = cyrillic_place(c).unwrap_or(c);
+        return match c {
+            '[' => Some(Key::Escape),
+            c if c.is_ascii_alphabetic() => Some(Key::Ctrl(c.to_ascii_lowercase())),
+            ']' => Some(Key::Ctrl(']')),
+            // `⌃^` is typed as ⌃6 (with ⇧ or without).
+            '^' | '6' => Some(Key::Ctrl('^')),
             _ => None,
         };
     }
@@ -150,6 +170,15 @@ fn key_place(key: &str, shift: bool) -> Option<char> {
         }
         _ => None,
     }
+}
+
+/// The US key of a letter of the Russian (ЙЦУКЕН) layout.
+fn cyrillic_place(c: char) -> Option<char> {
+    const RUSSIAN: &str = "йцукенгшщзхъфывапролджэячсмитьбюё";
+    const US: &str = "qwertyuiop[]asdfghjkl;'zxcvbnm,.`";
+    let lower = c.to_lowercase().next()?;
+    let at = RUSSIAN.chars().position(|r| r == lower)?;
+    US.chars().nth(at)
 }
 
 struct AppClipboard<'a>(&'a mut App);
@@ -367,11 +396,11 @@ impl CodeView {
             return false;
         };
         if mode == Mode::Insert {
-            if key != Key::Escape {
+            if !key.is_insert_command() {
                 return false;
             }
             // An input method's composition ends first; the next Escape leaves Insert.
-            if self.end_composition(cx) {
+            if key == Key::Escape && self.end_composition(cx) {
                 return true;
             }
         }

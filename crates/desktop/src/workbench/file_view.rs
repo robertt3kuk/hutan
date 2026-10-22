@@ -20,7 +20,7 @@ use hutan_chat_view::diff::DiffLine;
 use hutan_code_view::{
     AcceptAgentChanges, CloseFind, CodeStyle, CodeView, CodeViewEvent, Conflict, ExRun, FailReason,
     FileBuffer, Find, FindNext, FindPrevious, FindQuery, FindReplace, LoadState, NextAgentHunk,
-    PreviousAgentHunk, RejectAgentHunk, Save, ToggleFollowAgent, VimSettings,
+    PreviousAgentHunk, RejectAgentHunk, Save, ToggleFollowAgent, VimKey, VimSettings,
 };
 use hutan_settings::SettingsStore;
 use hutan_vim::ex::Ex;
@@ -612,6 +612,7 @@ impl FileView {
         let Some(command) = &mut self.command else {
             return;
         };
+        let vim_key = hutan_code_view::vim_key_of_keystroke(ks, |_| true);
         match ks.key.as_str() {
             "enter" if plain => {
                 let line = command.text.clone();
@@ -619,7 +620,8 @@ impl FileView {
                 cx.stop_propagation();
                 return;
             }
-            "escape" if plain => {
+            // Escape, `⌃[` and `⌃C` leave the line without running it.
+            _ if matches!(vim_key, Some(VimKey::Escape | VimKey::Ctrl('c'))) => {
                 self.close_command_line(window, cx);
                 cx.stop_propagation();
                 return;

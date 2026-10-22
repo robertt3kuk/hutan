@@ -760,7 +760,9 @@ impl Core {
     // ---- Insert ------------------------------------------------------------------------------
 
     fn insert_key<H: VimHost>(&mut self, host: &mut H, key: Key, opts: Options) -> Outcome {
-        if key == Key::Escape {
+        // `i_CTRL-C` ends Insert as Escape does (a real Vim repeats a count's text for a typed
+        // `⌃C` too, unless the key interrupted it).
+        if matches!(key, Key::Escape | Key::Ctrl('c')) {
             self.leave_insert(host, opts);
             return Outcome::Handled;
         }
@@ -1043,6 +1045,12 @@ impl Core {
         clip: &mut dyn Clipboard,
     ) -> Outcome {
         let visual = self.mode.is_visual();
+        // `⌃C` cancels like Escape: a command in progress, a Visual mode.
+        let key = if key == Key::Ctrl('c') {
+            Key::Escape
+        } else {
+            key
+        };
         if self.pending.is_empty() {
             // Keys that are the field's when no command is in progress.
             let ignored = match key {

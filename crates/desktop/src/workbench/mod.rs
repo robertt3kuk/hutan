@@ -70,6 +70,7 @@ mod terminals;
 pub mod text_field;
 pub mod ui;
 mod view;
+mod vim_keys;
 pub mod vim_ui;
 mod workspaces;
 mod worktrees;

@@ -943,6 +943,7 @@ impl Workbench {
                 });
             })
         };
+        let vim_keys = super::vim_keys::install(settings.clone(), window, cx);
         let checkpoint_store = sessions.read(cx).checkpoints().clone();
         let subscriptions = vec![
             cx.subscribe(&lsp, |this, _, event: &super::lsp::LspStoreEvent, cx| {
@@ -950,6 +951,7 @@ impl Workbench {
             }),
             modal_guard,
             focus_modality,
+            vim_keys,
             cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
             cx.on_app_quit(|this, cx| this.on_platform_quit(cx)),
             cx.subscribe_in(
