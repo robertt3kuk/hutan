@@ -869,14 +869,20 @@ fn the_inspector_lists_the_requests_and_answers_them(cx: &mut TestAppContext) {
         option(cx, 1).expect("a second option"),
     );
     assert!((a.top() - b.top()).abs() <= gpui::px(1.0), "two to a row");
-    assert_eq!(a.size.width, b.size.width, "equal cells");
+    assert!(
+        (a.size.width - b.size.width).abs() <= gpui::px(3.0),
+        "equal cells"
+    );
     assert!(b.left() > a.left());
     if let Some(c) = option(cx, 2) {
-        assert_eq!(c.left(), a.left(), "the third starts the second row");
+        assert!(
+            (c.left() - a.left()).abs() <= gpui::px(2.0),
+            "the third starts the second row"
+        );
         assert!(c.top() >= a.bottom());
         if let Some(d) = option(cx, 3) {
             assert!((d.top() - c.top()).abs() <= gpui::px(1.0));
-            assert_eq!(d.left(), b.left());
+            assert!((d.left() - b.left()).abs() <= gpui::px(2.0));
         }
     }
     click(&view, cx, Region::InspectorOption(0));

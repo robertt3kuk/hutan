@@ -259,10 +259,10 @@ fn row_height(view: &Entity<Workbench>, cx: &mut VisualTestContext, index: usize
     bounds(view, cx, Region::SettingsItem("row", index)).map(|b| f32::from(b.size.height))
 }
 
-/// FX-E2E2-C item 7: a help line cut with "…" shows whole while the keyboard is on its row (its
-/// tooltip is `SheetRow`'s other half; hover cannot be driven here).
+/// FX-E2E2-C item 7, replaced by CL-POLISH-4 item 14: a help line is never cut with "…", so no
+/// row grows when the keyboard reaches it; the rows that need two lines have them at rest.
 #[gpui::test]
-fn a_cut_help_line_shows_whole_while_the_keyboard_is_on_its_row(cx: &mut TestAppContext) {
+fn a_help_line_is_whole_at_rest_and_the_keyboard_grows_no_row(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx) = open_with(cx, settings_of(&daemon), daemon.connection(), None);
     wait_until(cx, "the first synchronisation", |cx| {
@@ -281,23 +281,22 @@ fn a_cut_help_line_shows_whole_while_the_keyboard_is_on_its_row(cx: &mut TestApp
         .map(|i| row_height(&view, cx, i).unwrap())
         .collect();
 
-    // The keyboard walks the rows (search, pages, controls); the row it is on grows when its
-    // help was cut.
+    // The keyboard walks the rows (search, pages, controls): none changes its height.
     cx.simulate_keystrokes("tab tab");
     assert_eq!(
         view.read_with(cx, |wb, _| wb.sheet_focus_zone()),
         Some(SheetFocus::Controls)
     );
-    let mut grown = Vec::new();
     for (i, rest) in resting.iter().enumerate() {
         let focused = row_height(&view, cx, i).unwrap();
-        if focused > rest + 1.0 {
-            grown.push(i);
-        }
+        assert!(
+            (focused - rest).abs() <= 1.0,
+            "row {i} grew from {rest} to {focused} under the keyboard: {resting:?}"
+        );
         cx.simulate_keystrokes("down");
     }
     assert!(
-        !grown.is_empty(),
-        "some row's help is cut at rest and whole under the keyboard: {resting:?}"
+        resting.iter().any(|h| *h > 56.0),
+        "a long help takes a second line at rest: {resting:?}"
     );
 }
