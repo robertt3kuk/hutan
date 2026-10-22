@@ -16,7 +16,7 @@ use crate::workbench::ui::{Button, StyledExt as _, prose_font};
 use crate::workbench::view::Region;
 
 /// What the chat view draws with: chrome colors, density tokens and the monospace font. Message
-/// text is prose (the serif face at 15 px / 1.6) unless the look is [`sans`](Look::sans).
+/// text is prose (the prose face, the UI face by default, at 15 px / 1.6) unless the look is [`sans`](Look::sans).
 #[derive(Debug, Clone)]
 pub struct Look {
     pub theme: Theme,
@@ -57,7 +57,7 @@ impl Look {
         }
     }
 
-    /// The face of running text: the prose serif, or the UI font.
+    /// The face of running text: the prose face, or the UI font.
     fn text_face(&self) -> Font {
         if self.serif {
             prose_font()

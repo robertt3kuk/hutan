@@ -405,7 +405,7 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | Key | Built-in | Used for |
 |---|---|---|
 | `ui` | `.SystemUIFont` | Chrome text. The first installed family wins. |
-| `prose` | `.New York`, `New York`, `Georgia`, `.SystemUIFont` | Chat prose and empty-state copy. The first installed family wins. |
+| `prose` | `.SystemUIFont` | Chat prose and empty-state copy: the UI face unless a pack names another. The first installed family wins. |
 | `mono` | `Menlo` | Terminal default and monospaced text. The first installed family wins. |
 
 <!-- tokens:end -->

@@ -423,7 +423,9 @@ impl FontRole {
     pub const fn doc(self) -> &'static str {
         match self {
             Self::Ui => "Chrome text. The first installed family wins.",
-            Self::Prose => "Chat prose and empty-state copy. The first installed family wins.",
+            Self::Prose => {
+                "Chat prose and empty-state copy: the UI face unless a pack names another. The first installed family wins."
+            }
             Self::Mono => "Terminal default and monospaced text. The first installed family wins.",
         }
     }

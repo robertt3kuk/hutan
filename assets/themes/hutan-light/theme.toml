@@ -87,7 +87,7 @@ root = true
 
 [fonts]
 ui = [".SystemUIFont"]
-prose = [".New York", "New York", "Georgia", ".SystemUIFont"]
+prose = [".SystemUIFont"]
 mono = ["Menlo"]
 
 [density.compact]

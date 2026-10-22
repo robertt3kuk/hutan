@@ -1252,7 +1252,7 @@ impl ChatView {
             .into_any_element()
     }
 
-    /// The empty transcript: the mascot, one serif sentence, no button and, for Mawas, one muted
+    /// The empty transcript: the mascot, one sentence, no button and, for Mawas, one muted
     /// line on what is sent to the model. Mawas's composer below holds the keyboard
     /// (placeholder `Ask Mawas…`), so asking needs no second way in; looking at what waits for
     /// the user is Today's *Review requests*, ⌘⇧J and the Agents page.

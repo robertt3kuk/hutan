@@ -47,10 +47,10 @@ struct Families {
 
 thread_local! {
     /// Read by views without a `cx`; written by [`apply_fonts`] on the UI thread. Before any
-    /// pack is applied: the system UI font, and Georgia for prose.
+    /// pack is applied: the system UI font, for prose too (one family app-wide but for code).
     static FAMILIES: RefCell<Families> = RefCell::new(Families {
         ui: SYSTEM_UI.into(),
-        prose: "Georgia".into(),
+        prose: SYSTEM_UI.into(),
     });
 }
 
@@ -105,7 +105,7 @@ pub fn ui_family() -> SharedString {
     FAMILIES.with(|f| f.borrow().ui.clone())
 }
 
-/// The prose family ([`apply_fonts`]); Georgia until it has run.
+/// The prose family ([`apply_fonts`]): the UI face unless the pack names another.
 pub fn prose_family() -> SharedString {
     FAMILIES.with(|f| f.borrow().prose.clone())
 }
@@ -117,7 +117,7 @@ pub fn prose_font() -> gpui::Font {
 
 /// Style helpers on any GPUI element.
 pub trait StyledExt: Styled + Sized {
-    /// Prose type: serif, 15 px, line height 1.6.
+    /// Prose type: the pack's prose face (the UI face by default), 15 px, line height 1.6.
     fn prose(self, tokens: &Tokens) -> Self {
         self.font_family(prose_family())
             .text_size(px(tokens.prose_font_size))
@@ -508,7 +508,7 @@ pub fn mascot(state: Mascot, size: f32) -> gpui::Img {
 
 /// An empty state (`docs/design.md` § Visual system): one sentence that teaches, at most one
 /// action, optionally one muted hint (the shortcut). A center surface leads with the mascot and
-/// says its sentence in serif prose; a sidebar or panel says it as one muted line of text, with
+/// says its sentence in prose type; a sidebar or panel says it as one muted line of text, with
 /// a ghost button for its action ([`EmptyState::new`] without [`EmptyState::mascot`]).
 pub struct EmptyState {
     mascot: Option<Mascot>,
@@ -538,7 +538,7 @@ impl EmptyState {
         }
     }
 
-    /// A center surface's: the mascot at the pack's mascot size above a serif sentence.
+    /// A center surface's: the mascot at the pack's mascot size above a sentence in prose type.
     pub fn mascot(mut self, state: Mascot) -> Self {
         self.mascot = Some(state);
         self
@@ -594,7 +594,7 @@ impl EmptyState {
     }
 }
 
-/// A center surface's empty state: the mascot, one serif sentence, optionally one action
+/// A center surface's empty state: the mascot, one sentence, optionally one action
 /// ([`EmptyState`] with a mascot).
 pub fn empty_state(
     state: Mascot,
@@ -611,7 +611,7 @@ pub fn empty_state(
     .render(theme, tokens)
 }
 
-/// A serif headline (the prose family at 24 px, `fg`): the title of a first-run step.
+/// A headline (the prose family at 24 px, `fg`): the title of a first-run step.
 pub fn headline(text: impl Into<SharedString>, theme: &Theme) -> gpui::Div {
     div()
         .font_family(prose_family())

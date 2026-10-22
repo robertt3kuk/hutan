@@ -270,10 +270,9 @@ fn the_builtins_carry_today_s_density_metrics_and_fonts() {
             ]
         );
         assert_eq!(theme.fonts().role(FontRole::Ui), [".SystemUIFont"]);
-        assert_eq!(
-            theme.fonts().role(FontRole::Prose),
-            [".New York", "New York", "Georgia", ".SystemUIFont"]
-        );
+        // One family app-wide but for code: the prose face is the UI face unless a pack says
+        // otherwise (FX-E2E4).
+        assert_eq!(theme.fonts().role(FontRole::Prose), [".SystemUIFont"]);
         assert_eq!(theme.fonts().role(FontRole::Mono), ["Menlo"]);
     }
 }

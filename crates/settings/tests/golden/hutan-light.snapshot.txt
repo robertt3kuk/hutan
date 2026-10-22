@@ -190,5 +190,5 @@ shadow.spread = 0
 
 [fonts]
 ui = [".SystemUIFont"]
-prose = [".New York", "New York", "Georgia", ".SystemUIFont"]
+prose = [".SystemUIFont"]
 mono = ["Menlo"]
