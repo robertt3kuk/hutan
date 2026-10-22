@@ -4,6 +4,10 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+### Fixed
+- One session, one tab: opening a Mawas session from anywhere focuses Mawas Home instead of a second tab; the same title and icon everywhere; saved layouts with duplicate tabs are merged.
+- Resources panel: fixed columns with ellipsis and tooltips, no overlapping text at any width, session titles instead of raw ids, one header.
+
 ## 0.2.0 — 2026-10-22
 
 ### Editor
