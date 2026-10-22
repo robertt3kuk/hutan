@@ -637,6 +637,64 @@ pub fn choice(
         .child(label.into())
 }
 
+/// One option of a form question (a radio, or a checkbox when several may be picked): the mark
+/// on the left, the label, and the option's description under the label inside the row. The
+/// chosen one is an `accent_soft` fill with its label in medium weight; the rest take the
+/// hover fill. The row is the whole width of the list, so the marks line up.
+pub fn option_row(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+    description: Option<SharedString>,
+    selected: bool,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> Stateful<gpui::Div> {
+    let hover = theme.surface_hover;
+    div()
+        .id(id.into())
+        .flex()
+        .items_start()
+        .gap(px(8.0))
+        .w_full()
+        .px(px(10.0))
+        .py(px(6.0))
+        .rounded(px(tokens.radius))
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .when(selected, |s| s.bg(theme.accent_soft))
+        .when(!selected, |s| s.hover(move |s| s.bg(hover)))
+        .child(
+            div()
+                .flex_none()
+                // The mark sits on the label's first line.
+                .pt(px(2.0))
+                .text_color(if selected { theme.fg } else { theme.muted })
+                .child(crate::icons::glyph(if selected {
+                    crate::icons::Icon::StateCompleted
+                } else {
+                    crate::icons::Icon::StateTodo
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .child(
+                    div()
+                        .text_color(theme.fg)
+                        .when(selected, |s| s.medium())
+                        .child(label.into()),
+                )
+                .children(description.map(|text| {
+                    div()
+                        .text_size(px(tokens.secondary_font_size))
+                        .text_color(theme.muted)
+                        .child(text)
+                })),
+        )
+}
+
 /// The one silhouette of a segmented control: an outlined `surface` strip with 2 px inside it,
 /// holding [`segment`]s.
 pub fn segmented(theme: &Theme, tokens: &Tokens) -> gpui::Div {

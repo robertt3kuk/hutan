@@ -281,6 +281,8 @@ impl InspectorPanel {
                     chat::scope_tooltip(number, option, &approval.title, agent.as_deref()),
                     look,
                 )
+                // The cell's whole width, so the grid's columns line up.
+                .block()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let task = this.env.sessions.update(cx, |store, cx| {
                         store.respond_approval(id, option_id.clone(), cx)
@@ -299,6 +301,23 @@ impl InspectorPanel {
                 .into_any_element()
             })
             .collect();
+        // The options are a 2 × 2 grid in the narrow column (`Always reject` never wraps to a
+        // second line of its own), in the agent's order.
+        let mut cells = buttons.into_iter();
+        let mut grid = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(tokens.spacing * 2.0));
+        while let Some(first) = cells.next() {
+            grid = grid.child(
+                div()
+                    .flex()
+                    .gap(px(tokens.spacing * 2.0))
+                    .child(div().flex_1().min_w_0().child(first))
+                    .child(div().flex_1().min_w_0().children(cells.next())),
+            );
+        }
         let link = self.session_link(
             format!("inspector-open-{}", approval.id),
             approval.session_id,
@@ -317,7 +336,7 @@ impl InspectorPanel {
                 approval.kind,
                 Some(&approval.title),
                 approval.detail.as_deref(),
-                buttons,
+                vec![grid.into_any_element()],
                 chat::always_note(&approval.options, &approval.title),
                 look,
             ))

@@ -860,6 +860,25 @@ fn the_inspector_lists_the_requests_and_answers_them(cx: &mut TestAppContext) {
         draw(cx);
         region(&view, cx, Region::InspectorOption(0)).is_some()
     });
+    // The options are a grid of two columns (CL-POLISH-4): equal cells, a row at a time.
+    let option = |cx: &VisualTestContext, n: usize| {
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::InspectorOption(n)))
+    };
+    let (a, b) = (
+        option(cx, 0).unwrap(),
+        option(cx, 1).expect("a second option"),
+    );
+    assert!((a.top() - b.top()).abs() <= gpui::px(1.0), "two to a row");
+    assert_eq!(a.size.width, b.size.width, "equal cells");
+    assert!(b.left() > a.left());
+    if let Some(c) = option(cx, 2) {
+        assert_eq!(c.left(), a.left(), "the third starts the second row");
+        assert!(c.top() >= a.bottom());
+        if let Some(d) = option(cx, 3) {
+            assert!((d.top() - c.top()).abs() <= gpui::px(1.0));
+            assert_eq!(d.left(), b.left());
+        }
+    }
     click(&view, cx, Region::InspectorOption(0));
     pump(cx, "the card to resolve", |cx| {
         pending(&model, cx).is_empty()
@@ -2155,6 +2174,27 @@ fn a_question_card_is_filled_with_clicks_and_keys_and_submitted_with_cmd_enter(
         draw(cx);
         region(&view, cx, Region::ChatQuestion(0)).is_some()
     });
+
+    // The card's rhythm and buttons (CL-POLISH-4): the options are full-width rows in one
+    // column (radio on the left, description inside), the groups are 16 px apart, and Decline is
+    // the only way out besides Submit: no Cancel.
+    let at = |cx: &VisualTestContext, n: usize| {
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::ChatQuestion(n)))
+    };
+    let (first, second) = (at(cx, 100).unwrap(), at(cx, 101).unwrap());
+    assert_eq!(first.left(), second.left(), "one column of options");
+    assert_eq!(first.size.width, second.size.width, "full-width rows");
+    assert!(
+        second.top() >= first.bottom() && second.top() - first.bottom() <= gpui::px(4.0),
+        "the options of one field are stacked closely: {first:?} {second:?}"
+    );
+    let note = at(cx, 8 + 1).expect("the note field");
+    assert!(
+        note.top() - second.bottom() >= gpui::px(16.0),
+        "16 px between the groups: {second:?} then {note:?}"
+    );
+    assert!(at(cx, 1).is_some(), "Decline");
+    assert!(at(cx, 2).is_none(), "no Cancel next to Decline");
 
     // An incomplete form is refused here, with the reason on the card; nothing is sent.
     click(&view, cx, Region::ChatQuestion(0));

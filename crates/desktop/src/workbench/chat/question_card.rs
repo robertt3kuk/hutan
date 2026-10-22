@@ -21,6 +21,21 @@ use crate::workbench::text_field::{EditableText, FieldMut, FieldRef, FieldState,
 use crate::workbench::ui::{Button, FocusRingExt as _, StyledExt as _};
 use crate::workbench::view::Region;
 
+/// Space between the groups of the card, and between a field's label and its control (px).
+const GROUP_GAP: f32 = 16.0;
+const LABEL_GAP: f32 = 8.0;
+
+/// Whether two texts say the same thing: equal without case, spaces and closing punctuation.
+fn same_words(a: &str, b: &str) -> bool {
+    let norm = |text: &str| {
+        text.trim_end_matches(|c: char| c.is_whitespace() || "?:.*".contains(c))
+            .trim_start()
+            .to_lowercase()
+    };
+    let (a, b) = (norm(a), norm(b));
+    !a.is_empty() && a == b
+}
+
 /// How many options one field offers as buttons before the rest are cut (a form with a hundred
 /// options is not a form a card can hold).
 const OPTION_LIMIT: usize = 20;
@@ -151,10 +166,6 @@ impl ChatView {
 
     pub fn decline_question(&mut self, id: QuestionId, cx: &mut Context<Self>) {
         self.send_question_response(id, QuestionResponse::Decline, cx);
-    }
-
-    pub fn cancel_question(&mut self, id: QuestionId, cx: &mut Context<Self>) {
-        self.send_question_response(id, QuestionResponse::Cancel, cx);
     }
 
     fn send_question_response(
@@ -390,16 +401,28 @@ impl ChatView {
             };
         let form = self.forms.get(&id).cloned();
         let fields: Vec<AnyElement> = match (&form, pending) {
-            (Some(form), true) => question
-                .spec
-                .fields
-                .iter()
-                .enumerate()
-                .map(|(at, field)| self.question_field(id, at, field, form, look, cx))
-                .collect(),
+            (Some(form), true) => {
+                let alone = question.spec.fields.len() == 1;
+                question
+                    .spec
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .map(|(at, field)| {
+                        let echoed = alone
+                            && (same_words(&field.label, &question.spec.title)
+                                || same_words(&field.label, &question.spec.prompt));
+                        self.question_field(id, at, field, form, echoed, look, cx)
+                    })
+                    .collect()
+            }
             _ => Vec::new(),
         };
-        let prompt = if question.spec.prompt.trim().is_empty() {
+        // The question is said once: a prompt or a field label that only repeats the title (or
+        // the prompt) is not drawn again.
+        let prompt = if question.spec.prompt.trim().is_empty()
+            || same_words(&question.spec.prompt, &question.spec.title)
+        {
             None
         } else {
             let mut ids = Ids::new(format!("question-{id}"));
@@ -427,31 +450,39 @@ impl ChatView {
         let ended = self.ended_answers(id, cx);
         let sending = form.as_ref().is_some_and(|f| f.sending);
         let error = form.as_ref().and_then(|f| f.error.clone());
+        // 16 px between the groups of the card (the question, each field, the buttons), 8 px
+        // between a field's label and its control.
         div()
             .relative()
             .flex()
             .flex_col()
-            .gap(px(tokens.spacing * 2.0))
+            .gap(px(GROUP_GAP))
             .p(px(tokens.spacing * 3.0))
             .card(theme, tokens)
             .child(
                 div()
                     .flex()
-                    .items_center()
-                    .gap(px(tokens.spacing * 1.5))
+                    .flex_col()
+                    .gap(px(tokens.spacing))
                     .child(
                         div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(SharedString::from(question.spec.title.clone())),
+                            .flex()
+                            .items_center()
+                            .gap(px(tokens.spacing * 1.5))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(SharedString::from(question.spec.title.clone())),
+                            )
+                            .children(question.spec.source.as_ref().map(|source| {
+                                div()
+                                    .text_color(theme.muted)
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .child(SharedString::from(source.clone()))
+                            })),
                     )
-                    .children(question.spec.source.as_ref().map(|source| {
-                        div()
-                            .text_color(theme.muted)
-                            .text_size(px(tokens.secondary_font_size))
-                            .child(SharedString::from(source.clone()))
-                    })),
+                    .children(prompt),
             )
-            .children(prompt)
             .children(raw)
             .children(fields)
             .children(error.map(|message| {
@@ -487,24 +518,12 @@ impl ChatView {
                                 &look.theme,
                                 &look.tokens,
                             )
+                            .ghost()
                             .disabled(sending)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.decline_question(id, cx);
                             }))
                             .child(probe(&self.regions, Region::ChatQuestion(1))),
-                        )
-                        .child(
-                            Button::new(
-                                SharedString::from(format!("question-cancel-{id}")),
-                                "Cancel",
-                                &look.theme,
-                                &look.tokens,
-                            )
-                            .disabled(sending)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.cancel_question(id, cx);
-                            }))
-                            .child(probe(&self.regions, Region::ChatQuestion(2))),
                         ),
                 )
             })
@@ -565,6 +584,7 @@ impl ChatView {
         at: usize,
         field: &QuestionField,
         form: &QuestionForm,
+        label_echoes_question: bool,
         look: &Look,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -636,64 +656,46 @@ impl ChatView {
                 },
                 Input::Choice { chosen, other },
             ) => {
-                let buttons = options
+                let rows = options
                     .iter()
                     .enumerate()
                     .take(OPTION_LIMIT)
                     .map(|(k, option)| {
                         let value = option.value.clone();
                         let picked = chosen.contains(&option.value);
-                        let mark = if picked {
-                            crate::icons::Icon::StateCompleted
-                        } else {
-                            crate::icons::Icon::StateTodo
-                        };
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                crate::workbench::ui::choice(
-                                    SharedString::from(format!("question-option-{id}-{at}-{k}")),
-                                    option.label.clone(),
-                                    picked,
-                                    theme,
-                                    tokens,
-                                )
-                                .gap(px(tokens.spacing))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let spec_fields = this
-                                        .model
-                                        .read(cx)
-                                        .transcript()
-                                        .question(id)
-                                        .map(|q| q.spec.fields.clone())
-                                        .unwrap_or_default();
-                                    if let Some(form) = this.forms.get_mut(&id) {
-                                        form.choose(&spec_fields, at, &value);
-                                    }
-                                    cx.notify();
-                                }))
-                                .child(crate::icons::glyph(mark))
-                                .child(probe(&self.regions, option_region(at, k))),
-                            )
-                            .children(option.description.as_ref().map(|d| {
-                                div()
-                                    .text_color(theme.muted)
-                                    .text_size(px(tokens.secondary_font_size))
-                                    .child(SharedString::from(d.clone()))
-                            }))
+                        crate::workbench::ui::option_row(
+                            SharedString::from(format!("question-option-{id}-{at}-{k}")),
+                            option.label.clone(),
+                            option
+                                .description
+                                .clone()
+                                .filter(|d| !d.trim().is_empty())
+                                .map(SharedString::from),
+                            picked,
+                            theme,
+                            tokens,
+                        )
+                        .relative()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let spec_fields = this
+                                .model
+                                .read(cx)
+                                .transcript()
+                                .question(id)
+                                .map(|q| q.spec.fields.clone())
+                                .unwrap_or_default();
+                            if let Some(form) = this.forms.get_mut(&id) {
+                                form.choose(&spec_fields, at, &value);
+                            }
+                            cx.notify();
+                        }))
+                        .child(probe(&self.regions, option_region(at, k)))
                     });
                 div()
                     .flex()
                     .flex_col()
                     .gap(px(tokens.spacing))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap(px(tokens.spacing * 2.0))
-                            .children(buttons),
-                    )
+                    .child(div().flex().flex_col().gap(px(2.0)).children(rows))
                     .when(*allow_other, |s| {
                         s.child(text_box(other, "Or type your own answer", false, false))
                     })
@@ -715,13 +717,13 @@ impl ChatView {
         div()
             .flex()
             .flex_col()
-            .gap(px(tokens.spacing))
-            .child(
+            .gap(px(LABEL_GAP))
+            .children((!label_echoes_question).then(|| {
                 div()
                     .text_size(px(tokens.secondary_font_size))
                     .text_color(theme.muted)
-                    .child(SharedString::from(label)),
-            )
+                    .child(SharedString::from(label))
+            }))
             .children(field.description.as_ref().map(|d| {
                 div()
                     .text_size(px(tokens.secondary_font_size))
@@ -730,5 +732,18 @@ impl ChatView {
             }))
             .child(control)
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_words;
+
+    #[test]
+    fn a_label_that_repeats_the_question_is_the_same_words() {
+        assert!(same_words("Which database?", "which database"));
+        assert!(same_words("  Which database? * ", "Which database?"));
+        assert!(!same_words("Which database?", "Which cache?"));
+        assert!(!same_words("", ""), "nothing is not a repeat");
     }
 }
