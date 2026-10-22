@@ -279,6 +279,30 @@ fn the_ex_line_of_a_file_tab_takes_ctrl_w_h_u_r_and_ctrl_p_n_history(cx: &mut Te
 }
 
 #[gpui::test]
+fn the_ex_line_takes_its_own_row_and_the_caret_stays_in_view(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
+    let dir = tempfile::tempdir().unwrap();
+    let long: String = (1..=300).map(|n| format!("line {n}\n")).collect();
+    let tab = open_text(&view, cx, dir.path(), "long.txt", &long);
+    // `G`: the caret on the last line, at the bottom of the view.
+    cx.simulate_input("G");
+    draw(cx);
+    draw(cx);
+    let before = tab.code.read_with(cx, |c, _| c.scroll_y());
+    assert!(before > 0.0);
+    cx.simulate_input(":");
+    draw(cx);
+    draw(cx);
+    assert_eq!(bar(&tab, cx).as_deref(), Some(":"));
+    let after = tab.code.read_with(cx, |c, _| c.scroll_y());
+    assert!(
+        after > before,
+        "the code scrolled up by the line's row ({before} → {after}), the caret is not under it"
+    );
+}
+
+#[gpui::test]
 fn ctrl_bracket_and_ctrl_c_leave_insert_in_the_composer(cx: &mut TestAppContext) {
     let env = ChatEnv::new();
     let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));

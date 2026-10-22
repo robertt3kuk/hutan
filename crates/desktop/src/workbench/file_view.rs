@@ -140,6 +140,9 @@ pub struct FileView {
     /// A bar (agent or conflict) showed in the last frame: when it goes, the text stays where
     /// it is on screen instead of jumping up by the bar's height.
     had_bar: bool,
+    /// The line under the code showed in the last frame: when it comes, the code gives it its
+    /// row and brings the caret back into view above it, as Vim's command line does.
+    had_command_bar: bool,
     /// The window's language servers, for the bar over the code (E-12a, `lsp_bar.rs`).
     lsp: Option<Entity<super::lsp::LspStore>>,
     _subscriptions: Vec<Subscription>,
@@ -256,6 +259,7 @@ impl FileView {
             follow: false,
             followed_epoch: 0,
             had_bar: false,
+            had_command_bar: false,
             lsp: None,
             _subscriptions: subscriptions,
         };
@@ -760,7 +764,8 @@ impl FileView {
             );
             self.shown_bar = Some(format!(":{}", command.text));
             return Some(
-                bar.child(div().text_color(theme.fg).child(":"))
+                bar.gap_0()
+                    .child(div().text_color(theme.fg).child(":"))
                     .child(
                         div()
                             .id("file-command-box")
@@ -1677,6 +1682,11 @@ impl Render for FileView {
         let command_bar = ready
             .then(|| self.render_command_bar(&theme, &tokens, window, cx))
             .flatten();
+        if command_bar.is_some() && !self.had_command_bar {
+            self.code
+                .update(cx, |code, cx| code.reveal_caret_next_frame(cx));
+        }
+        self.had_command_bar = command_bar.is_some();
         div()
             .id("file-view")
             .key_context(KEY_CONTEXT)
