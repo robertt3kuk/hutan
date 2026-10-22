@@ -177,7 +177,7 @@ fn closing_the_last_item_leaves_an_empty_pane(cx: &mut TestAppContext) {
     // Closing again with nothing left is a harmless no-op.
     cx.dispatch_action(actions::ClosePaneItem);
     assert!(state(&view, cx).active_pane().unwrap().items.is_empty());
-    assert_eq!(cx.window_title().as_deref(), Some("Hutan — Hutan"));
+    assert_eq!(cx.window_title().as_deref(), Some("Hutan"));
 }
 
 #[gpui::test]

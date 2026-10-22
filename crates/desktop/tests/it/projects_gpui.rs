@@ -635,8 +635,8 @@ fn session_rows_are_one_line_and_only_a_checkout_that_is_news_adds_a_second(
     assert!(row(&listed, "s-other").shared);
     assert_eq!(
         row(&listed, "s-main").badge.as_deref(),
-        Some("main"),
-        "a shared main checkout keeps its warning badge"
+        Some("shared checkout"),
+        "a shared main checkout keeps its warning badge, in words"
     );
     assert!(!row(&listed, "s-wt").shared, "another checkout");
 }
