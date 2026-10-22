@@ -1257,8 +1257,19 @@ fn parse_sandbox(text: &str) -> Result<SandboxMode, String> {
 pub enum DaemonCommand {
     /// Start hutand detached and wait for its socket; does nothing if it already runs
     Start,
-    /// Show whether hutand runs, and its pid, uptime, and counts
+    /// Show whether hutand runs, and its pid, uptime, and counts; when it does not, why its
+    /// last start failed
     Status,
+    /// Why hutand is not running: the record of its last failed start, the end of what it
+    /// printed while starting, and the end of its log
+    Why,
+    /// Start with empty data: move the database (and its -wal/-shm files) into backups/ next
+    /// to it, so the next hutand starts with none. Nothing is deleted. Refused while hutand runs
+    ResetData {
+        /// Do it (without it nothing is moved)
+        #[arg(long)]
+        yes: bool,
+    },
     /// Ask hutand to shut down; sessions that were alive come back at the next start
     Stop {
         /// Stop live sessions first; otherwise shutdown is refused while any run. They are

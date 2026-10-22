@@ -4,7 +4,10 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use hutan_client::{Client, ClientError, ConnectOptions, default_socket_path};
+use hutan_client::{
+    Client, ClientError, ConnectOptions, DaemonFiles, StartFailure, default_socket_path,
+    move_data_aside, start_failure,
+};
 use hutan_protocol::ErrorBody;
 use hutan_protocol::messages::{
     ClientInfo, ClientKind, DaemonShutdown, DaemonStatusInfo, Empty, Event, Request, SessionList,
@@ -68,6 +71,8 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Setup => ctx?.setup().await,
         Command::Daemon(DaemonCommand::Start) => ctx?.daemon_start().await,
         Command::Daemon(DaemonCommand::Status) => ctx?.daemon_status().await,
+        Command::Daemon(DaemonCommand::Why) => ctx?.daemon_why().await,
+        Command::Daemon(DaemonCommand::ResetData { yes }) => ctx?.daemon_reset_data(yes).await,
         Command::Daemon(DaemonCommand::Stop {
             stop_sessions,
             forget,
@@ -231,18 +236,130 @@ impl Ctx {
         let client = match self.connect().await {
             Ok(client) => client,
             Err(error @ CliError::Unreachable(_)) => {
+                let failure = StartFailure::recorded(&self.files());
                 if self.json {
                     print_line(
-                        &serde_json::json!({"running": false, "socket": self.socket}).to_string(),
+                        &serde_json::json!({
+                            "running": false,
+                            "socket": self.socket,
+                            "start_error": failure.as_ref().and_then(|f| f.record.as_ref()),
+                        })
+                        .to_string(),
                     )?;
                 }
-                return Err(error);
+                return Err(match failure {
+                    Some(failure) => CliError::Unreachable(format!(
+                        "{error}\nThe last start failed: {}\nRun `hutan daemon why` for details.",
+                        failure.sentence()
+                    )),
+                    None => error,
+                });
             }
             Err(e) => return Err(e),
         };
         let info: DaemonStatusInfo = self.call(&client, Request::DaemonStatus(Empty {})).await?;
         let out = StatusOut::new(&self.socket, info);
         self.print(&out, || out.human())
+    }
+
+    /// Where the daemon behind this socket keeps its start-error record and logs.
+    fn files(&self) -> DaemonFiles {
+        DaemonFiles::for_socket(&self.socket)
+    }
+
+    /// `hutan daemon why`: whether hutand runs, the record of its last failed start, and the
+    /// ends of its start output and of its log.
+    async fn daemon_why(&self) -> Result<(), CliError> {
+        let running = match self.connect().await {
+            Ok(client) => Some(
+                self.call::<DaemonStatusInfo>(&client, Request::DaemonStatus(Empty {}))
+                    .await?,
+            ),
+            Err(CliError::Unreachable(_)) => None,
+            Err(e) => return Err(e),
+        };
+        let files = self.files();
+        let failure = StartFailure::recorded(&files);
+        let start_log = files.start_log();
+        let daemon_log = files.daemon_log();
+        let start_tail = start_failure::tail(&start_log, start_failure::TAIL_LINES);
+        let log_tail = start_failure::tail(&daemon_log, start_failure::TAIL_LINES);
+        let value = serde_json::json!({
+            "running": running.is_some(),
+            "pid": running.as_ref().map(|info| info.pid),
+            "socket": self.socket,
+            "start_error": failure.as_ref().and_then(|f| f.record.as_ref()),
+            "sentence": failure.as_ref().map(StartFailure::sentence),
+            "start_log": {"path": start_log, "tail": start_tail},
+            "log": {"path": daemon_log, "tail": log_tail},
+        });
+        self.print(&value, || {
+            let mut out = match &running {
+                Some(info) => format!(
+                    "hutand is running (pid {}) on {}.",
+                    info.pid,
+                    self.socket.display()
+                ),
+                None => format!("hutand is not running ({}).", self.socket.display()),
+            };
+            match &failure {
+                Some(failure) => {
+                    out.push_str("\n\nLast start error: ");
+                    out.push_str(failure.details().trim_end());
+                    if failure.schema_too_new().is_some() {
+                        out.push_str(
+                            "\n\nTo start with empty data instead, run `hutan daemon reset-data \
+                             --yes`: it moves your data into backups/ and deletes nothing.",
+                        );
+                    }
+                }
+                None => out.push_str("\nNo start error is recorded."),
+            }
+            for (path, tail) in [(&start_log, &start_tail), (&daemon_log, &log_tail)] {
+                match tail {
+                    Some(tail) => {
+                        out.push_str(&format!("\n\nEnd of {}:\n{tail}", path.display()));
+                    }
+                    None => out.push_str(&format!("\n\n{}: empty or missing", path.display())),
+                }
+            }
+            out
+        })
+    }
+
+    /// `hutan daemon reset-data --yes`: start with empty data. Moves the database the last
+    /// failed start named (else `hutan.db` next to the socket) into `backups/`.
+    async fn daemon_reset_data(&self, yes: bool) -> Result<(), CliError> {
+        if !yes {
+            return Err(CliError::Usage(
+                "`hutan daemon reset-data` moves your Hutan database into backups/ so the next \
+                 hutand starts with empty data (nothing is deleted); run it with --yes to do it"
+                    .to_owned(),
+            ));
+        }
+        if self.connect().await.is_ok() {
+            return Err(CliError::Failed(
+                "hutand is running; stop it first (`hutan daemon stop`)".to_owned(),
+            ));
+        }
+        let files = self.files();
+        let record = files.read_record();
+        let moved = move_data_aside(&files, record.as_ref())
+            .map_err(|error| CliError::Failed(error.to_string()))?;
+        let value = serde_json::json!({
+            "backup": moved.backup,
+            "moved": moved
+                .moved
+                .iter()
+                .map(|(from, to)| serde_json::json!({"from": from, "to": to}))
+                .collect::<Vec<_>>(),
+        });
+        self.print(&value, || {
+            format!(
+                "Moved your data to {}\nThe next `hutan daemon start` starts with empty data.",
+                moved.backup.display()
+            )
+        })
     }
 
     async fn daemon_stop(&self, stop_sessions: bool, forget: bool) -> Result<(), CliError> {

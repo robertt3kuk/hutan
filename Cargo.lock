@@ -2572,6 +2572,7 @@ dependencies = [
  "parking_lot",
  "portable-pty",
  "regex",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
