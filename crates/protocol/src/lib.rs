@@ -2,8 +2,9 @@
 //!
 //! - [`lsp`]: language servers in the daemon — `doc.open|change|save|close` (capability
 //!   `doc.sync`), `lsp.status|diagnostics|hover|definition|restart|stop|trust` and the events
-//!   `lsp.state` and `lsp.diagnostics` (protocol 0.39, capability `lsp`); [`resources`] lists the
-//!   servers as `services`.
+//!   `lsp.state` and `lsp.diagnostics` (protocol 0.39, capability `lsp`), completion and
+//!   signature help — `lsp.completion|completion_resolve|signature_help` (protocol 0.41,
+//!   capability `lsp.completion`); [`resources`] lists the servers as `services`.
 //! - [`checkpoint`]: checkpoints of agent edits on the wire — `checkpoint.list|diff|remove`, the
 //!   events `checkpoint.created|removed|state` and `ChatInfo.checkpoints` (protocol 0.37,
 //!   capability `checkpoint`, ADR 0019); restoring files to before turns —
@@ -100,7 +101,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 40,
+    minor: 41,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

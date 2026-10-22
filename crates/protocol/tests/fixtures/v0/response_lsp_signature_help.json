@@ -1,0 +1,1 @@
+{"id":66,"result":{"active_signature":0,"signatures":[{"active_parameter":1,"documentation":"Inserts a key-value pair.","label":"fn insert(&mut self, k: K, v: V) -> Option<V>","parameters":[{"end":19,"start":10},{"documentation":"the key","end":25,"start":21},{"end":31,"start":27}]}]}}

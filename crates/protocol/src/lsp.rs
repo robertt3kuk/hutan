@@ -6,7 +6,9 @@
 //! they have open and what they typed (`doc.open|change|save|close`); the hub keeps a bounded
 //! text mirror per document and feeds the servers, coalescing a burst of edits into one
 //! `didChange`. What the servers know comes back as `lsp.diagnostics` and answers to
-//! `lsp.hover` / `lsp.definition`.
+//! `lsp.hover` / `lsp.definition`; completion (`lsp.completion`, `lsp.completion_resolve`)
+//! and signature help (`lsp.signature_help`) since protocol 0.41 (capability
+//! `lsp.completion`).
 //!
 //! **Positions** on this wire are LSP's `line` / `character` with `character` in UTF-16 code
 //! units, whatever the server negotiated; the hub converts. Paths are absolute.
@@ -21,7 +23,10 @@
 //! not open, the server is not running), `forbidden` (`lsp.trust` from an agent; a document
 //! outside the workspace roots for an agent), `unsupported` (`data.reason`: `too_large` for a
 //! document over [`DOC_OPEN_TEXT_MAX_BYTES`], `server` when the server lacks the request),
-//! `provider_error` (the server failed or timed out answering).
+//! `provider_error` (the server failed or timed out answering), `conflict` with
+//! `data.reason = "superseded"` (a newer `lsp.completion`, `lsp.completion_resolve` or
+//! `lsp.signature_help` of the same connection replaced this one; the server got
+//! `$/cancelRequest`).
 
 use std::path::PathBuf;
 
@@ -53,6 +58,26 @@ pub const HOVER_MAX_BYTES: usize = 64 << 10;
 pub const LOCATIONS_MAX: usize = 100;
 /// `lsp.diagnostics` events of one file are at most this far apart.
 pub const DIAGNOSTICS_EVENT_INTERVAL_MS: u64 = 250;
+/// Items one `lsp.completion` answer carries; more set `truncated`.
+pub const COMPLETION_ITEMS_MAX: usize = 200;
+/// Longest [`LspCompletionItem::label`], `filter_text` and `sort_text`, in bytes.
+pub const COMPLETION_LABEL_MAX_BYTES: usize = 256;
+/// Longest [`LspCompletionItem::detail`], in bytes.
+pub const COMPLETION_DETAIL_MAX_BYTES: usize = 1 << 10;
+/// Longest [`LspCompletionItem::documentation`] in a list; a resolved item may carry up to
+/// [`HOVER_MAX_BYTES`].
+pub const COMPLETION_DOC_MAX_BYTES: usize = 4 << 10;
+/// Longest text an item inserts (`insert_text`, an edit's `new_text`); an item with a longer
+/// one is left out of the answer (cutting code would insert something else).
+pub const COMPLETION_TEXT_MAX_BYTES: usize = 16 << 10;
+/// Additional edits of one item (an auto-import); an item with more is left out.
+pub const COMPLETION_EDITS_MAX: usize = 32;
+/// Signatures one `lsp.signature_help` answer carries.
+pub const SIGNATURES_MAX: usize = 16;
+/// Parameters kept per signature.
+pub const PARAMETERS_MAX: usize = 64;
+/// Trigger characters kept per server and kind.
+pub const TRIGGERS_MAX: usize = 32;
 
 /// A position in a document: zero-based line, and `character` in UTF-16 code units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -156,6 +181,14 @@ pub struct LspServerInfo {
     /// What the running server announced it can do: `hover`, `definition`, `references`, …
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
+    /// The characters after which the server offers completion unasked (`.`, `::`'s `:`):
+    /// its `completionProvider.triggerCharacters`, while it runs (protocol 0.41).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub completion_triggers: Vec<String>,
+    /// The characters that open (or move) signature help (`(`, `,`): its
+    /// `signatureHelpProvider.triggerCharacters` and `retriggerCharacters` (protocol 0.41).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signature_triggers: Vec<String>,
 }
 
 /// A decision about a folder, as stored.
@@ -443,4 +476,175 @@ pub struct LspLocation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LspLocations {
     pub locations: Vec<LspLocation>,
+}
+
+/// What a completion item is, as the popup draws it (LSP's `CompletionItemKind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LspCompletionKind {
+    Text,
+    Method,
+    Function,
+    Constructor,
+    Field,
+    Variable,
+    Class,
+    Interface,
+    Module,
+    Property,
+    Unit,
+    Value,
+    Enum,
+    Keyword,
+    Snippet,
+    Color,
+    File,
+    Reference,
+    Folder,
+    EnumMember,
+    Constant,
+    Struct,
+    Event,
+    Operator,
+    TypeParameter,
+    /// A kind of a newer peer.
+    #[serde(other)]
+    Other,
+}
+
+/// `lsp.completion`: what may be typed at `position` of an open document. Answered with
+/// [`LspCompletionList`]. A newer `lsp.completion` of the same connection cancels this one
+/// (`conflict`, `data.reason = "superseded"`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LspCompletionRequest {
+    pub path: PathBuf,
+    pub position: LspPosition,
+    /// The character just typed that asked for it (one of the server's
+    /// [`LspServerInfo::completion_triggers`]); absent when the user asked (⌃Space) or typed a
+    /// word.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
+    /// Asked again while typing because the previous answer was `incomplete`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incomplete: bool,
+}
+
+/// One replacement of a range of the document (UTF-16 positions of the text the request was
+/// answered for).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LspTextEdit {
+    pub range: LspRange,
+    pub new_text: String,
+}
+
+/// One completion item, bounded ([`COMPLETION_LABEL_MAX_BYTES`] …).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LspCompletionItem {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<LspCompletionKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Markdown or plain text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub documentation: Option<String>,
+    /// The server's order (absent: the label).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort_text: Option<String>,
+    /// What typing is matched against (absent: the label).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter_text: Option<String>,
+    /// What accepting inserts when there is no `edit` (absent: the label); it replaces the
+    /// word before the caret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub insert_text: Option<String>,
+    /// The text inserted is a snippet (`$1`, `${1:name}`, `$0`, …).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub snippet: bool,
+    /// The replacement accepting makes (its range ends at the request's position).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<LspTextEdit>,
+    /// Edits elsewhere that come with it (an import), at most [`COMPLETION_EDITS_MAX`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub additional_edits: Vec<LspTextEdit>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub preselect: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deprecated: bool,
+    /// The server tells more on `lsp.completion_resolve` (documentation, detail, the edits of
+    /// an import).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub resolvable: bool,
+}
+
+/// Result of `lsp.completion`: at most [`COMPLETION_ITEMS_MAX`] items, in the server's order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LspCompletionList {
+    /// Names this answer for `lsp.completion_resolve`; the daemon keeps the last few lists of
+    /// each connection.
+    pub completion_id: u64,
+    pub items: Vec<LspCompletionItem>,
+    /// The server will answer differently as more is typed: ask again instead of filtering.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incomplete: bool,
+    /// Items were left out (more than [`COMPLETION_ITEMS_MAX`], or one too large).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+}
+
+/// `lsp.completion_resolve`: the item `index` of the list `completion_id`, with what the
+/// server adds (`completionItem/resolve`). Answered with [`LspCompletionItem`]; `not_found`
+/// when the list is no longer kept. A newer resolve of the same connection cancels this one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LspCompletionResolve {
+    pub completion_id: u64,
+    pub index: u32,
+}
+
+/// `lsp.signature_help`: the call around `position`. Answered with [`LspSignatureHelp`]; a
+/// newer one of the same connection cancels this one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LspSignatureHelpRequest {
+    pub path: PathBuf,
+    pub position: LspPosition,
+    /// The character just typed that asked for it (`(`, `,`); absent when the user asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
+    /// Signature help shows already (LSP's `isRetrigger`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub retrigger: bool,
+}
+
+/// One parameter of a signature: where it is in the signature's label.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LspParameter {
+    /// Byte offsets into [`LspSignature::label`] (`start..end`; empty when the server named a
+    /// parameter that is not in the label).
+    pub start: u32,
+    pub end: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub documentation: Option<String>,
+}
+
+/// One signature of a call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LspSignature {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub documentation: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<LspParameter>,
+    /// The parameter being typed, an index into `parameters`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_parameter: Option<u32>,
+}
+
+/// Result of `lsp.signature_help`: no signatures when the position is in no call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LspSignatureHelp {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signatures: Vec<LspSignature>,
+    /// The signature to show, an index into `signatures`.
+    #[serde(default)]
+    pub active_signature: u32,
 }

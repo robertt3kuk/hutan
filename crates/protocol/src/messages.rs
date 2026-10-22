@@ -37,8 +37,9 @@ use crate::fs::{
 use crate::grants::{ControlGrantRevoke, ControlGrantsList};
 use crate::history::{HistorySearch, HistorySetEnabled};
 use crate::lsp::{
-    DocChange, DocOpen, DocRef, LspDiagnostic, LspDiagnosticsRequest, LspPositionRequest,
-    LspServerInfo, LspServerRef, LspStatusRequest, LspTrustRequest,
+    DocChange, DocOpen, DocRef, LspCompletionRequest, LspCompletionResolve, LspDiagnostic,
+    LspDiagnosticsRequest, LspPositionRequest, LspServerInfo, LspServerRef,
+    LspSignatureHelpRequest, LspStatusRequest, LspTrustRequest,
 };
 use crate::memory::{
     MemoryHistoryRequest, MemoryList, MemoryProposalResolve, MemoryProposalsList, MemoryPropose,
@@ -563,6 +564,19 @@ pub enum Request {
     /// Capability `lsp`: go to definition; answered with `LspLocations`. Read-only.
     #[serde(rename = "lsp.definition")]
     LspDefinition(LspPositionRequest),
+    /// Capability `lsp.completion` (protocol 0.41): completion at a position of an open
+    /// document; answered with `LspCompletionList`. Read-only. A newer one of the same
+    /// connection cancels it (`conflict`, `data.reason = "superseded"`).
+    #[serde(rename = "lsp.completion")]
+    LspCompletion(LspCompletionRequest),
+    /// Capability `lsp.completion`: more about one item of a completion list (documentation,
+    /// detail, an import's edits); answered with `LspCompletionItem`. Read-only.
+    #[serde(rename = "lsp.completion_resolve")]
+    LspCompletionResolve(LspCompletionResolve),
+    /// Capability `lsp.completion`: the signatures of the call around a position; answered
+    /// with `LspSignatureHelp`. Read-only.
+    #[serde(rename = "lsp.signature_help")]
+    LspSignatureHelp(LspSignatureHelpRequest),
     /// Capability `lsp`: starts a server again (or looks for its binary again); answered with
     /// `LspServerInfo`. A mutation: an agent asks per `[control]`.
     #[serde(rename = "lsp.restart")]

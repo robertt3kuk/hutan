@@ -805,6 +805,8 @@ fn lsp_server_info(state: LspServerState) -> LspServerInfo {
         setting: None,
         trust_pending: false,
         capabilities: vec!["hover".into(), "definition".into(), "references".into()],
+        completion_triggers: vec![],
+        signature_triggers: vec![],
     }
 }
 
@@ -3084,6 +3086,37 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::LspTrust(LspTrustRequest {
                 folder: "/Users/me/repo".into(),
                 decision: LspTrust::Ask,
+            }),
+        ),
+        (
+            "lsp_completion",
+            Request::LspCompletion(LspCompletionRequest {
+                path: "/Users/me/repo/src/main.rs".into(),
+                position: LspPosition {
+                    line: 3,
+                    character: 8,
+                },
+                trigger: Some(".".into()),
+                incomplete: false,
+            }),
+        ),
+        (
+            "lsp_completion_resolve",
+            Request::LspCompletionResolve(LspCompletionResolve {
+                completion_id: 7,
+                index: 0,
+            }),
+        ),
+        (
+            "lsp_signature_help",
+            Request::LspSignatureHelp(LspSignatureHelpRequest {
+                path: "/Users/me/repo/src/main.rs".into(),
+                position: LspPosition {
+                    line: 3,
+                    character: 14,
+                },
+                trigger: Some("(".into()),
+                retrigger: false,
             }),
         ),
     ]
@@ -6456,6 +6489,134 @@ fn responses_match_fixtures() {
                 },
             )
             .unwrap(),
+        ),
+        (
+            "lsp_completion_list",
+            ControlMessage::ok(
+                65,
+                &LspCompletionList {
+                    completion_id: 7,
+                    items: vec![
+                        LspCompletionItem {
+                            label: "push".into(),
+                            kind: Some(LspCompletionKind::Method),
+                            detail: Some("fn(&mut self, value: T)".into()),
+                            documentation: None,
+                            sort_text: Some("0001".into()),
+                            filter_text: None,
+                            insert_text: None,
+                            snippet: true,
+                            edit: Some(LspTextEdit {
+                                range: LspRange {
+                                    start: LspPosition {
+                                        line: 3,
+                                        character: 6,
+                                    },
+                                    end: LspPosition {
+                                        line: 3,
+                                        character: 8,
+                                    },
+                                },
+                                new_text: "push(${1:value})$0".into(),
+                            }),
+                            additional_edits: vec![],
+                            preselect: true,
+                            deprecated: false,
+                            resolvable: true,
+                        },
+                        LspCompletionItem {
+                            label: "HashMap".into(),
+                            kind: Some(LspCompletionKind::Struct),
+                            detail: None,
+                            documentation: Some("A hash map.".into()),
+                            sort_text: None,
+                            filter_text: Some("HashMap".into()),
+                            insert_text: Some("HashMap".into()),
+                            snippet: false,
+                            edit: None,
+                            additional_edits: vec![LspTextEdit {
+                                range: LspRange {
+                                    start: LspPosition {
+                                        line: 0,
+                                        character: 0,
+                                    },
+                                    end: LspPosition {
+                                        line: 0,
+                                        character: 0,
+                                    },
+                                },
+                                new_text: "use std::collections::HashMap;\n".into(),
+                            }],
+                            preselect: false,
+                            deprecated: true,
+                            resolvable: false,
+                        },
+                    ],
+                    incomplete: true,
+                    truncated: false,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "lsp_signature_help",
+            ControlMessage::ok(
+                66,
+                &LspSignatureHelp {
+                    signatures: vec![LspSignature {
+                        label: "fn insert(&mut self, k: K, v: V) -> Option<V>".into(),
+                        documentation: Some("Inserts a key-value pair.".into()),
+                        parameters: vec![
+                            LspParameter {
+                                start: 10,
+                                end: 19,
+                                documentation: None,
+                            },
+                            LspParameter {
+                                start: 21,
+                                end: 25,
+                                documentation: Some("the key".into()),
+                            },
+                            LspParameter {
+                                start: 27,
+                                end: 31,
+                                documentation: None,
+                            },
+                        ],
+                        active_parameter: Some(1),
+                    }],
+                    active_signature: 0,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "lsp_server_info_triggers",
+            ControlMessage::ok(
+                67,
+                &LspServerInfo {
+                    capabilities: vec![
+                        "hover".into(),
+                        "completion".into(),
+                        "signature_help".into(),
+                    ],
+                    completion_triggers: vec![".".into(), ":".into()],
+                    signature_triggers: vec!["(".into(), ",".into()],
+                    ..lsp_server_info(LspServerState::Ready)
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "error_lsp_completion_superseded",
+            ControlMessage::err(
+                68,
+                ErrorBody {
+                    code: ErrorCode::Conflict,
+                    message: "superseded by a newer `lsp.completion`".into(),
+                    data: Some(serde_json::json!({"reason": "superseded"})),
+                },
+            ),
         ),
     ];
     for (name, message) in cases {
