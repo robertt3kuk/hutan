@@ -171,7 +171,6 @@ impl Render for Workbench {
         let modal = self.render_modal(cx);
         let close_toast = self.render_close_toast(cx);
         let attention_toasts = self.render_attention_toasts(window, cx);
-        let toast_up = attention_toasts.is_some();
         let restore_toast = self.render_restore_toast(cx);
         let checkpoints_list = self.render_checkpoints_list(cx);
         let rewind_sheet = self.render_rewind_sheet(cx);
@@ -187,11 +186,10 @@ impl Render for Workbench {
         let resizing_docks = matches!(self.resizing, Some(Resizing::Dock { .. }));
         let root = div()
             .id("workbench")
-            .key_context(match (resizing_docks, toast_up) {
-                (false, false) => "Workbench",
-                (true, false) => "Workbench DockResize",
-                (false, true) => "Workbench AttentionToast",
-                (true, true) => "Workbench DockResize AttentionToast",
+            .key_context(if resizing_docks {
+                "Workbench DockResize"
+            } else {
+                "Workbench"
             })
             .track_focus(&self.focus_handle)
             .relative()

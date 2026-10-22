@@ -228,9 +228,29 @@ fn escape_dismisses_the_toasts_and_review_opens_the_session(cx: &mut TestAppCont
     blocked(&daemon, b);
     wait_until(cx, "the toast", |cx| toasts(&view, cx).len() == 1);
 
+    // Escape with the keyboard where it was (the terminal or window) is never taken: the
+    // toast stays.
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
-    assert!(toasts(&view, cx).is_empty(), "Escape dismisses");
+    assert_eq!(
+        toasts(&view, cx).len(),
+        1,
+        "Escape elsewhere leaves the toast"
+    );
+
+    // With focus on the toast (Tab or a click puts it there), Escape dismisses.
+    draw(cx);
+    let focus = view
+        .read_with(cx, |wb, _| wb.attention_toast_focus())
+        .expect("a toast was drawn");
+    cx.update(|window, cx| focus.focus(window, cx));
+    draw(cx);
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(
+        toasts(&view, cx).is_empty(),
+        "Escape on the toast dismisses"
+    );
     assert!(has_dot(&view, cx, b), "the dot stays");
 
     // Review (⌘⇧R) shows the session of the newest toast.

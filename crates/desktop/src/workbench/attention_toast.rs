@@ -31,12 +31,20 @@ pub const TOAST_CONTEXT: &str = "AttentionToast";
 pub struct AttentionToasts {
     stack: ToastStack,
     timer: Option<Task<()>>,
+    /// Focus of the toasts' container; created with the first frame that shows one.
+    focus: Option<gpui::FocusHandle>,
 }
 
 impl Workbench {
     /// The toasts on screen, oldest first.
     pub fn attention_toasts(&self) -> Vec<Toast> {
         self.attention_toasts.stack.toasts().cloned().collect()
+    }
+
+    /// The focus of the toasts' container (`None` before one was shown): Escape dismisses the
+    /// toasts only while it is focused.
+    pub fn attention_toast_focus(&self) -> Option<gpui::FocusHandle> {
+        self.attention_toasts.focus.clone()
     }
 
     /// Whether `session` is the active item of some pane: its card is there to see.
@@ -209,6 +217,11 @@ impl Workbench {
             return None;
         }
         let (theme, tokens) = (self.theme, self.density.ui());
+        let focus = self
+            .attention_toasts
+            .focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
         let review_key: SharedString =
             key_hint(window, &super::actions::ReviewRequest).unwrap_or_else(|| "".into());
         let toasts: Vec<Toast> = self.attention_toasts.stack.toasts().cloned().collect();
@@ -290,6 +303,11 @@ impl Workbench {
         Some(
             div()
                 .id("attn-toasts")
+                // Escape dismisses only while keyboard focus is on the toasts (Tab or a click
+                // puts it there): never taken from a terminal, the composer or a text field.
+                .key_context(TOAST_CONTEXT)
+                .track_focus(&focus)
+                .tab_stop(true)
                 .absolute()
                 .bottom(px(tokens.status_bar + tokens.spacing * 3.0))
                 .right(px(tokens.spacing * 4.0))
