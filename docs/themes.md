@@ -534,6 +534,7 @@ Generated from `IconId::ALL`; a drift test enforces this list. Offline schema: `
 - `status.approvals`
 - `state.question`
 - `state.review`
+- `state.plan`
 - `state.info`
 - `status.attention`
 - `status.connected`

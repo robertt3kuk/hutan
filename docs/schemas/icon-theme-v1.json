@@ -439,6 +439,11 @@
           "description": "Pack-root-relative monochrome SVG path",
           "maxLength": 1024
         },
+        "state.plan": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
         "state.info": {
           "type": "string",
           "description": "Pack-root-relative monochrome SVG path",
