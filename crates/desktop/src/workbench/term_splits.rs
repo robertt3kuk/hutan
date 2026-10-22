@@ -34,6 +34,16 @@ fn element_id(text: impl Into<SharedString>) -> ElementId {
     ElementId::from(text.into())
 }
 
+/// What a tab of splits says about them: `⊞ 3`, and `⊞ 3 · zoomed` while one fills the tab (the
+/// count stays: the other splits are hidden, not gone).
+fn split_badge_label(split: &TermSplit) -> String {
+    if split.zoomed {
+        format!("⊞ {} · zoomed", split.len())
+    } else {
+        format!("⊞ {}", split.len())
+    }
+}
+
 impl Workbench {
     // ---- queries ----------------------------------------------------------------------------
 
@@ -620,6 +630,13 @@ impl Workbench {
     }
 
     /// The `⊞ 3` badge of a tab that holds splits.
+    /// The words of the badge of the tab at `index` of `pane` (`⊞ 3`, `⊞ 3 · zoomed`); `None`
+    /// for a tab without splits.
+    pub fn split_badge_text(&self, pane: PaneId, index: usize) -> Option<String> {
+        let item = self.state.pane(pane)?.items.get(index)?;
+        item.as_term_split().map(split_badge_label)
+    }
+
     pub(crate) fn split_count_badge(
         &self,
         pane: PaneId,
@@ -634,8 +651,13 @@ impl Workbench {
                 .id(element_id(format!("tab-splits-{pane}-{index}")))
                 .flex_none()
                 .text_size(px(tokens.secondary_font_size))
-                .text_color(theme.muted)
-                .child(SharedString::from(format!("⊞ {}", split.len())))
+                // A zoomed split hides the others: the badge says so, in the accent.
+                .text_color(if split.zoomed {
+                    theme.accent
+                } else {
+                    theme.muted
+                })
+                .child(SharedString::from(split_badge_label(split)))
                 .child(probe(&self.regions, Region::TabSplits(pane, index)))
                 .into_any_element(),
         )

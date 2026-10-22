@@ -445,3 +445,50 @@ fn the_unread_dot_is_six_pixels_and_centred_on_the_row(cx: &mut TestAppContext) 
         "the dot is {off:?} off the line's middle: {dot:?} in {row:?}"
     );
 }
+
+// ---- 6. F9: a zoomed split says so ---------------------------------------------------------------
+
+#[gpui::test]
+fn a_zoomed_split_says_so_on_its_tab_and_keeps_the_count(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let a = terminal(&daemon);
+    let (view, cx) = open(cx, &daemon);
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    view.update_in(cx, |wb, window, cx| wb.open_session(a, window, cx));
+    wait_until(cx, "the terminal", |cx| {
+        view.read_with(cx, |wb, _| wb.terminal_view_of(a).is_some())
+    });
+    cx.simulate_keystrokes("cmd-d");
+    wait_until(cx, "two splits", |cx| {
+        split_tab(&view, cx).is_some_and(|s| s.len() == 2)
+    });
+    let pane = view.read_with(cx, |wb, _| wb.state().first_pane_id());
+    let label = |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.split_badge_text(pane, 0));
+    assert_eq!(label(cx).as_deref(), Some("⊞ 2"));
+    settle(cx);
+    let width = |cx: &VisualTestContext| {
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::TabSplits(pane, 0)))
+            .map(|b| b.size.width)
+    };
+    let plain = width(cx).expect("the badge is drawn");
+
+    cx.simulate_keystrokes("cmd-shift-enter");
+    settle(cx);
+    assert_eq!(
+        label(cx).as_deref(),
+        Some("⊞ 2 · zoomed"),
+        "the count stays"
+    );
+    assert!(
+        width(cx).unwrap() > plain,
+        "the badge is drawn with the cue"
+    );
+
+    cx.simulate_keystrokes("cmd-shift-enter");
+    settle(cx);
+    assert_eq!(label(cx).as_deref(), Some("⊞ 2"));
+}
