@@ -357,6 +357,12 @@ pub fn round_button(
     }
 }
 
+/// The action row at the foot of a dialog or sheet: right-aligned, 12 px between buttons.
+/// Cancel goes first and the one primary (or the destructive confirm) last.
+pub fn dialog_footer() -> gpui::Div {
+    div().flex().justify_end().items_center().gap(px(12.0))
+}
+
 /// The widest a [`pill`] gets before its text is cut with "…".
 const PILL_MAX_WIDTH: f32 = 140.0;
 

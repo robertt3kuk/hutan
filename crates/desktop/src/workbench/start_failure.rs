@@ -23,7 +23,7 @@ use hutan_client::{DaemonFiles, StartErrorKind, StartFailure, move_data_aside};
 use super::actions::daemon;
 use super::panels::StatusTone;
 use super::render::probe;
-use super::ui::{self, ButtonKind};
+use super::ui::{Button, ButtonKind};
 use super::view::{Region, Workbench};
 use crate::icons::{Icon, glyph};
 use crate::theme::DensityExt as _;
@@ -173,7 +173,7 @@ impl Workbench {
         self.open_confirm(
             "Start with empty data?",
             message,
-            "Move Data & Start",
+            "Move data and start",
             move |this, _, cx| this.move_data_and_start(failure.clone(), cx),
             window,
             cx,
@@ -226,11 +226,11 @@ impl Workbench {
             self.set_notice("No stuck daemon is known", cx);
             return;
         };
-        self.open_confirm(
+        self.open_destructive(
             format!("Stop hutand (pid {pid})?"),
             "It holds the daemon's lock but does not answer. Hutan asks it to stop (SIGTERM) \
              and starts a new daemon. Its sessions come back with the new one.",
-            "Stop It",
+            "Stop it",
             move |this, _, cx| this.terminate_stuck_daemon(pid, cx),
             window,
             cx,
@@ -276,8 +276,8 @@ impl Workbench {
                       label: &'static str,
                       style: ButtonKind,
                       action: Box<dyn gpui::Action>| {
-            ui::button(id, label, style, true, &theme, &tokens)
-                .relative()
+            Button::new(id, label, &theme, &tokens)
+                .kind(style)
                 .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
                 .child(probe(&regions, region(id)))
                 .into_any_element()
@@ -294,13 +294,13 @@ impl Workbench {
             StartFailureKind::NewerData => vec![
                 button(
                     "daemon-copy-update",
-                    "Copy Update Command",
+                    "Copy update command",
                     ButtonKind::Secondary,
                     Box::new(daemon::CopyUpdateCommand),
                 ),
                 button(
                     "daemon-empty-data",
-                    "Start with Empty Data…",
+                    "Start with empty data…",
                     ButtonKind::Ghost,
                     Box::new(daemon::StartWithEmptyData),
                 ),
@@ -308,13 +308,13 @@ impl Workbench {
             StartFailureKind::Stuck => vec![
                 button(
                     "daemon-show-stuck",
-                    "Show the Process",
+                    "Show the process",
                     ButtonKind::Secondary,
                     Box::new(daemon::ShowStuckDaemon),
                 ),
                 button(
                     "daemon-stop-stuck",
-                    "Stop It…",
+                    "Stop it…",
                     ButtonKind::Ghost,
                     Box::new(daemon::StopStuckDaemon),
                 ),
@@ -322,13 +322,13 @@ impl Workbench {
             StartFailureKind::Other => vec![
                 button(
                     "daemon-failure-logs",
-                    "Open Logs",
+                    "Open logs",
                     ButtonKind::Secondary,
                     Box::new(daemon::OpenLogs),
                 ),
                 button(
                     "daemon-copy-details",
-                    "Copy Details",
+                    "Copy details",
                     ButtonKind::Ghost,
                     Box::new(daemon::CopyStartError),
                 ),

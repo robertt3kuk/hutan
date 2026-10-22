@@ -13,7 +13,7 @@ use super::actions::daemon;
 use super::panels::StatusTone;
 use super::render::probe;
 use super::ui::motion::{self, PresentExt as _};
-use super::ui::{self, StyledExt as _};
+use super::ui::{Button, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::macos::LoginItemStatus;
 use crate::macos::status_item::{KEEP_RUNNING, START_AT_LOGIN};
@@ -111,8 +111,7 @@ impl Workbench {
 
         let regions = self.regions.clone();
         let button = |id: &'static str, label: &'static str, action: Box<dyn Action>| {
-            ui::button(id, label, ui::ButtonKind::Secondary, true, &theme, &tokens)
-                .relative()
+            Button::new(id, label, &theme, &tokens)
                 .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
                 .child(probe(&regions, Region::Popover(id)))
         };
@@ -121,21 +120,21 @@ impl Workbench {
             actions = actions
                 .child(button(
                     "daemon-restart",
-                    "Restart Daemon",
+                    "Restart daemon",
                     Box::new(daemon::Restart),
                 ))
-                .child(button("daemon-stop", "Stop Daemon", Box::new(daemon::Stop)));
+                .child(button("daemon-stop", "Stop daemon", Box::new(daemon::Stop)));
         }
         if !connected && !busy {
             actions = actions.child(button(
                 "daemon-start",
-                "Start Daemon",
+                "Start daemon",
                 Box::new(daemon::Start),
             ));
         }
         actions = actions.child(button(
             "daemon-logs",
-            "Open Logs",
+            "Open logs",
             Box::new(daemon::OpenLogs),
         ));
 
@@ -285,7 +284,7 @@ impl Workbench {
                             |s| {
                                 s.child(button(
                                     "daemon-login-items",
-                                    "Open Login Items",
+                                    "Open login items",
                                     Box::new(daemon::OpenLoginItems),
                                 ))
                             },

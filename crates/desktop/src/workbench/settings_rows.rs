@@ -694,7 +694,7 @@ impl Workbench {
                     s.child(
                         small_button(
                             SharedString::from("open-login-items"),
-                            "Open Login Items",
+                            "Open login items",
                             false,
                             &theme,
                             &tokens,

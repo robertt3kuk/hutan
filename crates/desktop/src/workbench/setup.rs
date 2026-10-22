@@ -27,7 +27,7 @@ use super::actions::{InstallHarness, setup as setup_actions};
 use super::harnesses::{Detection, HARNESSES, Harness, login_summary};
 use super::render::probe;
 use super::ui::motion::{self, PresentExt as _};
-use super::ui::{self, ButtonKind, Mascot, StyledExt as _};
+use super::ui::{self, Button, ButtonKind, Mascot, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::cli_link::{CliLink, Manual, Plan};
 use crate::integrations::IntegrationStatus;
@@ -915,7 +915,7 @@ impl Workbench {
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .child("Run Setup Again…"),
+                            .child("Run setup again…"),
                     )
                     .child(
                         div()
@@ -929,17 +929,9 @@ impl Workbench {
                     ),
             )
             .child(
-                ui::button(
-                    "run-setup",
-                    "Run Setup Again…",
-                    ButtonKind::Secondary,
-                    true,
-                    &theme,
-                    &tokens,
-                )
-                .relative()
-                .on_click(cx.listener(|this, _, window, cx| this.open_setup(window, cx)))
-                .child(probe(&self.regions, Region::Setup("run-setup"))),
+                Button::new("run-setup", "Run setup again…", &theme, &tokens)
+                    .on_click(cx.listener(|this, _, window, cx| this.open_setup(window, cx)))
+                    .child(probe(&self.regions, Region::Setup("run-setup"))),
             )
             .into_any_element()
     }
@@ -969,8 +961,8 @@ impl Workbench {
             SetupStep::Done => self.setup_done(&state, cx),
         };
         let button = |id: &'static str, label: &'static str, kind: ButtonKind| {
-            ui::button(id, label, kind, true, &theme, &tokens)
-                .relative()
+            Button::new(id, label, &theme, &tokens)
+                .kind(kind)
                 .child(probe(&self.regions, Region::Setup(id)))
         };
         let footer = div()
@@ -984,7 +976,6 @@ impl Workbench {
             .child(
                 div().flex_1().flex().child(
                     button("skip", "Skip setup", ButtonKind::Ghost)
-                        .text_color(theme.muted)
                         .on_click(cx.listener(|this, _, window, cx| this.skip_setup(window, cx))),
                 ),
             )
@@ -998,7 +989,6 @@ impl Workbench {
                     .when(step.skippable(), |s| {
                         s.child(
                             button("skip-step", "Skip this step", ButtonKind::Ghost)
-                                .text_color(theme.muted)
                                 .on_click(cx.listener(|this, _, _, cx| this.setup_skip_step(cx))),
                         )
                     })
@@ -1504,15 +1494,13 @@ impl Workbench {
             Detection::Unknown => "Hutan could not ask the daemon".to_owned(),
         };
         let action = |kind_id: &'static str, label: &'static str, kind: ButtonKind| {
-            ui::button(
+            Button::new(
                 SharedString::from(format!("setup-{kind_id}-{id}")),
                 label,
-                kind,
-                true,
                 &theme,
                 &tokens,
             )
-            .relative()
+            .kind(kind)
             .child(probe(&self.regions, Region::SetupHarness(id, kind_id)))
         };
         let mut buttons = div().flex().items_center().gap(px(tokens.spacing * 2.0));
@@ -1809,15 +1797,13 @@ impl Workbench {
             .flex()
             .items_center()
             .child(
-                ui::button(
+                Button::new(
                     "allow-notifications",
                     "Allow notifications",
-                    ButtonKind::Secondary,
-                    notifications_available && !asking,
                     &theme,
                     &tokens,
                 )
-                .relative()
+                .disabled(!(notifications_available && !asking))
                 .when(notifications_available && !asking, |s| {
                     s.on_click(cx.listener(|this, _, _, cx| this.setup_request_notifications(cx)))
                 })
@@ -1929,17 +1915,11 @@ impl Workbench {
                                 .child(SharedString::from(command)),
                         )
                         .child(
-                            ui::button(
-                                "copy-command",
-                                "Copy",
-                                ButtonKind::Secondary,
-                                true,
-                                &theme,
-                                &tokens,
-                            )
-                            .relative()
-                            .on_click(cx.listener(|this, _, _, cx| this.setup_copy_cli_command(cx)))
-                            .child(probe(&self.regions, Region::Setup("copy-command"))),
+                            Button::new("copy-command", "Copy", &theme, &tokens)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.setup_copy_cli_command(cx)),
+                                )
+                                .child(probe(&self.regions, Region::Setup("copy-command"))),
                         ),
                 )
             })
@@ -1999,34 +1979,20 @@ impl Workbench {
                     .flex()
                     .gap(px(tokens.spacing * 2.0))
                     .child(
-                        ui::button(
-                            "open-folder",
-                            "Open a folder  ⌘O",
-                            ButtonKind::Primary,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.finish_setup(Some(SetupFinish::OpenFolder), window, cx);
-                        }))
-                        .child(probe(&self.regions, Region::Setup("open-folder"))),
+                        Button::new("open-folder", "Open a folder", &theme, &tokens)
+                            .primary()
+                            .shortcut("⌘O")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.finish_setup(Some(SetupFinish::OpenFolder), window, cx);
+                            }))
+                            .child(probe(&self.regions, Region::Setup("open-folder"))),
                     )
                     .child(
-                        ui::button(
-                            "new-terminal",
-                            "New terminal",
-                            ButtonKind::Secondary,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.finish_setup(Some(SetupFinish::NewTerminal), window, cx);
-                        }))
-                        .child(probe(&self.regions, Region::Setup("new-terminal"))),
+                        Button::new("new-terminal", "New terminal", &theme, &tokens)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.finish_setup(Some(SetupFinish::NewTerminal), window, cx);
+                            }))
+                            .child(probe(&self.regions, Region::Setup("new-terminal"))),
                     ),
             )
             .into_any_element();

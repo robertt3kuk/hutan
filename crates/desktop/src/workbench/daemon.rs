@@ -491,13 +491,13 @@ impl Workbench {
             self.begin_stop(false, cx);
             return;
         }
-        self.open_confirm(
+        self.open_destructive(
             "Stop the daemon?",
             format!(
                 "{} will be stopped with the daemon. Hutan stays open.",
                 sessions_phrase(live)
             ),
-            "Stop Sessions & Daemon",
+            "Stop sessions and daemon",
             |this, _, cx| this.begin_stop(false, cx),
             window,
             cx,
@@ -523,10 +523,10 @@ impl Workbench {
             .daemon_settings()
             .value("daemon.restore_sessions")
             .and_then(Value::as_str);
-        self.open_confirm(
+        self.open_destructive(
             "Restart the daemon?",
             super::settings_labels::words::restart_message(&sessions_phrase(live), policy),
-            "Stop Sessions & Restart",
+            "Stop sessions and restart",
             |this, _, cx| this.begin_stop(true, cx),
             window,
             cx,
@@ -737,11 +737,13 @@ impl Workbench {
                  keep the daemon running in the background: Hutan turns on \"Keep daemon \
                  running after Hutan quits\" and quits. That does not start it at login.",
             ),
-            confirm_label: "Stop Sessions & Quit".into(),
+            confirm_label: "Stop sessions and quit".into(),
             input: None,
             secure_input: false,
+            destructive: true,
             choice: Some(ModalChoice {
-                label: "Keep Running in Background".into(),
+                destructive: false,
+                label: "Keep running in background".into(),
                 run: Rc::new(|this, _, _, cx| this.keep_running_in_background(cx)),
             }),
             checkbox: None,

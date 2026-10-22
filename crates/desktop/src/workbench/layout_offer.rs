@@ -10,7 +10,7 @@ use gpui::{AnyElement, Context, IntoElement, ParentElement, Styled, div, prelude
 
 use super::model::LayoutPreset;
 use super::render::probe;
-use super::ui::{self, ButtonKind};
+use super::ui::{Button, ButtonKind};
 use super::view::{Region, Workbench};
 use crate::icons::{Icon, glyph};
 use crate::theme::DensityExt as _;
@@ -59,8 +59,8 @@ impl Workbench {
         let theme = self.theme;
         let tokens = self.density.ui();
         let button = |id: &'static str, label: &'static str, kind: ButtonKind| {
-            ui::button(id, label, kind, true, &theme, &tokens)
-                .relative()
+            Button::new(id, label, &theme, &tokens)
+                .kind(kind)
                 .child(probe(&self.regions, Region::Offer(id)))
         };
         Some(

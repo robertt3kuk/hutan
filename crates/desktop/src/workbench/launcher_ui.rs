@@ -15,7 +15,7 @@ use super::panels::field_box;
 use super::render::probe;
 use super::send_key::send_key_control;
 use super::ui::motion::{self, PresentExt as _};
-use super::ui::{self, ButtonKind, FocusRingExt as _, StyledExt as _};
+use super::ui::{self, Button, FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::VimConfig;
 use super::workspaces::tilde;
@@ -333,15 +333,13 @@ impl Workbench {
                 }
                 if self.providers.providers.is_empty() {
                     agents = agents.child(
-                        ui::button(
+                        Button::new(
                             "launch-add-provider",
                             "Direct model · Add a provider…",
-                            ButtonKind::Ghost,
-                            true,
                             &theme,
                             &tokens,
                         )
-                        .relative()
+                        .ghost()
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.launcher = None;
                             this.open_models_settings(window, cx);
@@ -377,27 +375,19 @@ impl Workbench {
                     .child(probe(&self.regions, Region::Launcher("agent-status")));
                 if let Some((key, text)) = action {
                     line = line.child(
-                        ui::button(
-                            id(format!("launch-{key}-{hid}")),
-                            text,
-                            ButtonKind::Secondary,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if key == "install" {
-                                window.dispatch_action(
-                                    Box::new(super::actions::InstallHarness(hid.to_owned())),
-                                    cx,
-                                );
-                            } else {
-                                this.launcher = None;
-                                this.account_flow(hid, None, true, window, cx);
-                            }
-                        }))
-                        .child(probe(&self.regions, Region::LauncherChoice(key, hid))),
+                        Button::new(id(format!("launch-{key}-{hid}")), text, &theme, &tokens)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if key == "install" {
+                                    window.dispatch_action(
+                                        Box::new(super::actions::InstallHarness(hid.to_owned())),
+                                        cx,
+                                    );
+                                } else {
+                                    this.launcher = None;
+                                    this.account_flow(hid, None, true, window, cx);
+                                }
+                            }))
+                            .child(probe(&self.regions, Region::LauncherChoice(key, hid))),
                     );
                 }
                 body = body.child(line);
@@ -1038,7 +1028,6 @@ impl Workbench {
         let mode_row = row("", ring(LauncherStop::Mode, mode.into_any_element()));
 
         // ---- footer ----
-        let ready = !starting;
         let summary = self.launcher_summary(cx);
         let start_label = self.launcher_start_label();
         let footer_frame = div()
@@ -1053,9 +1042,8 @@ impl Workbench {
                     .border_t_1()
                     .border_color(theme.border)
             });
-        let cancel = |id: &'static str, label: &'static str| {
-            ui::button(id, label, ButtonKind::Ghost, true, &theme, &tokens).relative()
-        };
+        let cancel =
+            |id: &'static str, label: &'static str| Button::new(id, label, &theme, &tokens);
         let footer = if let Some(confirm) = launcher.confirm.clone() {
             // The first chat on this agent and model that sends its prompt at once: ask.
             let remember = confirm.remember;
@@ -1100,19 +1088,13 @@ impl Workbench {
                         .child(probe(&self.regions, Region::Launcher("confirm-cancel"))),
                 )
                 .child(
-                    ui::button(
-                        "launch-confirm-start",
-                        "Start ↩",
-                        ButtonKind::Primary,
-                        true,
-                        &theme,
-                        &tokens,
-                    )
-                    .relative()
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.launcher_confirm_start(window, cx);
-                    }))
-                    .child(probe(&self.regions, Region::Launcher("confirm-start"))),
+                    Button::new("launch-confirm-start", "Start", &theme, &tokens)
+                        .primary()
+                        .shortcut("↩")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.launcher_confirm_start(window, cx);
+                        }))
+                        .child(probe(&self.regions, Region::Launcher("confirm-start"))),
                 )
         } else {
             footer_frame
@@ -1141,39 +1123,23 @@ impl Workbench {
                             .child(probe(&self.regions, Region::Launcher("cancel"))),
                     )
                     .child(
-                        ui::button(
-                            "launch-start-new",
-                            "Start & new ⌥⌘↩",
-                            ButtonKind::Secondary,
-                            ready,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .when(ready, |s| {
-                            s.on_click(cx.listener(|this, _, window, cx| {
+                        Button::new("launch-start-new", "Start and new", &theme, &tokens)
+                            .shortcut("⌥⌘↩")
+                            .loading(starting)
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 this.launcher_start(true, window, cx);
                             }))
-                        })
-                        .child(probe(&self.regions, Region::Launcher("start-new"))),
+                            .child(probe(&self.regions, Region::Launcher("start-new"))),
                     )
                 })
                 .child(
-                    ui::button(
-                        "launch-start",
-                        start_label,
-                        ButtonKind::Primary,
-                        ready,
-                        &theme,
-                        &tokens,
-                    )
-                    .relative()
-                    .when(ready, |s| {
-                        s.on_click(cx.listener(|this, _, window, cx| {
+                    Button::new("launch-start", start_label, &theme, &tokens)
+                        .primary()
+                        .loading(starting)
+                        .on_click(cx.listener(|this, _, window, cx| {
                             this.launcher_start(false, window, cx);
                         }))
-                    })
-                    .child(probe(&self.regions, Region::Launcher("start"))),
+                        .child(probe(&self.regions, Region::Launcher("start"))),
                 )
         };
 

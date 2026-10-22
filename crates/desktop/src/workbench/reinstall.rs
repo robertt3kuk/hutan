@@ -13,13 +13,13 @@
 //! A development build has no install and nothing here shows.
 
 use gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString, Styled,
+    Window, div, px,
 };
 
 use super::files::FileOpen;
 use super::render::probe;
-use super::ui::{self, ButtonKind};
+use super::ui::{Button, ButtonKind};
 use super::view::{Region, Workbench};
 use crate::icons::{Icon, glyph};
 use crate::install::{Change, Install, InstallRecord, whats_new_line};
@@ -172,8 +172,8 @@ impl Workbench {
         let theme = self.theme;
         let tokens = self.density.ui();
         let button = |id: &'static str, label: &'static str, kind: ButtonKind| {
-            ui::button(id, label, kind, true, &theme, &tokens)
-                .relative()
+            Button::new(id, label, &theme, &tokens)
+                .kind(kind)
                 .child(probe(&self.regions, Region::Offer(id)))
         };
         Some(
@@ -218,19 +218,23 @@ impl Workbench {
     pub(crate) fn render_whats_new(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let version = self.install.updated.as_deref()?;
         let theme = self.theme;
+        let tokens = self.density.ui();
         Some(
             div()
-                .id("whats-new")
                 .relative()
                 .flex()
                 .flex_none()
                 .items_center()
-                .cursor_pointer()
                 .text_color(theme.fg)
-                .on_click(cx.listener(|this, _, window, cx| this.open_whats_new(window, cx)))
                 .child(SharedString::from(format!("Updated to {version} · ")))
-                .child(div().text_color(theme.accent).child("What's new"))
-                .child(probe(&self.regions, Region::Offer("whats-new")))
+                .child(
+                    Button::new("whats-new", "What's new", &theme, &tokens)
+                        .link()
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_whats_new(window, cx)),
+                        )
+                        .child(probe(&self.regions, Region::Offer("whats-new"))),
+                )
                 .into_any_element(),
         )
     }

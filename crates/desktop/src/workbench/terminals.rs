@@ -655,7 +655,7 @@ impl Workbench {
             return;
         }
         let title = info.title.clone();
-        self.open_confirm(
+        self.open_destructive(
             "Stop session?",
             format!(
                 "“{title}” is running. Stopping ends its process; closing the tab only detaches."

@@ -156,7 +156,7 @@ impl Workbench {
             self.set_notice(format!("Cannot close “{}”: {reason}", info.name), cx);
             return;
         }
-        self.open_confirm(
+        self.open_destructive(
             "Close project?",
             format!(
                 "“{}” leaves the sidebar and its ended sessions are removed. It stays in the recent projects (⌘O).",
@@ -187,7 +187,7 @@ impl Workbench {
     // ---- workspaces: create, delete -------------------------------------------------------------
 
     /// The "New Workspace…" dialog: a name, then either the workspace as it is (it holds
-    /// `projects`) or — when `projects` is empty — "Choose Folders…" to put the projects of some
+    /// `projects`) or — when `projects` is empty — "Choose folders…" to put the projects of some
     /// folders into it. `show` switches the window to the new workspace.
     pub fn new_workspace_dialog(
         &mut self,
@@ -198,7 +198,8 @@ impl Workbench {
     ) {
         let for_projects = projects.clone();
         let choice = projects.is_empty().then(|| ModalChoice {
-            label: "Choose Folders…".into(),
+            destructive: false,
+            label: "Choose folders…".into(),
             run: Rc::new(move |this, result, window, cx| {
                 let name = result.input.unwrap_or_default().trim().to_owned();
                 this.choose_folders(
@@ -223,6 +224,7 @@ impl Workbench {
                 confirm_label: "Create".into(),
                 input: Some(String::new()),
                 secure_input: false,
+                destructive: false,
                 choice,
                 checkbox: None,
                 on_confirm: Rc::new(move |this, result, window, cx| {
@@ -313,10 +315,10 @@ impl Workbench {
                 "Its {n} projects and their sessions are kept; they move to “No workspace”."
             ),
         };
-        self.open_confirm(
+        self.open_destructive(
             "Delete workspace?",
             format!("“{}” is removed. {kept}", info.name),
-            "Delete Workspace",
+            "Delete workspace",
             move |this, window, cx| {
                 let task = this
                     .sessions

@@ -243,8 +243,8 @@ fn with_live_sessions_quitting_asks_to_stop_them(cx: &mut TestAppContext) {
             modal.checkbox.is_some(),
         )
     });
-    assert_eq!(confirm_label, "Stop Sessions & Quit");
-    assert_eq!(choice.as_deref(), Some("Keep Running in Background"));
+    assert_eq!(confirm_label, "Stop sessions and quit");
+    assert_eq!(choice.as_deref(), Some("Keep running in background"));
     assert!(
         !checkbox,
         "there is nothing to remember: the toggle is the setting"

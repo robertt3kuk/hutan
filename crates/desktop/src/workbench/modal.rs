@@ -11,7 +11,7 @@ use gpui::{
 
 use super::actions::modal as modal_actions;
 use super::ui::motion::{self, PresentExt as _};
-use super::ui::{self, FocusRingExt as _, StyledExt as _};
+use super::ui::{self, Button, FocusRingExt as _, StyledExt as _};
 use super::view::Workbench;
 use super::vim_ui::OverlayField;
 
@@ -47,6 +47,8 @@ pub(crate) struct PromptSpec<'a> {
 #[derive(Clone)]
 pub struct ModalChoice {
     pub label: SharedString,
+    /// The choice throws something away (Don't save): drawn as a destructive button.
+    pub destructive: bool,
     pub(crate) run: ModalAction,
 }
 
@@ -75,6 +77,9 @@ pub struct Modal {
     pub input: Option<String>,
     /// Write-only input: mask render snapshots and Debug; never put a key in view text.
     pub secure_input: bool,
+    /// The confirm button destroys something (stop, delete, reset): it is drawn destructive,
+    /// never the default, and Return cancels instead of confirming.
+    pub destructive: bool,
     pub(crate) choice: Option<ModalChoice>,
     pub checkbox: Option<ModalCheckbox>,
     pub(crate) on_confirm: ModalAction,
@@ -115,6 +120,34 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_confirm_as(false, title, message, confirm_label, on_confirm, window, cx);
+    }
+
+    /// A confirmation of something destructive: the confirm button is destructive, Cancel is
+    /// the keyboard's default (Return cancels) and Escape cancels too.
+    pub(crate) fn open_destructive(
+        &mut self,
+        title: impl Into<SharedString>,
+        message: impl Into<SharedString>,
+        confirm_label: impl Into<SharedString>,
+        on_confirm: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_confirm_as(true, title, message, confirm_label, on_confirm, window, cx);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn open_confirm_as(
+        &mut self,
+        destructive: bool,
+        title: impl Into<SharedString>,
+        message: impl Into<SharedString>,
+        confirm_label: impl Into<SharedString>,
+        on_confirm: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.open_modal(
             Modal {
                 title: title.into(),
@@ -122,6 +155,7 @@ impl Workbench {
                 confirm_label: confirm_label.into(),
                 input: None,
                 secure_input: false,
+                destructive,
                 choice: None,
                 checkbox: None,
                 on_confirm: Rc::new(move |this, _, window, cx| on_confirm(this, window, cx)),
@@ -145,6 +179,7 @@ impl Workbench {
                 confirm_label: prompt.confirm_label.into(),
                 input: Some(prompt.initial.to_owned()),
                 secure_input: false,
+                destructive: false,
                 choice: None,
                 checkbox: None,
                 on_confirm: Rc::new(move |this, result, window, cx| {
@@ -324,6 +359,7 @@ impl Workbench {
             confirm_label: stored.confirm_label.clone(),
             input: stored.input.as_ref().map(|_| String::new()),
             secure_input: stored.secure_input,
+            destructive: stored.destructive,
             choice: stored.choice.clone(),
             checkbox: stored.checkbox.clone(),
             on_confirm: Rc::clone(&stored.on_confirm),
@@ -334,9 +370,6 @@ impl Workbench {
             .then(|| self.overlay_parts(OverlayField::Modal, "", cx));
         let theme = self.theme;
         let tokens = self.density.ui();
-        let button = |id: &'static str, label: SharedString, kind: ui::ButtonKind| {
-            ui::button(id, label, kind, true, &theme, &tokens)
-        };
         Some(
             div()
                 .id("modal-backdrop")
@@ -380,7 +413,13 @@ impl Workbench {
                             }
                         }))
                         .on_action(cx.listener(|this, _: &modal_actions::Confirm, window, cx| {
-                            this.confirm_modal(window, cx);
+                            // Return is the default button; a destructive dialog has none but
+                            // Cancel (a stray Return never destroys anything).
+                            if this.modal.as_ref().is_some_and(|m| m.destructive) {
+                                this.close_modal(window, cx);
+                            } else {
+                                this.confirm_modal(window, cx);
+                            }
                         }))
                         .on_action(cx.listener(|this, _: &modal_actions::Cancel, window, cx| {
                             if this.modal_vim_escape(cx) {
@@ -426,22 +465,25 @@ impl Workbench {
                             )
                         })
                         .child(
-                            div()
-                                .flex()
-                                .justify_end()
-                                .gap(px(tokens.spacing * 2.0))
+                            ui::dialog_footer()
                                 .child(
-                                    button("modal-cancel", "Cancel".into(), ui::ButtonKind::Ghost)
+                                    Button::new("modal-cancel", "Cancel", &theme, &tokens)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.close_modal(window, cx);
                                         })),
                                 )
                                 .children(modal.choice.as_ref().map(|choice| {
-                                    button(
+                                    Button::new(
                                         "modal-choice",
                                         choice.label.clone(),
-                                        ui::ButtonKind::Secondary,
+                                        &theme,
+                                        &tokens,
                                     )
+                                    .kind(if choice.destructive {
+                                        ui::ButtonKind::Destructive
+                                    } else {
+                                        ui::ButtonKind::Secondary
+                                    })
                                     .on_click(cx.listener(
                                         |this, _, window, cx| {
                                             this.choose_modal_alternative(window, cx);
@@ -449,11 +491,18 @@ impl Workbench {
                                     ))
                                 }))
                                 .child(
-                                    button(
+                                    Button::new(
                                         "modal-ok",
                                         modal.confirm_label.clone(),
-                                        ui::ButtonKind::Primary,
+                                        &theme,
+                                        &tokens,
                                     )
+                                    .kind(if modal.destructive {
+                                        ui::ButtonKind::Destructive
+                                    } else {
+                                        ui::ButtonKind::Primary
+                                    })
+                                    .when(!modal.destructive, |b| b.shortcut("↩"))
                                     .on_click(cx.listener(
                                         |this, _, window, cx| {
                                             this.confirm_modal(window, cx);

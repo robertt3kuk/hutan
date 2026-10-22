@@ -19,7 +19,7 @@ use super::render::probe;
 use super::rewind::{DiffState, Group, Phase, RewindHeader, SheetFocus};
 use super::style::TextTooltip;
 use super::ui::motion::{self, PresentExt as _};
-use super::ui::{self, FocusRingExt as _, StyledExt as _};
+use super::ui::{self, Button, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::workspaces::tilde;
 use crate::theme::{DensityExt as _, Theme, Tokens};
@@ -169,9 +169,10 @@ impl Workbench {
                       kind: ui::ButtonKind,
                       enabled: bool,
                       at: SheetFocus| {
-            ui::button(id, label, kind, enabled, &theme, &tokens)
-                .relative()
-                .focus_ring(focus == at, &theme, &tokens)
+            Button::new(id, label, &theme, &tokens)
+                .kind(kind)
+                .disabled(!enabled)
+                .ring(focus == at)
         };
 
         // The files, by group.
@@ -533,7 +534,7 @@ impl Workbench {
                                     button(
                                         "rewind-cancel",
                                         "Cancel".into(),
-                                        ui::ButtonKind::Ghost,
+                                        ui::ButtonKind::Secondary,
                                         true,
                                         SheetFocus::Cancel,
                                     )
@@ -693,21 +694,14 @@ impl Workbench {
                                 })),
                         )
                         .child(
-                            ui::button(
-                                ("checkpoint-rewind", index),
-                                "Rewind…",
-                                ui::ButtonKind::Secondary,
-                                rewindable,
-                                &theme,
-                                &tokens,
-                            )
-                            .relative()
-                            .when(rewindable, |b| {
-                                b.on_click(cx.listener(move |this, _, window, cx| {
-                                    this.rewind_list_row(index, window, cx);
-                                }))
-                            })
-                            .child(probe(&regions, Region::CheckpointRewind(index))),
+                            Button::new(("checkpoint-rewind", index), "Rewind…", &theme, &tokens)
+                                .disabled(!rewindable)
+                                .when(rewindable, |b| {
+                                    b.on_click(cx.listener(move |this, _, window, cx| {
+                                        this.rewind_list_row(index, window, cx);
+                                    }))
+                                })
+                                .child(probe(&regions, Region::CheckpointRewind(index))),
                         )
                         .child(probe(&regions, Region::CheckpointRow(index)))
                 }))
@@ -767,15 +761,7 @@ impl Workbench {
                                         })),
                                 )
                                 .child(
-                                    ui::button(
-                                        "checkpoints-close",
-                                        "Close",
-                                        ui::ButtonKind::Ghost,
-                                        true,
-                                        &theme,
-                                        &tokens,
-                                    )
-                                    .relative()
+                                    Button::new("checkpoints-close", "Close", &theme, &tokens).ghost()
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.close_checkpoints(window, cx);
                                     }))
@@ -825,19 +811,12 @@ impl Workbench {
                     .child(SharedString::from(toast.text()))
                     .child(probe(&self.regions, Region::RestoreToast("toast")))
                     .child(
-                        ui::button(
-                            "restore-undo",
-                            "Undo",
-                            ui::ButtonKind::Ghost,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.undo_restore_toast(window, cx)),
-                        )
-                        .child(probe(&self.regions, Region::RestoreToast("undo"))),
+                        Button::new("restore-undo", "Undo", &theme, &tokens)
+                            .ghost()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.undo_restore_toast(window, cx)
+                            }))
+                            .child(probe(&self.regions, Region::RestoreToast("undo"))),
                     ),
             )
             .into_any_element(),

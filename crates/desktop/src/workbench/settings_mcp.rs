@@ -480,7 +480,7 @@ impl Workbench {
     /// "Remove…": asks, then takes the server out of `daemon.toml`.
     pub fn mcp_remove(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         let key = format!("mcp.{name}");
-        self.open_confirm(
+        self.open_destructive(
             words::mcp_remove_title(name),
             words::MCP_REMOVE_MESSAGE,
             words::MCP_REMOVE_CONFIRM,

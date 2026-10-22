@@ -73,7 +73,7 @@ impl Workbench {
             panel.update(cx, |panel, cx| panel.run(command, cx));
             return;
         };
-        self.open_confirm(
+        self.open_destructive(
             ask.title,
             ask.message,
             ask.confirm,

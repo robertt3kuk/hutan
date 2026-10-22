@@ -683,8 +683,10 @@ impl Workbench {
                 confirm_label: "Save".into(),
                 input: None,
                 secure_input: false,
+                destructive: false,
                 choice: Some(ModalChoice {
-                    label: "Don't Save".into(),
+                    destructive: true,
+                    label: "Don't save".into(),
                     run: std::rc::Rc::new(move |this, _, _, cx| {
                         if let Some((pane, index)) = this.state.find_item(&discard_item) {
                             this.try_mutate(cx, |s| s.close_item(pane, index));

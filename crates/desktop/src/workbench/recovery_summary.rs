@@ -13,7 +13,7 @@ use hutan_core::SessionId;
 use super::panels::{time_tooltip, tone_color};
 use super::render::probe;
 use super::ui::motion::{self, PresentExt as _};
-use super::ui::{self, StyledExt as _};
+use super::ui::{self, Button, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::sessions::Tone;
 use crate::theme::DensityExt as _;
@@ -133,36 +133,21 @@ impl Workbench {
                             ))),
                     )
                     .child(
-                        ui::button(
-                            "recovery-review",
-                            "Review",
-                            ui::ButtonKind::Secondary,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.recovery_review = true;
-                            cx.notify();
-                        }))
-                        .child(probe(&regions, Region::Recovery("review"))),
+                        Button::new("recovery-review", "Review", &theme, &tokens)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.recovery_review = true;
+                                cx.notify();
+                            }))
+                            .child(probe(&regions, Region::Recovery("review"))),
                     )
                     .child(
-                        ui::button(
-                            "recovery-dismiss-all",
-                            "Dismiss all",
-                            ui::ButtonKind::Ghost,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.ack_recovery(None, cx);
-                            this.close_recovery_summary(cx);
-                        }))
-                        .child(probe(&regions, Region::Recovery("dismiss-all"))),
+                        Button::new("recovery-dismiss-all", "Dismiss all", &theme, &tokens)
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.ack_recovery(None, cx);
+                                this.close_recovery_summary(cx);
+                            }))
+                            .child(probe(&regions, Region::Recovery("dismiss-all"))),
                     )
                     .child(probe(&regions, Region::Recovery("sheet")))
                     .presented(
@@ -195,15 +180,12 @@ impl Workbench {
                     .map(hutan_client::recovery::detail)
                     .unwrap_or_default();
                 let action = row.action.map(|action| {
-                    ui::button(
+                    Button::new(
                         SharedString::from(format!("recovery-action-{index}")),
                         action.label(),
-                        ui::ButtonKind::Secondary,
-                        true,
                         &theme,
                         &tokens,
                     )
-                    .relative()
                     .on_click(cx.listener(move |this, _, _, cx| match action {
                         RowAction::Retry => this.retry_last_message(session, cx),
                         RowAction::Restart => {
@@ -281,15 +263,13 @@ impl Workbench {
                     )
                     .children(action)
                     .child(
-                        ui::button(
+                        Button::new(
                             SharedString::from(format!("recovery-dismiss-{index}")),
                             "Dismiss",
-                            ui::ButtonKind::Ghost,
-                            true,
                             &theme,
                             &tokens,
                         )
-                        .relative()
+                        .ghost()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.ack_recovery(Some(session), cx);
                         }))
@@ -348,19 +328,12 @@ impl Workbench {
                                 ),
                         )
                         .child(
-                            ui::button(
-                                "recovery-close",
-                                "Close",
-                                ui::ButtonKind::Ghost,
-                                true,
-                                &theme,
-                                &tokens,
-                            )
-                            .relative()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.close_recovery_summary(cx);
-                            }))
-                            .child(probe(&regions, Region::Recovery("close"))),
+                            Button::new("recovery-close", "Close", &theme, &tokens)
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.close_recovery_summary(cx);
+                                }))
+                                .child(probe(&regions, Region::Recovery("close"))),
                         ),
                 )
                 .child(
@@ -374,20 +347,12 @@ impl Workbench {
                 )
                 .child(
                     div().flex().justify_end().child(
-                        ui::button(
-                            "recovery-dismiss-all",
-                            "Dismiss all",
-                            ui::ButtonKind::Secondary,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.ack_recovery(None, cx);
-                            this.close_recovery_summary(cx);
-                        }))
-                        .child(probe(&regions, Region::Recovery("dismiss-all"))),
+                        Button::new("recovery-dismiss-all", "Dismiss all", &theme, &tokens)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.ack_recovery(None, cx);
+                                this.close_recovery_summary(cx);
+                            }))
+                            .child(probe(&regions, Region::Recovery("dismiss-all"))),
                     ),
                 )
                 .child(probe(&regions, Region::Recovery("sheet")))

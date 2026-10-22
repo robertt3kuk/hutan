@@ -25,7 +25,7 @@ use super::harnesses::harness_name;
 use super::launcher::{HarnessChoice, LauncherPreset, Readiness};
 use super::model::{ItemRef, PaneId};
 use super::render::probe;
-use super::ui::{self, ButtonKind, Mascot, StyledExt as _};
+use super::ui::{self, Button, ButtonKind, IconButton, Mascot, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::icons::{Icon, glyph};
 use crate::integrations::IntegrationStatus;
@@ -232,47 +232,28 @@ impl Workbench {
                     .items_center()
                     .gap(px(tokens.spacing * 2.0))
                     .child(
-                        ui::button(
-                            "first-open-folder",
-                            "Open a folder  ⌘O",
-                            ButtonKind::Primary,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_folder_dialog(window, cx);
-                        }))
-                        .child(probe(&self.regions, Region::FirstRun("open-folder"))),
+                        Button::new("first-open-folder", "Open a folder", &theme, &tokens)
+                            .primary()
+                            .shortcut("⌘O")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_folder_dialog(window, cx);
+                            }))
+                            .child(probe(&self.regions, Region::FirstRun("open-folder"))),
                     )
                     .child(
-                        ui::button(
-                            "first-new-terminal",
-                            "New terminal",
-                            ButtonKind::Secondary,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.first_screen_new_terminal(window, cx);
-                        }))
-                        .child(probe(&self.regions, Region::FirstRun("new-terminal"))),
+                        Button::new("first-new-terminal", "New terminal", &theme, &tokens)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.first_screen_new_terminal(window, cx);
+                            }))
+                            .child(probe(&self.regions, Region::FirstRun("new-terminal"))),
                     )
                     .child(
-                        ui::button(
-                            "first-setup",
-                            "Set up Hutan…",
-                            ButtonKind::Ghost,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, window, cx| this.open_setup(window, cx)))
-                        .child(probe(&self.regions, Region::FirstRun("setup"))),
+                        Button::new("first-setup", "Set up Hutan…", &theme, &tokens)
+                            .ghost()
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.open_setup(window, cx)),
+                            )
+                            .child(probe(&self.regions, Region::FirstRun("setup"))),
                     ),
             )
             .child(
@@ -322,15 +303,13 @@ impl Workbench {
             )
             .when_some(action, |s, (key, label)| {
                 s.child(
-                    ui::button(
+                    Button::new(
                         SharedString::from(format!("first-agent-{key}-{id}")),
                         label,
-                        ButtonKind::Ghost,
-                        true,
                         &theme,
                         &tokens,
                     )
-                    .relative()
+                    .ghost()
                     .on_click(cx.listener(move |this, _, window, cx| match key {
                         "login" => this.account_flow(id, None, true, window, cx),
                         "install" => {
@@ -365,7 +344,6 @@ impl Workbench {
                 .on_click(cx.listener(move |this, _, _, cx| this.set_send_key(key, cx)))
                 .child(probe(&self.regions, Region::Launcher(region)))
         });
-        let hover = theme.surface_hover;
         Some(
             div()
                 .flex()
@@ -376,21 +354,21 @@ impl Workbench {
                 .child("Which key sends a message?")
                 .children(choices)
                 .child(
-                    div()
-                        .id("launch-ask-dismiss")
-                        .relative()
-                        .px(px(tokens.spacing))
-                        .rounded(px(tokens.radius - 2.0))
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(hover))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if let Err(error) = super::send_key::stop_asking(&this.settings) {
-                                this.set_notice(format!("Could not save the setting: {error}"), cx);
-                            }
-                            cx.notify();
-                        }))
-                        .child(glyph(Icon::ActionClose))
-                        .child(probe(&self.regions, Region::Launcher("ask-dismiss"))),
+                    IconButton::new(
+                        "launch-ask-dismiss",
+                        Icon::ActionClose,
+                        "Dismiss",
+                        &theme,
+                        &tokens,
+                    )
+                    .compact()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Err(error) = super::send_key::stop_asking(&this.settings) {
+                            this.set_notice(format!("Could not save the setting: {error}"), cx);
+                        }
+                        cx.notify();
+                    }))
+                    .child(probe(&self.regions, Region::Launcher("ask-dismiss"))),
                 )
                 .into_any_element(),
         )
@@ -469,8 +447,8 @@ impl Workbench {
         let theme = self.theme;
         let tokens = self.density.ui();
         let button = |id: &'static str, label: &'static str, kind: ButtonKind| {
-            ui::button(id, label, kind, true, &theme, &tokens)
-                .relative()
+            Button::new(id, label, &theme, &tokens)
+                .kind(kind)
                 .child(probe(&self.regions, Region::Offer(id)))
         };
         let (text, color, buttons): (&str, _, Vec<AnyElement>) = match &self.first_run.notify {
@@ -556,8 +534,9 @@ impl Workbench {
         let name = harness_name(agent);
         let open = self.first_run.hooks_open == Some(agent);
         let button = |id: &'static str, label: SharedString, kind: ButtonKind| {
-            ui::button(id, label, kind, !self.integration_busy(), &theme, &tokens)
-                .relative()
+            Button::new(id, label, &theme, &tokens)
+                .kind(kind)
+                .disabled(!(!self.integration_busy()))
                 .child(probe(&self.regions, Region::Offer(id)))
         };
         if !open {

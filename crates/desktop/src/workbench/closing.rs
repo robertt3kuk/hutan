@@ -6,15 +6,15 @@ use std::time::Duration;
 
 use crate::theme::DensityExt as _;
 use gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString, Styled,
+    Window, div, px,
 };
 use hutan_core::SessionId;
 use hutan_protocol::messages::SessionBusy;
 
 use super::render::probe;
 use super::ui::motion;
-use super::ui::{self, StyledExt as _};
+use super::ui::{Button, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::sessions::CloseFailure;
 
@@ -192,7 +192,7 @@ impl Workbench {
                 }
                 Err(CloseFailure::Busy(busy)) => {
                     let what = busy_text(&busy);
-                    this.open_confirm(
+                    this.open_destructive(
                         format!("Close {title}?"),
                         format!("{what}. Closing stops it."),
                         "Stop and close",
@@ -314,16 +314,12 @@ impl Workbench {
                     .py(px(tokens.spacing * 2.0))
                     .child(SharedString::from(format!("Closed {}", toast.title)))
                     .child(
-                        ui::button(
-                            "close-undo",
-                            "Undo",
-                            ui::ButtonKind::Ghost,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| this.undo_close(window, cx)))
-                        .child(probe(&self.regions, Region::CloseToast("undo"))),
+                        Button::new("close-undo", "Undo", &theme, &tokens)
+                            .ghost()
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.undo_close(window, cx)),
+                            )
+                            .child(probe(&self.regions, Region::CloseToast("undo"))),
                     ),
             )
             .into_any_element(),

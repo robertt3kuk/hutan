@@ -890,7 +890,7 @@ fn the_plus_menu_makes_workspaces_and_opens_folders_into_them(cx: &mut TestAppCo
         view.read_with(cx, |wb, _| wb
             .modal()
             .and_then(|m| m.choice_label().map(str::to_owned))),
-        Some("Choose Folders…".to_owned()),
+        Some("Choose folders…".to_owned()),
         "folders are optional"
     );
     view.update(cx, |wb, cx| wb.set_modal_input("blank", cx));

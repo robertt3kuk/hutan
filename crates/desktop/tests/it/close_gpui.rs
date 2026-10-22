@@ -141,3 +141,63 @@ fn a_busy_session_asks_first_cancel_keeps_it_and_stop_and_close_closes_it(cx: &m
     view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
     wait_sessions(&view, cx, "the session to be closed", 0);
 }
+
+#[gpui::test]
+fn return_never_confirms_a_destructive_dialog_and_escape_cancels_it(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let session = daemon.create_session(&["cat"], None);
+    let _: AgentApplied = daemon.call(Request::AgentReport(AgentReportRequest {
+        pid: None,
+        session_id: session.id,
+        source: "fake-hooks".into(),
+        agent: "Claude Code".into(),
+        state: Some(AgentState::Working),
+        message: None,
+        seq: 1,
+        agent_session_id: None,
+        resume_argv: None,
+        node: None,
+    }));
+    let (view, cx) = open(cx, &daemon);
+    wait_sessions(&view, cx, "the session", 1);
+    wait_until(cx, "the agent working", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).session(session.id).is_some_and(|s| {
+                s.agent
+                    .as_ref()
+                    .is_some_and(|a| a.state == AgentState::Working)
+            })
+        })
+    });
+
+    click(&view, cx, Region::SessionClose(session.id));
+    wait_until(cx, "the confirmation", |cx| {
+        view.read_with(cx, |wb, _| wb.modal_open())
+    });
+    assert!(
+        view.read_with(cx, |wb, _| wb.modal().is_some_and(|m| m.destructive)),
+        "stopping a working session is a destructive confirmation"
+    );
+
+    // Return is the default key: on a destructive dialog it is Cancel, never the stop.
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| !wb.modal_open()),
+        "Return closes it"
+    );
+    assert_eq!(state(&view, cx, session.id), Some(SessionState::Running));
+
+    // Escape cancels too.
+    click(&view, cx, Region::SessionClose(session.id));
+    wait_until(cx, "the confirmation again", |cx| {
+        view.read_with(cx, |wb, _| wb.modal_open())
+    });
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| !wb.modal_open()),
+        "Escape closes it"
+    );
+    assert_eq!(state(&view, cx, session.id), Some(SessionState::Running));
+}

@@ -305,7 +305,7 @@ impl Workbench {
     /// "Clear key": asks first. The key leaves the Keychain and Hutan cannot show it again.
     pub fn clear_provider_key(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let id = id.to_owned();
-        self.open_confirm(
+        self.open_destructive(
             super::settings_labels::words::CLEAR_KEY_TITLE,
             super::settings_labels::words::CLEAR_KEY_MESSAGE,
             super::settings_labels::words::CLEAR_KEY_CONFIRM,
@@ -328,7 +328,7 @@ impl Workbench {
 
     pub fn remove_provider(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let id = id.to_owned();
-        self.open_confirm(
+        self.open_destructive(
             "Remove provider?",
             "Existing chats keep their history; this provider and its stored key will be removed.",
             "Remove",

@@ -197,7 +197,7 @@ impl Workbench {
                 )
             })
             .collect();
-        self.open_confirm(
+        self.open_destructive(
             words::RESET_PAGE_TITLE,
             words::reset_page_message(&listing),
             words::RESET_PAGE_CONFIRM,

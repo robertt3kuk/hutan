@@ -127,10 +127,12 @@ pub struct Button {
     icon: Option<Icon>,
     shortcut: Option<SharedString>,
     tooltip: Option<SharedString>,
+    selected: bool,
     disabled: bool,
     loading: bool,
     block: bool,
     focus: Option<FocusHandle>,
+    ring: bool,
     on_click: Option<ClickHandler>,
     children: Vec<AnyElement>,
     theme: Theme,
@@ -165,10 +167,12 @@ impl Button {
             icon: None,
             shortcut: None,
             tooltip: None,
+            selected: false,
             disabled: false,
             loading: false,
             block: false,
             focus: None,
+            ring: false,
             on_click: None,
             children: Vec::new(),
             theme: *theme,
@@ -221,6 +225,13 @@ impl Button {
         self
     }
 
+    /// The chosen one of a group of buttons (a density, a filter): the selected `accent_soft`
+    /// fill instead of the outline. Secondary and ghost buttons only.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
     /// Dim, default cursor, no hover, no click.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
@@ -243,6 +254,13 @@ impl Button {
     /// the focus ring while focus came from the keyboard.
     pub fn focus_handle(mut self, handle: &FocusHandle) -> Self {
         self.focus = Some(handle.clone());
+        self
+    }
+
+    /// Draws the keyboard focus ring while `ring` holds and focus came from the keyboard: for a
+    /// sheet that keeps its own keyboard position among its buttons instead of GPUI focus.
+    pub fn ring(mut self, ring: bool) -> Self {
+        self.ring = ring;
         self
     }
 
@@ -271,10 +289,12 @@ impl RenderOnce for Button {
             icon,
             shortcut,
             tooltip,
+            selected,
             disabled,
             loading,
             block,
             focus,
+            ring,
             on_click,
             children,
             theme,
@@ -286,7 +306,7 @@ impl RenderOnce for Button {
             ButtonSize::Compact => (tokens.button_height_compact, m.button_padding_x_compact),
         };
         let inert = disabled || loading;
-        let focused = focus.as_ref().is_some_and(|h| h.is_focused(window));
+        let focused = ring || focus.as_ref().is_some_and(|h| h.is_focused(window));
         let (text, hover, pressed) = match kind {
             ButtonKind::Primary => (
                 theme.on_accent(),
@@ -335,6 +355,10 @@ impl RenderOnce for Button {
                 .when(kind == ButtonKind::Primary, |s| s.bg(theme.accent))
                 .when(kind == ButtonKind::Secondary, |s| {
                     s.outlined(&theme, &tokens)
+                })
+                .when(selected && kind != ButtonKind::Primary, |s| {
+                    s.border_color(gpui::transparent_black())
+                        .bg(theme.accent_soft)
                 })
                 .when(kind == ButtonKind::Destructive, |s| {
                     s.border_1().border_color(theme.danger)

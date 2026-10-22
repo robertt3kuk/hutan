@@ -30,7 +30,7 @@ use hutan_core::Epoch;
 
 use super::actions::daemon;
 use super::render::probe;
-use super::ui::{self, ButtonKind};
+use super::ui::{Button, ButtonKind};
 use super::view::{Region, Workbench};
 use crate::icons::{Icon, glyph};
 use crate::theme::DensityExt as _;
@@ -212,8 +212,8 @@ impl Workbench {
                       label: &'static str,
                       style: ButtonKind,
                       action: Box<dyn gpui::Action>| {
-            ui::button(id, label, style, true, &theme, &tokens)
-                .relative()
+            Button::new(id, label, &theme, &tokens)
+                .kind(style)
                 .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
                 .child(probe(&regions, Region::Offer(id)))
                 .into_any_element()
@@ -222,7 +222,7 @@ impl Workbench {
             Mismatch::Different => vec![
                 button(
                     "daemon-mismatch-restart",
-                    "Restart Now",
+                    "Restart now",
                     ButtonKind::Secondary,
                     Box::new(daemon::UseOwnDaemon),
                 ),
@@ -236,7 +236,7 @@ impl Workbench {
             Mismatch::Newer => vec![
                 button(
                     "daemon-mismatch-update",
-                    "Copy Update Command",
+                    "Copy update command",
                     ButtonKind::Secondary,
                     Box::new(daemon::CopyUpdateCommand),
                 ),
@@ -250,7 +250,7 @@ impl Workbench {
             Mismatch::Foreign { .. } => vec![
                 button(
                     "daemon-mismatch-restart",
-                    "Use This App's Service",
+                    "Use this app's service",
                     ButtonKind::Secondary,
                     Box::new(daemon::UseOwnDaemon),
                 ),

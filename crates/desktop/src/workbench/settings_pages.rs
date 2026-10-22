@@ -696,7 +696,7 @@ impl Workbench {
     ) {
         let (_, place) = hook_files(harness);
         let name = harness_name(harness);
-        self.open_confirm(
+        self.open_destructive(
             words::uninstall_title(&name),
             words::uninstall_message(place),
             words::UNINSTALL_HOOKS_CONFIRM,
@@ -772,7 +772,9 @@ impl Workbench {
                 confirm_label: words::CONFIRM_ON_FORGET.into(),
                 input: None,
                 secure_input: false,
+                destructive: false,
                 choice: Some(ModalChoice {
+                    destructive: false,
                     label: words::CONFIRM_ON_KEEP.into(),
                     run: Rc::new(move |this, _, _, cx| turn_on(this, cx)),
                 }),
@@ -1353,7 +1355,7 @@ impl Workbench {
     ) {
         let name = name.to_owned();
         let builtin = LayoutPreset::builtin().iter().any(|p| p.name == name);
-        self.open_confirm(
+        self.open_destructive(
             words::preset_delete_title(&name, builtin),
             words::preset_delete_message(builtin),
             if builtin {
