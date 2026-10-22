@@ -1309,11 +1309,10 @@ pub mod words {
         SOURCE_DEFAULT = "Default";
         SOURCE_DEFAULT_TIP = "Built in: nothing sets this";
         SOURCE_YOU = "You";
-        SOURCE_YOU_LINE = "Set by you";
         LAYER_WORKSPACE = "Workspace";
         LAYER_PROJECT = "Project";
         EDIT_IN = "Edit in";
-        RESET = "Reset";
+        RESET_TIP = "Reset to default";
         RESET_PAGE = "Reset page…";
         RESET_PAGE_TITLE = "Reset this page?";
         RESET_PAGE_CONFIRM = "Reset page";
@@ -1504,6 +1503,11 @@ pub mod words {
         ENV_WARNING_DAEMON = "Do not put secrets here: the values stay in daemon.toml as plain text.";
         IDLE_STOP_HINT = "0 (never) or at least 60";
         PROBLEMS_NONE = "Problems · none";
+        PROBLEMS_COUNT = "Problems";
+        APPLIES_RESTART_SHORT = "after restart";
+        PENDING_RESTART_SHORT = "restart to apply";
+        PACK_MORE_TIP = "Pack actions";
+        PACK_HINT = "↑ ↓ preview · Return applies · Esc cancels";
         PROVIDER_DETAILS = "Details";
         RESTART_NEUTRAL = "What happens to them in the new daemon depends on the setting “Sessions after a restart”.";
         RESTART_RESPAWN = "The new daemon restores them: shells start again in their folders, chats resume their conversations.";

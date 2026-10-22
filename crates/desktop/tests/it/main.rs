@@ -44,6 +44,7 @@ mod resources_gpui;
 mod review_comments_gpui;
 mod rich_input_gpui;
 mod sessions_gpui;
+mod settings_clean_gpui;
 mod settings_gpui;
 mod settings_r4_gpui;
 mod setup_gpui;

@@ -267,6 +267,9 @@ pub enum Region {
     /// `hooks-uninstall` (per agent), `revoke` (per remembered choice), `env-remove`,
     /// `preset-rename`, `preset-delete`.
     SettingsItem(&'static str, usize),
+    /// The head of a menu of the settings sheet (a choice, an add menu, a theme picker): the
+    /// hash of the dropdown's tag. A click on it is not "outside" the menu that hangs from it.
+    SettingsMenu(u64),
     /// Entry `index` of a list of the Start… sheet (`project`, `provider`, `model`, `worktree`,
     /// `after`), top to bottom.
     LauncherItem(&'static str, usize),

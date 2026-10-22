@@ -13,7 +13,7 @@ use super::settings_labels::{field_help, field_title, value_label, words};
 use super::settings_schema::{Field, FieldKind, number_range, value_at};
 use super::settings_sheet::display_value;
 use super::style::TextTooltip;
-use super::ui::FocusRingExt as _;
+use super::ui::{FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::macos::LoginItemStatus;
@@ -29,7 +29,8 @@ fn status_tone(status: LoginItemStatus, theme: Theme) -> gpui::Hsla {
     }
 }
 
-/// A compact button of the sheet's rows; `active` marks the selected one of a group.
+/// A compact button of the sheet's rows: the secondary button's shape ([`StyledExt::outlined`]);
+/// `active` marks the open or selected one of a group with the selection fill and no outline.
 pub(super) fn small_button(
     id: impl Into<gpui::ElementId>,
     label: impl Into<SharedString>,
@@ -38,7 +39,7 @@ pub(super) fn small_button(
     tokens: &Tokens,
 ) -> gpui::Stateful<gpui::Div> {
     let hover = theme.surface_hover;
-    let (border, soft) = (theme.border, theme.accent_soft);
+    let soft = theme.accent_soft;
     div()
         .id(id.into())
         .px(px(tokens.spacing * 2.0))
@@ -47,18 +48,169 @@ pub(super) fn small_button(
         .gap(px(tokens.spacing))
         .flex_none()
         .items_center()
-        .rounded(px(tokens.radius))
-        .border_1()
+        .outlined(theme, tokens)
         // The selected one of a group is a fill without the outline.
-        .border_color(if active { transparent_black() } else { border })
-        .when(active, move |s| s.bg(soft))
+        .when(active, move |s| {
+            s.border_color(transparent_black()).bg(soft)
+        })
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .child(label.into())
 }
 
-/// A row of the sheet: `title` and `help` on the left, the `control` on the right, and
-/// whatever `under` adds below the help.
+/// The height of a row of the sheet: 56 px comfortable, 52 px compact.
+pub(super) fn row_height(tokens: &Tokens) -> f32 {
+    tokens.sidebar_row + 26.0
+}
+
+/// One row of a page of the sheet: the label (13 medium) with its chip, one line of help (12
+/// `muted`, cut with "…", the whole text in a tooltip and while the keyboard is on the row),
+/// and at the right the ghost ↺ and the control. A hairline under it.
+pub(super) struct SheetRow {
+    id: gpui::ElementId,
+    title: SharedString,
+    help: SharedString,
+    under: Vec<AnyElement>,
+    control: AnyElement,
+    chip: Option<AnyElement>,
+    reset: Option<AnyElement>,
+    full_help: bool,
+    top: bool,
+    mark: Option<AnyElement>,
+}
+
+impl SheetRow {
+    pub(super) fn new(
+        id: impl Into<gpui::ElementId>,
+        title: impl Into<SharedString>,
+        help: impl Into<SharedString>,
+        control: AnyElement,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            help: help.into(),
+            under: Vec::new(),
+            control,
+            chip: None,
+            reset: None,
+            full_help: false,
+            top: false,
+            mark: None,
+        }
+    }
+
+    /// Lines under the help that the row cannot do without (a warning, an error).
+    #[must_use]
+    pub(super) fn under(mut self, under: Vec<AnyElement>) -> Self {
+        self.under = under;
+        self
+    }
+
+    /// The chip after the label (`You`).
+    #[must_use]
+    pub(super) fn chip(mut self, chip: Option<AnyElement>) -> Self {
+        self.chip = chip;
+        self
+    }
+
+    /// The ghost ↺ before the control.
+    #[must_use]
+    pub(super) fn reset(mut self, reset: Option<AnyElement>) -> Self {
+        self.reset = reset;
+        self
+    }
+
+    /// The whole help, not one line: the keyboard is on the row.
+    #[must_use]
+    pub(super) fn full_help(mut self, full: bool) -> Self {
+        self.full_help = full;
+        self
+    }
+
+    /// The control is taller than a line (a list, a table): the label stays at the top.
+    #[must_use]
+    pub(super) fn top(mut self) -> Self {
+        self.top = true;
+        self
+    }
+
+    /// An invisible probe child, to find the row in tests.
+    #[must_use]
+    pub(super) fn marked(mut self, probe: impl IntoElement) -> Self {
+        self.mark = Some(probe.into_any_element());
+        self
+    }
+
+    pub(super) fn build(self, theme: &Theme, tokens: &Tokens) -> AnyElement {
+        let help_id = gpui::ElementId::from((self.id.clone(), "help"));
+        let tip = self.help.clone();
+        let has_help = !self.help.is_empty();
+        let full = self.full_help;
+        let row = div()
+            .id(self.id)
+            .flex()
+            .relative()
+            .when(self.top, |s| s.items_start())
+            .when(!self.top, |s| s.items_center())
+            .justify_between()
+            .gap(px(tokens.spacing * 3.0))
+            .min_h(px(row_height(tokens)))
+            .py(px(tokens.spacing))
+            .border_b_1()
+            .border_color(theme.border)
+            .children(self.mark)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(tokens.spacing * 2.0))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .child(self.title),
+                            )
+                            .children(self.chip),
+                    )
+                    .when(has_help, |s| {
+                        s.child(
+                            div()
+                                .id(help_id)
+                                .text_size(px(tokens.secondary_font_size))
+                                .text_color(theme.muted)
+                                .when(!full, |s| {
+                                    s.truncate().tooltip(move |_, cx| {
+                                        cx.new(|_| TextTooltip(tip.clone())).into()
+                                    })
+                                })
+                                .child(self.help),
+                        )
+                    })
+                    .children(self.under),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(tokens.spacing))
+                    .children(self.reset)
+                    .child(self.control),
+            );
+        row.into_any_element()
+    }
+}
+
+/// A row of the sheet without a chip, ↺ or focus: `title` and `help` on the left, the
+/// `control` on the right, and whatever `under` adds below the help.
 pub(super) fn sheet_row(
     id: impl Into<gpui::ElementId>,
     title: impl Into<SharedString>,
@@ -68,36 +220,51 @@ pub(super) fn sheet_row(
     theme: &Theme,
     tokens: &Tokens,
 ) -> AnyElement {
+    SheetRow::new(id, title, help, control)
+        .under(under)
+        .build(theme, tokens)
+}
+
+/// The chip after a row's label: `You`, `Workspace acme`, `Project api` (`counter` style, a
+/// neutral fill: no color says who set a value). `tip` is its hover.
+pub(super) fn source_chip(
+    id: impl Into<gpui::ElementId>,
+    text: impl Into<SharedString>,
+    tip: impl Into<SharedString>,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> AnyElement {
+    let tip: SharedString = tip.into();
+    super::ui::counter(text, theme, tokens)
+        .id(id.into())
+        .max_w(px(160.0))
+        .truncate()
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .into_any_element()
+}
+
+/// The ghost ↺ that takes a value back to what it inherits.
+pub(super) fn reset_button(
+    id: impl Into<gpui::ElementId>,
+    tip: impl Into<SharedString>,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> gpui::Stateful<gpui::Div> {
+    let hover = theme.surface_hover;
+    let tip: SharedString = tip.into();
     div()
         .id(id.into())
+        .flex_none()
         .flex()
-        .items_start()
-        .justify_between()
-        .gap(px(tokens.spacing * 3.0))
-        .py(px(tokens.spacing * 2.0))
-        .border_b_1()
-        .border_color(theme.border)
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w_0()
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .child(title.into()),
-                )
-                .child(
-                    div()
-                        .text_size(px(tokens.secondary_font_size))
-                        .text_color(theme.muted)
-                        .child(help.into()),
-                )
-                .children(under),
-        )
-        .child(div().flex().items_start().child(control))
-        .into_any_element()
+        .items_center()
+        .justify_center()
+        .size(px(tokens.control_height - 4.0))
+        .rounded(px(tokens.radius))
+        .text_color(theme.muted)
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .child("↺")
 }
 
 /// A line of small muted text.
@@ -108,58 +275,190 @@ pub(super) fn note(text: impl Into<SharedString>, theme: &Theme, tokens: &Tokens
         .child(text.into())
 }
 
+/// Tells the heads of different menus apart (FNV-1a of the dropdown's tag).
+pub(super) fn menu_key(tag: &str) -> u64 {
+    tag.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// The panel of a menu or picker: a popover (elevation 2) that takes the mouse and scrolls
+/// past `max_height`.
+pub(super) fn menu_panel(
+    id: impl Into<gpui::ElementId>,
+    max_height: f32,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id.into())
+        .occlude()
+        .flex()
+        .flex_col()
+        .max_h(px(max_height))
+        .overflow_y_scroll()
+        .popover(theme, tokens)
+        .text_size(px(tokens.font_size))
+        .text_color(theme.fg)
+}
+
+/// One option of a menu: a check where it is the current one, its label, and the fill of the
+/// cursor (arrow keys) or the hover. The caller adds the click.
+pub(super) fn menu_option(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+    current: bool,
+    cursor: bool,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> gpui::Stateful<gpui::Div> {
+    let hover = theme.surface_hover;
+    div()
+        .id(id.into())
+        .row(tokens.control_height, tokens)
+        .flex_none()
+        .gap(px(tokens.spacing))
+        .cursor_pointer()
+        .when(cursor, |s| s.bg(hover))
+        .hover(move |s| s.bg(hover))
+        .child(
+            div()
+                .w(px(12.0))
+                .flex_none()
+                .children(current.then(|| crate::icons::glyph(crate::icons::Icon::StateCompleted))),
+        )
+        .child(div().min_w_0().truncate().child(label.into()))
+}
+
 impl Workbench {
-    /// The line under a field's help that says which layer the value comes from; the file is
-    /// the hover.
-    pub(super) fn source_line(&self, field: &Field, cx: &App) -> AnyElement {
-        let theme = self.theme;
-        let tokens = self.density.ui();
+    /// The chip after a field's label when its value is set in a file (`You`, `Workspace
+    /// acme`, `Project api`): its hover is the file, and where a change goes when that is not
+    /// the layer the value comes from. A built-in default has no chip.
+    pub(super) fn field_chip(&self, field: &Field, cx: &App) -> Option<AnyElement> {
         let source = self.source_of_field(field, cx);
+        source.layer?;
         let edit = self.edit_layer_of(field);
-        // A row says who set the value in words ("You" alone reads like a cut-off line).
-        let mut text = if source.layer == Some(hutan_settings::SettingsLayer::User) {
-            words::SOURCE_YOU_LINE.to_owned()
-        } else {
-            source.label.clone()
-        };
-        // A value hidden by another layer, or not set where a change goes: say where it goes.
-        // A built-in default with changes going to your own settings is the plain case and
-        // says nothing more.
-        let plain = source.layer.is_none() && edit == hutan_settings::SettingsLayer::User;
-        if source.layer != Some(edit) && !plain {
+        let mut tip = source.path.as_ref().map_or_else(
+            || words::SOURCE_DEFAULT_TIP.to_owned(),
+            |path| path.display().to_string(),
+        );
+        if source.layer != Some(edit) {
             let target = self.layer_label(edit, cx);
             if target != source.label {
-                text = format!("{text} · {}", words::editing(&target));
+                tip = format!("{tip} · {}", words::editing(&target));
             }
         }
-        let tip: SharedString = source
-            .path
+        Some(
+            div()
+                .relative()
+                .flex_none()
+                .child(source_chip(
+                    SharedString::from(format!("source-{}-{}", field.namespace, field.dotted())),
+                    source.label,
+                    tip,
+                    &self.theme,
+                    &self.density.ui(),
+                ))
+                .child(probe(
+                    &self.regions,
+                    Region::SettingsItem("chip", self.field_index(field)),
+                ))
+                .into_any_element(),
+        )
+    }
+
+    /// The place of `field` on the selected page: what tells the probes of its parts apart.
+    pub(super) fn field_index(&self, field: &Field) -> usize {
+        self.sheet
             .as_ref()
-            .map_or_else(
-                || words::SOURCE_DEFAULT_TIP.to_owned(),
-                |path| path.display().to_string(),
-            )
-            .into();
+            .and_then(|s| s.fields().iter().position(|f| f == field))
+            .unwrap_or(0)
+    }
+
+    /// Opens the dropdown `tag`, or closes it when it is the one open. Either way the keyboard
+    /// is on `row` of the controls afterwards, so Escape (or a pick) leaves it where the
+    /// dropdown was opened from.
+    pub(super) fn toggle_dropdown(&mut self, tag: &str, row: &str, cx: &mut Context<Self>) {
+        if let Some(sheet) = &mut self.sheet {
+            let open = sheet.dropdown.as_deref() == Some(tag);
+            sheet.dropdown = (!open).then(|| tag.to_owned());
+            sheet.cursor = None;
+            sheet.pack_filter.clear();
+            sheet.pack_preview = None;
+            sheet.pack_menu = None;
+            sheet.edit = None;
+            sheet.zone = super::settings_keys::SheetFocus::Controls;
+            sheet.focus_row = Some(row.to_owned());
+            cx.notify();
+        }
+    }
+
+    /// Closes the open dropdown without choosing anything (Escape, a click outside it).
+    pub(super) fn close_dropdown(&mut self, cx: &mut Context<Self>) {
+        if let Some(sheet) = &mut self.sheet {
+            sheet.dropdown = None;
+            sheet.cursor = None;
+            sheet.pack_filter.clear();
+            sheet.pack_preview = None;
+            sheet.pack_menu = None;
+        }
+        cx.notify();
+    }
+
+    /// `head` with the `panel` of its menu hanging below it, right edges aligned, while
+    /// there is one (the panel is drawn in front of the page, not inside its scroll, so it
+    /// never pushes a row). A press outside the panel calls `close`, except on the head, which
+    /// toggles the menu itself.
+    pub(super) fn menu_anchor(
+        &self,
+        tag: &str,
+        head: gpui::Stateful<gpui::Div>,
+        panel: Option<gpui::Stateful<gpui::Div>>,
+        close: fn(&mut Self, &mut Context<Self>),
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let key = menu_key(tag);
+        let head = head
+            .relative()
+            .child(probe(&self.regions, Region::SettingsMenu(key)));
+        let regions = self.regions.clone();
+        let menu_probe = probe(&self.regions, Region::Settings("menu"));
+        let panel = panel.map(|panel| {
+            panel
+                .relative()
+                .child(menu_probe)
+                .on_mouse_down_out(
+                    cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                        let on_head = regions
+                            .get(Region::SettingsMenu(key))
+                            .is_some_and(|bounds| bounds.contains(&event.position));
+                        if !on_head {
+                            close(this, cx);
+                        }
+                    }),
+                )
+        });
         div()
-            .id(SharedString::from(format!(
-                "source-{}-{}",
-                field.namespace,
-                field.dotted()
-            )))
-            .w_full()
-            .text_size(px(tokens.secondary_font_size))
-            .text_color(match source.layer {
-                None => theme.faint,
-                Some(hutan_settings::SettingsLayer::User) => theme.muted,
-                Some(_) => theme.accent,
-            })
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
-            .child(SharedString::from(text))
+            .relative()
+            .flex_none()
+            .child(head)
+            .children(panel.map(|panel| {
+                div().absolute().top_full().right_0().size_0().child(
+                    gpui::deferred(
+                        gpui::anchored()
+                            .anchor(gpui::Anchor::TopRight)
+                            .offset(gpui::point(px(0.0), px(4.0)))
+                            .snap_to_window_with_margin(px(8.0))
+                            .child(panel),
+                    )
+                    .priority(10),
+                )
+            }))
             .into_any_element()
     }
 
-    /// One row of the page: the field's title and help, where its value comes from, its
-    /// control, and Reset when the file it edits sets it.
+    /// One row of the page: the field's title and one line of help, its `You` chip when the
+    /// value is set in a file, its control, and the ghost ↺ when the file it edits sets it.
     pub(super) fn render_field_row(&self, field: &Field, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -180,13 +479,15 @@ impl Workbench {
         let kind = self.sheet_kind_of(field);
         let editing = sheet.edit.clone();
         let dropdown = sheet.dropdown.clone();
-        let mut under = vec![self.source_line(field, cx)];
+        let row_tag = format!("f:{key}");
+        let mut under: Vec<AnyElement> = Vec::new();
+        let mut tall = false;
 
         let control: AnyElement = match (&kind, (ns, key.as_str())) {
             (FieldKind::Bool, _) => self.render_toggle(field, &value, cx),
             (FieldKind::Enum(options), _) => {
                 let open = dropdown.as_deref() == Some(key.as_str());
-                let k = key.clone();
+                let (k, row) = (key.clone(), row_tag.clone());
                 let known = matches!(&value, Json::String(s) if options.contains(s));
                 let label = match &value {
                     Json::String(s) if known => value_label(ns, &key, s),
@@ -202,44 +503,34 @@ impl Workbench {
                 )
                 .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(sheet) = &mut this.sheet {
-                        sheet.dropdown = if sheet.dropdown.as_deref() == Some(k.as_str()) {
-                            None
-                        } else {
-                            Some(k.clone())
-                        };
-                        cx.notify();
-                    }
+                    this.toggle_dropdown(&k, &row, cx);
                 }))
                 .relative()
                 .child(probe(&self.regions, Region::Settings("dropdown")));
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_end()
-                    .gap(px(tokens.spacing))
-                    .child(head)
-                    .when(open, |s| {
-                        s.children(options.iter().map(|option| {
-                            let (k, o) = (key.clone(), option.clone());
-                            small_button(
-                                SharedString::from(format!("option-{key}-{option}")),
-                                SharedString::from(value_label(ns, &key, option)),
-                                Json::String(option.clone()) == value,
-                                &theme,
-                                &tokens,
-                            )
-                            .when(self.dropdown_cursor_at(&key, option), |b| {
-                                b.bg(theme.surface_hover)
-                            })
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    this.sheet_choose(&k, &o, cx);
-                                },
-                            ))
+                let panel = open.then(|| {
+                    menu_panel(
+                        SharedString::from(format!("menu-{key}")),
+                        320.0,
+                        &theme,
+                        &tokens,
+                    )
+                    .min_w(px(160.0))
+                    .children(options.iter().map(|option| {
+                        let (k, o) = (key.clone(), option.clone());
+                        menu_option(
+                            SharedString::from(format!("option-{key}-{option}")),
+                            SharedString::from(value_label(ns, &key, option)),
+                            Json::String(option.clone()) == value,
+                            self.dropdown_cursor_at(&key, option),
+                            &theme,
+                            &tokens,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.sheet_choose(&k, &o, cx);
                         }))
-                    })
-                    .into_any_element()
+                    }))
+                });
+                self.menu_anchor(&key, head, panel, Self::close_dropdown, cx)
             }
             (FieldKind::Integer | FieldKind::Number | FieldKind::String, _) => {
                 let k = key.clone();
@@ -260,14 +551,8 @@ impl Workbench {
                             .min_w(px(150.0))
                             .h(px(tokens.control_height))
                             .px(px(tokens.spacing * 2.0))
-                            .rounded(px(tokens.radius))
-                            .bg(theme.bg)
-                            .border_1()
-                            .border_color(if error.is_some() {
-                                theme.danger
-                            } else {
-                                theme.border
-                            })
+                            .outlined(&theme, &tokens)
+                            .when(error.is_some(), |s| s.border_color(theme.danger))
                             .focus_ring(active.is_some(), &theme, &tokens)
                             .cursor_text()
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -293,9 +578,11 @@ impl Workbench {
                     .into_any_element()
             }
             (FieldKind::StringList | FieldKind::ChoiceList(_), _) => {
+                tall = true;
                 self.render_list_control(field, &kind, &value, cx)
             }
             (FieldKind::StringMap, _) => {
+                tall = true;
                 under.push(
                     note(words::ENV_WARNING, &theme, &tokens)
                         .text_color(theme.warning)
@@ -303,7 +590,10 @@ impl Workbench {
                 );
                 self.render_map_control(field, &value, cx)
             }
-            (FieldKind::Unsupported(_), ("layout", "presets")) => self.render_presets_control(cx),
+            (FieldKind::Unsupported(_), ("layout", "presets")) => {
+                tall = true;
+                self.render_presets_control(cx)
+            }
             (FieldKind::Unsupported(hint), _) => div()
                 .text_color(theme.muted)
                 .max_w(px(260.0))
@@ -311,53 +601,70 @@ impl Workbench {
                 .into_any_element(),
         };
 
-        let reset =
-            (!matches!(kind, FieldKind::Unsupported(_)) && self.field_has_key(field)).then(|| {
-                let k = key.clone();
-                small_button(
-                    SharedString::from(format!("reset-{key}")),
-                    words::RESET,
-                    false,
-                    &theme,
-                    &tokens,
-                )
-                .text_color(theme.muted)
-                .on_click(cx.listener(move |this, _, _, cx| this.sheet_reset(&k, cx)))
-            });
-        let id = SharedString::from(format!("field-{key}"));
+        let reset = self.field_reset(field, &kind, cx);
         let help = field_help(ns, &key, &field.doc);
-        let row = sheet_row(
-            id,
+        let mut row = SheetRow::new(
+            SharedString::from(format!("field-{key}")),
             field_title(ns, &key),
             help,
-            under,
-            div()
-                .flex()
-                .items_start()
-                .gap(px(tokens.spacing * 2.0))
-                .children(reset)
-                .child(control)
-                .into_any_element(),
-            &theme,
-            &tokens,
-        );
-        self.sheet_row_focus(&format!("f:{key}"), row)
+            control,
+        )
+        .under(under)
+        .chip(self.field_chip(field, cx))
+        .reset(reset)
+        .marked(probe(
+            &self.regions,
+            Region::SettingsItem("row", self.field_index(field)),
+        ))
+        .full_help(self.row_has_keys(&row_tag) && super::ui::keyboard_focus());
+        if tall {
+            row = row.top();
+        }
+        self.sheet_row_focus(&row_tag, row.build(&theme, &tokens))
     }
 
-    /// The On/Off toggle of a boolean field; Start at login also shows what the system says
-    /// about the launch agent and how to approve it.
+    /// The ghost ↺ of a field whose key the file it edits sets.
+    pub(super) fn field_reset(
+        &self,
+        field: &Field,
+        kind: &FieldKind,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if matches!(kind, FieldKind::Unsupported(_)) || !self.field_has_key(field) {
+            return None;
+        }
+        let key = field.dotted();
+        let k = key.clone();
+        Some(
+            reset_button(
+                SharedString::from(format!("reset-{key}")),
+                words::RESET_TIP,
+                &self.theme,
+                &self.density.ui(),
+            )
+            .relative()
+            .child(probe(
+                &self.regions,
+                Region::SettingsItem("reset", self.field_index(field)),
+            ))
+            .on_click(cx.listener(move |this, _, _, cx| this.sheet_reset(&k, cx)))
+            .into_any_element(),
+        )
+    }
+
+    /// The switch of a boolean field; Start at login also shows what the system says about the
+    /// launch agent and how to approve it.
     fn render_toggle(&self, field: &Field, value: &Json, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
         let key = field.dotted();
         let on = value.as_bool().unwrap_or(false);
         let k = key.clone();
-        let toggle = small_button(
+        let toggle = super::ui::switch(
             SharedString::from(format!("toggle-{key}")),
-            if on { "On" } else { "Off" },
             on,
+            true,
             &theme,
-            &tokens,
         )
         .on_click(cx.listener(move |this, _, window, cx| this.sheet_toggle_in(&k, window, cx)));
         if !(field.namespace == "app" && key == "start_at_login") {
@@ -401,14 +708,7 @@ impl Workbench {
             .child(if available {
                 toggle.into_any_element()
             } else {
-                div()
-                    .px(px(tokens.spacing * 2.0))
-                    .h(px(tokens.control_height - 2.0))
-                    .flex()
-                    .items_center()
-                    .text_color(theme.muted)
-                    .child("Off")
-                    .into_any_element()
+                super::ui::switch("start-at-login-off", false, false, &theme).into_any_element()
             })
             .into_any_element()
     }
@@ -504,55 +804,43 @@ impl Workbench {
             if remaining.is_empty() {
                 div().into_any_element()
             } else {
-                let k = key.clone();
-                let toggle_key = menu.clone();
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_end()
-                    .gap(px(tokens.spacing))
-                    .child(
-                        small_button(
-                            SharedString::from(format!("add-{key}")),
-                            words::ADD_CHOICE,
-                            menu_open,
+                let (k, row) = (key.clone(), format!("f:{key}"));
+                let tag = menu.clone();
+                let head = small_button(
+                    SharedString::from(format!("add-{key}")),
+                    words::ADD_CHOICE,
+                    menu_open,
+                    &theme,
+                    &tokens,
+                )
+                .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.toggle_dropdown(&tag, &row, cx);
+                }));
+                let panel = menu_open.then(|| {
+                    menu_panel(
+                        SharedString::from(format!("menu-{key}")),
+                        320.0,
+                        &theme,
+                        &tokens,
+                    )
+                    .min_w(px(160.0))
+                    .children(remaining.iter().map(|choice| {
+                        let (k, c) = (k.clone(), choice.clone());
+                        menu_option(
+                            SharedString::from(format!("choose-{key}-{choice}")),
+                            SharedString::from(value_label(ns, &key, choice)),
+                            false,
+                            self.dropdown_cursor_at(&menu, choice),
                             &theme,
                             &tokens,
                         )
-                        .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(sheet) = &mut this.sheet {
-                                sheet.dropdown =
-                                    if sheet.dropdown.as_deref() == Some(toggle_key.as_str()) {
-                                        None
-                                    } else {
-                                        Some(toggle_key.clone())
-                                    };
-                                cx.notify();
-                            }
-                        })),
-                    )
-                    .when(menu_open, |s| {
-                        s.children(remaining.iter().map(|choice| {
-                            let (k, c) = (k.clone(), choice.clone());
-                            small_button(
-                                SharedString::from(format!("choose-{key}-{choice}")),
-                                SharedString::from(value_label(ns, &key, choice)),
-                                false,
-                                &theme,
-                                &tokens,
-                            )
-                            .when(self.dropdown_cursor_at(&menu, choice), |b| {
-                                b.bg(theme.surface_hover)
-                            })
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    this.sheet_add_list_item(&k, &c, cx);
-                                },
-                            ))
+                            this.sheet_add_list_item(&k, &c, cx);
                         }))
-                    })
-                    .into_any_element()
+                    }))
+                });
+                self.menu_anchor(&menu, head, panel, Self::close_dropdown, cx)
             }
         } else {
             match adding {
@@ -614,7 +902,8 @@ impl Workbench {
             .into_any_element()
     }
 
-    /// Reset page… and the layer switch of the page's header.
+    /// The page's header actions: the layer switch (while a workspace or project layer exists)
+    /// and the ghost Reset page….
     pub(super) fn render_sheet_actions(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -626,37 +915,46 @@ impl Workbench {
             .items_center()
             .gap(px(tokens.spacing * 2.0))
             .when(!choices.is_empty(), |s| {
-                s.child(note(words::EDIT_IN, &theme, &tokens)).children(
-                    choices
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, (layer, label))| {
-                            small_button(
-                                SharedString::from(format!("layer-{index}")),
-                                SharedString::from(label),
-                                chosen == Some(layer),
-                                &theme,
-                                &tokens,
-                            )
-                            .relative()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                let next = (this.sheet.as_ref().and_then(|s| s.layer)
-                                    != Some(layer))
-                                .then_some(layer);
-                                this.sheet_set_layer(next, cx);
-                            }))
-                            .child(probe(&self.regions, Region::SettingsItem("layer", index)))
-                        }),
+                s.child(note(words::EDIT_IN, &theme, &tokens)).child(
+                    super::ui::segmented(&theme, &tokens).children(
+                        choices
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, (layer, label))| {
+                                super::ui::segment(
+                                    SharedString::from(format!("layer-{index}")),
+                                    SharedString::from(label),
+                                    chosen == Some(layer),
+                                    &theme,
+                                    &tokens,
+                                )
+                                .relative()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let next = (this.sheet.as_ref().and_then(|s| s.layer)
+                                        != Some(layer))
+                                    .then_some(layer);
+                                    this.sheet_set_layer(next, cx);
+                                }))
+                                .child(probe(&self.regions, Region::SettingsItem("layer", index)))
+                            }),
+                    ),
                 )
             })
             .when(resettable, |s| {
                 s.child(
-                    small_button("reset-page", words::RESET_PAGE, false, &theme, &tokens)
-                        .relative()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.sheet_reset_page(window, cx);
-                        }))
-                        .child(probe(&self.regions, Region::Settings("reset-page"))),
+                    super::ui::button(
+                        "reset-page",
+                        words::RESET_PAGE,
+                        super::ui::ButtonKind::Ghost,
+                        true,
+                        &theme,
+                        &tokens,
+                    )
+                    .relative()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.sheet_reset_page(window, cx);
+                    }))
+                    .child(probe(&self.regions, Region::Settings("reset-page"))),
                 )
             })
             .into_any_element()

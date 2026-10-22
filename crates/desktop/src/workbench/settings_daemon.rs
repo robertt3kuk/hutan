@@ -34,8 +34,11 @@ use super::settings_labels::{
 };
 use super::settings_mcp::McpForm;
 use super::settings_pages::{DataTarget, valid_env_name};
-use super::settings_rows::{note, sheet_row, small_button};
+use super::settings_rows::{
+    SheetRow, menu_option, menu_panel, note, reset_button, small_button, source_chip,
+};
 use super::settings_sheet::{Edit, display_value};
+use super::style::TextTooltip;
 use super::ui::FocusRingExt as _;
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
@@ -1247,53 +1250,71 @@ impl Workbench {
         self.daemon_value_text(e, &e.default)
     }
 
-    /// "Default: On · applies at once": whether the file sets it and when a change counts.
-    pub(super) fn daemon_source_line(&self, e: &DaemonSetting) -> AnyElement {
+    /// The chips after a daemon row's label: `You` while daemon.toml sets it (the default is
+    /// the hover), and when a change counts if that is not at once: *after restart*, or
+    /// *restart to apply* once it was saved.
+    pub(super) fn daemon_chip(&self, e: &DaemonSetting) -> Option<AnyElement> {
         let theme = self.theme;
         let tokens = self.density.ui();
         let table = e.kind == DaemonSettingKind::Table;
-        let default = self.daemon_default_text(e);
-        let source = match (e.set_in_file, table) {
-            (true, true) => words::SET_IN_FILE.to_owned(),
-            (true, false) => words::set_with_default(&default),
-            (false, true) => words::NONE_SET.to_owned(),
-            (false, false) => words::default_is(&default),
-        };
-        let applies = match (e.pending_restart, e.applies) {
-            (true, _) => words::PENDING_RESTART,
-            (false, Applies::Live) => words::APPLIES_LIVE,
-            (false, Applies::Restart) => words::APPLIES_RESTART,
-        };
-        div()
-            .id(SharedString::from(format!("dsource-{}", e.key)))
-            .flex()
-            .flex_wrap()
-            .gap(px(tokens.spacing))
-            .text_size(px(tokens.secondary_font_size))
-            .child(
+        let mut chips: Vec<AnyElement> = Vec::new();
+        if e.set_in_file {
+            let tip = if table {
+                words::SET_IN_FILE.to_owned()
+            } else {
+                words::set_with_default(&self.daemon_default_text(e))
+            };
+            chips.push(source_chip(
+                SharedString::from(format!("dsource-{}", e.key)),
+                words::SOURCE_YOU,
+                tip,
+                &theme,
+                &tokens,
+            ));
+        }
+        if e.pending_restart {
+            chips.push(
                 div()
-                    .text_color(if e.set_in_file {
-                        theme.accent
-                    } else {
-                        theme.faint
+                    .id(SharedString::from(format!("dapplies-{}", e.key)))
+                    .flex_none()
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.warning)
+                    .tooltip(|_, cx| {
+                        cx.new(|_| TextTooltip(words::PENDING_RESTART.into()))
+                            .into()
                     })
-                    .child(SharedString::from(source)),
-            )
-            .child(div().text_color(theme.faint).child("·"))
-            .child(
+                    .child(words::PENDING_RESTART_SHORT)
+                    .into_any_element(),
+            );
+        } else if e.applies == Applies::Restart {
+            chips.push(
                 div()
-                    .text_color(if e.pending_restart {
-                        theme.warning
-                    } else {
-                        theme.faint
+                    .id(SharedString::from(format!("dapplies-{}", e.key)))
+                    .flex_none()
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.muted)
+                    .tooltip(|_, cx| {
+                        cx.new(|_| TextTooltip(words::APPLIES_RESTART.into()))
+                            .into()
                     })
-                    .child(SharedString::from(applies)),
-            )
-            .into_any_element()
+                    .child(words::APPLIES_RESTART_SHORT)
+                    .into_any_element(),
+            );
+        }
+        (!chips.is_empty()).then(|| {
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(tokens.spacing * 2.0))
+                .children(chips)
+                .into_any_element()
+        })
     }
 
-    /// One row: title and help, where the value comes from and when a change counts, the
-    /// control of its kind, Reset when the file sets it, and what the daemon refused.
+    /// One row: title and one line of help, the chips (where the value comes from, when a
+    /// change counts), the control of its kind, ↺ when the file sets it, and what the daemon
+    /// refused.
     pub(super) fn render_daemon_row(
         &self,
         e: &DaemonSetting,
@@ -1302,7 +1323,7 @@ impl Workbench {
         let theme = self.theme;
         let tokens = self.density.ui();
         let key = e.key.clone();
-        let mut under = vec![self.daemon_source_line(e)];
+        let mut under: Vec<AnyElement> = Vec::new();
         if let Some(error) = self.daemon_settings.error(&key) {
             under.push(
                 div()
@@ -1313,6 +1334,10 @@ impl Workbench {
                     .into_any_element(),
             );
         }
+        let tall = matches!(
+            e.kind,
+            DaemonSettingKind::StringMap | DaemonSettingKind::StringList { .. }
+        );
         if e.kind == DaemonSettingKind::StringMap {
             under.push(
                 note(words::ENV_WARNING_DAEMON, &theme, &tokens)
@@ -1323,36 +1348,34 @@ impl Workbench {
         let control = self.render_daemon_control(e, cx);
         let reset = (e.set_in_file && e.kind != DaemonSettingKind::Table).then(|| {
             let k = key.clone();
-            small_button(
+            reset_button(
                 SharedString::from(format!("dreset-{key}")),
                 if e.kind == DaemonSettingKind::Path {
                     words::USE_DEFAULT
                 } else {
-                    words::RESET
+                    words::RESET_TIP
                 },
-                false,
                 &theme,
                 &tokens,
             )
-            .text_color(theme.muted)
             .on_click(cx.listener(move |this, _, _, cx| this.daemon_setting_reset(&k, cx)))
+            .into_any_element()
         });
-        let row = sheet_row(
+        let row_tag = format!("d:{key}");
+        let mut row = SheetRow::new(
             SharedString::from(format!("dfield-{key}")),
             daemon_field_title(&key),
             daemon_field_help(&key),
-            under,
-            div()
-                .flex()
-                .items_start()
-                .gap(px(tokens.spacing * 2.0))
-                .children(reset)
-                .child(control)
-                .into_any_element(),
-            &theme,
-            &tokens,
-        );
-        self.sheet_row_focus(&format!("d:{key}"), row)
+            control,
+        )
+        .under(under)
+        .chip(self.daemon_chip(e))
+        .reset(reset)
+        .full_help(self.row_has_keys(&row_tag) && super::ui::keyboard_focus());
+        if tall {
+            row = row.top();
+        }
+        self.sheet_row_focus(&row_tag, row.build(&theme, &tokens))
     }
 
     fn render_daemon_control(&self, e: &DaemonSetting, cx: &mut Context<Self>) -> AnyElement {
@@ -1366,12 +1389,11 @@ impl Workbench {
             DaemonSettingKind::Bool => {
                 let on = e.value.as_bool().unwrap_or(false);
                 let k = key.clone();
-                small_button(
+                super::ui::switch(
                     SharedString::from(format!("dtoggle-{key}")),
-                    if on { "On" } else { "Off" },
                     on,
+                    true,
                     &theme,
-                    &tokens,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.daemon_toggle(&k, cx)))
                 .into_any_element()
@@ -1435,7 +1457,8 @@ impl Workbench {
             Some((_, label)) => label.clone(),
             None => words::not_available(&current),
         };
-        let k = key.clone();
+        let (k, row) = (key.clone(), format!("d:{key}"));
+        let toggle = tag.clone();
         let head = small_button(
             SharedString::from(format!("ddropdown-{key}")),
             SharedString::from(label),
@@ -1445,41 +1468,32 @@ impl Workbench {
         )
         .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
         .on_click(cx.listener(move |this, _, _, cx| {
-            if let Some(sheet) = &mut this.sheet {
-                sheet.dropdown = if sheet.dropdown.as_deref() == Some(tag.as_str()) {
-                    None
-                } else {
-                    Some(tag.clone())
-                };
-                cx.notify();
-            }
+            this.toggle_dropdown(&toggle, &row, cx);
         }))
         .relative()
         .child(probe(&self.regions, Region::Settings("ddropdown")));
-        div()
-            .flex()
-            .flex_col()
-            .items_end()
-            .gap(px(tokens.spacing))
-            .child(head)
-            .when(open, |s| {
-                s.children(options.iter().map(|(value, label)| {
-                    let (k, v) = (k.clone(), value.clone());
-                    small_button(
-                        SharedString::from(format!("doption-{key}-{value}")),
-                        SharedString::from(label.clone()),
-                        *value == current,
-                        &theme,
-                        &tokens,
-                    )
-                    .when(
-                        self.dropdown_cursor_at(&format!("{EDIT_PREFIX}{key}"), value),
-                        |b| b.bg(theme.surface_hover),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.daemon_choose(&k, &v, cx)))
-                }))
-            })
-            .into_any_element()
+        let panel = open.then(|| {
+            menu_panel(
+                SharedString::from(format!("dmenu-{key}")),
+                320.0,
+                &theme,
+                &tokens,
+            )
+            .min_w(px(160.0))
+            .children(options.iter().map(|(value, label)| {
+                let (k, v) = (k.clone(), value.clone());
+                menu_option(
+                    SharedString::from(format!("doption-{key}-{value}")),
+                    SharedString::from(label.clone()),
+                    *value == current,
+                    self.dropdown_cursor_at(&tag, value),
+                    &theme,
+                    &tokens,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.daemon_choose(&k, &v, cx)))
+            }))
+        });
+        self.menu_anchor(&tag, head, panel, Self::close_dropdown, cx)
     }
 
     /// A number or text box.
@@ -1610,54 +1624,43 @@ impl Workbench {
             if remaining.is_empty() {
                 div().into_any_element()
             } else {
-                let toggle = menu.clone();
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_end()
-                    .gap(px(tokens.spacing))
-                    .child(
-                        small_button(
-                            SharedString::from(format!("dadd-{key}")),
-                            words::ADD_CHOICE,
-                            menu_open,
+                let row = format!("d:{key}");
+                let tag = menu.clone();
+                let head = small_button(
+                    SharedString::from(format!("dadd-{key}")),
+                    words::ADD_CHOICE,
+                    menu_open,
+                    &theme,
+                    &tokens,
+                )
+                .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.toggle_dropdown(&tag, &row, cx);
+                }));
+                let panel = menu_open.then(|| {
+                    menu_panel(
+                        SharedString::from(format!("dmenu-{key}")),
+                        320.0,
+                        &theme,
+                        &tokens,
+                    )
+                    .min_w(px(160.0))
+                    .children(remaining.iter().map(|choice| {
+                        let (k, c) = (key.clone(), (*choice).clone());
+                        menu_option(
+                            SharedString::from(format!("dchoose-item-{key}-{choice}")),
+                            SharedString::from(daemon_value_label(&key, choice)),
+                            false,
+                            self.dropdown_cursor_at(&menu, choice),
                             &theme,
                             &tokens,
                         )
-                        .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(sheet) = &mut this.sheet {
-                                sheet.dropdown =
-                                    if sheet.dropdown.as_deref() == Some(toggle.as_str()) {
-                                        None
-                                    } else {
-                                        Some(toggle.clone())
-                                    };
-                                cx.notify();
-                            }
-                        })),
-                    )
-                    .when(menu_open, |s| {
-                        s.children(remaining.iter().map(|choice| {
-                            let (k, c) = (key.clone(), (*choice).clone());
-                            small_button(
-                                SharedString::from(format!("dchoose-item-{key}-{choice}")),
-                                SharedString::from(daemon_value_label(&key, choice)),
-                                false,
-                                &theme,
-                                &tokens,
-                            )
-                            .when(self.dropdown_cursor_at(&menu, choice), |b| {
-                                b.bg(theme.surface_hover)
-                            })
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    this.daemon_list_add(&k, &c, cx);
-                                },
-                            ))
+                            this.daemon_list_add(&k, &c, cx);
                         }))
-                    })
-                    .into_any_element()
+                    }))
+                });
+                self.menu_anchor(&menu, head, panel, Self::close_dropdown, cx)
             }
         } else {
             match adding {

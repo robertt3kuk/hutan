@@ -333,15 +333,56 @@ impl CatalogEntry {
     }
 }
 
-/// All namespaces of the app, in display order. A page shows its own namespace and every
-/// later entry that names it as its `page`.
+/// The groups of the sheet's page list, in order. The catalog lists every page of a group
+/// together, so the groups are runs of the list and the arrow keys walk through them in the
+/// order they are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavGroup {
+    General,
+    Agents,
+    Data,
+    /// Collapsed in the list until it holds the selected page or a search is on.
+    Advanced,
+}
+
+impl NavGroup {
+    pub const ALL: [NavGroup; 4] = [Self::General, Self::Agents, Self::Data, Self::Advanced];
+
+    /// The label over the group's pages.
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Agents => "Agents",
+            Self::Data => "Data",
+            Self::Advanced => "Advanced",
+        }
+    }
+
+    /// The group of the page of `namespace`.
+    pub fn of(namespace: &str) -> Self {
+        match namespace {
+            "assistant" | "agents" | "integrations" | "launcher" | "accounts" | "models" => {
+                Self::Agents
+            }
+            "history" | "data" | "sessions_restore" => Self::Data,
+            "agents_tools" | "control" | "resources" => Self::Advanced,
+            _ => Self::General,
+        }
+    }
+}
+
+/// All namespaces of the app, in display order: the pages of a group are together
+/// ([`NavGroup`]). A page shows its own namespace and every later entry that names it as its
+/// `page`.
 pub fn catalog() -> Vec<CatalogEntry> {
     vec![
+        // General
         CatalogEntry::of::<AppearanceSettings>(),
         CatalogEntry::of::<AppSettings>(),
-        CatalogEntry::custom("data"),
         CatalogEntry::of::<KeymapSettings>(),
         CatalogEntry::of::<TerminalSettings>(),
+        CatalogEntry::of::<EditorSettings>(),
+        CatalogEntry::of::<ChatSettings>(),
         CatalogEntry::of::<LayoutSettings>(),
         CatalogEntry::of::<SessionsPanelSettings>(),
         CatalogEntry::of::<SidebarSettings>().on_page(SessionsPanelSettings::NAMESPACE),
@@ -349,21 +390,23 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<FilesPanelSettings>(),
         CatalogEntry::of::<crate::settings::ProblemsPanelSettings>(),
         CatalogEntry::of::<WorkspacesSettings>(),
-        CatalogEntry::custom("sessions_restore"),
-        CatalogEntry::of::<HistorySettings>(),
-        CatalogEntry::of::<ChatSettings>(),
-        CatalogEntry::of::<EditorSettings>(),
-        CatalogEntry::of::<AgentsSettings>(),
-        CatalogEntry::custom("agents_tools"),
-        CatalogEntry::of::<ResourcesSettings>(),
         CatalogEntry::of::<TasksSettings>(),
         CatalogEntry::custom("notifications"),
+        // Agents
         CatalogEntry::of::<AssistantSettings>(),
-        CatalogEntry::custom("control"),
+        CatalogEntry::of::<AgentsSettings>(),
         CatalogEntry::of::<IntegrationsSettings>(),
         CatalogEntry::of::<LauncherSettings>(),
         CatalogEntry::custom("accounts"),
         CatalogEntry::custom("models"),
+        // Data
+        CatalogEntry::of::<HistorySettings>(),
+        CatalogEntry::custom("data"),
+        CatalogEntry::custom("sessions_restore"),
+        // Advanced
+        CatalogEntry::custom("agents_tools"),
+        CatalogEntry::custom("control"),
+        CatalogEntry::of::<ResourcesSettings>(),
     ]
 }
 
@@ -534,6 +577,30 @@ mod tests {
         );
         assert!(terminal.workspace_overridable);
         assert_eq!(terminal.default, current);
+    }
+
+    #[test]
+    fn the_pages_of_a_group_are_together_in_the_catalog() {
+        // The groups of the page list are runs of the catalog, in the groups' order, and every
+        // group has a page: the arrow keys and the drawn list agree.
+        let mut seen: Vec<NavGroup> = Vec::new();
+        for entry in catalog().iter().filter(|e| e.is_page()) {
+            let group = NavGroup::of(entry.namespace);
+            if seen.last() != Some(&group) {
+                assert!(
+                    !seen.contains(&group),
+                    "{} comes after another group's page",
+                    entry.namespace
+                );
+                seen.push(group);
+            }
+        }
+        assert_eq!(seen, NavGroup::ALL);
+        assert_eq!(
+            catalog()[0].namespace,
+            "appearance",
+            "the sheet opens on it"
+        );
     }
 
     #[test]

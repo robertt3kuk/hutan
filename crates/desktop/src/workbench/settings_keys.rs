@@ -135,9 +135,17 @@ impl Workbench {
         }
     }
 
+    /// Whether the keyboard is on the row `row` and nothing is open over it: an open dropdown or
+    /// picker has the keyboard (and draws its own ring), so the row's ring and its whole help
+    /// wait until it closes.
+    pub(super) fn row_has_keys(&self, row: &str) -> bool {
+        self.sheet_focused_row() == Some(row)
+            && self.sheet.as_ref().is_some_and(|s| s.dropdown.is_none())
+    }
+
     /// `el` inside the keyboard focus ring while the keyboard is on the row `row`.
     pub(super) fn sheet_row_focus(&self, row: &str, el: AnyElement) -> AnyElement {
-        if self.sheet_focused_row() != Some(row) {
+        if !self.row_has_keys(row) {
             return el;
         }
         div()

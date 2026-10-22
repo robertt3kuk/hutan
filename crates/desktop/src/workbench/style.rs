@@ -37,7 +37,7 @@ impl TerminalStyle {
     }
 }
 
-/// A one-line tooltip.
+/// A tooltip of text: one line, or wrapped at 360 px when the text is longer than that.
 #[derive(Debug)]
 pub struct TextTooltip(pub gpui::SharedString);
 
@@ -50,6 +50,7 @@ impl gpui::Render for TextTooltip {
         use gpui::{ParentElement as _, Styled as _, div, px};
         let style = UiStyle::get(cx);
         div()
+            .max_w(px(360.0))
             .px(px(8.0))
             .py(px(4.0))
             .rounded(px(style.density.ui().radius - 2.0))

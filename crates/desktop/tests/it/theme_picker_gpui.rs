@@ -109,6 +109,20 @@ fn picker_index(field: PackField) -> usize {
     field.index()
 }
 
+/// Clicks the pack action `action` (`pack-open-folder`, `pack-reload`, `pack-duplicate`,
+/// `pack-reset`) of the open picker of `field`: they are in its `⋯` menu, opened first.
+fn pack_action(
+    view: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+    field: PackField,
+    action: &'static str,
+) {
+    if view.read_with(cx, |wb, _| wb.settings_sheet().and_then(|s| s.pack_menu())) != Some(field) {
+        click_region(view, cx, Region::SettingsItem("pack-more", field.index()));
+    }
+    click_region(view, cx, Region::SettingsItem(action, field.index()));
+}
+
 /// Opens a picker the way the head's click does, scrolling its row into view.
 fn open_picker(view: &Entity<Workbench>, cx: &mut VisualTestContext, field: PackField) {
     if view.read_with(cx, |wb, _| wb.open_pack_picker()) == Some(field) {
@@ -728,11 +742,7 @@ fn an_invalid_selection_falls_back_visibly_and_reset_removes_the_keys(cx: &mut T
 
     // The row's Reset to embedded default removes the key; nothing is written in its place.
     open_picker(&view, cx, PackField::DarkTheme);
-    click_region(
-        &view,
-        cx,
-        Region::SettingsItem("pack-reset", PackField::DarkTheme.index()),
-    );
+    pack_action(&view, cx, PackField::DarkTheme, "pack-reset");
     wait_until(cx, "the reset", |cx| resolved_id(&view, cx) == "hutan-dark");
     let file = fixture.settings_file();
     assert!(!file.contains("dark_theme"), "{file}");
@@ -775,6 +785,12 @@ fn an_unreadable_theme_never_removes_the_way_back(cx: &mut TestAppContext) {
         cx,
         Region::SettingsItem("pack-picker", picker_index(PackField::DarkTheme)),
     );
+    // Its actions are in the ⋯ menu of the picker, Reset to embedded default among them.
+    click_region(
+        &view,
+        cx,
+        Region::SettingsItem("pack-more", PackField::DarkTheme.index()),
+    );
     assert!(view.read_with(cx, |wb, _| {
         wb.region_bounds(Region::SettingsItem(
             "pack-reset",
@@ -782,7 +798,8 @@ fn an_unreadable_theme_never_removes_the_way_back(cx: &mut TestAppContext) {
         ))
         .is_some()
     }));
-    cx.simulate_keystrokes("escape escape");
+    // The menu, the picker, then the sheet.
+    cx.simulate_keystrokes("escape escape escape");
     // ... and so is the command, which does not depend on anything being legible.
     cx.dispatch_action(actions::ResetTheme);
     draw(cx);
@@ -806,11 +823,7 @@ fn the_row_opens_the_folder_reloads_and_duplicates_into_a_new_pack(cx: &mut Test
     open_picker(&view, cx, PackField::DarkTheme);
 
     // Open pack folder: the folder of that kind, created when it is not there.
-    click_region(
-        &view,
-        cx,
-        Region::SettingsItem("pack-open-folder", PackField::DarkTheme.index()),
-    );
+    pack_action(&view, cx, PackField::DarkTheme, "pack-open-folder");
     assert_eq!(opened.borrow().len(), 1);
     assert!(
         opened.borrow()[0].ends_with("themes"),
@@ -818,11 +831,7 @@ fn the_row_opens_the_folder_reloads_and_duplicates_into_a_new_pack(cx: &mut Test
         opened.borrow()
     );
     open_picker_if_closed(&view, cx, PackField::IconTheme);
-    click_region(
-        &view,
-        cx,
-        Region::SettingsItem("pack-open-folder", PackField::IconTheme.index()),
-    );
+    pack_action(&view, cx, PackField::IconTheme, "pack-open-folder");
     assert!(
         opened.borrow()[1].ends_with("icon-themes"),
         "{:?}",
@@ -832,11 +841,7 @@ fn the_row_opens_the_folder_reloads_and_duplicates_into_a_new_pack(cx: &mut Test
 
     // Validate / Reload says what it found.
     open_picker_if_closed(&view, cx, PackField::DarkTheme);
-    click_region(
-        &view,
-        cx,
-        Region::SettingsItem("pack-reload", PackField::DarkTheme.index()),
-    );
+    pack_action(&view, cx, PackField::DarkTheme, "pack-reload");
     let notice = view
         .read_with(cx, |wb, _| wb.notice().map(ToString::to_string))
         .unwrap();
@@ -849,11 +854,7 @@ fn the_row_opens_the_folder_reloads_and_duplicates_into_a_new_pack(cx: &mut Test
     cx.simulate_keystrokes("down");
     assert_eq!(cursor(&view, cx).as_deref(), Some("canopy"));
     let file = fixture.settings_file();
-    click_region(
-        &view,
-        cx,
-        Region::SettingsItem("pack-duplicate", PackField::DarkTheme.index()),
-    );
+    pack_action(&view, cx, PackField::DarkTheme, "pack-duplicate");
     assert!(fixture.home.join("themes/canopy-copy/theme.toml").is_file());
     assert_eq!(
         ids(&view, cx, PackField::DarkTheme, ""),

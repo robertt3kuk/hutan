@@ -20,7 +20,7 @@ use serde_json::{Value as Json, json};
 use super::render::probe;
 use super::settings_daemon::{EDIT_PREFIX, MCP_KEYS};
 use super::settings_labels::{daemon_field_help, daemon_field_title, words};
-use super::settings_rows::{note, sheet_row, small_button};
+use super::settings_rows::{SheetRow, note, small_button};
 use super::ui::FocusRingExt as _;
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
@@ -542,7 +542,7 @@ impl Workbench {
         let key = server.key.clone();
         let name = key.strip_prefix("mcp.").unwrap_or(&key).to_owned();
         let present = server.value.is_object();
-        let mut under = vec![self.daemon_source_line(server)];
+        let mut under: Vec<AnyElement> = Vec::new();
         if let Some(error) = self.daemon_settings.error(&key) {
             under.push(
                 div()
@@ -612,16 +612,19 @@ impl Workbench {
             )
             .children(buttons)
             .into_any_element();
-        let row = sheet_row(
+        let row_tag = format!("d:{key}");
+        let row = SheetRow::new(
             SharedString::from(format!("dfield-{key}")),
             daemon_field_title(&key),
             daemon_field_help(&key),
-            under,
             control,
-            &theme,
-            &tokens,
-        );
-        self.sheet_row_focus(&format!("d:{key}"), row)
+        )
+        .under(under)
+        .chip(self.daemon_chip(server))
+        .full_help(self.row_has_keys(&row_tag) && super::ui::keyboard_focus())
+        .top()
+        .build(&theme, &tokens);
+        self.sheet_row_focus(&row_tag, row)
     }
 
     /// The form: its boxes, the kind of server, the error, Save and Cancel.

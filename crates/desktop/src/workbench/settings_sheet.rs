@@ -23,15 +23,17 @@ use serde_json::Value as Json;
 
 use super::actions::sheet as sheet_actions;
 use super::modal::PromptSpec;
+use super::render::probe;
 use super::settings_keys::SheetFocus;
 use super::settings_labels::{namespace_title, words};
 use super::settings_pages::{preset_name, valid_env_name};
 use super::settings_schema::{
-    CatalogEntry, Field, FieldKind, catalog, number_range, page_fields, refine_kind, search,
-    value_at,
+    CatalogEntry, Field, FieldKind, NavGroup, catalog, number_range, page_fields, refine_kind,
+    search, value_at,
 };
+use super::style::TextTooltip;
 use super::ui::{FocusRingExt as _, StyledExt as _};
-use super::view::Workbench;
+use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::settings::LayoutSettings;
 
@@ -77,6 +79,13 @@ pub struct SettingsSheet {
     /// way they type while the sheet is open, so turning Vim on in it does not make its own
     /// Escape leave Insert instead of closing it.
     pub(super) vim: bool,
+    /// The Problems footer's list is open (over the page, which keeps its size).
+    pub(super) problems_open: bool,
+    /// The Advanced group of the page list is open (it is also open while it holds the
+    /// selected page or a search is on).
+    pub(super) advanced_open: bool,
+    /// The `⋯` menu of the open theme picker, for this picker.
+    pub(super) pack_menu: Option<super::settings_themes::PackField>,
 }
 
 impl SettingsSheet {
@@ -87,6 +96,21 @@ impl SettingsSheet {
 
     pub fn query(&self) -> &str {
         &self.query
+    }
+
+    /// Whether the Problems list is open.
+    pub fn problems_open(&self) -> bool {
+        self.problems_open
+    }
+
+    /// Whether the Advanced group was opened by hand.
+    pub fn advanced_open(&self) -> bool {
+        self.advanced_open
+    }
+
+    /// The picker whose `⋯` menu is open.
+    pub fn pack_menu(&self) -> Option<super::settings_themes::PackField> {
+        self.pack_menu
     }
 
     pub fn edit(&self) -> Option<&Edit> {
@@ -183,6 +207,9 @@ impl Workbench {
             pack_preview: None,
             scroll: gpui::ScrollHandle::new(),
             vim: self.vim_config().enabled,
+            problems_open: false,
+            advanced_open: false,
+            pack_menu: None,
         });
         window.focus(&self.sheet_focus, cx);
         self.edits.sheet_query.reset();
@@ -218,7 +245,9 @@ impl Workbench {
         }
     }
 
-    /// Escape: cancels an edit or a dropdown first, then closes the sheet.
+    /// Escape: closes what is open over the page, innermost first (the `⋯` menu of a picker, a
+    /// dropdown or picker, a text edit, the Problems list), then the sheet. The keyboard stays
+    /// on the row the dropdown was opened from.
     pub(crate) fn sheet_dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Under Vim mode the first Escape of a text field leaves Insert mode.
         if self.sheet_vim_escape(cx) {
@@ -227,6 +256,10 @@ impl Workbench {
         let Some(sheet) = &mut self.sheet else {
             return;
         };
+        if sheet.pack_menu.take().is_some() {
+            cx.notify();
+            return;
+        }
         let abandoned = sheet.edit.take();
         let closed_dropdown = sheet.dropdown.take().is_some();
         if closed_dropdown {
@@ -243,6 +276,8 @@ impl Workbench {
             {
                 self.daemon_settings.discard_refused(key);
             }
+            cx.notify();
+        } else if std::mem::take(&mut sheet.problems_open) {
             cx.notify();
         } else {
             self.close_settings(window, cx);
@@ -286,6 +321,7 @@ impl Workbench {
             sheet.dropdown = None;
             sheet.message = None;
             sheet.layer = None;
+            sheet.problems_open = false;
             sheet.zone = super::settings_keys::SheetFocus::Categories;
             sheet.focus_row = None;
             sheet.cursor = None;
@@ -318,6 +354,7 @@ impl Workbench {
                 sheet.edit = None;
                 sheet.dropdown = None;
                 sheet.layer = None;
+                sheet.problems_open = false;
                 sheet.focus_row = None;
                 sheet.cursor = None;
                 sheet.pack_filter.clear();
@@ -886,6 +923,167 @@ impl Workbench {
         }
     }
 
+    // ---- the page list and the footer ---------------------------------------------------------
+
+    /// The page list as drawn: each group with the pages the search leaves, and whether its pages
+    /// show. Advanced is closed until it was opened, holds the selected page or a search is on.
+    pub fn sheet_nav(&self) -> Vec<(NavGroup, bool, Vec<&'static str>)> {
+        let Some(sheet) = &self.sheet else {
+            return Vec::new();
+        };
+        let pages = self.sheet_pages();
+        NavGroup::ALL
+            .into_iter()
+            .filter_map(|group| {
+                let own: Vec<&'static str> = pages
+                    .iter()
+                    .copied()
+                    .filter(|page| NavGroup::of(page) == group)
+                    .collect();
+                if own.is_empty() {
+                    return None;
+                }
+                let open = group != NavGroup::Advanced
+                    || sheet.advanced_open
+                    || !sheet.query.trim().is_empty()
+                    || NavGroup::of(sheet.namespace) == group;
+                Some((group, open, own))
+            })
+            .collect()
+    }
+
+    /// Opens or closes the Advanced group of the page list (what the user chose; a search or
+    /// the selected page keep it open regardless).
+    pub fn sheet_toggle_advanced(&mut self, cx: &mut Context<Self>) {
+        if let Some(sheet) = &mut self.sheet {
+            sheet.advanced_open = !sheet.advanced_open;
+            cx.notify();
+        }
+    }
+
+    /// Opens or closes the list of problems over the page. Nothing to open without problems.
+    pub fn sheet_toggle_problems(&mut self, cx: &mut Context<Self>) {
+        if self.sheet_problems().is_empty() {
+            return;
+        }
+        if let Some(sheet) = &mut self.sheet {
+            sheet.problems_open = !sheet.problems_open;
+            cx.notify();
+        }
+    }
+
+    /// The problem lines of the selected page as drawn, in the order of
+    /// [`Self::sheet_problems`]: severity, the file (its folder and name; the whole path is
+    /// its hover), the key, and the reason with every token id in mono.
+    fn problem_lines(&self, mono: &SharedString) -> Vec<AnyElement> {
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let Some(sheet) = &self.sheet else {
+            return Vec::new();
+        };
+        let line = |severity: &str,
+                    tone: gpui::Hsla,
+                    file: Option<&std::path::Path>,
+                    key: &str,
+                    message: &str| {
+            let mut parts: Vec<AnyElement> = Vec::new();
+            if let Some(file) = file {
+                let full: SharedString = file.display().to_string().into();
+                parts.push(
+                    div()
+                        .id(SharedString::from(format!("problem-file-{full}")))
+                        .text_color(theme.muted)
+                        .tooltip({
+                            let full = full.clone();
+                            move |_, cx| cx.new(|_| TextTooltip(full.clone())).into()
+                        })
+                        .child(SharedString::from(short_path(file)))
+                        .into_any_element(),
+                );
+            }
+            if !key.is_empty() {
+                parts.push(
+                    div()
+                        .font_family(mono.clone())
+                        .child(SharedString::from(key.to_owned()))
+                        .into_any_element(),
+                );
+            }
+            // The reason is one flow of text, the ids in mono; the dots only part file, key and
+            // reason.
+            parts.push(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .children(token_runs(message).into_iter().map(|(text, id)| {
+                        let piece = div().child(SharedString::from(text));
+                        if id {
+                            piece.font_family(mono.clone()).into_any_element()
+                        } else {
+                            piece.into_any_element()
+                        }
+                    }))
+                    .into_any_element(),
+            );
+            let mut spans: Vec<AnyElement> = Vec::new();
+            for (i, part) in parts.into_iter().enumerate() {
+                if i > 0 {
+                    spans.push(div().text_color(theme.faint).child("·").into_any_element());
+                }
+                spans.push(part);
+            }
+            div()
+                .flex()
+                .flex_wrap()
+                .items_baseline()
+                .gap(px(tokens.spacing))
+                .py(px(2.0))
+                .text_size(px(tokens.secondary_font_size))
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(56.0))
+                        .text_color(tone)
+                        .child(SharedString::from(severity.to_owned())),
+                )
+                .children(spans)
+                .into_any_element()
+        };
+        let mut lines: Vec<AnyElement> = self
+            .settings
+            .errors()
+            .iter()
+            .map(|e| {
+                let tone = if e.is_error() {
+                    theme.danger
+                } else {
+                    theme.warning
+                };
+                line(
+                    &e.severity.to_string(),
+                    tone,
+                    e.file.as_deref(),
+                    &e.key_path,
+                    &e.message,
+                )
+            })
+            .collect();
+        lines.extend(
+            self.daemon_page_problems(sheet.namespace)
+                .iter()
+                .map(|message| {
+                    line(
+                        &Severity::Error.to_string(),
+                        theme.danger,
+                        None,
+                        "",
+                        message,
+                    )
+                }),
+        );
+        lines
+    }
+
     // ---- rendering --------------------------------------------------------------------------
 
     pub(crate) fn render_settings_sheet(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -896,87 +1094,84 @@ impl Workbench {
         let scroll = sheet.scroll.clone();
         let theme = self.theme;
         let tokens = self.density.ui();
-        let hover = theme.surface_hover;
         let selected = sheet.namespace;
         let editing = sheet.edit.clone();
         let message = sheet.message.clone();
         let query = sheet.query.clone();
         let zone = sheet.zone;
+        let problems_open = sheet.problems_open;
         let pages = self.sheet_pages();
         let errors = self.settings.errors();
+        let daemon_problems = self.daemon_page_problems(selected);
+        let problem_count = errors.len() + daemon_problems.len();
+        let has_errors =
+            !daemon_problems.is_empty() || errors.iter().any(|e| e.severity == Severity::Error);
+        let no_match = !query.trim().is_empty() && pages.is_empty();
 
-        let nav: Vec<AnyElement> = pages
-            .iter()
-            .map(|ns| {
-                let ns: &'static str = ns;
+        // The page list: group labels over the pages, Advanced behind its own header.
+        let mut nav: Vec<AnyElement> = Vec::new();
+        for (index, (group, open, own)) in self.sheet_nav().into_iter().enumerate() {
+            let forced = group == NavGroup::Advanced
+                && (!query.trim().is_empty() || NavGroup::of(selected) == group);
+            let label = div()
+                .id(SharedString::from(format!("nav-group-{}", group.title())))
+                .flex()
+                .items_center()
+                .gap(px(tokens.spacing))
+                .px(px(tokens.spacing * 2.0))
+                .pt(px(if index == 0 {
+                    2.0
+                } else {
+                    tokens.spacing * 3.0
+                }))
+                .pb(px(2.0))
+                .child(super::ui::section_label(group.title(), &theme, &tokens))
+                .when(group == NavGroup::Advanced, |s| {
+                    s.child(
+                        div()
+                            .text_size(px(tokens.section_font_size))
+                            .text_color(theme.muted)
+                            .child(if open { "▾" } else { "▸" }),
+                    )
+                    .when(!forced, |s| {
+                        s.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
+                            this.sheet_toggle_advanced(cx);
+                        }))
+                    })
+                });
+            nav.push(label.into_any_element());
+            if !open {
+                continue;
+            }
+            nav.extend(own.into_iter().map(|ns| {
                 div()
                     .id(SharedString::from(format!("ns-{ns}")))
                     .flex()
                     .items_center()
                     .h(px(tokens.sidebar_row))
-                    .px(px(tokens.spacing * 3.0))
+                    .px(px(tokens.spacing * 2.0))
                     .rounded(px(tokens.radius))
                     .cursor_pointer()
-                    .when(ns == selected, move |s| s.bg(theme.accent_soft))
+                    .when(ns == selected, |s| s.bg(theme.sidebar_accent))
+                    .when(ns != selected, |s| {
+                        s.hover(move |s| s.bg(theme.sidebar_hover))
+                    })
                     // The keyboard on the category list: the focus ring, not an outline.
                     .focus_ring(
                         ns == selected && zone == SheetFocus::Categories,
                         &theme,
                         &tokens,
                     )
-                    .hover(move |s| s.bg(hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.select_settings_namespace(ns, cx);
                     }))
                     .child(SharedString::from(namespace_title(ns)))
                     .into_any_element()
-            })
-            .collect();
+            }));
+        }
 
-        let problems: Vec<AnyElement> = errors
-            .iter()
-            .map(|e| {
-                let color = if e.is_error() {
-                    theme.danger
-                } else {
-                    theme.warning
-                };
-                div()
-                    .flex()
-                    .gap(px(tokens.spacing * 2.0))
-                    .text_size(px(tokens.secondary_font_size))
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_color(color)
-                            .child(SharedString::from(e.severity.to_string())),
-                    )
-                    .child(div().min_w_0().child(SharedString::from(problem_text(e))))
-                    .into_any_element()
-            })
-            .collect();
-        let daemon_problems = self.daemon_page_problems(selected);
-        let problems: Vec<AnyElement> = problems
-            .into_iter()
-            .chain(daemon_problems.iter().map(|message| {
-                div()
-                    .flex()
-                    .gap(px(tokens.spacing * 2.0))
-                    .text_size(px(tokens.secondary_font_size))
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_color(theme.danger)
-                            .child(SharedString::from(Severity::Error.to_string())),
-                    )
-                    .child(div().min_w_0().child(SharedString::from(message.clone())))
-                    .into_any_element()
-            }))
-            .collect();
-        let problem_count = problems.len();
-        let has_errors =
-            !daemon_problems.is_empty() || errors.iter().any(|e| e.severity == Severity::Error);
-        let no_match = !query.trim().is_empty() && pages.is_empty();
+        let mono = SharedString::from(super::terminals::mono_family(cx, &self.resolved_theme));
+        let problem_lines = self.problem_lines(&mono);
         let rows = if no_match {
             vec![self.render_no_match(cx)]
         } else {
@@ -998,7 +1193,7 @@ impl Workbench {
             .id("sheet-search")
             .flex()
             .items_center()
-            .h(px(tokens.sidebar_row))
+            .h(px(tokens.control_height))
             .mx(px(tokens.spacing * 2.0))
             .mb(px(tokens.spacing * 2.0))
             .px(px(tokens.spacing * 2.0))
@@ -1027,7 +1222,7 @@ impl Workbench {
                     .into_any_element()
             } else if query.is_empty() {
                 div()
-                    .text_color(theme.faint)
+                    .text_color(theme.muted)
                     .flex()
                     .items_center()
                     .gap(px(4.0))
@@ -1039,6 +1234,42 @@ impl Workbench {
                     .child(SharedString::from(query.clone()))
                     .into_any_element()
             });
+
+        // One muted line, 32 px whatever it says: the list of problems opens over the page.
+        let footer_text = if no_match && problem_count == 0 {
+            words::NO_MATCH_FOOTER.to_owned()
+        } else if problem_count == 0 {
+            words::PROBLEMS_NONE.to_owned()
+        } else {
+            format!(
+                "{} · {problem_count} {}",
+                words::PROBLEMS_COUNT,
+                if problems_open { "▾" } else { "▸" }
+            )
+        };
+        let footer = div()
+            .id("sheet-footer")
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(32.0))
+            .px(px(tokens.spacing * 4.0))
+            .border_t_1()
+            .border_color(theme.border)
+            .text_size(px(tokens.secondary_font_size))
+            .text_color(if has_errors {
+                theme.danger
+            } else {
+                theme.muted
+            })
+            .when(problem_count > 0, |s| {
+                s.cursor_pointer()
+                    .hover(move |s| s.bg(theme.surface_hover))
+                    .on_click(cx.listener(|this, _, _, cx| this.sheet_toggle_problems(cx)))
+            })
+            .child(SharedString::from(footer_text))
+            .child(probe(&self.regions, Region::Settings("sheet-footer")));
 
         Some(
             div()
@@ -1059,7 +1290,8 @@ impl Workbench {
                         .id("settings-sheet")
                         .key_context("SettingsSheet")
                         .track_focus(&self.sheet_focus)
-                        .w(px(860.0))
+                        .relative()
+                        .w(px(880.0))
                         .h(px(600.0))
                         .flex()
                         .flex_col()
@@ -1084,6 +1316,7 @@ impl Workbench {
                         }))
                         .child(
                             div()
+                                .relative()
                                 .flex()
                                 .flex_1()
                                 .min_h_0()
@@ -1092,8 +1325,8 @@ impl Workbench {
                                         .flex()
                                         .flex_col()
                                         .flex_none()
-                                        .w(px(220.0))
-                                        .py(px(tokens.spacing * 3.0))
+                                        .w(px(200.0))
+                                        .pt(px(tokens.spacing * 3.0))
                                         .bg(theme.sidebar)
                                         .border_r_1()
                                         .border_color(theme.border)
@@ -1103,7 +1336,8 @@ impl Workbench {
                                                 .id("sheet-nav")
                                                 .flex_1()
                                                 .overflow_y_scroll()
-                                                .px(px(tokens.spacing))
+                                                .px(px(tokens.spacing * 2.0))
+                                                .pb(px(tokens.spacing * 2.0))
                                                 .children(nav),
                                         ),
                                 )
@@ -1116,14 +1350,16 @@ impl Workbench {
                                         .child(
                                             div()
                                                 .flex()
+                                                .flex_none()
                                                 .items_center()
                                                 .justify_between()
-                                                .h(px(tokens.sidebar_row + 8.0))
+                                                .h(px(tokens.sidebar_row + 18.0))
                                                 .px(px(tokens.spacing * 4.0))
                                                 .border_b_1()
                                                 .border_color(theme.border)
                                                 .child(
                                                     div()
+                                                        .text_size(px(15.0))
                                                         .font_weight(gpui::FontWeight::MEDIUM)
                                                         .child(SharedString::from(if no_match {
                                                             "Search".to_owned()
@@ -1161,44 +1397,151 @@ impl Workbench {
                                                     .child(SharedString::from(message)),
                                             )
                                         }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id("sheet-errors")
-                                .flex()
-                                .flex_col()
-                                .flex_none()
-                                .max_h(px(110.0))
-                                .overflow_y_scroll()
-                                .gap(px(2.0))
-                                .px(px(tokens.spacing * 4.0))
-                                .py(px(tokens.spacing * 2.0))
-                                .border_t_1()
-                                .border_color(theme.border)
-                                .child(
-                                    div()
-                                        .text_size(px(tokens.section_font_size))
-                                        .font_weight(gpui::FontWeight::MEDIUM)
-                                        .text_color(if has_errors {
-                                            theme.danger
-                                        } else {
-                                            theme.muted
-                                        })
-                                        .child(SharedString::from(
-                                            if no_match && problem_count == 0 {
-                                                words::NO_MATCH_FOOTER.to_owned()
-                                            } else if problem_count == 0 {
-                                                words::PROBLEMS_NONE.to_owned()
-                                            } else {
-                                                format!("Problems · {problem_count}")
-                                            },
-                                        )),
                                 )
-                                .children(problems),
-                        ),
+                                .child(probe(&self.regions, Region::Settings("sheet-body"))),
+                        )
+                        .child(footer)
+                        // The list of problems: in front of the page, above the footer; the page
+                        // and the footer keep their size.
+                        .when(problems_open && problem_count > 0, |s| {
+                            s.child(
+                                div()
+                                    .id("sheet-problems")
+                                    .absolute()
+                                    .left_0()
+                                    .right_0()
+                                    .bottom(px(32.0))
+                                    .max_h(px(220.0))
+                                    .overflow_y_scroll()
+                                    .occlude()
+                                    .px(px(tokens.spacing * 4.0))
+                                    .py(px(tokens.spacing * 2.0))
+                                    .bg(theme.surface)
+                                    .border_t_1()
+                                    .border_color(theme.border)
+                                    .children(problem_lines),
+                            )
+                        }),
                 )
                 .into_any_element(),
         )
+    }
+}
+
+/// The last two parts of a path (`canopy-day/theme.toml`): where a problem is, short; the whole
+/// path is the hover.
+fn short_path(path: &std::path::Path) -> String {
+    let parts: Vec<_> = path
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    let from = parts.len().saturating_sub(2);
+    parts[from..].join("/")
+}
+
+/// Whether `word` is a token id (`diff.hunk.foreground`, `ui.accent`): lowercase dotted
+/// segments that start with a letter, none only digits. A number (`4.5`), a version (`v1.0`)
+/// or a sentence end is not.
+fn is_token_id(word: &str) -> bool {
+    let mut segments = word.split('.');
+    let Some(first) = segments.next() else {
+        return false;
+    };
+    let rest: Vec<&str> = segments.collect();
+    !rest.is_empty()
+        && first.starts_with(|c: char| c.is_ascii_lowercase())
+        && std::iter::once(first).chain(rest).all(|segment| {
+            !segment.is_empty()
+                && !segment.chars().all(|c| c.is_ascii_digit())
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        })
+}
+
+/// A message split into runs of its own text, the token ids apart: `(text, is_token_id)`. The
+/// plain runs keep their spaces and the punctuation after an id (`a.b:`), so the runs put
+/// together are the message again.
+pub(super) fn token_runs(message: &str) -> Vec<(String, bool)> {
+    let mut runs: Vec<(String, bool)> = Vec::new();
+    let mut plain_from = 0;
+    let mut word_from: Option<usize> = None;
+    let ends = message.len();
+    for (at, c) in message.char_indices().chain(std::iter::once((ends, ' '))) {
+        match (c.is_whitespace(), word_from) {
+            (false, None) => word_from = Some(at),
+            (true, Some(from)) => {
+                word_from = None;
+                let word = &message[from..at];
+                let bare = word.trim_end_matches([',', ':', ';', '.']);
+                if is_token_id(bare) {
+                    if plain_from < from {
+                        runs.push((message[plain_from..from].to_owned(), false));
+                    }
+                    runs.push((bare.to_owned(), true));
+                    plain_from = from + bare.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    if plain_from < ends {
+        runs.push((message[plain_from..].to_owned(), false));
+    }
+    runs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_ids_are_set_apart_from_the_reason() {
+        assert_eq!(
+            token_runs(
+                "diff.hunk.foreground on diff.hunk.background: contrast 4.26:1, below 4.5:1"
+            ),
+            vec![
+                ("diff.hunk.foreground".to_owned(), true),
+                (" on ".to_owned(), false),
+                ("diff.hunk.background".to_owned(), true),
+                (": contrast 4.26:1, below 4.5:1".to_owned(), false),
+            ]
+        );
+        // The runs are the message.
+        assert_eq!(
+            token_runs("a.b and c.d.")
+                .iter()
+                .map(|(t, _)| t.as_str())
+                .collect::<String>(),
+            "a.b and c.d."
+        );
+        // A number, a version and a sentence end are words.
+        assert_eq!(
+            token_runs("v1.0 is not 4.5 enough."),
+            vec![("v1.0 is not 4.5 enough.".to_owned(), false)]
+        );
+        assert!(is_token_id("ui.accent"));
+        assert!(is_token_id("terminal.ansi-black"));
+        assert!(!is_token_id("accent"));
+        assert!(!is_token_id("Ui.accent"));
+        assert!(!is_token_id("a..b"));
+    }
+
+    #[test]
+    fn a_path_is_shortened_to_its_folder_and_file() {
+        assert_eq!(
+            short_path(std::path::Path::new(
+                "/Users/a/home/themes/canopy-day/theme.toml"
+            )),
+            "canopy-day/theme.toml"
+        );
+        assert_eq!(
+            short_path(std::path::Path::new("settings.toml")),
+            "settings.toml"
+        );
     }
 }

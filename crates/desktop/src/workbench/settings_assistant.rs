@@ -29,7 +29,7 @@ use super::agents::Models;
 use super::panels::ScopeKey;
 use super::settings_daemon::sections;
 use super::settings_labels::{daemon_field_help, daemon_field_title, words};
-use super::settings_rows::{note, sheet_row, small_button};
+use super::settings_rows::{menu_option, menu_panel, note, sheet_row, small_button};
 use super::view::Workbench;
 use crate::theme::DensityExt as _;
 
@@ -1029,49 +1029,51 @@ impl Workbench {
             Models::Ready(_) if list.is_empty() => Some(words::MODEL_NONE.to_owned()),
             Models::Ready(_) => None,
         };
-        div()
-            .flex()
-            .flex_col()
-            .items_end()
-            .gap(px(tokens.spacing))
-            .child(head)
-            .when(open, |s| {
-                s.child(
-                    small_button(
-                        SharedString::from(format!("amodel-option-{id}-automatic")),
-                        words::AUTOMATIC,
-                        config.model.is_none(),
-                        &theme,
-                        &tokens,
-                    )
-                    .when(self.dropdown_cursor_at(&menu, ""), |b| {
-                        b.bg(theme.surface_hover)
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.assistant_choose_model(scope, None, cx);
-                    })),
+        let panel = open.then(|| {
+            menu_panel(
+                SharedString::from(format!("amodel-menu-{id}")),
+                320.0,
+                &theme,
+                &tokens,
+            )
+            .min_w(px(200.0))
+            .child(
+                menu_option(
+                    SharedString::from(format!("amodel-option-{id}-automatic")),
+                    words::AUTOMATIC,
+                    config.model.is_none(),
+                    self.dropdown_cursor_at(&menu, ""),
+                    &theme,
+                    &tokens,
                 )
-                .children(list.iter().map(|model| {
-                    let chosen = model.id.clone();
-                    small_button(
-                        SharedString::from(format!("amodel-option-{id}-{}", model.id)),
-                        SharedString::from(model.display_name.clone()),
-                        config.model.as_deref() == Some(model.id.as_str()),
-                        &theme,
-                        &tokens,
-                    )
-                    .when(self.dropdown_cursor_at(&menu, &model.id), |b| {
-                        b.bg(theme.surface_hover)
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.assistant_choose_model(scope, Some(chosen.clone()), cx);
-                    }))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.assistant_choose_model(scope, None, cx);
+                })),
+            )
+            .children(list.iter().map(|model| {
+                let chosen = model.id.clone();
+                menu_option(
+                    SharedString::from(format!("amodel-option-{id}-{}", model.id)),
+                    SharedString::from(model.display_name.clone()),
+                    config.model.as_deref() == Some(model.id.as_str()),
+                    self.dropdown_cursor_at(&menu, &model.id),
+                    &theme,
+                    &tokens,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.assistant_choose_model(scope, Some(chosen.clone()), cx);
                 }))
-                .when_some(note_text.clone(), |s, text| {
-                    s.child(note(text, &theme, &tokens))
-                })
+            }))
+            .when_some(note_text.clone(), |s, text| {
+                s.child(
+                    div()
+                        .px(px(tokens.spacing * 2.0))
+                        .py(px(tokens.spacing))
+                        .child(note(text, &theme, &tokens)),
+                )
             })
-            .into_any_element()
+        });
+        self.menu_anchor(&menu, head, panel, Self::close_dropdown, cx)
     }
 
     /// One permission of the shown workspace: Inherit, Allow or Deny.

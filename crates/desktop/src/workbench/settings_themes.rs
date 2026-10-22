@@ -32,7 +32,7 @@ use hutan_settings::{AppearanceSettings, SystemAppearance};
 
 use super::render::probe;
 use super::settings_labels::{field_help, field_title, words};
-use super::settings_rows::{note, sheet_row, small_button};
+use super::settings_rows::{SheetRow, menu_option, menu_panel, note, small_button};
 use super::settings_schema::Field;
 use super::settings_theme_preview as sample;
 use super::style::TextTooltip;
@@ -305,15 +305,19 @@ impl Workbench {
 
     // ---- the cursor and the preview -------------------------------------------------------------------
 
-    /// Opens or closes the picker of `field`.
+    /// Opens or closes the picker of `field`. Either way the keyboard is on the field's row
+    /// afterwards.
     pub fn toggle_pack_picker(&mut self, field: PackField, cx: &mut Context<Self>) {
         let open = self.open_pack_picker() == Some(field);
         if let Some(sheet) = &mut self.sheet {
             sheet.cursor = None;
             sheet.pack_filter.clear();
             sheet.pack_preview = None;
+            sheet.pack_menu = None;
             sheet.dropdown = (!open).then(|| field.key().to_owned());
             sheet.edit = None;
+            sheet.zone = super::settings_keys::SheetFocus::Controls;
+            sheet.focus_row = Some(format!("f:{}", field.key()));
         }
         if !open {
             self.scroll_to_pack_row(field);
@@ -347,13 +351,7 @@ impl Workbench {
 
     /// Closes the open picker without writing anything: Escape, a click outside it.
     pub fn close_pack_picker(&mut self, cx: &mut Context<Self>) {
-        if let Some(sheet) = &mut self.sheet {
-            sheet.dropdown = None;
-            sheet.cursor = None;
-            sheet.pack_filter.clear();
-            sheet.pack_preview = None;
-        }
-        cx.notify();
+        self.close_dropdown(cx);
     }
 
     /// A key typed into the open picker's search box. `true` when the key was used.
@@ -505,6 +503,7 @@ impl Workbench {
             sheet.cursor = None;
             sheet.pack_filter.clear();
             sheet.pack_preview = None;
+            sheet.pack_menu = None;
         }
         if current.as_deref() == Some(choice) {
             cx.notify();
@@ -648,8 +647,8 @@ impl Workbench {
 
     // ---- rendering ----------------------------------------------------------------------------
 
-    /// The row of a picker setting: its current pack, the open picker with its list and
-    /// preview, and the pack actions.
+    /// The row of a picker setting: its title, one line of help, the `You` chip and ↺, and the
+    /// head, a button with the current pack's name, from which the picker hangs.
     pub(super) fn render_pack_row(
         &self,
         pack_field: PackField,
@@ -673,26 +672,23 @@ impl Workbench {
             (None, other) => words::not_available(other),
         };
 
-        let mut under = vec![self.source_line(field, cx)];
-        under.push(match current_info {
-            Some(info) => note(pack_summary(info), &theme, &tokens).into_any_element(),
-            None if current == AUTO => note(
-                "Follows the color theme in use: its own terminal colors.",
-                &theme,
-                &tokens,
-            )
-            .into_any_element(),
-            None => note(
-                format!(
-                    "`{current}` is not installed or is invalid: the embedded {} is used until it works (see Problems)",
-                    pack_field.noun()
-                ),
-                &theme,
-                &tokens,
-            )
-            .text_color(theme.warning)
-            .into_any_element(),
-        });
+        // The pack's authors, license and version are in the picker; the row only speaks up
+        // when the pack asked for is not there.
+        let mut under: Vec<AnyElement> = Vec::new();
+        if current_info.is_none() && current != AUTO {
+            under.push(
+                note(
+                    format!(
+                        "`{current}` is not installed or is invalid: the embedded {} is used until it works (see Problems)",
+                        pack_field.noun()
+                    ),
+                    &theme,
+                    &tokens,
+                )
+                .text_color(theme.warning)
+                .into_any_element(),
+            );
+        }
 
         let head = small_button(
             SharedString::from(format!("dropdown-{key}")),
@@ -708,58 +704,36 @@ impl Workbench {
             &self.regions,
             Region::SettingsItem("pack-picker", pack_field.index()),
         ));
-        // The Reset every other row has, while the file sets the key.
-        let reset = self.field_has_key(field).then(|| {
-            let k = key.clone();
-            small_button(
-                SharedString::from(format!("reset-{key}")),
-                words::RESET,
-                false,
-                &theme,
-                &tokens,
-            )
-            .text_color(theme.muted)
-            .on_click(cx.listener(move |this, _, _, cx| this.sheet_reset(&k, cx)))
-        });
-        let row = sheet_row(
+        let panel = open.then(|| self.render_pack_picker(pack_field, &current, cx));
+        let control = self.menu_anchor(pack_field.key(), head, panel, Self::close_dropdown, cx);
+        let row_tag = format!("f:{key}");
+        let row = SheetRow::new(
             SharedString::from(format!("field-{key}")),
             field_title(ns, &key),
             field_help(ns, &key, &field.doc),
-            under,
-            div()
-                .flex()
-                .items_start()
-                .gap(px(tokens.spacing * 2.0))
-                .children(reset)
-                .child(head)
-                .into_any_element(),
-            &theme,
-            &tokens,
-        );
-        // The picker opens below the row, over its whole width. A click anywhere outside the
-        // row and its picker (the search box of the sheet, another row) cancels it; one inside
-        // never does.
-        let row = div()
-            .id(SharedString::from(format!("pack-row-{key}")))
-            .flex()
-            .flex_col()
-            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                if this.open_pack_picker() == Some(pack_field) {
-                    this.close_pack_picker(cx);
-                }
-            }))
-            .child(row)
-            .children(open.then(|| self.render_pack_picker(pack_field, &current, cx)))
-            .into_any_element();
-        self.sheet_row_focus(&format!("f:{key}"), row)
+            control,
+        )
+        .under(under)
+        .chip(self.field_chip(field, cx))
+        .reset(self.field_reset(field, &self.sheet_kind_of(field), cx))
+        .marked(probe(
+            &self.regions,
+            Region::SettingsItem("row", self.field_index(field)),
+        ))
+        .full_help(self.row_has_keys(&row_tag) && super::ui::keyboard_focus())
+        .build(&theme, &tokens);
+        self.sheet_row_focus(&row_tag, row)
     }
 
+    /// The picker: a popover with the search box and the `⋯` menu of pack actions on top, the
+    /// list of packs on the left, the preview of the one the cursor is on on the right, and the
+    /// keys underneath.
     fn render_pack_picker(
         &self,
         pack_field: PackField,
         current: &str,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> gpui::Stateful<gpui::Div> {
         let theme = self.theme;
         let tokens = self.density.ui();
         let filter = self.pack_filter().to_owned();
@@ -773,6 +747,12 @@ impl Workbench {
                     .position(|r| r.value.as_deref().is_some_and(|v| v == current))
             })
             .unwrap_or(0);
+        // The pack card above the preview: the highlighted pack's authors, license and version.
+        let summary = rows
+            .get(at)
+            .and_then(|r| r.info.as_ref())
+            .map(pack_summary)
+            .filter(|s| !s.is_empty());
         // Six lines at a time, following the cursor.
         const SHOWN: usize = 6;
         let start = at
@@ -782,9 +762,11 @@ impl Workbench {
         let search = div()
             .id("pack-filter")
             .flex()
+            .flex_1()
+            .min_w_0()
             .items_center()
             .gap(px(tokens.spacing))
-            .h(px(tokens.control_height - 4.0))
+            .h(px(tokens.control_height))
             .px(px(tokens.spacing * 2.0))
             .outlined(&theme, &tokens)
             // The picker's field has the keyboard while the picker is open.
@@ -793,10 +775,47 @@ impl Workbench {
             .child(if filter.is_empty() {
                 div()
                     .text_color(theme.muted)
-                    .child("Type to search by name, id or author")
+                    .child("Search by name, id or author")
             } else {
                 div().child(SharedString::from(filter.clone()))
             });
+        let menu_open = self
+            .sheet
+            .as_ref()
+            .is_some_and(|s| s.pack_menu == Some(pack_field));
+        let more_tag = format!("pack-more-{}", pack_field.key());
+        let more_head = div()
+            .id(SharedString::from(more_tag.clone()))
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(tokens.control_height))
+            .rounded(px(tokens.radius))
+            .text_color(theme.muted)
+            .cursor_pointer()
+            .when(menu_open, |s| s.bg(theme.accent_soft).text_color(theme.fg))
+            .hover(move |s| s.bg(theme.surface_hover))
+            .tooltip(|_, cx| cx.new(|_| TextTooltip(words::PACK_MORE_TIP.into())).into())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(sheet) = &mut this.sheet {
+                    sheet.pack_menu = (sheet.pack_menu != Some(pack_field)).then_some(pack_field);
+                    cx.notify();
+                }
+            }))
+            .child(crate::icons::glyph(crate::icons::Icon::ActionMore))
+            .relative()
+            .child(probe(
+                &self.regions,
+                Region::SettingsItem("pack-more", pack_field.index()),
+            ));
+        let more = self.menu_anchor(
+            &more_tag,
+            more_head,
+            menu_open.then(|| self.render_pack_actions(pack_field, cx)),
+            Self::close_pack_menu,
+            cx,
+        );
         let list = div()
             .id(SharedString::from(format!(
                 "pack-list-{}",
@@ -826,69 +845,57 @@ impl Workbench {
             }));
         let preview = match self.pack_preview() {
             Some(preview) if preview.field == pack_field => {
-                self.render_pack_preview(preview, cx)
+                self.render_pack_preview(preview, summary, cx)
             }
             _ => note(
-                "↑ ↓ or the pointer preview a theme here without changing anything; Return or a click applies it, Escape cancels.",
+                "↑ ↓ or the pointer preview a theme here without changing anything.",
                 &theme,
                 &tokens,
             )
             .into_any_element(),
         };
-        let apply = cursor.clone().filter(|c| c != current).map(|choice| {
-            small_button("pack-apply", "Apply", true, &theme, &tokens)
-                .relative()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.pack_apply(pack_field, &choice, cx);
-                }))
-                .child(probe(&self.regions, Region::Settings("pack-apply")))
-        });
-        div()
-            .id(SharedString::from(format!(
-                "pack-picker-{}",
-                pack_field.key()
-            )))
-            .flex()
-            .flex_col()
-            .gap(px(tokens.spacing * 2.0))
-            .my(px(tokens.spacing * 2.0))
-            .p(px(tokens.spacing * 2.0))
-            .rounded(px(tokens.card_radius))
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.surface)
-            .child(self.render_pack_actions(pack_field, cx))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(tokens.spacing * 3.0))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_none()
-                            .w(px(264.0))
-                            .gap(px(tokens.spacing * 2.0))
-                            .child(search)
-                            .child(list),
-                    )
-                    .child(div().flex().flex_col().flex_1().min_w_0().child(preview)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(tokens.spacing * 2.0))
-                    .child(
-                        small_button("pack-cancel", "Cancel", false, &theme, &tokens)
-                            .relative()
-                            .on_click(cx.listener(|this, _, _, cx| this.close_pack_picker(cx)))
-                            .child(probe(&self.regions, Region::Settings("pack-cancel"))),
-                    )
-                    .children(apply),
-            )
-            .into_any_element()
+        menu_panel(
+            SharedString::from(format!("pack-picker-{}", pack_field.key())),
+            460.0,
+            &theme,
+            &tokens,
+        )
+        .w(px(620.0))
+        .min_h(px(240.0))
+        .gap(px(tokens.spacing * 2.0))
+        .p(px(tokens.spacing * 2.0))
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(tokens.spacing))
+                .child(search)
+                .child(more),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_1()
+                .gap(px(tokens.spacing * 3.0))
+                .child(div().flex().flex_col().flex_none().w(px(264.0)).child(list))
+                .child(div().flex().flex_col().flex_1().min_w_0().child(preview)),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(theme.muted)
+                .child(words::PACK_HINT),
+        )
+    }
+
+    /// Closes the picker's `⋯` menu, and nothing else.
+    fn close_pack_menu(&mut self, cx: &mut Context<Self>) {
+        if let Some(sheet) = &mut self.sheet {
+            sheet.pack_menu = None;
+        }
+        cx.notify();
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -906,7 +913,6 @@ impl Workbench {
         let is_current = row.value.as_deref() == Some(current);
         let pointed = row.value.is_some() && row.value.as_deref() == cursor;
         let mut badges: Vec<&'static str> = Vec::new();
-        let detail: String;
         let mut errors: Vec<String> = Vec::new();
         let mut id_text = String::new();
         if let Some(info) = &row.info {
@@ -923,13 +929,10 @@ impl Workbench {
             if let Some(id) = &info.id {
                 id_text = id.clone();
             }
-            detail = pack_summary(info);
             errors = info.errors().map(error_line).collect();
             if !info.valid {
                 badges.push("Disabled");
             }
-        } else {
-            detail = "The active color theme's own terminal colors".to_owned();
         }
         let value = row.value.clone();
         let mut element = div()
@@ -954,6 +957,7 @@ impl Workbench {
                     .child(
                         div()
                             .min_w_0()
+                            .truncate()
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(if row.value.is_some() {
                                 theme.fg
@@ -990,16 +994,17 @@ impl Workbench {
                         .children(
                             badges
                                 .into_iter()
-                                .map(|badge| super::ui::pill(badge, &theme, &tokens)),
+                                .map(|badge| super::ui::counter(badge, &theme, &tokens)),
                         ),
                 )
             })
-            .child(
-                div()
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.muted)
-                    .child(SharedString::from(detail)),
-            )
+            .when(row.info.is_none(), |s| {
+                s.child(note(
+                    "The active color theme's own terminal colors",
+                    &theme,
+                    &tokens,
+                ))
+            })
             .children(errors.into_iter().take(2).map(|line| {
                 div()
                     .text_size(px(tokens.secondary_font_size))
@@ -1028,7 +1033,12 @@ impl Workbench {
         element.into_any_element()
     }
 
-    fn render_pack_preview(&self, preview: &PackPreview, _cx: &mut Context<Self>) -> AnyElement {
+    fn render_pack_preview(
+        &self,
+        preview: &PackPreview,
+        summary: Option<String>,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
         let body = match &preview.body {
@@ -1074,6 +1084,7 @@ impl Workbench {
                             .child("not applied"),
                     ),
             )
+            .children(summary.map(|summary| note(summary, &theme, &tokens)))
             .child(body)
             .children(preview.notes.iter().take(4).map(|line| {
                 div()
@@ -1084,7 +1095,12 @@ impl Workbench {
             .into_any_element()
     }
 
-    fn render_pack_actions(&self, pack_field: PackField, cx: &mut Context<Self>) -> AnyElement {
+    /// The pack actions: the `⋯` menu of the picker.
+    fn render_pack_actions(
+        &self,
+        pack_field: PackField,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
         let theme = self.theme;
         let tokens = self.density.ui();
         let kind = pack_field.kind();
@@ -1094,51 +1110,58 @@ impl Workbench {
             .map(|d| d.join(kind.folder()).display().to_string())
             .unwrap_or_else(|| "no data folder".to_owned())
             .into();
-        let button = |id: &'static str, label: &'static str| {
-            small_button(id, label, false, &theme, &tokens).relative()
+        let item = |id: &'static str, label: &'static str| {
+            menu_option(id, label, false, false, &theme, &tokens).relative()
         };
-        div()
-            .flex()
-            .flex_wrap()
-            .gap(px(tokens.spacing * 2.0))
-            .mt(px(tokens.spacing))
-            .child(
-                button("pack-open-folder", words::PACK_OPEN_FOLDER)
-                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(folder_tip.clone())).into())
-                    .on_click(cx.listener(move |this, _, _, cx| this.pack_open_folder(kind, cx)))
-                    .child(probe(
-                        &self.regions,
-                        Region::SettingsItem("pack-open-folder", pack_field.index()),
-                    )),
-            )
-            .child(
-                button("pack-reload", words::PACK_RELOAD)
-                    .on_click(cx.listener(|this, _, _, cx| this.pack_reload(cx)))
-                    .child(probe(
-                        &self.regions,
-                        Region::SettingsItem("pack-reload", pack_field.index()),
-                    )),
-            )
-            .child(
-                button("pack-duplicate", words::PACK_DUPLICATE)
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.pack_duplicate(pack_field, cx)),
-                    )
-                    .child(probe(
-                        &self.regions,
-                        Region::SettingsItem("pack-duplicate", pack_field.index()),
-                    )),
-            )
-            .child(
-                button("pack-reset", words::PACK_RESET)
-                    .text_color(theme.muted)
-                    .on_click(cx.listener(move |this, _, _, cx| this.pack_reset(pack_field, cx)))
-                    .child(probe(
-                        &self.regions,
-                        Region::SettingsItem("pack-reset", pack_field.index()),
-                    )),
-            )
-            .into_any_element()
+        menu_panel(
+            SharedString::from(format!("pack-actions-{}", pack_field.key())),
+            220.0,
+            &theme,
+            &tokens,
+        )
+        .min_w(px(210.0))
+        .child(
+            item("pack-open-folder", words::PACK_OPEN_FOLDER)
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip(folder_tip.clone())).into())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.close_pack_menu(cx);
+                    this.pack_open_folder(kind, cx);
+                }))
+                .child(probe(
+                    &self.regions,
+                    Region::SettingsItem("pack-open-folder", pack_field.index()),
+                )),
+        )
+        .child(
+            item("pack-reload", words::PACK_RELOAD)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.close_pack_menu(cx);
+                    this.pack_reload(cx);
+                }))
+                .child(probe(
+                    &self.regions,
+                    Region::SettingsItem("pack-reload", pack_field.index()),
+                )),
+        )
+        .child(
+            item("pack-duplicate", words::PACK_DUPLICATE)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.close_pack_menu(cx);
+                    this.pack_duplicate(pack_field, cx);
+                }))
+                .child(probe(
+                    &self.regions,
+                    Region::SettingsItem("pack-duplicate", pack_field.index()),
+                )),
+        )
+        .child(
+            item("pack-reset", words::PACK_RESET)
+                .on_click(cx.listener(move |this, _, _, cx| this.pack_reset(pack_field, cx)))
+                .child(probe(
+                    &self.regions,
+                    Region::SettingsItem("pack-reset", pack_field.index()),
+                )),
+        )
     }
 }
 
