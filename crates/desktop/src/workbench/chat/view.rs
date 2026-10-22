@@ -1734,7 +1734,10 @@ impl Render for ChatView {
         let theme = look.theme;
         div()
             .id("chat")
-            .key_context(KEY_CONTEXT)
+            .key_context(crate::workbench::vim_ui::vim_key_context(
+                KEY_CONTEXT,
+                self.vim_mode(cx),
+            ))
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| this.on_key(event, cx)))
             .on_action(cx.listener(|this, _: &actions::chat::SendMessage, _, cx| {

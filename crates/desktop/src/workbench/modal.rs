@@ -353,7 +353,10 @@ impl Workbench {
                 .child(
                     div()
                         .id("modal")
-                        .key_context("Modal")
+                        .key_context(super::vim_ui::vim_key_context(
+                            "Modal",
+                            self.overlay_vim_mode(super::vim_ui::OverlayField::Modal),
+                        ))
                         .track_focus(&self.modal_focus)
                         .w(px(440.0))
                         .flex()

@@ -417,6 +417,56 @@ fn with_vim_off_ctrl_bracket_is_no_escape(cx: &mut TestAppContext) {
     );
 }
 
+// ---- precedence: the `vim_mode` contexts -------------------------------------------------------
+
+#[gpui::test]
+fn the_overlays_carry_vim_mode_in_their_key_context(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    // ⌃Y closes the palette only in Normal mode (a binding the user scoped to it).
+    std::fs::write(
+        daemon.home().join("keymap.toml"),
+        "[[binding]]\nkeys = \"ctrl-y\"\naction = \"palette::Dismiss\"\ncontext = \"Palette && vim_mode == normal\"\n",
+    )
+    .unwrap();
+    let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
+    cx.simulate_keystrokes("cmd-shift-p");
+    cx.simulate_input("split");
+    cx.simulate_keystrokes("ctrl-y");
+    assert!(
+        view.read_with(cx, |wb, _| wb.palette_open()),
+        "Insert mode: the binding does not apply"
+    );
+    cx.simulate_keystrokes("escape");
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.palette_vim_mode()),
+        Some(Mode::Normal)
+    );
+    cx.simulate_keystrokes("ctrl-y");
+    assert!(!view.read_with(cx, |wb, _| wb.palette_open()));
+}
+
+#[gpui::test]
+fn a_keymap_binding_scoped_to_insert_mode_gets_an_editor_key_back(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    // The documented way back to the editor's ⌃A (line start) in Insert mode.
+    std::fs::write(
+        daemon.home().join("keymap.toml"),
+        "[[binding]]\nkeys = \"ctrl-a\"\naction = \"code_view::MoveLineStart\"\ncontext = \"CodeView && vim_mode == insert\"\n",
+    )
+    .unwrap();
+    let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
+    let dir = tempfile::tempdir().unwrap();
+    let tab = open_text(&view, cx, dir.path(), "a.txt", "one two\n");
+    cx.simulate_input("A");
+    cx.simulate_keystrokes("ctrl-a");
+    cx.simulate_input("X");
+    assert_eq!(text(&tab.buffer, cx), "Xone two\n");
+    // In Normal mode ⌃A is still Vim's (increment; no number here, nothing changes).
+    cx.simulate_keystrokes("escape ctrl-a");
+    assert_eq!(text(&tab.buffer, cx), "Xone two\n");
+    assert_eq!(file_mode(&tab, cx), Some(VimMode::Normal));
+}
+
 // ---- Insert mode -------------------------------------------------------------------------------
 
 #[gpui::test]

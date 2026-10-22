@@ -1313,7 +1313,11 @@ impl Workbench {
                 .child(
                     div()
                         .id("settings-sheet")
-                        .key_context("SettingsSheet")
+                        .key_context(super::vim_ui::vim_key_context(
+                            "SettingsSheet",
+                            self.overlay_vim_mode(OverlayField::SheetValue)
+                                .or_else(|| self.overlay_vim_mode(OverlayField::SheetQuery)),
+                        ))
                         .track_focus(&self.sheet_focus)
                         .relative()
                         .w(px(880.0))

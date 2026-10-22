@@ -716,7 +716,10 @@ impl Workbench {
                 .child(
                     div()
                         .id("agent-picker")
-                        .key_context("AgentPicker")
+                        .key_context(super::vim_ui::vim_key_context(
+                            "AgentPicker",
+                            self.overlay_vim_mode(super::vim_ui::OverlayField::Agent),
+                        ))
                         .track_focus(&self.agent_focus)
                         .w(px(560.0))
                         .flex()

@@ -1262,7 +1262,10 @@ impl Workbench {
                 .child(
                     div()
                         .id("picker")
-                        .key_context("Picker")
+                        .key_context(super::vim_ui::vim_key_context(
+                            "Picker",
+                            self.overlay_vim_mode(super::vim_ui::OverlayField::Picker),
+                        ))
                         .track_focus(&self.picker_focus)
                         .w(px(560.0))
                         .flex()

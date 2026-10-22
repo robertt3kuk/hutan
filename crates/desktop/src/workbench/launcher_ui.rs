@@ -51,6 +51,8 @@ impl Workbench {
         let vim = VimConfig::of(&self.settings)
             .enabled
             .then_some(&launcher.vim);
+        let key_context =
+            || crate::workbench::vim_ui::vim_key_context("Launcher", vim.map(|v| v.mode()));
         let stop = launcher.stop;
         let kind = launcher.kind;
         let queue = launcher.queue;
@@ -1226,7 +1228,7 @@ impl Workbench {
             return Some(
                 div()
                     .id("launcher-inline")
-                    .key_context("Launcher")
+                    .key_context(key_context())
                     .track_focus(&self.launcher_focus)
                     .size_full()
                     .flex()
@@ -1316,7 +1318,7 @@ impl Workbench {
                 .child(
                     div()
                         .id("launcher")
-                        .key_context("Launcher")
+                        .key_context(key_context())
                         .track_focus(&self.launcher_focus)
                         .w(px(680.0))
                         .max_h(px(720.0))

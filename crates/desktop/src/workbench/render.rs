@@ -2349,7 +2349,10 @@ impl Workbench {
                 .child(
                     div()
                         .id("palette")
-                        .key_context("Palette")
+                        .key_context(super::vim_ui::vim_key_context(
+                            "Palette",
+                            self.overlay_vim_mode(super::vim_ui::OverlayField::Palette),
+                        ))
                         .track_focus(&self.palette_focus)
                         .w(px(560.0))
                         .flex()

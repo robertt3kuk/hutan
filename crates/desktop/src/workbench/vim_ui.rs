@@ -8,9 +8,10 @@
 //! caret, the undo history and the modal state.
 
 use gpui::{
-    AnyElement, App, ClipboardItem, Context, IntoElement, KeyDownEvent, ParentElement, Styled, div,
+    AnyElement, App, ClipboardItem, Context, IntoElement, KeyContext, KeyDownEvent, ParentElement,
+    Styled, div,
 };
-use hutan_code_view::vim_key_of;
+use hutan_code_view::{VIM_MODE_KEY, vim_key_of, vim_mode_value};
 use hutan_settings::SettingsStore;
 
 use super::chat::TextInput;
@@ -104,6 +105,18 @@ impl CaretShape {
 /// The `NORMAL` / `INSERT` / `VISUAL` pill.
 pub fn mode_pill(mode: Mode, theme: &Theme, tokens: &Tokens) -> gpui::Div {
     ui::pill(mode.label(), theme, tokens)
+}
+
+/// The key context `name` of a field's element, with `vim_mode = normal | insert | visual`
+/// while Vim is on in the field (`mode`), as a file tab carries it: a keymap binding can name the
+/// mode (`Palette && vim_mode == normal`), and the base keymap keeps its keys out of Vim's way.
+pub fn vim_key_context(name: &'static str, mode: Option<Mode>) -> KeyContext {
+    let mut context = KeyContext::default();
+    context.add(name);
+    if let Some(mode) = mode {
+        context.set(VIM_MODE_KEY, vim_mode_value(mode));
+    }
+    context
 }
 
 /// The state of one plain-`String` field: the text as a [`TextInput`] (caret, selection, the text
@@ -362,6 +375,13 @@ impl Workbench {
                 Some((&edits.sheet_value, &sheet.edit.as_ref()?.text, sheet.vim))
             }
         }
+    }
+
+    /// The Vim mode of an overlay's field for its key context; `None` while it is not there,
+    /// Vim mode is off or the field has no Vim (a secret).
+    pub(crate) fn overlay_vim_mode(&self, which: OverlayField) -> Option<Mode> {
+        let (edit, _, vim) = self.overlay_view(which)?;
+        (self.vim_config().enabled && vim).then(|| edit.mode())
     }
 
     fn overlay_focus(&self, which: OverlayField) -> gpui::FocusHandle {

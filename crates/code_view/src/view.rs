@@ -1392,16 +1392,7 @@ impl CodeView {
             context.add(crate::SNIPPET_CONTEXT);
         }
         if let Some(mode) = self.vim_mode() {
-            context.set(
-                crate::VIM_MODE_KEY,
-                match mode {
-                    hutan_vim::Mode::Normal => "normal",
-                    hutan_vim::Mode::Insert => "insert",
-                    hutan_vim::Mode::Visual
-                    | hutan_vim::Mode::VisualLine
-                    | hutan_vim::Mode::VisualBlock => "visual",
-                },
-            );
+            context.set(crate::VIM_MODE_KEY, crate::vim_mode_value(mode));
         }
         context
     }

@@ -835,6 +835,20 @@ Chords (`keys = "cmd-k right"`) are GPUI multi-stroke bindings. A `keymap.toml` 
 
 Elsewhere in the docs "⌘K" names the command palette as the Hutan base binds it (⌘K → "…"); in the Zed base the palette is ⌘⇧P.
 
+### Vim's keys and the keymap (FX-VIM-2)
+
+With `editor.vim_mode` on, every field Vim runs in carries its mode in its key context, as a file tab does: `vim_mode = normal | insert | visual` beside `CodeView`, `HutanChat` (the composer), `Launcher` (the Start sheet), `Palette`, `Picker`, `AgentPicker`, `Modal` and `SettingsSheet`. Vim's own keys (Escape and `⌃[`, the ⌃ keys of `docs/editor.md` § Vim's control keys, the user's `editor.vim_mappings`) are read by the focused field before the window's other keys; the base keymaps bind no ⌃ key where Vim would read it, except where noted. With Vim off nothing changes.
+
+| Key | What it did before | With Vim on | To get it back |
+|---|---|---|---|
+| `⌃A` / `⌃E` in a file tab | line start / end (both bases) | Vim's in every mode: Insert `⌃A` inserts the last insert, `⌃E` copies the character below; Normal `⌃A` increments, `⌃E` scrolls | `keys = "ctrl-a"`, `action = "code_view::MoveLineStart"`, `context = "CodeView && vim_mode == insert"` (`ctrl-e`: `code_view::MoveLineEnd`) |
+| `⌃A` `⌃E` `⌃U` in a text field (composer, palette, Start sheet, forms) | macOS's line start, line end, delete to line start | Vim's Insert keys: `⌃A` inserts the last insert, `⌃E` copies the character below, `⌃U` deletes back to where the insert began (then to the line start); `⌃B` `⌃F` keep moving the caret | ⌘← / ⌘→ / ⌘⌫ do the same in every mode |
+| `⌃N` / `⌃P` in the palette and pickers | next / previous row | unchanged: the list keeps them (Vim's `⌃N` `⌃P` move lines, which a one-line field does not have) | — |
+| `⌃N` / `⌃P` in a file tab's Insert mode | — | completion (E-12b), as in Vim | — |
+| `⌃[` | nothing | Escape, in every field and the `:` `/` `?` lines (terminals still read it themselves) | — |
+
+A binding in `keymap.toml` wins over Vim on its key: that is how to give a ⌃ key to an action again, everywhere (no `context`) or only in one mode (`context = "… && vim_mode == insert"`). `editor.vim_mappings` changes what keys Vim reads; it never reaches past Vim to the window's bindings.
+
 ## Accessibility
 
 - All chrome reachable by keyboard; visible focus rings (system style).

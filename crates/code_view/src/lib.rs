@@ -98,6 +98,17 @@ pub const SNIPPET_CONTEXT: &str = "in_snippet";
 /// The key of the view's context that holds the Vim mode (`normal`, `insert`, `visual`) while
 /// `editor.vim_mode` is on.
 pub const VIM_MODE_KEY: &str = "vim_mode";
+
+/// The value of [`VIM_MODE_KEY`] for `mode`: `normal`, `insert`, or `visual` for all three
+/// Visual modes. File tabs, the chat composer and the overlays' fields carry it alike.
+pub fn vim_mode_value(mode: VimMode) -> &'static str {
+    match mode {
+        VimMode::Normal => "normal",
+        VimMode::Insert => "insert",
+        VimMode::Visual | VimMode::VisualLine | VimMode::VisualBlock => "visual",
+    }
+}
+
 /// Where the editor's own keys apply that Vim's Normal and Visual modes answer themselves
 /// (motions, Return, Tab, deletion, the ⌃ line keys): everywhere but there.
 pub const TYPING_CONTEXT: &str = "CodeView && vim_mode != normal && vim_mode != visual";
