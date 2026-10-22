@@ -155,6 +155,23 @@ impl Repo {
         .await
         .unwrap_or_else(|_| panic!("never {count} checkpoints"))
     }
+
+    /// The checkpoint refs once there are `count`. A turn's row names its end ref before the
+    /// daemon deletes the turn's start ref, so a listed row does not yet mean the start ref is
+    /// gone.
+    async fn refs_when(&self, count: usize) -> Vec<String> {
+        timeout(WAIT, async {
+            loop {
+                let refs = refs(&self.root);
+                if refs.len() == count {
+                    return refs;
+                }
+                sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| refs(&self.root))
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -183,7 +200,7 @@ async fn ls_diff_and_rm_work_on_the_checkpoints_of_a_fixture_chat() {
     );
     assert_eq!(checkpoints[1]["files_changed"], 1);
     assert_eq!(checkpoints[1]["state"], "ok");
-    assert_eq!(refs(&r.root).len(), 2, "one ref per turn");
+    assert_eq!(r.refs_when(2).await.len(), 2, "one ref per turn");
 
     // The table: one row per changed turn, newest first.
     let text = r.t.hutan(&["checkpoint", "ls", &session]).await.ok().stdout;
