@@ -42,16 +42,26 @@ impl LayoutPreset {
         Dock::new(panels, Self::LEFT_SIZE, visible)
     }
 
-    /// The right side's activity rail (CL-CHROME, the clean default): Changes first (the
-    /// default tab), Agents, History as icons; Requests (the inspector) and Resources listed in
-    /// its `⋯` menu, Requests coming onto the rail with its count while a request waits.
+    /// The right side's activity rail (CL-CHROME, the clean default; SB-ATTACH): Files first
+    /// (Orca puts the explorer on the right), then Changes (the default tab), Agents, History as
+    /// icons; Requests (the inspector) and Resources listed in its `⋯` menu, Requests coming
+    /// onto the rail with its count while a request waits.
     fn right(visible: bool) -> Dock {
-        Dock::new(
-            &["changes", "agents", "history", "inspector", "resources"],
+        let mut dock = Dock::new(
+            &[
+                "files",
+                "changes",
+                "agents",
+                "history",
+                "inspector",
+                "resources",
+            ],
             Self::RIGHT_SIZE,
             visible,
         )
-        .with_more(&["inspector", "resources"])
+        .with_more(&["inspector", "resources"]);
+        dock.active = Some(PanelId::new("changes"));
+        dock
     }
 
     fn docks(left: Dock, right: Dock) -> Docks {
@@ -62,10 +72,10 @@ impl LayoutPreset {
         }
     }
 
-    /// The pages of the left sidebar in every built-in preset: Projects (shown), Tasks, Files.
-    const LEFT_PAGES: [&'static str; 3] = ["sessions", "tasks", "files"];
+    /// The pages of the left sidebar in every built-in preset: Projects (shown) and Tasks.
+    const LEFT_PAGES: [&'static str; 2] = ["sessions", "tasks"];
 
-    /// `sessions` (Projects), `tasks` and `files` as pages of the left sidebar (Agents is a
+    /// `sessions` (Projects) and `tasks` as pages of the left sidebar (Agents is a
     /// page of the center, not of the sidebar); the right rail of [`Self::right`]; the bottom
     /// dock hidden and empty; center untouched.
     pub fn default_preset() -> Self {

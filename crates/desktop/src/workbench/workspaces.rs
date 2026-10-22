@@ -259,6 +259,61 @@ impl Workbench {
         self.focus_root(window, cx);
     }
 
+    /// The containers the keyboard cycles through, in the sidebar's order under its filters: a
+    /// workspace's projects (the workspace itself when it has none), the projects of no
+    /// workspace, Home. Switching never closes a session.
+    pub fn container_cycle(&self, cx: &gpui::App) -> Vec<WorkspaceId> {
+        use crate::sessions::tree::{self, Node};
+        let store = self.sessions.read(cx);
+        let filters = self.settings.get::<WorkspacesSettings>();
+        let sessions: Vec<&hutan_protocol::messages::SessionInfo> =
+            store.sessions().iter().collect();
+        let needs = store.requests_by_workspace();
+        let built = tree::build(&tree::Inputs {
+            workspaces: store.workspaces(),
+            sessions: &sessions,
+            organize: self.settings.get::<SidebarSettings>().organize,
+            sort: filters.sort,
+            filters: &filters,
+            query: "",
+            active: [store.active_workspace_id(), store.active_project_id()],
+            needs: &needs,
+            session_matches: &|_| true,
+        });
+        let mut order = Vec::new();
+        for node in &built.nodes {
+            match node {
+                Node::Workspace(workspace) if workspace.projects.is_empty() => {
+                    order.push(workspace.info.id);
+                }
+                Node::Workspace(workspace) => {
+                    order.extend(workspace.projects.iter().map(|p| p.info.id));
+                }
+                Node::Project(node) | Node::Home(node) => order.push(node.info.id),
+                Node::NoWorkspace => {}
+            }
+        }
+        order
+    }
+
+    /// Shows the container `delta` places after the one the window shows in
+    /// [`container_cycle`](Self::container_cycle), wrapping around (⌃⌥↓ / ⌃⌥↑).
+    pub fn cycle_container(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let order = self.container_cycle(cx);
+        if order.len() < 2 {
+            return;
+        }
+        let current = {
+            let store = self.sessions.read(cx);
+            store.active_project_id().or(store.active_workspace_id())
+        };
+        let at = current
+            .and_then(|id| order.iter().position(|c| *c == id))
+            .map_or(0, |i| i as isize);
+        let next = (at + delta).rem_euclid(order.len() as isize) as usize;
+        self.switch_workspace(order[next], window, cx);
+    }
+
     /// Shows `project` and picks its worktree at `path`: Files and Search follow it, and the
     /// sidebar marks its row. The center keeps the layout of the project.
     pub fn open_checkout(

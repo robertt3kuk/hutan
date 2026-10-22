@@ -155,14 +155,18 @@ fn default_presets() -> Vec<LayoutPreset> {
 fn default_state_is_valid() {
     let state = WorkbenchState::default();
     check(&state);
-    assert_eq!(
-        state.docks.left.panels,
-        ids(&["sessions", "tasks", "files"])
-    );
+    assert_eq!(state.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(state.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(
         state.docks.right.panels,
-        ids(&["changes", "agents", "history", "inspector", "resources"])
+        ids(&[
+            "files",
+            "changes",
+            "agents",
+            "history",
+            "inspector",
+            "resources"
+        ])
     );
     assert_eq!(state.docks.right.more, ids(&["inspector", "resources"]));
     assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
@@ -537,7 +541,7 @@ fn panel_moves_between_docks_and_reveals_target() {
     check(&state);
     assert_eq!(
         state.docks.right.panels,
-        ids(&["changes", "agents", "history", "resources"])
+        ids(&["files", "changes", "agents", "history", "resources"])
     );
     assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
     // A panel that leaves the dock leaves its ⋯ list too.
@@ -555,7 +559,7 @@ fn panel_dock_to_center_and_back() {
         .move_panel(&PanelId::new("sessions"), PanelDest::Center)
         .unwrap();
     check(&state);
-    assert_eq!(state.docks.left.panels, ids(&["tasks", "files"]));
+    assert_eq!(state.docks.left.panels, ids(&["tasks"]));
     assert!(
         state
             .active_pane()
@@ -571,10 +575,7 @@ fn panel_dock_to_center_and_back() {
         )
         .unwrap();
     check(&state);
-    assert_eq!(
-        state.docks.left.panels,
-        ids(&["tasks", "files", "sessions"])
-    );
+    assert_eq!(state.docks.left.panels, ids(&["tasks", "sessions"]));
     assert_eq!(sorted_items(&state), before);
 }
 
@@ -598,7 +599,7 @@ fn panel_drop_into_new_split_from_dock() {
     assert_eq!(state.panes().len(), 2);
     assert_eq!(
         state.docks.right.panels,
-        ids(&["changes", "agents", "history", "resources"])
+        ids(&["files", "changes", "agents", "history", "resources"])
     );
 }
 
@@ -608,7 +609,7 @@ fn dock_reorder() {
     state.open_panel(&PanelId::new("notifications"), DockPosition::Left);
     assert_eq!(
         state.docks.left.panels,
-        ids(&["sessions", "tasks", "files", "notifications"])
+        ids(&["sessions", "tasks", "notifications"])
     );
     state
         .move_item(
@@ -625,7 +626,7 @@ fn dock_reorder() {
     check(&state);
     assert_eq!(
         state.docks.left.panels,
-        ids(&["notifications", "sessions", "tasks", "files"])
+        ids(&["notifications", "sessions", "tasks"])
     );
     assert_eq!(state.docks.left.active, Some(PanelId::new("notifications")));
 }
@@ -1377,7 +1378,7 @@ fn json_roundtrip_preserves_state() {
         .unwrap();
     let json = state.to_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 7);
+    assert_eq!(value["version"], 8);
     let back = WorkbenchState::from_json(&json).unwrap();
     assert_eq!(back, state);
     check(&back);
@@ -1601,11 +1602,18 @@ fn random_operations_preserve_invariants_and_conserve_items() {
 fn builtin_presets_place_the_pages_and_the_strip_and_never_the_assistant() {
     let presets = default_presets();
     let by = |name: &str| presets.iter().find(|p| p.name == name).unwrap().clone();
-    let strip = ids(&["changes", "agents", "history", "inspector", "resources"]);
+    let strip = ids(&[
+        "files",
+        "changes",
+        "agents",
+        "history",
+        "inspector",
+        "resources",
+    ]);
     let more = ids(&["inspector", "resources"]);
 
     let default = by("default");
-    let pages = ids(&["sessions", "tasks", "files"]);
+    let pages = ids(&["sessions", "tasks"]);
     assert_eq!(default.docks.left.panels, pages);
     assert_eq!(default.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(default.docks.right.panels, strip);
@@ -1754,11 +1762,11 @@ fn as_version_1_json(state: &WorkbenchState) -> String {
 }
 
 #[test]
-fn the_state_version_is_seven() {
+fn the_state_version_is_eight() {
     let value: serde_json::Value =
         serde_json::from_str(&WorkbenchState::default().to_json().unwrap()).unwrap();
-    assert_eq!(value["version"], 7);
-    assert_eq!(STATE_VERSION, 7);
+    assert_eq!(value["version"], 8);
+    assert_eq!(STATE_VERSION, 8);
 }
 
 /// Whether a tab of the center is `panel`.
@@ -2572,4 +2580,56 @@ fn the_overview_stash_is_merged_too() {
         .flat_map(|p| p.items.clone())
         .collect();
     assert_eq!(stashed_items, [ItemRef::panel("assistant")]);
+}
+
+/// A layout saved at `version` with these panels in its docks.
+fn saved_with(version: u32, left: &[&str], right: &[&str]) -> String {
+    let mut state = WorkbenchState::default();
+    state.docks.left = Dock::new(left, 280.0, true);
+    state.docks.right = Dock::new(right, 350.0, true);
+    let mut value: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
+    value["version"] = version.into();
+    serde_json::to_string(&value).unwrap()
+}
+
+#[test]
+fn files_moves_to_the_right_dock_once_and_only_from_the_built_in_left_dock() {
+    let right = ["changes", "agents", "history"];
+    // The built-in left dock of an older layout loses Files, which leads the right dock.
+    let moved =
+        WorkbenchState::from_json(&saved_with(6, &["sessions", "tasks", "files"], &right)).unwrap();
+    assert_eq!(moved.docks.left.panels, ids(&["sessions", "tasks"]));
+    assert_eq!(
+        moved.docks.right.panels,
+        ids(&["files", "changes", "agents", "history"])
+    );
+    // A left dock the user arranged keeps its Files.
+    let arranged =
+        WorkbenchState::from_json(&saved_with(6, &["files", "sessions", "tasks"], &right)).unwrap();
+    assert_eq!(
+        arranged.docks.left.panels,
+        ids(&["files", "sessions", "tasks"])
+    );
+    // So does a Files panel the user put in the right dock themselves.
+    let placed = WorkbenchState::from_json(&saved_with(
+        6,
+        &["sessions", "tasks"],
+        &["changes", "files", "agents"],
+    ))
+    .unwrap();
+    assert_eq!(
+        placed.docks.right.panels,
+        ids(&["changes", "files", "agents"])
+    );
+    // A layout saved at this version is the user's own: nothing moves.
+    let current = WorkbenchState::from_json(&saved_with(
+        STATE_VERSION,
+        &["sessions", "tasks", "files"],
+        &right,
+    ))
+    .unwrap();
+    assert_eq!(
+        current.docks.left.panels,
+        ids(&["sessions", "tasks", "files"])
+    );
 }

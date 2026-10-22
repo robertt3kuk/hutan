@@ -108,6 +108,8 @@ actions!(
         OpenFolder,
         OpenJump,
         GoHome,
+        NextContainer,
+        PreviousContainer,
         PinActiveWorkspace,
         RenameActiveWorkspace,
         AddFolderToWorkspace,
@@ -725,6 +727,8 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Search: Find in Files", ShowSearch),
         command("Search: Replace in Files", ShowSearchReplace),
         command("Workspace: Go to Home", GoHome),
+        command("Workspace: Next Container", NextContainer),
+        command("Workspace: Previous Container", PreviousContainer),
         command("File: Open File…", OpenFileDialog),
         command("File: Open in Split Right", OpenFileInSplitRight),
         command("File: Open in Split Down", OpenFileInSplitDown),
@@ -969,6 +973,8 @@ fn hutan_global_bindings() -> Vec<BindingSpec> {
         bind::<ResizeRight>("ctrl-cmd-right", None),
         bind::<ResizeUp>("ctrl-cmd-up", None),
         bind::<ResizeDown>("ctrl-cmd-down", None),
+        bind::<NextContainer>("ctrl-alt-down", None),
+        bind::<PreviousContainer>("ctrl-alt-up", None),
     ]
 }
 
@@ -1268,6 +1274,8 @@ fn zed_global_bindings() -> Vec<BindingSpec> {
         bind::<ResizeRight>("ctrl-cmd-right", None),
         bind::<ResizeUp>("ctrl-cmd-up", None),
         bind::<ResizeDown>("ctrl-cmd-down", None),
+        bind::<NextContainer>("ctrl-alt-down", None),
+        bind::<PreviousContainer>("ctrl-alt-up", None),
     ]
 }
 
@@ -1468,6 +1476,8 @@ mod tests {
             "ctrl-cmd-right | workbench::ResizeRight | -",
             "ctrl-cmd-up | workbench::ResizeUp | -",
             "ctrl-cmd-down | workbench::ResizeDown | -",
+            "ctrl-alt-down | workbench::NextContainer | -",
+            "ctrl-alt-up | workbench::PreviousContainer | -",
             "cmd-c | hutan_terminal_view::Copy | HutanTerminal",
             "cmd-v | hutan_terminal_view::Paste | HutanTerminal",
             "cmd-up | hutan_terminal_view::JumpToPreviousPrompt | HutanTerminal",

@@ -851,8 +851,8 @@ mod audit {
         ),
         (
             "desktop/src/workbench/panels/sessions.rs",
-            2,
-            "a project row and a session row",
+            3,
+            "a project row, a worktree row and a session row",
         ),
         (
             "desktop/src/workbench/panels/status.rs",

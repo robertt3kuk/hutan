@@ -22,8 +22,11 @@ use super::{
 /// no rewrite (`visible` already is Expanded/Hidden, `collapsed` defaults to off, the sizes are
 /// clamped like every loaded layout); every file older than 6 goes through [`migrate_v5`]. 7
 /// (MEM-SIDEBAR) makes Mawas's Memory a body of the left sidebar: a `mawas-memory` tab of the
-/// center moves into the left dock ([`migrate_v6`]); the next save writes version 7.
-pub const STATE_VERSION: u32 = 7;
+/// center moves into the left dock ([`migrate_v6`]). 8 (SB-ATTACH) puts Files in the right
+/// dock: a layout whose left dock is the built-in one loses `files` there and gets it at the
+/// front of the right dock ([`migrate_v7`]); a Files panel the user placed stays. The next save
+/// writes version 8.
+pub const STATE_VERSION: u32 = 8;
 
 /// Result of reading a saved state.
 #[derive(Debug)]
@@ -34,7 +37,7 @@ pub struct LoadOutcome {
 }
 
 impl WorkbenchState {
-    /// `{ "version": 7, "docks": …, "center": …, … }`, pretty-printed.
+    /// `{ "version": 8, "docks": …, "center": …, … }`, pretty-printed.
     pub fn to_json(&self) -> Result<String, ModelError> {
         let mut value =
             serde_json::to_value(self).map_err(|e| ModelError::Invalid(e.to_string()))?;
@@ -50,7 +53,7 @@ impl WorkbenchState {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| ModelError::Invalid(e.to_string()))?;
         let version = match value.get("version").and_then(serde_json::Value::as_u64) {
-            Some(v @ (1..=7)) => v,
+            Some(v @ (1..=8)) => v,
             Some(v) => return Err(ModelError::Invalid(format!("unsupported version {v}"))),
             None => return Err(ModelError::Invalid("missing version".to_owned())),
         };
@@ -70,6 +73,9 @@ impl WorkbenchState {
         }
         if version <= 6 {
             migrate_v6(&mut state);
+        }
+        if version <= 7 {
+            migrate_v7(&mut state);
         }
         state.normalize();
         Ok(state)
@@ -116,6 +122,31 @@ pub fn migrate_v6(state: &mut WorkbenchState) {
     }
 }
 
+/// The one-time move of a layout older than version 8 to Files in the right dock (SB-ATTACH:
+/// Orca puts the explorer on the right): a layout whose left dock is exactly the built-in
+/// `sessions`, `tasks`, `files` (a Memory page beside them does not count; the live layout, the overview stash and every parked workspace
+/// layout) gets `files` at the front of its right dock instead. A Files panel anywhere else, or
+/// in a left dock the user arranged, is where the user put it and stays. Logged once per read,
+/// only when something moved.
+pub fn migrate_v7(state: &mut WorkbenchState) {
+    let mut moved = usize::from(files_to_right(&mut state.docks));
+    if let Some(saved) = state.stashed.as_deref_mut() {
+        moved += usize::from(files_to_right(&mut saved.docks));
+    }
+    for parked in state.parked.values_mut() {
+        moved += usize::from(files_to_right(&mut parked.layout.docks));
+        if let Some(saved) = parked.stashed.as_deref_mut() {
+            moved += usize::from(files_to_right(&mut saved.docks));
+        }
+    }
+    if moved > 0 {
+        tracing::info!(
+            layouts = moved,
+            "saved layout: Files moved from the left sidebar to the right dock"
+        );
+    }
+}
+
 /// Moves the center's Memory tabs into the left dock; whether there was one.
 fn memory_to_sidebar(docks: &mut Docks, center: &mut PaneTree) -> bool {
     let page = PanelId::new(MEMORY_PAGE);
@@ -142,6 +173,30 @@ fn memory_to_sidebar(docks: &mut Docks, center: &mut PaneTree) -> bool {
     if shown {
         left.active = Some(page);
     }
+    true
+}
+
+/// Moves `files` from the built-in left dock to the front of the right one; whether it did.
+fn files_to_right(docks: &mut Docks) -> bool {
+    let files = PanelId::new("files");
+    let builtin = ["sessions", "tasks", "files"].map(PanelId::new);
+    // A Memory page that just joined the sidebar (version 7) does not make it the user's own.
+    let memory = PanelId::new(MEMORY_PAGE);
+    let left: Vec<PanelId> = docks
+        .left
+        .panels
+        .iter()
+        .filter(|p| **p != memory)
+        .cloned()
+        .collect();
+    if left != builtin || docks.right.panels.contains(&files) {
+        return false;
+    }
+    docks.left.panels.retain(|p| *p != files);
+    if docks.left.active.as_ref() == Some(&files) {
+        docks.left.active = docks.left.panels.first().cloned();
+    }
+    docks.right.panels.insert(0, files);
     true
 }
 

@@ -159,7 +159,7 @@ pub fn builtin_panels() -> PanelRegistry {
         id: "files".into(),
         title: "Files".into(),
         icon: crate::icons::Icon::PanelFiles,
-        default_dock: DockPosition::Left,
+        default_dock: DockPosition::Right,
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
             AnyView::from(cx.new(|cx| FilesPanel::new(env, cx)))

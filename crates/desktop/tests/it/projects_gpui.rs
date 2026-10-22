@@ -399,7 +399,28 @@ impl World {
         cx: &'a mut TestAppContext,
         state_path: Option<PathBuf>,
     ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
-        let (view, cx) = open(cx, &self.daemon, state_path);
+        self.synced_with(cx, state_path, true)
+    }
+
+    /// [`synced`](Self::synced) with the default sidebar: only the active container expanded.
+    fn synced_attached<'a>(
+        &self,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+        self.synced_with(cx, None, false)
+    }
+
+    fn synced_with<'a>(
+        &self,
+        cx: &'a mut TestAppContext,
+        state_path: Option<PathBuf>,
+        show_all: bool,
+    ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+        let (view, cx) = if show_all {
+            open(cx, &self.daemon, state_path)
+        } else {
+            open_attached(cx, &self.daemon, state_path)
+        };
         wait_synced(&view, cx, 7, 4);
         // The placements arrive with the events (a plain folder has none).
         let git_sessions = [self.s_main.id, self.s_wt.id, self.s_web.id];
