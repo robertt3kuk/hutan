@@ -743,3 +743,15 @@ Test `quick_open_gpui::the_finders_first_results_on_a_hundred_thousand_files`: a
 | release, run 3 | 47.7, 48.9, 171.0, 49.3 ms | 171.0 ms | ≤ 50 ms | **✗** |
 
 **Miss, not relaxed.** Medians of the release runs sit around the budget (≈ 49–73 ms) and one key in each run takes 110–185 ms. Not yet separated: the load of the machine (load 54–67 on 10 cores), the daemon's `fs.find` itself (a subsequence test over 100 001 paths, the fzy matrix for each match, a sort; built per query from the shared index), and late `fs.generation`s from the tree just written (FSEvents after the watch starts) that make the daemon rebuild its index and ⌘P ask again. Follow-up: time `fs.find` alone in the daemon on an idle machine, keep a scorer and its buffers per index, narrow a query that extends the last one to the last answer's candidates, and make this test wait until the root's generations are quiet; then measure again on an idle machine with `just bench`.
+
+## Editor: completion (slice E-12b, B16)
+
+B16 of `docs/spikes/2026-10-21-editor.md` § 4.8: with a local fake server, keystroke → completion items on screen ≤ 100 ms, of which protocol + daemon ≤ 5 ms (the server's own compute excluded). Measured by two tests over a real daemon and `hutan-fake-lsp` (which answers at once), run in the gate in debug and once in release for the numbers below (`cargo nextest run --cargo-profile release -p hutan-desktop -p hutan-daemon -E 'test(=completion_gpui::b16_keystroke_to_items_on_screen) | test(=lsp::completion_resolve_and_signature_help_run_through_the_daemon)' --no-capture`; build `hutan-fake-lsp` in release first). Apple M1 Pro, macOS 27.0.1, 2026-10-22, load average 12–14 (other agents building).
+
+| # | Measure | Release | Debug (gate) | Budget | |
+|---|---|---|---|---|---|
+| B16 | `.` (a trigger character) → the first frame that draws the items: `doc.change` of the keystroke, `lsp.completion`, ranking, the popup's frame (`CompletionState::drawn_at`); median of 6 | **3.0 ms** (max 3.1) | 14.4–15.3 ms | ≤ 100 ms | ✓ |
+| B16 | a word character → items: the same plus the 20 ms typing debounce (`COMPLETION_DEBOUNCE`, skipped by the test clock and added back); median of 6 | **23.3 ms** (max 23.7) | 38.9–40.7 ms | ≤ 100 ms | ✓ |
+| B16 | protocol + daemon: `lsp.completion` round trip over the socket, through the hub to `hutan-fake-lsp` and back (an upper bound: it includes the fake server's answer and the client's decoding); median of 40 | **0.105 ms** (p95 0.160) | 0.41 ms (p95 0.48) | ≤ 5 ms | ✓ |
+
+The gate asserts the debug numbers against a relaxed bound (250 ms for a keystroke, 50 ms for the daemon round trip) so that a loaded machine does not fail it; the release run is the measurement. What keeps it short: the keystroke's `doc.change` is sent at once when a request waits for it (not after the 50 ms change debounce), the daemon runs completion on a task of its own (the next keystroke's `doc.change` does not queue behind it), typing more filters the list in the view without a request, and a newer request supersedes the older one in the daemon, which cancels it at the server (`$/cancelRequest`).
