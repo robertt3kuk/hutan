@@ -870,12 +870,19 @@ impl Ctx<'_> {
                 let text = match named.as_slice() {
                     [] => match report.and_then(|r| r.message.as_deref()) {
                         Some(message) if !message.trim().is_empty() => {
-                            format!("Blocked: {}", activity_text(message))
+                            // The state word says it is a request: the reason is what for
+                            // (`Permission: Bash`).
+                            let text = activity_text(message);
+                            let mut chars = text.chars();
+                            chars
+                                .next()
+                                .map(|first| first.to_uppercase().chain(chars).collect())
+                                .unwrap_or(text)
                         }
                         _ if info.state == SessionState::WaitingApproval => {
                             "Waiting for approval".to_owned()
                         }
-                        _ => "Blocked: waiting for you".to_owned(),
+                        _ => "Waiting for you".to_owned(),
                     },
                     [only] => format!("{only} blocked, and the main agent waits"),
                     many => format!("{} agents blocked: {}", many.len(), many.join(", ")),
