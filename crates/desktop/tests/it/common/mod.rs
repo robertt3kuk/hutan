@@ -733,6 +733,8 @@ pub struct ProcessDaemon {
     wrapper: PathBuf,
     runtime: tokio::runtime::Runtime,
     reaper: DaemonReaper,
+    /// Daemons [`spawn_from`](Self::spawn_from) started, waited for on drop.
+    spawned: RefCell<Vec<std::process::Child>>,
 }
 
 impl ProcessDaemon {
@@ -774,6 +776,7 @@ impl ProcessDaemon {
             dir,
             wrapper,
             runtime,
+            spawned: RefCell::new(Vec::new()),
         }
     }
 
@@ -828,6 +831,7 @@ impl ProcessDaemon {
             .open(self.dir.path().join("pids"))
             .unwrap();
         writeln!(pids, "{}", child.id()).unwrap();
+        self.spawned.borrow_mut().push(child);
         let deadline = Instant::now() + WAIT;
         while std::os::unix::net::UnixStream::connect(self.socket()).is_err() {
             assert!(
@@ -889,6 +893,10 @@ impl Drop for ProcessDaemon {
         // From now on the wrapper starts nothing (ignored error: then the reaper still runs).
         let _ = std::fs::write(self.dir.path().join("closed"), "");
         self.reaper.reap();
+        // The reaper ended them; collect their exit status (ignored: they were signalled).
+        for mut child in self.spawned.take() {
+            let _ = child.wait();
+        }
     }
 }
 
