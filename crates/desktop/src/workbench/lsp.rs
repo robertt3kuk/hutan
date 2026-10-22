@@ -120,11 +120,15 @@ pub struct ServerView {
 /// The bar over a file tab about its language server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LspBar {
-    /// The folder is not trusted yet: *Trust* / *Not now*.
+    /// The folder is not trusted yet: *Trust* / *Not now*. Trust is per folder: every server
+    /// waiting below it starts once it is trusted, so the bar names them all.
     Trust {
-        server_id: String,
-        name: String,
         folder: PathBuf,
+        /// The languages of the servers that wait for the folder, each once, the file's own
+        /// first ([`language_label_of`]).
+        languages: Vec<String>,
+        /// How many servers wait for it.
+        servers: usize,
     },
     /// The server is not installed: the command that installs it (never run by Hutan).
     Install {
@@ -158,8 +162,11 @@ pub struct LspStore {
     servers: HashMap<String, LspServerInfo>,
     /// Languages (by file extension) the daemon has no server for.
     no_server: HashSet<String>,
-    /// Servers whose bar the user closed (*Not now*, the install hint's close).
+    /// Install bars the user closed (the install hint's close, its *Copy Command*).
     dismissed: HashSet<String>,
+    /// Folders whose trust bar the user closed (*Not now*): no bar asks again for a server
+    /// below them in this window.
+    not_now: HashSet<PathBuf>,
     /// Folders whose `lsp.trust` is on its way.
     trusting: HashSet<PathBuf>,
     jumps: Vec<Jump>,
@@ -216,6 +223,56 @@ pub fn severity_of(severity: Option<LspSeverity>) -> Severity {
         Some(LspSeverity::Warning) => Severity::Warning,
         Some(LspSeverity::Information) => Severity::Info,
         Some(LspSeverity::Hint) => Severity::Hint,
+    }
+}
+
+/// The name of LSP language `id` the way the editor names languages (`Rust`, `TSX`); an id the
+/// editor has no language for reads `Plain Text`, as the tab of such a file does.
+pub fn language_label_of(id: &str) -> &'static str {
+    match id {
+        "rust" => "Rust",
+        "typescript" => "TypeScript",
+        "typescriptreact" => "TSX",
+        "javascript" | "javascriptreact" => "JavaScript",
+        "python" => "Python",
+        "go" | "gomod" => "Go",
+        "json" | "jsonc" => "JSON",
+        "toml" => "TOML",
+        "yaml" => "YAML",
+        "markdown" => "Markdown",
+        "shellscript" => "Shell",
+        "html" => "HTML",
+        "css" => "CSS",
+        "c" => "C",
+        "cpp" => "C++",
+        "objective-c" => "Objective-C",
+        "objective-cpp" => "Objective-C++",
+        _ => "Plain Text",
+    }
+}
+
+/// The languages a server serves, by name, each once, in its order (`C, C++`).
+pub fn languages_of(languages: &[String]) -> Vec<&'static str> {
+    let mut labels: Vec<&'static str> = Vec::new();
+    for id in languages {
+        let label = language_label_of(id);
+        if !labels.contains(&label) {
+            labels.push(label);
+        }
+    }
+    labels
+}
+
+/// `A`, `A and B`, `A, B and C`.
+pub fn spoken_list<S: AsRef<str>>(items: &[S]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.as_ref().to_owned(),
+        [rest @ .., last] => format!(
+            "{} and {}",
+            rest.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(", "),
+            last.as_ref()
+        ),
     }
 }
 
@@ -325,6 +382,7 @@ impl LspStore {
             servers: HashMap::new(),
             no_server: HashSet::new(),
             dismissed: HashSet::new(),
+            not_now: HashSet::new(),
             trusting: HashSet::new(),
             jumps: Vec::new(),
             listener: None,
@@ -849,28 +907,61 @@ impl LspStore {
             .collect()
     }
 
-    /// The bar the file tab of `path` shows, if any: a folder to trust, or a server to
-    /// install (until the user closes it).
+    /// The bar the file tab of `path` shows, if any: a folder to trust (until the user says
+    /// *Not now* to it or a folder above it), or a server to install (until the user closes it).
     pub fn bar(&self, path: &str) -> Option<LspBar> {
-        self.servers_of(path).into_iter().find_map(|s| {
-            if self.dismissed.contains(&s.server_id) {
-                return None;
+        self.servers_of(path).into_iter().find_map(|s| match s.state {
+            LspServerState::Untrusted if s.trust_pending => {
+                let folder = s.root?;
+                if self.not_now.iter().any(|closed| folder.starts_with(closed)) {
+                    return None;
+                }
+                Some(self.trust_bar(folder, &s.server_id))
             }
-            match s.state {
-                LspServerState::Untrusted if s.trust_pending => Some(LspBar::Trust {
-                    folder: s.root.clone()?,
-                    server_id: s.server_id,
-                    name: s.name,
-                }),
-                LspServerState::NotInstalled => Some(LspBar::Install {
+            LspServerState::NotInstalled if !self.dismissed.contains(&s.server_id) => {
+                Some(LspBar::Install {
                     command: s.install.clone()?,
                     server_id: s.server_id,
                     name: s.name,
                     setting: s.setting,
-                }),
-                _ => None,
+                })
             }
+            _ => None,
         })
+    }
+
+    /// The trust bar of `folder`: every server known to wait for it (its root at or below the
+    /// folder), `first` (the file's own) leading.
+    fn trust_bar(&self, folder: PathBuf, first: &str) -> LspBar {
+        let mut waiting: Vec<&LspServerInfo> = self
+            .servers
+            .values()
+            .filter(|s| {
+                s.state == LspServerState::Untrusted
+                    && s.trust_pending
+                    && s.root.starts_with(&folder)
+            })
+            .collect();
+        waiting.sort_by(|a, b| {
+            (a.server_id != first, &a.name, &a.server_id).cmp(&(
+                b.server_id != first,
+                &b.name,
+                &b.server_id,
+            ))
+        });
+        let mut languages: Vec<String> = Vec::new();
+        for server in &waiting {
+            for label in languages_of(&server.languages) {
+                if !languages.iter().any(|l| l == label) {
+                    languages.push(label.to_owned());
+                }
+            }
+        }
+        LspBar::Trust {
+            folder,
+            languages,
+            servers: waiting.len().max(1),
+        }
     }
 
     /// Whether the trust of `folder` is on its way.
@@ -921,10 +1012,17 @@ impl LspStore {
         cx.notify();
     }
 
-    /// *Not now* (or the install hint's close): the bar of `server_id` stays closed in this
-    /// window.
+    /// The install hint's close: the install bar of `server_id` stays closed in this window.
     pub fn dismiss(&mut self, server_id: &str, cx: &mut Context<Self>) {
         self.dismissed.insert(server_id.to_owned());
+        cx.emit(LspStoreEvent::Changed);
+        cx.notify();
+    }
+
+    /// *Not now* on a trust bar: nothing is decided, and no bar asks about `folder` (or a
+    /// folder below it) again in this window, whatever language the next file has.
+    pub fn not_now(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
+        self.not_now.insert(folder);
         cx.emit(LspStoreEvent::Changed);
         cx.notify();
     }

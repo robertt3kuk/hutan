@@ -21,7 +21,9 @@ use hutan_desktop::workbench::file_view::FileView;
 use hutan_desktop::workbench::lsp::CHANGE_DEBOUNCE;
 use hutan_desktop::workbench::panels::{ProblemRow, ProblemsPanel};
 use hutan_desktop::workbench::{FileOpen, Region, Workbench, actions};
-use hutan_protocol::lsp::{LspDiagnosticsRequest, LspDiagnosticsResult, LspServerState};
+use hutan_protocol::lsp::{
+    LspDiagnosticsRequest, LspDiagnosticsResult, LspServerState, LspStatus, LspStatusRequest,
+};
 use hutan_protocol::messages::Request;
 use hutan_settings::{SettingsPaths, SettingsStore};
 use serde_json::{Value, json};
@@ -45,6 +47,7 @@ fn fake_bin() -> PathBuf {
 pub(crate) struct Env {
     daemon: TestDaemon,
     root: PathBuf,
+    script: PathBuf,
     _work: tempfile::TempDir,
 }
 
@@ -52,23 +55,31 @@ impl Env {
     /// `trust`: `[lsp] trust` (`"always"`, or `"ask"` for the trust bar); `script` gets the
     /// root (canonical), for scripts that name files.
     pub(crate) fn new(trust: &str, script: impl FnOnce(&Path) -> Value) -> Self {
+        Self::with_extra(trust, script, "")
+    }
+
+    /// Like [`new`](Self::new), with `extra` appended to `daemon.toml` (more servers). The
+    /// root also has a `Cargo.toml`, so a Rust server's root is the same folder.
+    pub(crate) fn with_extra(trust: &str, script: impl FnOnce(&Path) -> Value, extra: &str) -> Self {
         let work = tempfile::tempdir().unwrap();
         let base = work.path().canonicalize().unwrap();
         let root = base.join("repo");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("fake.toml"), "").unwrap();
+        std::fs::write(root.join("Cargo.toml"), "").unwrap();
         let script_path = base.join("script.json");
         std::fs::write(&script_path, script(&root).to_string()).unwrap();
         let toml = format!(
             "[lsp]\ntrust = \"{trust}\"\n\n\
              [lsp.servers.fake]\ncommand = {:?}\nargs = [\"--script\", {:?}]\n\
-             languages = [\"fake\"]\nroot_markers = [\"fake.toml\"]\n",
+             languages = [\"fake\"]\nroot_markers = [\"fake.toml\"]\n\n{extra}",
             fake_bin().display().to_string(),
             script_path.display().to_string(),
         );
         Self {
             daemon: TestDaemon::start_with_config(&toml),
             root,
+            script: script_path,
             _work: work,
         }
     }
@@ -467,6 +478,87 @@ fn the_trust_bar_shows_for_an_untrusted_folder_and_trust_starts_the_server(
             Some(LspServerState::Starting | LspServerState::Indexing | LspServerState::Ready)
         ),
         "{state:?}"
+    );
+}
+
+/// The built-in `rust-analyzer` pointed at `program`.
+fn rust_server(program: &Path) -> String {
+    format!(
+        "[lsp.servers.rust-analyzer]\ncommand = {:?}\n",
+        program.display().to_string()
+    )
+}
+
+fn bar_of(tab: &Tab, cx: &mut VisualTestContext) -> Option<String> {
+    tab.view.read_with(cx, |v, cx| v.lsp_bar_text(cx))
+}
+
+#[gpui::test]
+fn the_trust_bar_names_every_server_of_the_folder_and_not_now_covers_the_folder(
+    cx: &mut TestAppContext,
+) {
+    let env = Env::with_extra("ask", |_| json!({}), &rust_server(&fake_bin()));
+    let (view, cx) = env.open(cx, "");
+    let folder = env.root.display().to_string();
+    let fake = open_file(&view, cx, &env.file("a.fake"), "x\n");
+    wait_until(cx, "the bar of the one server known", |cx| {
+        bar_of(&fake, cx).is_some_and(|text| {
+            text == format!(
+                "Language server for Plain Text runs code from this folder (build scripts, tools). Trust {folder}?"
+            )
+        })
+    });
+
+    // A Rust file of the same folder: its bar names both servers trusting would start, and
+    // so does the first file's.
+    let rust = open_file(&view, cx, &env.file("main.rs"), "fn main() {}\n");
+    wait_until(cx, "the bar naming both", |cx| {
+        bar_of(&rust, cx).is_some_and(|text| {
+            text == format!(
+                "Language servers for Rust and Plain Text run code from this folder (build scripts, tools). Trust {folder}?"
+            )
+        })
+    });
+    assert_eq!(
+        bar_of(&fake, cx).as_deref(),
+        Some(
+            format!(
+                "Language servers for Plain Text and Rust run code from this folder (build scripts, tools). Trust {folder}?"
+            )
+            .as_str()
+        )
+    );
+
+    // Not now: one answer for the folder; no bar in any tab of it, nor for the next file.
+    draw(cx);
+    let not_now = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::FileLsp("not-now")))
+        .expect("the Not now button");
+    cx.simulate_click(not_now.center(), Modifiers::none());
+    wait_until(cx, "no bar", |cx| {
+        bar_of(&rust, cx).is_none() && bar_of(&fake, cx).is_none()
+    });
+    let next = open_file(&view, cx, &env.file("b.fake"), "y\n");
+    draw(cx);
+    assert_eq!(bar_of(&next, cx), None);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::FileLsp("trust")))
+            .is_none()
+    );
+
+    // Nothing was decided: the folder still waits, no server runs.
+    let status: LspStatus = env
+        .daemon
+        .call(Request::LspStatus(LspStatusRequest::default()));
+    assert!(status.trust.is_empty(), "{:?}", status.trust);
+    assert_eq!(status.servers.len(), 2);
+    assert!(
+        status
+            .servers
+            .iter()
+            .all(|s| s.state == LspServerState::Untrusted && s.trust_pending),
+        "{:?}",
+        status.servers
     );
 }
 

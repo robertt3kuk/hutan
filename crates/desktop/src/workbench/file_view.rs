@@ -256,12 +256,9 @@ impl FileView {
     /// What the language server's bar says, if it shows (tests).
     pub fn lsp_bar_text(&self, cx: &App) -> Option<String> {
         let lsp = self.lsp.as_ref()?;
-        let buffer = self.buffer.read(cx);
-        let bar = lsp.read(cx).bar(&buffer.path().display().to_string())?;
-        Some(super::lsp_bar::bar_text(
-            &bar,
-            hutan_code_view::language_label(buffer.language()),
-        ))
+        let path = self.buffer.read(cx).path().display().to_string();
+        let bar = lsp.read(cx).bar(&path)?;
+        Some(super::lsp_bar::bar_text(&bar))
     }
 
     // ---- an agent's changes (E-10) -----------------------------------------------------------
@@ -1591,10 +1588,8 @@ impl Render for FileView {
             .then(|| self.render_agent_bar(&theme, &tokens, cx))
             .flatten();
         let lsp_bar = self.lsp.as_ref().filter(|_| ready).and_then(|lsp| {
-            let buffer = self.buffer.read(cx);
-            let path = buffer.path().display().to_string();
-            let language = hutan_code_view::language_label(buffer.language());
-            super::lsp_bar::render(lsp, &path, language, &self.regions, &theme, &tokens, cx)
+            let path = self.buffer.read(cx).path().display().to_string();
+            super::lsp_bar::render(lsp, &path, &self.regions, &theme, &tokens, cx)
         });
         let has_bar = conflict_bar.is_some() || agent_bar.is_some() || lsp_bar.is_some();
         if self.had_bar && !has_bar {
