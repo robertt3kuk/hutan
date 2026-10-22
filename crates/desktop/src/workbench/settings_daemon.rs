@@ -1353,8 +1353,7 @@ impl Workbench {
         )
         .under(under)
         .chip(self.daemon_chip(e))
-        .reset(reset)
-        .full_help(self.row_has_keys(&row_tag) && super::ui::keyboard_focus());
+        .reset(reset);
         if tall {
             row = row.top();
         }

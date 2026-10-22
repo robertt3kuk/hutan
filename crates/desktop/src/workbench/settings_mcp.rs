@@ -621,7 +621,6 @@ impl Workbench {
         )
         .under(under)
         .chip(self.daemon_chip(server))
-        .full_help(self.row_has_keys(&row_tag) && super::ui::keyboard_focus())
         .top()
         .build(&theme, &tokens);
         self.sheet_row_focus(&row_tag, row)

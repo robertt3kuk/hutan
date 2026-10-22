@@ -66,20 +66,30 @@ fn problems_open(view: &Entity<Workbench>, cx: &VisualTestContext) -> bool {
 // ---- the Problems footer -------------------------------------------------------------------------
 
 #[gpui::test]
-fn the_footer_is_one_line_with_none_three_or_thirty_problems_and_its_list_opens_over_the_page(
+fn the_footer_is_there_only_for_problems_one_line_with_three_or_thirty_and_its_list_opens_over_the_page(
     cx: &mut TestAppContext,
 ) {
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon);
     open_page(&view, cx, "appearance");
-    let footer = bounds(&view, cx, Region::Settings("sheet-footer")).unwrap();
-    let body = bounds(&view, cx, Region::Settings("sheet-body")).unwrap();
-    // The probe is inside the footer's hairline: 32 px measure 31.
-    assert_eq!(f32::from(footer.size.height), 31.0);
+    // Nothing to say, nothing drawn (CL-POLISH-4): no `Problems · none` strip.
+    assert!(
+        bounds(&view, cx, Region::Settings("sheet-footer")).is_none(),
+        "no footer without problems"
+    );
     assert!(view.read_with(cx, |wb, _| wb.sheet_problems().is_empty()));
     // With nothing to list the footer does not open anything.
     view.update(cx, |wb, cx| wb.sheet_toggle_problems(cx));
     assert!(!problems_open(&view, cx));
+
+    // One problem: the footer is there, 32 px (the probe is inside the footer's hairline: 31).
+    std::fs::write(daemon.home().join("settings.toml"), "[unknown_0]\nx = 1\n").unwrap();
+    wait_until(cx, "the problem of the file", |cx| {
+        view.read_with(cx, |wb, _| !wb.sheet_problems().is_empty())
+    });
+    let footer = bounds(&view, cx, Region::Settings("sheet-footer")).expect("the footer");
+    let body = bounds(&view, cx, Region::Settings("sheet-body")).unwrap();
+    assert_eq!(f32::from(footer.size.height), 31.0);
 
     for count in [3_usize, 30] {
         let text: String = (0..count)
@@ -126,6 +136,33 @@ fn the_footer_is_one_line_with_none_three_or_thirty_problems_and_its_list_opens_
     assert!(!problems_open(&view, cx));
     cx.simulate_keystrokes("escape");
     assert!(!sheet_open(&view, cx));
+}
+
+// ---- CL-POLISH-4: help wraps, controls share a column ----------------------------------------------
+
+#[gpui::test]
+fn a_long_help_wraps_whole_and_every_dropdown_is_at_least_120_px_wide(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    open_page(&view, cx, "appearance");
+    // `Compact` is the shortest value of a dropdown (83 px before); the column is 120 px at least.
+    let head = bounds(&view, cx, Region::Settings("dropdown")).expect("a dropdown");
+    assert!(
+        f32::from(head.size.width) >= 118.0,
+        "the dropdown is {head:?} wide (the probe is inside the hairline)"
+    );
+
+    // The Hooks page has a help of several sentences: its row grows to the text, which is not
+    // cut with an ellipsis.
+    open_page(&view, cx, "integrations");
+    let tallest = (0..12)
+        .filter_map(|n| bounds(&view, cx, Region::SettingsItem("row", n)))
+        .map(|b| f32::from(b.size.height))
+        .fold(0.0_f32, f32::max);
+    assert!(
+        tallest > 80.0,
+        "a long help takes the lines it needs; the tallest row is {tallest} px"
+    );
 }
 
 // ---- rows ----------------------------------------------------------------------------------------

@@ -720,7 +720,6 @@ impl Workbench {
             &self.regions,
             Region::SettingsItem("row", self.field_index(field)),
         ))
-        .full_help(self.row_has_keys(&row_tag) && super::ui::keyboard_focus())
         .build(&theme, &tokens);
         self.sheet_row_focus(&row_tag, row)
     }

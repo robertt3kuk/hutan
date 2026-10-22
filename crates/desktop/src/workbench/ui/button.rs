@@ -134,6 +134,7 @@ pub struct Button {
     focus: Option<FocusHandle>,
     ring: bool,
     max_width: Option<f32>,
+    min_width: Option<f32>,
     on_click: Option<ClickHandler>,
     children: Vec<AnyElement>,
     theme: Theme,
@@ -175,6 +176,7 @@ impl Button {
             focus: None,
             ring: false,
             max_width: None,
+            min_width: None,
             on_click: None,
             children: Vec::new(),
             theme: *theme,
@@ -272,6 +274,13 @@ impl Button {
         self
     }
 
+    /// The narrowest the button gets, in px, so the controls of a column share a left edge (the
+    /// settings sheet's dropdowns).
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = Some(width);
+        self
+    }
+
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -305,6 +314,7 @@ impl RenderOnce for Button {
             ring,
             on_click,
             max_width,
+            min_width,
             children,
             theme,
             tokens,
@@ -380,6 +390,9 @@ impl RenderOnce for Button {
         }
         if let Some(width) = max_width {
             button = button.max_w(px(width)).min_w_0().flex_shrink(1.0);
+        }
+        if let Some(width) = min_width {
+            button = button.min_w(px(width));
         }
         if inert {
             button = button.cursor_default();
@@ -912,8 +925,8 @@ mod audit {
         ),
         (
             "desktop/src/workbench/ui.rs",
-            3,
-            "the switch, the checkbox and a segment of a segmented control",
+            4,
+            "the switch, the checkbox, a segment of a segmented control and a question's option",
         ),
         (
             "desktop/src/workbench/ui/button.rs",

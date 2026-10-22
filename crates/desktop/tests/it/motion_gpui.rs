@@ -600,12 +600,10 @@ mod places {
         (view, cx)
     }
 
-    fn footer_top(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> f32 {
+    fn sheet_top(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> f32 {
         draw(cx);
         let bounds = view
-            .read_with(cx, |wb, _| {
-                wb.region_bounds(Region::Settings("sheet-footer"))
-            })
+            .read_with(cx, |wb, _| wb.region_bounds(Region::Settings("sheet-body")))
             .expect("the sheet is drawn");
         f32::from(bounds.origin.y)
     }
@@ -615,11 +613,11 @@ mod places {
         let (view, cx) = open_workbench(cx, "off");
         advance(cx, Duration::from_millis(300));
         cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
-        let start = footer_top(&view, cx);
+        let start = sheet_top(&view, cx);
         advance(cx, Duration::from_millis(100));
-        let middle = footer_top(&view, cx);
+        let middle = sheet_top(&view, cx);
         advance(cx, Duration::from_millis(150));
-        let end = footer_top(&view, cx);
+        let end = sheet_top(&view, cx);
         assert!(
             (start - end - 8.0).abs() < 0.5,
             "starts 8 px low: {start} vs {end}"
@@ -629,18 +627,18 @@ mod places {
             "on its way at 100 ms: {middle}"
         );
         advance(cx, Duration::from_millis(300));
-        assert_eq!(footer_top(&view, cx), end, "and stays");
+        assert_eq!(sheet_top(&view, cx), end, "and stays");
     }
 
     #[gpui::test]
     fn the_settings_sheet_does_not_move_under_reduce_motion(cx: &mut TestAppContext) {
         let (view, cx) = open_workbench(cx, "on");
         cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
-        let start = footer_top(&view, cx);
+        let start = sheet_top(&view, cx);
         advance(cx, Duration::from_millis(40));
-        let later = footer_top(&view, cx);
+        let later = sheet_top(&view, cx);
         advance(cx, Duration::from_millis(300));
-        let end = footer_top(&view, cx);
+        let end = sheet_top(&view, cx);
         assert_eq!((start, later), (end, end), "no movement at any frame");
     }
 
@@ -679,7 +677,7 @@ mod places {
         cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
         draw(cx);
         // The sheet is at its first frame: 200 ms of motion are ahead, and no clock has moved.
-        let before = footer_top(&view, cx);
+        let before = sheet_top(&view, cx);
         cx.simulate_input("dens");
         assert_eq!(
             view.read_with(cx, |wb, _| wb.settings_sheet().unwrap().query().to_owned()),
@@ -687,7 +685,7 @@ mod places {
             "every keystroke lands in the field at once"
         );
         // The keystrokes were a keyboard input: nothing slid while they landed.
-        assert!(footer_top(&view, cx) <= before);
+        assert!(sheet_top(&view, cx) <= before);
     }
 }
 
@@ -1015,12 +1013,10 @@ mod in_the_workbench {
         assert!(leaving(&view, cx).is_empty());
     }
 
-    fn footer_top(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<f32> {
+    fn sheet_top(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<f32> {
         draw(cx);
-        view.read_with(cx, |wb, _| {
-            wb.region_bounds(Region::Settings("sheet-footer"))
-        })
-        .map(|bounds| f32::from(bounds.origin.y))
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Settings("sheet-body")))
+            .map(|bounds| f32::from(bounds.origin.y))
     }
 
     #[gpui::test]
@@ -1028,23 +1024,23 @@ mod in_the_workbench {
         let (view, cx) = open_workbench(cx, "off");
         cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
         step(cx, Duration::from_millis(300));
-        let rest = footer_top(&view, cx).expect("drawn");
+        let rest = sheet_top(&view, cx).expect("drawn");
         let in_sheet = focus_id(cx);
 
         view.update_in(cx, |wb, window, cx| wb.close_settings(window, cx));
-        let first = footer_top(&view, cx).expect("still drawn while it leaves");
+        let first = sheet_top(&view, cx).expect("still drawn while it leaves");
         assert_ne!(focus_id(cx), in_sheet, "the keyboard is back at the close");
         assert!(
             (first - rest).abs() < 0.5,
             "starts where it was: {first} vs {rest}"
         );
         step(cx, Duration::from_millis(75));
-        let middle = footer_top(&view, cx).expect("drawn at 75 ms");
+        let middle = sheet_top(&view, cx).expect("drawn at 75 ms");
         assert!(middle > rest && middle < rest + 8.0, "sinking: {middle}");
         step(cx, Duration::from_millis(74));
-        assert!(footer_top(&view, cx).is_some(), "drawn at 149 ms");
+        assert!(sheet_top(&view, cx).is_some(), "drawn at 149 ms");
         step(cx, Duration::from_millis(1));
-        assert_eq!(footer_top(&view, cx), None, "gone at 150 ms");
+        assert_eq!(sheet_top(&view, cx), None, "gone at 150 ms");
         assert!(leaving(&view, cx).is_empty());
     }
 
@@ -1056,15 +1052,15 @@ mod in_the_workbench {
         view.update_in(cx, |wb, window, cx| wb.close_settings(window, cx));
         draw(cx);
         step(cx, Duration::from_millis(75));
-        let leaving_at = footer_top(&view, cx).expect("drawn");
+        let leaving_at = sheet_top(&view, cx).expect("drawn");
         cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
-        let back = footer_top(&view, cx).expect("drawn");
+        let back = sheet_top(&view, cx).expect("drawn");
         assert!(
             (back - leaving_at).abs() < 1.0,
             "continues from where it was: {back} vs {leaving_at}"
         );
         step(cx, Duration::from_millis(300));
-        let rest = footer_top(&view, cx).expect("drawn");
+        let rest = sheet_top(&view, cx).expect("drawn");
         assert!(rest < back, "rises into place");
     }
 
@@ -1075,16 +1071,16 @@ mod in_the_workbench {
         let (view, cx) = open_workbench(cx, "on");
         cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
         step(cx, Duration::from_millis(300));
-        let rest = footer_top(&view, cx).expect("drawn");
+        let rest = sheet_top(&view, cx).expect("drawn");
         view.update_in(cx, |wb, window, cx| wb.close_settings(window, cx));
         for _ in 0..5 {
-            if let Some(top) = footer_top(&view, cx) {
+            if let Some(top) = sheet_top(&view, cx) {
                 assert_eq!(top, rest, "no movement at any frame");
             }
             step(cx, Duration::from_millis(30));
         }
         assert_eq!(
-            footer_top(&view, cx),
+            sheet_top(&view, cx),
             None,
             "a fade of at most 150 ms, then gone"
         );

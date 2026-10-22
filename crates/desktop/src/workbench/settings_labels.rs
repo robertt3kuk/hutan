@@ -86,7 +86,7 @@ const FIELDS: &[FieldText] = &[
         "appearance",
         "density",
         "Density",
-        "How much space rows, buttons and panels take. Compact fits more on screen; Comfortable uses larger rows and more padding.",
+        "Compact fits more on screen; Comfortable gives rows more room.",
         &[("compact", "Compact"), ("comfortable", "Comfortable")],
     ),
     choice(
@@ -100,26 +100,26 @@ const FIELDS: &[FieldText] = &[
         "appearance",
         "reduce_motion",
         "Reduce motion",
-        "Whether menus, sheets, toasts and groups fade and slide. System follows macOS (System Settings, Accessibility, Display) and changes with it at once. Reduced, nothing slides or changes height and fades stay under 150 ms.",
+        "Whether menus, sheets and toasts fade and slide. System follows macOS Accessibility. Reduced, nothing slides and fades stay under 150 ms.",
         &[("system", "System"), ("on", "On"), ("off", "Off")],
     ),
     field(
         "appearance",
         "light_theme",
         "Light theme",
-        "The color theme of light windows. Moving through the list previews each theme without changing anything; Return applies it. A theme that is missing or invalid is replaced by Hutan Light until it works.",
+        "The color theme of light windows. Moving through the list previews each theme; Return applies it. A missing theme falls back to Hutan Light.",
     ),
     field(
         "appearance",
         "dark_theme",
         "Dark theme",
-        "The color theme of dark windows. Moving through the list previews each theme without changing anything; Return applies it. A theme that is missing or invalid is replaced by Hutan Dark until it works.",
+        "The color theme of dark windows. Moving through the list previews each theme; Return applies it. A missing theme falls back to Hutan Dark.",
     ),
     field(
         "appearance",
         "icon_theme",
         "Icon theme",
-        "The icons, chosen independently of the colors. Icons a theme leaves out fall back to Phosphor one by one; the preview shows which ones. Return applies it.",
+        "The icons, chosen independently of the colors. Icons a theme leaves out fall back to Phosphor; Return applies the one you preview.",
     ),
     field(
         "appearance",
@@ -132,57 +132,57 @@ const FIELDS: &[FieldText] = &[
         "app",
         "keep_running",
         "Keep the daemon running after Hutan quits",
-        "Quitting Hutan leaves its background daemon and your sessions running, without asking. You can stop it from the Daemon menu or with “hutan daemon stop”. Off, the daemon stops when Hutan quits.",
+        "Quitting Hutan leaves its daemon and your sessions running, without asking. Off, the daemon stops when Hutan quits.",
     ),
     field(
         "app",
         "start_at_login",
         "Start the daemon when you log in",
-        "Registers Hutan's launch agent in macOS Login Items so the daemon starts at login and restarts after a crash. While it is registered, quitting Hutan never stops the daemon. Only available when Hutan runs from Hutan.app.",
+        "Registers Hutan's launch agent in macOS Login Items: the daemon starts at login and restarts after a crash. Needs Hutan.app.",
     ),
     field(
         "app",
         "setup_done",
         "First run finished",
-        "Whether the first run is over: you opened a folder or started a terminal from the first screen, or finished or skipped the setup. Turn it off to see the first screen again at the next start, or use “Run Setup Again…” below for the setup.",
+        "Whether the first run is over. Turn it off to see the first screen again at the next start; “Run Setup Again…” below runs the setup.",
     ),
     field(
         "app",
         "ask_notifications",
         "Offer notifications",
-        "Shows a one-line offer once, the first time something wants you (an approval, a finished run) while Hutan is not the frontmost app. The system's permission prompt only appears when you press “Notify me”. Off after you answered or dismissed it.",
+        "Offers once to notify you the first time something wants you while Hutan is in the background. Off after you answered or dismissed it.",
     ),
     field(
         "app",
         "ask_hooks",
         "Offer hooks for an agent in a terminal",
-        "Shows an offer once, in the strip under a terminal where Codex, Claude Code or OMP runs without having reported: install that agent's hooks, which says what is written and where first. Off after you answered or dismissed it. Nothing is written unless you accept.",
+        "Offers once, under a terminal where Codex, Claude Code or OMP runs unreported, to install its hooks. Nothing is written unless you accept.",
     ),
     choice(
         "app",
         "on_last_window_close",
         "When the last window closes",
-        "Quit Hutan, which asks first while sessions are running, or keep Hutan in the menu bar without a Dock icon. Keeping it in the menu bar needs the menu bar item below.",
+        "Quit Hutan (it asks first while sessions run), or keep it in the menu bar without a Dock icon; that needs the menu bar item below.",
         &[("quit", "Quit Hutan"), ("menu_bar", "Keep in the menu bar")],
     ),
     field(
         "app",
         "menu_bar",
         "Show the menu bar item",
-        "A menu bar icon with the daemon's state, how many sessions have a request waiting or an unseen failure, and a menu to jump to them. While no Hutan window is connected, the daemon shows its own icon whatever this says.",
+        "A menu bar icon with the daemon's state, the sessions waiting for you, and a menu to jump to them. With no window the daemon has its own.",
     ),
     field(
         "notifications",
         "dock_badge",
         "Show a badge on the Dock icon",
-        "Shows how many sessions have a request waiting (an approval, a question, a plan) on the Dock icon, and nothing at zero. Only requests count: a failure or finished work never does.",
+        "Shows how many sessions have a request waiting (an approval, a question, a plan) on the Dock icon. Failures and finished work never count.",
     ),
     // ---- keyboard ----
     choice(
         "keymap",
         "base",
         "Key bindings",
-        "The set of shortcuts Hutan starts from. Zed keys follow Zed on macOS (⌘⇧P command palette, ⌘P jump, ⌘B left sidebar, ⌘L ⌘R right sidebar, ⌘J bottom dock); Hutan keys are the original ones (⌘K command palette, ⌘J jump). Your own bindings in keymap.toml are applied on top, and a change takes effect at once.",
+        "The shortcuts Hutan starts from: Zed's on macOS, or Hutan's own. Your keymap.toml is applied on top; a change takes effect at once.",
         &[("zed", "Zed keys"), ("hutan", "Hutan keys")],
     ),
     // ---- terminal ----
@@ -208,7 +208,7 @@ const FIELDS: &[FieldText] = &[
         "terminal",
         "theme",
         "Color theme",
-        "The terminal's colors. Automatic uses the terminal colors of the color theme in effect (so it follows the light or dark mode); any installed color theme keeps its terminal colors whatever the window does.",
+        "The terminal's colors. Automatic follows the color theme in effect; an installed theme keeps its colors whatever the window does.",
         &[
             ("auto", "Automatic"),
             ("hutan-dark", "Hutan Dark"),
@@ -236,7 +236,7 @@ const FIELDS: &[FieldText] = &[
         "terminal",
         "option_as_meta",
         "Option key as Meta",
-        "Makes the Option key send Meta (Alt) for shell and editor shortcuts instead of typing special characters. macOS cannot tell the two Option keys apart here, so every choice except None applies to both.",
+        "Makes Option send Meta (Alt) for shell and editor shortcuts instead of special characters. Every choice except None applies to both keys.",
         &[
             ("none", "None"),
             ("left", "Left Option"),
@@ -283,13 +283,13 @@ const FIELDS: &[FieldText] = &[
         "terminal",
         "dim_unfocused_splits",
         "Dim unfocused splits",
-        "In a terminal tab with splits, the splits that do not have the keyboard lose a few percent of their contrast, so the one you type in stands out by more than its top edge. Off, only the edge marks it.",
+        "Splits of a terminal tab that do not have the keyboard lose a few percent of contrast. Off, only the edge marks the focused one.",
     ),
     field(
         "terminal",
         "blocks",
         "Command blocks",
-        "Groups each command and its output into a block with a marker bar, a status chip, and actions on hover such as copy and fold. Off, the terminal looks like a plain terminal.",
+        "Groups each command and its output into a block with a marker bar, a status chip and hover actions. Off, a plain terminal.",
     ),
     field(
         "terminal",
@@ -301,7 +301,7 @@ const FIELDS: &[FieldText] = &[
         "terminal",
         "env",
         "Extra environment variables",
-        "Variables added to the environment of new terminals, on top of your login environment. Terminals that are already open keep theirs. A workspace or project can set its own value for a variable.",
+        "Variables added to the environment of new terminals, on top of your login environment. Terminals already open keep theirs.",
     ),
     // ---- layout ----
     choice(
@@ -331,7 +331,7 @@ const FIELDS: &[FieldText] = &[
         "layout",
         "presets",
         "Your layout presets",
-        "Layouts you saved, by name. Save the layout you have on screen, rename a preset or delete one. A saved preset named like a built-in one replaces it until you delete it.",
+        "Layouts you saved, by name: save the one on screen, rename a preset or delete one. A preset named like a built-in one replaces it.",
     ),
     // ---- projects sidebar ----
     choice(
@@ -349,7 +349,7 @@ const FIELDS: &[FieldText] = &[
         "panels.sessions",
         "needs_you",
         "Requests, Failed and Ready for review groups",
-        "Shows the groups on top of the sidebar: Requests (an approval, a question or a plan waits for you), Failed and Ready for review (finished work you have not seen yet).",
+        "Shows the groups on top of the sidebar: Requests (an approval, a question or a plan waits), Failed, and Ready for review.",
     ),
     choice(
         "panels.sessions",
@@ -369,7 +369,7 @@ const FIELDS: &[FieldText] = &[
         "sidebar",
         "organize",
         "Organize the sidebar",
-        "Workspaces first lists your workspaces with their projects inside, then the projects that are in no workspace, then Home. Projects only shows one flat list of projects, pinned ones first, then Home.",
+        "Workspaces first lists workspaces with their projects, then loose projects, then Home. Projects only is one flat list, pinned first.",
         &[
             ("workspaces", "Workspaces, then projects"),
             ("projects", "Projects only"),
@@ -429,7 +429,7 @@ const FIELDS: &[FieldText] = &[
         "panels.search",
         "case_sensitive",
         "Match case",
-        "Finds only text with the same upper and lower case. Off, a query with an upper-case letter still matches case exactly. The Search panel's Aa button switches it too.",
+        "Finds only text with the same case. Off, a query with an upper-case letter still matches case exactly. The Aa button switches it too.",
     ),
     field(
         "panels.search",
@@ -567,13 +567,13 @@ const FIELDS: &[FieldText] = &[
         "editor",
         "vim_use_system_clipboard",
         "Vim uses the system clipboard",
-        "On by default, as in Zed: copies and deletes in Vim mode also go to the system clipboard, and p pastes from it. Off, as in Vim itself, they use Vim's own registers (a private one in each field).",
+        "On, as in Zed: copies and deletes in Vim mode also go to the system clipboard. Off, they use Vim's own registers, as Vim does.",
     ),
     field(
         "editor",
         "vim_mappings.insert",
         "Vim mappings in Insert mode",
-        "Your own keys for Insert mode, as Vim's inoremap: keys you type, and the keys Vim gets instead, such as jk for <Esc>. Edit them in settings.toml; the Keyboard page lists them with Vim's own keys.",
+        "Your own keys for Insert mode, as Vim's inoremap, such as jk for <Esc>. Edit them in settings.toml; the Keyboard page lists them.",
     ),
     field(
         "editor",
@@ -591,7 +591,7 @@ const FIELDS: &[FieldText] = &[
         "editor",
         "vim_timeout_ms",
         "Vim mapping timeout (ms)",
-        "How long a mapping of several keys waits for the next one, as Vim's timeoutlen. After that the keys typed so far count as themselves: a lone j types j.",
+        "How long a mapping of several keys waits for the next one, as Vim's timeoutlen. After that the keys typed count as themselves.",
     ),
     field(
         "editor",
@@ -632,7 +632,7 @@ const FIELDS: &[FieldText] = &[
         "editor",
         "agent_highlight",
         "Highlight agents' changes",
-        "File tabs tint the lines an agent's current turn changed, mark them in the gutter, and let you reject one change at a time. Off, nothing is compared or drawn; agents still write the files as before.",
+        "File tabs tint the lines an agent's turn changed and let you reject one change at a time. Off, nothing is compared or drawn.",
     ),
     // ---- agents ----
     field(
@@ -1592,7 +1592,6 @@ pub mod words {
         // ---- R4-A ----
         ENV_WARNING_DAEMON = "Do not put secrets here: the values stay in daemon.toml as plain text.";
         IDLE_STOP_HINT = "0 (never) or at least 60";
-        PROBLEMS_NONE = "Problems · none";
         PROBLEMS_COUNT = "Problems";
         APPLIES_RESTART_SHORT = "after restart";
         PENDING_RESTART_SHORT = "restart to apply";

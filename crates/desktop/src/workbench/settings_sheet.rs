@@ -1312,11 +1312,11 @@ impl Workbench {
                     .into_any_element()
             });
 
-        // One muted line, 32 px whatever it says: the list of problems opens over the page.
+        // One muted line, 32 px whatever it says: the list of problems opens over the page. It is
+        // there only when there is something to say: problems, or no match for the search.
+        let show_footer = problem_count > 0 || no_match;
         let footer_text = if no_match && problem_count == 0 {
             words::NO_MATCH_FOOTER.to_owned()
-        } else if problem_count == 0 {
-            words::PROBLEMS_NONE.to_owned()
         } else {
             format!(
                 "{} · {problem_count} {}",
@@ -1481,7 +1481,7 @@ impl Workbench {
                                 )
                                 .child(probe(&self.regions, Region::Settings("sheet-body"))),
                         )
-                        .child(footer)
+                        .children(show_footer.then_some(footer))
                         // The list of problems: in front of the page, above the footer; the page
                         // and the footer keep their size.
                         .when(problems_open && problem_count > 0, |s| {

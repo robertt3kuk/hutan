@@ -30,13 +30,17 @@ fn status_tone(status: LoginItemStatus, theme: Theme) -> gpui::Hsla {
     }
 }
 
+/// The narrowest the control column of a row is, in px: a dropdown, a field and a switch's cell
+/// all start at the same x, whatever their value says.
+pub(super) const CONTROL_MIN_WIDTH: f32 = 120.0;
+
 /// The height of a row of the sheet: 56 px comfortable, 52 px compact.
 pub(super) fn row_height(tokens: &Tokens) -> f32 {
     tokens.sidebar_row + 26.0
 }
 
 /// One row of a page of the sheet: the label (13 medium) with its chip, one line of help (12
-/// `muted`, cut with "…", the whole text in a tooltip and while the keyboard is on the row),
+/// `muted`, wrapped whole: a row grows to its help instead of cutting it with "…"),
 /// and at the right the ghost ↺ and the control. A hairline under it.
 pub(super) struct SheetRow {
     id: gpui::ElementId,
@@ -46,7 +50,6 @@ pub(super) struct SheetRow {
     control: AnyElement,
     chip: Option<AnyElement>,
     reset: Option<AnyElement>,
-    full_help: bool,
     top: bool,
     mark: Option<AnyElement>,
 }
@@ -66,7 +69,6 @@ impl SheetRow {
             control,
             chip: None,
             reset: None,
-            full_help: false,
             top: false,
             mark: None,
         }
@@ -93,13 +95,6 @@ impl SheetRow {
         self
     }
 
-    /// The whole help, not one line: the keyboard is on the row.
-    #[must_use]
-    pub(super) fn full_help(mut self, full: bool) -> Self {
-        self.full_help = full;
-        self
-    }
-
     /// The control is taller than a line (a list, a table): the label stays at the top.
     #[must_use]
     pub(super) fn top(mut self) -> Self {
@@ -116,9 +111,7 @@ impl SheetRow {
 
     pub(super) fn build(self, theme: &Theme, tokens: &Tokens) -> AnyElement {
         let help_id = gpui::ElementId::from((self.id.clone(), "help"));
-        let tip = self.help.clone();
         let has_help = !self.help.is_empty();
-        let full = self.full_help;
         let row = div()
             .id(self.id)
             .flex()
@@ -158,11 +151,6 @@ impl SheetRow {
                                 .id(help_id)
                                 .text_size(px(tokens.secondary_font_size))
                                 .text_color(theme.muted)
-                                .when(!full, |s| {
-                                    s.truncate().tooltip(move |_, cx| {
-                                        cx.new(|_| TextTooltip(tip.clone())).into()
-                                    })
-                                })
                                 .child(self.help),
                         )
                     })
@@ -173,6 +161,9 @@ impl SheetRow {
                     .flex()
                     .flex_none()
                     .items_center()
+                    .justify_end()
+                    // One column: the controls of a page start at the same x.
+                    .min_w(px(CONTROL_MIN_WIDTH))
                     .gap(px(tokens.spacing))
                     .children(self.reset)
                     .child(self.control),
@@ -481,6 +472,7 @@ impl Workbench {
                     &tokens,
                 )
                 .compact()
+                .min_width(CONTROL_MIN_WIDTH)
                 .selected(open)
                 .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -595,8 +587,7 @@ impl Workbench {
         .marked(probe(
             &self.regions,
             Region::SettingsItem("row", self.field_index(field)),
-        ))
-        .full_help(self.row_has_keys(&row_tag) && super::ui::keyboard_focus());
+        ));
         if tall {
             row = row.top();
         }
