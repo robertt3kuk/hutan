@@ -39,7 +39,7 @@ pub enum ChatUpdate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckpointUpdate {
     /// A turn's or a restore's checkpoint was recorded (or recorded again with its end).
-    Created(CheckpointInfo),
+    Created(Box<CheckpointInfo>),
     /// Checkpoints went (`checkpoint.remove`, retention).
     Removed(Vec<CheckpointId>),
 }

@@ -429,7 +429,7 @@ impl StoreState {
             // whoever shows them (`Connection::chat_updates`).
             Event::CheckpointCreated { checkpoint } => effects
                 .checkpoints
-                .push(crate::chat::CheckpointUpdate::Created(*checkpoint)),
+                .push(crate::chat::CheckpointUpdate::Created(checkpoint)),
             Event::CheckpointRemoved { ids } => effects
                 .checkpoints
                 .push(crate::chat::CheckpointUpdate::Removed(ids)),
