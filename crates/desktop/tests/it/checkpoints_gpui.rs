@@ -4,8 +4,9 @@
 //! on a turn that changed files, the preview sheet's groups and ticks as the daemon plans them,
 //! Esc and Return (on *Cancel*) writing nothing, a conflict restored only through its own box,
 //! *Restore* writing the files with the toast and the footer's `Restored — Undo`, an open file
-//! tab showing the restored text, the toast's *Undo* restoring again; a folder outside git saying
-//! why once, in the chat's ⋯ menu; and nothing at all without the capability.
+//! tab showing the restored text, the toast's *Undo* restoring again; the sheet naming the
+//! project, and `Restored — Undo` in a new window over a restarted daemon (FX-SMALL-1); a folder
+//! outside git saying why once, in the chat's ⋯ menu; and nothing at all without the capability.
 
 use crate::common;
 
@@ -592,4 +593,93 @@ fn the_palette_picks_the_turn_from_the_checkpoints_list_and_undoes_the_last_rest
         view.read_with(cx, |wb, _| wb.restore_toast().is_some_and(|t| t.undid))
     });
     assert_eq!(fs::read_to_string(&a).unwrap(), "edited by the agent\n");
+}
+
+#[gpui::test]
+fn the_sheet_names_the_project_and_restored_survives_a_restart_until_undone(
+    cx: &mut TestAppContext,
+) {
+    let (mut s, root) = setup(1, true);
+    let root = fs::canonicalize(&root).unwrap();
+    let a = root.join("a.txt");
+    let (view, cx) = open(cx, &s.daemon, s.daemon.connection());
+    show_chat(&view, cx, s.session);
+    turn(&s, &view, cx, 0, || {
+        fs::write(&a, "edited by the agent\n").unwrap();
+    });
+    let footer = footers(&view, cx, s.session)[0];
+    wait_until(cx, "the turn's Rewind…", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::ChatRewind(footer)).is_some()
+        })
+    });
+    let checkpoint = view.read_with(cx, |wb, cx| {
+        wb.sessions().read(cx).checkpoints().read(cx).of(s.session)[0].id
+    });
+
+    // The sheet says the project's name, and `this checkout`; the full path is the tooltip.
+    click(&view, cx, Region::ChatRewind(footer));
+    sheet_ready(&view, cx);
+    // The repository is a project (the test daemon put the chat in Home; open it as one).
+    let _: hutan_protocol::messages::WorkspaceOpened = s.daemon.call(Request::WorkspaceOpen(
+        hutan_protocol::messages::WorkspaceOpen {
+            path: root.clone(),
+            created_by: None,
+        },
+    ));
+    wait_until(cx, "the project `repo`", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .workspaces()
+                .iter()
+                .any(|w| w.name == "repo" && w.project.as_ref().is_some_and(|p| p.root == root))
+        })
+    });
+    let header = view
+        .read_with(cx, |wb, cx| wb.rewind_sheet_header(cx))
+        .unwrap();
+    assert_eq!(header.facts, "Codex · 1 turn · repo");
+    assert!(
+        header
+            .label
+            .ends_with("anything outside this checkout are not rewound."),
+        "{}",
+        header.label
+    );
+    let path = root.display().to_string();
+    assert!(!header.facts.contains(&path) && !header.label.contains(&path));
+    assert_eq!(header.checkout, path);
+    click(&view, cx, Region::Rewind("restore"));
+    wait_until(cx, "the restore", |cx| {
+        view.read_with(cx, |wb, _| wb.restore_toast().is_some())
+    });
+    assert_eq!(fs::read_to_string(&a).unwrap(), "alpha\n");
+
+    // The daemon and the desktop restart: a new window over a new daemon still shows the turn
+    // as restored. (The restored chat gets a replay that refuses to resume: never a real Codex.)
+    let refusing = s.env.fixture("plain-turn");
+    s.daemon.stop();
+    s.daemon.restart_with(|c| {
+        c.codex = Some(refusing);
+        c.checkpoints.git_env = git_env();
+    });
+    let (second, cx) = open(cx, &s.daemon, s.daemon.connection());
+    show_chat(&second, cx, s.session);
+    let store = second.read_with(cx, |wb, cx| wb.sessions().read(cx).checkpoints().clone());
+    wait_until(cx, "Restored — Undo after the restart", |cx| {
+        store.read_with(cx, |store, _| store.restored_by(checkpoint).is_some())
+    });
+    let footer = footers(&second, cx, s.session)[0];
+
+    // Its Undo brings the agent's text back, and the footer offers Rewind… again.
+    click(&second, cx, Region::ChatRewind(footer));
+    wait_until(cx, "the undo", |cx| {
+        second.read_with(cx, |wb, _| wb.restore_toast().is_some_and(|t| t.undid))
+    });
+    assert_eq!(fs::read_to_string(&a).unwrap(), "edited by the agent\n");
+    wait_until(cx, "Rewind… again", |cx| {
+        store.read_with(cx, |store, _| store.restored_by(checkpoint).is_none())
+    });
+    assert!(drawn(&second, cx, Region::ChatRewind(footer)));
 }

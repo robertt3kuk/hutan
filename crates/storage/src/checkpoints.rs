@@ -1,4 +1,5 @@
-//! The `checkpoints` table (schema v14, v16, ADR 0019): one row per checkpoint of a chat session.
+//! The `checkpoints` table (schema v14, v16, v18, ADR 0019): one row per checkpoint of a chat
+//! session.
 //!
 //! Writes are applied before they return (they go through the writer like a read): the daemon
 //! writes a turn's row before the turn's first ref and reconciles rows with refs at start, so
@@ -36,8 +37,10 @@ pub struct CheckpointRow {
     pub start_commit: Option<String>,
     /// The end commit's tree.
     pub tree: Option<String>,
-    /// The checkpoint this one follows (a restore's turn, CK-4).
+    /// The checkpoint this one follows: what a restore restored (CK-4), the first of its chain.
     pub parent_id: Option<CheckpointId>,
+    /// The last checkpoint of a restore's chain (`through`, schema v18); `None` for one.
+    pub through_id: Option<CheckpointId>,
     pub created_ms: u64,
     pub ended_ms: Option<u64>,
     pub files_changed: u64,
@@ -73,6 +76,7 @@ impl CheckpointRow {
             start_commit: None,
             tree: None,
             parent_id: None,
+            through_id: None,
             created_ms,
             ended_ms: None,
             files_changed: 0,
@@ -100,6 +104,12 @@ impl CheckpointRow {
             removed: self.lines_removed,
             bytes: self.bytes,
             skipped: self.skipped.clone(),
+            restores: self
+                .parent_id
+                .filter(|_| self.kind == CheckpointKind::Restore),
+            restores_through: self
+                .through_id
+                .filter(|_| self.kind == CheckpointKind::Restore),
         }
     }
 }
@@ -257,7 +267,7 @@ impl Checkpoints<'_> {
 
 const SELECT: &str = "SELECT id, session_id, turn_id, kind, state, reason, checkout, common_dir, \
      ref, commit_id, start_commit, tree, parent_id, created_ms, ended_ms, files_changed, \
-     lines_added, lines_removed, bytes, skipped_json, during_json FROM checkpoints";
+     lines_added, lines_removed, bytes, skipped_json, during_json, through_id FROM checkpoints";
 
 fn list(conn: &Connection, filter: &CheckpointFilter) -> Result<Vec<CheckpointRow>> {
     let context = "reading checkpoints";
@@ -303,9 +313,9 @@ fn upsert(conn: &Connection, row: &CheckpointRow) -> Result<()> {
         "INSERT OR REPLACE INTO checkpoints (id, session_id, turn_id, kind, state, reason, \
              checkout, common_dir, ref, commit_id, start_commit, tree, parent_id, created_ms, \
              ended_ms, files_changed, lines_added, lines_removed, bytes, skipped_json, \
-             during_json) \
+             during_json, through_id) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, \
-             ?19, ?20, ?21)",
+             ?19, ?20, ?21, ?22)",
         params![
             row.id.to_string(),
             row.session_id.to_string(),
@@ -328,6 +338,7 @@ fn upsert(conn: &Connection, row: &CheckpointRow) -> Result<()> {
             ms(row.bytes),
             skipped,
             during,
+            row.through_id.map(|p| p.to_string()),
         ],
     )
     .map_err(StorageError::sqlite("writing a checkpoint"))?;
@@ -379,6 +390,12 @@ fn from_row(row: &Row<'_>) -> Result<CheckpointRow> {
             .map(|p| {
                 p.parse()
                     .map_err(|e| StorageError::corrupt("checkpoints.parent_id", e))
+            })
+            .transpose()?,
+        through_id: text(21)?
+            .map(|p| {
+                p.parse()
+                    .map_err(|e| StorageError::corrupt("checkpoints.through_id", e))
             })
             .transpose()?,
         created_ms: int(13)?,
@@ -436,6 +453,7 @@ mod tests {
         full.start_commit = Some("d".repeat(40));
         full.tree = Some("e".repeat(40));
         full.parent_id = Some(CheckpointId::new());
+        full.through_id = Some(CheckpointId::new());
         full.ended_ms = Some(25);
         full.files_changed = 3;
         full.lines_added = 4;
@@ -592,5 +610,26 @@ mod tests {
             [rows[5].id]
         );
         assert!(page(CheckpointScope::All, Some(CheckpointId::new()), 10).is_empty());
+    }
+
+    #[test]
+    fn a_restore_tells_what_it_restored_and_a_turn_does_not() {
+        let (turn, last) = (CheckpointId::new(), CheckpointId::new());
+        let mut restore = row(SessionId::new(), 30, None);
+        restore.kind = CheckpointKind::Restore;
+        restore.parent_id = Some(turn);
+        let info = restore.info();
+        assert_eq!((info.restores, info.restores_through), (Some(turn), None));
+        restore.through_id = Some(last);
+        let info = restore.info();
+        assert_eq!(
+            (info.restores, info.restores_through),
+            (Some(turn), Some(last))
+        );
+
+        let mut other = row(SessionId::new(), 30, None);
+        other.parent_id = Some(turn);
+        let info = other.info();
+        assert_eq!((info.restores, info.restores_through), (None, None));
     }
 }

@@ -380,6 +380,8 @@ mod tests {
             removed: 1,
             bytes: 10,
             skipped: Vec::new(),
+            restores: None,
+            restores_through: None,
         }
     }
 

@@ -306,6 +306,18 @@ impl RewindSheet {
     }
 }
 
+/// The words at the top of the sheet once its plan is in
+/// ([`Workbench::rewind_sheet_header`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewindHeader {
+    /// `Codex · 1 turn · hutan`: the agent, the turns, the project (else the `~` folder).
+    pub facts: String,
+    /// The honest label, which names the checkout `this checkout`.
+    pub label: String,
+    /// The checkout's full path: the tooltip of both lines.
+    pub checkout: String,
+}
+
 /// One row of the Checkpoints list.
 #[derive(Debug, Clone)]
 pub struct ListRow {
@@ -994,7 +1006,7 @@ impl Workbench {
         let files = restored.written.len() + restored.deleted.len();
         let store = self.checkpoint_store(cx);
         store.update(cx, |store, cx| {
-            store.note_restore(restored.checkpoint.id, sheet.checkpoint, cx);
+            store.note_restore(&restored.checkpoint, cx);
         });
         if sheet.note {
             let mut changed: Vec<&str> = restored
@@ -1101,7 +1113,7 @@ impl Workbench {
                     let files = restored.written.len() + restored.deleted.len();
                     let store = this.checkpoint_store(cx);
                     store.update(cx, |store, cx| {
-                        store.note_restore(restored.checkpoint.id, restore, cx);
+                        store.note_restore(&restored.checkpoint, cx);
                     });
                     this.show_restore_toast(session, restored.checkpoint.id, files, true, cx);
                 }

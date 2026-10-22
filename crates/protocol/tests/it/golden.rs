@@ -3166,6 +3166,25 @@ fn checkpoint_fixture() -> CheckpointInfo {
             reason: SkipReason::SecretName,
             bytes: Some(120),
         }],
+        restores: None,
+        restores_through: None,
+    }
+}
+
+/// A restore of turns 1 through 2 (protocol 0.40: `restores`, `restores_through`).
+fn restore_checkpoint_fixture() -> CheckpointInfo {
+    CheckpointInfo {
+        id: checkpoint_id(3),
+        turn_id: None,
+        kind: CheckpointKind::Restore,
+        files_changed: 2,
+        added: 4,
+        removed: 9,
+        bytes: 0,
+        skipped: vec![],
+        restores: Some(checkpoint_id(1)),
+        restores_through: Some(checkpoint_id(2)),
+        ..checkpoint_fixture()
     }
 }
 
@@ -4219,6 +4238,12 @@ fn events() -> Vec<(&'static str, Event)> {
                 version: None,
                 diagnostics: vec![],
                 truncated: false,
+            },
+        ),
+        (
+            "checkpoint_created_restore",
+            Event::CheckpointCreated {
+                checkpoint: Box::new(restore_checkpoint_fixture()),
             },
         ),
     ]
@@ -6414,6 +6439,23 @@ fn responses_match_fixtures() {
                     "`lsp.trust` is the user's alone: an agent cannot trust a folder",
                 ),
             ),
+        ),
+        (
+            "checkpoint_list_restores",
+            ControlMessage::ok(
+                64,
+                &CheckpointList {
+                    checkpoints: vec![
+                        CheckpointInfo {
+                            restores_through: None,
+                            ..restore_checkpoint_fixture()
+                        },
+                        checkpoint_fixture(),
+                    ],
+                    next: None,
+                },
+            )
+            .unwrap(),
         ),
     ];
     for (name, message) in cases {

@@ -151,6 +151,15 @@ pub struct CheckpointInfo {
     /// Files left out, with the reason.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped: Vec<SkippedFile>,
+    /// A `restore` checkpoint: the checkpoint it restored to before (a turn's, or an earlier
+    /// restore's when it was an Undo), from its stored row (protocol 0.40). Absent for a turn
+    /// and for a restore recorded before 0.40.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restores: Option<CheckpointId>,
+    /// A restore of a chain of turns: the last checkpoint of the chain (`through`), absent
+    /// when it restored one checkpoint (protocol 0.40).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restores_through: Option<CheckpointId>,
 }
 
 /// Whether a chat session's turns get checkpoints.

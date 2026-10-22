@@ -31,7 +31,7 @@ use hutan_protocol::checkpoint::{
 use hutan_protocol::control::ErrorBody;
 use hutan_protocol::fs::{FsOrigin, FsWatch, FsWatchPath};
 use hutan_protocol::messages::{Event, Origin, Request, SessionResult};
-use hutan_storage::{CheckpointRow, Storage};
+use hutan_storage::{CheckpointFilter, CheckpointRow, Storage};
 use serde_json::json;
 use tokio::sync::broadcast;
 use tokio::time::{sleep, timeout};
@@ -130,6 +130,7 @@ fn hutan_refs(root: &Path) -> Vec<String> {
 struct Service {
     _dir: tempfile::TempDir,
     root: PathBuf,
+    database: PathBuf,
     storage: Storage,
     turns: Arc<TurnCheckpoints>,
     session: SessionId,
@@ -140,7 +141,8 @@ impl Service {
         let dir = tempfile::tempdir().unwrap();
         let root = repository(dir.path());
         let base = fs::canonicalize(dir.path()).unwrap().join("home");
-        let storage = Storage::open(base.join("hutan.sqlite")).unwrap();
+        let database = base.join("hutan.sqlite");
+        let storage = Storage::open(&database).unwrap();
         let turns = TurnCheckpoints::new(
             storage.clone(),
             &base,
@@ -156,6 +158,7 @@ impl Service {
         Self {
             _dir: dir,
             root,
+            database,
             storage,
             turns,
             session,
@@ -294,6 +297,11 @@ async fn a_restore_returns_the_start_tree_and_undo_and_undo_of_undo_flip_it_with
     assert_eq!(undo.files_changed, 3);
     let row = s.row(undo.id);
     assert_eq!(row.parent_id, Some(turn.id));
+    // It says so on the wire: what it restored, one turn.
+    assert_eq!(
+        (undo.restores, undo.restores_through),
+        (Some(turn.id), None)
+    );
     assert_eq!(row.tree.as_deref(), Some(start.as_str()));
     assert_eq!(s.start_tree(&row), end);
     assert_eq!(
@@ -311,6 +319,11 @@ async fn a_restore_returns_the_start_tree_and_undo_and_undo_of_undo_flip_it_with
 
     // Undo: the same algorithm over the restore.
     let undone = s.restore(undo.id).await;
+    assert_eq!(
+        undone.checkpoint.restores,
+        Some(undo.id),
+        "an undo restores the restore"
+    );
     assert_eq!(undone.written, ["a.txt", "b.txt", "new/c.txt"]);
     assert_eq!(worktree_tree(&s.root), end, "the end again");
     // Undo of undo.
@@ -447,6 +460,20 @@ async fn an_edit_between_two_turns_is_a_gap_and_a_save_during_a_turn_is_during()
         "the first start"
     );
     assert_eq!(s.read("b.txt").as_deref(), Some("turn 2 and the user\n"));
+    // The restore names its chain, and a restarted daemon (the same database, opened again)
+    // lists it so: every window can tell which turns stand restored.
+    let chain = (Some(first.id), Some(second.id));
+    let info = &restored.checkpoint;
+    assert_eq!((info.restores, info.restores_through), chain);
+    let reopened = Storage::open(&s.database).unwrap();
+    let listed = reopened
+        .checkpoints()
+        .list(CheckpointFilter::Session(s.session))
+        .unwrap();
+    let row = listed.iter().find(|r| r.id == info.id).unwrap();
+    assert_eq!(row.info(), *info);
+    let turn = listed.iter().find(|r| r.id == first.id).unwrap().info();
+    assert_eq!((turn.restores, turn.restores_through), (None, None));
 }
 
 #[tokio::test(flavor = "multi_thread")]

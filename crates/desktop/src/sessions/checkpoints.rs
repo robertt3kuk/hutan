@@ -5,10 +5,10 @@
 //! then kept current by `checkpoint.created` / `checkpoint.removed` (which the connection hands
 //! out on [`Connection::chat_updates`]); a resync reads every loaded chat again.
 //!
-//! The daemon does not say which checkpoint a restore restored (`CheckpointInfo` has no parent
-//! on the wire), so the restores this window made are remembered here, in order: a turn whose
-//! newest restore was not undone shows `Restored — Undo`, and an undo of that undo shows its
-//! *Rewind…* again.
+//! A restore checkpoint says what it restored (`restores`, and `restores_through` for a chain;
+//! protocol 0.40), so which turns stand restored follows from the list alone, in every window and
+//! after a restart: a turn whose newest restore was not undone shows `Restored — Undo`, and an
+//! undo of that undo shows its *Rewind…* again.
 
 use std::collections::HashMap;
 
@@ -39,8 +39,6 @@ struct Loaded {
 pub struct CheckpointStore {
     connection: Connection,
     chats: HashMap<SessionId, Loaded>,
-    /// The restores this window made, oldest first: `(restore, what it restored)`.
-    restores: Vec<(CheckpointId, CheckpointId)>,
     /// Bumped by every change a footer may show.
     revision: u64,
     _task: Task<()>,
@@ -52,7 +50,6 @@ impl std::fmt::Debug for CheckpointStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CheckpointStore")
             .field("chats", &self.chats.len())
-            .field("restores", &self.restores.len())
             .finish_non_exhaustive()
     }
 }
@@ -86,7 +83,6 @@ impl CheckpointStore {
         Self {
             connection,
             chats: HashMap::new(),
-            restores: Vec::new(),
             revision: 0,
             _task: task,
         }
@@ -177,26 +173,27 @@ impl CheckpointStore {
 
     fn apply(&mut self, update: &CheckpointUpdate, cx: &mut Context<Self>) {
         match update {
-            CheckpointUpdate::Created(info) => {
-                let Some(loaded) = self.chats.get_mut(&info.session_id) else {
-                    return;
-                };
-                match loaded.list.iter_mut().find(|c| c.id == info.id) {
-                    Some(slot) => *slot = info.clone(),
-                    None => loaded.list.push(info.clone()),
-                }
-                sort_newest_first(&mut loaded.list);
-            }
+            CheckpointUpdate::Created(info) => self.insert(info),
             CheckpointUpdate::Removed(ids) => {
                 for loaded in self.chats.values_mut() {
                     loaded.list.retain(|c| !ids.contains(&c.id));
                 }
-                self.restores
-                    .retain(|(restore, target)| !ids.contains(restore) && !ids.contains(target));
             }
         }
         self.revision += 1;
         cx.notify();
+    }
+
+    /// `info` joins (or replaces its older self in) its chat's list, when that is loaded.
+    fn insert(&mut self, info: &CheckpointInfo) {
+        let Some(loaded) = self.chats.get_mut(&info.session_id) else {
+            return;
+        };
+        match loaded.list.iter_mut().find(|c| c.id == info.id) {
+            Some(slot) => *slot = info.clone(),
+            None => loaded.list.push(info.clone()),
+        }
+        sort_newest_first(&mut loaded.list);
     }
 
     /// The checkpoints of `session`, newest first (empty until loaded).
@@ -240,22 +237,55 @@ impl CheckpointStore {
             .find(|c| c.kind == CheckpointKind::Restore && c.state == CheckpointState::Ok)
     }
 
-    /// Remembers that `restore` restored `target` (a turn, or an earlier restore: an undo).
-    pub fn note_restore(
-        &mut self,
-        restore: CheckpointId,
-        target: CheckpointId,
-        cx: &mut Context<Self>,
-    ) {
-        self.restores.push((restore, target));
+    /// The restore this window just made, from its answer: the footer says `Restored — Undo`
+    /// at once, not only when `checkpoint.created` arrives.
+    pub fn note_restore(&mut self, restore: &CheckpointInfo, cx: &mut Context<Self>) {
+        self.insert(restore);
         self.revision += 1;
         cx.notify();
     }
 
     /// The restore that Undo restores when `checkpoint` is restored now, else `None`.
     pub fn restored_by(&self, checkpoint: CheckpointId) -> Option<CheckpointId> {
-        restored_by(&self.restores, checkpoint)
+        let session = self.get(checkpoint)?.session_id;
+        restored_by(&restore_pairs(self.of(session)), checkpoint)
     }
+}
+
+/// `(restore, what it restored)` for every restore of a chat's `list` (newest first) that went
+/// through, oldest first: a chain restore restored each turn from `restores` through
+/// `restores_through`; an undo restored the restore it undid.
+fn restore_pairs(list: &[CheckpointInfo]) -> Vec<(CheckpointId, CheckpointId)> {
+    let mut pairs = Vec::new();
+    for restore in list.iter().rev() {
+        if restore.kind != CheckpointKind::Restore || restore.state != CheckpointState::Ok {
+            continue;
+        }
+        let Some(first) = restore.restores else {
+            continue;
+        };
+        pairs.push((restore.id, first));
+        let Some(last) = restore.restores_through else {
+            continue;
+        };
+        // The turns of the chain, oldest first: after `first`, up to and including `last`
+        // (none while `last` is not in the list).
+        let Some(end) = list.iter().rev().position(|c| c.id == last) else {
+            continue;
+        };
+        let chain = list
+            .iter()
+            .rev()
+            .take(end + 1)
+            .skip_while(|c| c.id != first)
+            .skip(1);
+        pairs.extend(
+            chain
+                .filter(|c| c.kind == CheckpointKind::Turn)
+                .map(|c| (restore.id, c.id)),
+        );
+    }
+    pairs
 }
 
 /// Newest first; the id breaks ties (ids grow with time).
@@ -318,5 +348,60 @@ mod tests {
         let second = CheckpointId::new();
         again.push((second, turn));
         assert_eq!(restored_by(&again, turn), Some(second));
+    }
+
+    fn checkpoint(session: SessionId, kind: CheckpointKind, at: u64) -> CheckpointInfo {
+        CheckpointInfo {
+            id: CheckpointId::new(),
+            session_id: session,
+            turn_id: None,
+            kind,
+            state: CheckpointState::Ok,
+            reason: None,
+            created_ms: at,
+            checkout: None,
+            files_changed: 1,
+            added: 1,
+            removed: 0,
+            bytes: 0,
+            skipped: Vec::new(),
+            restores: None,
+            restores_through: None,
+        }
+    }
+
+    #[test]
+    fn the_list_says_what_each_restore_restored_and_a_chain_covers_its_turns() {
+        let session = SessionId::new();
+        let turns: Vec<CheckpointInfo> = (0..4)
+            .map(|n| checkpoint(session, CheckpointKind::Turn, n))
+            .collect();
+        // Turns 1 through 2 restored, then that undone; a restore that failed counts for none.
+        let mut chain = checkpoint(session, CheckpointKind::Restore, 10);
+        chain.restores = Some(turns[1].id);
+        chain.restores_through = Some(turns[2].id);
+        let mut undo = checkpoint(session, CheckpointKind::Restore, 11);
+        undo.restores = Some(chain.id);
+        let mut failed = checkpoint(session, CheckpointKind::Restore, 12);
+        failed.restores = Some(turns[0].id);
+        failed.state = CheckpointState::Failed;
+        let mut list = vec![failed, undo.clone(), chain.clone()];
+        list.extend(turns.iter().rev().cloned());
+
+        let pairs = restore_pairs(&list);
+        assert_eq!(
+            pairs,
+            [
+                (chain.id, turns[1].id),
+                (chain.id, turns[2].id),
+                (undo.id, chain.id)
+            ]
+        );
+        let before_undo = restore_pairs(&list[2..]);
+        for turn in &turns {
+            let expected = (turn.id == turns[1].id || turn.id == turns[2].id).then_some(chain.id);
+            assert_eq!(restored_by(&before_undo, turn.id), expected);
+            assert_eq!(restored_by(&pairs, turn.id), None, "undone");
+        }
     }
 }

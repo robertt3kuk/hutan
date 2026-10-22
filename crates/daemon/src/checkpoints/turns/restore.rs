@@ -454,6 +454,7 @@ impl TurnCheckpoints {
             now_ms(),
         );
         row.parent_id = Some(req.checkpoint_id);
+        row.through_id = req.through.filter(|through| *through != req.checkpoint_id);
         row.checkout = Some(held.checkout().to_owned());
         row.common_dir = Some(chain.common_dir.clone());
         let pre_label = Label::restore(session.to_string(), id.to_string(), Kind::RestorePre);

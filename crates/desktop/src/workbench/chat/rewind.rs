@@ -1,5 +1,6 @@
 //! The checkpoint line of a turn's footer (ADR 0019, slice CK-5): a turn that changed files says
-//! `3 files changed · +41 −7 · Rewind…`; once this window restored it, `Restored — Undo` until
+//! `3 files changed · +41 −7 · Rewind…`; once it is restored (by any window, before a restart
+//! too: the daemon's restore checkpoint says what it restored), `Restored — Undo` until
 //! that restore is undone. Nothing without the daemon's capability `checkpoint`, nothing for a
 //! chat whose checkpoints are off or unsupported (the chat's ⋯ menu says why, once), and no
 //! button without `checkpoint.restore`. The buttons dispatch to the workbench, which owns the
@@ -34,7 +35,7 @@ pub fn changed_text(checkpoint: &CheckpointInfo) -> String {
 pub enum FooterAction {
     /// The turn can be rewound.
     Rewind,
-    /// This window restored it: Undo restores that restore.
+    /// It stands restored (by any window, or the CLI): Undo restores that restore.
     Undo(hutan_core::CheckpointId),
     /// Nothing (a late checkpoint, a daemon that cannot restore).
     None,
@@ -199,6 +200,8 @@ mod tests {
             removed: 7,
             bytes: 0,
             skipped: Vec::new(),
+            restores: None,
+            restores_through: None,
         };
         assert_eq!(changed_text(&checkpoint), "3 files changed · +41 −7");
         checkpoint.files_changed = 1;
