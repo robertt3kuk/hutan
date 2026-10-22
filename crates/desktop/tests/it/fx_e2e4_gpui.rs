@@ -81,7 +81,7 @@ fn a_popover_button_over_a_dock_edge_takes_the_click(cx: &mut TestAppContext) {
 fn the_stopped_chip_starts_the_daemon_at_once_without_a_restart_card(cx: &mut TestAppContext) {
     let process = ProcessDaemon::new();
     let session = process.create_session(&["sleep", "600"]);
-    let settings = SettingsStore::new(SettingsPaths::in_dir(&process.dir.path().join("config")));
+    let settings = SettingsStore::new(SettingsPaths::in_dir(process.dir.path().join("config")));
     let (view, cx) = open_with(cx, settings, Connection::start(process.options()), None);
     wait_until(cx, "the session", |cx| {
         view.read_with(cx, |wb, cx| {
@@ -112,7 +112,7 @@ fn the_stopped_chip_starts_the_daemon_at_once_without_a_restart_card(cx: &mut Te
             wb.daemon_busy().is_none() && wb.daemon_stopped()
         })
     });
-    assert_eq!(view.read_with(cx, |wb, _| wb.daemon_popover_open()), true);
+    assert!(view.read_with(cx, |wb, _| wb.daemon_popover_open()));
     cx.dispatch_action(hutan_desktop::workbench::actions::palette::Dismiss);
     draw(cx);
     assert!(!view.read_with(cx, |wb, _| wb.daemon_popover_open()));
