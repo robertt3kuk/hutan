@@ -1393,6 +1393,9 @@ impl CodeView {
         }
         if let Some(mode) = self.vim_mode() {
             context.set(crate::VIM_MODE_KEY, crate::vim_mode_value(mode));
+            if self.vim_in_command_line() {
+                context.add(crate::VIM_COMMAND_LINE_CONTEXT);
+            }
         }
         context
     }

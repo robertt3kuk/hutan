@@ -225,6 +225,11 @@ pub fn refine_kind(namespace: &str, key: &str, kind: &FieldKind) -> FieldKind {
         ("panels.inspector", "tabs", FieldKind::StringList) => {
             FieldKind::ChoiceList(own(&INSPECTOR_TABS))
         }
+        // Mappings are keys written as in Vim (`<C-w>`, `<Esc>`): settings.toml holds them, the
+        // Keyboard page lists them.
+        ("editor", "vim_mappings.insert" | "vim_mappings.normal" | "vim_mappings.visual", _) => {
+            FieldKind::Unsupported("edit settings.toml; listed on the Keyboard page".to_owned())
+        }
         _ => kind.clone(),
     }
 }

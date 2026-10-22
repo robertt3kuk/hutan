@@ -552,6 +552,30 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "editor",
+        "vim_mappings.insert",
+        "Vim mappings in Insert mode",
+        "Your own keys for Insert mode, as Vim's inoremap: keys you type, and the keys Vim gets instead, such as jk for <Esc>. Edit them in settings.toml; the Keyboard page lists them with Vim's own keys.",
+    ),
+    field(
+        "editor",
+        "vim_mappings.normal",
+        "Vim mappings in Normal mode",
+        "Your own keys for Normal mode, as Vim's nnoremap, such as Y for y$. Edit them in settings.toml.",
+    ),
+    field(
+        "editor",
+        "vim_mappings.visual",
+        "Vim mappings in Visual mode",
+        "Your own keys for the Visual modes, as Vim's xnoremap. Edit them in settings.toml.",
+    ),
+    field(
+        "editor",
+        "vim_timeout_ms",
+        "Vim mapping timeout (ms)",
+        "How long a mapping of several keys waits for the next one, as Vim's timeoutlen. After that the keys typed so far count as themselves: a lone j types j.",
+    ),
+    field(
+        "editor",
         "font_size",
         "Code font size",
         "Font size of code in file tabs, in points. The font is the color pack's monospace family.",
@@ -1407,6 +1431,12 @@ pub mod words {
         BINDINGS_HELP = "The bindings in keymap.toml, on top of the set chosen above: the keys, what they do and where they work. Edit the file to change them, then Reload.";
         BINDINGS_EMPTY = "keymap.toml sets no bindings.";
         BINDING_EVERYWHERE = "Everywhere";
+        VIM_KEYS_TITLE = "Vim keys";
+        VIM_KEYS_HELP = "With Vim mode on: your Vim mappings from settings.toml first, then Vim's own control keys. Your keymap.toml bindings win over both.";
+        VIM_KEYS_OFF = "Vim mode is off: these keys apply once it is on.";
+        VIM_MAPPINGS_EMPTY = "settings.toml sets no Vim mappings.";
+        VIM_MAPPING_BAD = "not used:";
+        VIM_BUILTIN = "Built in";
         OPEN_KEYMAP = "Open keymap.toml";
         RELOAD = "Reload";
         PRESET_NEEDS_NAME = "A preset needs a name";

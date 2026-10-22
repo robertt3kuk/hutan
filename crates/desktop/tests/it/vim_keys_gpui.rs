@@ -467,6 +467,106 @@ fn a_keymap_binding_scoped_to_insert_mode_gets_an_editor_key_back(cx: &mut TestA
     assert_eq!(file_mode(&tab, cx), Some(VimMode::Normal));
 }
 
+// ---- user mappings (`editor.vim_mappings`) ----------------------------------------------------
+
+const JK: &str = "[editor]\nvim_mode = true\nvim_timeout_ms = 500\n\n[editor.vim_mappings.insert]\njk = \"<Esc>\"\njj = \"<Esk>\"\n\n[editor.vim_mappings.normal]\nY = \"y$\"\n";
+
+#[gpui::test]
+fn a_jk_mapping_leaves_insert_and_a_lone_j_types_after_the_timeout(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, JK);
+    let dir = tempfile::tempdir().unwrap();
+    let tab = open_text(&view, cx, dir.path(), "a.txt", "one\n");
+    cx.simulate_input("A");
+    assert_eq!(file_mode(&tab, cx), Some(VimMode::Insert));
+    cx.simulate_input("jk");
+    assert_eq!(file_mode(&tab, cx), Some(VimMode::Normal));
+    assert_eq!(text(&tab.buffer, cx), "one\n", "jk typed nothing");
+
+    // A lone `j` waits for a `k`; after the timeout it is typed.
+    cx.simulate_input("A");
+    cx.simulate_input("j");
+    assert_eq!(text(&tab.buffer, cx), "one\n", "held while a k may follow");
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(499));
+    cx.run_until_parked();
+    assert_eq!(text(&tab.buffer, cx), "one\n");
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(1));
+    cx.run_until_parked();
+    assert_eq!(text(&tab.buffer, cx), "onej\n");
+    assert_eq!(file_mode(&tab, cx), Some(VimMode::Insert));
+    // `j` then another key: both typed at once.
+    cx.simulate_input("jx");
+    assert_eq!(text(&tab.buffer, cx), "onejjx\n");
+
+    // Normal mode: `Y` is `y$` (non-recursive: the `y` is Vim's own), `j` is not mapped.
+    cx.simulate_keystrokes("escape");
+    cx.simulate_input("0Y");
+    cx.simulate_input("$p");
+    assert_eq!(text(&tab.buffer, cx), "onejjxonejjx\n");
+
+    // A field of the palette has it too.
+    cx.simulate_keystrokes("cmd-shift-p");
+    cx.simulate_input("splijk");
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.palette_vim_mode()),
+        Some(Mode::Normal)
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.palette().map(|p| p.query.clone())),
+        Some("spli".to_owned())
+    );
+}
+
+#[gpui::test]
+fn the_keyboard_page_lists_vim_keys_and_a_bad_mapping_is_a_problem(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, JK);
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_settings(Some("keymap"), window, cx);
+    });
+    draw(cx);
+    let rows = view.read_with(cx, |wb, _| wb.shown_vim_key_rows());
+    assert!(
+        rows.iter()
+            .any(|r| r.keys == "jk" && r.what == "→ <Esc>" && r.modes == "Insert")
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.keys == "Y" && r.what == "→ y$" && r.modes == "Normal")
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.problem && r.what.contains("\"jj\" = \"<Esk>\""))
+    );
+    assert!(rows.iter().any(|r| r.keys == "⌃[" && !r.mapping));
+    // The bad entry is a problem of the settings, named by its key.
+    let problems = view.read_with(cx, |wb, _| wb.sheet_problems());
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("editor.vim_mappings.insert")
+                && p.contains("<Esk> is not a key Hutan knows")),
+        "{problems:?}"
+    );
+
+    // Searching for a Vim key finds the page and narrows the list to it.
+    view.update_in(cx, |wb, window, cx| wb.close_settings(window, cx));
+    view.update_in(cx, |wb, window, cx| wb.open_settings(None, window, cx));
+    view.update(cx, |wb, cx| wb.set_settings_query("⌃W s", cx));
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb
+            .settings_sheet()
+            .map(|s| s.namespace().to_owned())),
+        Some("keymap".to_owned())
+    );
+    draw(cx);
+    let rows = view.read_with(cx, |wb, _| wb.shown_vim_key_rows());
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].keys, "⌃W s ⌃W v");
+}
+
 // ---- Insert mode -------------------------------------------------------------------------------
 
 #[gpui::test]

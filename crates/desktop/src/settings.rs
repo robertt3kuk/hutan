@@ -994,6 +994,14 @@ pub struct EditorSettings {
     /// On by default, as Zed's `use_system_clipboard = "always"`; off, as in Vim itself, they
     /// use a register private to the field.
     pub vim_use_system_clipboard: bool,
+    /// Your own Vim mappings, per mode: keys you type → the keys Vim reads instead, like Vim's
+    /// `inoremap` / `nnoremap` / `xnoremap` (what a mapping sends is never mapped again). Keys
+    /// are written as in Vim: `jk`, `<Esc>`, `<C-w>`, `<CR>`, `<Space>`, `<lt>`; `<Nop>` maps
+    /// to nothing.
+    pub vim_mappings: VimMappings,
+    /// How long a mapping that has begun waits for its next key (ms, Vim's `timeoutlen`):
+    /// after that the keys typed so far count as themselves.
+    pub vim_timeout_ms: u64,
     /// Font size of code in file tabs, in points (the family is the color pack's monospace).
     pub font_size: f64,
     /// Line height of code in file tabs, as a multiple of the font size.
@@ -1015,11 +1023,25 @@ pub struct EditorSettings {
 /// `editor.large_file_bytes` by default: 16 MiB.
 pub const DEFAULT_LARGE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
+/// `editor.vim_mappings`: one table per mode, keys typed → keys Vim reads.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct VimMappings {
+    /// Insert mode (`inoremap`): `jk = "<Esc>"`.
+    pub insert: BTreeMap<String, String>,
+    /// Normal mode (`nnoremap`): `Y = "y$"`.
+    pub normal: BTreeMap<String, String>,
+    /// Visual modes (`xnoremap`).
+    pub visual: BTreeMap<String, String>,
+}
+
 impl Default for EditorSettings {
     fn default() -> Self {
         Self {
             vim_mode: false,
             vim_use_system_clipboard: true,
+            vim_mappings: VimMappings::default(),
+            vim_timeout_ms: 1000,
             font_size: 13.0,
             line_height: 1.45,
             large_file_bytes: DEFAULT_LARGE_FILE_BYTES,

@@ -302,6 +302,11 @@ impl CodeView {
         self.vim.as_ref().map(|v| v.vim.mode())
     }
 
+    /// Whether Vim's `/` or `?` line is being typed.
+    pub(crate) fn vim_in_command_line(&self) -> bool {
+        self.vim.as_ref().is_some_and(|v| v.vim.in_command_line())
+    }
+
     /// What the `editor.mode` status item shows beside the mode: `recording @a` while a macro
     /// is recorded, and the keys of a command in progress (`2d`). The `/` / `?` line being
     /// typed is not among them: it shows under the code ([`vim_command_line`]).

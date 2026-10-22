@@ -395,6 +395,11 @@ impl<H: VimHost> Vim<H> {
             .map(|l| format!("{}{}", l.kind, l.text))
     }
 
+    /// Whether a `:` / `/` / `?` line is being typed.
+    pub fn in_command_line(&self) -> bool {
+        self.core.cmdline.is_some()
+    }
+
     /// Whether `c`, typed now, is text rather than a command key: Insert mode, the `:` / `/` /
     /// `?` line, or a command that waits for its character (`f`, `t`, `r`). A client on a
     /// keyboard layout that does not type Latin letters reads every other key by its place on

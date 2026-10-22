@@ -98,7 +98,7 @@ pub use settings_assistant::{AssistantDefaults, MawasGrants, Running as Assistan
 pub use settings_daemon::DaemonSettingsState;
 pub use settings_keys::SheetFocus;
 pub use settings_layers::FieldSource;
-pub use settings_pages::{DataTarget, HistoryIndex};
+pub use settings_pages::{DataTarget, HistoryIndex, VimKeyRow};
 pub use settings_sheet::{Edit, SettingsSheet};
 pub use settings_themes::{PackField, PackPreview, PickerRow};
 pub use setup::{NotificationUi, SetupFinish, SetupState, SetupStep};

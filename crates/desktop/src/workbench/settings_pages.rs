@@ -38,7 +38,7 @@ use super::ui::{self, ButtonKind, FocusRingExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::integrations::IntegrationStatus;
-use crate::settings::LayoutSettings;
+use crate::settings::{EditorSettings, LayoutSettings};
 use crate::theme::DensityExt as _;
 use crate::workbench::model::LayoutPreset;
 
@@ -165,6 +165,7 @@ impl Workbench {
         self.custom_bindings()
             .iter()
             .map(binding_text)
+            .chain(self.vim_key_rows().iter().map(VimKeyRow::text))
             .collect::<Vec<_>>()
             .join(" ")
     }
@@ -195,7 +196,10 @@ impl Workbench {
         match page {
             "integrations" => rows.push(self.render_integrations(cx)),
             "launcher" => rows.push(self.render_exemptions(cx)),
-            "keymap" => rows.push(self.render_keybindings(cx)),
+            "keymap" => {
+                rows.push(self.render_keybindings(cx));
+                rows.push(self.render_vim_keys());
+            }
             "assistant" => rows.extend(self.render_assistant_daemon(cx)),
             page if super::settings_daemon::is_daemon_page(page) => {
                 rows.extend(self.render_daemon_page(page, cx));
@@ -952,6 +956,119 @@ impl Workbench {
         )
     }
 
+    // ---- Keyboard: Vim's keys and the user's mappings ------------------------------------------
+
+    /// The Vim keys of the Keyboard page: the mappings of `editor.vim_mappings` (one that
+    /// cannot be used says why), then Vim's own control keys.
+    pub fn vim_key_rows(&self) -> Vec<VimKeyRow> {
+        let editor = self.settings.get::<EditorSettings>();
+        let (good, problems) = super::vim_keys::compile(&editor.vim_mappings);
+        let mut rows: Vec<VimKeyRow> = good
+            .iter()
+            .map(|m| VimKeyRow {
+                keys: m.from_text.clone(),
+                modes: m.mode.label().to_owned(),
+                what: format!("→ {}", m.to_text),
+                mapping: true,
+                problem: false,
+            })
+            .collect();
+        rows.extend(problems.into_iter().map(|p| VimKeyRow {
+            keys: String::new(),
+            modes: p.mode.label().to_owned(),
+            what: format!("{} {}", words::VIM_MAPPING_BAD, p.message),
+            mapping: true,
+            problem: true,
+        }));
+        rows.extend(super::vim_keys::BUILTIN_KEYS.iter().map(|k| VimKeyRow {
+            keys: k.keys.to_owned(),
+            modes: k.modes.to_owned(),
+            what: k.what.to_owned(),
+            mapping: false,
+            problem: false,
+        }));
+        rows
+    }
+
+    /// The Vim keys the page shows: the ones the sheet's search finds among them, else all.
+    pub fn shown_vim_key_rows(&self) -> Vec<VimKeyRow> {
+        let query = self
+            .sheet
+            .as_ref()
+            .map(|s| s.query().trim().to_lowercase())
+            .unwrap_or_default();
+        let rows = self.vim_key_rows();
+        let matching: Vec<VimKeyRow> = rows
+            .iter()
+            .filter(|r| !query.is_empty() && r.text().to_lowercase().contains(&query))
+            .cloned()
+            .collect();
+        if matching.is_empty() { rows } else { matching }
+    }
+
+    fn render_vim_keys(&self) -> AnyElement {
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let rows = self.shown_vim_key_rows();
+        let mut under: Vec<AnyElement> = Vec::new();
+        if !self.vim_config().enabled {
+            under.push(note(words::VIM_KEYS_OFF, &theme, &tokens).into_any_element());
+        }
+        if !rows.iter().any(|r| r.mapping) {
+            under.push(note(words::VIM_MAPPINGS_EMPTY, &theme, &tokens).into_any_element());
+        }
+        let mut builtin_heading = false;
+        for (index, row) in rows.iter().enumerate() {
+            if !row.mapping && !builtin_heading {
+                builtin_heading = true;
+                under.push(
+                    div()
+                        .pt(px(tokens.spacing * 2.0))
+                        .child(ui::section_label(words::VIM_BUILTIN, &theme, &tokens))
+                        .into_any_element(),
+                );
+            }
+            under.push(
+                div()
+                    .id(SharedString::from(format!("vim-key-{index}")))
+                    .flex()
+                    .gap(px(tokens.spacing * 3.0))
+                    .py(px(2.0))
+                    .when(row.problem, |s| s.text_color(theme.danger))
+                    .child(
+                        div()
+                            .w(px(130.0))
+                            .flex_none()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(SharedString::from(row.keys.clone())),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(SharedString::from(row.what.clone())),
+                    )
+                    .child(
+                        div()
+                            .w(px(130.0))
+                            .flex_none()
+                            .text_color(theme.muted)
+                            .child(SharedString::from(row.modes.clone())),
+                    )
+                    .into_any_element(),
+            );
+        }
+        sheet_row(
+            "field-vim-keys",
+            words::VIM_KEYS_TITLE,
+            words::VIM_KEYS_HELP,
+            under,
+            div().into_any_element(),
+            &theme,
+            &tokens,
+        )
+    }
+
     // ---- terminal.env: rows of variables -------------------------------------------------------
 
     pub(super) fn render_map_control(
@@ -1363,4 +1480,25 @@ fn binding_text(binding: &BindingSpec) -> String {
         binding.action,
         binding.context.as_deref().unwrap_or_default()
     )
+}
+
+/// One line of the Keyboard page's Vim keys.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VimKeyRow {
+    /// As written (`jk`, `⌃W s`); empty for a mapping that cannot be used.
+    pub keys: String,
+    /// Where it applies (`Insert`, `Normal (file tabs)`).
+    pub modes: String,
+    /// What it does (`→ <Esc>`), or why a mapping is not used.
+    pub what: String,
+    /// One of `editor.vim_mappings` rather than Vim's own.
+    pub mapping: bool,
+    pub problem: bool,
+}
+
+impl VimKeyRow {
+    /// Everything a search can match in it, `vim` included.
+    fn text(&self) -> String {
+        format!("vim {} {} {}", self.keys, self.what, self.modes)
+    }
 }

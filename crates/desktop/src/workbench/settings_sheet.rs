@@ -233,6 +233,20 @@ impl Workbench {
         cx.notify();
     }
 
+    /// The problems of the settings files: the store's, then the Vim mappings that cannot be
+    /// used (`editor.vim_mappings`, a key Hutan does not know).
+    pub fn settings_problems(&self) -> Vec<hutan_settings::SettingsError> {
+        let mut errors = self.settings.errors();
+        let editor = self.settings.get::<crate::settings::EditorSettings>();
+        errors.extend(
+            super::vim_keys::compile(&editor.vim_mappings)
+                .1
+                .into_iter()
+                .map(|p| hutan_settings::SettingsError::error(None, p.key_path, p.message)),
+        );
+        errors
+    }
+
     /// The lines of the Problems footer of the selected page, in the order they are drawn: the
     /// settings files', then the daemon's (`daemon.toml` that cannot be read, a refused field,
     /// a provider error on the Models page).
@@ -240,7 +254,7 @@ impl Workbench {
         let Some(sheet) = &self.sheet else {
             return Vec::new();
         };
-        let mut lines: Vec<String> = self.settings.errors().iter().map(problem_text).collect();
+        let mut lines: Vec<String> = self.settings_problems().iter().map(problem_text).collect();
         lines.extend(self.daemon_page_problems(sheet.namespace));
         lines
     }
@@ -1075,8 +1089,7 @@ impl Workbench {
                 .into_any_element()
         };
         let mut lines: Vec<AnyElement> = self
-            .settings
-            .errors()
+            .settings_problems()
             .iter()
             .map(|e| {
                 let tone = if e.is_error() {
@@ -1126,7 +1139,7 @@ impl Workbench {
         let zone = sheet.zone;
         let problems_open = sheet.problems_open;
         let pages = self.sheet_pages();
-        let errors = self.settings.errors();
+        let errors = self.settings_problems();
         let daemon_problems = self.daemon_page_problems(selected);
         let problem_count = errors.len() + daemon_problems.len();
         let has_errors =
