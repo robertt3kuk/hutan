@@ -519,7 +519,8 @@ impl Workbench {
     }
 
     pub fn close_agent_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.agent_picker.take().is_some() {
+        if let Some(old) = self.agent_picker.take() {
+            self.leave_agent_picker(old, cx);
             self.focus_root(window, cx);
             cx.notify();
         }
@@ -571,6 +572,24 @@ impl Workbench {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if self.agent_picker.is_some() {
+            self.exits.agent_picker.cancel();
+            return self.build_agent_picker(true, cx);
+        }
+        let now = cx.background_executor().now();
+        motion::while_leaving(
+            self,
+            now,
+            |this| &mut this.agent_picker,
+            |this| &mut this.exits.agent_picker,
+            |this| this.build_agent_picker(false, cx),
+        )
+        .flatten()
+    }
+
+    /// The model dialog at its current state; `wanted` is false while it leaves (inert, the
+    /// filter drawn as plain text).
+    fn build_agent_picker(&mut self, wanted: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
         let picker = self.agent_picker.clone()?;
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -721,7 +740,7 @@ impl Workbench {
                             "AgentPicker",
                             self.overlay_vim_mode(super::vim_ui::OverlayField::Agent),
                         ))
-                        .track_focus(&self.agent_focus)
+                        .when(wanted, |s| s.track_focus(&self.agent_focus))
                         .w(px(560.0))
                         .flex()
                         .flex_col()
@@ -763,11 +782,15 @@ impl Workbench {
                                 .items_center()
                                 .gap(px(tokens.spacing))
                                 .child(div().text_color(theme.muted).child("Filter:"))
-                                .children(self.overlay_parts(
-                                    OverlayField::Agent,
-                                    "Type to filter models",
-                                    cx,
-                                )),
+                                .children(if wanted {
+                                    self.overlay_parts(
+                                        OverlayField::Agent,
+                                        "Type to filter models",
+                                        cx,
+                                    )
+                                } else {
+                                    vec![div().child(picker.model_query.clone()).into_any_element()]
+                                }),
                         )
                         .child(
                             div()
@@ -822,9 +845,10 @@ impl Workbench {
                         .presented(
                             "agent-picker-motion",
                             motion::Kind::Popover,
-                            true,
+                            wanted,
                             motion::Slide::Drop,
-                        ),
+                        )
+                        .inert(!wanted),
                 )
                 .into_any_element(),
         )

@@ -603,7 +603,8 @@ impl Workbench {
 
     /// Esc, *Cancel*, a click beside the sheet: closes it, nothing written.
     pub fn close_rewind(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.rewind.sheet.take().is_some() {
+        if let Some(old) = self.rewind.sheet.take() {
+            self.leave_rewind(old, cx);
             self.give_focus_back(window, cx);
             cx.notify();
         }
@@ -1021,6 +1022,7 @@ impl Workbench {
             model.update(cx, |model, cx| model.add_note(&note, cx));
         }
         self.show_restore_toast(sheet.session, restored.checkpoint.id, files, sheet.undo, cx);
+        self.leave_rewind(sheet, cx);
         self.give_focus_back(window, cx);
         cx.notify();
     }
@@ -1200,7 +1202,8 @@ impl Workbench {
     }
 
     pub fn close_checkpoints(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.rewind.list.take().is_some() {
+        if let Some(old) = self.rewind.list.take() {
+            self.leave_checkpoints(old, cx);
             self.give_focus_back(window, cx);
             cx.notify();
         }

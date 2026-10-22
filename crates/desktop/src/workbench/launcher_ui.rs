@@ -36,16 +36,34 @@ impl Workbench {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        self.build_launcher(false, cx)
+        if self.launcher.is_some() {
+            self.exits.launcher.cancel();
+            return self.build_launcher(false, true, cx);
+        }
+        let now = cx.background_executor().now();
+        motion::while_leaving(
+            self,
+            now,
+            |this| &mut this.launcher,
+            |this| &mut this.exits.launcher,
+            |this| this.build_launcher(false, false, cx),
+        )
+        .flatten()
     }
 
     /// The start composer inside the centre (`LauncherPreset::inline`): the prompt and the
     /// agent, the other rows folded under Options. Built from the same rows as the sheet.
     pub(crate) fn render_launcher_inline(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        self.build_launcher(true, cx)
+        self.build_launcher(true, true, cx)
     }
 
-    fn build_launcher(&mut self, inline: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// `wanted` is false while the sheet leaves: it takes no input.
+    fn build_launcher(
+        &mut self,
+        inline: bool,
+        wanted: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let more_present = self.overlays.track(
             "launcher-more",
             self.launcher
@@ -1303,7 +1321,7 @@ impl Workbench {
                     div()
                         .id("launcher")
                         .key_context(key_context())
-                        .track_focus(&self.launcher_focus)
+                        .when(wanted, |s| s.track_focus(&self.launcher_focus))
                         .w(px(680.0))
                         .max_h(px(720.0))
                         .flex()
@@ -1323,16 +1341,17 @@ impl Workbench {
                         .presented(
                             "launcher-motion",
                             motion::Kind::Sheet,
-                            true,
+                            wanted,
                             motion::Slide::Rise,
                         ),
                 )
                 .presented(
                     "launcher-scrim",
                     motion::Kind::Sheet,
-                    true,
+                    wanted,
                     motion::Slide::None,
                 )
+                .inert(!wanted)
                 .into_any_element(),
         )
     }

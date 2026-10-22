@@ -129,6 +129,23 @@ impl Workbench {
     }
 
     pub(crate) fn render_rewind_sheet(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.rewind.sheet.is_some() {
+            self.exits.rewind.cancel();
+            return self.build_rewind_sheet(true, cx);
+        }
+        let now = cx.background_executor().now();
+        motion::while_leaving(
+            self,
+            now,
+            |this| &mut this.rewind.sheet,
+            |this| &mut this.exits.rewind,
+            |this| this.build_rewind_sheet(false, cx),
+        )
+        .flatten()
+    }
+
+    /// `wanted` is false while the sheet leaves: it takes no input.
+    fn build_rewind_sheet(&mut self, wanted: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
         let sheet = self.rewind.sheet.as_ref()?;
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -409,7 +426,7 @@ impl Workbench {
                     div()
                         .id("rewind-sheet")
                         .key_context("RewindSheet")
-                        .track_focus(&self.rewind.focus)
+                        .when(wanted, |s| s.track_focus(&self.rewind.focus))
                         .relative()
                         .w(px(680.0))
                         .flex()
@@ -576,14 +593,41 @@ impl Workbench {
                                     .child(probe(&regions, Region::Rewind("restore"))),
                                 ),
                         )
-.presented("rewind-sheet-motion", motion::Kind::Sheet, true, motion::Slide::Rise),
+                        .presented(
+                            "rewind-sheet-motion",
+                            motion::Kind::Sheet,
+                            wanted,
+                            motion::Slide::Rise,
+                        ),
                 )
-                .presented("rewind-scrim", motion::Kind::Sheet, true, motion::Slide::None)
+                .presented("rewind-scrim", motion::Kind::Sheet, wanted, motion::Slide::None)
+                .inert(!wanted)
 .into_any_element(),
         )
     }
 
     pub(crate) fn render_checkpoints_list(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.rewind.list.is_some() {
+            self.exits.checkpoints.cancel();
+            return self.build_checkpoints_list(true, cx);
+        }
+        let now = cx.background_executor().now();
+        motion::while_leaving(
+            self,
+            now,
+            |this| &mut this.rewind.list,
+            |this| &mut this.exits.checkpoints,
+            |this| this.build_checkpoints_list(false, cx),
+        )
+        .flatten()
+    }
+
+    /// `wanted` is false while the list leaves: it takes no input.
+    fn build_checkpoints_list(
+        &mut self,
+        wanted: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let list = self.rewind.list.as_ref()?;
         let session = list.session;
         let selected = list.selected;
@@ -725,7 +769,7 @@ impl Workbench {
                     div()
                         .id("checkpoints-sheet")
                         .key_context("CheckpointsList")
-                        .track_focus(&self.rewind.list_focus)
+                        .when(wanted, |s| s.track_focus(&self.rewind.list_focus))
                         .relative()
                         .w(px(620.0))
                         .flex()
@@ -778,9 +822,15 @@ impl Workbench {
                                 ),
                         )
                         .child(body)
-.presented("checkpoints-motion", motion::Kind::Sheet, true, motion::Slide::Rise),
+                        .presented(
+                            "checkpoints-motion",
+                            motion::Kind::Sheet,
+                            wanted,
+                            motion::Slide::Rise,
+                        ),
                 )
-                .presented("checkpoints-scrim", motion::Kind::Sheet, true, motion::Slide::None)
+                .presented("checkpoints-scrim", motion::Kind::Sheet, wanted, motion::Slide::None)
+                .inert(!wanted)
 .into_any_element(),
         )
     }

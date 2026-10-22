@@ -268,11 +268,12 @@ impl Workbench {
     /// with its caret, a terminal, a panel). A click on the sidebar's Settings button moved it
     /// to the sidebar itself (or the window): then the focused pane's content takes it.
     pub fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(sheet) = self.sheet.take() else {
+        let Some(mut sheet) = self.sheet.take() else {
             return;
         };
         let back = sheet
             .return_focus
+            .take()
             .and_then(|f| f.upgrade())
             .filter(|f| *f != self.focus_handle && !self.dock_focus.contains(f));
         match back {
@@ -282,6 +283,7 @@ impl Workbench {
                 self.focus_pane(pane, window, cx);
             }
         }
+        self.leave_sheet(sheet, cx);
         cx.notify();
     }
 
@@ -1126,9 +1128,29 @@ impl Workbench {
     // ---- rendering --------------------------------------------------------------------------
 
     pub(crate) fn render_settings_sheet(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.sync_dropdown_exit(cx);
+        if self.sheet.is_some() {
+            self.exits.sheet.cancel();
+            return self.build_settings_sheet(true, cx);
+        }
+        let now = cx.background_executor().now();
+        motion::while_leaving(
+            self,
+            now,
+            |this| &mut this.sheet,
+            |this| &mut this.exits.sheet,
+            |this| this.build_settings_sheet(false, cx),
+        )
+        .flatten()
+    }
+
+    /// `wanted` is false while the sheet leaves: it takes no input.
+    fn build_settings_sheet(&mut self, wanted: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
         self.sheet.as_ref()?;
         // A catalog generation or a settings change since the last frame refreshes the preview.
-        self.sync_pack_preview();
+        if wanted {
+            self.sync_pack_preview();
+        }
         let sheet = self.sheet.as_ref()?;
         let scroll = sheet.scroll.clone();
         let theme = self.theme;
@@ -1332,7 +1354,7 @@ impl Workbench {
                             self.overlay_vim_mode(OverlayField::SheetValue)
                                 .or_else(|| self.overlay_vim_mode(OverlayField::SheetQuery)),
                         ))
-                        .track_focus(&self.sheet_focus)
+                        .when(wanted, |s| s.track_focus(&self.sheet_focus))
                         .relative()
                         .w(px(880.0))
                         .h(px(600.0))
@@ -1474,16 +1496,17 @@ impl Workbench {
                         .presented(
                             "settings-sheet-motion",
                             motion::Kind::Sheet,
-                            true,
+                            wanted,
                             motion::Slide::Rise,
                         ),
                 )
                 .presented(
                     "settings-scrim",
                     motion::Kind::Sheet,
-                    true,
+                    wanted,
                     motion::Slide::None,
                 )
+                .inert(!wanted)
                 .into_any_element(),
         )
     }

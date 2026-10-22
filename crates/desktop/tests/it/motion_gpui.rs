@@ -690,3 +690,388 @@ mod places {
         assert!(footer_top(&view, cx) <= before);
     }
 }
+
+// ---- overlays that leave (UX-MOTION-2) ---------------------------------------------------------
+
+/// An overlay whose state is dropped at its close, drawn as a real one is: the state goes into a
+/// [`motion::Leaving`], the render lends it back while it leaves, and the surface is inert then.
+struct Overlay {
+    kind: Kind,
+    open: Option<u32>,
+    exit: motion::Leaving<u32>,
+    seen: Rc<Seen>,
+    clicks: Rc<Cell<usize>>,
+}
+
+impl Overlay {
+    fn build(&mut self, wanted: bool) -> gpui::AnyElement {
+        use gpui::{InteractiveElement as _, StatefulInteractiveElement as _};
+        let (seen, clicks) = (Rc::clone(&self.seen), Rc::clone(&self.clicks));
+        let body = div()
+            .id("body")
+            .w(px(100.0))
+            .h(px(40.0))
+            .on_click(move |_, _, _| clicks.set(clicks.get() + 1));
+        let animate = move |element: gpui::Stateful<gpui::Div>, frame: motion::Frame| {
+            seen.value.set(frame.value);
+            seen.shift.set(frame.shift);
+            seen.settled.set(frame.settled);
+            seen.draws.set(seen.draws.get() + 1);
+            frame.slide_fade(element)
+        };
+        motion::transition(
+            "overlay",
+            self.kind,
+            if wanted { 1.0 } else { 0.0 },
+            body,
+            animate,
+        )
+        .from(0.0)
+        .inert(!wanted)
+        .into_any_element()
+    }
+}
+
+impl Render for Overlay {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let element = if self.open.is_some() {
+            self.exit.cancel();
+            Some(self.build(true))
+        } else {
+            let now = cx.background_executor().now();
+            motion::while_leaving(
+                self,
+                now,
+                |this| &mut this.open,
+                |this| &mut this.exit,
+                |this| this.build(false),
+            )
+        };
+        div().children(element)
+    }
+}
+
+struct Opened<'a> {
+    view: Entity<Overlay>,
+    seen: Rc<Seen>,
+    clicks: Rc<Cell<usize>>,
+    cx: &'a mut VisualTestContext,
+}
+
+/// An overlay of `kind`, open and settled, with the last input a pointer press.
+fn opened(cx: &mut TestAppContext, kind: Kind, reduced: bool) -> Opened<'_> {
+    set_reduce(cx, reduced);
+    motion::note_input(false);
+    let seen = Rc::new(Seen::default());
+    let clicks = Rc::new(Cell::new(0));
+    let (view_seen, view_clicks) = (Rc::clone(&seen), Rc::clone(&clicks));
+    let (view, cx) = cx.add_window_view(move |_, _| Overlay {
+        kind,
+        open: Some(1),
+        exit: motion::Leaving::default(),
+        seen: view_seen,
+        clicks: view_clicks,
+    });
+    frame(cx);
+    advance(cx, Duration::from_millis(300));
+    frame(cx);
+    Opened {
+        view,
+        seen,
+        clicks,
+        cx,
+    }
+}
+
+impl Opened<'_> {
+    fn close(&mut self) {
+        self.view.update(self.cx, |overlay, cx| {
+            let state = overlay.open.take().expect("open");
+            overlay.exit.start(state, overlay.kind, cx);
+            cx.notify();
+        });
+    }
+
+    fn reopen(&mut self) {
+        self.view.update(self.cx, |overlay, cx| {
+            overlay.open = Some(2);
+            cx.notify();
+        });
+    }
+
+    /// Moves the clock by `by`, lets the exit's timer run and draws; returns the draws so far.
+    fn step(&mut self, by: Duration) -> usize {
+        advance(self.cx, by);
+        self.cx.run_until_parked();
+        frame(self.cx);
+        self.seen.draws.get()
+    }
+}
+
+#[gpui::test]
+fn an_overlay_that_closed_is_drawn_for_its_exit_at_its_token_and_then_not(cx: &mut TestAppContext) {
+    for (kind, exit_ms) in [(Kind::Popover, 100), (Kind::Sheet, 150)] {
+        let mut o = opened(cx, kind, false);
+        o.close();
+        let at_close = o.step(Duration::ZERO);
+        assert_eq!(o.seen.value.get(), 1.0, "{kind:?}: leaves from where it was");
+        let half = o.step(Duration::from_millis(exit_ms / 2));
+        assert!(half > at_close, "{kind:?}: drawn at half time");
+        assert!(
+            o.seen.value.get() < 0.5 && o.seen.value.get() > 0.0,
+            "{kind:?}: ease-out is past half at half time: {}",
+            o.seen.value.get()
+        );
+        let before_end = o.step(Duration::from_millis(exit_ms / 2 - 1));
+        assert!(before_end > half, "{kind:?}: still drawn 1 ms before its token");
+        let end = o.step(Duration::from_millis(1));
+        assert_eq!(end, before_end, "{kind:?}: not drawn once {exit_ms} ms passed");
+    }
+}
+
+#[gpui::test]
+fn reopening_an_overlay_mid_exit_continues_from_the_value_on_screen(cx: &mut TestAppContext) {
+    let mut o = opened(cx, Kind::Sheet, false);
+    o.close();
+    o.step(Duration::ZERO);
+    o.step(Duration::from_millis(60));
+    let leaving = o.seen.value.get();
+    assert!(leaving < 1.0 && leaving > 0.0, "on its way out: {leaving}");
+    o.reopen();
+    o.step(Duration::ZERO);
+    assert!(
+        (o.seen.value.get() - leaving).abs() < 1e-4,
+        "no jump when it comes back: {} vs {leaving}",
+        o.seen.value.get()
+    );
+    o.step(Duration::from_millis(20));
+    assert!(o.seen.value.get() > leaving, "heads back to shown");
+    o.step(Duration::from_millis(300));
+    assert_eq!(o.seen.value.get(), 1.0);
+    assert!(o.seen.settled.get());
+}
+
+#[gpui::test]
+fn a_leaving_overlay_takes_no_clicks_and_an_open_one_does(cx: &mut TestAppContext) {
+    let mut o = opened(cx, Kind::Sheet, false);
+    let spot = gpui::point(px(10.0), px(10.0));
+    o.cx.simulate_click(spot, gpui::Modifiers::none());
+    assert_eq!(o.clicks.get(), 1, "open: the click lands");
+    o.close();
+    o.step(Duration::from_millis(30));
+    o.cx.simulate_click(spot, gpui::Modifiers::none());
+    assert_eq!(o.clicks.get(), 1, "leaving: the click goes to what is under it");
+}
+
+#[gpui::test]
+fn a_close_from_the_keyboard_leaves_nothing_behind(cx: &mut TestAppContext) {
+    let mut o = opened(cx, Kind::Sheet, false);
+    let drawn = o.seen.draws.get();
+    motion::note_input(true);
+    o.close();
+    assert_eq!(o.step(Duration::ZERO), drawn, "gone at the very next frame");
+    motion::note_input(false);
+}
+
+#[gpui::test]
+fn an_overlay_leaves_without_moving_under_reduce_motion(cx: &mut TestAppContext) {
+    let mut o = opened(cx, Kind::Sheet, true);
+    o.close();
+    let mut last = 1.0;
+    for _ in 0..4 {
+        o.step(Duration::from_millis(30));
+        assert_eq!(o.seen.shift.get(), 0.0, "never moves");
+        assert!(o.seen.value.get() <= last, "only fades");
+        last = o.seen.value.get();
+    }
+    let before_end = o.seen.draws.get();
+    o.step(Duration::from_millis(30));
+    assert_eq!(o.seen.draws.get(), before_end, "a fade of at most 150 ms, then gone");
+}
+
+#[gpui::test]
+fn a_settled_exit_adds_no_frames(cx: &mut TestAppContext) {
+    let mut o = opened(cx, Kind::Popover, false);
+    let idle = frame(o.cx);
+    o.close();
+    o.step(Duration::ZERO);
+    assert!(frame(o.cx) > idle, "leaving: a frame is requested per frame");
+    o.step(Duration::from_millis(110));
+    frame(o.cx);
+    assert_eq!(frame(o.cx), idle, "gone: back to the baseline");
+}
+
+mod in_the_workbench {
+    use super::{advance, frame};
+    use crate::common::{draw, offline_connection, open_with};
+    use gpui::{Entity, TestAppContext, VisualTestContext};
+    use hutan_desktop::workbench::ui::motion;
+    use hutan_desktop::workbench::{Region, Workbench, actions};
+    use std::time::Duration;
+
+    fn open_workbench<'a>(
+        cx: &'a mut TestAppContext,
+        reduce_motion: &str,
+    ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+        let (connection, settings, _) = offline_connection();
+        settings
+            .write_user(
+                "appearance.reduce_motion",
+                toml::Value::String(reduce_motion.into()),
+            )
+            .unwrap();
+        let (view, cx) = open_with(cx, settings, connection, None);
+        draw(cx);
+        motion::note_input(false);
+        advance(cx, Duration::from_millis(300));
+        draw(cx);
+        (view, cx)
+    }
+
+    fn leaving(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<&'static str> {
+        let now = cx.executor().now();
+        view.read_with(cx, |wb, _| wb.overlays_leaving(now))
+    }
+
+    fn step(cx: &mut VisualTestContext, by: Duration) {
+        advance(cx, by);
+        cx.run_until_parked();
+        draw(cx);
+    }
+
+    fn focus_id(cx: &mut VisualTestContext) -> Option<gpui::FocusHandle> {
+        cx.update(|window, cx| window.focused(cx))
+    }
+
+    #[gpui::test]
+    fn the_palette_fades_out_in_100_ms_and_the_keyboard_is_back_at_once(cx: &mut TestAppContext) {
+        let (view, cx) = open_workbench(cx, "off");
+        view.update_in(cx, |wb, window, cx| wb.open_palette(window, cx));
+        step(cx, Duration::from_millis(300));
+        let in_palette = focus_id(cx);
+        assert!(leaving(&view, cx).is_empty());
+
+        view.update_in(cx, |wb, window, cx| wb.close_palette(window, cx));
+        draw(cx);
+        assert!(!view.read_with(cx, |wb, _| wb.palette_open()));
+        assert_eq!(leaving(&view, cx), ["palette"], "still on screen, fading");
+        assert_ne!(
+            focus_id(cx),
+            in_palette,
+            "the keyboard left the palette when it closed"
+        );
+        step(cx, Duration::from_millis(99));
+        assert_eq!(leaving(&view, cx), ["palette"], "100 ms: not yet gone at 99");
+        step(cx, Duration::from_millis(1));
+        assert!(leaving(&view, cx).is_empty(), "gone at 100 ms");
+    }
+
+    #[gpui::test]
+    fn the_palette_closed_from_the_keyboard_is_gone_at_once(cx: &mut TestAppContext) {
+        let (view, cx) = open_workbench(cx, "off");
+        view.update_in(cx, |wb, window, cx| wb.open_palette(window, cx));
+        step(cx, Duration::from_millis(300));
+        motion::note_input(true);
+        view.update_in(cx, |wb, window, cx| wb.close_palette(window, cx));
+        draw(cx);
+        assert!(leaving(&view, cx).is_empty());
+        motion::note_input(false);
+    }
+
+    #[gpui::test]
+    fn the_jump_picker_leaves_like_the_palette(cx: &mut TestAppContext) {
+        let (view, cx) = open_workbench(cx, "off");
+        view.update_in(cx, |wb, window, cx| wb.open_jump_palette(window, cx));
+        step(cx, Duration::from_millis(300));
+        view.update_in(cx, |wb, window, cx| wb.close_picker(window, cx));
+        draw(cx);
+        assert_eq!(leaving(&view, cx), ["picker"]);
+        step(cx, Duration::from_millis(100));
+        assert!(leaving(&view, cx).is_empty());
+    }
+
+    fn footer_top(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<f32> {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Settings("sheet-footer"))
+        })
+        .map(|bounds| f32::from(bounds.origin.y))
+    }
+
+    #[gpui::test]
+    fn the_settings_sheet_sinks_8_px_and_is_gone_in_150_ms(cx: &mut TestAppContext) {
+        let (view, cx) = open_workbench(cx, "off");
+        cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
+        step(cx, Duration::from_millis(300));
+        let rest = footer_top(&view, cx).expect("drawn");
+        let in_sheet = focus_id(cx);
+
+        view.update_in(cx, |wb, window, cx| wb.close_settings(window, cx));
+        let first = footer_top(&view, cx).expect("still drawn while it leaves");
+        assert_ne!(focus_id(cx), in_sheet, "the keyboard is back at the close");
+        assert!((first - rest).abs() < 0.5, "starts where it was: {first} vs {rest}");
+        step(cx, Duration::from_millis(75));
+        let middle = footer_top(&view, cx).expect("drawn at 75 ms");
+        assert!(middle > rest && middle < rest + 8.0, "sinking: {middle}");
+        step(cx, Duration::from_millis(74));
+        assert!(footer_top(&view, cx).is_some(), "drawn at 149 ms");
+        step(cx, Duration::from_millis(1));
+        assert_eq!(footer_top(&view, cx), None, "gone at 150 ms");
+        assert!(leaving(&view, cx).is_empty());
+    }
+
+    #[gpui::test]
+    fn reopening_settings_mid_exit_does_not_jump(cx: &mut TestAppContext) {
+        let (view, cx) = open_workbench(cx, "off");
+        cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
+        step(cx, Duration::from_millis(300));
+        view.update_in(cx, |wb, window, cx| wb.close_settings(window, cx));
+        draw(cx);
+        step(cx, Duration::from_millis(75));
+        let leaving_at = footer_top(&view, cx).expect("drawn");
+        cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
+        let back = footer_top(&view, cx).expect("drawn");
+        assert!(
+            (back - leaving_at).abs() < 1.0,
+            "continues from where it was: {back} vs {leaving_at}"
+        );
+        step(cx, Duration::from_millis(300));
+        let rest = footer_top(&view, cx).expect("drawn");
+        assert!(rest < back, "rises into place");
+    }
+
+    #[gpui::test]
+    fn the_settings_sheet_does_not_move_while_it_leaves_under_reduce_motion(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = open_workbench(cx, "on");
+        cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
+        step(cx, Duration::from_millis(300));
+        let rest = footer_top(&view, cx).expect("drawn");
+        view.update_in(cx, |wb, window, cx| wb.close_settings(window, cx));
+        for _ in 0..5 {
+            if let Some(top) = footer_top(&view, cx) {
+                assert_eq!(top, rest, "no movement at any frame");
+            }
+            step(cx, Duration::from_millis(30));
+        }
+        assert_eq!(footer_top(&view, cx), None, "a fade of at most 150 ms, then gone");
+    }
+
+    #[gpui::test]
+    fn a_workbench_whose_overlays_left_is_idle_again(cx: &mut TestAppContext) {
+        let (view, cx) = open_workbench(cx, "off");
+        frame(cx);
+        frame(cx);
+        let idle = frame(cx);
+        view.update_in(cx, |wb, window, cx| wb.open_palette(window, cx));
+        step(cx, Duration::from_millis(300));
+        view.update_in(cx, |wb, window, cx| wb.close_palette(window, cx));
+        draw(cx);
+        assert!(frame(cx) > idle, "leaving: frames are requested");
+        step(cx, Duration::from_millis(110));
+        frame(cx);
+        frame(cx);
+        assert_eq!(frame(cx), idle, "gone: back to the baseline");
+    }
+}

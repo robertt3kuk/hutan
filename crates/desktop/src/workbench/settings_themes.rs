@@ -659,7 +659,7 @@ impl Workbench {
         let tokens = self.density.ui();
         let key = field.dotted();
         let ns = field.namespace;
-        let open = self.open_pack_picker() == Some(pack_field);
+        let open = self.dropdown_drawn(pack_field.key(), cx);
         let current = self.pack_current(pack_field).unwrap_or_default();
         let (packs, _) = self.themes.listing(pack_field.kind());
         let current_info = packs

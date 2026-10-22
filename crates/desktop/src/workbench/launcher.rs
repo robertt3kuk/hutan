@@ -1171,7 +1171,8 @@ impl Workbench {
     }
 
     pub fn close_launcher(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.launcher.take().is_some() {
+        if let Some(old) = self.launcher.take() {
+            self.leave_launcher(old, cx);
             self.focus_root(window, cx);
             cx.notify();
         }
@@ -2099,7 +2100,9 @@ impl Workbench {
     /// A start went through: close the sheet, or clear it for the next one.
     fn launcher_done(&mut self, and_new: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !and_new {
-            self.launcher = None;
+            if let Some(old) = self.launcher.take() {
+                self.leave_launcher(old, cx);
+            }
             self.focus_root(window, cx);
             cx.notify();
             return;

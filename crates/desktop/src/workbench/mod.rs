@@ -36,6 +36,7 @@ pub mod model;
 mod monitor;
 mod notify;
 pub mod open_link;
+mod overlay_exit;
 pub mod palette;
 pub mod panels;
 pub mod persistence;

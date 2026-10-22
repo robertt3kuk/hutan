@@ -974,10 +974,7 @@ impl Workbench {
         let tokens = self.density.ui();
         let id = tag(scope);
         let menu = format!("assistant-model:{id}");
-        let open = self
-            .sheet
-            .as_ref()
-            .is_some_and(|s| s.dropdown.as_deref() == Some(menu.as_str()));
+        let open = self.dropdown_drawn(&menu, cx);
         let models = self.assistant_models(config.backend, config.provider.as_deref(), cx);
         let list: Vec<ModelInfo> = match &models {
             Models::Ready(models) => models.iter().filter(|m| !m.hidden).cloned().collect(),

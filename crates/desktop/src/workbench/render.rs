@@ -2323,6 +2323,29 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if self.palette.is_some() {
+            self.exits.palette.cancel();
+            return self.build_palette(true, window, cx);
+        }
+        let now = cx.background_executor().now();
+        motion::while_leaving(
+            self,
+            now,
+            |this| &mut this.palette,
+            |this| &mut this.exits.palette,
+            |this| this.build_palette(false, window, cx),
+        )
+        .flatten()
+    }
+
+    /// The palette at its current state; `wanted` is false while it leaves (inert, the field
+    /// drawn as plain text).
+    fn build_palette(
+        &mut self,
+        wanted: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let palette = self.palette.clone()?;
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -2382,7 +2405,7 @@ impl Workbench {
                             "Palette",
                             self.overlay_vim_mode(super::vim_ui::OverlayField::Palette),
                         ))
-                        .track_focus(&self.palette_focus)
+                        .when(wanted, |s| s.track_focus(&self.palette_focus))
                         .w(px(560.0))
                         .flex()
                         .flex_col()
@@ -2414,7 +2437,11 @@ impl Workbench {
                                 .border_b_1()
                                 .border_color(theme.border)
                                 .child(div().text_color(theme.faint).child("› "))
-                                .children(self.overlay_parts(OverlayField::Palette, "", cx)),
+                                .children(if wanted {
+                                    self.overlay_parts(OverlayField::Palette, "", cx)
+                                } else {
+                                    vec![div().child(palette.query.clone()).into_any_element()]
+                                }),
                         )
                         .children(rows)
                         .when(empty, |s| {
@@ -2428,9 +2455,10 @@ impl Workbench {
                         .presented(
                             "palette-motion",
                             motion::Kind::Popover,
-                            true,
+                            wanted,
                             motion::Slide::Drop,
-                        ),
+                        )
+                        .inert(!wanted),
                 )
                 .into_any_element(),
         )

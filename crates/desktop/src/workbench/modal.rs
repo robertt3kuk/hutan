@@ -260,7 +260,8 @@ impl Workbench {
     }
 
     pub fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.modal.take().is_some() {
+        if let Some(old) = self.modal.take() {
+            self.leave_modal(old, cx);
             self.restore_modal_focus(window, cx);
             cx.notify();
         }
@@ -340,6 +341,7 @@ impl Workbench {
             Some(choice) if alternative => Rc::clone(&choice.run),
             _ => Rc::clone(&modal.on_confirm),
         };
+        self.leave_modal(modal.clone(), cx);
         let result = ModalResult {
             input: modal.input,
             checked: modal.checkbox.is_some_and(|c| c.checked),
@@ -350,6 +352,23 @@ impl Workbench {
     }
 
     pub(crate) fn render_modal(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.modal.is_some() {
+            self.exits.modal.cancel();
+            return self.build_modal(true, cx);
+        }
+        let now = cx.background_executor().now();
+        motion::while_leaving(
+            self,
+            now,
+            |this| &mut this.modal,
+            |this| &mut this.exits.modal,
+            |this| this.build_modal(false, cx),
+        )
+        .flatten()
+    }
+
+    /// `wanted` is false while the dialog leaves: it takes no input and its field is drawn empty.
+    fn build_modal(&mut self, wanted: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
         let stored = self.modal.as_ref()?;
         // The prompt's text is not in this snapshot: its field element draws it (a secret as
         // dots) and never keeps it.
@@ -367,7 +386,13 @@ impl Workbench {
         let input_parts = modal
             .input
             .is_some()
-            .then(|| self.overlay_parts(OverlayField::Modal, "", cx));
+            .then(|| {
+                if wanted {
+                    self.overlay_parts(OverlayField::Modal, "", cx)
+                } else {
+                    Vec::new()
+                }
+            });
         let theme = self.theme;
         let tokens = self.density.ui();
         Some(
@@ -391,7 +416,7 @@ impl Workbench {
                             "Modal",
                             self.overlay_vim_mode(super::vim_ui::OverlayField::Modal),
                         ))
-                        .track_focus(&self.modal_focus)
+                        .when(wanted, |s| s.track_focus(&self.modal_focus))
                         .w(px(440.0))
                         .flex()
                         .flex_col()
@@ -513,16 +538,17 @@ impl Workbench {
                         .presented(
                             "modal-motion",
                             motion::Kind::Sheet,
-                            true,
+                            wanted,
                             motion::Slide::Rise,
                         ),
                 )
                 .presented(
                     "modal-scrim",
                     motion::Kind::Sheet,
-                    true,
+                    wanted,
                     motion::Slide::None,
                 )
+                .inert(!wanted)
                 .into_any_element(),
         )
     }

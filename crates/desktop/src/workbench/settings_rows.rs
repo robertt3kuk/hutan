@@ -402,18 +402,26 @@ impl Workbench {
             .flex_none()
             .child(head)
             .children(panel.map(|panel| {
+                let wanted = self
+                    .sheet
+                    .as_ref()
+                    .is_some_and(|s| s.dropdown.as_deref() == Some(tag));
                 div().absolute().top_full().right_0().size_0().child(
                     gpui::deferred(
                         gpui::anchored()
                             .anchor(gpui::Anchor::TopRight)
                             .offset(gpui::point(px(0.0), px(4.0)))
                             .snap_to_window_with_margin(px(8.0))
-                            .child(panel.presented(
-                                gpui::SharedString::from(format!("menu-motion-{key:?}")),
-                                motion::Kind::Popover,
-                                true,
-                                motion::Slide::Drop,
-                            )),
+                            .child(
+                                panel
+                                    .presented(
+                                        gpui::SharedString::from(format!("menu-motion-{key:?}")),
+                                        motion::Kind::Popover,
+                                        wanted,
+                                        motion::Slide::Drop,
+                                    )
+                                    .inert(!wanted),
+                            ),
                     )
                     .priority(10),
                 )
@@ -442,7 +450,6 @@ impl Workbench {
             .unwrap_or(Json::Null);
         let kind = self.sheet_kind_of(field);
         let editing = sheet.edit.clone();
-        let dropdown = sheet.dropdown.clone();
         let row_tag = format!("f:{key}");
         let mut under: Vec<AnyElement> = Vec::new();
         let mut tall = false;
@@ -450,7 +457,7 @@ impl Workbench {
         let control: AnyElement = match (&kind, (ns, key.as_str())) {
             (FieldKind::Bool, _) => self.render_toggle(field, &value, cx),
             (FieldKind::Enum(options), _) => {
-                let open = dropdown.as_deref() == Some(key.as_str());
+                let open = self.dropdown_drawn(&key, cx);
                 let (k, row) = (key.clone(), row_tag.clone());
                 let known = matches!(&value, Json::String(s) if options.contains(s));
                 let label = match &value {
@@ -702,7 +709,7 @@ impl Workbench {
         };
         let adding = sheet.edit.as_ref().filter(|e| e.field == key);
         let menu = format!("add:{key}");
-        let menu_open = sheet.dropdown.as_deref() == Some(menu.as_str());
+        let menu_open = self.dropdown_drawn(&menu, cx);
         let choices: Option<&Vec<String>> = match kind {
             FieldKind::ChoiceList(choices) => Some(choices),
             _ => None,

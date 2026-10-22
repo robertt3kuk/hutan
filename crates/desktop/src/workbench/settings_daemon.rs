@@ -1431,10 +1431,7 @@ impl Workbench {
         let tokens = self.density.ui();
         let key = e.key.clone();
         let tag = format!("{EDIT_PREFIX}{key}");
-        let open = self
-            .sheet
-            .as_ref()
-            .is_some_and(|s| s.dropdown.as_deref() == Some(tag.as_str()));
+        let open = self.dropdown_drawn(&tag, cx);
         let current = choice_text(&e.value);
         let label = match options.iter().find(|(v, _)| *v == current) {
             Some((_, label)) => label.clone(),
@@ -1549,7 +1546,7 @@ impl Workbench {
         let field = format!("{EDIT_PREFIX}{key}");
         let adding = sheet.edit.as_ref().filter(|edit| edit.field == field);
         let menu = format!("add:{field}");
-        let menu_open = sheet.dropdown.as_deref() == Some(menu.as_str());
+        let menu_open = self.dropdown_drawn(&menu, cx);
         let ordered = choices.is_none();
         let last = items.len().saturating_sub(1);
         let chips = items.iter().enumerate().map(|(index, item)| {

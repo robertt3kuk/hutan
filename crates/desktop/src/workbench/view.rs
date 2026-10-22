@@ -698,6 +698,8 @@ pub struct Workbench {
     pub(crate) closing_tab: Option<super::closing::ClosingTab>,
     /// Overlays while they leave (`ui::motion::Presences`).
     pub(crate) overlays: super::ui::motion::Presences,
+    /// The overlays that closed and are still fading out (`overlay_exit.rs`).
+    pub(crate) exits: super::overlay_exit::OverlayExits,
     /// The toasts while they leave (`ui::motion::Ghost`): the state is cleared at dismissal, the
     /// exit animation still needs the content.
     pub(crate) close_toast_exit: super::ui::motion::Ghost<super::closing::CloseToast>,
@@ -1246,6 +1248,7 @@ impl Workbench {
             toast_rev: 0,
             closing_tab: None,
             overlays: super::ui::motion::Presences::default(),
+            exits: super::overlay_exit::OverlayExits::default(),
             close_toast_exit: super::ui::motion::Ghost::default(),
             restore_toast_exit: super::ui::motion::Ghost::default(),
             attention_toasts: super::attention_toast::AttentionToasts::default(),
@@ -1817,7 +1820,8 @@ impl Workbench {
     }
 
     pub fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.palette.take().is_some() {
+        if let Some(state) = self.palette.take() {
+            self.leave_palette(state, cx);
             self.focus_root(window, cx);
             cx.notify();
         }

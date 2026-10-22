@@ -505,6 +505,7 @@ pub struct Transition<E> {
     target: f32,
     initial: Option<f32>,
     animator: Option<Animator<E>>,
+    inert: bool,
 }
 
 impl<E> std::fmt::Debug for Transition<E> {
@@ -541,6 +542,7 @@ pub fn transition<E: IntoElement + 'static>(
         target,
         initial: None,
         animator: Some(Box::new(animate)),
+        inert: false,
     }
 }
 
@@ -697,7 +699,13 @@ impl<E: IntoElement + 'static> Element for Transition<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        element.prepaint(window, cx);
+        if self.inert {
+            window.with_content_mask(Some(gpui::ContentMask::default()), |window| {
+                element.prepaint(window, cx);
+            });
+        } else {
+            element.prepaint(window, cx);
+        }
     }
 
     fn paint(
@@ -1006,6 +1014,117 @@ impl<T: Clone> Ghost<T> {
             value,
             wanted: false,
         })
+    }
+}
+
+/// The state of an overlay that closed, kept for its exit: for owners that drop the state when
+/// the overlay closes and whose state is not `Clone` (the Start sheet, Settings, Rewind). The
+/// close puts the state here ([`start`](Self::start)); the render lends it back to the owner
+/// while it leaves ([`while_leaving`]) so the overlay is built by its own render code, then
+/// takes it again. Reopening ([`cancel`](Self::cancel)) drops it and the overlay's
+/// [`Transition`] continues from the value on screen.
+///
+/// A keyboard-initiated close and any exit of zero length leave nothing here: the overlay is
+/// gone at once.
+pub struct Leaving<T> {
+    state: Option<T>,
+    until: Option<Instant>,
+    timer: Option<gpui::Task<()>>,
+}
+
+impl<T> std::fmt::Debug for Leaving<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Leaving")
+            .field("held", &self.state.is_some())
+            .field("until", &self.until)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> Default for Leaving<T> {
+    fn default() -> Self {
+        Self {
+            state: None,
+            until: None,
+            timer: None,
+        }
+    }
+}
+
+impl<T> Leaving<T> {
+    /// The overlay closed with `state`: keep it for the exit of `kind` and re-render `V` when
+    /// the exit is over.
+    pub fn start<V: 'static>(&mut self, state: T, kind: Kind, cx: &mut Context<V>) {
+        let exit = spec_now(kind, cx.reduce_motion()).exit;
+        self.cancel();
+        if exit.is_zero() {
+            return;
+        }
+        self.state = Some(state);
+        self.until = Some(cx.background_executor().now() + exit);
+        self.timer = Some(cx.spawn(async move |view, cx| {
+            cx.background_executor().timer(exit).await;
+            view.update(cx, |_, cx| cx.notify()).ok();
+        }));
+    }
+
+    /// The overlay is wanted again, or it was dismissed another way: nothing leaves.
+    pub fn cancel(&mut self) {
+        self.state = None;
+        self.until = None;
+        self.timer = None;
+    }
+
+    /// Whether a state is being kept for an exit that has not ended at `now`.
+    pub fn leaving(&self, now: Instant) -> bool {
+        self.state.is_some() && self.until.is_some_and(|until| now < until)
+    }
+
+    /// The state kept for an exit that has not ended at `now`, to read while it leaves.
+    pub fn held(&self, now: Instant) -> Option<&T> {
+        if self.leaving(now) {
+            self.state.as_ref()
+        } else {
+            None
+        }
+    }
+
+    fn lend(&mut self, now: Instant) -> Option<T> {
+        if self.leaving(now) {
+            self.state.take()
+        } else {
+            self.cancel();
+            None
+        }
+    }
+}
+
+/// Runs `build` with the state of an overlay that is leaving put back in its slot, then takes it
+/// out again: `None` (and `build` not called) when nothing is leaving. `slot` is where the owner
+/// keeps the live state, `exit` its [`Leaving`].
+pub fn while_leaving<O, T, R>(
+    owner: &mut O,
+    now: Instant,
+    slot: fn(&mut O) -> &mut Option<T>,
+    exit: fn(&mut O) -> &mut Leaving<T>,
+    build: impl FnOnce(&mut O) -> R,
+) -> Option<R> {
+    let state = exit(owner).lend(now)?;
+    *slot(owner) = Some(state);
+    let built = build(owner);
+    let state = slot(owner).take();
+    exit(owner).state = state;
+    Some(built)
+}
+
+impl<E> Transition<E> {
+    /// Takes no pointer input while `inert`: what is leaving must not catch the click that
+    /// belongs to what is under it. The hit boxes of the element are made empty (clipped by an
+    /// empty content mask in the prepaint); it still paints.
+    #[must_use]
+    pub fn inert(mut self, inert: bool) -> Self {
+        self.inert = inert;
+        self
     }
 }
 

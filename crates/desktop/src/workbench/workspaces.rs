@@ -778,6 +778,7 @@ impl Workbench {
             if old.kind == PickerKind::QuickOpen {
                 self.quick_open_closed(cx);
             }
+            self.leave_picker(old, cx);
             self.focus_root(window, cx);
             cx.notify();
         }
@@ -1137,6 +1138,24 @@ impl Workbench {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if self.picker.is_some() {
+            self.exits.picker.cancel();
+            return self.build_picker(true, cx);
+        }
+        let now = cx.background_executor().now();
+        motion::while_leaving(
+            self,
+            now,
+            |this| &mut this.picker,
+            |this| &mut this.exits.picker,
+            |this| this.build_picker(false, cx),
+        )
+        .flatten()
+    }
+
+    /// The picker at its current state; `wanted` is false while it leaves (inert, the field
+    /// drawn as plain text).
+    fn build_picker(&mut self, wanted: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
         let picker = self.picker.clone()?;
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -1317,7 +1336,7 @@ impl Workbench {
                             "Picker",
                             self.overlay_vim_mode(super::vim_ui::OverlayField::Picker),
                         ))
-                        .track_focus(&self.picker_focus)
+                        .when(wanted, |s| s.track_focus(&self.picker_focus))
                         .w(px(560.0))
                         .flex()
                         .flex_col()
@@ -1359,7 +1378,11 @@ impl Workbench {
                                 .border_b_1()
                                 .border_color(theme.border)
                                 .child(div().text_color(theme.muted).child(format!("{prompt} ")))
-                                .children(self.overlay_parts(OverlayField::Picker, "", cx)),
+                                .children(if wanted {
+                                    self.overlay_parts(OverlayField::Picker, "", cx)
+                                } else {
+                                    vec![div().child(picker.query.clone()).into_any_element()]
+                                }),
                         )
                         .children(rows)
                         .when_some(hint, |s, hint| {
@@ -1373,9 +1396,10 @@ impl Workbench {
                         .presented(
                             "picker-motion",
                             motion::Kind::Popover,
-                            true,
+                            wanted,
                             motion::Slide::Drop,
-                        ),
+                        )
+                        .inert(!wanted),
                 )
                 .into_any_element(),
         )

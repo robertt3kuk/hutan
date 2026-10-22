@@ -218,6 +218,8 @@ pub enum SetupFinish {
 /// The setup inside the workbench.
 pub(crate) struct SetupControl {
     state: Option<SetupState>,
+    /// The state of a setup that just closed, while its sheet fades out.
+    exit: motion::Leaving<SetupState>,
     pub(crate) focus: gpui::FocusHandle,
     cli_link: Option<CliLink>,
 }
@@ -226,6 +228,7 @@ impl SetupControl {
     pub(crate) fn new(focus: gpui::FocusHandle, cli_link: Option<CliLink>) -> Self {
         Self {
             state: None,
+            exit: motion::Leaving::default(),
             focus,
             cli_link,
         }
@@ -360,7 +363,8 @@ impl Workbench {
     }
 
     fn close_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.setup.state.take().is_some() {
+        if let Some(old) = self.setup.state.take() {
+            self.setup.exit.start(old, motion::Kind::Sheet, cx);
             self.focus_root(window, cx);
             cx.notify();
         }
@@ -941,10 +945,32 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if self.setup.state.as_ref().is_some_and(|s| !s.suspended) {
+            self.setup.exit.cancel();
+            return self.build_setup(true, window, cx);
+        }
+        let now = cx.background_executor().now();
+        motion::while_leaving(
+            self,
+            now,
+            |this| &mut this.setup.state,
+            |this| &mut this.setup.exit,
+            |this| this.build_setup(false, window, cx),
+        )
+        .flatten()
+    }
+
+    /// `wanted` is false while the sheet leaves: it takes no input and no focus.
+    fn build_setup(
+        &mut self,
+        wanted: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let state = self.setup.state.clone().filter(|s| !s.suspended)?;
         // The sheet is modal: the keyboard stays in it (a terminal that starts or a daemon that
         // connects behind it must not take the focus and the keys).
-        if !self.setup.focus.contains_focused(window, cx) {
+        if wanted && !self.setup.focus.contains_focused(window, cx) {
             window.focus(&self.setup.focus, cx);
         }
         let theme = self.theme;
@@ -1029,7 +1055,7 @@ impl Workbench {
                     div()
                         .id("setup")
                         .key_context("Setup")
-                        .track_focus(&self.setup.focus)
+                        .when(wanted, |s| s.track_focus(&self.setup.focus))
                         .relative()
                         .w(px(WIDTH))
                         .max_h(relative(0.94))
@@ -1070,16 +1096,17 @@ impl Workbench {
                         .presented(
                             "setup-motion",
                             motion::Kind::Sheet,
-                            true,
+                            wanted,
                             motion::Slide::Rise,
                         ),
                 )
                 .presented(
                     "setup-scrim",
                     motion::Kind::Sheet,
-                    true,
+                    wanted,
                     motion::Slide::None,
                 )
+                .inert(!wanted)
                 .into_any_element(),
         )
     }
