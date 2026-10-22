@@ -1196,7 +1196,14 @@ impl ResourcesPanel {
         };
         let node = None;
         let row = row
-            .child(self.actions_cell(index, session, Some(process.pid), node.clone(), theme, tokens))
+            .child(self.actions_cell(
+                index,
+                session,
+                Some(process.pid),
+                node.clone(),
+                theme,
+                tokens,
+            ))
             .child(probe(regions, Region::ResourceRow(index)));
         Self::menu_on_right_click(row, session, Some(process.pid), node).into_any_element()
     }

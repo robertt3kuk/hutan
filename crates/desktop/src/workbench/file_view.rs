@@ -378,7 +378,7 @@ impl FileView {
             .and_then(|changes| changes.label.title.clone())
             .filter(|title| !title.is_empty());
         let at_caret = self.code.read(cx).agent_hunk_at_caret(cx).is_some();
-        let icon_button = |id: &'static str, glyph, tip: &'static str| {
+        let step_button = |id: &'static str, glyph, tip: &'static str| {
             ui::IconButton::new(id, glyph, tip, theme, tokens).compact()
         };
         let reject_tip = if at_caret {
@@ -472,7 +472,7 @@ impl FileView {
                         }),
                 )
                 .child(
-                    icon_button(
+                    step_button(
                         "file-agent-previous",
                         crate::icons::Icon::ActionCollapse,
                         "Previous change (⌘⌥[)",
@@ -482,7 +482,7 @@ impl FileView {
                     })),
                 )
                 .child(
-                    icon_button(
+                    step_button(
                         "file-agent-next",
                         crate::icons::Icon::ActionExpand,
                         "Next change (⌘⌥])",

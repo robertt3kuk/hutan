@@ -1220,24 +1220,24 @@ impl Workbench {
         let track = ui::Button::new("untracked-track", label, &theme, &tokens)
             .compact()
             .ghost()
-        .on_click(cx.listener(move |this, _, _, cx| {
-            let tracking = this
-                .sessions
-                .update(cx, |store, cx| store.track_agent(id, cx));
-            cx.spawn(async move |this, cx| {
-                if let Err(error) = tracking.await {
-                    this.update(cx, |this, cx| {
-                        this.set_notice(format!("Could not track the agent: {error}"), cx);
-                    })
-                    .ok();
-                }
-            })
-            .detach();
-        }))
-        .child(crate::workbench::render::probe(
-            &self.regions,
-            crate::workbench::Region::Untracked("track"),
-        ));
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let tracking = this
+                    .sessions
+                    .update(cx, |store, cx| store.track_agent(id, cx));
+                cx.spawn(async move |this, cx| {
+                    if let Err(error) = tracking.await {
+                        this.update(cx, |this, cx| {
+                            this.set_notice(format!("Could not track the agent: {error}"), cx);
+                        })
+                        .ok();
+                    }
+                })
+                .detach();
+            }))
+            .child(crate::workbench::render::probe(
+                &self.regions,
+                crate::workbench::Region::Untracked("track"),
+            ));
         let (offer_buttons, offer_detail) = match offer {
             Some(offer) => (offer.buttons, offer.detail),
             None => (Vec::new(), None),

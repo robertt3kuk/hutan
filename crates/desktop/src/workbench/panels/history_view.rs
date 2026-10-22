@@ -383,16 +383,11 @@ impl HistoryPanel {
                     .items_center()
                     .gap(px(tokens.spacing * 2.0))
                     .child(
-                        ui::Button::new(
-                            "history-not-now",
-                            "Not now",
-                            theme,
-                            tokens,
-                        )
-                        .ghost()
-                        .disabled(busy)
-                        .on_click(cx.listener(|this, _, _, cx| this.close_card(cx)))
-                        .child(probe(&self.env.regions, Region::History("not-now"))),
+                        ui::Button::new("history-not-now", "Not now", theme, tokens)
+                            .ghost()
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, _, cx| this.close_card(cx)))
+                            .child(probe(&self.env.regions, Region::History("not-now"))),
                     )
                     .child(
                         ui::Button::new(

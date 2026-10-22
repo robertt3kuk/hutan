@@ -677,3 +677,319 @@ impl RenderOnce for IconButton {
         button.child(face).focus_ring(focused, &theme, &tokens)
     }
 }
+
+/// The button audit: no ad-hoc button styling outside [`Button`] and [`IconButton`]
+/// (`docs/design.md` § Buttons). A pointer cursor on a hand-built `div` is how a button used to
+/// be made, so it is counted per file: a file may only keep the ones listed here, and each is a
+/// true exception (a row, a tab, a menu entry, a disclosure, a card choice, a checkbox) with its
+/// reason. A new button goes through `ui::Button` / `ui::IconButton`; a new exception goes in
+/// this list with a comment, or the test fails.
+#[cfg(test)]
+mod audit {
+    use std::path::{Path, PathBuf};
+
+    /// `(file under crates/, how many pointer cursors it keeps, why)`.
+    const EXCEPTIONS: &[(&str, usize, &str)] = &[
+        (
+            "desktop/src/workbench/agents.rs",
+            1,
+            "a row of the agent picker",
+        ),
+        (
+            "desktop/src/workbench/changes.rs",
+            3,
+            "the file strip's toggle, a file row, a hunk header",
+        ),
+        (
+            "desktop/src/workbench/changes/tray.rs",
+            6,
+            "the review summary disclosure, menu entries, a review row, a diff line",
+        ),
+        (
+            "desktop/src/workbench/chat/cards.rs",
+            6,
+            "card headers that fold (disclosures)",
+        ),
+        (
+            "desktop/src/workbench/chat/rich_view.rs",
+            1,
+            "a context chip that folds (a disclosure)",
+        ),
+        (
+            "desktop/src/workbench/daemon_popover.rs",
+            1,
+            "a choice card of the daemon popover",
+        ),
+        (
+            "desktop/src/workbench/file_view.rs",
+            1,
+            "the agent bar's Follow switch with its label",
+        ),
+        (
+            "desktop/src/workbench/launcher_ui.rs",
+            9,
+            "the Start sheet's selector fields and rows, its disclosures and a checkbox",
+        ),
+        (
+            "desktop/src/workbench/modal.rs",
+            1,
+            "a dialog's checkbox with its label",
+        ),
+        (
+            "desktop/src/workbench/panels/agents.rs",
+            3,
+            "the Agents panel's section header, fold and row",
+        ),
+        (
+            "desktop/src/workbench/panels/agents_page.rs",
+            2,
+            "a group header and a subagent row",
+        ),
+        (
+            "desktop/src/workbench/panels/agents_page/row.rs",
+            3,
+            "the Agents page's row and its two inline disclosures",
+        ),
+        (
+            "desktop/src/workbench/panels/assistant.rs",
+            1,
+            "a row of the backend chooser",
+        ),
+        (
+            "desktop/src/workbench/panels/assistant_rail.rs",
+            1,
+            "a Today row",
+        ),
+        (
+            "desktop/src/workbench/panels/changes.rs",
+            1,
+            "a checkout row",
+        ),
+        (
+            "desktop/src/workbench/panels/common.rs",
+            1,
+            "the placement badge (a pill that opens a menu, inside a row)",
+        ),
+        (
+            "desktop/src/workbench/panels/files.rs",
+            1,
+            "a file tree row",
+        ),
+        (
+            "desktop/src/workbench/panels/history_view.rs",
+            6,
+            "a source checkbox, a scope tab, the scan strip, a group header, a row, a menu entry",
+        ),
+        (
+            "desktop/src/workbench/panels/inspector.rs",
+            2,
+            "an inspector tab and a block row",
+        ),
+        (
+            "desktop/src/workbench/panels/problems.rs",
+            1,
+            "a problem row",
+        ),
+        (
+            "desktop/src/workbench/panels/resources.rs",
+            4,
+            "a sortable column header, the error banner, a fold chevron, a session row",
+        ),
+        (
+            "desktop/src/workbench/panels/search.rs",
+            3,
+            "a match checkbox, a result row, the skipped-files row",
+        ),
+        (
+            "desktop/src/workbench/panels/sessions.rs",
+            2,
+            "a project row and a session row",
+        ),
+        (
+            "desktop/src/workbench/panels/status.rs",
+            1,
+            "a status bar item: text that opens its panel, not a button",
+        ),
+        ("desktop/src/workbench/panels/tasks.rs", 1, "a task row"),
+        (
+            "desktop/src/workbench/providers.rs",
+            1,
+            "the failure details disclosure",
+        ),
+        (
+            "desktop/src/workbench/recovery_summary.rs",
+            1,
+            "a recovered-session row",
+        ),
+        (
+            "desktop/src/workbench/render.rs",
+            4,
+            "a dock tab, an editor tab, a palette row, a menu entry",
+        ),
+        (
+            "desktop/src/workbench/rewind_view.rs",
+            3,
+            "a rewind file row, its checkbox, the note checkbox",
+        ),
+        (
+            "desktop/src/workbench/settings_daemon.rs",
+            1,
+            "a choice row",
+        ),
+        (
+            "desktop/src/workbench/settings_rows.rs",
+            1,
+            "a choice row of a dropdown",
+        ),
+        (
+            "desktop/src/workbench/settings_sheet.rs",
+            3,
+            "a navigation group, a navigation row, the footer's problems toggle",
+        ),
+        (
+            "desktop/src/workbench/settings_themes.rs",
+            1,
+            "a pack option row",
+        ),
+        (
+            "desktop/src/workbench/setup.rs",
+            3,
+            "the appearance cards and the hook and history checkboxes",
+        ),
+        (
+            "desktop/src/workbench/sidebars.rs",
+            3,
+            "a nav row, the way-back row, the rail icon (a tab with a badge, drag and drop)",
+        ),
+        (
+            "desktop/src/workbench/ui.rs",
+            3,
+            "the switch, the checkbox and a segment of a segmented control",
+        ),
+        (
+            "desktop/src/workbench/ui/button.rs",
+            3,
+            "the button system itself",
+        ),
+        (
+            "desktop/src/workbench/workspaces.rs",
+            1,
+            "a row of the workspace picker",
+        ),
+        (
+            "terminal_view/src/view.rs",
+            3,
+            "the terminal's own overlays (block actions, jump pill, paste confirm): drawn in the terminal's palette, and the crate cannot depend on the desktop's button",
+        ),
+    ];
+
+    /// Every Rust file under `dir`, tests directories excluded.
+    fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path
+                    .file_name()
+                    .is_some_and(|n| n == "tests" || n == "target")
+                {
+                    continue;
+                }
+                sources(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// The code of `text` without line comments.
+    fn code(text: &str) -> impl Iterator<Item = &str> {
+        text.lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+    }
+
+    fn all_sources() -> Vec<(String, String)> {
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("the desktop crate lives in crates/")
+            .to_owned();
+        let mut files = Vec::new();
+        for krate in ["desktop", "chat_view", "code_view", "terminal_view"] {
+            sources(&crates.join(krate).join("src"), &mut files);
+        }
+        files
+            .into_iter()
+            .map(|path| {
+                let relative = path
+                    .strip_prefix(&crates)
+                    .expect("a file under crates/")
+                    .to_string_lossy()
+                    .into_owned();
+                let text = std::fs::read_to_string(&path).expect("a readable source file");
+                (relative, text)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn no_legacy_button_helper_is_left() {
+        // Built from pieces so this file does not contain what it forbids.
+        let forbidden = [
+            concat!("ui::", "button("),
+            concat!("ui::", "round_button("),
+            concat!("ui::", "key_hint("),
+            concat!("fn ", "small_button("),
+            concat!("fn ", "icon_button("),
+            concat!("fn ", "dock_button("),
+            concat!("fn ", "round_button("),
+        ];
+        let mut found = Vec::new();
+        for (file, text) in all_sources() {
+            for line in code(&text) {
+                for pattern in forbidden {
+                    if line.contains(pattern) {
+                        found.push(format!("{file}: {}", line.trim()));
+                    }
+                }
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "legacy button helpers are back:\n{}",
+            found.join("\n")
+        );
+    }
+
+    #[test]
+    fn pointer_cursors_are_only_where_a_row_a_tab_or_a_menu_is() {
+        let pattern = concat!(".cursor_", "pointer()");
+        let mut problems = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for (file, text) in all_sources() {
+            let count = code(&text).filter(|l| l.contains(pattern)).count();
+            let allowed = EXCEPTIONS.iter().find(|(path, ..)| *path == file);
+            match (count, allowed) {
+                (0, None) => {}
+                (0, Some((_, n, reason))) => {
+                    problems.push(format!("{file}: lists {n} exceptions ({reason}) but has none; remove the entry"));
+                }
+                (count, None) => problems.push(format!(
+                    "{file}: {count} pointer cursor(s) on a hand-built element; use ui::Button or ui::IconButton, or list a true exception with its reason"
+                )),
+                (count, Some((_, n, reason))) if count != *n => problems.push(format!(
+                    "{file}: has {count} pointer cursor(s), the list allows {n} ({reason}); a new one is a button (use ui::Button) or a new exception (list it)"
+                )),
+                _ => {}
+            }
+            seen.insert(file);
+        }
+        for (path, ..) in EXCEPTIONS {
+            if !seen.contains(*path) {
+                problems.push(format!("{path}: listed but not found"));
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+}

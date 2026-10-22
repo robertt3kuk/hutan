@@ -319,19 +319,19 @@ pub fn builtin_status_items() -> StatusItemRegistry {
                 .into_any_element()
         }),
     });
-    registry.register(dock_button(
+    registry.register(dock_item(
         "dock_left",
         DockPosition::Left,
         "left dock",
         || Box::new(ToggleLeftDock),
     ));
-    registry.register(dock_button(
+    registry.register(dock_item(
         "dock_bottom",
         DockPosition::Bottom,
         "bottom dock",
         || Box::new(ToggleBottomDock),
     ));
-    registry.register(dock_button(
+    registry.register(dock_item(
         "dock_right",
         DockPosition::Right,
         "right dock",
@@ -344,7 +344,7 @@ pub fn builtin_status_items() -> StatusItemRegistry {
 /// pressed (an `accent_soft` fill, the glyph `fg`) while the dock shows, dim and inert while it
 /// is hidden and holds no panel. Its tooltip carries the key of the active keymap. Not in the
 /// built-in presets' status bar; a preset that names it shows it.
-fn dock_button(
+fn dock_item(
     id: &'static str,
     pos: DockPosition,
     name: &'static str,

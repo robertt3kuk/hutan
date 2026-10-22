@@ -1264,14 +1264,19 @@ impl AgentsPage {
                     .flex()
                     .gap(px(8.0))
                     .child(
-                        ui::Button::new("agents-empty-integrations", "Agent integrations…", &theme, &tokens)
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(OpenSettingsFor("integrations".to_owned())),
-                                    cx,
-                                );
-                            })
-                            .child(probe(&self.env.regions, Region::AgentsPage("integrations"))),
+                        ui::Button::new(
+                            "agents-empty-integrations",
+                            "Agent integrations…",
+                            &theme,
+                            &tokens,
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(OpenSettingsFor("integrations".to_owned())),
+                                cx,
+                            );
+                        })
+                        .child(probe(&self.env.regions, Region::AgentsPage("integrations"))),
                     )
                     .child(
                         ui::Button::new("agents-empty-start", "Start agent…", &theme, &tokens)

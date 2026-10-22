@@ -1851,10 +1851,8 @@ impl SessionsPanel {
                         )
                         .compact()
                         .on_click(move |_, window, cx| {
-                            window.dispatch_action(
-                                Box::new(CloseSessionById(close_id.clone())),
-                                cx,
-                            );
+                            window
+                                .dispatch_action(Box::new(CloseSessionById(close_id.clone())), cx);
                             cx.stop_propagation();
                         })
                         .child(probe(&self.env.regions, Region::SessionClose(session))),

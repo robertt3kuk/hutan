@@ -1106,17 +1106,12 @@ impl ChangesView {
                         )
                     })
                     .child(
-                        ui::Button::new(
-                            "changes-review-send",
-                            "Send to agent",
-                            theme,
-                            tokens,
-                        )
-                        .primary()
-                        .loading(self.review.sending)
-                        .disabled(!can_send)
-                        .on_click(cx.listener(|this, _, _, cx| this.send_review(None, cx)))
-                        .child(probe(&self.env.regions, Region::Changes("review-send"))),
+                        ui::Button::new("changes-review-send", "Send to agent", theme, tokens)
+                            .primary()
+                            .loading(self.review.sending)
+                            .disabled(!can_send)
+                            .on_click(cx.listener(|this, _, _, cx| this.send_review(None, cx)))
+                            .child(probe(&self.env.regions, Region::Changes("review-send"))),
                     )
                     .child(
                         ui::IconButton::new(

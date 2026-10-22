@@ -876,10 +876,12 @@ impl Workbench {
                 )
                 .compact()
                 .toggled(mode == DockMode::Expanded)
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| match pos {
-                    DockPosition::Left => this.toggle_dock_hidden_cmd(pos, cx),
-                    _ => this.toggle_dock_cmd(pos, cx),
-                })),
+                .on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| match pos {
+                        DockPosition::Left => this.toggle_dock_hidden_cmd(pos, cx),
+                        _ => this.toggle_dock_cmd(pos, cx),
+                    },
+                )),
             )
             .child(probe(&self.regions, Region::DockToggle(pos)))
             .into_any_element()

@@ -11,8 +11,7 @@
 
 use gpui::{
     AnyElement, App, Context, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, MouseDownEvent, ParentElement, SharedString, Styled, Window, div, prelude::*,
-    px,
+    MouseButton, MouseDownEvent, ParentElement, SharedString, Styled, Window, div, prelude::*, px,
 };
 use hutan_core::{DeliveryState, ReviewDecision, Task as DaemonTask, TaskId, TaskState};
 use hutan_protocol::worktree::{CommitSummary, DiffFile, WorktreeCommit, WorktreeMerged};
