@@ -12,8 +12,13 @@
 //! - **Keyboard.** ↑↓ move between diagnostics, Return opens the file with the caret on the
 //!   diagnostic and moves the keyboard there; a click does the same.
 //! - The empty states are text only.
+//! - **Servers.** Under the list, one line per language server the answer comes from, with
+//!   its state (`lsp.status` adds the reason and the languages): `Rust · failed: <reason>`
+//!   with **Restart** (`lsp.restart`), `Plain Text · ready`. "Still starting" shows only while
+//!   one is starting or indexing.
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, Context, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyDownEvent,
@@ -22,7 +27,10 @@ use gpui::{
 };
 use hutan_client::{ConnectionState, Notice};
 use hutan_code_view::Severity;
-use hutan_protocol::lsp::{LspDiagnosticsRequest, LspDiagnosticsResult, LspSeverity};
+use hutan_protocol::lsp::{
+    LspDiagnosticsRequest, LspDiagnosticsResult, LspServerInfo, LspServerState, LspSeverity,
+    LspStatusRequest,
+};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::common::panel_header_with;
@@ -31,13 +39,17 @@ use crate::settings::{ProblemsPanelSettings, ProblemsSeverity};
 use crate::theme::DensityExt as _;
 use crate::workbench::Region;
 use crate::workbench::actions::{OpenAtPosition, PositionTarget};
-use crate::workbench::lsp::severity_of;
+use crate::workbench::lsp::{languages_of, severity_of};
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
+use crate::workbench::ui::{self, ButtonKind};
 
 /// Height of every row (file headers and diagnostics alike: the list is uniform).
 const ROW_HEIGHT: f32 = 24.0;
+/// The note while a server's diagnostics may still be on their way.
+pub const STILL_STARTING: &str =
+    "Some language servers are still starting: the list may be incomplete.";
 
 /// One diagnostic as the panel lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,10 +95,92 @@ pub enum Problems {
     Ready {
         problems: Vec<Problem>,
         rows: Vec<ProblemRow>,
-        stale: bool,
+        /// The servers the answer comes from, one line each.
+        servers: Vec<ServerLine>,
         truncated: bool,
     },
     Failed(String),
+}
+
+/// A language server as the panel's footer shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerLine {
+    pub server_id: String,
+    /// Its languages by name (`Rust`, `C, C++`), else its name when `lsp.status` did not say.
+    pub label: String,
+    /// Its name in `daemon.toml` (`rust-analyzer`).
+    pub name: String,
+    pub root: Option<PathBuf>,
+    pub state: LspServerState,
+    pub reason: Option<String>,
+    pub install: Option<String>,
+}
+
+impl ServerLine {
+    /// `failed: <reason>`, `ready`, `not installed: <command>`.
+    pub fn state_text(&self) -> String {
+        let with = |state: &str, detail: Option<&String>| match detail {
+            Some(detail) if !detail.is_empty() => format!("{state}: {detail}"),
+            _ => state.to_owned(),
+        };
+        match self.state {
+            LspServerState::Starting => "starting".to_owned(),
+            LspServerState::Indexing => "indexing".to_owned(),
+            LspServerState::Ready => "ready".to_owned(),
+            LspServerState::Failed => with("failed", self.reason.as_ref()),
+            LspServerState::Stopped => with("stopped", self.reason.as_ref()),
+            LspServerState::NotInstalled => {
+                with("not installed", self.install.as_ref().or(self.reason.as_ref()))
+            }
+            LspServerState::Untrusted => "folder not trusted".to_owned(),
+        }
+    }
+
+    /// `Rust · failed: <reason>`.
+    pub fn text(&self) -> String {
+        format!("{} · {}", self.label, self.state_text())
+    }
+
+    /// Whether the line offers Restart: the server ended (it crashed too often, or stopped).
+    pub fn restartable(&self) -> bool {
+        matches!(self.state, LspServerState::Failed | LspServerState::Stopped)
+    }
+
+    /// Whether its diagnostics may still be on their way.
+    pub fn busy(&self) -> bool {
+        matches!(
+            self.state,
+            LspServerState::Starting | LspServerState::Indexing
+        )
+    }
+}
+
+/// The lines of the servers an answer comes from, with what `lsp.status` adds (`status`: its
+/// servers; empty when it could not be read), by label then name.
+pub fn server_lines(result: &LspDiagnosticsResult, status: &[LspServerInfo]) -> Vec<ServerLine> {
+    let mut lines: Vec<ServerLine> = result
+        .servers
+        .iter()
+        .map(|brief| {
+            let info = status.iter().find(|s| s.server_id == brief.server_id);
+            let label = info
+                .map(|i| languages_of(&i.languages).join(", "))
+                .filter(|l| !l.is_empty())
+                .unwrap_or_else(|| brief.name.clone());
+            ServerLine {
+                server_id: brief.server_id.clone(),
+                label,
+                name: brief.name.clone(),
+                root: info.map(|i| i.root.clone()),
+                // The answer's state is the one its diagnostics belong to.
+                state: brief.state,
+                reason: info.and_then(|i| i.reason.clone()),
+                install: info.and_then(|i| i.install.clone()),
+            }
+        })
+        .collect();
+    lines.sort_by(|a, b| (&a.label, &a.name, &a.server_id).cmp(&(&b.label, &b.name, &b.server_id)));
+    lines
 }
 
 /// The rows of an answer: files by path (two servers publishing for one file make one group),
@@ -174,6 +268,10 @@ pub struct ProblemsPanel {
     listener: Option<Task<()>>,
     /// Answers taken so far (tests wait on it).
     reads: usize,
+    /// Servers whose `lsp.restart` is on its way.
+    restarting: HashSet<String>,
+    /// Why the last Restart did not go through, until the next one.
+    restart_failed: Option<String>,
 }
 
 impl std::fmt::Debug for ProblemsPanel {
@@ -203,6 +301,8 @@ impl ProblemsPanel {
             task: None,
             listener: None,
             reads: 0,
+            restarting: HashSet::new(),
+            restart_failed: None,
         };
         panel.sync(cx);
         panel
@@ -227,6 +327,19 @@ impl ProblemsPanel {
             Problems::Ready { rows, .. } => rows,
             _ => &[],
         }
+    }
+
+    /// The server lines under the list, top to bottom.
+    pub fn servers(&self) -> &[ServerLine] {
+        match &self.problems {
+            Problems::Ready { servers, .. } => servers,
+            _ => &[],
+        }
+    }
+
+    /// The "still starting" note shows: some server's diagnostics may still be on their way.
+    pub fn still_starting(&self) -> bool {
+        self.servers().iter().any(ServerLine::busy)
     }
 
     pub fn selected(&self) -> Option<usize> {
@@ -306,9 +419,22 @@ impl ProblemsPanel {
             min_severity: min_severity(self.filter()),
             ..LspDiagnosticsRequest::default()
         };
-        let call = cx.background_spawn(async move { connection.lsp_diagnostics(request).await });
+        // The servers' reasons and languages come from `lsp.status`; without it the lines
+        // still show each server's state, by name.
+        let call = cx.background_spawn(async move {
+            let answer = connection.lsp_diagnostics(request).await;
+            let status = match &answer {
+                Ok(result) if !result.servers.is_empty() => connection
+                    .lsp_status(LspStatusRequest::default())
+                    .await
+                    .map(|s| s.servers)
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            (answer, status)
+        });
         self.task = Some(cx.spawn(async move |this, cx| {
-            let answer = call.await;
+            let (answer, status) = call.await;
             this.update(cx, |this, cx| {
                 if this.generation != generation {
                     return;
@@ -330,7 +456,7 @@ impl ProblemsPanel {
                         this.problems = Problems::Ready {
                             problems,
                             rows,
-                            stale: result.stale,
+                            servers: server_lines(&result, &status),
                             truncated: result.truncated,
                         };
                     }
@@ -350,6 +476,34 @@ impl ProblemsPanel {
             })
             .ok();
         }));
+        cx.notify();
+    }
+
+    /// Restart on a server line: `lsp.restart`; its `lsp.state` notices read the list again.
+    fn restart(&mut self, server_id: String, cx: &mut Context<Self>) {
+        if !self.restarting.insert(server_id.clone()) {
+            return;
+        }
+        self.restart_failed = None;
+        let connection = self.env.sessions.read(cx).connection().clone();
+        let id = server_id.clone();
+        let call = cx.background_spawn(async move { connection.lsp_restart(&id).await });
+        cx.spawn(async move |this, cx| {
+            let result = call.await;
+            this.update(cx, |this, cx| {
+                this.restarting.remove(&server_id);
+                if let Err(error) = result {
+                    this.restart_failed = Some(format!(
+                        "Could not restart {server_id}: {}",
+                        crate::workbench::files::error_text(&error)
+                    ));
+                }
+                this.refresh_soon(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -461,6 +615,98 @@ impl ProblemsPanel {
     }
 
     // ---- rendering ------------------------------------------------------------------------
+
+    /// The footer: one line per server (its languages, its state, Restart when it ended), and
+    /// why the last Restart failed.
+    fn render_servers(
+        &self,
+        theme: &crate::theme::Theme,
+        tokens: &crate::theme::Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let servers = self.servers();
+        if servers.is_empty() && self.restart_failed.is_none() {
+            return None;
+        }
+        let lines = servers.iter().enumerate().map(|(index, line)| {
+            let tone = match line.state {
+                LspServerState::Failed => theme.danger,
+                LspServerState::NotInstalled | LspServerState::Untrusted => theme.warning,
+                _ => theme.muted,
+            };
+            let mut tip = format!("{}: {}", line.name, line.state_text());
+            if let Some(root) = &line.root {
+                tip.push('\n');
+                tip.push_str(&crate::workbench::workspaces::tilde(root));
+            }
+            let restart = line.restartable().then(|| {
+                let busy = self.restarting.contains(&line.server_id);
+                let id = line.server_id.clone();
+                ui::button(
+                    SharedString::from(format!("problems-restart-{index}")),
+                    if busy { "Restarting…" } else { "Restart" },
+                    ButtonKind::Ghost,
+                    !busy,
+                    theme,
+                    tokens,
+                )
+                .flex_none()
+                .relative()
+                .tooltip(|_, cx| {
+                    cx.new(|_| TextTooltip("Start this language server again".into()))
+                        .into()
+                })
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, _, cx| this.restart(id.clone(), cx)))
+                .child(probe(
+                    &self.env.regions,
+                    Region::ProblemsServerRestart(index),
+                ))
+            });
+            div()
+                .id(SharedString::from(format!("problems-server-{index}")))
+                .flex()
+                .items_center()
+                .gap(px(tokens.spacing * 2.0))
+                .min_h(px(ROW_HEIGHT))
+                .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone().into())).into())
+                .child(
+                    div()
+                        .flex_none()
+                        .text_color(theme.fg)
+                        .child(SharedString::from(line.label.clone())),
+                )
+                .child(div().flex_none().text_color(theme.faint).child("·"))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(tone)
+                        .child(SharedString::from(line.state_text())),
+                )
+                .children(restart)
+        });
+        let failed = self.restart_failed.clone().map(|text| {
+            div()
+                .text_color(theme.danger)
+                .child(SharedString::from(text))
+        });
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .px(px(tokens.spacing * 3.0))
+                .py(px(tokens.spacing))
+                .border_t_1()
+                .border_color(theme.border)
+                .text_size(px(tokens.secondary_font_size))
+                .children(lines)
+                .children(failed)
+                .into_any_element(),
+        )
+    }
 
     fn render_rows(
         &mut self,
@@ -676,12 +922,13 @@ impl Render for ProblemsPanel {
             .into_any_element();
         let header = panel_header_with("Problems", "panels.problems", vec![severity, refresh], cx);
 
+        let starting = self.still_starting();
         let (summary, note) = match &self.problems {
             Problems::Ready {
                 problems,
                 rows,
-                stale,
                 truncated,
+                ..
             } if !problems.is_empty() => {
                 let files = rows
                     .iter()
@@ -707,19 +954,17 @@ impl Render for ProblemsPanel {
                 );
                 let note = if *truncated {
                     Some("Only the first 5 000 are listed.")
-                } else if *stale {
-                    Some("Some language servers are still starting: the list may be incomplete.")
+                } else if starting {
+                    Some(STILL_STARTING)
                 } else {
                     None
                 };
                 (Some(summary), note)
             }
-            Problems::Ready { stale: true, .. } => (
-                None,
-                Some("Some language servers are still starting: the list may be incomplete."),
-            ),
+            Problems::Ready { .. } if starting => (None, Some(STILL_STARTING)),
             _ => (None, None),
         };
+        let servers = self.render_servers(&theme, &tokens, cx);
 
         let count = self.rows().len();
         let body: AnyElement = match &self.problems {
@@ -804,6 +1049,7 @@ impl Render for ProblemsPanel {
                     .child(note)
             }))
             .child(body)
+            .children(servers)
     }
 }
 
@@ -928,5 +1174,67 @@ mod tests {
             min_severity(ProblemsSeverity::Error),
             Some(LspSeverity::Error)
         );
+    }
+
+    #[test]
+    fn server_lines_name_languages_and_say_the_state_with_its_reason() {
+        use hutan_protocol::lsp::LspServerBrief;
+        let brief = |id: &str, name: &str, state| LspServerBrief {
+            server_id: id.into(),
+            name: name.into(),
+            state,
+        };
+        let info = |id: &str, name: &str, languages: &[&str], reason: Option<&str>| LspServerInfo {
+            server_id: id.into(),
+            name: name.into(),
+            root: "/w".into(),
+            languages: languages.iter().map(|l| (*l).to_owned()).collect(),
+            state: LspServerState::Stopped,
+            reason: reason.map(str::to_owned),
+            pid: None,
+            restarts: 0,
+            rss_bytes: None,
+            documents: 1,
+            install: None,
+            setting: None,
+            trust_pending: false,
+            capabilities: Vec::new(),
+            completion_triggers: Vec::new(),
+            signature_triggers: Vec::new(),
+        };
+        let result = LspDiagnosticsResult {
+            files: Vec::new(),
+            truncated: false,
+            stale: true,
+            servers: vec![
+                brief("ra", "rust-analyzer", LspServerState::Failed),
+                brief("fake", "fake", LspServerState::Ready),
+                brief("clangd", "clangd", LspServerState::Indexing),
+            ],
+        };
+        let status = [
+            info(
+                "ra",
+                "rust-analyzer",
+                &["rust"],
+                Some("exited with code 1"),
+            ),
+            info("fake", "fake", &["fake"], Some("idle")),
+        ];
+        let lines = server_lines(&result, &status);
+        assert_eq!(
+            lines.iter().map(ServerLine::text).collect::<Vec<_>>(),
+            [
+                "Plain Text · ready",
+                "Rust · failed: exited with code 1",
+                // Not in `lsp.status`: its name stands in for its languages.
+                "clangd · indexing",
+            ]
+        );
+        assert_eq!(
+            lines.iter().map(ServerLine::restartable).collect::<Vec<_>>(),
+            [false, true, false]
+        );
+        assert!(lines[2].busy() && !lines[0].busy() && !lines[1].busy());
     }
 }

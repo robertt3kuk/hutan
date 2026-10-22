@@ -1358,6 +1358,15 @@ impl Connection {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;
         client.lsp_trust(req).await
     }
+
+    /// `lsp.restart`: starts a server again (a failed or stopped one, too).
+    pub async fn lsp_restart(
+        &self,
+        server_id: &str,
+    ) -> Result<hutan_protocol::lsp::LspServerInfo, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.lsp_restart(server_id).await
+    }
 }
 
 /// Body of the `hutan-client` thread.

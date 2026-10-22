@@ -403,6 +403,8 @@ pub enum Region {
     ProblemsRow(usize),
     /// A control of the Problems panel's header (`severity`, `refresh`).
     Problems(&'static str),
+    /// The Restart button of the Problems panel's server line `index` (top to bottom).
+    ProblemsServerRestart(usize),
     /// Row `index` of the Search panel's list (file headers and matches, top to bottom).
     SearchRow(usize),
     /// The checkbox of row `index` of the Search panel's list (a file's or a match's).

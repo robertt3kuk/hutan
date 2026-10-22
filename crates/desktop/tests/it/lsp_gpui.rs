@@ -563,6 +563,95 @@ fn the_trust_bar_names_every_server_of_the_folder_and_not_now_covers_the_folder(
 }
 
 #[gpui::test]
+fn the_problems_panel_shows_each_servers_state_and_restarts_a_failed_one(
+    cx: &mut TestAppContext,
+) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let programs = tempfile::tempdir().unwrap();
+    let rust_analyzer = programs.path().join("rust-analyzer");
+    // Its interpreter does not exist: the server cannot start at all (failed at once, no
+    // crash loop to wait out).
+    std::fs::write(&rust_analyzer, "#!/nonexistent/interpreter\n").unwrap();
+    std::fs::set_permissions(&rust_analyzer, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let env = Env::with_extra(
+        "always",
+        |_| json!({"diagnostics": true}),
+        &rust_server(&rust_analyzer),
+    );
+    let (view, cx) = env.open(cx, "");
+    let fake = open_file(&view, cx, &env.file("a.fake"), "an error\n");
+    open_file(&view, cx, &env.file("main.rs"), "fn main() {}\n");
+    wait_until(cx, "the fake server's error", |cx| {
+        diagnostics(&fake.buffer, cx).len() == 1
+    });
+
+    cx.simulate_keystrokes("cmd-shift-m");
+    wait_until(cx, "the Problems panel", |cx| {
+        view.read_with(cx, |wb, _| wb.panel::<ProblemsPanel>("problems"))
+            .is_some()
+    });
+    let panel = view
+        .read_with(cx, |wb, _| wb.panel::<ProblemsPanel>("problems"))
+        .unwrap();
+    wait_until(cx, "a line per server: one ready, one failed", |cx| {
+        panel.read_with(cx, |p, _| {
+            let states: Vec<_> = p.servers().iter().map(|s| s.state).collect();
+            p.settled() && states == [LspServerState::Ready, LspServerState::Failed]
+        })
+    });
+    let (lines, starting) = panel.read_with(cx, |p, _| {
+        (
+            p.servers().iter().map(|s| s.text()).collect::<Vec<_>>(),
+            p.still_starting(),
+        )
+    });
+    assert_eq!(lines[0], "Plain Text · ready");
+    assert!(lines[1].starts_with("Rust · failed: "), "{lines:?}");
+    assert!(
+        lines[1].len() > "Rust · failed: ".len(),
+        "the reason is said: {lines:?}"
+    );
+    assert!(!starting, "nothing is starting: no 'still starting' note");
+
+    // Restart only on the failed line.
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::ProblemsServerRestart(0)))
+            .is_none()
+    );
+    let restart = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::ProblemsServerRestart(1)))
+        .expect("Restart on the failed server's line");
+
+    // The user mends the server; Restart starts it.
+    std::fs::write(
+        &rust_analyzer,
+        format!(
+            "#!/bin/sh\nexec {:?} --script {:?}\n",
+            fake_bin().display().to_string(),
+            env.script.display().to_string()
+        ),
+    )
+    .unwrap();
+    cx.simulate_click(restart.center(), Modifiers::none());
+    wait_until(cx, "both servers ready", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.settled()
+                && p.servers().len() == 2
+                && p.servers().iter().all(|s| s.state == LspServerState::Ready)
+        })
+    });
+    assert_eq!(
+        panel.read_with(cx, |p, _| p
+            .servers()
+            .iter()
+            .map(|s| s.text())
+            .collect::<Vec<_>>()),
+        ["Plain Text · ready", "Rust · ready"]
+    );
+}
+
+#[gpui::test]
 fn the_problems_panel_lists_by_file_filters_and_opens_at_the_position(cx: &mut TestAppContext) {
     let env = Env::new("always", |_| json!({"diagnostics": true, "warnings": true}));
     let (view, cx) = env.open(cx, "");
