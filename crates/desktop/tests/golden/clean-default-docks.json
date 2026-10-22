@@ -2,8 +2,7 @@
   "left": {
     "panels": [
       "sessions",
-      "tasks",
-      "files"
+      "tasks"
     ],
     "active": "sessions",
     "size": 280.0,
@@ -12,6 +11,7 @@
   },
   "right": {
     "panels": [
+      "files",
       "changes",
       "agents",
       "history",

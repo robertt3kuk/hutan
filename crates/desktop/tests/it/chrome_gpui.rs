@@ -12,7 +12,7 @@ use hutan_desktop::settings::LayoutSettings;
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::model::{
     Dock, DockMode, DockPosition, Docks, Edge, FocusTarget, ItemRef, LayoutPreset, PaneId, PanelId,
-    WorkbenchState,
+    STATE_VERSION, WorkbenchState,
 };
 use hutan_desktop::workbench::persistence::{STATE_FILE, load_state};
 use hutan_desktop::workbench::{Region, SAVE_DEBOUNCE, Workbench};
@@ -102,25 +102,33 @@ fn a_new_home_gets_the_clean_default_and_saves_it_as_the_golden(cx: &mut TestApp
     assert_eq!(s.preset, "default");
     assert_eq!(
         s.docks.right.panels,
-        ids(&["changes", "agents", "history", "inspector", "resources"])
+        ids(&[
+            "files",
+            "changes",
+            "agents",
+            "history",
+            "inspector",
+            "resources"
+        ])
     );
     assert_eq!(s.docks.right.more, ids(&["inspector", "resources"]));
     assert_eq!(s.docks.right.active, Some(PanelId::new("changes")));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(s.docks.right.mode(), DockMode::Compact, "the rail only");
     assert!(!offered(&view, cx), "a new home is not offered what it has");
 
-    // The rail: three icons and ⋯, nothing for Requests or Resources.
+    // The rail: four icons (Files first, SB-ATTACH) and ⋯, nothing for Requests or Resources.
     wait_until(cx, "the rail", |cx| {
         painted(&view, cx, Region::Rail(DockPosition::Right))
     });
-    for index in 0..3 {
+    for index in 0..4 {
         assert!(painted(
             &view,
             cx,
             Region::DockTab(DockPosition::Right, index)
         ));
     }
-    for index in 3..5 {
+    for index in 4..6 {
         assert!(!painted(
             &view,
             cx,
@@ -176,7 +184,8 @@ fn a_saved_layout_is_untouched_and_offered_the_new_default_once(cx: &mut TestApp
             ));
         }
 
-        // Saving writes the same docks back (version 7, no `more`).
+        // Saving writes the same docks back (no `more`, Files not moved: the left dock is the
+        // user's own) under the current version.
         view.update(cx, |wb, cx| {
             wb.edit_layout(cx, |s| {
                 let pane = s.first_pane_id();
@@ -185,7 +194,7 @@ fn a_saved_layout_is_untouched_and_offered_the_new_default_once(cx: &mut TestApp
         });
         save(&view, cx);
         let after = on_disk(&path);
-        assert_eq!(after["version"], 7);
+        assert_eq!(after["version"], STATE_VERSION);
         assert_eq!(
             after["docks"], before["docks"],
             "the saved layout is untouched"
@@ -218,7 +227,7 @@ fn use_new_default_takes_the_panels_and_keeps_the_modes_sizes_and_center(cx: &mu
         LayoutPreset::default_preset().docks.right.panels
     );
     assert_eq!(s.docks.right.more, ids(&["inspector", "resources"]));
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "files"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
     // The user's modes and widths stay; so does the center.
     assert_eq!(s.docks.right.mode(), DockMode::Compact);
     assert_eq!((s.docks.left.size, s.docks.right.size), (300.0, 400.0));
@@ -266,9 +275,9 @@ fn the_more_menu_lists_requests_and_resources_and_opens_them(cx: &mut TestAppCon
     assert_eq!(s.docks.right.active, Some(PanelId::new("resources")));
     assert!(s.docks.right.is_expanded());
     wait_until(cx, "the Resources icon", |cx| {
-        painted(&view, cx, Region::DockTab(DockPosition::Right, 4))
+        painted(&view, cx, Region::DockTab(DockPosition::Right, 5))
     });
-    assert!(!painted(&view, cx, Region::DockTab(DockPosition::Right, 3)));
+    assert!(!painted(&view, cx, Region::DockTab(DockPosition::Right, 4)));
     // The ⌘⌥R-style panel command opens a panel listed in ⋯ the same way.
     cx.dispatch_action(actions::OpenPanel("inspector".into()));
     assert_eq!(

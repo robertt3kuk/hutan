@@ -280,7 +280,7 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
     assert_size(body.size.width, 350.0);
     assert_size(rail.size.width, 40.0);
     assert!(rail.left() >= body.right(), "the rail is outside the body");
-    for i in 0..3 {
+    for i in 0..4 {
         let icon = bounds(&view, cx, Region::DockTab(Right, i));
         assert!(rail.contains(&icon.center()), "icon {i} is on the rail");
         assert_size(icon.size.width, 32.0);
@@ -291,11 +291,11 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
     );
 
     // The active icon collapses the body; the rail stays and remembers the panel and width.
-    click(&view, cx, Region::DockTab(Right, 0));
+    click(&view, cx, Region::DockTab(Right, 1));
     assert_eq!(chosen(&view, cx, Right), Compact);
     assert!(!painted(&view, cx, Region::Dock(Right)));
     assert_size(bounds(&view, cx, Region::Rail(Right)).size.width, 40.0);
-    assert!(painted(&view, cx, Region::DockTab(Right, 2)));
+    assert!(painted(&view, cx, Region::DockTab(Right, 3)));
     assert_eq!(
         state(&view, cx).docks.right.active,
         Some(PanelId::new("changes"))
@@ -303,12 +303,12 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
     assert_eq!(state(&view, cx).docks.right.size, 350.0);
 
     // Any icon expands that panel while collapsed, the remembered one included.
-    click(&view, cx, Region::DockTab(Right, 0));
+    click(&view, cx, Region::DockTab(Right, 1));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_size(bounds(&view, cx, Region::Dock(Right)).size.width, 350.0);
-    click(&view, cx, Region::DockTab(Right, 0));
-    assert_eq!(chosen(&view, cx, Right), Compact);
     click(&view, cx, Region::DockTab(Right, 1));
+    assert_eq!(chosen(&view, cx, Right), Compact);
+    click(&view, cx, Region::DockTab(Right, 2));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
@@ -316,7 +316,7 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
     );
 
     // Another icon while open switches the panel and stays open.
-    click(&view, cx, Region::DockTab(Right, 0));
+    click(&view, cx, Region::DockTab(Right, 1));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
@@ -327,7 +327,7 @@ fn the_right_rail_is_outside_the_body_and_the_active_icon_collapses_it(cx: &mut 
 #[gpui::test]
 fn cmd_l_toggles_the_body_and_keeps_the_rail_and_the_panel(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
-    click(&view, cx, Region::DockTab(Right, 2));
+    click(&view, cx, Region::DockTab(Right, 3));
     assert_eq!(
         state(&view, cx).docks.right.active,
         Some(PanelId::new("history"))
@@ -687,7 +687,7 @@ fn opening_a_dock_in_a_narrow_window_keeps_it_open_until_the_window_grows(cx: &m
     draw(cx);
     assert_eq!(shown(&view, cx, Left), Expanded, "it stays");
     // A rail icon opens the right panel the same way.
-    click(&view, cx, Region::DockTab(Right, 1));
+    click(&view, cx, Region::DockTab(Right, 2));
     assert_eq!(shown(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
@@ -747,7 +747,7 @@ fn the_dock_modes_are_saved_and_restored(cx: &mut TestAppContext) {
     view.update(cx, |wb, _| wb.flush_save());
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 7);
+    assert_eq!(on_disk["version"], hutan_desktop::workbench::model::STATE_VERSION);
     assert_eq!(on_disk["docks"]["left"]["collapsed"], true);
     assert_eq!(on_disk["docks"]["right"]["collapsed"], true);
     let loaded = load_state(&path);
@@ -861,7 +861,7 @@ fn a_new_approval_does_not_expand_a_collapsed_right_panel(cx: &mut TestAppContex
     assert_eq!(chosen(&view, cx, Right), Compact, "still collapsed");
     assert!(!painted(&view, cx, Region::Dock(Right)));
     assert!(
-        painted(&view, cx, Region::DockTab(Right, 3)),
+        painted(&view, cx, Region::DockTab(Right, 4)),
         "the Requests icon is on the rail"
     );
     assert!(
@@ -876,7 +876,7 @@ fn a_new_approval_does_not_expand_a_collapsed_right_panel(cx: &mut TestAppContex
         state(&view, cx).docks.right.active,
         Some(PanelId::new("changes"))
     );
-    click(&view, cx, Region::DockTab(Right, 3));
+    click(&view, cx, Region::DockTab(Right, 4));
     assert_eq!(chosen(&view, cx, Right), Expanded);
     assert_eq!(
         state(&view, cx).docks.right.active,
