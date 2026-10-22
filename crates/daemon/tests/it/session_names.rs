@@ -15,6 +15,8 @@ use hutan_protocol::messages::{
     Empty, Event, Request, SessionClose, SessionInfo, SessionList, SessionListFilter,
     SessionRename, SessionResult,
 };
+use hutan_protocol::resources::{ResourceSample, ResourcesListRequest};
+use tokio::time::timeout;
 
 /// A canonical folder called `name` in a temporary directory (kept alive by the guard).
 fn folder(name: &str) -> (tempfile::TempDir, PathBuf) {
@@ -199,7 +201,30 @@ async fn the_command_in_the_foreground_follows_the_name() {
         _ => None,
     })
     .await;
-    // Ctrl-C ends the command; the name is the folder's again.
+    // Ctrl-C ends the command; the name is the folder's again. The name follows zsh's preexec
+    // (`OSC 133;C`), which runs before zsh forks the command and hands it the terminal: a
+    // Ctrl-C that comes sooner interrupts zsh, not `sleep`, which then runs its 31 s. The
+    // child is `sleep` only once it holds the terminal (zsh attaches it before the exec).
+    timeout(WAIT, async {
+        loop {
+            let sample = client
+                .call::<ResourceSample>(Request::ResourcesList(ResourcesListRequest {
+                    session_id: Some(session.id),
+                }))
+                .await
+                .unwrap();
+            if sample
+                .sessions
+                .iter()
+                .flat_map(|s| &s.processes)
+                .any(|p| p.name == "sleep")
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("sleep never ran in the session");
     client
         .send_input(terminal_of(&session), b"\x03")
         .await
