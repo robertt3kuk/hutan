@@ -1550,7 +1550,7 @@ impl Render for FileView {
             let buffer = self.buffer.read(cx);
             let path = buffer.path().display().to_string();
             let language = hutan_code_view::language_label(buffer.language());
-            super::lsp_bar::render(lsp, &path, language, &theme, &tokens, cx)
+            super::lsp_bar::render(lsp, &path, language, &self.regions, &theme, &tokens, cx)
         });
         let has_bar = conflict_bar.is_some() || agent_bar.is_some() || lsp_bar.is_some();
         if self.had_bar && !has_bar {

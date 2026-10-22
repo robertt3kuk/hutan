@@ -17,6 +17,9 @@ use gpui::{
 };
 
 use super::lsp::{LspBar, LspStore};
+use super::regions::Regions;
+use super::render::probe;
+use super::view::Region;
 use super::style::TextTooltip;
 use super::ui::{self, ButtonKind};
 use crate::theme::{Theme, Tokens};
@@ -59,6 +62,7 @@ pub fn render(
     lsp: &Entity<LspStore>,
     path: &str,
     language: &str,
+    regions: &Regions,
     theme: &Theme,
     tokens: &Tokens,
     cx: &App,
@@ -112,7 +116,8 @@ pub fn render(
             .on_click(move |_, _, cx| {
                 let folder = folder.clone();
                 trust_store.update(cx, |lsp, cx| lsp.trust(folder, cx));
-            });
+            })
+            .child(probe(regions, Region::FileLsp("trust")));
             let not_now = ui::button(
                 "file-lsp-not-now",
                 "Not now",
@@ -124,7 +129,8 @@ pub fn render(
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(move |_, _, cx| {
                 dismiss_store.update(cx, |lsp, cx| lsp.dismiss(&server_id, cx));
-            });
+            })
+            .child(probe(regions, Region::FileLsp("not-now")));
             row.child(
                 div()
                     .flex_1()
@@ -163,7 +169,8 @@ pub fn render(
             .on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(command.clone()));
                 copy_store.update(cx, |lsp, cx| lsp.dismiss(&copy_id, cx));
-            });
+            })
+            .child(probe(regions, Region::FileLsp("copy")));
             let close = ui::button(
                 "file-lsp-dismiss",
                 "Dismiss",
@@ -175,7 +182,8 @@ pub fn render(
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(move |_, _, cx| {
                 dismiss_store.update(cx, |lsp, cx| lsp.dismiss(&server_id, cx));
-            });
+            })
+            .child(probe(regions, Region::FileLsp("dismiss")));
             row.child(
                 div()
                     .id("file-lsp-message")

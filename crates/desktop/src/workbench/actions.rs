@@ -388,6 +388,9 @@ data_actions! {
     /// Open a file the user chose (the Files panel, ⌘P) in the focused pane, a split or as a
     /// preview that leaves the keyboard where it is. Read as picked.
     OpenChosenFile(ChosenFile);
+    /// Open a file in the focused pane (or focus its tab) with the caret at a language server's
+    /// position: the Problems panel's rows.
+    OpenAtPosition(PositionTarget);
 }
 
 /// A file to open, and where in it.
@@ -411,6 +414,17 @@ pub struct ChosenFile {
     /// 1-based, in characters.
     pub column: Option<u32>,
     pub place: super::files::FilePlace,
+}
+
+/// A file and a position in it as language servers name it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PositionTarget {
+    /// Absolute.
+    pub path: String,
+    /// Zero-based.
+    pub line: u32,
+    /// Zero-based, in UTF-16 code units.
+    pub character: u32,
 }
 
 /// Where to open the context menu of a workspace.

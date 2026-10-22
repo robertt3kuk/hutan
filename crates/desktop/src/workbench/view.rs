@@ -391,6 +391,13 @@ pub enum Region {
     Checkpoints(&'static str),
     /// A control of the "Restored N files · Undo" toast (`toast`, `undo`).
     RestoreToast(&'static str),
+    /// A control of a file tab's language-server bar (`trust`, `not-now`, `copy`, `dismiss`).
+    FileLsp(&'static str),
+    /// Diagnostic row `index` of the Problems panel (the listed diagnostics, top to bottom,
+    /// file headers not counted).
+    ProblemsRow(usize),
+    /// A control of the Problems panel's header (`severity`, `refresh`).
+    Problems(&'static str),
 }
 
 /// A pane tab or dock tab being dragged.

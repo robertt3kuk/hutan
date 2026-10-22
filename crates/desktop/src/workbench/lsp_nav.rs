@@ -226,15 +226,20 @@ impl Workbench {
         .detach();
     }
 
-    /// The Problems panel, shown (the status item's click, *Problems: Show Problems Panel*,
-    /// ⌘⇧M).
+    /// The Problems panel, shown with the keyboard in it (the status item's click, *Problems:
+    /// Show Problems Panel*, ⌘⇧M).
     pub(crate) fn show_problems(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_panel("problems", cx);
-        if self
+        let panel = self
             .panel_view(&super::model::PanelId::new("problems"), window, cx)
-            .is_none()
-        {
+            .and_then(|view| view.downcast::<super::panels::ProblemsPanel>().ok());
+        let Some(panel) = panel else {
             self.set_notice("The Problems panel is not available", cx);
-        }
+            return;
+        };
+        // The panel is drawn (and its list can take the keyboard) after this frame.
+        cx.defer_in(window, move |_, window, cx| {
+            panel.update(cx, |panel, cx| panel.focus_list(window, cx));
+        });
     }
 }

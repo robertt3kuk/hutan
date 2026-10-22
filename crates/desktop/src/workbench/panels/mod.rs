@@ -14,6 +14,7 @@ mod history_model;
 mod history_view;
 mod inspector;
 mod memory;
+mod problems;
 mod resources;
 mod resources_model;
 mod sessions;
@@ -74,6 +75,7 @@ pub use resources_model::{
     Item as ResourceItem, Line as ResourceLine, ProcessLine as ResourceProcessLine,
     SessionLine as ResourceSessionLine, Target as ResourceTarget,
 };
+pub use problems::{Problem, ProblemRow, Problems, ProblemsPanel, filter_label as problems_filter_label};
 pub use sessions::{DraggedProject, DraggedWorkspace, RowKind, SessionsPanel, SidebarRow};
 pub use status::{Tone as StatusTone, builtin_status_items, connection_label};
 pub use tasks::{CascadeAsk, TICK as TASKS_TICK, TasksPanel};
@@ -123,10 +125,11 @@ impl Render for PlaceholderPanel {
 
 /// `sessions`, `files`, `history`, `changes`, `inspector` (titled Requests), `agents` (the
 /// compact projection of the Agents page), `agents-dashboard` (the Agents page), `resources`,
-/// `tasks`, `assistant` (Mawas Home), `notifications`. `sessions` (Projects), `files` and
-/// `tasks` open as pages of the left sidebar, `history`, `changes`, `inspector`, `agents` and
-/// `resources` as tabs of the right sidebar's strip, `assistant` and `agents-dashboard` as tabs
-/// of the center.
+/// `tasks`, `assistant` (Mawas Home), `problems` (the language servers' diagnostics),
+/// `notifications`. `sessions` (Projects), `files` and `tasks` open as pages of the left
+/// sidebar, `history`, `changes`, `inspector`, `agents` and `resources` as tabs of the right
+/// sidebar's strip, `assistant` and `agents-dashboard` as tabs of the center, `problems` in the
+/// bottom dock.
 pub fn builtin_panels() -> PanelRegistry {
     let mut registry = PanelRegistry::new();
     registry.register(PanelSpec {
@@ -239,6 +242,16 @@ pub fn builtin_panels() -> PanelRegistry {
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
             AnyView::from(cx.new(|cx| MemoryPanel::new(env, cx)))
+        }),
+    });
+    registry.register(PanelSpec {
+        id: "problems".into(),
+        title: "Problems".into(),
+        icon: crate::icons::Icon::StatusAttention,
+        default_dock: DockPosition::Bottom,
+        factory: Rc::new(|env, _window, cx| {
+            let env = env.clone();
+            AnyView::from(cx.new(|cx| ProblemsPanel::new(env, cx)))
         }),
     });
     registry.register(PanelSpec {
