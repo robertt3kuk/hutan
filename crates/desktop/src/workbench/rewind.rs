@@ -80,12 +80,10 @@ impl Group {
                 "you or another agent changed this since the turn — restoring overwrites that \
                  change",
             ),
-            Self::Gap => Some(
-                "changed between the turns — restoring overwrites that change",
-            ),
-            Self::During => Some(
-                "you saved this while the turn ran — restoring overwrites your change",
-            ),
+            Self::Gap => Some("changed between the turns — restoring overwrites that change"),
+            Self::During => {
+                Some("you saved this while the turn ran — restoring overwrites your change")
+            }
             Self::Clean | Self::NotCaptured => None,
         }
     }
@@ -202,7 +200,12 @@ pub struct RewindSheet {
 }
 
 impl RewindSheet {
-    fn new(session: SessionId, checkpoint: CheckpointId, undo: bool, prompt: Option<String>) -> Self {
+    fn new(
+        session: SessionId,
+        checkpoint: CheckpointId,
+        undo: bool,
+        prompt: Option<String>,
+    ) -> Self {
         Self {
             session,
             checkpoint,
@@ -226,7 +229,9 @@ impl RewindSheet {
 
     /// The ticked files.
     pub fn checked(&self) -> impl Iterator<Item = &RewindRow> {
-        self.rows.iter().filter(|row| row.checked && row.checkable())
+        self.rows
+            .iter()
+            .filter(|row| row.checked && row.checkable())
     }
 
     /// `Restore N files`.
@@ -488,7 +493,10 @@ impl Workbench {
     // ---- opening ---------------------------------------------------------------------------
 
     /// The checkpoints of agent chats.
-    fn checkpoint_store(&self, cx: &gpui::App) -> Entity<crate::sessions::checkpoints::CheckpointStore> {
+    fn checkpoint_store(
+        &self,
+        cx: &gpui::App,
+    ) -> Entity<crate::sessions::checkpoints::CheckpointStore> {
         self.sessions.read(cx).checkpoints().clone()
     }
 
@@ -529,16 +537,24 @@ impl Workbench {
     }
 
     /// The prompt of the turn of `checkpoint`, from a transcript this window holds.
-    fn prompt_of(&self, session: SessionId, checkpoint: CheckpointId, cx: &gpui::App) -> Option<String> {
+    fn prompt_of(
+        &self,
+        session: SessionId,
+        checkpoint: CheckpointId,
+        cx: &gpui::App,
+    ) -> Option<String> {
         let turn = self
             .checkpoint_store(cx)
             .read(cx)
             .get(checkpoint)
             .and_then(|c| c.turn_id)?;
-        let model = self
-            .chat_models
-            .get(&session)
-            .or_else(|| self.rewind.list.as_ref().filter(|l| l.session == session).map(|l| &l.model))?;
+        let model = self.chat_models.get(&session).or_else(|| {
+            self.rewind
+                .list
+                .as_ref()
+                .filter(|l| l.session == session)
+                .map(|l| &l.model)
+        })?;
         turn_prompt(model.read(cx), turn)
     }
 
@@ -556,7 +572,11 @@ impl Workbench {
             .get(checkpoint)
             .is_some_and(|c| c.kind == CheckpointKind::Restore);
         let prompt = self.prompt_of(session, checkpoint, cx);
-        self.open_sheet(RewindSheet::new(session, checkpoint, undo, prompt), window, cx);
+        self.open_sheet(
+            RewindSheet::new(session, checkpoint, undo, prompt),
+            window,
+            cx,
+        );
     }
 
     fn open_sheet(&mut self, sheet: RewindSheet, window: &mut Window, cx: &mut Context<Self>) {
@@ -595,7 +615,11 @@ impl Workbench {
         cx.spawn(async move |this, cx| {
             let answer = connection.checkpoint_preview(request).await;
             this.update(cx, |this, cx| {
-                let Some(sheet) = this.rewind.sheet.as_mut().filter(|s| s.generation == generation)
+                let Some(sheet) = this
+                    .rewind
+                    .sheet
+                    .as_mut()
+                    .filter(|s| s.generation == generation)
                 else {
                     return;
                 };
@@ -754,7 +778,12 @@ impl Workbench {
     }
 
     /// A button of the sheet, clicked or pressed with the keyboard.
-    pub fn press_rewind(&mut self, button: SheetFocus, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn press_rewind(
+        &mut self,
+        button: SheetFocus,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match button {
             SheetFocus::Files => {}
             SheetFocus::Cancel => self.close_rewind(window, cx),
@@ -889,7 +918,12 @@ impl Workbench {
             };
             if stale.is_some() {
                 this.update(cx, |this, cx| {
-                    if let Some(sheet) = this.rewind.sheet.as_mut().filter(|s| s.generation == generation) {
+                    if let Some(sheet) = this
+                        .rewind
+                        .sheet
+                        .as_mut()
+                        .filter(|s| s.generation == generation)
+                    {
                         sheet.working = false;
                         sheet.notice = Some(STALE.to_owned());
                     }
@@ -917,7 +951,12 @@ impl Workbench {
     }
 
     fn restore_failed(&mut self, generation: u64, error: &ClientError, cx: &mut Context<Self>) {
-        let Some(sheet) = self.rewind.sheet.as_mut().filter(|s| s.generation == generation) else {
+        let Some(sheet) = self
+            .rewind
+            .sheet
+            .as_mut()
+            .filter(|s| s.generation == generation)
+        else {
             return;
         };
         sheet.working = false;
@@ -943,11 +982,7 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(sheet) = self
-            .rewind
-            .sheet
-            .take_if(|s| s.generation == generation)
-        else {
+        let Some(sheet) = self.rewind.sheet.take_if(|s| s.generation == generation) else {
             return;
         };
         let files = restored.written.len() + restored.deleted.len();
@@ -1035,9 +1070,9 @@ impl Workbench {
                 Ok(p) => {
                     p.busy.is_empty()
                         && !p.entries.is_empty()
-                        && p.entries
-                            .iter()
-                            .all(|e| e.state == RestoreState::Clean && e.action != RestoreAction::Skip)
+                        && p.entries.iter().all(|e| {
+                            e.state == RestoreState::Clean && e.action != RestoreAction::Skip
+                        })
                 }
                 Err(_) => false,
             };
@@ -1065,14 +1100,16 @@ impl Workbench {
                     this.show_restore_toast(session, restored.checkpoint.id, files, true, cx);
                 }
                 (Err(error), _) => {
-                    this.set_notice(format!("Cannot undo the restore: {}", message_of(&error)), cx);
+                    this.set_notice(
+                        format!("Cannot undo the restore: {}", message_of(&error)),
+                        cx,
+                    );
                 }
                 // Anything but a clean plan is shown first, as any restore is.
                 _ => {
                     let mut sheet = RewindSheet::new(session, restore, true, None);
-                    sheet.notice = Some(
-                        "Undo needs a look: some files changed since the restore.".to_owned(),
-                    );
+                    sheet.notice =
+                        Some("Undo needs a look: some files changed since the restore.".to_owned());
                     this.open_sheet(sheet, window, cx);
                 }
             })
@@ -1104,7 +1141,12 @@ impl Workbench {
     // ---- the Checkpoints list --------------------------------------------------------------
 
     /// The Checkpoints list of `session`: each checkpoint with its *Rewind…*.
-    pub fn show_checkpoints(&mut self, session: SessionId, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn show_checkpoints(
+        &mut self,
+        session: SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let store = self.checkpoint_store(cx);
         if !store.read(cx).supported() {
             self.set_notice("This daemon keeps no checkpoints", cx);
@@ -1172,7 +1214,9 @@ impl Workbench {
         let Some(row) = self.checkpoint_rows(cx).into_iter().nth(index) else {
             return;
         };
-        if row.checkpoint.state != CheckpointState::Ok || !self.checkpoint_store(cx).read(cx).restore_supported() {
+        if row.checkpoint.state != CheckpointState::Ok
+            || !self.checkpoint_store(cx).read(cx).restore_supported()
+        {
             return;
         }
         if let Some(list) = &mut self.rewind.list {
@@ -1285,7 +1329,11 @@ impl Workbench {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let Some(sheet) = this.rewind.sheet.as_mut().filter(|s| s.generation == generation)
+                let Some(sheet) = this
+                    .rewind
+                    .sheet
+                    .as_mut()
+                    .filter(|s| s.generation == generation)
                 else {
                     return;
                 };

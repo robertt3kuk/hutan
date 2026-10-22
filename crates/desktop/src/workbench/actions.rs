@@ -696,10 +696,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Accounts…", ManageAccounts),
         command("Chat: Switch Model…", SwitchChatModel),
         command("Chat: Toggle Send Key", ToggleSendKey),
-        command(
-            "Chat: Rewind Files to Before This Turn…",
-            RewindFocusedChat,
-        ),
+        command("Chat: Rewind Files to Before This Turn…", RewindFocusedChat),
         command("Chat: Undo Last Restore", UndoLastRestore),
     ]);
     if assistant {

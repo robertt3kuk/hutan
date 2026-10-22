@@ -160,9 +160,8 @@ impl ChatView {
                     _ => (None, None),
                 };
                 let turn = entry.turn;
-                let retry = failed.and_then(|(message, at)| {
-                    self.footer_retry(index, &message, at, &look, cx)
-                });
+                let retry = failed
+                    .and_then(|(message, at)| self.footer_retry(index, &message, at, &look, cx));
                 // The files the turn changed, with Rewind… (CK-5).
                 let files = self.checkpoint_footer(index, turn, &look, cx);
                 match (card, files) {

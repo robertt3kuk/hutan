@@ -26,7 +26,6 @@ pub mod vim;
 mod widgets;
 
 pub(crate) use cards::{counts_of, diff_row};
-pub use rewind::changed_text;
 pub use chip::{Chip, cut_to};
 pub use context::{
     ContextChip, DEFAULT_HITS, DEFAULT_LINES, DEFAULT_TURNS, Mention, MentionKind, Thumb,
@@ -35,6 +34,7 @@ pub use context::{
 pub use input::{TextInput, utf16_len, utf16_to_byte};
 pub use markdown_view::Look;
 pub use model::{ChatModel, LoadStatus};
+pub use rewind::changed_text;
 pub use rich::{LONG_PASTE_CHARS, LONG_PASTE_LINES, format_size, is_long_paste};
 pub use view::{ChatView, KEY_CONTEXT};
 pub use vim::Vim;

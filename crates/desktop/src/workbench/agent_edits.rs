@@ -423,7 +423,11 @@ impl Workbench {
             loop {
                 let event = match updates.recv().await {
                     Ok(ChatUpdate::Event(event)) => event,
-                    Ok(ChatUpdate::Resync { .. } | ChatUpdate::Queue(_) | ChatUpdate::Checkpoint(_))
+                    Ok(
+                        ChatUpdate::Resync { .. }
+                        | ChatUpdate::Queue(_)
+                        | ChatUpdate::Checkpoint(_),
+                    )
                     | Err(RecvError::Lagged(_)) => continue,
                     Err(RecvError::Closed) => break,
                 };

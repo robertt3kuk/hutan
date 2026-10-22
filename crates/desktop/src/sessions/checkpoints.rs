@@ -208,7 +208,9 @@ impl CheckpointStore {
 
     /// Whether the checkpoints of `session` have been read (or tried).
     pub fn loaded(&self, session: SessionId) -> bool {
-        self.chats.get(&session).is_some_and(|loaded| !loaded.loading)
+        self.chats
+            .get(&session)
+            .is_some_and(|loaded| !loaded.loading)
     }
 
     /// Why the checkpoints of `session` could not be read.
@@ -239,7 +241,12 @@ impl CheckpointStore {
     }
 
     /// Remembers that `restore` restored `target` (a turn, or an earlier restore: an undo).
-    pub fn note_restore(&mut self, restore: CheckpointId, target: CheckpointId, cx: &mut Context<Self>) {
+    pub fn note_restore(
+        &mut self,
+        restore: CheckpointId,
+        target: CheckpointId,
+        cx: &mut Context<Self>,
+    ) {
         self.restores.push((restore, target));
         self.revision += 1;
         cx.notify();
@@ -272,10 +279,7 @@ fn restored_by(
     // Each step moves to a restore made later, so the walk ends; the bound keeps it finite
     // whatever the list holds.
     for _ in 0..=restores.len() {
-        let Some((restore, _)) = restores
-            .iter()
-            .rev()
-            .find(|(_, target)| *target == current)
+        let Some((restore, _)) = restores.iter().rev().find(|(_, target)| *target == current)
         else {
             break;
         };

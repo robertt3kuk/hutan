@@ -3,8 +3,8 @@
 //! labels, and every state said in words, never by colour alone.
 
 use gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px,
+    AnyElement, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement,
+    SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px,
 };
 use hutan_core::{CheckpointKind, CheckpointState};
 use hutan_protocol::checkpoint::restore_label;
@@ -24,22 +24,34 @@ const DIFF_MAX_HEIGHT: f32 = 220.0;
 
 impl Workbench {
     /// The actions the turn footers, the menus and the palette dispatch.
-    pub(crate) fn bind_rewind_actions<E: InteractiveElement>(&self, root: E, cx: &mut Context<Self>) -> E {
-        root.on_action(cx.listener(|this, a: &actions::RewindCheckpoint, window, cx| {
-            this.open_rewind(a.0.session, a.0.checkpoint, window, cx);
-        }))
+    pub(crate) fn bind_rewind_actions<E: InteractiveElement>(
+        &self,
+        root: E,
+        cx: &mut Context<Self>,
+    ) -> E {
+        root.on_action(
+            cx.listener(|this, a: &actions::RewindCheckpoint, window, cx| {
+                this.open_rewind(a.0.session, a.0.checkpoint, window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, a: &actions::UndoRestore, window, cx| {
             this.undo_restore(a.0.session, a.0.checkpoint, window, cx);
         }))
-        .on_action(cx.listener(|this, a: &actions::ShowCheckpoints, window, cx| {
-            this.show_checkpoints(a.0, window, cx);
-        }))
-        .on_action(cx.listener(|this, _: &actions::RewindFocusedChat, window, cx| {
-            this.rewind_focused_chat(window, cx);
-        }))
-        .on_action(cx.listener(|this, _: &actions::UndoLastRestore, window, cx| {
-            this.undo_last_restore(window, cx);
-        }))
+        .on_action(
+            cx.listener(|this, a: &actions::ShowCheckpoints, window, cx| {
+                this.show_checkpoints(a.0, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::RewindFocusedChat, window, cx| {
+                this.rewind_focused_chat(window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::UndoLastRestore, window, cx| {
+                this.undo_last_restore(window, cx);
+            }),
+        )
     }
 
     /// The names of `sessions`, for `shared with …` and the busy line.
@@ -112,7 +124,11 @@ impl Workbench {
             .and_then(|p| p.agent.as_deref())
             .map_or_else(|| "the agent".to_owned(), harness_name);
 
-        let button = |id: &'static str, label: SharedString, kind: ui::ButtonKind, enabled: bool, at: SheetFocus| {
+        let button = |id: &'static str,
+                      label: SharedString,
+                      kind: ui::ButtonKind,
+                      enabled: bool,
+                      at: SheetFocus| {
             ui::button(id, label, kind, enabled, &theme, &tokens)
                 .relative()
                 .focus_ring(focus == at, &theme, &tokens)
@@ -192,10 +208,11 @@ impl Workbench {
                             .flex_none()
                             .when(!checkable, |s| s.opacity(0.4))
                             .when(checkable, |s| {
-                                s.cursor_pointer().on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.toggle_rewind_file(index, cx);
-                                }))
+                                s.cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.toggle_rewind_file(index, cx);
+                                    }))
                             })
                             .child(crate::icons::glyph(if row.checked && checkable {
                                 crate::icons::Icon::StateCompleted
@@ -232,9 +249,12 @@ impl Workbench {
                     .flex_col()
                     .children(file.lines.iter().map(|line| diff_row(line, &look)))
                     .when(file.lines.is_empty(), |s| {
-                        s.child(div().px(px(tokens.spacing * 2.0)).text_color(theme.muted).child(
-                            "No text to show (a binary file or a mode change).",
-                        ))
+                        s.child(
+                            div()
+                                .px(px(tokens.spacing * 2.0))
+                                .text_color(theme.muted)
+                                .child("No text to show (a binary file or a mode change)."),
+                        )
                     })
                     .into_any_element(),
                 Some(DiffState::Ready(None)) => div()
@@ -295,7 +315,9 @@ impl Workbench {
                 .into_any_element(),
             Phase::Failed(error) => div()
                 .text_color(theme.danger)
-                .child(SharedString::from(format!("Cannot preview the restore: {error}")))
+                .child(SharedString::from(format!(
+                    "Cannot preview the restore: {error}"
+                )))
                 .into_any_element(),
             Phase::Ready if sheet.rows.is_empty() => div()
                 .text_color(theme.muted)
@@ -540,10 +562,15 @@ impl Workbench {
         let body: AnyElement = if let Some(error) = error {
             div()
                 .text_color(theme.danger)
-                .child(SharedString::from(format!("Cannot list the checkpoints: {error}")))
+                .child(SharedString::from(format!(
+                    "Cannot list the checkpoints: {error}"
+                )))
                 .into_any_element()
         } else if !loaded && rows.is_empty() {
-            div().text_color(theme.muted).child("Reading the checkpoints…").into_any_element()
+            div()
+                .text_color(theme.muted)
+                .child("Reading the checkpoints…")
+                .into_any_element()
         } else if rows.is_empty() {
             div()
                 .text_color(theme.muted)
@@ -749,7 +776,9 @@ impl Workbench {
                         &tokens,
                     )
                     .relative()
-                    .on_click(cx.listener(|this, _, window, cx| this.undo_restore_toast(window, cx)))
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.undo_restore_toast(window, cx)),
+                    )
                     .child(probe(&self.regions, Region::RestoreToast("undo"))),
                 )
                 .into_any_element(),

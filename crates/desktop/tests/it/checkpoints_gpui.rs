@@ -22,8 +22,8 @@ use hutan_core::{CheckpointAvailability, SessionId};
 use hutan_desktop::workbench::chat::LoadStatus;
 use hutan_desktop::workbench::rewind::{Group, Phase, SheetFocus};
 use hutan_desktop::workbench::{FileOpen, Region, Workbench};
-use hutan_protocol::checkpoint::{CheckpointPreview, CheckpointPreviewRequest};
 use hutan_protocol::chat::{ChatSend, ChatSent};
+use hutan_protocol::checkpoint::{CheckpointPreview, CheckpointPreviewRequest};
 use hutan_protocol::messages::Request;
 use hutan_settings::{SettingsPaths, SettingsStore};
 use serde_json::json;
@@ -33,7 +33,12 @@ fn git(dir: &Path, args: &[&str]) {
         .arg("-C")
         .arg(dir)
         .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
-        .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"])
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
         .args(args)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -287,7 +292,7 @@ fn rewind_previews_restores_a_turns_files_and_undo_brings_them_back(cx: &mut Tes
         view.read_with(cx, |wb, cx| {
             wb.buffers()
                 .get(&key)
-                .is_some_and(|b| b.read(cx).text().to_string() == "edited by the agent\n")
+                .is_some_and(|b| b.read(cx).text() == "edited by the agent\n")
         })
     });
     let buffer = view.read_with(cx, |wb, _| wb.buffers().get(&key).unwrap().clone());
@@ -361,7 +366,9 @@ fn rewind_previews_restores_a_turns_files_and_undo_brings_them_back(cx: &mut Tes
     // Restore writes the clean file only, and says so.
     click(&view, cx, Region::Rewind("restore"));
     wait_until(cx, "the restore's toast", |cx| {
-        view.read_with(cx, |wb, _| wb.restore_toast().is_some() && wb.rewind_sheet().is_none())
+        view.read_with(cx, |wb, _| {
+            wb.restore_toast().is_some() && wb.rewind_sheet().is_none()
+        })
     });
     assert_eq!(fs::read_to_string(&a).unwrap(), "alpha\n");
     assert_eq!(fs::read_to_string(&c).unwrap(), "the user's change\n");
@@ -371,7 +378,7 @@ fn rewind_previews_restores_a_turns_files_and_undo_brings_them_back(cx: &mut Tes
     );
     // The open tab reloads the restored text.
     wait_until(cx, "the tab to show the restored text", |cx| {
-        buffer.read_with(cx, |b, _| b.text().to_string() == "alpha\n")
+        buffer.read_with(cx, |b, _| b.text() == "alpha\n")
     });
     // The footer of the restored turn: Restored — Undo.
     assert!(store.read_with(cx, |store, _| store.restored_by(checkpoint).is_some()));
@@ -386,21 +393,20 @@ fn rewind_previews_restores_a_turns_files_and_undo_brings_them_back(cx: &mut Tes
             .to_owned()
     });
     assert!(
-        draft.starts_with("Hutan restored these files to before the turn") && draft.contains("a.txt"),
+        draft.starts_with("Hutan restored these files to before the turn")
+            && draft.contains("a.txt"),
         "{draft}"
     );
 
     // The toast's Undo restores the restore: the agent's text is back.
     click(&view, cx, Region::RestoreToast("undo"));
     wait_until(cx, "the undo", |cx| {
-        view.read_with(cx, |wb, _| {
-            wb.restore_toast().is_some_and(|t| t.undid)
-        })
+        view.read_with(cx, |wb, _| wb.restore_toast().is_some_and(|t| t.undid))
     });
     assert_eq!(fs::read_to_string(&a).unwrap(), "edited by the agent\n");
     assert!(store.read_with(cx, |store, _| store.restored_by(checkpoint).is_none()));
     wait_until(cx, "the tab to show the agent's text again", |cx| {
-        buffer.read_with(cx, |b, _| b.text().to_string() == "edited by the agent\n")
+        buffer.read_with(cx, |b, _| b.text() == "edited by the agent\n")
     });
     let _ = &s.env;
 }
@@ -455,8 +461,7 @@ fn without_the_capability_nothing_of_checkpoints_is_drawn(cx: &mut TestAppContex
     // The daemon recorded the turn, but this client cannot tell.
     wait_until(cx, "the daemon's checkpoint", |_| {
         let list: hutan_protocol::checkpoint::CheckpointList =
-            s.daemon
-                .call(Request::CheckpointList(Default::default()));
+            s.daemon.call(Request::CheckpointList(Default::default()));
         !list.checkpoints.is_empty()
     });
     let footer = footers(&view, cx, s.session);
@@ -465,7 +470,9 @@ fn without_the_capability_nothing_of_checkpoints_is_drawn(cx: &mut TestAppContex
     click(&view, cx, Region::Chat("menu"));
     let entries = view.read_with(cx, |wb, _| wb.context_menu_entries().unwrap());
     assert!(
-        !entries.iter().any(|(label, _)| label.starts_with("Checkpoints")),
+        !entries
+            .iter()
+            .any(|(label, _)| label.starts_with("Checkpoints")),
         "{entries:?}"
     );
     cx.simulate_keystrokes("escape");
@@ -525,7 +532,10 @@ fn a_busy_checkout_waits_for_the_turn_and_a_stale_plan_is_replaced(cx: &mut Test
         sheet_rows(&view, cx),
         [("a.txt".to_owned(), Group::After, false)]
     );
-    assert_eq!(fs::read_to_string(&a).unwrap(), "changed after the preview\n");
+    assert_eq!(
+        fs::read_to_string(&a).unwrap(),
+        "changed after the preview\n"
+    );
     assert!(view.read_with(cx, |wb, _| wb.restore_toast().is_none()));
 }
 

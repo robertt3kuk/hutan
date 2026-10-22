@@ -1155,16 +1155,19 @@ impl Workbench {
         let mut rows = vec![
             note(words::CHECKPOINT_PROJECTS, &theme, &tokens)
                 .relative()
-                .child(probe(&self.regions, Region::Settings("checkpoint-projects")))
+                .child(probe(
+                    &self.regions,
+                    Region::Settings("checkpoint-projects"),
+                ))
                 .into_any_element(),
         ];
         if !lines.is_empty() {
             rows.push(note(words::CHECKPOINT_CHATS_NOT_ON, &theme, &tokens).into_any_element());
-            rows.extend(
-                lines
-                    .into_iter()
-                    .map(|line| note(line, &theme, &tokens).pl(px(tokens.spacing * 3.0)).into_any_element()),
-            );
+            rows.extend(lines.into_iter().map(|line| {
+                note(line, &theme, &tokens)
+                    .pl(px(tokens.spacing * 3.0))
+                    .into_any_element()
+            }));
         }
         rows
     }
