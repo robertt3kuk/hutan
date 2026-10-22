@@ -124,6 +124,20 @@ mod tests {
     }
 
     #[test]
+    fn the_composers_send_is_an_up_arrow_and_its_stop_a_solid_square() {
+        let builtin = icons::builtin();
+        let art = |id: Icon| {
+            let bytes = Assets.load(&builtin.get(id).key).unwrap().unwrap();
+            String::from_utf8(bytes.into_owned()).unwrap()
+        };
+        // Phosphor `arrow-up` (Regular): the shaft runs from y=216 to the head at y=59.
+        assert!(art(Icon::ActionForward).contains("M205.66,117.66"));
+        // Phosphor `stop` (Fill): one closed rounded square, no pause bars.
+        let stop = art(Icon::ActionInterrupt);
+        assert!(stop.contains("M216,56V200") && stop.matches("<path").count() == 1);
+    }
+
+    #[test]
     fn only_the_current_and_one_retired_generation_are_served() {
         use hutan_settings::themes::{SystemAppearance, ThemeRegistry};
         let dir = tempfile::tempdir().unwrap();

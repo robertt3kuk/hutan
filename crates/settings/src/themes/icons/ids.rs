@@ -129,7 +129,7 @@ catalog! {
     ActionSortDescending => ("action.sort-descending", "caret-down.svg"),
     ActionStart => ("action.start", "play.svg"),
     ActionClose => ("action.close", "x.svg"),
-    ActionInterrupt => ("action.interrupt", "pause.svg"),
+    ActionInterrupt => ("action.interrupt", "stop-fill.svg"),
     ActionStop => ("action.stop", "stop-circle.svg"),
     ActionApprove => ("action.approve", "check-circle.svg"),
     ActionDeny => ("action.deny", "prohibit.svg"),
@@ -142,7 +142,7 @@ catalog! {
     ActionPin => ("action.pin", "push-pin.svg"),
     ActionRecover => ("action.recover", "arrow-clockwise.svg"),
     ActionSubagents => ("action.subagents", "tree-structure.svg"),
-    ActionForward => ("action.forward", "caret-right.svg"),
+    ActionForward => ("action.forward", "arrow-up.svg"),
     ActionAddContext => ("action.add-context", "plus.svg"),
     BrandHutan => ("brand.hutan", "hutan.svg"),
     BrandMawas => ("brand.mawas", "sparkle.svg"),
@@ -156,6 +156,9 @@ pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
     match path {
         "arrow-clockwise.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/arrow-clockwise.svg"
+        )),
+        "arrow-up.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/arrow-up.svg"
         )),
         "arrow-square-out.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/arrow-square-out.svg"
@@ -265,9 +268,6 @@ pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
         "magnifying-glass.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/magnifying-glass.svg"
         )),
-        "pause.svg" => Some(include_bytes!(
-            "../../../../../assets/icon-themes/phosphor/pause.svg"
-        )),
         "pencil.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/pencil.svg"
         )),
@@ -312,6 +312,9 @@ pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
         )),
         "stop-circle.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/stop-circle.svg"
+        )),
+        "stop-fill.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/stop-fill.svg"
         )),
         "sun.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/sun.svg"

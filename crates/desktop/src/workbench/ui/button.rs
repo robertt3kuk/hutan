@@ -626,7 +626,16 @@ impl RenderOnce for IconButton {
                 theme.button_pressed,
             ),
         };
-        let rest = if toggled { theme.fg } else { rest };
+        // A disabled primary (the composer's Send while it is empty) is not a faded accent, which
+        // is 1.4:1 on the card: it is a neutral `surface_hover` disc with a `muted` glyph.
+        let neutral = disabled && kind == ButtonKind::Primary;
+        let rest = if toggled {
+            theme.fg
+        } else if neutral {
+            theme.muted
+        } else {
+            rest
+        };
         let spinner_id = (id.clone(), "spinner");
         let pointer_id = id.clone();
         let hover_id = (id.clone(), "face-hover");
@@ -641,7 +650,7 @@ impl RenderOnce for IconButton {
             .size(px(hit))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .tooltip(move |_, cx| cx.new(|_| TextTooltip(tooltip.clone())).into());
-        if disabled {
+        if disabled && !neutral {
             button = button.opacity(m.button_disabled_opacity);
         }
         button = if inert {
@@ -672,7 +681,10 @@ impl RenderOnce for IconButton {
             .size(px(hit - 2.0 * inset))
             .rounded(px(radius))
             .text_color(rest)
-            .when(kind == ButtonKind::Primary, |s| s.bg(theme.accent))
+            .when(kind == ButtonKind::Primary && !neutral, |s| {
+                s.bg(theme.accent)
+            })
+            .when(neutral, |s| s.bg(theme.surface_hover))
             .when(kind == ButtonKind::Secondary && !toggled, |s| {
                 s.outlined(&theme, &tokens).rounded(px(radius))
             })
