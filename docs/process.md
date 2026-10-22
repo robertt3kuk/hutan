@@ -155,6 +155,7 @@ Real-window checks use Cua Driver (`cua-driver call <tool> '<json>'`, profile `.
 - GPUI stops presenting frames while the window is **fully covered** and repaints when shown; this is not a bug. Keep the Hutan window frontmost (`bring_to_front`) for pixel checks, wait ≥ 0.7 s after a change, and avoid foreground-mode actions that restore another app on top of Hutan.
 - Clicks: prefer `delivery_mode: "foreground"` with Hutan already frontmost; background clicks are unreliable (GPUI hit-tests from the last hovered position). Background keys work.
 - GPUI content exposes no accessibility tree (only window chrome and menu bar): target pixels from the latest screenshot and confirm each action with a new screenshot. Hover and tooltips cannot be checked.
+- Real agents in UI checks (user, 2026-10-23): chats with a real model run only through the **real OMP harness inside Hutan on a Haiku model** (`anthropic/claude-haiku-5-5`), chosen in the model menu before the first send; small prompts, scratch repos only; never another model. Every such check also confirms that the models Hutan lists for OMP (Start sheet, Switch model, chat header) match `omp models` — ids, display names, default (`hutan chat models --agent omp` gives the daemon's view). The automated gate still never calls a real model.
 - Disable the history index in the scratch home so the user's real transcripts never appear in screenshots; answer any macOS permission prompt the driver triggers with Deny and report it.
 
 ## Milestone cadence
