@@ -144,6 +144,9 @@ pub enum PasteChoice {
     Cancel,
 }
 
+/// What the tooltip over a link in the text says.
+pub const LINK_TOOLTIP: &str = "⌘-click to open";
+
 /// Rows of one soft-wrapped line the link detector reads on each side of the hovered row.
 const LINK_SCAN_ROWS: i64 = 16;
 
@@ -918,11 +921,27 @@ impl TerminalView {
         self.backend.working_dir()
     }
 
-    /// Finds the plain-text link under the pointer while ⌘ is held. Returns whether what is
-    /// underlined changed.
+    /// Whether a plain hover (no ⌘) may mark the links in the text: not while the application
+    /// takes the mouse or draws its own screen (vim, htop), where the text is its own.
+    fn quiet_links(&self) -> bool {
+        let model = self.model.get();
+        let modes = model.modes();
+        modes.mouse == MouseMode::None && !modes.alt_screen
+    }
+
+    /// What the tooltip over a link in the text says, while the pointer is on one and ⌘ is not
+    /// held (with ⌘ it is underlined solid and opens on a click: the hint has done its job).
+    pub fn link_tooltip(&self) -> Option<&'static str> {
+        (self.hover_detected.is_some() && !self.cmd_held).then_some(LINK_TOOLTIP)
+    }
+
+    /// Finds the plain-text link under the pointer. Returns whether what is underlined
+    /// changed.
     fn refresh_detected(&mut self) -> bool {
         let wanted = match self.hover_cell {
-            Some((row, col)) if self.cmd_held && self.link_at(row, col).is_none() => {
+            Some((row, col))
+                if (self.cmd_held || self.quiet_links()) && self.link_at(row, col).is_none() =>
+            {
                 if self.hover_detected.as_ref().is_some_and(|d| {
                     let line = self.line_for_row(row);
                     d.covers(line, col)
@@ -1486,10 +1505,13 @@ impl TerminalView {
         if hover != self.hover_cell || cmd != self.cmd_held {
             let had_link = self.hover_link().is_some();
             let had_block = self.hover_block();
+            // ⌘ turns the dotted underline of a link solid.
+            let restyled = cmd != self.cmd_held && self.hover_detected.is_some();
             self.hover_cell = hover;
             self.cmd_held = cmd;
             let detected_changed = self.refresh_detected();
             if detected_changed
+                || restyled
                 || had_link
                 || self.hover_link().is_some()
                 || had_block != self.hover_block()
@@ -1615,8 +1637,9 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         if event.modifiers.platform != self.cmd_held {
+            let restyled = self.hover_detected.is_some();
             self.cmd_held = event.modifiers.platform;
-            if self.refresh_detected() || self.hover_link().is_some() {
+            if self.refresh_detected() || restyled || self.hover_link().is_some() {
                 cx.notify();
             }
         }
@@ -2179,10 +2202,20 @@ impl TerminalView {
         let actions = self.block_actions(id)?;
         let layout = self.layout?;
         let spans = self.block_spans();
-        let row = self
-            .display()
+        let display = self.display();
+        let first = display
             .iter()
             .position(|shown| blocks::block_at(&spans, shown.line()) == Some(id))?;
+        // Over the output, at the block's top right: the command line stays readable to its
+        // end and the exit badge stays visible. A block with no output has only the one row.
+        let row = if display
+            .get(first + 1)
+            .is_some_and(|shown| blocks::block_at(&spans, shown.line()) == Some(id))
+        {
+            first + 1
+        } else {
+            first
+        };
         let (background, foreground) = (self.theme.background(), self.theme.foreground());
         let surface = hsla(background.mix(foreground, 0.16));
         let text = hsla(foreground.mix(background, 0.2));
@@ -2272,6 +2305,39 @@ impl TerminalView {
 }
 
 impl TerminalView {
+    /// The tooltip under a link in the text ([`Self::link_tooltip`]): a small label one row
+    /// below the pointer's cell (above it on the last row), over no text it has not already hidden.
+    fn link_tip_overlay(&self) -> Option<gpui::AnyElement> {
+        let text = self.link_tooltip()?;
+        let (row, col) = self.hover_cell?;
+        let layout = self.layout?;
+        let (background, foreground) = (self.theme.background(), self.theme.foreground());
+        let below = row + 1 < layout.rows;
+        let shown_row = if below {
+            row + 1
+        } else {
+            row.saturating_sub(1)
+        };
+        Some(
+            div()
+                .id("hutan-link-tip")
+                .absolute()
+                .top(px(self.settings.padding) + layout.cell.height * shown_row as f32)
+                .left(px(self.settings.padding) + layout.cell.width * f32::from(col))
+                .h(layout.cell.height)
+                .px(px(6.))
+                .flex()
+                .items_center()
+                .whitespace_nowrap()
+                .rounded(px(4.))
+                .bg(hsla(background.mix(foreground, 0.16)))
+                .text_color(hsla(foreground.mix(background, 0.2)))
+                .text_size(px((self.settings.font_size * 0.85).max(8.0)))
+                .child(SharedString::from(text))
+                .into_any_element(),
+        )
+    }
+
     /// The "N new lines ↓" pill at the bottom edge, in the theme's cursor colors, while the
     /// view is scrolled back and output arrived below it. A click returns to the live screen.
     fn jump_pill(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
@@ -2508,6 +2574,7 @@ impl Render for TerminalView {
             ViewStatus::Ended(message) => Some(message.clone()),
         };
         let bar = self.actions_bar(cx);
+        let link_tip = self.link_tip_overlay();
         let pill = self.jump_pill(cx);
         let drop_overlay = self.drop_overlay();
         let paste_card = self.paste_card(cx);
@@ -2580,6 +2647,7 @@ impl Render for TerminalView {
             .bg(background)
             .child(TerminalElement::new(cx.entity()))
             .children(bar)
+            .children(link_tip)
             .children(pill)
             .children(drop_overlay)
             .children(paste_card);

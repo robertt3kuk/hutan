@@ -187,11 +187,6 @@ fn cmd_hover_underlines_an_existing_path_and_cmd_click_opens_it(cx: &mut TestApp
         plain(&["error at src/lib.rs:42:7: boom", "plain words"]),
     );
 
-    // Without ⌘ nothing is found.
-    cx.simulate_mouse_move(at(12.0, 0), None, Modifiers::default());
-    draw(cx);
-    assert!(h.view.read_with(cx, |v, _| v.hovered_link().is_none()));
-
     let want = file(&dir.path().join("src/lib.rs"), Some(42), Some(7));
     assert_eq!(hover(&h, cx, 12.0, 0), Some(want.clone()));
     // The underline covers `src/lib.rs:42:7`: columns 9..24 of the first line.
@@ -200,15 +195,59 @@ fn cmd_hover_underlines_an_existing_path_and_cmd_click_opens_it(cx: &mut TestApp
         .read_with(cx, |v, _| v.hovered_link().map(|(_, s)| s.to_vec()));
     assert_eq!(segments, Some(vec![(0, 9, 24)]));
 
-    // Holding ⌘ and leaving the text drops it; so does releasing ⌘ over it.
+    // Leaving the text drops it; releasing ⌘ over it keeps the quiet hint (dotted, tooltip).
     assert_eq!(hover(&h, cx, 40.0, 0), None);
     assert_eq!(hover(&h, cx, 12.0, 0), Some(want.clone()));
     cx.simulate_mouse_move(at(12.0, 0), None, Modifiers::default());
     draw(cx);
-    assert!(h.view.read_with(cx, |v, _| v.hovered_link().is_none()));
+    assert!(h.view.read_with(cx, |v, _| v.hovered_link().is_some()));
 
     cmd_click(cx, 12.0, 0);
     assert_eq!(*h.opened.borrow(), [want]);
+}
+
+#[gpui::test]
+fn a_plain_hover_marks_a_link_and_says_cmd_click_opens_it(cx: &mut TestAppContext) {
+    let (h, cx) = setup(cx);
+    let dir = project();
+    *h.folder.0.borrow_mut() = Some(dir.path().to_path_buf());
+    show(
+        &h,
+        cx,
+        plain(&["error at src/lib.rs:42:7: boom", "plain words"]),
+    );
+    let tooltip =
+        |h: &Harness, cx: &mut VisualTestContext| h.view.read_with(cx, |v, _| v.link_tooltip());
+
+    // Over words that are no link: no hint.
+    cx.simulate_mouse_move(at(2.0, 1), None, Modifiers::default());
+    draw(cx);
+    assert_eq!(tooltip(&h, cx), None);
+    assert!(h.view.read_with(cx, |v, _| v.hovered_link().is_none()));
+
+    // Over the path, no ⌘: the hint, and the cells that get the quiet underline.
+    cx.simulate_mouse_move(at(12.0, 0), None, Modifiers::default());
+    draw(cx);
+    assert_eq!(tooltip(&h, cx), Some("⌘-click to open"));
+    let segments = h
+        .view
+        .read_with(cx, |v, _| v.hovered_link().map(|(_, s)| s.to_vec()));
+    assert_eq!(segments, Some(vec![(0, 9, 24)]));
+    // A plain click still opens nothing.
+    cx.simulate_mouse_down(at(12.0, 0), MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(at(12.0, 0), MouseButton::Left, Modifiers::default());
+    assert!(h.opened.borrow().is_empty());
+
+    // With ⌘ the underline is solid and the hint is not needed.
+    cx.simulate_mouse_move(at(12.0, 0), None, CMD);
+    draw(cx);
+    assert_eq!(tooltip(&h, cx), None);
+    assert!(h.view.read_with(cx, |v, _| v.hovered_link().is_some()));
+
+    // Off the link the hint goes.
+    cx.simulate_mouse_move(at(40.0, 0), None, Modifiers::default());
+    draw(cx);
+    assert_eq!(tooltip(&h, cx), None);
 }
 
 #[gpui::test]

@@ -378,6 +378,7 @@ fn prepare(
                     .hover_detected
                     .as_ref()
                     .and_then(|detected| detected.columns_on(line)),
+                strong: view.cmd_held,
             };
             let key = row_key(row, fingerprint, &font, hover);
             shape_cached(

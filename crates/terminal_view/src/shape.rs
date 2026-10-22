@@ -153,19 +153,30 @@ pub(crate) struct RowHover {
     pub link: Option<u32>,
     /// The hovered link found in the text: its columns on this row, `from..to`.
     pub columns: Option<(u16, u16)>,
+    /// ⌘ is held: the link is underlined solid, it opens on a click. Otherwise (a plain hover)
+    /// the underline is dotted, the quiet hint that the text is a link.
+    pub strong: bool,
 }
 
 impl RowHover {
     pub const NONE: Self = Self {
         link: None,
         columns: None,
+        strong: false,
     };
 
-    fn underlines(&self, run: &Run, cell_from: u16, cell_to: u16) -> bool {
-        (self.link.is_some() && run.link == self.link)
-            || self
-                .columns
-                .is_some_and(|(from, to)| from <= cell_from && cell_to <= to)
+    /// How a run's cells are underlined by the hover, if they are.
+    fn underline(&self, run: &Run, cell_from: u16, cell_to: u16) -> Option<UnderlineKind> {
+        if self.link.is_some() && run.link == self.link {
+            return Some(UnderlineKind::Single);
+        }
+        self.columns
+            .is_some_and(|(from, to)| from <= cell_from && cell_to <= to)
+            .then_some(if self.strong {
+                UnderlineKind::Single
+            } else {
+                UnderlineKind::Dotted
+            })
     }
 }
 
@@ -215,8 +226,8 @@ pub(crate) fn shape_row(
             .underline_color
             .map_or(fg, |c| hsla(theme.resolve(c, colors.fg)));
         let mut kind = underline_kind(run.flags);
-        if kind.is_none() && hover.underlines(run, cell.col, cell.end()) {
-            kind = Some(UnderlineKind::Single);
+        if kind.is_none() {
+            kind = hover.underline(run, cell.col, cell.end());
         }
         if let Some(kind) = kind {
             push_merged(
@@ -321,6 +332,7 @@ pub(crate) fn row_key(row: &Row, style_key: u64, font: &FontSpec, hover: RowHove
         (hover.link.is_some() && run.link == hover.link).hash(&mut h);
     }
     hover.columns.hash(&mut h);
+    hover.strong.hash(&mut h);
     h.finish()
 }
 
