@@ -168,6 +168,35 @@ fn the_status_items_follow_every_vim_key_without_a_click(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+fn the_last_line_of_a_file_ending_in_a_newline_is_its_last_real_line(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
+    let dir = tempfile::tempdir().unwrap();
+    let tab = open_text(&view, cx, dir.path(), "n.txt", "one\ntwo\nthree\nfour\n");
+
+    cx.simulate_input("G");
+    assert_eq!(
+        status(&view, cx).1,
+        "Ln 4, Col 1",
+        "on `four`, not on an empty line after it"
+    );
+    cx.simulate_input("j");
+    assert_eq!(status(&view, cx).1, "Ln 4, Col 1", "j at the end stays");
+    cx.simulate_input("gg:");
+    draw(cx);
+    cx.simulate_input("$");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(status(&view, cx).1, "Ln 4, Col 1", ":$ too");
+    cx.simulate_input("2GdG");
+    assert_eq!(
+        text(&tab.buffer, cx),
+        "one\n",
+        "dG deletes to the end and the file still ends in a newline"
+    );
+    assert_eq!(status(&view, cx).1, "Ln 1, Col 1");
+}
+
+#[gpui::test]
 fn the_search_line_shows_while_it_is_typed(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");

@@ -48,7 +48,9 @@ impl Transaction {
 ///
 /// Every offset is a byte offset on a character boundary of the host's current text; a line ends
 /// at a `\n` (which belongs to no line's text) or at the end of the text, and a text that ends in
-/// `\n` has an empty last line. The reads are what motions, text objects and operators need, so
+/// `\n` has an empty last line here. Vim does not see that one: a final `\n` is the file's final
+/// newline (`'eol'`), so motions stop on the line before it and edits leave it in place. The
+/// reads are what motions, text objects and operators need, so
 /// that a rope can answer each in `O(log n)` without flattening the text (`slice` in the length
 /// of what it returns, which is a word, a line or an operator's span, never the whole text). The
 /// edits are the only way the modal layer changes the text: [`apply`](Self::apply) for what Vim

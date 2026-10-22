@@ -146,7 +146,7 @@ Anything else answers `Not supported: :…`. Patterns are Vim patterns (E-7b, `h
 
 ## Vim command matrix (E-7b)
 
-`hutan-vim` is checked against Vim 9.1 (`/usr/bin/vim -Nu NONE -i NONE -es`, patches 1-1752) by 508 differential fixtures in `crates/vim/tests/fixtures/*.json`: each case gives a text, a caret and keys; the recorder (`cargo run -p hutan-vim --example record [file…]`, dev only, never in the gate) types the keys into the real Vim with `feedkeys(…, 'tx')` and stores the text, the caret and every non-empty register; `tests/it/fixtures.rs` replays every case on the reference host and fails on any difference. Behaviour is specified from Vim's documentation; no editor's Vim code was read.
+`hutan-vim` is checked against Vim 9.1 (`/usr/bin/vim -Nu NONE -i NONE -es`, patches 1-1752) by 508 differential fixtures in `crates/vim/tests/fixtures/*.json`: each case gives a text, a caret and keys; the recorder (`cargo run -p hutan-vim --example record [file…]`, dev only, never in the gate) types the keys into the real Vim with `feedkeys(…, 'tx')` and stores the text, the caret and every non-empty register; `tests/it/fixtures.rs` replays every case on the reference host and fails on any difference. Every case replays twice: as its lines alone and as the file Vim read, ending in a newline (FX-SMALL-1). A text that ends in `\n` is the file's lines with a final newline, as in Vim (`'eol'`), not an empty line after them: `G`, `j`, `:$`, `}`, `]]` stop on the last real line, and `dd`, `dG`, `p`, `:m$`, `J` there keep the final newline. Behaviour is specified from Vim's documentation; no editor's Vim code was read.
 
 | Area | Supported | Not supported (answers "Not supported: …") |
 |---|---|---|

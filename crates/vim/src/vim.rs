@@ -889,8 +889,15 @@ impl Core {
             host.set_cursor(Text::new(&*host).normal_clamp(corner));
             return;
         }
-        if at > buf.line_start(at) {
-            let to = buf.prev(at);
+        // A caret after the final newline (the host's empty last line) goes back onto the last
+        // line, which Vim's buffer ends with.
+        let to = if at > buf.line_start(at) {
+            buf.prev(at)
+        } else {
+            at
+        };
+        let to = buf.normal_clamp(to);
+        if to != at {
             host.set_cursor(to);
         }
     }

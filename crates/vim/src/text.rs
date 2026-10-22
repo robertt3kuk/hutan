@@ -47,14 +47,29 @@ pub(crate) fn class(c: char, big: bool) -> u8 {
 /// The host's text, for motions in byte offsets that always sit on character boundaries.
 /// Columns are display columns, Vim's virtual columns: a tab reaches the next multiple of
 /// `'tabstop'`, a wide character (CJK) takes two.
+///
+/// A text that ends in `\n` is seen without it: Vim's buffer is lines, and a file's final
+/// newline ends its last line (`'eol'`) rather than starting an empty one after it. So `G`, `j`,
+/// `:$`, `}` stop on the last real line, and every edit ends before that newline, which stays.
 pub(crate) struct Text<'a, H: VimHost + ?Sized> {
     host: &'a H,
     tab: usize,
+    /// The host's length, less the final `\n`.
+    len: usize,
+    /// Whether the host's text ends in a `\n` this view leaves out.
+    eol: bool,
 }
 
 impl<'a, H: VimHost + ?Sized> Text<'a, H> {
     pub fn new(host: &'a H) -> Self {
-        Self { host, tab: 8 }
+        let len = host.len();
+        let eol = host.char_before(len) == Some('\n');
+        Self {
+            host,
+            tab: 8,
+            len: len - usize::from(eol),
+            eol,
+        }
     }
 
     /// The same view with tabs `tab_stop` wide.
@@ -73,15 +88,20 @@ impl<'a, H: VimHost + ?Sized> Text<'a, H> {
     }
 
     pub fn len(&self) -> usize {
-        self.host.len()
+        self.len
     }
 
     /// The character starting at `i`.
     pub fn at(&self, i: usize) -> Option<char> {
-        self.host.char_at(i)
+        if i < self.len {
+            self.host.char_at(i)
+        } else {
+            None
+        }
     }
 
-    /// The character ending at `i`.
+    /// The character ending at `i` (also past the end: a caret the host put after the final
+    /// newline steps back onto the last line).
     pub fn before(&self, i: usize) -> Option<char> {
         self.host.char_before(i)
     }
@@ -136,7 +156,7 @@ impl<'a, H: VimHost + ?Sized> Text<'a, H> {
     }
 
     pub fn line_count(&self) -> usize {
-        self.host.line_count()
+        self.host.line_count() - usize::from(self.eol)
     }
 
     /// The start of line `line`, or of the last line when there are fewer.

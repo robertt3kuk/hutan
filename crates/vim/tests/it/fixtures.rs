@@ -1,6 +1,8 @@
 //! Differential fixtures (`tests/fixtures/*.json`, recorded from a real Vim by
 //! `examples/record.rs`): every case replays on the reference host and has to end with Vim's
-//! text, caret and registers. Recording is not part of the gate; replaying is.
+//! text, caret and registers. Each case replays twice: as its lines alone, and as the file Vim
+//! read, ending in a newline (what an editor holds), which has to stay. Recording is not part of
+//! the gate; replaying is.
 
 use std::path::Path;
 
@@ -36,10 +38,15 @@ fn vim_form(vim: &Vim<StringHost>, name: char) -> Option<(String, String)> {
     (!text.is_empty()).then_some((text, kind))
 }
 
-/// Replays one case; the differences from Vim, if any.
-fn replay(case: &Value) -> Result<(), String> {
+/// Replays one case; the differences from Vim, if any. With `eol` the text ends in the newline
+/// the recorder's file ended with (what an editor holds for a file that ends in one): Vim's
+/// buffer is the same lines either way, so the result has to be too, still ending in a newline.
+fn replay(case: &Value, eol: bool) -> Result<(), String> {
     let lines = lines_of(&case["lines"]);
-    let text = lines.join("\n");
+    let mut text = lines.join("\n");
+    if eol {
+        text.push('\n');
+    }
     let cursor = case["cursor"].as_array().expect("cursor");
     let (line, col) = (
         cursor[0].as_u64().expect("line") as usize,
@@ -81,7 +88,20 @@ fn replay(case: &Value) -> Result<(), String> {
     let expect = &case["expect"];
     let mut diffs = Vec::new();
     let want_lines = lines_of(&expect["lines"]);
-    let got_lines: Vec<String> = host.text().split('\n').map(str::to_owned).collect();
+    let got_text = if eol {
+        match host.text().strip_suffix('\n') {
+            Some(text) => text,
+            // An empty buffer has no line to end, as Vim writes it.
+            None if host.text().is_empty() => "",
+            None => {
+                diffs.push("lost the final newline".to_owned());
+                host.text()
+            }
+        }
+    } else {
+        host.text()
+    };
+    let got_lines: Vec<String> = got_text.split('\n').map(str::to_owned).collect();
     if want_lines != got_lines {
         diffs.push(format!("text {got_lines:?}, Vim {want_lines:?}"));
     }
@@ -155,11 +175,24 @@ fn every_recorded_case_replays_like_vim() {
                 case.get("expect").is_some(),
                 "{stem}/{name}: not recorded yet"
             );
-            if let Err(diff) = replay(case) {
-                failures.push(format!(
-                    "{stem}/{name} ({:?}): {diff}",
-                    case["keys"].as_str().unwrap_or_default()
-                ));
+            // Without the final newline a text whose last line is empty cannot be written: its
+            // last `\n` would end the line before (`'eol'`), so a case that starts or ends with
+            // such a text replays in the file form only.
+            let ends_bare = |lines: Vec<String>| {
+                lines.len() == 1 || lines.last().is_some_and(|l| !l.is_empty())
+            };
+            let bare = ends_bare(lines_of(&case["lines"]))
+                && ends_bare(lines_of(&case["expect"]["lines"]));
+            for (eol, form) in [(false, ""), (true, ", ending in a newline")] {
+                if !eol && !bare {
+                    continue;
+                }
+                if let Err(diff) = replay(case, eol) {
+                    failures.push(format!(
+                        "{stem}/{name} ({:?}{form}): {diff}",
+                        case["keys"].as_str().unwrap_or_default()
+                    ));
+                }
             }
         }
     }
