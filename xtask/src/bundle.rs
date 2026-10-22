@@ -7,6 +7,7 @@
 //!   MacOS/hutan-desktop  hutand  hutan        the three real executables of the workspace
 //!   Library/LaunchAgents/dev.hutan.daemon.plist assets/macos/dev.hutan.daemon.plist
 //!   Resources/shell-integration/…                the OSC 133 / OSC 7 scripts
+//!   Resources/CHANGELOG.md                       the changelog: the app's *What's new* after an update
 //! ```
 //!
 //! Nothing here runs the bundle or registers it with the system: the only programs started are
@@ -163,6 +164,8 @@ pub fn assemble(root: &Path, bin_dir: &Path, out: &Path) -> Result<PathBuf> {
         &root.join("crates/terminal/shell-integration"),
         &resources.join("shell-integration"),
     )?;
+    fs::copy(root.join("CHANGELOG.md"), resources.join("CHANGELOG.md"))
+        .context("copying CHANGELOG.md (the app's What's new)")?;
     Ok(app)
 }
 
@@ -378,7 +381,8 @@ mod tests {
             assert!(agent.get(key).is_none(), "{key} stays unset");
         }
 
-        // Resources: the icon and the shell integration scripts.
+        // Resources: the icon, the changelog (the app's *What's new*) and the shell integration
+        // scripts.
         let scripts = app.join("Contents/Resources/shell-integration");
         for script in [
             "zsh/.zshenv",
@@ -388,6 +392,11 @@ mod tests {
         ] {
             assert!(scripts.join(script).is_file(), "{script}");
         }
+        assert_eq!(
+            fs::read_to_string(app.join("Contents/Resources/CHANGELOG.md")).unwrap(),
+            fs::read_to_string(root.join("CHANGELOG.md")).unwrap(),
+            "the bundle carries the changelog the app opens after an update"
+        );
 
         // No Notifier helper: the daemon posts the notifications itself (ADR 0007).
         assert!(
@@ -399,7 +408,7 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         resources.sort();
-        assert_eq!(resources, [ICON_FILE, "shell-integration"]);
+        assert_eq!(resources, ["CHANGELOG.md", ICON_FILE, "shell-integration"]);
 
         // Signature: ad hoc, with the identifiers we gave.
         let described = |path: &Path| {

@@ -22,6 +22,7 @@ use super::terminals::TerminalItem;
 use super::workspaces::PickerState;
 use crate::cli_link::CliLink;
 use crate::harness_install::PackageRunner;
+use crate::install::Install;
 use crate::integrations::IntegrationInstaller;
 use crate::macos::MacServices;
 use crate::sessions::{
@@ -69,6 +70,9 @@ pub struct WorkbenchOptions {
     pub first_run_setup: bool,
     /// The link the setup's Command line step may make; `None` outside `Hutan.app`.
     pub cli_link: Option<CliLink>,
+    /// The app bundle this desktop runs from, to tell a reinstall or an update from a launch;
+    /// `None` for a development build.
+    pub install: Option<Install>,
     /// Runs `hutan integration` for the agent integrations; `None` installs nothing.
     pub installer: Option<Arc<dyn IntegrationInstaller>>,
     /// Checks and installs missing harness packages (the "Install…" buttons); `None` offers
@@ -96,6 +100,7 @@ impl WorkbenchOptions {
             mac: MacServices::inert(),
             first_run_setup: false,
             cli_link: None,
+            install: None,
             installer: None,
             package_runner: None,
             custom_home: std::env::var_os("HUTAN_HOME").is_some_and(|home| !home.is_empty()),
@@ -111,6 +116,13 @@ impl WorkbenchOptions {
     /// The same options showing the first-run setup until it is done (`app.setup_done`).
     pub fn with_first_run_setup(mut self) -> Self {
         self.first_run_setup = true;
+        self
+    }
+
+    /// The same options with the install this desktop runs from (`Install::current()`);
+    /// `None`, a development build, never offers anything.
+    pub fn with_install(mut self, install: Option<Install>) -> Self {
+        self.install = install;
         self
     }
 
@@ -610,6 +622,8 @@ pub struct Workbench {
     pub(crate) mac: MacControl,
     pub(crate) setup: super::setup::SetupControl,
     pub(crate) first_run: super::first_run::FirstRunControl,
+    /// This install against the one the desktop last saw (`reinstall.rs`).
+    pub(crate) install: super::reinstall::InstallControl,
     /// The one-time offer of the clean default layout is on screen (`layout_offer.rs`).
     pub(crate) layout_offer: bool,
     pub(crate) integrations: super::integrations::IntegrationControl,
@@ -700,6 +714,14 @@ impl Workbench {
         let settings = options.settings;
         let first_run_setup = options.first_run_setup;
         crate::settings::register_all(&settings);
+        let (install, install_changed) = super::reinstall::InstallControl::start(
+            options.install,
+            options
+                .state_path
+                .as_deref()
+                .and_then(persistence::load_install),
+            settings.get::<crate::settings::AppSettings>().setup_done,
+        );
         let (mac, mac_events) = MacControl::new(options.mac);
         let appearance_settings = settings.get::<AppearanceSettings>();
         let layout_settings = settings.get::<LayoutSettings>();
@@ -1139,6 +1161,7 @@ impl Workbench {
             mac,
             setup: super::setup::SetupControl::new(cx.focus_handle(), options.cli_link),
             first_run: super::first_run::FirstRunControl::default(),
+            install,
             layout_offer,
             integrations: super::integrations::IntegrationControl::new(
                 options.installer,
@@ -1198,6 +1221,9 @@ impl Workbench {
                 .setup_done
         {
             this.begin_first_run();
+        }
+        if install_changed {
+            this.schedule_save(cx);
         }
         if !this.attention_marks.is_empty() {
             let marks = this.attention_marks.clone();
@@ -1470,6 +1496,7 @@ impl Workbench {
             &self.chat_drafts,
             &self.attention_marks,
             &self.recent_files,
+            self.install.record.as_ref(),
         ) {
             Ok(json) => json,
             Err(err) => {

@@ -43,6 +43,7 @@ pub mod quick_open;
 mod recovery_summary;
 pub mod regions;
 pub mod registry;
+mod reinstall;
 mod remote;
 mod render;
 mod resources;

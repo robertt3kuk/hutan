@@ -364,6 +364,7 @@ fn open_main(cx: &mut App) -> gpui::Result<WindowHandle<Workbench>> {
             .with_mac(mac)
             .with_first_run_setup()
             .with_cli_link(CliLink::system())
+            .with_install(crate::install::Install::current())
             .with_installer(Arc::new(CliInstaller::new(hutan_path())))
             .with_package_runner(Arc::new(SystemRunner));
     open_workbench(cx, options)

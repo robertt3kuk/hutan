@@ -150,6 +150,7 @@ impl Render for Workbench {
         let status = self.render_status_bar(window, cx);
         let offer = self.render_notify_offer(cx);
         let layout_offer = self.render_layout_offer(cx);
+        let reinstall_card = self.render_reinstall_card(cx);
         self.rescue_orphaned_focus(window, cx);
         self.sync_assistant_focus(window, cx);
         self.sync_agents_page(cx);
@@ -221,6 +222,7 @@ impl Render for Workbench {
                         .child(titlebar)
                         .children(offer)
                         .children(layout_offer)
+                        .children(reinstall_card)
                         .child(
                             div()
                                 .flex()
@@ -2275,6 +2277,7 @@ impl Workbench {
                 .collect()
         };
         let left = render_side(&status_bar.left);
+        let whats_new = self.render_whats_new(cx);
         let right = render_side(&status_bar.right);
         div()
             .id("status-bar")
@@ -2300,6 +2303,7 @@ impl Workbench {
                     .items_center()
                     .gap(px(tokens.spacing * 3.0))
                     .children(left)
+                    .children(whats_new)
                     .children(
                         self.notice
                             .clone()

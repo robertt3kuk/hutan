@@ -2,6 +2,7 @@
 
 use super::changes::ReviewComment;
 use super::model::{ModelError, WorkbenchState};
+use crate::install::InstallRecord;
 use crate::sessions::Marks;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -158,6 +159,12 @@ pub fn load_recent_files(path: &Path) -> RecentFiles {
     recent
 }
 
+/// The install the desktop last acknowledged (`install` in the state file); `None` when the file
+/// is missing or has none.
+pub fn load_install(path: &Path) -> Option<InstallRecord> {
+    load_key(path, "install")
+}
+
 /// Puts `file` first in `recent` (once), keeping at most [`MAX_RECENT_FILES`].
 pub fn note_recent_file(recent: &mut RecentFiles, file: &str) {
     recent.retain(|f| f != file);
@@ -177,7 +184,9 @@ fn load_key<T: serde::de::DeserializeOwned + Default>(path: &Path, key: &str) ->
 
 /// The state file's JSON: the layout plus, when there are any, the folded blocks, the review
 /// comments, the launcher memory, the chat drafts, what the user did to the attention queue
-/// (`attention`: marked unread, snoozed) and the recent files.
+/// (`attention`: marked unread, snoozed), the recent files and the install the desktop last
+/// acknowledged (`install`).
+#[allow(clippy::too_many_arguments)] // the one writer of one file; a struct would only rename them
 pub fn state_json(
     state: &WorkbenchState,
     collapsed: &CollapsedBlocks,
@@ -186,6 +195,7 @@ pub fn state_json(
     drafts: &ChatDrafts,
     marks: &Marks,
     recent: &RecentFiles,
+    install: Option<&InstallRecord>,
 ) -> Result<String, ModelError> {
     let json = state.to_json()?;
     if collapsed.is_empty()
@@ -194,6 +204,7 @@ pub fn state_json(
         && drafts.is_empty()
         && marks.is_empty()
         && recent.is_empty()
+        && install.is_none()
     {
         return Ok(json);
     }
@@ -234,6 +245,12 @@ pub fn state_json(
             map.insert(
                 "recent_files".to_owned(),
                 serde_json::to_value(recent).map_err(invalid)?,
+            );
+        }
+        if let Some(install) = install {
+            map.insert(
+                "install".to_owned(),
+                serde_json::to_value(install).map_err(invalid)?,
             );
         }
     }
@@ -292,6 +309,7 @@ mod tests {
                 &ChatDrafts::new(),
                 &Marks::default(),
                 &RecentFiles::new(),
+                None,
             )
             .unwrap(),
             state.to_json().unwrap()
@@ -308,6 +326,7 @@ mod tests {
                 &ChatDrafts::new(),
                 &Marks::default(),
                 &RecentFiles::new(),
+                None,
             )
             .unwrap(),
         )
@@ -343,6 +362,7 @@ mod tests {
                 &ChatDrafts::new(),
                 &Marks::default(),
                 &RecentFiles::new(),
+                None,
             )
             .unwrap(),
         )
@@ -376,6 +396,7 @@ mod tests {
                 &drafts,
                 &Marks::default(),
                 &RecentFiles::new(),
+                None,
             )
             .unwrap(),
         )
@@ -425,6 +446,7 @@ mod tests {
                 &ChatDrafts::new(),
                 &Marks::default(),
                 &recent,
+                None,
             )
             .unwrap(),
         )
@@ -436,6 +458,36 @@ mod tests {
         }
         assert_eq!(recent.len(), MAX_RECENT_FILES);
         assert_eq!(recent[0], format!("/repo/{}.rs", MAX_RECENT_FILES + 4));
+    }
+
+    #[test]
+    fn the_install_record_travels_beside_the_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STATE_FILE);
+        let state = WorkbenchState::default();
+        assert_eq!(load_install(&path), None);
+        let record = InstallRecord {
+            version: "0.2.0".to_owned(),
+            bundle_path: "/Applications/Hutan.app".to_owned(),
+            install_id: "1.000000002:3".to_owned(),
+        };
+        save_json(
+            &path,
+            &state_json(
+                &state,
+                &CollapsedBlocks::new(),
+                &ReviewComments::new(),
+                &LauncherMemory::default(),
+                &ChatDrafts::new(),
+                &Marks::default(),
+                &RecentFiles::new(),
+                Some(&record),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(load_install(&path), Some(record));
+        assert_eq!(load_state(&path), state);
     }
 
     #[test]
