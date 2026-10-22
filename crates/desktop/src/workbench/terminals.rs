@@ -948,6 +948,8 @@ impl Workbench {
         self.on_daemon_state_changed(cx);
         self.check_harness_installs(cx);
         self.on_approvals_changed(cx);
+        // A Rewind sheet that waited on a running turn asks again once it ended.
+        self.recheck_rewind_busy(cx);
         cx.notify();
     }
 

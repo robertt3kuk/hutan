@@ -473,3 +473,111 @@ fn without_the_capability_nothing_of_checkpoints_is_drawn(cx: &mut TestAppContex
     view.update_in(cx, |wb, window, cx| wb.rewind_focused_chat(window, cx));
     assert!(view.read_with(cx, |wb, _| wb.checkpoints_list().is_none()));
 }
+
+#[gpui::test]
+fn a_busy_checkout_waits_for_the_turn_and_a_stale_plan_is_replaced(cx: &mut TestAppContext) {
+    let (s, root) = setup(2, true);
+    let (view, cx) = open(cx, &s.daemon, s.daemon.connection());
+    show_chat(&view, cx, s.session);
+    let a = root.join("a.txt");
+    turn(&s, &view, cx, 0, || {
+        fs::write(&a, "edited by the agent\n").unwrap();
+    });
+    let footer = footers(&view, cx, s.session);
+
+    // Turn 1 runs (held): the sheet names the busy chat and restores nothing.
+    let _: ChatSent = s.daemon.call(Request::ChatSend(ChatSend {
+        session_id: s.session,
+        text: "turn 1".to_owned(),
+        attachments: vec![],
+    }));
+    click(&view, cx, Region::ChatRewind(footer[0]));
+    wait_until(cx, "the busy line", |cx| {
+        view.read_with(cx, |wb, _| wb.rewind_sheet().is_some_and(|s| s.busy()))
+    });
+    assert!(drawn(&view, cx, Region::Rewind("busy")));
+    assert!(drawn(&view, cx, Region::Rewind("interrupt")));
+    assert!(view.read_with(cx, |wb, _| !wb.rewind_sheet().unwrap().can_restore()));
+    click(&view, cx, Region::Rewind("restore"));
+    assert_eq!(fs::read_to_string(&a).unwrap(), "edited by the agent\n");
+
+    // The turn ends: the sheet asks again by itself.
+    fs::write(&s.gates[1], "").unwrap();
+    wait_until(cx, "the plan without the busy turn", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.rewind_sheet()
+                .is_some_and(|s| !s.busy() && s.can_restore())
+        })
+    });
+
+    // a.txt changes after the preview: the restore writes nothing and shows the new plan.
+    fs::write(&a, "changed after the preview\n").unwrap();
+    click(&view, cx, Region::Rewind("restore"));
+    wait_until(cx, "the new plan", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.rewind_sheet().is_some_and(|s| {
+                !s.working && s.notice.as_deref() == Some(hutan_desktop::workbench::rewind::STALE)
+            })
+        })
+    });
+    assert!(drawn(&view, cx, Region::Rewind("notice")));
+    assert_eq!(
+        sheet_rows(&view, cx),
+        [("a.txt".to_owned(), Group::After, false)]
+    );
+    assert_eq!(fs::read_to_string(&a).unwrap(), "changed after the preview\n");
+    assert!(view.read_with(cx, |wb, _| wb.restore_toast().is_none()));
+}
+
+#[gpui::test]
+fn the_palette_picks_the_turn_from_the_checkpoints_list_and_undoes_the_last_restore(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::workbench::actions;
+    let (s, root) = setup(1, true);
+    let (view, cx) = open(cx, &s.daemon, s.daemon.connection());
+    show_chat(&view, cx, s.session);
+    let a = root.join("a.txt");
+    turn(&s, &view, cx, 0, || {
+        fs::write(&a, "edited by the agent\n").unwrap();
+    });
+
+    // ⌘K Chat: Rewind Files to Before This Turn…: the list of the focused chat, with the
+    // turn's prompt, its files and +/−.
+    cx.dispatch_action(actions::RewindFocusedChat);
+    wait_until(cx, "the Checkpoints list", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.checkpoints_list().is_some() && !wb.checkpoint_rows(cx).is_empty()
+        })
+    });
+    let rows = view.read_with(cx, |wb, cx| wb.checkpoint_rows(cx));
+    assert_eq!(rows.len(), 1);
+    // The replayed Codex echoes the prompt of its recording as the turn's user message.
+    assert_eq!(
+        rows[0].prompt.as_deref(),
+        Some("Reply with the single word pong and nothing else.")
+    );
+    assert_eq!(rows[0].checkpoint.files_changed, 1);
+    assert!(drawn(&view, cx, Region::CheckpointRow(0)));
+
+    click(&view, cx, Region::CheckpointRewind(0));
+    sheet_ready(&view, cx);
+    click(&view, cx, Region::Rewind("restore"));
+    wait_until(cx, "the restore", |cx| {
+        view.read_with(cx, |wb, _| wb.restore_toast().is_some())
+    });
+    assert_eq!(fs::read_to_string(&a).unwrap(), "alpha\n");
+    view.update_in(cx, |wb, window, cx| wb.close_checkpoints(window, cx));
+    show_chat(&view, cx, s.session);
+
+    // ⌘K Chat: Undo Last Restore.
+    let store = view.read_with(cx, |wb, cx| wb.sessions().read(cx).checkpoints().clone());
+    wait_until(cx, "the restore's checkpoint", |cx| {
+        store.read_with(cx, |store, _| store.last_restore(s.session).is_some())
+    });
+    cx.dispatch_action(actions::UndoLastRestore);
+    wait_until(cx, "the undo", |cx| {
+        view.read_with(cx, |wb, _| wb.restore_toast().is_some_and(|t| t.undid))
+    });
+    assert_eq!(fs::read_to_string(&a).unwrap(), "edited by the agent\n");
+}

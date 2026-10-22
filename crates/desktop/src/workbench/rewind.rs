@@ -197,6 +197,8 @@ pub struct RewindSheet {
     pub diffs: HashMap<String, DiffState>,
     /// Bumped whenever the plan is asked again: an answer to an older request is dropped.
     generation: u64,
+    /// A whole plan is on its way (`refresh_preview`).
+    refreshing: bool,
 }
 
 impl RewindSheet {
@@ -218,6 +220,7 @@ impl RewindSheet {
             note: !undo,
             diffs: HashMap::new(),
             generation: 0,
+            refreshing: false,
         }
     }
 
@@ -271,16 +274,17 @@ impl RewindSheet {
     }
 
     fn install(&mut self, preview: CheckpointPreview) {
-        // What the user ticked or unticked stays as it was for the files still in the plan.
-        let before: HashMap<String, bool> = self
+        // What the user ticked or unticked stays as it was for the files still in the plan in
+        // the same group; a file that became a conflict starts unticked again.
+        let before: HashMap<String, (Group, bool)> = self
             .rows
             .iter()
-            .map(|row| (row.entry.path.clone(), row.checked))
+            .map(|row| (row.entry.path.clone(), (row.group, row.checked)))
             .collect();
         let mut rows = rows_of(&preview.entries);
         for row in &mut rows {
-            if let Some(checked) = before.get(&row.entry.path)
-                && Group::of(&row.entry) == row.group
+            if let Some((group, checked)) = before.get(&row.entry.path)
+                && *group == row.group
             {
                 row.checked = *checked && row.checkable();
             }
@@ -578,6 +582,7 @@ impl Workbench {
         let Some(sheet) = &mut self.rewind.sheet else {
             return;
         };
+        sheet.refreshing = true;
         self.rewind.generation += 1;
         sheet.generation = self.rewind.generation;
         let generation = sheet.generation;
@@ -594,6 +599,7 @@ impl Workbench {
                 else {
                     return;
                 };
+                sheet.refreshing = false;
                 match answer {
                     Ok(preview) => {
                         sheet.install(preview);
@@ -618,6 +624,31 @@ impl Workbench {
                 .is_some_and(|p| p.busy.contains(&session))
         });
         if waiting {
+            self.recheck_rewind_busy(cx);
+        }
+    }
+
+    /// The sessions changed: once none of the turns that held a sheet's checkout runs any
+    /// longer (as the daemon's session list says, which is what its preview reads), the sheet
+    /// asks for the plan again. The turn's end event can arrive before that change.
+    pub(crate) fn recheck_rewind_busy(&mut self, cx: &mut Context<Self>) {
+        let Some(sheet) = &self.rewind.sheet else {
+            return;
+        };
+        let Some(preview) = sheet.preview.as_ref().filter(|p| !p.busy.is_empty()) else {
+            return;
+        };
+        if sheet.refreshing {
+            return;
+        }
+        let store = self.sessions.read(cx);
+        let still = preview.busy.iter().any(|id| {
+            store
+                .session(*id)
+                .and_then(|s| s.chat.as_ref())
+                .is_some_and(|chat| chat.turn_active)
+        });
+        if !still {
             self.refresh_preview(cx);
         }
     }
