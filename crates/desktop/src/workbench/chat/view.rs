@@ -825,6 +825,7 @@ impl ChatView {
         // In a narrow pane it gives way first, but keeps the harness readable (`OMP · gitl…`).
         const WHO_MIN_WIDTH: f32 = 80.0;
         let who = detail.map(|text| {
+            let detail_text = SharedString::from(text.clone());
             let words = div().min_w_0().truncate().child(SharedString::from(text));
             if !switchable {
                 return div()
@@ -836,7 +837,26 @@ impl ChatView {
                     .when_some(full_model.clone(), |s, id| s.tooltip(tooltip(id.into())))
                     .into_any_element();
             }
-            let (hover, fg) = (theme.surface_hover, theme.fg);
+            if between_turns {
+                let text = detail_text.clone();
+                return ui::Button::new("chat-switch-model", text, theme, tokens)
+                    .compact()
+                    .ghost()
+                    .max_width(280.0)
+                    .tooltip(match &full_model {
+                        Some(id) => format!("Switch model… (now {id})"),
+                        None => "Switch model…".to_owned(),
+                    })
+                    .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(actions::SwitchChatModelById(session.to_string())),
+                            cx,
+                        );
+                    })
+                    .child(probe(&self.regions, Region::Chat("switch-model")))
+                    .into_any_element();
+            }
             div()
                 .id("chat-switch-model")
                 .relative()
@@ -844,46 +864,16 @@ impl ChatView {
                 .min_w(px(WHO_MIN_WIDTH))
                 .items_center()
                 .gap(px(2.0))
-                .h(px(tokens.control_height - 4.0))
-                // The words line up with the state's; the hover fill reaches past them.
-                .px(px(tokens.spacing * 1.5))
-                .mx(px(-tokens.spacing * 1.5))
-                .rounded(px(tokens.radius))
                 .text_color(theme.muted)
                 .text_size(px(tokens.secondary_font_size))
                 .child(words)
-                .when(between_turns, |s| {
-                    s.child(
-                        div()
-                            .flex_none()
-                            .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown)),
-                    )
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(hover).text_color(fg))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(
-                            Box::new(actions::SwitchChatModelById(session.to_string())),
-                            cx,
-                        );
-                    })
-                    .tooltip(tooltip(
-                        match &full_model {
-                            Some(id) => format!("Switch model… (now {id})"),
-                            None => "Switch model…".to_owned(),
-                        }
-                        .into(),
-                    ))
-                })
-                .when(!between_turns, |s| {
-                    s.tooltip(tooltip(
-                        match &full_model {
-                            Some(id) => format!("{id}. The model can be switched between turns"),
-                            None => "The model can be switched between turns".to_owned(),
-                        }
-                        .into(),
-                    ))
-                })
+                .tooltip(tooltip(
+                    match &full_model {
+                        Some(id) => format!("{id}. The model can be switched between turns"),
+                        None => "The model can be switched between turns".to_owned(),
+                    }
+                    .into(),
+                ))
                 .child(probe(&self.regions, Region::Chat("switch-model")))
                 .into_any_element()
         });

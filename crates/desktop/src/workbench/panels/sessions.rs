@@ -47,7 +47,7 @@ use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
 use crate::workbench::text_field::FieldRef;
-use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, StyledExt as _};
+use crate::workbench::ui::{self, FocusRingExt as _, StyledExt as _};
 use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
 use crate::workbench::{BadgeSite, DragPreview, Region};
 
@@ -1062,15 +1062,9 @@ fn lane_word(presentation: &crate::sessions::Presentation) -> Option<String> {
 fn open_folder_empty(theme: &crate::theme::Theme, tokens: &crate::theme::Tokens) -> gpui::Div {
     ui::EmptyState::new("No projects yet.")
         .action(
-            ui::button(
-                "sessions-empty-open",
-                "Open folder…",
-                ButtonKind::Ghost,
-                true,
-                theme,
-                tokens,
-            )
-            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx)),
+            ui::Button::new("sessions-empty-open", "Open folder…", theme, tokens)
+                .ghost()
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx)),
         )
         .render(theme, tokens)
 }
@@ -1120,7 +1114,6 @@ impl Render for SessionsPanel {
             }
         }
         let searching = self.search_focus.is_focused(window);
-        let hover = theme.surface_hover;
         let manual = ws_settings.sort == WorkspaceSort::Manual;
         let hint_query = !self.query.trim().is_empty();
         self.rows = RowContext {
@@ -1155,39 +1148,33 @@ impl Render for SessionsPanel {
         };
 
         // `⋯`: sort, filters, organize and the panel's settings (the sort menu).
-        let more_button = div()
-            .id("sessions-more")
-            .relative()
-            .flex_none()
-            .px(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .text_color(theme.muted)
-            .hover(move |s| s.bg(hover).text_color(theme.fg))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(|event, window, cx| {
-                window.dispatch_action(Box::new(ShowSortMenu(event.position())), cx);
-            })
-            .child(icon(Icon::ActionMore, 14.0, theme.muted))
-            .child(probe(&self.env.regions, Region::SidebarControl("more")))
-            .into_any_element();
+        let more_button = ui::IconButton::new(
+            "sessions-more",
+            Icon::ActionMore,
+            "Sort, filter and organize",
+            &theme,
+            &tokens,
+        )
+        .compact()
+        .on_click(|event, window, cx| {
+            window.dispatch_action(Box::new(ShowSortMenu(event.position())), cx);
+        })
+        .child(probe(&self.env.regions, Region::SidebarControl("more")))
+        .into_any_element();
         // `＋`: Open folder…, New workspace…
-        let plus_button = div()
-            .id("sessions-plus")
-            .relative()
-            .flex_none()
-            .px(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .text_color(theme.muted)
-            .hover(move |s| s.bg(hover).text_color(theme.fg))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(|event, window, cx| {
-                window.dispatch_action(Box::new(ShowPlusMenu(event.position())), cx);
-            })
-            .child(icon(Icon::ActionAdd, 14.0, theme.muted))
-            .child(probe(&self.env.regions, Region::SidebarControl("plus")))
-            .into_any_element();
+        let plus_button = ui::IconButton::new(
+            "sessions-plus",
+            Icon::ActionAdd,
+            "Open folder or new workspace",
+            &theme,
+            &tokens,
+        )
+        .compact()
+        .on_click(|event, window, cx| {
+            window.dispatch_action(Box::new(ShowPlusMenu(event.position())), cx);
+        })
+        .child(probe(&self.env.regions, Region::SidebarControl("plus")))
+        .into_any_element();
 
         let search = div()
             .id("sessions-search")
@@ -1618,30 +1605,30 @@ impl SessionsPanel {
                     let start_id = id_text.clone();
                     s.child(
                         div()
-                            .id(SharedString::from(format!("workspace-start-{id_text}")))
-                            .relative()
                             .flex_none()
-                            .px(px(tokens.spacing))
-                            .rounded(px(tokens.radius))
-                            .cursor_pointer()
-                            .text_size(px(tokens.secondary_font_size))
-                            .text_color(theme.muted)
                             .opacity(0.0)
                             .group_hover(group.clone(), |s| s.opacity(1.0))
-                            .hover(move |s| s.bg(theme.surface_hover).text_color(theme.fg))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(move |_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(OpenLauncher(LauncherOpen {
-                                        project: Some(start_id.clone()),
-                                        queue: false,
-                                    })),
-                                    cx,
-                                );
-                                cx.stop_propagation();
-                            })
-                            .child(crate::icons::glyph(crate::icons::Icon::ActionStart))
-                            .child(probe(&self.env.regions, Region::ProjectStart(id))),
+                            .child(
+                                ui::IconButton::new(
+                                    SharedString::from(format!("workspace-start-{id_text}")),
+                                    Icon::ActionStart,
+                                    "Start an agent here",
+                                    &theme,
+                                    &tokens,
+                                )
+                                .compact()
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(OpenLauncher(LauncherOpen {
+                                            project: Some(start_id.clone()),
+                                            queue: false,
+                                        })),
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                })
+                                .child(probe(&self.env.regions, Region::ProjectStart(id))),
+                            ),
                     )
                 },
             )
@@ -1726,23 +1713,18 @@ impl SessionsPanel {
             })
             .flatten()
             .map(|root| {
-                div()
-                    .id(SharedString::from(format!("session-review-{id}")))
-                    .relative()
-                    .flex_none()
-                    .cursor_pointer()
-                    .tooltip(|_, cx| {
-                        cx.new(|_| {
-                            TextTooltip(crate::sessions::agents_text::CHANGES_TO_REVIEW.into())
-                        })
-                        .into()
-                    })
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(Box::new(ReviewChangesAt(root.clone())), cx);
-                    })
-                    .child(icon(Icon::StateReview, 12.0, theme.accent))
-                    .child(probe(&self.env.regions, Region::SessionReview(info.id)))
+                ui::IconButton::new(
+                    SharedString::from(format!("session-review-{id}")),
+                    Icon::StateReview,
+                    crate::sessions::agents_text::CHANGES_TO_REVIEW,
+                    &theme,
+                    &tokens,
+                )
+                .compact()
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(Box::new(ReviewChangesAt(root.clone())), cx);
+                })
+                .child(probe(&self.env.regions, Region::SessionReview(info.id)))
             });
         let renaming = self
             .renaming
@@ -1856,23 +1838,27 @@ impl SessionsPanel {
             let session = info.id;
             line = line.child(
                 div()
-                    .id(SharedString::from(format!("session-close-{id}")))
-                    .relative()
                     .flex_none()
-                    .px(px(tokens.spacing))
-                    .rounded(px(tokens.radius))
-                    .cursor_pointer()
-                    .text_color(theme.muted)
                     .opacity(0.0)
                     .group_hover(row_group.clone(), |s| s.opacity(1.0))
-                    .hover(move |s| s.bg(theme.surface_hover).text_color(theme.fg))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(Box::new(CloseSessionById(close_id.clone())), cx);
-                        cx.stop_propagation();
-                    })
-                    .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
-                    .child(probe(&self.env.regions, Region::SessionClose(session))),
+                    .child(
+                        ui::IconButton::new(
+                            SharedString::from(format!("session-close-{id}")),
+                            Icon::ActionClose,
+                            "Close session",
+                            &theme,
+                            &tokens,
+                        )
+                        .compact()
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(CloseSessionById(close_id.clone())),
+                                cx,
+                            );
+                            cx.stop_propagation();
+                        })
+                        .child(probe(&self.env.regions, Region::SessionClose(session))),
+                    ),
             );
         }
 

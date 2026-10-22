@@ -382,7 +382,7 @@ impl RenderOnce for Button {
             button = button.w_full();
         }
         if let Some(width) = max_width {
-            button = button.max_w(px(width)).min_w_0();
+            button = button.max_w(px(width)).min_w_0().flex_shrink(1.0);
         }
         if inert {
             button = button.cursor_default();

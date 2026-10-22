@@ -2178,23 +2178,16 @@ impl Workbench {
         theme: &crate::theme::Theme,
         tokens: &crate::theme::Tokens,
     ) -> AnyElement {
-        ui::button(
-            "pane-empty-start",
-            "Start…",
-            ui::ButtonKind::Primary,
-            true,
-            theme,
-            tokens,
-        )
-        .relative()
-        .on_click(|_, window, cx| {
-            window.dispatch_action(
-                Box::new(actions::OpenLauncher(actions::LauncherOpen::default())),
-                cx,
-            );
-        })
-        .child(probe(&self.regions, Region::Launcher("empty-start")))
-        .into_any_element()
+        ui::Button::new("pane-empty-start", "Start…", theme, tokens)
+            .primary()
+            .on_click(|_, window, cx| {
+                window.dispatch_action(
+                    Box::new(actions::OpenLauncher(actions::LauncherOpen::default())),
+                    cx,
+                );
+            })
+            .child(probe(&self.regions, Region::Launcher("empty-start")))
+            .into_any_element()
     }
 
     pub(crate) fn placeholder_body(&self, text: String, _cx: &mut Context<Self>) -> AnyElement {

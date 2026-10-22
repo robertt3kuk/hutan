@@ -36,7 +36,7 @@ use crate::workbench::Region;
 use crate::workbench::actions::{AgentNodeAt, OpenSession, ShowAgentNodeMenu, ShowAgentsPanelMenu};
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
-use crate::workbench::style::{TextTooltip, UiStyle};
+use crate::workbench::style::UiStyle;
 use crate::workbench::ui::motion::reduce_motion;
 use crate::workbench::ui::{self, Mascot};
 
@@ -380,7 +380,6 @@ impl Render for AgentsPanel {
         let running = self.anything_running(cx);
         self.sync_ticker(running, cx);
         let pulse_dim = !reduce_motion() && (now / 1000) % 2 == 1;
-        let hover = theme.surface_hover;
 
         // The dock draws the panel's title; the scope is the one control of the top row, a
         // segmented strip, and the rest (Show finished, Blocked only, All agents, settings)
@@ -406,28 +405,18 @@ impl Render for AgentsPanel {
                 }))
                 .child(probe(&self.env.regions, Region::MonitorChip(region)))
             }));
-        let more = div()
-            .id("agents-more")
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(24.0))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(|event, window, cx| {
-                window.dispatch_action(Box::new(ShowAgentsPanelMenu(event.position())), cx);
-            })
-            .tooltip(|_, cx| cx.new(|_| TextTooltip("More".into())).into())
-            .child(crate::icons::icon(
-                crate::icons::Icon::ActionMore,
-                16.0,
-                theme.muted,
-            ))
-            .child(probe(&self.env.regions, Region::MonitorChip("more")));
+        let more = ui::IconButton::new(
+            "agents-more",
+            crate::icons::Icon::ActionMore,
+            "More",
+            &theme,
+            &tokens,
+        )
+        .compact()
+        .on_click(|event, window, cx| {
+            window.dispatch_action(Box::new(ShowAgentsPanelMenu(event.position())), cx);
+        })
+        .child(probe(&self.env.regions, Region::MonitorChip("more")));
 
         let mut list = div()
             .id("agents-list")

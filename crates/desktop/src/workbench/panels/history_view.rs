@@ -844,7 +844,6 @@ impl HistoryPanel {
             (Mode::Catalog, _) if catalog => ("Loading sessions…".to_owned(), None),
             _ => (String::new(), None),
         };
-        let hover = theme.surface_hover;
         div()
             .flex_none()
             .flex()
@@ -866,24 +865,13 @@ impl HistoryPanel {
             )
             .when_some(right, |s, label| {
                 s.child(
-                    div()
-                        .id("history-sort")
-                        .relative()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap(px(4.0))
-                        .px(px(tokens.spacing * 1.5))
-                        .h(px(24.0))
-                        .rounded(px(tokens.radius))
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(hover))
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    ui::Button::new("history-sort", label, theme, tokens)
+                        .compact()
+                        .ghost()
+                        .child(icon(Icon::ActionExpand, 14.0, theme.muted))
                         .on_click(cx.listener(|this, e: &ClickEvent, _, cx| {
                             this.open_menu(Menu::Sort(e.position()), cx);
                         }))
-                        .child(label)
-                        .child(icon(Icon::ActionExpand, 14.0, theme.muted))
                         .child(probe(&self.env.regions, Region::History("sort"))),
                 )
             })

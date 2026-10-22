@@ -23,6 +23,7 @@ use super::actions;
 use super::model::{Dock, DockMode, DockPosition, DropTarget, ItemRef, ItemSource, PanelId};
 use super::render::{TITLEBAR_HEIGHT, probe};
 use super::style::TextTooltip;
+use super::ui;
 use super::view::{DragPreview, DraggedItem, Region, Workbench};
 use crate::icons::{Icon, icon};
 use crate::theme::DensityExt as _;
@@ -365,24 +366,11 @@ impl Workbench {
     pub(super) fn left_toolbar(&mut self) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
-        let hover = theme.sidebar_hover;
         let button = |id: &'static str, glyph: Icon, label: &'static str, region: &'static str| {
-            div()
-                .id(id)
-                .relative()
-                .flex()
-                .items_center()
-                .min_w_0()
-                .gap(px(6.0))
-                .px(px(8.0))
-                .h(px(28.0))
-                .rounded(px(tokens.radius))
-                .cursor_pointer()
-                .text_size(px(12.0))
-                .text_color(theme.muted)
-                .hover(move |s| s.bg(hover).text_color(theme.fg))
-                .child(icon(glyph, 14.0, theme.muted))
-                .child(div().min_w_0().truncate().child(label))
+            ui::Button::new(id, label, &theme, &tokens)
+                .compact()
+                .ghost()
+                .icon(glyph)
                 .child(probe(&self.regions, Region::Toolbar(region)))
         };
         div()
@@ -824,7 +812,6 @@ impl Workbench {
         let theme = self.theme;
         let tokens = self.density.ui();
         let mode = self.dock_mode(pos);
-        let hover = theme.surface_hover;
         let (glyph, name, states): (Icon, &str, [(&str, DockMode); 3]) = match pos {
             DockPosition::Left => (
                 Icon::DockLeft,
@@ -857,29 +844,10 @@ impl Workbench {
             (_, DockMode::Hidden) => format!("Show {name}{hint}"),
         }
         .into();
-        // Icons are `muted` at rest and `fg` when what they stand for shows: no accent here.
-        let color = if mode == DockMode::Expanded {
-            theme.fg
-        } else {
-            theme.muted
-        };
         div()
             .id(SharedString::from(format!("titlebar-dock-{pos:?}")))
             .relative()
-            .flex()
             .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(tokens.control_height - 4.0))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| match pos {
-                DockPosition::Left => this.toggle_dock_hidden_cmd(pos, cx),
-                _ => this.toggle_dock_cmd(pos, cx),
-            }))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
@@ -898,7 +866,21 @@ impl Workbench {
                     cx.stop_propagation();
                 }),
             )
-            .child(icon(glyph, 16.0, color))
+            .child(
+                ui::IconButton::new(
+                    SharedString::from(format!("titlebar-dock-button-{pos:?}")),
+                    glyph,
+                    tip,
+                    &theme,
+                    &tokens,
+                )
+                .compact()
+                .toggled(mode == DockMode::Expanded)
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| match pos {
+                    DockPosition::Left => this.toggle_dock_hidden_cmd(pos, cx),
+                    _ => this.toggle_dock_cmd(pos, cx),
+                })),
+            )
             .child(probe(&self.regions, Region::DockToggle(pos)))
             .into_any_element()
     }

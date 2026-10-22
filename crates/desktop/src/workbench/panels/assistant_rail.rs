@@ -350,20 +350,9 @@ impl AssistantPanel {
         let today = self.today(cx);
         let hover = theme.surface_hover;
         let link = |id: &'static str, text: SharedString| {
-            div()
-                .id(id)
-                .relative()
-                .flex()
-                .items_center()
-                .gap(px(4.0))
-                .h(px(28.0))
-                .px(px(tokens.spacing * 2.0))
-                .rounded(px(tokens.radius))
-                .cursor_pointer()
-                .text_size(px(tokens.secondary_font_size))
-                .text_color(theme.muted)
-                .hover(move |s| s.bg(hover))
-                .child(text)
+            ui::Button::new(id, text, &theme, &tokens)
+                .compact()
+                .ghost()
                 .child(icon(Icon::ActionDisclose, 12.0, theme.muted))
         };
         let section = |label: String, items: Vec<AnyElement>| {

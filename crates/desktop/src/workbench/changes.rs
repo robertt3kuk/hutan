@@ -1386,29 +1386,18 @@ impl ChangesView {
             line,
             column: None,
         };
-        let hover = theme.surface_hover;
         let tip = SharedString::from(match line {
             Some(line) => format!("Open the file at line {line}"),
             None => "Open the file".to_owned(),
         });
-        div()
-            .id(id)
-            .relative()
-            .flex_none()
-            .px(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius - 2.0))
-            .cursor_pointer()
-            .text_size(px(tokens.secondary_font_size))
-            .text_color(theme.muted)
-            .font_family(super::ui::ui_family())
-            .hover(move |s| s.bg(hover))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .tooltip(move |_, cx| cx.new(|_| super::style::TextTooltip(tip.clone())).into())
+        ui::Button::new(id, "Open", theme, tokens)
+            .compact()
+            .ghost()
+            .tooltip(tip)
             .on_click(move |_, window, cx| {
                 cx.stop_propagation();
                 window.dispatch_action(Box::new(super::actions::OpenFile(target.clone())), cx);
             })
-            .child("Open")
             .child(probe(&self.env.regions, region))
             .into_any_element()
     }

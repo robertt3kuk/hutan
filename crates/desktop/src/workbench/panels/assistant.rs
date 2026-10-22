@@ -1053,34 +1053,15 @@ impl AssistantPanel {
                 .and_then(|session| store.session(session))
                 .map(|info| store.presentation(info))
         };
-        let hover = theme.surface_hover;
-        let scope = div()
-            .id("assistant-scope")
-            .relative()
-            .flex()
-            .flex_none()
-            .min_w_0()
-            .max_w(px(112.0))
-            .items_center()
-            .gap(px(4.0))
-            .h(px(24.0))
-            .px(px(8.0))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .text_size(px(tokens.secondary_font_size))
-            .hover(move |s| s.bg(hover))
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(scope_note.clone().into())).into())
+        let scope = Button::new("assistant-scope", scope_label, &theme, &tokens)
+            .compact()
+            .ghost()
+            .max_width(112.0)
+            .tooltip(scope_note)
+            .child(icon(Icon::ActionExpand, 12.0, theme.muted))
             .on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
                 window.dispatch_action(Box::new(ShowAssistantScopeMenu(e.position())), cx);
             }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(SharedString::from(scope_label)),
-            )
-            .child(icon(Icon::ActionExpand, 12.0, theme.muted))
             .child(probe(&self.env.regions, Region::Assistant("scope")));
         let dot = state.map(|presentation| {
             let label = SharedString::from(presentation.label.clone());
@@ -1092,23 +1073,11 @@ impl AssistantPanel {
                 .into_any_element()
         });
         let folded = self.folded;
-        let more = div()
-            .id("assistant-more")
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(24.0))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        let more = ui::IconButton::new("assistant-more", Icon::ActionMore, "More", &theme, &tokens)
+            .compact()
             .on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
                 window.dispatch_action(Box::new(ShowAssistantMoreMenu(e.position())), cx);
             }))
-            .tooltip(|_, cx| cx.new(|_| TextTooltip("More".into())).into())
-            .child(icon(Icon::ActionMore, 16.0, theme.muted))
             .child(probe(&self.env.regions, Region::Assistant("more")));
         div()
             .relative()
@@ -1154,24 +1123,11 @@ impl AssistantPanel {
         on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     ) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
-        let hover = theme.surface_hover;
-        div()
-            .id(id)
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .h(px(24.0))
-            .px(px(8.0))
-            .rounded(px(tokens.radius))
-            .text_size(px(tokens.secondary_font_size))
-            .when(enabled, move |s| {
-                s.cursor_pointer()
-                    .hover(move |s| s.bg(hover))
-                    .on_click(on_click)
-            })
-            .when(!enabled, |s| s.opacity(0.5))
-            .child(label)
+        Button::new(id, label, &theme, &tokens)
+            .compact()
+            .ghost()
+            .disabled(!enabled)
+            .on_click(on_click)
             .child(probe(&self.env.regions, Region::Assistant(region)))
             .into_any_element()
     }
@@ -1180,28 +1136,11 @@ impl AssistantPanel {
     /// there is something to stop, at any width.
     fn stop_button(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
-        let danger = theme.danger;
-        div()
-            .id("assistant-stop")
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .h(px(24.0))
-            .px(px(8.0))
-            .rounded(px(tokens.radius))
-            .text_color(danger)
-            .text_size(px(tokens.secondary_font_size))
-            .cursor_pointer()
-            .hover(move |s| s.bg(danger.opacity(0.12)))
+        Button::new("assistant-stop", "Stop", &theme, &tokens)
+            .compact()
+            .destructive()
+            .tooltip("Stop Mawas: deny what it asks and interrupt its turn")
             .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
-            .tooltip(|_, cx| {
-                cx.new(|_| {
-                    TextTooltip("Stop Mawas: deny what it asks and interrupt its turn".into())
-                })
-                .into()
-            })
-            .child("Stop")
             .child(probe(&self.env.regions, Region::Assistant("stop")))
             .into_any_element()
     }
@@ -1212,29 +1151,15 @@ impl AssistantPanel {
         let label = self.mode.map_or("Mode…", MawasMode::label);
         let help = self.mode.map_or("", MawasMode::help);
         let enabled = self.connected(cx) && self.mode.is_some();
-        let hover = theme.surface_hover;
-        div()
-            .id("assistant-mode")
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(4.0))
-            .h(px(24.0))
-            .px(px(8.0))
-            .rounded(px(tokens.radius))
-            .text_size(px(tokens.secondary_font_size))
-            .when(enabled, move |s| {
-                s.cursor_pointer()
-                    .hover(move |s| s.bg(hover))
-                    .on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
-                        window.dispatch_action(Box::new(ShowAssistantModeMenu(e.position())), cx);
-                    }))
-            })
-            .when(!enabled, |s| s.opacity(0.5))
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(help.into())).into())
-            .child(label)
+        Button::new("assistant-mode", label, &theme, &tokens)
+            .compact()
+            .ghost()
+            .disabled(!enabled)
+            .tooltip(help)
             .child(icon(Icon::ActionExpand, 12.0, theme.muted))
+            .on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
+                window.dispatch_action(Box::new(ShowAssistantModeMenu(e.position())), cx);
+            }))
             .child(probe(&self.env.regions, Region::Assistant("mode")))
             .into_any_element()
     }
@@ -1312,34 +1237,31 @@ impl AssistantPanel {
         let (theme, tokens) = (look.theme, look.tokens);
         let label = self.backend_label(cx);
         let enabled = self.connected(cx);
-        let hover = theme.surface_hover;
         div()
-            .id("assistant-backend")
-            .relative()
-            .flex()
             .flex_1()
             .min_w_0()
+            .flex()
             .items_center()
             .justify_end()
             .gap(px(4.0))
-            .h(px(24.0))
-            .px(px(8.0))
-            .rounded(px(tokens.radius))
-            .text_size(px(tokens.secondary_font_size))
-            .text_color(theme.muted)
-            .when(enabled, move |s| {
-                s.cursor_pointer().hover(move |s| s.bg(hover))
-            })
-            .when(!enabled, |s| s.opacity(0.5))
-            .when(enabled, |s| {
-                s.on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
+            .children(dot)
+            .child(
+                Button::new(
+                    "assistant-backend",
+                    SharedString::from(label),
+                    &theme,
+                    &tokens,
+                )
+                .compact()
+                .ghost()
+                .max_width(320.0)
+                .disabled(!enabled)
+                .child(icon(Icon::ActionExpand, 12.0, theme.muted))
+                .on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
                     window.dispatch_action(Box::new(ShowAssistantModelMenu(e.position())), cx);
                 }))
-            })
-            .children(dot)
-            .child(div().min_w_0().truncate().child(SharedString::from(label)))
-            .child(icon(Icon::ActionExpand, 12.0, theme.muted))
-            .child(probe(&self.env.regions, Region::Assistant("backend")))
+                .child(probe(&self.env.regions, Region::Assistant("backend"))),
+            )
             .into_any_element()
     }
 

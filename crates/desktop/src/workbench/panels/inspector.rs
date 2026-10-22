@@ -192,21 +192,22 @@ impl InspectorPanel {
             .session(session)
             .map_or_else(|| "a session that is gone".to_owned(), |s| s.title.clone());
         let session = session.to_string();
-        div()
-            .id(id.into())
-            .min_w_0()
-            .truncate()
-            // A link: `markdown.link`, the accent text that passes AA on every ground.
-            .text_color(theme.link)
-            .cursor_pointer()
-            .on_click(move |_, window, cx| {
-                window.dispatch_action(
-                    Box::new(crate::workbench::actions::OpenSession(session.clone())),
-                    cx,
-                );
-            })
-            .child(SharedString::from(format!("{prefix}{title} →")))
-            .into_any_element()
+        let tokens = UiStyle::get(cx).density.ui();
+        ui::Button::new(
+            id.into(),
+            SharedString::from(format!("{prefix}{title} →")),
+            theme,
+            &tokens,
+        )
+        .link()
+        .max_width(360.0)
+        .on_click(move |_, window, cx| {
+            window.dispatch_action(
+                Box::new(crate::workbench::actions::OpenSession(session.clone())),
+                cx,
+            );
+        })
+        .into_any_element()
     }
 
     /// One pending question: what is asked and in which session; it is answered in the chat.

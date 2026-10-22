@@ -1483,20 +1483,19 @@ impl ChangesView {
         if tail {
             row = row.child(
                 div()
-                    .id("changes-comment-add")
                     .absolute()
                     .right(px(tokens.spacing * 2.0))
                     .top_0()
-                    .px(px(tokens.spacing * 2.0))
-                    .rounded(px(tokens.radius))
-                    .bg(theme.accent)
-                    .text_color(theme.on_accent())
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_comment_box(window, cx);
-                    }))
-                    .child("+ Comment")
-                    .child(probe(&self.env.regions, Region::Changes("comment-add"))),
+                    .child(
+                        ui::Button::new("changes-comment-add", "Add comment", theme, tokens)
+                            .compact()
+                            .primary()
+                            .icon(crate::icons::Icon::ActionAdd)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_comment_box(window, cx);
+                            }))
+                            .child(probe(&self.env.regions, Region::Changes("comment-add"))),
+                    ),
             );
         }
         block = block.child(row);

@@ -772,32 +772,18 @@ impl MemoryPanel {
         selected: bool,
         enabled: bool,
         look: &Look,
-    ) -> gpui::Stateful<gpui::Div> {
+    ) -> ui::Button {
         let (theme, tokens) = (look.theme, look.tokens);
         let label: SharedString = label.into();
-        div()
-            .id(SharedString::from(format!("memory-chip-{id}")))
-            .relative()
-            .flex_none()
-            .px(px(tokens.spacing * 2.0))
-            .py(px(tokens.spacing / 2.0))
-            .rounded(px(crate::theme::pill_radius()))
-            .border_1()
-            .border_color(if selected {
-                gpui::transparent_black()
-            } else {
-                theme.border
-            })
-            .bg(if selected {
-                theme.accent_soft
-            } else {
-                theme.surface
-            })
-            .text_size(px(tokens.secondary_font_size))
-            .text_color(if enabled { theme.fg } else { theme.faint })
-            .when(enabled, |s| s.cursor_pointer())
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(label)
+        ui::Button::new(
+            SharedString::from(format!("memory-chip-{id}")),
+            label,
+            &theme,
+            &tokens,
+        )
+        .compact()
+        .selected(selected)
+        .disabled(!enabled)
     }
 
     fn render_header(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {

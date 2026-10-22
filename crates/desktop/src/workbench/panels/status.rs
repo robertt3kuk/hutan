@@ -9,7 +9,6 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, AnyView, AppContext as _, InteractiveElement, IntoElement, ParentElement,
     SharedString, StatefulInteractiveElement, Styled, div, px,
@@ -358,41 +357,24 @@ fn dock_button(
             let state = *ctx.data.docks.get(pos);
             let enabled = state.visible || state.has_panels;
             let hint = ctx.dock_hints.get(pos).clone();
-            let color = if state.visible {
-                ctx.theme.fg
-            } else {
-                ctx.theme.muted
-            };
-            let glyph = crate::icons::icon(
+            let tip = dock_tooltip(name, state, &hint);
+            let style = ctx.density.ui();
+            crate::workbench::ui::IconButton::new(
+                id,
                 match pos {
                     DockPosition::Left => crate::icons::Icon::DockLeft,
                     DockPosition::Right => crate::icons::Icon::DockRight,
                     DockPosition::Bottom => crate::icons::Icon::DockBottom,
                 },
-                14.0,
-                color,
-            );
-            let tip = dock_tooltip(name, state, &hint);
-            let button = div()
-                .id(id)
-                .flex()
-                .items_center()
-                .justify_center()
-                .w(px(22.0))
-                .h(px(18.0))
-                .rounded(px(ctx.density.ui().radius - 2.0))
-                .child(glyph);
-            if !enabled {
-                return button.opacity(0.4).tooltip(tooltip(tip)).into_any_element();
-            }
-            let hover = ctx.theme.surface_hover;
-            button
-                .cursor_pointer()
-                .when(state.visible, |s| s.bg(ctx.theme.accent_soft))
-                .hover(move |s| s.bg(hover))
-                .tooltip(tooltip(tip))
-                .on_click(move |_, window, cx| window.dispatch_action(toggle(), cx))
-                .into_any_element()
+                tip,
+                ctx.theme,
+                &style,
+            )
+            .compact()
+            .toggled(state.visible)
+            .disabled(!enabled)
+            .on_click(move |_, window, cx| window.dispatch_action(toggle(), cx))
+            .into_any_element()
         }),
     }
 }

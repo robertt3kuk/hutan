@@ -18,7 +18,7 @@ use hutan_client::ConnectionState;
 use hutan_core::WorkspaceId;
 use hutan_protocol::worktree::{DiffFile, WorktreeDiffRequest, WorktreeInfo};
 
-use crate::icons::{Icon, icon};
+use crate::icons::Icon;
 use crate::sessions::CheckoutActivity;
 use crate::theme::DensityExt as _;
 use crate::workbench::Region;
@@ -455,7 +455,6 @@ impl Render for ChangesPanel {
         self.env.regions.rendered(cx.entity_id());
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
-        let hover = theme.surface_hover;
         // Drawn means visible: that is when stale checkouts are listed again.
         if self
             .loaded_at
@@ -465,18 +464,17 @@ impl Render for ChangesPanel {
             self.refresh(cx);
         }
 
-        let refresh = div()
-            .id("changes-refresh")
-            .relative()
-            .px(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
-            .child(icon(Icon::ActionRefresh, 14.0, theme.muted))
-            .child(probe(&self.env.regions, Region::Changes("panel-refresh")))
-            .into_any_element();
+        let refresh = ui::IconButton::new(
+            "changes-refresh",
+            Icon::ActionRefresh,
+            "Refresh",
+            &theme,
+            &tokens,
+        )
+        .compact()
+        .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
+        .child(probe(&self.env.regions, Region::Changes("panel-refresh")))
+        .into_any_element();
 
         let body: AnyElement = match &self.checkouts {
             Checkouts::Ready(list) if !list.is_empty() => div()

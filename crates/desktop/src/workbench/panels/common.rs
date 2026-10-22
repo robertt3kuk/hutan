@@ -414,20 +414,18 @@ pub fn panel_header(title: &str, namespace: &'static str, cx: &App) -> AnyElemen
 pub fn settings_gear(namespace: &'static str, cx: &App) -> AnyElement {
     let style = UiStyle::get(cx);
     let tokens = style.density.ui();
-    let hover = style.theme.surface_hover;
-    div()
-        .id(SharedString::from(format!("gear-{namespace}")))
-        .flex_none()
-        .px(px(tokens.spacing * 1.5))
-        .rounded(px(tokens.radius))
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(move |_, window, cx| {
-            window.dispatch_action(Box::new(OpenSettingsFor(namespace.to_owned())), cx);
-        })
-        .child(icon(Icon::ActionSettings, 14.0, style.theme.muted))
-        .into_any_element()
+    crate::workbench::ui::IconButton::new(
+        SharedString::from(format!("gear-{namespace}")),
+        Icon::ActionSettings,
+        "Panel settings",
+        &style.theme,
+        &tokens,
+    )
+    .compact()
+    .on_click(move |_, window, cx| {
+        window.dispatch_action(Box::new(OpenSettingsFor(namespace.to_owned())), cx);
+    })
+    .into_any_element()
 }
 
 /// [`panel_header`] with `extra` controls between the title and the ⚙.

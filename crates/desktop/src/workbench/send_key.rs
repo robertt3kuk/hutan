@@ -8,10 +8,7 @@
 //! the merge and delivery commit messages (⌘↩ confirms, Return is a newline), the memory editor
 //! (⌘↩ saves), and every settings field.
 
-use gpui::{
-    Context, Div, InteractiveElement, ParentElement, Pixels, Point, SharedString, Stateful, Styled,
-    Window, div, px,
-};
+use gpui::{Context, ParentElement as _, Pixels, Point, SharedString, Window};
 use hutan_settings::{SettingsError, SettingsStore};
 
 use super::view::Workbench;
@@ -39,22 +36,10 @@ pub(crate) fn send_key_control(
     text: impl Into<SharedString>,
     theme: &Theme,
     tokens: &Tokens,
-) -> Stateful<Div> {
-    let (hover, fg) = (theme.surface_hover, theme.fg);
-    div()
-        .id(id)
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(tokens.spacing))
-        .px(px(tokens.spacing))
-        .rounded(px(tokens.radius - 2.0))
-        .cursor_pointer()
-        .text_color(theme.muted)
-        .text_size(px(tokens.secondary_font_size))
-        .hover(move |s| s.bg(hover).text_color(fg))
-        .child(text.into())
+) -> super::ui::Button {
+    super::ui::Button::new(id, text, theme, tokens)
+        .compact()
+        .ghost()
         .child(crate::icons::glyph(crate::icons::Icon::ActionExpand))
 }
 
