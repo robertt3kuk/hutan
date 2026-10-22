@@ -65,6 +65,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Help(args) => help::run(&args.topic),
         Command::Mcp => crate::mcp::run(ctx?.socket_arg).await,
         Command::Ui(command) => ctx?.ui(command).await,
+        Command::Setup => ctx?.setup().await,
         Command::Daemon(DaemonCommand::Start) => ctx?.daemon_start().await,
         Command::Daemon(DaemonCommand::Status) => ctx?.daemon_status().await,
         Command::Daemon(DaemonCommand::Stop {

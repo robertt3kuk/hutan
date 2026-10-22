@@ -19,6 +19,7 @@ Hutan.app/Contents/
                                                registers it (M6-C)
   Resources/Hutan.icns                         the app icon (CFBundleIconFile)
   Resources/shell-integration/…                the OSC 133 / OSC 7 scripts (zsh, bash, fish)
+  Resources/CHANGELOG.md                       the changelog (the app's "What's new" after an update)
 ```
 
 - **The desktop executable is `hutan-desktop`, not `Hutan` (ADR 0007's sketch).** The default macOS volume is case-insensitive, so `Contents/MacOS/Hutan` and the CLI `Contents/MacOS/hutan` would be one file. The name users see is still *Hutan* (`CFBundleName`, `CFBundleDisplayName`, the folder name); the xtask test fails if two executables ever collide ignoring case.
@@ -70,7 +71,7 @@ Code: `crates/daemon/src/notify_native.rs` and `notify_native/`; the wire side i
 
 ## Start at login (M6-C, D-2)
 
-This was "keep running" before D-2. Keep running (`app.keep_running`) now only leaves the daemon running after quit and registers nothing; both are off by default and only *Run setup again* and Settings → General offer them (`docs/design.md` § First run).
+This was "keep running" before D-2. Keep running (`app.keep_running`) now only leaves the daemon running after quit and registers nothing; both are off by default and only *Run Setup Again…* and Settings → General offer them (`docs/design.md` § First run).
 
 Code: `crates/desktop/src/macos/login_item.rs`, `crates/desktop/src/workbench/mac.rs`; behavior in `docs/design.md` § macOS integration. The desktop registers `Contents/Library/LaunchAgents/dev.hutan.daemon.plist` with `SMAppService.agent(plistName:)` (`register()` / `unregister()`), which adds *Hutan* to System Settings → General → Login Items (macOS shows a notice the first time, and the user may have to allow it: status `requires approval`, button *Open Login Items*). Registration needs the app to run from the bundle; a `cargo run` desktop disables the toggle.
 
@@ -177,6 +178,30 @@ data; `brew uninstall
 logs, preferences and a legacy user LaunchAgent plist if present. A bundled
 SMAppService plist is not copied to `~/Library/LaunchAgents` by Hutan.
 The formula has no uninstall hook: stop its daemon explicitly before uninstall.
+
+### What a reinstall keeps, and a clean start
+
+A reinstall or an update replaces `/Applications/Hutan.app` and nothing else: the data folder
+(`~/Library/Application Support/Hutan`: `settings.toml`, `keymap.toml`, `daemon.toml`,
+`desktop-state.json`, the session database, the logs) stays, so projects, sessions, settings and
+`app.setup_done` stay. The app decides what to say about it, not the cask (no cask hook):
+
+- It records which install it ran from in `desktop-state.json` (`install`: version, bundle path
+  and an install id made of the bundle's creation time and the inode of `Contents/Info.plist`).
+- **Reinstalled** (same or lower version, another install id, setup done before): a one-time card
+  at the top of the centre, *Run setup again? Your projects, sessions and settings stay.* —
+  **Run setup** (every answer starts at today's value, nothing is reset) or **Not now**.
+- **Updated** (higher version): no setup offer; *Updated to x.y.z · What's new* in the status
+  bar for that session, which opens the bundled `Contents/Resources/CHANGELOG.md` at the
+  version's section.
+- A development build outside an app bundle records nothing and never offers.
+- *Run Setup Again…* is always there: Hutan ▸ Run Setup Again…, Settings → General, the command
+  palette, and `hutan setup`.
+
+For a **clean start** (the first screen again, as on a new Mac), remove the data too:
+`brew uninstall --cask --zap robertt3kuk/hutan/hutan`, then
+`brew install --cask robertt3kuk/hutan/hutan`. `--zap` removes the application support folder,
+logs and preferences listed above; export what you want to keep first.
 
 ### Publish after review (maintainer only)
 

@@ -1,14 +1,17 @@
-//! The first-run setup (design.md § First-run setup): a centered sheet in the v2 style that walks
-//! through Welcome, Look, Agents, History, Background, Command line and Done. It is shown once (until
-//! `app.setup_done`), and again from ⌘K "Hutan: Run Setup…" and Settings → app → "Run setup
-//! again".
+//! The setup (design.md § First-run setup): one flow, re-runnable at any time, a centered sheet in
+//! the v2 style that walks through Welcome, Look, Editing (Vim mode, the send key), Agents,
+//! History, Background, Command line and Done. It opens from the first screen, from the
+//! reinstall card, from the Hutan menu's *Run Setup Again…*, from ⌘K "Hutan: Run Setup Again…",
+//! from Settings → General and from `hutan setup`, and every time shows today's values.
 //!
 //! Every choice is kept in [`SetupState`] while its step is on screen and written when the step is
-//! left (Continue or Back); Skip writes `app.setup_done` and leaves everything not yet written
-//! at its default. The Look step previews live: the window changes as the choice does, and
-//! goes back to the settings when the setup is skipped. Nothing here talks to the system by
-//! itself: the login item, the notification permission, the CLI link and the agent integrations
-//! each have their own seam and are only used when the user presses their control.
+//! left (Continue or Back), and only when it differs from what the settings say: a step can be
+//! skipped (*Skip this step*) and keeps every value, and finishing resets nothing. *Skip setup*
+//! writes `app.setup_done` and nothing else. The Look step previews live: the window changes as
+//! the choice does, and goes back to the settings when the step or the setup is skipped. Nothing
+//! here talks to the system by itself: the login item, the notification permission, the CLI link
+//! and the agent integrations each have their own seam and are only used when the user presses
+//! their control.
 
 use std::collections::BTreeSet;
 
@@ -29,7 +32,8 @@ use crate::cli_link::{CliLink, Manual, Plan};
 use crate::integrations::IntegrationStatus;
 use crate::macos::{LoginItemStatus, NotificationAnswer};
 use crate::settings::{
-    AppSettings, AppearanceSettings, AssistantSettings, IntegrationsSettings, SendKey,
+    AppSettings, AppearanceSettings, AssistantSettings, ChatSettings, EditorSettings,
+    IntegrationsSettings, SendKey,
 };
 use crate::theme::{DensityExt as _, Theme};
 
@@ -48,6 +52,7 @@ const SHORTCUTS: [(&str, &str); 3] = [
 pub enum SetupStep {
     Welcome,
     Look,
+    Editing,
     Agents,
     History,
     Background,
@@ -56,9 +61,10 @@ pub enum SetupStep {
 }
 
 impl SetupStep {
-    pub const ALL: [SetupStep; 7] = [
+    pub const ALL: [SetupStep; 8] = [
         SetupStep::Welcome,
         SetupStep::Look,
+        SetupStep::Editing,
         SetupStep::Agents,
         SetupStep::History,
         SetupStep::Background,
@@ -86,6 +92,7 @@ impl SetupStep {
         match self {
             SetupStep::Welcome => "Welcome",
             SetupStep::Look => "Look",
+            SetupStep::Editing => "Editing",
             SetupStep::Agents => "Agents",
             SetupStep::History => "History",
             SetupStep::Background => "Background",
@@ -94,10 +101,16 @@ impl SetupStep {
         }
     }
 
+    /// Steps that ask something: each can be skipped on its own.
+    pub fn skippable(self) -> bool {
+        !matches!(self, SetupStep::Welcome | SetupStep::Done)
+    }
+
     fn mascot(self) -> Mascot {
         match self {
             SetupStep::Welcome => Mascot::AngleFront,
             SetupStep::Look => Mascot::Angle34Left,
+            SetupStep::Editing => Mascot::Focus,
             SetupStep::Agents => Mascot::Focus,
             SetupStep::History => Mascot::Thinking,
             SetupStep::Background => Mascot::Sleep,
@@ -117,12 +130,17 @@ pub enum NotificationUi {
     Answered(NotificationAnswer),
 }
 
-/// What the user picked so far; written to the settings when the step is left.
+/// What the user picked so far; written to the settings when the step is left. Every field
+/// starts at today's value ([`SetupState::from_settings`]).
 #[derive(Debug, Clone)]
 pub struct SetupState {
     pub step: SetupStep,
     pub appearance: AppearanceMode,
     pub density: Density,
+    /// `editor.vim_mode`.
+    pub vim_mode: bool,
+    /// `chat.send_key`.
+    pub send_key: SendKey,
     pub assistant_enabled: bool,
     /// `None` until picked: the default is the first ready harness (OMP, Claude Code, Codex),
     /// else none ([`Workbench::setup_backend`]).
@@ -130,9 +148,15 @@ pub struct SetupState {
     pub auto_install: bool,
     /// The harnesses whose hooks the user ticked to install when the Agents step is left.
     pub hooks: BTreeSet<&'static str>,
-    /// The History step's sources, in [`HISTORY_SOURCES`] order. Unticked: reading other
-    /// tools' transcripts is something the user chooses.
+    /// The History step's sources, in [`HISTORY_SOURCES`] order: what the index reads now (none
+    /// while indexing is off or the daemon has not answered). Reading other tools' transcripts
+    /// is something the user chooses.
     pub history: [bool; 4],
+    /// `history` as the daemon last said it, which leaving the step compares with.
+    pub history_now: [bool; 4],
+    /// The user ticked or unticked a source: a late answer from the daemon no longer replaces
+    /// the ticks.
+    pub history_touched: bool,
     pub keep_running: bool,
     pub start_at_login: bool,
     pub global_shortcut: String,
@@ -140,7 +164,7 @@ pub struct SetupState {
     pub cli_link: bool,
     /// What making the link did, shown on the last step.
     pub cli_outcome: Option<String>,
-    /// The setup is hidden while a harness login runs; ⌘K "Hutan: Run Setup…" continues it.
+    /// The setup is hidden while a harness login runs; ⌘K "Hutan: Run Setup Again…" continues it.
     pub suspended: bool,
 }
 
@@ -153,11 +177,15 @@ impl SetupState {
             step: SetupStep::Welcome,
             appearance: look.appearance,
             density: look.density,
+            vim_mode: settings.get::<EditorSettings>().vim_mode,
+            send_key: settings.get::<ChatSettings>().send_key,
             assistant_enabled: assistant.enabled,
             assistant_backend: None,
             auto_install: settings.get::<IntegrationsSettings>().auto_install,
             hooks: BTreeSet::new(),
             history: [false; 4],
+            history_now: [false; 4],
+            history_touched: false,
             keep_running: app.keep_running,
             start_at_login: app.start_at_login,
             global_shortcut: assistant.global_shortcut.clone(),
@@ -271,9 +299,9 @@ impl Workbench {
 
     // ---- opening and closing ---------------------------------------------------------------
 
-    /// ⌘K "Hutan: Run Setup…" and Settings → app → "Run setup again": opens the setup at its
-    /// first step with the current settings, or brings a paused one (a login was running) back
-    /// where it was.
+    /// *Run Setup Again…* (the Hutan menu, ⌘K, Settings → General, the first screen, the
+    /// reinstall card, `hutan setup`): opens the setup at its first step with today's values, or
+    /// brings a paused one (a login was running) back where it was.
     pub fn open_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.palette = None;
         self.picker = None;
@@ -282,11 +310,33 @@ impl Workbench {
         self.daemon.popover = false;
         match &mut self.setup.state {
             Some(state) => state.suspended = false,
-            None => self.setup.state = Some(SetupState::from_settings(&self.settings)),
+            None => {
+                self.setup.state = Some(SetupState::from_settings(&self.settings));
+                // What the history index reads now: the daemon answers, the step shows it.
+                self.setup_adopt_history();
+                self.refresh_history_index(cx);
+            }
         }
         window.focus(&self.setup.focus, cx);
         self.setup_entered_step(cx);
         cx.notify();
+    }
+
+    /// The History step starts at what the index reads now (`history.status`), unless the user
+    /// already ticked something. Called when the setup opens and when the daemon answers.
+    pub(crate) fn setup_adopt_history(&mut self) {
+        let Some(status) = &self.history_index.status else {
+            return;
+        };
+        let now = HISTORY_SOURCES.map(|(id, _, _)| {
+            status.enabled && status.sources.iter().any(|source| source.name == id)
+        });
+        if let Some(state) = &mut self.setup.state {
+            state.history_now = now;
+            if !state.history_touched {
+                state.history = now;
+            }
+        }
     }
 
     /// The first-run setup is on screen: it is modal, so the workbench's shortcuts (⌘T, ⌘B, …)
@@ -303,7 +353,7 @@ impl Workbench {
         };
         state.suspended = true;
         self.set_notice(
-            "Setup is paused while you log in. Choose “Hutan: Run Setup…” in the command palette to continue.",
+            "Setup is paused while you log in. Choose “Hutan: Run Setup Again…” in the command palette to continue.",
             cx,
         );
     }
@@ -396,7 +446,8 @@ impl Workbench {
     }
 
     /// Writes what `step` chose to the settings (and to the system where the choice is an
-    /// action: the login item, the CLI link, the assistant's backend).
+    /// action: the login item, the CLI link, the assistant's backend), and only what differs from
+    /// what is there now: a step the user passed without touching writes nothing.
     fn setup_leave_step(&mut self, step: SetupStep, cx: &mut Context<Self>) {
         let Some(state) = self.setup.state.clone() else {
             return;
@@ -404,17 +455,40 @@ impl Workbench {
         match step {
             SetupStep::Welcome | SetupStep::Done => {}
             SetupStep::History => {
-                if state.history.iter().any(|on| *on) {
+                if state.history != state.history_now {
                     self.setup_enable_history(state.history, cx);
+                    if let Some(now) = &mut self.setup.state {
+                        now.history_now = state.history;
+                    }
                 }
             }
             SetupStep::Look => {
-                self.setup_write(
-                    "appearance.appearance",
-                    appearance_key(state.appearance),
-                    cx,
-                );
-                self.setup_write("appearance.density", density_key(state.density), cx);
+                let look = self.settings.get::<AppearanceSettings>();
+                if state.appearance != look.appearance {
+                    self.setup_write(
+                        "appearance.appearance",
+                        appearance_key(state.appearance),
+                        cx,
+                    );
+                }
+                if state.density != look.density {
+                    self.setup_write("appearance.density", density_key(state.density), cx);
+                }
+            }
+            SetupStep::Editing => {
+                if state.vim_mode != self.settings.get::<EditorSettings>().vim_mode {
+                    self.setup_write_bool("editor.vim_mode", state.vim_mode, cx);
+                }
+                // The send key was offered on this page: the composer need not ask again.
+                let written = if state.send_key != self.send_key() {
+                    super::send_key::write_send_key(&self.settings, state.send_key)
+                } else {
+                    super::send_key::stop_asking(&self.settings)
+                };
+                if let Err(error) = written {
+                    tracing::warn!("cannot save chat.send_key: {error}");
+                    self.set_notice(format!("Cannot save chat.send_key: {error}"), cx);
+                }
             }
             SetupStep::Agents => {
                 // Mawas is on by default: nothing is written unless the choice changed.
@@ -422,11 +496,9 @@ impl Workbench {
                 if state.assistant_enabled != self.assistant_enabled() {
                     self.setup_write_bool("assistant.enabled", state.assistant_enabled, cx);
                 }
-                // The send key was offered on this page: the composer need not ask again.
-                if let Err(error) = super::send_key::stop_asking(&self.settings) {
-                    tracing::warn!("cannot save chat.ask_send_key: {error}");
+                if state.auto_install != self.settings.get::<IntegrationsSettings>().auto_install {
+                    self.setup_write_bool("integrations.auto_install", state.auto_install, cx);
                 }
-                self.setup_write_bool("integrations.auto_install", state.auto_install, cx);
                 let ticked: Vec<&'static str> = state.hooks.iter().copied().collect();
                 if !ticked.is_empty() {
                     self.install_integrations(ticked, cx);
@@ -436,18 +508,71 @@ impl Workbench {
                 }
             }
             SetupStep::Background => {
-                self.set_keep_running(state.keep_running, cx);
+                let app = self.settings.get::<AppSettings>();
+                if state.keep_running != app.keep_running {
+                    self.set_keep_running(state.keep_running, cx);
+                }
                 // Only where it can be registered: outside Hutan.app there is nothing to ask.
-                if self.start_at_login_available() {
+                if self.start_at_login_available() && state.start_at_login != app.start_at_login {
                     self.set_start_at_login(state.start_at_login, cx);
                 }
-                self.setup_write("assistant.global_shortcut", &state.global_shortcut, cx);
+                if state.global_shortcut != self.settings.get::<AssistantSettings>().global_shortcut
+                {
+                    self.setup_write("assistant.global_shortcut", &state.global_shortcut, cx);
+                }
             }
             SetupStep::CommandLine => {
                 if state.cli_link {
                     self.setup_make_cli_link(cx);
                 }
             }
+        }
+    }
+
+    /// *Skip this step*: what the step offered is dropped (every value of it goes back to what
+    /// the settings say, the Look preview with it) and the next step shows.
+    pub fn setup_skip_step(&mut self, cx: &mut Context<Self>) {
+        let Some(step) = self.setup.state.as_ref().map(|s| s.step) else {
+            return;
+        };
+        if !step.skippable() {
+            return;
+        }
+        let today = SetupState::from_settings(&self.settings);
+        if let Some(state) = &mut self.setup.state {
+            match step {
+                SetupStep::Look => {
+                    state.appearance = today.appearance;
+                    state.density = today.density;
+                }
+                SetupStep::Editing => {
+                    state.vim_mode = today.vim_mode;
+                    state.send_key = today.send_key;
+                }
+                SetupStep::Agents => {
+                    state.assistant_enabled = today.assistant_enabled;
+                    state.assistant_backend = None;
+                    state.auto_install = today.auto_install;
+                    state.hooks.clear();
+                }
+                SetupStep::History => {
+                    state.history = state.history_now;
+                    state.history_touched = false;
+                }
+                SetupStep::Background => {
+                    state.keep_running = today.keep_running;
+                    state.start_at_login = today.start_at_login;
+                    state.global_shortcut = today.global_shortcut;
+                }
+                SetupStep::CommandLine => state.cli_link = false,
+                SetupStep::Welcome | SetupStep::Done => {}
+            }
+        }
+        if step == SetupStep::Look {
+            self.apply_look_from_settings(cx);
+        }
+        if let Some(next) = step.next() {
+            self.setup_show_step(next, cx);
         }
     }
 
@@ -468,8 +593,8 @@ impl Workbench {
         }
     }
 
-    /// The History step's ticked sources reach `daemon.toml` (`history.<source>`, all four, so
-    /// an unticked one stays unread whatever the file had) and indexing is turned on.
+    /// The History step's sources reach `daemon.toml` (`history.<source>`, all four, so an
+    /// unticked one stays unread whatever the file had) and indexing is on while any is ticked.
     fn setup_enable_history(&mut self, sources: [bool; 4], cx: &mut Context<Self>) {
         let connection = self.connection(cx);
         if !connection.supports_history() {
@@ -487,7 +612,10 @@ impl Workbench {
                             .await?;
                     }
                 }
-                connection.history_set_enabled(true).await.map(drop)
+                connection
+                    .history_set_enabled(sources.iter().any(|on| *on))
+                    .await
+                    .map(drop)
             }
             .await;
             if let Err(error) = result {
@@ -644,6 +772,23 @@ impl Workbench {
             && let Some(slot) = state.history.get_mut(index)
         {
             *slot = on;
+            state.history_touched = true;
+            cx.notify();
+        }
+    }
+
+    /// The Editing step's Vim switch; nothing is written until the step is left.
+    pub fn setup_set_vim_mode(&mut self, on: bool, cx: &mut Context<Self>) {
+        if let Some(state) = &mut self.setup.state {
+            state.vim_mode = on;
+            cx.notify();
+        }
+    }
+
+    /// The Editing step's send key; nothing is written until the step is left.
+    pub fn setup_set_send_key(&mut self, key: SendKey, cx: &mut Context<Self>) {
+        if let Some(state) = &mut self.setup.state {
+            state.send_key = key;
             cx.notify();
         }
     }
@@ -769,22 +914,23 @@ impl Workbench {
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .child("Run setup again"),
+                            .child("Run Setup Again…"),
                     )
                     .child(
                         div()
                             .text_size(px(tokens.secondary_font_size))
                             .text_color(theme.muted)
                             .child(
-                                "The first-run walk-through: look, agents, the daemon in the \
-                                 background, the command line.",
+                                "Look, editing, agents, history, the daemon in the background, \
+                                 the command line. Every answer starts at today's value; \
+                                 nothing changes unless you change it.",
                             ),
                     ),
             )
             .child(
                 ui::button(
                     "run-setup",
-                    "Run setup…",
+                    "Run Setup Again…",
                     ButtonKind::Secondary,
                     true,
                     &theme,
@@ -814,6 +960,7 @@ impl Workbench {
         let body = match step {
             SetupStep::Welcome => self.setup_welcome(&theme, &tokens),
             SetupStep::Look => self.setup_look(&state, window, cx),
+            SetupStep::Editing => self.setup_editing(&state, cx),
             SetupStep::Agents => self.setup_agents(&state, cx),
             SetupStep::History => self.setup_history(&state, cx),
             SetupStep::Background => self.setup_background(&state, cx),
@@ -847,6 +994,13 @@ impl Workbench {
                     .flex()
                     .justify_end()
                     .gap(px(tokens.spacing * 2.0))
+                    .when(step.skippable(), |s| {
+                        s.child(
+                            button("skip-step", "Skip this step", ButtonKind::Ghost)
+                                .text_color(theme.muted)
+                                .on_click(cx.listener(|this, _, _, cx| this.setup_skip_step(cx))),
+                        )
+                    })
                     .when(step.previous().is_some(), |s| {
                         s.child(
                             button("back", "Back", ButtonKind::Secondary)
@@ -1243,7 +1397,6 @@ impl Workbench {
                         .child(backends),
                 )
             })
-            .child(self.setup_send_key_row(cx))
             .into_any_element();
         self.setup_page(
             "Bring your agents",
@@ -1253,12 +1406,42 @@ impl Workbench {
         )
     }
 
-    /// The Agents step's one-line send-key choice: ⌘Return or Return sends a message. It is
-    /// saved at once (the same setting the composers' quick switch writes).
-    fn setup_send_key_row(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The Editing step: Vim mode and the send key, each a pending choice written when the step
+    /// is left.
+    fn setup_editing(&self, state: &SetupState, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme;
+        let vim = ui::switch("vim-mode", state.vim_mode, true, &theme)
+            .relative()
+            .on_click(cx.listener(|this, _, _, cx| {
+                let on = this.setup.state.as_ref().is_some_and(|s| !s.vim_mode);
+                this.setup_set_vim_mode(on, cx);
+            }))
+            .child(probe(&self.regions, Region::Setup("vim-mode")));
+        let content = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(self.setup_row(
+                "Vim mode",
+                "Modal editing (Normal, Insert, Visual) in file tabs and text fields. \
+                 Escape goes to Normal; off keeps every field a plain text box.",
+                vim.into_any_element(),
+            ))
+            .child(self.setup_send_key_row(state, cx))
+            .into_any_element();
+        self.setup_page(
+            "How you type",
+            "Both can be changed later in Settings.",
+            Some(content),
+        )
+    }
+
+    /// The Editing step's one-line send-key choice: ⌘Return or Return sends a message. It is
+    /// written (as the same setting the composers' quick switch writes) when the step is left.
+    fn setup_send_key_row(&self, state: &SetupState, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme;
         let tokens = self.density.ui();
-        let current = self.send_key();
+        let current = state.send_key;
         let choices = div()
             .flex()
             .gap(px(tokens.spacing * 2.0))
@@ -1269,7 +1452,7 @@ impl Workbench {
                 };
                 ui::choice(id, key.short_label(), current == key, &theme, &tokens)
                     .relative()
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_send_key(key, cx)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.setup_set_send_key(key, cx)))
                     .child(probe(&self.regions, Region::Setup(region)))
             }));
         self.setup_row(
@@ -1874,6 +2057,7 @@ mod tests {
             [
                 "Welcome",
                 "Look",
+                "Editing",
                 "Agents",
                 "History",
                 "Background",

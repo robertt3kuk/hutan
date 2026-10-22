@@ -241,6 +241,7 @@ impl Workbench {
                     }
                     Err(error) => this.history_index.error = Some(error.to_string()),
                 }
+                this.setup_adopt_history();
                 cx.notify();
             })
             .ok();

@@ -106,6 +106,7 @@ pub fn menus(presets: &[LayoutPreset], current: &str, daemon_menu: &DaemonMenu) 
             MenuItem::action("About Hutan", actions::About),
             MenuItem::separator(),
             MenuItem::action("Settings…", actions::OpenSettings),
+            MenuItem::action("Run Setup Again…", actions::RunSetup),
             MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),
@@ -473,6 +474,23 @@ fn watch_signals(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hutan_menu_offers_run_setup_again() {
+        let menus = menus(
+            &LayoutPreset::builtin(),
+            LayoutPreset::DEFAULT,
+            &DaemonMenu::default(),
+        );
+        let hutan = menus.first().expect("the Hutan menu comes first");
+        assert!(
+            hutan.items.iter().any(|item| matches!(
+                item,
+                MenuItem::Action { name, .. } if name.as_ref() == "Run Setup Again…"
+            )),
+            "Hutan ▸ Run Setup Again…"
+        );
+    }
 
     #[test]
     fn hutand_is_found_beside_the_binary_else_on_path() {

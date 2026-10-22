@@ -164,6 +164,9 @@ pub enum Command {
     /// (`hutan ui actions|layout|run|set`)
     #[command(subcommand)]
     Ui(UiCommand),
+    /// Open Hutan's setup (Run Setup Again…) in the desktop window: agents, Vim mode, send key,
+    /// history, start at login, command line, appearance, each starting at today's value
+    Setup,
     /// Serve Hutan's control tools to an agent as an MCP server on stdio (started by the agent;
     /// see `hutan help agent`)
     Mcp,

@@ -132,6 +132,15 @@ fn the_first_launch_is_a_first_screen_not_a_modal_sheet(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+fn the_first_screen_links_to_the_setup_without_ending_the_first_run(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx) = open_first_launch(cx, &daemon);
+    click(&view, cx, Region::FirstRun("setup"));
+    assert!(view.read_with(cx, |wb, _| wb.setup_open()));
+    assert_eq!(saved(&daemon), "", "opening the setup writes nothing");
+}
+
+#[gpui::test]
 fn new_terminal_on_the_first_screen_ends_the_first_run(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx) = open_first_launch(cx, &daemon);

@@ -50,6 +50,11 @@ fn catalog() -> UiPublish {
                 })),
             },
             UiAction {
+                id: "workbench::RunSetup".into(),
+                title: "Hutan: Run Setup Again…".into(),
+                args_schema: None,
+            },
+            UiAction {
                 id: "workbench::Broken".into(),
                 title: "Layout: Broken".into(),
                 args_schema: None,
@@ -265,7 +270,8 @@ async fn ui_actions_layout_run_and_set_talk_to_the_desktop() {
         [
             "workbench::SplitRight",
             "workbench::ApplyPreset",
-            "workbench::Broken"
+            "workbench::RunSetup",
+            "workbench::Broken",
         ]
     );
     assert_eq!(actions["settings"][0]["key"], "font_size");
@@ -351,6 +357,37 @@ async fn ui_actions_layout_run_and_set_talk_to_the_desktop() {
     let missing = t.hutan(&["ui", "set", "terminal.nope", "1"]).await;
     assert_eq!(missing.code, 1, "{missing:?}");
 
+    t.stop().await;
+}
+
+/// `hutan setup` opens the desktop's setup through `ui.run`; with no window it says where the
+/// setup lives.
+#[tokio::test(flavor = "multi_thread")]
+async fn setup_opens_the_desktops_setup_and_says_so_without_a_window() {
+    let t = TestDaemon::start().await;
+
+    let none = t.hutan(&["setup", "--json"]).await.ok().json();
+    assert_eq!(none["opened"], false);
+    let text = t.hutan(&["setup"]).await.ok();
+    assert!(
+        text.stdout.contains("Run Setup Again…") && text.stdout.contains("none is open"),
+        "{text:?}"
+    );
+
+    let desktop = FakeDesktop::start(&t.paths.socket).await;
+    let opened = t.hutan(&["setup", "--json"]).await.ok().json();
+    assert_eq!(opened["opened"], true);
+    assert_eq!(
+        t.hutan(&["setup"]).await.ok().stdout.trim(),
+        "the setup is open in Hutan"
+    );
+    assert_eq!(
+        desktop.seen(),
+        [
+            ("workbench::RunSetup".to_owned(), json!({})),
+            ("workbench::RunSetup".to_owned(), json!({})),
+        ]
+    );
     t.stop().await;
 }
 

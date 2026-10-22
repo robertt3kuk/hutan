@@ -635,7 +635,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("App: Command Palette", TogglePalette),
         command("App: Settings…", OpenSettings),
         command("App: About Hutan", About),
-        command("Hutan: Run Setup…", RunSetup),
+        command("Hutan: Run Setup Again…", RunSetup),
         command("Window: Minimize", MinimizeWindow),
         command("Window: Zoom", ZoomWindow),
         command("App: Quit Hutan", Quit),

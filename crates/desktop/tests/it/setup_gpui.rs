@@ -19,6 +19,7 @@ use hutan_desktop::cli_link::{CliLink, Manual, Plan};
 use hutan_desktop::harness_install::{FakeRunner, SOURCES};
 use hutan_desktop::integrations::{FakeInstaller, IntegrationStatus};
 use hutan_desktop::macos::{LoginItemCall, LoginItemStatus, NotificationAnswer};
+use hutan_desktop::settings::SendKey;
 use hutan_desktop::workbench::actions::{self, daemon as daemon_actions};
 use hutan_desktop::workbench::{
     Detection, HARNESSES, Listing, NotificationUi, Region, SetupStep, Workbench, WorkbenchOptions,
@@ -323,7 +324,7 @@ fn the_setup_is_modal_shortcuts_wait_and_escape_skips_it(cx: &mut TestAppContext
 }
 
 #[gpui::test]
-fn back_continue_and_skip_walk_the_seven_steps(cx: &mut TestAppContext) {
+fn back_continue_and_skip_walk_the_steps(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let env = Env::new();
     let (view, cx) = open_walkthrough(cx, &daemon, &env);
@@ -333,7 +334,7 @@ fn back_continue_and_skip_walk_the_seven_steps(cx: &mut TestAppContext) {
     );
 
     let mut seen = vec![step(&view, cx).unwrap()];
-    for _ in 0..6 {
+    for _ in 1..SetupStep::ALL.len() {
         click(&view, cx, Region::Setup("continue"));
         seen.push(step(&view, cx).unwrap());
     }
@@ -415,7 +416,7 @@ fn the_setup_reopens_from_the_palette_and_from_settings(cx: &mut TestAppContext)
     assert!(view.read_with(cx, |wb, _| {
         wb.commands()
             .iter()
-            .any(|c| c.title.as_ref() == "Hutan: Run Setup…")
+            .any(|c| c.title.as_ref() == "Hutan: Run Setup Again…")
     }));
     cx.dispatch_action(actions::RunSetup);
     cx.run_until_parked();
@@ -424,7 +425,7 @@ fn the_setup_reopens_from_the_palette_and_from_settings(cx: &mut TestAppContext)
     click(&view, cx, Region::Setup("skip"));
     assert!(!setup_open(&view, cx));
 
-    // Settings → app has "Run setup again".
+    // Settings → app has "Run Setup Again…".
     cx.dispatch_action(actions::OpenSettingsFor("app".into()));
     draw(cx);
     click(&view, cx, Region::Setup("run-setup"));
@@ -1090,7 +1091,10 @@ fn hooks_are_off_until_ticked_and_only_the_ticked_agents_get_them(cx: &mut TestA
     });
     pump_for(cx, Duration::from_millis(300));
     assert_eq!(env.installer.installs(), ["claude"], "OMP was not ticked");
-    assert!(saved(&daemon).contains("auto_install = false"));
+    assert!(
+        !saved(&daemon).contains("auto_install"),
+        "the answer is today's value: nothing is written"
+    );
     assert!(!view.read_with(cx, |wb, _| wb.integrations_auto_install()));
 }
 
@@ -1345,32 +1349,18 @@ fn the_fakes_of_a_login_item_work_with_the_setup_services(cx: &mut TestAppContex
     assert!(view.read_with(cx, |wb, _| wb.start_at_login_available()));
 }
 
-// ---- Send key ----------------------------------------------------------------------------------
+// ---- Editing -----------------------------------------------------------------------------------
 
-#[gpui::test]
-fn the_agents_step_offers_the_send_key_and_leaving_it_stops_the_composer_asking(
-    cx: &mut TestAppContext,
-) {
-    let scripts = tempfile::tempdir().unwrap();
-    let daemon = daemon_with_harnesses(scripts.path());
-    let env = Env::new();
-    let (view, cx) = open_walkthrough(cx, &daemon, &env);
-    go_to(&view, cx, SetupStep::Agents);
-    wait_listing(&view, cx);
-    assert!(!saved(&daemon).contains("send_key"));
-
-    // The one line is on the page and writes the user's choice at once.
-    assert!(drawn(&view, cx, Region::Setup("send-key-enter")));
-    // It is the last row of a page that scrolls: bring it above the footer.
+/// Scrolls the sheet until `region` is above the footer, then clicks it.
+fn scroll_and_click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
+    assert!(drawn(view, cx, region));
     let at = view
         .read_with(cx, |wb, _| wb.region_bounds(Region::Setup("sheet")))
         .unwrap()
         .center();
     for _ in 0..20 {
         let row = view
-            .read_with(cx, |wb, _| {
-                wb.region_bounds(Region::Setup("send-key-enter"))
-            })
+            .read_with(cx, |wb, _| wb.region_bounds(region))
             .unwrap();
         if row.bottom() < gpui::px(900.0) {
             break;
@@ -1383,14 +1373,198 @@ fn the_agents_step_offers_the_send_key_and_leaving_it_stops_the_composer_asking(
         });
         draw(cx);
     }
-    click(&view, cx, Region::Setup("send-key-enter"));
-    let text = saved(&daemon);
-    assert!(text.contains("send_key = \"enter\""), "{text}");
-    click(&view, cx, Region::Setup("send-key-cmd-enter"));
-    assert!(saved(&daemon).contains("send_key = \"cmd-enter\""));
+    click(view, cx, region);
+}
 
-    // Leaving the page counts as having been asked: the composer will not ask again.
+#[gpui::test]
+fn the_editing_step_offers_the_send_key_and_leaving_it_stops_the_composer_asking(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let env = Env::new();
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
+    go_to(&view, cx, SetupStep::Editing);
+    assert!(!saved(&daemon).contains("send_key"));
+    let key = |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.setup().unwrap().send_key);
+    assert_eq!(key(cx), SendKey::CmdEnter, "today's value");
+
+    // The choice is pending until the step is left.
+    scroll_and_click(&view, cx, Region::Setup("send-key-enter"));
+    assert_eq!(key(cx), SendKey::Enter);
+    assert!(!saved(&daemon).contains("send_key"), "{}", saved(&daemon));
+
+    // Leaving the page writes it, and counts as having been asked: the composer will not ask
+    // again.
     click(&view, cx, Region::Setup("continue"));
     let text = saved(&daemon);
+    assert!(text.contains("send_key = \"enter\""), "{text}");
     assert!(text.contains("ask_send_key = false"), "{text}");
+}
+
+#[gpui::test]
+fn the_editing_step_starts_at_todays_values_and_writes_only_what_changed(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let env = Env::new();
+    std::fs::write(
+        daemon.home().join("settings.toml"),
+        "[editor]\nvim_mode = true\n[chat]\nsend_key = \"enter\"\nask_send_key = false\n",
+    )
+    .unwrap();
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
+    go_to(&view, cx, SetupStep::Editing);
+    view.read_with(cx, |wb, _| {
+        let state = wb.setup().unwrap();
+        assert!(state.vim_mode, "Vim starts on, as the settings say");
+        assert_eq!(state.send_key, SendKey::Enter);
+    });
+    let before = saved(&daemon);
+
+    // Leaving without a change writes nothing.
+    click(&view, cx, Region::Setup("continue"));
+    assert_eq!(saved(&daemon), before);
+
+    // Changing Vim writes that key and only it.
+    click(&view, cx, Region::Setup("back"));
+    click(&view, cx, Region::Setup("vim-mode"));
+    assert!(!view.read_with(cx, |wb, _| wb.setup().unwrap().vim_mode));
+    assert_eq!(saved(&daemon), before, "pending until the step is left");
+    click(&view, cx, Region::Setup("continue"));
+    let after = saved(&daemon);
+    assert!(after.contains("vim_mode = false"), "{after}");
+    assert!(after.contains("send_key = \"enter\""), "{after}");
+    assert!(!after.contains("appearance"), "{after}");
+}
+
+// ---- Skipping a step, and finishing -------------------------------------------------------------
+
+#[gpui::test]
+fn skipping_a_step_keeps_every_value_of_it(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let env = Env::new();
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
+    assert!(
+        !drawn(&view, cx, Region::Setup("skip-step")),
+        "Welcome has nothing to skip"
+    );
+    go_to(&view, cx, SetupStep::Look);
+
+    // Look: a previewed choice is dropped and the window goes back.
+    click(&view, cx, Region::Setup("appearance-dark"));
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.shown_appearance()),
+        AppearanceMode::Dark
+    );
+    click(&view, cx, Region::Setup("skip-step"));
+    assert_eq!(step(&view, cx), Some(SetupStep::Editing));
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.shown_appearance()),
+        AppearanceMode::System
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.setup().unwrap().appearance),
+        AppearanceMode::System
+    );
+
+    // Editing: Vim and the send key stay as they were, and the composer still asks.
+    click(&view, cx, Region::Setup("vim-mode"));
+    scroll_and_click(&view, cx, Region::Setup("send-key-enter"));
+    click(&view, cx, Region::Setup("skip-step"));
+    assert_eq!(step(&view, cx), Some(SetupStep::Agents));
+    view.read_with(cx, |wb, _| {
+        let state = wb.setup().unwrap();
+        assert!(!state.vim_mode);
+        assert_eq!(state.send_key, SendKey::CmdEnter);
+    });
+
+    // Background: the pending switches go back to today's values.
+    go_to(&view, cx, SetupStep::Background);
+    click(&view, cx, Region::Setup("keep-running"));
+    click(&view, cx, Region::Setup("start-at-login"));
+    click(&view, cx, Region::Setup("skip-step"));
+    assert_eq!(step(&view, cx), Some(SetupStep::CommandLine));
+    view.read_with(cx, |wb, _| {
+        let state = wb.setup().unwrap();
+        assert!(!state.keep_running && !state.start_at_login);
+    });
+    assert!(env.fakes.login.calls().is_empty(), "nothing was registered");
+    assert_eq!(saved(&daemon), "", "skipping wrote nothing");
+
+    // The last steps cannot be skipped away from: Done only finishes.
+    click(&view, cx, Region::Setup("skip-step"));
+    assert_eq!(step(&view, cx), Some(SetupStep::Done));
+    assert!(!drawn(&view, cx, Region::Setup("skip-step")));
+}
+
+#[gpui::test]
+fn finishing_with_nothing_changed_writes_only_that_the_setup_is_done(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let env = Env::new();
+    // A user who has settled in: everything non-default, the questions answered.
+    std::fs::write(
+        daemon.home().join("settings.toml"),
+        "[app]\nsetup_done = true\nkeep_running = true\nstart_at_login = false\n\
+         [appearance]\nappearance = \"dark\"\ndensity = \"comfortable\"\n\
+         [editor]\nvim_mode = true\n[chat]\nsend_key = \"enter\"\nask_send_key = false\n\
+         [integrations]\nauto_install = true\n[assistant]\nenabled = true\nglobal_shortcut = \"alt-space\"\n",
+    )
+    .unwrap();
+    let before = saved(&daemon);
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
+    view.read_with(cx, |wb, _| {
+        let state = wb.setup().unwrap();
+        assert_eq!(state.appearance, AppearanceMode::Dark);
+        assert_eq!(state.density, Density::Comfortable);
+        assert!(state.vim_mode && state.keep_running && state.auto_install);
+        assert_eq!(state.send_key, SendKey::Enter);
+        assert_eq!(state.global_shortcut, "alt-space");
+    });
+    go_to(&view, cx, SetupStep::Done);
+    click(&view, cx, Region::Setup("continue"));
+    assert!(!setup_open(&view, cx));
+    assert_eq!(saved(&daemon), before, "every answer was today's value");
+    assert!(env.fakes.login.calls().is_empty());
+}
+
+#[gpui::test]
+fn the_history_step_starts_at_what_the_index_reads_now(cx: &mut TestAppContext) {
+    let history = common::history::HistoryEnv::new();
+    let toml = history.daemon_toml(true).replacen(
+        "enabled = true\n",
+        "enabled = true\nhutan = true\ncodex = true\nclaude = false\nomp = false\n",
+        1,
+    );
+    let daemon = TestDaemon::start_with_config(&toml);
+    let env = Env::new();
+    let (view, cx) = open_walkthrough(cx, &daemon, &env);
+    go_to(&view, cx, SetupStep::History);
+    let ticked = |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.setup().unwrap().history);
+    wait_until(cx, "the index status", |cx| {
+        draw(cx);
+        ticked(cx) == [true, false, true, false]
+    });
+    let before = std::fs::read_to_string(&daemon.paths.config_file).unwrap();
+
+    // Leaving it as it is writes nothing.
+    click(&view, cx, Region::Setup("continue"));
+    pump_for(cx, Duration::from_millis(300));
+    assert_eq!(
+        std::fs::read_to_string(&daemon.paths.config_file).unwrap(),
+        before
+    );
+
+    // Unticking one writes the new set and keeps indexing on.
+    click(&view, cx, Region::Setup("back"));
+    click(&view, cx, Region::SetupHarness("codex", "history"));
+    assert_eq!(ticked(cx), [true, false, false, false]);
+    click(&view, cx, Region::Setup("continue"));
+    wait_until(cx, "codex to be switched off", |cx| {
+        draw(cx);
+        let toml = std::fs::read_to_string(&daemon.paths.config_file).unwrap_or_default();
+        toml.contains("codex = false")
+    });
+    let toml = std::fs::read_to_string(&daemon.paths.config_file).unwrap();
+    assert!(
+        toml.contains("hutan = true") && toml.contains("enabled = true"),
+        "{toml}"
+    );
 }

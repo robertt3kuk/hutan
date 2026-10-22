@@ -11,6 +11,9 @@ use crate::args::{UiActionsArgs, UiCommand, UiRunArgs, UiSetArgs, UiWindowArgs};
 use crate::error::CliError;
 use hutan_protocol::messages::Request;
 
+/// The catalog id of the desktop's *Run Setup Again…* (`workbench::RunSetup`).
+const SETUP_ACTION: &str = "workbench::RunSetup";
+
 impl Ctx {
     pub(super) async fn ui(&self, command: UiCommand) -> Result<(), CliError> {
         match command {
@@ -19,6 +22,39 @@ impl Ctx {
             UiCommand::Run(args) => self.ui_run(args).await,
             UiCommand::Set(args) => self.ui_set(args).await,
         }
+    }
+
+    /// `hutan setup`: the setup is the desktop's. With a window connected it opens there
+    /// (`ui.run workbench::RunSetup`, the same action as *Run Setup Again…*); without one the
+    /// command says where it lives.
+    pub(super) async fn setup(&self) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        let mut opened = false;
+        if client.supports_control() {
+            match client
+                .ui_run(UiRun {
+                    window_id: None,
+                    action: SETUP_ACTION.to_owned(),
+                    args: None,
+                })
+                .await
+            {
+                Ok(_) => opened = true,
+                // No window is open.
+                Err(hutan_client::ClientError::Remote(body))
+                    if body.code == hutan_protocol::ErrorCode::InvalidState => {}
+                Err(error) => return Err(self.fail(error)),
+            }
+        }
+        self.print(&serde_json::json!({ "opened": opened }), || {
+            if opened {
+                "the setup is open in Hutan".to_owned()
+            } else {
+                "Hutan's setup opens in the desktop window and none is open: start Hutan, then \
+                 choose Hutan ▸ Run Setup Again… (or run `hutan setup` again)"
+                    .to_owned()
+            }
+        })
     }
 
     async fn catalog(

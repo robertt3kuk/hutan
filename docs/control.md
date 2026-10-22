@@ -28,6 +28,8 @@ An action that closes the window (`workbench::Quit`, or the quit of a closed las
 
 CLI: `hutan ui actions [--filter TEXT] [--json]`, `hutan ui layout [--json]`, `hutan ui run <action> [--arg k=v]…`, `hutan ui set <namespace.key> <value> [--layer user|workspace|project]`; `--window ID` picks a window.
 
+`hutan setup` is `ui.run workbench::RunSetup` (the palette's *Hutan: Run Setup Again…*): the window opens its setup flow with every answer at today's value (`docs/design.md` § Run Setup Again…). With no window open it prints that the setup opens in the desktop (Hutan ▸ Run Setup Again…) and exits 0; `--json` prints `{"opened": true|false}`.
+
 ## Who is asking
 
 `ClientInfo.origin {session_id}` is sent by the CLI and by `hutan mcp` from `HUTAN_SESSION_ID`, which every Hutan session process gets. The daemon honours it only while that session exists and is live (a claim that does not hold is ignored and logged: the caller is then the user).

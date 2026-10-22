@@ -11,7 +11,8 @@
 //!   without having reported (the *Track as* strip).
 //! - **Send key** — one line above the first composer: the chat's, or this start composer's.
 //!
-//! The old seven steps stay reachable as *Run setup again* (`setup.rs`).
+//! The setup (the walk-through of `setup.rs`) stays reachable as *Run Setup Again…*, and the
+//! first screen links to it.
 
 use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
@@ -259,6 +260,19 @@ impl Workbench {
                             this.first_screen_new_terminal(window, cx);
                         }))
                         .child(probe(&self.regions, Region::FirstRun("new-terminal"))),
+                    )
+                    .child(
+                        ui::button(
+                            "first-setup",
+                            "Set up Hutan…",
+                            ButtonKind::Ghost,
+                            true,
+                            &theme,
+                            &tokens,
+                        )
+                        .relative()
+                        .on_click(cx.listener(|this, _, window, cx| this.open_setup(window, cx)))
+                        .child(probe(&self.regions, Region::FirstRun("setup"))),
                     ),
             )
             .child(

@@ -1235,9 +1235,9 @@ pub struct AppSettings {
     /// read.
     pub start_at_login: bool,
     /// The first run is over: a folder was opened (or a terminal started) from the first
-    /// screen, or the walk-through was finished or skipped. Off shows the first screen; "Run
-    /// setup again" (Settings, the command palette's "Hutan: Run Setup…") opens the
-    /// walk-through whatever this says.
+    /// screen, or the setup was finished or skipped. Off shows the first screen; "Run Setup
+    /// Again…" (the Hutan menu, Settings, the command palette) opens the setup whatever this
+    /// says.
     pub setup_done: bool,
     /// Offer notifications once, the first time something needs you (an approval, a finished
     /// run) while Hutan is not the frontmost app: one line with *Notify me* and *No thanks*.

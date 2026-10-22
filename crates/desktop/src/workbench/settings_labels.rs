@@ -137,7 +137,7 @@ const FIELDS: &[FieldText] = &[
         "app",
         "setup_done",
         "First run finished",
-        "Whether the first run is over: you opened a folder or started a terminal from the first screen, or finished or skipped the walk-through. Turn it off to see the first screen again at the next start, or use “Run setup again” below for the walk-through.",
+        "Whether the first run is over: you opened a folder or started a terminal from the first screen, or finished or skipped the setup. Turn it off to see the first screen again at the next start, or use “Run Setup Again…” below for the setup.",
     ),
     field(
         "app",
