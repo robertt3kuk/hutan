@@ -17,7 +17,7 @@ use crate::settings::{SidebarOrganize, WorkspaceSort, WorkspacesSettings};
 pub struct Inputs<'a> {
     /// Every container the daemon knows: Home, projects and workspaces.
     pub workspaces: &'a [WorkspaceInfo],
-    /// The sessions the tree may list (a session that "Needs you" took out is not one of them).
+    /// The sessions the tree may list (a session a group of attention took out is not one of them).
     pub sessions: &'a [&'a SessionInfo],
     pub organize: SidebarOrganize,
     pub sort: WorkspaceSort,
@@ -270,7 +270,7 @@ pub fn session_folder(session: &SessionInfo) -> Option<&Path> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subtitle {
     /// The container the session sits in: only where the row is away from its parent project
-    /// row (Needs you, a flat list).
+    /// row (a group of attention, a flat list).
     pub container: Option<String>,
     /// The live folder's last two parts, only when the session has left the checkout it belongs
     /// to (its placement's root, else its project's).
@@ -282,7 +282,7 @@ pub struct Subtitle {
 /// What [`subtitle`] decides from.
 #[derive(Debug, Clone, Copy)]
 pub struct SubtitleInputs<'a> {
-    /// The row is not under its project row (the Needs you group, a flat list), so the project
+    /// The row is not under its project row (a group of attention, a flat list), so the project
     /// is part of what it says.
     pub away_from_parent: bool,
     /// The name of the container the session sits in.
@@ -644,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn needs_you_counts_roll_up_to_the_workspace() {
+    fn request_counts_roll_up_to_the_workspace() {
         let w = world();
         let api = w.all.iter().find(|c| c.name == "api").unwrap().id;
         let web = w.all.iter().find(|c| c.name == "web").unwrap().id;

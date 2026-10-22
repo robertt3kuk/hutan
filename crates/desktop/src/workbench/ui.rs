@@ -420,7 +420,7 @@ pub fn state_label(
         )
 }
 
-/// The glyph of a state drawn in `tone`: done, needs you, failed, working, or idle.
+/// The glyph of a state drawn in `tone`: done, a request, failed, working, or idle.
 pub fn state_glyph(tone: Hsla, theme: &Theme) -> crate::icons::Icon {
     use crate::icons::Icon;
     if tone == theme.success {

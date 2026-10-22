@@ -81,7 +81,7 @@ impl TaskBook {
     }
 
     /// Whether the finished run of `session` waits for a reviewer: its task is `done` and
-    /// `awaiting_review`. Such a session counts as a soft *Needs you* item until the user has
+    /// `awaiting_review`. Such a session counts as a soft *Ready for review* item until the user has
     /// seen it (see [`review_key`](Self::review_key)).
     pub fn awaits_review(&self, session: SessionId) -> bool {
         self.review_key(session).is_some()

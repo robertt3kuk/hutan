@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Mawas's Memory page (MW-2): the page in the center with its entries, editor, history and
 //! proposals, its entry points (⌘K "Mawas: Memory", the Today rail), the pending proposals under
-//! Needs you, and Settings → Mawas, against a real in-process daemon with the in-memory
+//! Requests, and Settings → Mawas, against a real in-process daemon with the in-memory
 //! credential store and a loopback provider. Nothing calls a model.
 
 use crate::common;
@@ -13,7 +13,7 @@ use hutan_core::{ApprovalId, SessionId, WorkspaceId};
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::model::{ItemRef, PanelId};
 use hutan_desktop::workbench::panels::{
-    AssistantPanel, MemoryEditorTarget, MemoryPanel, MemoryScopeChoice, NeedsKind,
+    AssistantPanel, MemoryEditorTarget, MemoryPanel, MemoryScopeChoice, TodayKind,
 };
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_protocol::chat::{ApprovalList, ApprovalListRequest};
@@ -534,7 +534,7 @@ fn home_panel(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<As
 }
 
 #[gpui::test]
-fn proposals_wait_on_the_page_and_under_needs_you_and_are_answered_from_either(
+fn proposals_wait_on_the_page_and_under_requests_and_are_answered_from_either(
     cx: &mut TestAppContext,
 ) {
     let env = started();
@@ -545,26 +545,26 @@ fn proposals_wait_on_the_page_and_under_needs_you_and_are_answered_from_either(
     let second = propose(&env, mawas, "two", "REJECTED-CLAIM");
     let third = propose(&env, mawas, "three", "draft wording");
 
-    // Under Needs you: memory proposals, each with its options and Edit & approve.
-    wait_until(cx, "the proposals under Needs you", |cx| {
+    // Under Requests: memory proposals, each with its options and Edit & approve.
+    wait_until(cx, "the proposals under Requests", |cx| {
         home.read_with(cx, |p, cx| {
             p.today(cx)
-                .needs_you
+                .requests
                 .iter()
-                .filter(|r| matches!(r.kind, NeedsKind::Approval { memory: true, .. }))
+                .filter(|r| matches!(r.kind, TodayKind::Approval { memory: true, .. }))
                 .count()
                 == 3
         })
     });
     let today = home.read_with(cx, |p, cx| p.today(cx));
-    let NeedsKind::Approval {
+    let TodayKind::Approval {
         options,
         memory,
         mawas: by_mawas,
         ..
-    } = &today.needs_you[0].kind
+    } = &today.requests[0].kind
     else {
-        panic!("an approval: {:?}", today.needs_you[0]);
+        panic!("an approval: {:?}", today.requests[0]);
     };
     assert!(*memory && *by_mawas);
     assert_eq!(
@@ -572,9 +572,9 @@ fn proposals_wait_on_the_page_and_under_needs_you_and_are_answered_from_either(
         ["approve", "reject"]
     );
     assert!(
-        today.needs_you[0].title.starts_with("Memory proposal:"),
+        today.requests[0].title.starts_with("Memory proposal:"),
         "{}",
-        today.needs_you[0].title
+        today.requests[0].title
     );
     draw(cx);
     assert!(
@@ -645,7 +645,7 @@ fn proposals_wait_on_the_page_and_under_needs_you_and_are_answered_from_either(
 }
 
 #[gpui::test]
-fn a_card_under_needs_you_approves_a_proposal_and_edit_and_approve_opens_the_page_on_it(
+fn a_card_under_requests_approves_a_proposal_and_edit_and_approve_opens_the_page_on_it(
     cx: &mut TestAppContext,
 ) {
     let env = started();
@@ -654,7 +654,7 @@ fn a_card_under_needs_you_approves_a_proposal_and_edit_and_approve_opens_the_pag
     let mawas = home.read_with(cx, |p, cx| p.session(cx).unwrap());
     let first = propose(&env, mawas, "one", "Prefers short answers.");
     wait_until(cx, "the card", |cx| {
-        home.read_with(cx, |p, cx| p.today(cx).needs_you.len() == 1)
+        home.read_with(cx, |p, cx| p.today(cx).requests.len() == 1)
     });
     draw(cx);
     // Approve: the first option of the card.
@@ -665,7 +665,7 @@ fn a_card_under_needs_you_approves_a_proposal_and_edit_and_approve_opens_the_pag
             .any(|e| e.body == "Prefers short answers.")
     });
     wait_until(cx, "the card to go", |cx| {
-        home.read_with(cx, |p, cx| p.today(cx).needs_you.is_empty())
+        home.read_with(cx, |p, cx| p.today(cx).requests.is_empty())
     });
     let applied = proposals_of(&env);
     assert_eq!(
@@ -676,7 +676,7 @@ fn a_card_under_needs_you_approves_a_proposal_and_edit_and_approve_opens_the_pag
     // Edit & approve: opens the page with that proposal's editor, even from a closed page.
     let second = propose(&env, mawas, "two", "Staging is called kite.");
     wait_until(cx, "the second card", |cx| {
-        home.read_with(cx, |p, cx| p.today(cx).needs_you.len() == 1)
+        home.read_with(cx, |p, cx| p.today(cx).requests.len() == 1)
     });
     draw(cx);
     click(&view, cx, Region::AssistantItem("today-edit-approve", 0));

@@ -47,6 +47,16 @@ pub fn connection_shown(tone: Tone) -> bool {
     tone != Tone::Ok
 }
 
+/// The words of the `attention` item: `1 request`, `3 requests`, `99+ requests` — the sessions
+/// in the sidebar's *Requests* group, never finished work or failures.
+pub fn requests_text(n: usize) -> String {
+    match n {
+        1 => "1 request".to_owned(),
+        2..=99 => format!("{n} requests"),
+        _ => "99+ requests".to_owned(),
+    }
+}
+
 fn retry_text(retry_in: Duration) -> String {
     let secs = retry_in.as_secs_f32();
     if secs < 1.0 {
@@ -161,8 +171,9 @@ pub fn builtin_status_items() -> StatusItemRegistry {
         id: "attention",
         default_side: StatusSide::Left,
         render: Rc::new(|ctx: &StatusContext<'_>| {
-            // Nothing needs you: the bar stays, the words go.
-            let n = ctx.data.needs_you;
+            // No request waits: the bar stays, the words go. Finished work and failures are
+            // never counted here (they are in the sidebar's groups).
+            let n = ctx.data.requests;
             if n == 0 {
                 return div().id("status-attention").into_any_element();
             }
@@ -171,7 +182,7 @@ pub fn builtin_status_items() -> StatusItemRegistry {
             clickable("status-attention", ctx)
                 .text_color(ctx.theme.fg)
                 .tooltip(tooltip(format!(
-                    "Jump to the next session that needs you {}",
+                    "Jump to the next request {}",
                     ctx.attention_hint
                 )))
                 .on_click(|_, window, cx| {
@@ -185,7 +196,7 @@ pub fn builtin_status_items() -> StatusItemRegistry {
                         .text_color(ctx.theme.warning)
                         .child(crate::icons::glyph(crate::icons::Icon::StatusAttention)),
                 )
-                .child(format!("{n} need{} you", if n == 1 { "s" } else { "" }))
+                .child(requests_text(n))
                 .into_any_element()
         }),
     });

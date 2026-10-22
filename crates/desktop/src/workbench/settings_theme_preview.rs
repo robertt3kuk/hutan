@@ -136,7 +136,7 @@ pub(super) fn state_cards(theme: &Theme, tokens: &Tokens) -> Div {
         .flex_wrap()
         .gap(px(tokens.spacing * 2.0))
         .child(chip("Working", theme.accent))
-        .child(chip("Needs you", theme.warning))
+        .child(chip("Requests", theme.warning))
         .child(chip("Failed", theme.danger))
         .child(chip("Done", theme.success))
         .child(chip("Idle", theme.muted))

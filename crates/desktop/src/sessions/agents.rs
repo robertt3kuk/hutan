@@ -460,19 +460,20 @@ pub fn badge(observation: &AgentObservation) -> AgentBadge {
     }
 }
 
-/// How a live session whose tree has blocked nodes presents itself when the session summary
-/// has not caught up (or never said so, as for a chat): blocked, and it needs the user.
+/// How a live session whose tree has a blocked main agent presents itself when the session
+/// summary has not caught up (or never said so, as for a chat): a request waits for the user.
+/// Blocked subagents alone never make one (the store passes only trees whose main agent waits).
 pub fn blocked_presentation(blocked: &[BlockedNode]) -> Presentation {
     let names: Vec<&str> = blocked.iter().map(|n| n.label.as_str()).collect();
     Presentation {
-        label: "blocked".into(),
+        label: "approval".into(),
         detail: match names.as_slice() {
             [only] => format!("agent: {only}"),
             many => format!("{} agents: {}", many.len(), names.join(", ")),
         },
         tone: Tone::Warning,
         filled: true,
-        needs_you: true,
+        attention: Some(super::attention::Attention::Request),
     }
 }
 
@@ -868,13 +869,13 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_tree_presents_as_needing_you() {
+    fn a_blocked_tree_presents_as_a_request() {
         let p = blocked_presentation(&[BlockedNode {
             node_id: "a".into(),
             label: "reviewer".into(),
             main: false,
         }]);
-        assert_eq!((p.label.as_str(), p.needs_you), ("blocked", true));
+        assert_eq!((p.label.as_str(), p.is_request()), ("approval", true));
         assert_eq!(p.detail, "agent: reviewer");
         let two = blocked_presentation(&[
             BlockedNode {

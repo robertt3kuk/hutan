@@ -205,9 +205,9 @@ impl MenuModel {
         let needing = self.needs_you.len();
         if needing > 0 {
             rows.push(MenuRow::Label(if needing == 1 {
-                "1 needs you".to_owned()
+                "1 needs attention".to_owned()
             } else {
-                format!("{needing} need you")
+                format!("{needing} need attention")
             }));
             rows.extend(
                 self.needs_you
@@ -917,7 +917,7 @@ mod tests {
         assert_eq!(
             titles(&rows)[2..8],
             [
-                "label: 3 need you",
+                "label: 3 need attention",
                 "claude — blocked: running tests",
                 "make — failed: exit 2",
                 "codex — approval",
@@ -935,7 +935,7 @@ mod tests {
             "an entry opens its session"
         );
         let one = model(vec![entry("a", Need::Blocked, "")]);
-        assert_eq!(titles(&one.rows())[2], "label: 1 needs you");
+        assert_eq!(titles(&one.rows())[2], "label: 1 needs attention");
     }
 
     #[test]

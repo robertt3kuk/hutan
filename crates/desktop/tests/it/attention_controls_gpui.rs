@@ -12,7 +12,7 @@ use common::agents::{Node, Reporter};
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_core::SessionId;
-use hutan_desktop::sessions::{Group, Unread};
+use hutan_desktop::sessions::{Attention, Group, Unread};
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_settings::{SettingsPaths, SettingsStore};
 
@@ -48,6 +48,13 @@ fn store<R>(
     view.read_with(cx, |wb, cx| f(wb.sessions().read(cx)))
 }
 
+/// Whether `id` is in any of the three groups of attention.
+fn waits(s: &hutan_desktop::sessions::SessionsStore, id: SessionId) -> bool {
+    Attention::ALL
+        .into_iter()
+        .any(|group| s.in_attention(group).contains(&id))
+}
+
 fn known(view: &Entity<Workbench>, cx: &mut VisualTestContext, id: SessionId) {
     wait_until(cx, "the session to be listed", |cx| {
         store(view, cx, |s| s.session(id).is_some())
@@ -62,12 +69,16 @@ fn a_session_marked_unread_is_still_unread_after_the_desktop_restarts(cx: &mut T
     {
         let (view, cx) = open(cx, &daemon, Some(&state));
         known(&view, cx, id);
-        assert!(!store(&view, cx, |s| s.needs_you().contains(&id)));
+        assert!(!store(&view, cx, |s| waits(s, id)));
         view.update(cx, |wb, cx| {
             wb.sessions()
                 .update(cx, |store, cx| assert!(store.mark_unread(id, cx)));
         });
-        assert!(store(&view, cx, |s| s.needs_you().contains(&id)));
+        // A mark is a quiet item of *Ready for review*, never a request.
+        assert!(store(&view, cx, |s| s
+            .in_attention(Attention::Review)
+            .contains(&id)));
+        assert!(store(&view, cx, |s| s.requests().is_empty()));
         assert_eq!(store(&view, cx, |s| s.unread(id)), Some(Unread::Marked));
         view.update(cx, |wb, _| wb.flush_save());
         let saved: serde_json::Value =
@@ -78,11 +89,11 @@ fn a_session_marked_unread_is_still_unread_after_the_desktop_restarts(cx: &mut T
     let (view, cx) = open(cx, &daemon, Some(&state));
     known(&view, cx, id);
     assert!(store(&view, cx, |s| s.is_marked_unread(id)));
-    assert!(store(&view, cx, |s| s.needs_you().contains(&id)));
+    assert!(store(&view, cx, |s| waits(s, id)));
     view.update(cx, |wb, cx| {
         wb.sessions().update(cx, |s, cx| s.mark_read(id, cx));
     });
-    assert!(!store(&view, cx, |s| s.needs_you().contains(&id)));
+    assert!(!store(&view, cx, |s| waits(s, id)));
     view.update(cx, |wb, _| wb.flush_save());
     let saved: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
@@ -90,7 +101,7 @@ fn a_session_marked_unread_is_still_unread_after_the_desktop_restarts(cx: &mut T
 }
 
 #[gpui::test]
-fn the_jump_goes_to_a_blocked_agent_before_a_session_that_is_only_done(cx: &mut TestAppContext) {
+fn the_jump_goes_to_a_request_before_a_session_that_is_only_done(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon, None);
     // Listed first: a session that finishes (done, unread). Listed second: an agent that blocks.
@@ -101,15 +112,16 @@ fn the_jump_goes_to_a_blocked_agent_before_a_session_that_is_only_done(cx: &mut 
     known(&view, cx, blocked);
     Reporter::new(blocked, "omp-extension", "omp").report(&daemon, Node::main("m").blocked());
     daemon.send_input(done_terminal, b"\n");
-    wait_until(cx, "both to need the user", |cx| {
+    wait_until(cx, "both to want the user", |cx| {
         store(&view, cx, |s| {
-            s.needs_you().contains(&done.id) && s.needs_you().contains(&blocked)
+            s.in_attention(Attention::Review).contains(&done.id) && s.requests().contains(&blocked)
         })
     });
+    assert_eq!(store(&view, cx, |s| s.requests()), vec![blocked]);
     assert_eq!(
-        store(&view, cx, |s| s.needs_you()),
-        vec![done.id, blocked],
-        "list order puts the finished one first"
+        store(&view, cx, |s| s.in_attention(Attention::Review)),
+        vec![done.id],
+        "the finished one is ready for review, never a request"
     );
     assert_eq!(
         store(&view, cx, |s| s.next_needing_attention(None)),
@@ -135,14 +147,14 @@ fn a_snooze_hides_the_session_until_its_attention_changes(cx: &mut TestAppContex
     let reporter = Reporter::new(id, "omp-extension", "omp");
     reporter.report(&daemon, Node::main("m").blocked());
     wait_until(cx, "the session to need the user", |cx| {
-        store(&view, cx, |s| s.needs_you().contains(&id))
+        store(&view, cx, |s| s.requests().contains(&id))
     });
 
     view.update(cx, |wb, cx| {
         wb.sessions()
             .update(cx, |store, cx| assert!(store.snooze(id, cx)));
     });
-    assert!(store(&view, cx, |s| s.needs_you().is_empty()));
+    assert!(store(&view, cx, |s| s.requests().is_empty()));
     assert_eq!(
         store(&view, cx, |s| s
             .agent_presentation()
@@ -159,7 +171,7 @@ fn a_snooze_hides_the_session_until_its_attention_changes(cx: &mut TestAppContex
     });
     reporter.report(&daemon, Node::main("m").blocked());
     wait_until(cx, "the session to need the user again", |cx| {
-        store(&view, cx, |s| s.needs_you().contains(&id))
+        store(&view, cx, |s| s.requests().contains(&id))
     });
 }
 
@@ -217,11 +229,11 @@ fn an_agent_nobody_reported_is_noted_and_track_as_makes_it_a_tracked_agent(
         Some(Group::Unconfirmed)
     );
 
-    // Once an integration says it is blocked, it is in *Needs you*.
+    // Once an integration says it is blocked, it is in *Requests*.
     Reporter::new(id, "omp-extension", "claude").report(&daemon, Node::main("m").blocked());
     wait_until(cx, "the agent to need the user", |cx| {
         store(&view, cx, |s| {
-            s.agent_presentation().get(id).map(|r| r.group) == Some(Group::NeedsYou)
+            s.agent_presentation().get(id).map(|r| r.group) == Some(Group::Requests)
         })
     });
 }

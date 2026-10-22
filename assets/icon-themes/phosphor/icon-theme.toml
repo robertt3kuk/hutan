@@ -81,6 +81,7 @@ root = true
 "status.approvals" = "hand-palm.svg"
 "state.question" = "question.svg"
 "state.review" = "eye.svg"
+"state.plan" = "list-checks.svg"
 "state.info" = "info.svg"
 "status.attention" = "warning.svg"
 "status.connected" = "plug.svg"

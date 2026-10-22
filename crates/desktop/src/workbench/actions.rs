@@ -591,7 +591,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Session: Stop…", StopSession),
         command("Session: Close…", CloseSession),
         command("Session: Copy Session ID", CopySessionId),
-        command("Session: Jump to Next That Needs You", JumpToNextAttention),
+        command("Session: Jump to Next Attention", JumpToNextAttention),
         command("Layout: Split Right", SplitRight),
         command("Layout: Split Down", SplitDown),
         command("Layout: Split Left", SplitLeft),

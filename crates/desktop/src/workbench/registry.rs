@@ -123,7 +123,7 @@ pub struct StatusContext<'a> {
     pub density: Density,
     /// Key hint of the palette action ("⌘⇧P"), from the live keymap.
     pub palette_hint: SharedString,
-    /// Key hint of the "jump to next that needs you" action.
+    /// Key hint of the "jump to next attention" action.
     pub attention_hint: SharedString,
     /// Key hint of each dock's toggle action, from the live keymap (empty when unbound).
     pub dock_hints: PerDock<SharedString>,
@@ -146,8 +146,8 @@ pub struct StatusData {
     pub sessions: usize,
     /// Name of the workspace the window shows.
     pub workspace: Option<String>,
-    /// Sessions that need the user.
-    pub needs_you: usize,
+    /// Sessions with a request waiting (the *Requests* group).
+    pub requests: usize,
     /// Permission requests of agent chats waiting for an answer.
     pub approvals: usize,
     /// Name of the terminal theme in effect.
@@ -243,7 +243,7 @@ pub struct StatusBarLayout {
 }
 
 impl Default for StatusBarLayout {
-    /// The quiet status bar of the built-in presets (CL-CHROME): what needs you and the
+    /// The quiet status bar of the built-in presets (CL-CHROME): the requests that wait and the
     /// connection while it is not up on the left, the editor's items while a file tab has
     /// focus and the palette's key on the right. The other items (`workspace`, `sessions`,
     /// `approvals`, `density`, `theme`, the dock buttons) stay registered for presets that

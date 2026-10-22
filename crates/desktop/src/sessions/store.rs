@@ -44,8 +44,8 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::agents::{self, AgentAttentionChanged, AgentBadge};
 use super::attention::{
-    AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread, classify,
-    present,
+    Attention, AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread,
+    classify, present,
 };
 use super::models::{self, ModelNames};
 use super::presentation::{self, AgentPresentation, Facts};
@@ -1078,14 +1078,14 @@ impl SessionsStore {
         self.dir_watches.len()
     }
 
-    /// How many sessions of each workspace need the user.
-    pub fn needs_you_by_workspace(&self) -> HashMap<WorkspaceId, usize> {
+    /// How many sessions of each workspace have a request waiting.
+    pub fn requests_by_workspace(&self) -> HashMap<WorkspaceId, usize> {
         let mut counts = HashMap::new();
         for session in self
             .state
             .sessions
             .iter()
-            .filter(|s| self.presentation(s).needs_you)
+            .filter(|s| self.presentation(s).is_request())
         {
             *counts.entry(session.workspace_id).or_insert(0) += 1;
         }
@@ -1104,16 +1104,17 @@ impl SessionsStore {
         self.attention.unread(id)
     }
 
-    /// How `info` shows up: its own state, except that a live session in which an agent of the
-    /// observation tree is blocked always needs the user, whatever the session summary says, and
-    /// that the session of a task waiting for review is a soft *Needs you* item (accent, never
-    /// a badge: [`classify`] leaves accent alone) until the user has seen it. Seen, it is its
-    /// own state again (*idle*), with [`changes_to_review`](Self::changes_to_review) as a link
-    /// beside it, never a state of its own. A turn that runs (or is stopping) is *working*,
-    /// whatever waits.
+    /// How `info` shows up: its own state, except that a live session whose main agent is
+    /// blocked in the observation tree always has a request waiting, whatever the session
+    /// summary says (blocked subagents alone never make one), and that the session of a task
+    /// waiting for review is a soft *Ready for review* item (accent, never a badge:
+    /// [`classify`] leaves it alone) until the user has seen it. Seen, it is its own state
+    /// again (*idle*), with [`changes_to_review`](Self::changes_to_review) as a link beside it,
+    /// never a state of its own. A turn that runs (or is stopping) is *working*, whatever
+    /// waits.
     pub fn presentation(&self, info: &SessionInfo) -> Presentation {
         let presentation = self.raw_presentation(info);
-        if presentation.needs_you && self.attention.snoozed_key(info.id).is_some() {
+        if presentation.attention.is_some() && self.attention.snoozed_key(info.id).is_some() {
             return Presentation {
                 detail: if presentation.detail.is_empty() {
                     "snoozed".to_owned()
@@ -1122,7 +1123,7 @@ impl SessionsStore {
                 },
                 tone: Tone::Muted,
                 filled: false,
-                needs_you: false,
+                attention: None,
                 ..presentation
             };
         }
@@ -1131,25 +1132,38 @@ impl SessionsStore {
 
     /// [`presentation`](Self::presentation) before a snooze is applied.
     fn raw_presentation(&self, info: &SessionInfo) -> Presentation {
-        let presentation = present(info, self.attention.unread(info.id), &self.model_names);
-        if !presentation.needs_you
+        let mut presentation = present(info, self.attention.unread(info.id), &self.model_names);
+        if presentation.attention.is_none()
             && info.state.is_live()
             && let Some(tree) = self.state.trees.get(&info.id)
         {
             let blocked = agents::blocked_nodes(tree);
-            if !blocked.is_empty() {
+            if blocked.iter().any(|node| node.main) {
                 return agents::blocked_presentation(&blocked);
             }
         }
         let working = Self::working(info, &presentation);
-        if !presentation.needs_you && !working && self.review_seen(info.id) == Some(false) {
+        if presentation.attention.is_none() && !working && self.review_seen(info.id) == Some(false)
+        {
             return Presentation {
                 label: "review".into(),
                 detail: "awaiting review".into(),
                 tone: Tone::Accent,
                 filled: true,
-                needs_you: true,
+                attention: Some(Attention::Review),
             };
+        }
+        // A plan that waits is a request of its own kind: it says so.
+        if presentation.label == "question"
+            && presentation.is_request()
+            && self
+                .state
+                .questions
+                .iter()
+                .filter(|q| q.session_id == info.id)
+                .all(|q| presentation::is_plan_title(&q.spec.title))
+        {
+            presentation.label = "plan".into();
         }
         presentation
     }
@@ -1294,14 +1308,20 @@ impl SessionsStore {
         self.revision
     }
 
-    /// Sessions that need the user, in daemon order.
-    pub fn needs_you(&self) -> Vec<SessionId> {
+    /// Sessions in the group `attention`, in daemon order.
+    pub fn in_attention(&self, attention: Attention) -> Vec<SessionId> {
         self.state
             .sessions
             .iter()
-            .filter(|s| self.presentation(s).needs_you)
+            .filter(|s| self.presentation(s).attention == Some(attention))
             .map(|s| s.id)
             .collect()
+    }
+
+    /// Sessions with a request waiting (an approval, a question, a plan), in daemon order: the
+    /// only ones that block an agent, and what the status bar counts.
+    pub fn requests(&self) -> Vec<SessionId> {
+        self.in_attention(Attention::Request)
     }
 
     /// The sessions that need the user for the menu bar item and the Dock badge: blocked
@@ -1340,16 +1360,21 @@ impl SessionsStore {
             .collect()
     }
 
-    /// The session after `current` that needs the user, most urgent first: a request or a
-    /// question that waits, then a blocked agent, a failure, a review, and last what is only
-    /// done or marked unread; sessions of the same urgency in list order. Wraps around.
+    /// The session after `current` that wants the user, most urgent first: a request that
+    /// waits, then a failure, a review, and last what is only finished or marked unread;
+    /// sessions of the same urgency in list order. Wraps around.
     pub fn next_needing_attention(&self, current: Option<SessionId>) -> Option<SessionId> {
         let mut needing: Vec<(u8, usize, SessionId)> = self
             .state
             .sessions
             .iter()
             .enumerate()
-            .filter(|(_, s)| self.presentation(s).needs_you)
+            .filter(|(_, s)| {
+                let presentation = self.presentation(s);
+                // A failure the user has seen stays in its group but is not worth a jump.
+                presentation.attention.is_some()
+                    && (presentation.attention != Some(Attention::Failed) || presentation.filled)
+            })
             .map(|(at, s)| (self.urgency(s), at, s.id))
             .collect();
         needing.sort_unstable();
@@ -1361,20 +1386,19 @@ impl SessionsStore {
         next.map(|(_, _, id)| *id)
     }
 
-    /// How urgently `info` wants the user: 0 a request or question waits, 1 an agent is
-    /// blocked, 2 it failed, 3 its work waits for review, 4 it is done or marked unread.
+    /// How urgently `info` wants the user: 0 a request waits, 1 it failed, 2 its work waits for
+    /// review, 3 it is finished or marked unread.
     fn urgency(&self, info: &SessionInfo) -> u8 {
         let waits = self.state.approvals.iter().any(|a| a.session_id == info.id)
             || self.state.questions.iter().any(|q| q.session_id == info.id);
         if waits {
             return 0;
         }
-        let presentation = self.presentation(info);
-        match presentation.tone {
-            Tone::Warning => 1,
-            Tone::Error => 2,
-            _ if presentation.label == "review" => 3,
-            _ => 4,
+        match self.presentation(info).attention {
+            Some(Attention::Request) => 0,
+            Some(Attention::Failed) => 1,
+            _ if self.presentation(info).label == "review" => 2,
+            _ => 3,
         }
     }
 
@@ -1549,19 +1573,24 @@ impl SessionsStore {
         self.focus_task = Some((generation, task));
     }
 
-    /// The user looked at `session` (it is the one on screen): what is unread about it is read.
-    /// A session just marked unread while it is the one on screen stays marked until the focus
-    /// has gone elsewhere and come back.
+    /// The user looked at `session` (it is the one on screen): finished work, marks and the work
+    /// it left for review are seen; a failure stays listed in *Failed*, no longer a badge, until
+    /// a new run starts or *Mark as read*. A session just marked unread while it is the one on
+    /// screen stays marked until the focus has gone elsewhere and come back.
     pub fn mark_looked_at(&mut self, session: SessionId, cx: &mut Context<Self>) {
         if self.hold_unread == Some(session) {
             return;
         }
-        self.mark_read(session, cx);
+        let read = self.attention.look_at(session);
+        if self.see_review(session) || read {
+            self.changed(StoreChanged::ATTENTION, cx);
+        }
+        self.ack_surfaced(session, cx);
     }
 
-    /// *Mark as read*: what is unread about `session` is read, whether or not it is on screen,
-    /// and the work it left for review is seen. The notification intents raised for it are
-    /// acknowledged: their banners go.
+    /// *Mark as read*: what is unread about `session` is read and a failure is dismissed,
+    /// whether or not it is on screen, and the work it left for review is seen. The
+    /// notification intents raised for it are acknowledged: their banners go.
     pub fn mark_read(&mut self, session: SessionId, cx: &mut Context<Self>) {
         if self.hold_unread == Some(session) {
             self.hold_unread = None;
@@ -1669,7 +1698,7 @@ impl SessionsStore {
         let Some(info) = self.session(session).cloned() else {
             return false;
         };
-        if !self.raw_presentation(&info).needs_you {
+        if self.raw_presentation(&info).attention.is_none() {
             return false;
         }
         let key = self.attention_key(&info);
@@ -1773,7 +1802,7 @@ impl SessionsStore {
     /// *Track as <agent>*: reports the agent found in terminal `session` (`agent.report`, source
     /// `hutan-desktop`, with the pid, without a state: the agent shows as *State unavailable*
     /// until a hook or an extension says more, never as idle). From then on the session is an
-    /// agent session: it is in the Agents page and a blocked report puts it in *Needs you*.
+    /// agent session: it is in the Agents page and a blocked report puts it in *Requests*.
     pub fn track_agent(
         &mut self,
         session: SessionId,

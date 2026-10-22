@@ -39,7 +39,7 @@ pub use assistant::{
     AssistantPanel, Choice as AssistantChoice, Failure, MawasMode, Opened, ScopeEntry, ScopeKey,
 };
 pub use assistant_rail::{
-    NeedsKind, NeedsRow, RailOption, Section as TodaySection, Today, WorkingRow, today,
+    RailOption, Section as TodaySection, Today, TodayKind, TodayRow, WorkingRow, today,
 };
 pub use changes::{
     ChangesPanel, Checkouts as ChangesCheckouts, Counts as ChangesCounts,

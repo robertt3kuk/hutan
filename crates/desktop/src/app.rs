@@ -161,7 +161,7 @@ pub fn menus(presets: &[LayoutPreset], current: &str, daemon_menu: &DaemonMenu) 
             MenuItem::action("Stop…", actions::StopSession),
             MenuItem::action("Copy Session ID", actions::CopySessionId),
             MenuItem::separator(),
-            MenuItem::action("Jump to Next That Needs You", actions::JumpToNextAttention),
+            MenuItem::action("Jump to Next Attention", actions::JumpToNextAttention),
         ]),
         Menu::new("Workspace").items([
             MenuItem::action("Open Project…", actions::OpenProject),

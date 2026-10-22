@@ -361,12 +361,12 @@ fn a_request_is_answered_only_by_its_option_button_never_by_return_on_the_row(
     };
     wait_until(cx, "the approval", |cx| pending(&view, cx) == 1);
 
-    // The page lists the chat under Needs you with its request expanded.
+    // The page lists the chat under Requests with its request expanded.
     click(&view, cx, Region::Nav("agents"));
     let page = page(&view, cx);
     let p = page.clone();
     wait_until(cx, "the chat on the page", move |cx| {
-        p.read_with(cx, |p, _| p.listed_groups().contains(&Group::NeedsYou))
+        p.read_with(cx, |p, _| p.listed_groups().contains(&Group::Requests))
     });
     page.update(cx, |p, cx| {
         p.apply_request(
@@ -485,7 +485,7 @@ fn a_page_that_is_not_on_screen_does_no_work_when_the_store_changes(cx: &mut Tes
 
 /// A chat that waits for a permission: one pending approval at the daemon, shown on the page.
 #[gpui::test]
-fn a_session_waiting_for_a_request_says_needs_you_and_never_working(cx: &mut TestAppContext) {
+fn a_session_waiting_for_a_request_says_approval_and_never_working(cx: &mut TestAppContext) {
     let env = ChatEnv::new();
     let daemon = TestDaemon::start_with_codex(env.fixture("approval-touch"));
     let info = daemon.create_chat(&env.cwd());
@@ -505,8 +505,8 @@ fn a_session_waiting_for_a_request_says_needs_you_and_never_working(cx: &mut Tes
     click(&view, cx, Region::Nav("agents"));
     let page = page(&view, cx);
     let p = page.clone();
-    wait_until(cx, "the chat under Needs you", move |cx| {
-        p.read_with(cx, |p, _| p.listed_groups().contains(&Group::NeedsYou))
+    wait_until(cx, "the chat under Requests", move |cx| {
+        p.read_with(cx, |p, _| p.listed_groups().contains(&Group::Requests))
     });
     // One state word for the record, and it is the attention, not the work underneath.
     let record = view
@@ -518,9 +518,9 @@ fn a_session_waiting_for_a_request_says_needs_you_and_never_working(cx: &mut Tes
                 .cloned()
         })
         .expect("the record");
-    assert_eq!(agents_text::state_word(&record), "Needs you · approval");
+    assert_eq!(agents_text::state_word(&record), "Approval");
     let (glyph, tone) = agents_text::lead(&record);
-    assert_eq!(glyph.id(), "state.blocked");
+    assert_eq!(glyph.id(), "state.approval");
     assert_eq!(tone, hutan_desktop::sessions::Tone::Warning);
     let detail = agents_text::reason_detail(&record).expect("the reason");
     assert!(!detail.starts_with("Permission:"), "{detail}");
@@ -528,7 +528,7 @@ fn a_session_waiting_for_a_request_says_needs_you_and_never_working(cx: &mut Tes
         !page
             .read_with(cx, |p, _| p.listed_groups())
             .contains(&Group::Working),
-        "no Working group beside Needs you for the same session"
+        "no Working group beside Requests for the same session"
     );
     assert!(region(&view, cx, Region::AgentRow(info.id)).is_some());
     // The panel's head says the same word.
@@ -540,7 +540,7 @@ fn a_session_waiting_for_a_request_says_needs_you_and_never_working(cx: &mut Tes
         .read_with(cx, |wb, _| wb.panel::<AgentsPanel>("agents"))
         .expect("the panel");
     let sections = panel.read_with(cx, |p, cx| p.sections(0, cx));
-    assert_eq!(sections[0].word, "Needs you · approval");
+    assert_eq!(sections[0].word, "Approval");
     assert_eq!(sections[0].detail.as_deref(), Some(detail.as_str()));
 }
 

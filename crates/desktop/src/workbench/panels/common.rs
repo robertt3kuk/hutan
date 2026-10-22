@@ -34,7 +34,7 @@ pub fn tone_color(theme: &Theme, tone: Tone) -> Hsla {
     }
 }
 
-/// The colour of a state word (`Needs you · approval`, `Completed`): the state's own colour for
+/// The colour of a state word (`Approval`, `Completed`): the state's own colour for
 /// warning, error and success; `muted` for working and idle, because the accent is spent on the
 /// working glyph only; `fg` on a selected row, where state colours are not AA in the light pack
 /// and only the glyph keeps its colour.

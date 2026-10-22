@@ -14,7 +14,7 @@ use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::{SessionId, WorkspaceId};
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::model::{DockPosition, ItemRef, PanelId};
-use hutan_desktop::workbench::panels::{AssistantPanel, MawasMode, NeedsKind};
+use hutan_desktop::workbench::panels::{AssistantPanel, MawasMode, TodayKind};
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_gateway::testing::Reply;
 use hutan_protocol::daemon_settings::DaemonSettings;
@@ -75,10 +75,10 @@ fn title_of(env: &AssistantEnv, session: SessionId) -> String {
     env.daemon.session(session).title
 }
 
-/// Waits until the rail lists `count` rows under Needs you.
+/// Waits until the rail lists `count` rows under Requests.
 fn wait_needs(panel: &Entity<AssistantPanel>, cx: &mut VisualTestContext, count: usize) {
-    wait_until(cx, &format!("{count} request(s) under Needs you"), |cx| {
-        panel.read_with(cx, |p, cx| p.today(cx).needs_you.len() == count)
+    wait_until(cx, &format!("{count} request(s) under Requests"), |cx| {
+        panel.read_with(cx, |p, cx| p.today(cx).requests.len() == count)
     });
 }
 
@@ -228,8 +228,8 @@ fn today_lists_mawas_approvals_first_and_answering_one_there_runs_the_request(
     let target = env.daemon.sh("sleep 600");
     let other = reported_agent(&env);
     assert!(
-        panel.read_with(cx, |p, cx| p.today(cx).needs_you.is_empty()),
-        "nothing needs you yet"
+        panel.read_with(cx, |p, cx| p.today(cx).requests.is_empty()),
+        "no request yet"
     );
 
     // Another agent asks first, then Mawas.
@@ -242,14 +242,14 @@ fn today_lists_mawas_approvals_first_and_answering_one_there_runs_the_request(
         .call_from_in_background::<SessionResult>(mawas, rename_request(target.id, "mawas"));
     wait_needs(&panel, cx, 2);
     let today = panel.read_with(cx, |p, cx| p.today(cx));
-    match (&today.needs_you[0].kind, &today.needs_you[1].kind) {
+    match (&today.requests[0].kind, &today.requests[1].kind) {
         (
-            NeedsKind::Approval {
+            TodayKind::Approval {
                 mawas: first,
                 options,
                 ..
             },
-            NeedsKind::Approval { mawas: second, .. },
+            TodayKind::Approval { mawas: second, .. },
         ) => {
             assert!(*first && !*second, "Mawas's request is listed first");
             let ids: Vec<&str> = options.iter().map(|o| o.id.as_str()).collect();
@@ -262,11 +262,11 @@ fn today_lists_mawas_approvals_first_and_answering_one_there_runs_the_request(
         other => panic!("two approvals expected: {other:?}"),
     }
     assert!(
-        today.needs_you[0]
+        today.requests[0]
             .title
             .starts_with("Mawas asks Hutan to rename"),
         "{}",
-        today.needs_you[0].title
+        today.requests[0].title
     );
     // It is drawn: the row and its options, and Mawas's own above the conversation, where the
     // transcript cannot hold what Hutan's gate asks.
@@ -300,8 +300,8 @@ fn today_lists_mawas_approvals_first_and_answering_one_there_runs_the_request(
     // The other agent's request stays, with the same options; deny it from Today as well.
     let today = panel.read_with(cx, |p, cx| p.today(cx));
     assert!(matches!(
-        today.needs_you[0].kind,
-        NeedsKind::Approval { mawas: false, .. }
+        today.requests[0].kind,
+        TodayKind::Approval { mawas: false, .. }
     ));
     draw(cx);
     // Deny is the third option of the other agent's request (allow once, allow for the

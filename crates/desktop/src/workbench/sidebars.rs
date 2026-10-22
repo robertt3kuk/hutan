@@ -52,7 +52,7 @@ pub struct NavEntry {
     pub label: SharedString,
     /// Stable semantic id, never a vendor filename or a text fallback.
     pub icon: Icon,
-    /// A count shown as a pill (the agents that need you).
+    /// A count shown as a pill (the agents with a request waiting).
     pub badge: Option<usize>,
     pub target: NavTarget,
     /// The page the row stands for is the one showing.
@@ -134,8 +134,8 @@ impl Workbench {
             key: "agents".to_owned(),
             label: "Agents".into(),
             icon: Icon::NavAgents,
-            // Agent sessions that need you: the page's own count, not every session's.
-            badge: Some(self.sessions.read(cx).agent_presentation().needs_you()).filter(|n| *n > 0),
+            // Agent sessions with a request waiting: the page's own count, not every session's.
+            badge: Some(self.sessions.read(cx).agent_presentation().requests()).filter(|n| *n > 0),
             target: NavTarget::Agents,
             selected: self.state.active_center_item().as_ref()
                 == Some(&ItemRef::panel(super::model::AGENTS_PAGE)),

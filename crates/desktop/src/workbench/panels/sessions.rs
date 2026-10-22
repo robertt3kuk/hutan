@@ -1,6 +1,6 @@
 //! The `sessions` panel ("Projects"): user workspaces → their projects → sessions, the projects
 //! in no workspace, then Home (or a flat list of projects, `sidebar.organize`); sorted, pinned,
-//! filtered and searched; "Needs you" on top. A session row is one line (state lane, kind icon,
+//! filtered and searched; the groups of attention (Requests, Failed, Ready for review) on top. A session row is one line (state lane, kind icon,
 //! title, age, hover ×); a second line exists only when it says something new: the placement
 //! badge off the main checkout, the project of a row away from its project row, a folder the
 //! session left its checkout for. Workspaces and projects are managed here: the "+" menu, drag a project onto a
@@ -9,7 +9,7 @@
 
 use crate::theme::DensityExt as _;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,10 +28,10 @@ use super::common::{
     session_icon, state_dot, time_tooltip,
 };
 use crate::icons::{Icon, icon};
-use crate::sessions::StoreChanged;
 use crate::sessions::tree::{
     self, Node, ProjectNode, Subtitle, SubtitleInputs, folder_label, session_folder,
 };
+use crate::sessions::{Attention, StoreChanged};
 use crate::settings::{
     GroupBy, SessionsPanelSettings, SidebarSettings, WorkspaceSort, WorkspacesSettings,
 };
@@ -88,7 +88,7 @@ pub struct DraggedProject {
 /// What a listed row is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
-    /// "Needs you · 2", a state label.
+    /// "Requests · 2", a state label.
     Section,
     Workspace,
     Project,
@@ -118,7 +118,7 @@ pub struct SidebarRow {
     pub pinned: bool,
     /// `3` or `1/3` (live/total) on a workspace, project or Home row.
     pub count: Option<String>,
-    /// Sessions of the row (and under it) that need the user.
+    /// Sessions of the row (and under it) with a request waiting.
     pub needs: usize,
     /// The row of the container or project the window shows.
     pub active: bool,
@@ -135,7 +135,7 @@ pub struct SidebarRow {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum SectionKey {
-    NeedsYou,
+    Attention(Attention),
     All,
     State(String),
 }
@@ -740,8 +740,11 @@ impl SessionsPanel {
         let ws_settings = self.env.settings.get::<WorkspacesSettings>();
         let organize = self.env.settings.get::<SidebarSettings>().organize;
         let (active, project) = (store.active_workspace_id(), store.active_project_id());
-        let needs: Vec<SessionId> = store.needs_you();
-        let attention = store.needs_you_by_workspace();
+        let needs: HashMap<Attention, Vec<SessionId>> = Attention::ALL
+            .into_iter()
+            .map(|group| (group, store.in_attention(group)))
+            .collect();
+        let attention = store.requests_by_workspace();
         // A session is listed by the search when it matches itself or sits in a project or
         // workspace whose name or folder does.
         let listed = |s: &SessionInfo| {
@@ -756,7 +759,7 @@ impl SessionsPanel {
                 })
         };
         // The second line of a row (`tree::subtitle`): `away` is a row that is not under its
-        // project row (Needs you, the flat lists).
+        // project row (the groups of attention, the flat lists).
         let has = |field: &str| settings.row.iter().any(|f| f == field);
         let (show_folder, show_placement) = (has("folder"), has("placement"));
         let subtitle_of = |info: &SessionInfo, away: bool| {
@@ -776,12 +779,31 @@ impl SessionsPanel {
             )
         };
         let mut entries = Vec::new();
-        let (needing, rest): (Vec<&SessionInfo>, Vec<&SessionInfo>) = if settings.needs_you {
-            store
+        // The groups of attention on top, each listing the sessions that are in it (a search
+        // narrows them like every other row).
+        let (needing, rest): (Vec<(Attention, Vec<&SessionInfo>)>, Vec<&SessionInfo>) = if settings
+            .needs_you
+        {
+            let groups = Attention::ALL
+                .into_iter()
+                .map(|group| {
+                    let rows: Vec<&SessionInfo> = store
+                        .sessions()
+                        .iter()
+                        .filter(|s| {
+                            listed(s) && needs.get(&group).is_some_and(|ids| ids.contains(&s.id))
+                        })
+                        .collect();
+                    (group, rows)
+                })
+                .filter(|(_, rows)| !rows.is_empty())
+                .collect();
+            let rest = store
                 .sessions()
                 .iter()
-                .filter(|s| listed(s))
-                .partition(|s| needs.contains(&s.id))
+                .filter(|s| listed(s) && !needs.values().any(|ids| ids.contains(&s.id)))
+                .collect();
+            (groups, rest)
         } else {
             (
                 Vec::new(),
@@ -789,18 +811,18 @@ impl SessionsPanel {
             )
         };
         // The sessions the tree decides about itself (it knows which containers the search
-        // matches); the ones "Needs you" took are not among them.
+        // matches); the ones the groups of attention took are not among them.
         let in_tree: Vec<&SessionInfo> = store
             .sessions()
             .iter()
-            .filter(|s| !(settings.needs_you && needs.contains(&s.id)))
+            .filter(|s| !(settings.needs_you && needs.values().any(|ids| ids.contains(&s.id))))
             .collect();
-        if !needing.is_empty() {
+        for (group, rows) in needing {
             entries.push(Entry::Section {
-                key: SectionKey::NeedsYou,
-                title: "Needs you".to_owned(),
+                key: SectionKey::Attention(group),
+                title: format!("{} · {}", group.label(), rows.len()),
             });
-            entries.extend(needing.into_iter().map(|info| {
+            entries.extend(rows.into_iter().map(|info| {
                 Entry::Session(Box::new(SessionRow {
                     subtitle: subtitle_of(info, true),
                     info: info.clone(),
@@ -1029,7 +1051,11 @@ impl SessionsPanel {
 /// The word of a session's state when its lane draws a glyph; an idle session draws nothing
 /// (the hollow circle every idle row used to start with said nothing).
 fn lane_word(presentation: &crate::sessions::Presentation) -> Option<String> {
-    (presentation.label != "idle").then(|| presentation.label.clone())
+    (presentation.label != "idle").then(|| {
+        presentation
+            .state_word()
+            .map_or_else(|| presentation.label.clone(), str::to_owned)
+    })
 }
 
 /// The sidebar's text-only empty state: one muted line and one ghost button.
@@ -1568,7 +1594,7 @@ impl SessionsPanel {
                 )
             })
             .child(name)
-            // The Needs you group above already says which sessions wait: the project row only
+            // The Requests group above already says which sessions wait: the project row only
             // repeats it while that group is off.
             .when(
                 row.needs > 0 && !self.env.settings.get::<SessionsPanelSettings>().needs_you,
@@ -1639,14 +1665,20 @@ impl SessionsPanel {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let presentation = self.env.sessions.read(cx).presentation(info);
-        let unread = self.env.sessions.read(cx).unread(info.id).is_some();
+        // A failure the user has looked at stays listed but no longer wears the unread dot.
+        let unread = self
+            .env
+            .sessions
+            .read(cx)
+            .unread(info.id)
+            .is_some_and(crate::sessions::Unread::is_unseen);
         let hover = card_hover(&theme);
         let id = info.id.to_string();
         let open_id = id.clone();
         let menu_id = id.clone();
         let mut badge = self.env.sessions.read(cx).agent_badge(info.id);
-        if presentation.needs_you {
-            // The lane already says the session needs you; its ▲ does not say it twice.
+        if presentation.is_request() {
+            // The lane already says a request waits; its ▲ does not say it twice.
             badge.blocked.clear();
         }
         let mut badge = agent_badge(
@@ -1730,10 +1762,11 @@ impl SessionsPanel {
         for field in &settings.row {
             line = match field.as_str() {
                 "state" => {
+                    let word = lane.clone().unwrap_or_else(|| presentation.label.clone());
                     let tip: SharedString = if presentation.detail.is_empty() {
-                        presentation.label.clone().into()
+                        word.into()
                     } else {
-                        format!("{} · {}", presentation.label, presentation.detail).into()
+                        format!("{word} · {}", presentation.detail).into()
                     };
                     line.child(
                         // The 16 px state lane: the state's glyph in its tone, nothing for an

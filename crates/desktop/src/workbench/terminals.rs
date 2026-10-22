@@ -766,13 +766,14 @@ impl Workbench {
         }
     }
 
-    /// Focuses the next session that needs the user.
+    /// Focuses the next session that wants the user: a request first, then a failure, then work
+    /// to review.
     pub fn jump_to_next_attention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = self.focused_session();
         let next = self.sessions.read(cx).next_needing_attention(current);
         match next {
             Some(session) => self.open_session(session, window, cx),
-            None => self.set_notice("Nothing needs you", cx),
+            None => self.set_notice("No requests, failures or work to review", cx),
         }
     }
 
@@ -785,9 +786,9 @@ impl Workbench {
         let store = self.sessions.read(cx);
         let unread = store.unread(session).is_some();
         let snoozed = store.is_snoozed(session);
-        let needs_you = store
+        let wants_you = store
             .session(session)
-            .is_some_and(|info| store.presentation(info).needs_you);
+            .is_some_and(|info| store.presentation(info).attention.is_some());
         let read = if unread {
             Self::entry("Mark as read", move |this, _, cx| {
                 this.sessions
@@ -805,7 +806,7 @@ impl Workbench {
                 this.sessions
                     .update(cx, |store, cx| store.unsnooze(session, cx));
             })
-        } else if needs_you {
+        } else if wants_you {
             Self::entry("Snooze until it changes", move |this, _, cx| {
                 this.sessions.update(cx, |store, cx| {
                     store.snooze(session, cx);
@@ -813,7 +814,7 @@ impl Workbench {
             })
         } else {
             MenuEntry {
-                label: "Snooze until it changes (nothing needs you here)".into(),
+                label: "Snooze until it changes (nothing waits for you here)".into(),
                 disabled: true,
                 ..Self::entry("Snooze until it changes", |_, _, _| {})
             }
@@ -1203,7 +1204,7 @@ impl Workbench {
     }
 
     /// A quiet line at the foot of a terminal in which a known agent (`claude`, `codex`, `omp`)
-    /// runs without having reported: Hutan cannot tell what it does, so it is not in *Needs you*.
+    /// runs without having reported: Hutan cannot tell what it does, so it is not in *Requests*.
     /// *Track as <agent>* reports it through `agent.report` (`UX-ATTENTION-CONTROLS`).
     fn render_terminal_untracked(
         &mut self,

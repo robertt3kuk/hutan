@@ -874,7 +874,7 @@ impl Workbench {
         };
         let sessions: Vec<&hutan_protocol::messages::SessionInfo> =
             store.sessions().iter().collect();
-        let needs = store.needs_you_by_workspace();
+        let needs = store.requests_by_workspace();
         let tree = tree::build(&tree::Inputs {
             workspaces: store.workspaces(),
             sessions: &sessions,

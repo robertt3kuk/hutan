@@ -143,7 +143,7 @@ const FIELDS: &[FieldText] = &[
         "app",
         "ask_notifications",
         "Offer notifications",
-        "Shows a one-line offer once, the first time something needs you (an approval, a finished run) while Hutan is not the frontmost app. The system's permission prompt only appears when you press “Notify me”. Off after you answered or dismissed it.",
+        "Shows a one-line offer once, the first time something wants you (an approval, a finished run) while Hutan is not the frontmost app. The system's permission prompt only appears when you press “Notify me”. Off after you answered or dismissed it.",
     ),
     field(
         "app",
@@ -162,13 +162,13 @@ const FIELDS: &[FieldText] = &[
         "app",
         "menu_bar",
         "Show the menu bar item",
-        "A menu bar icon with the daemon's state, how many sessions need you, and a menu to jump to them. While no Hutan window is connected, the daemon shows its own icon whatever this says.",
+        "A menu bar icon with the daemon's state, how many sessions have a request waiting or an unseen failure, and a menu to jump to them. While no Hutan window is connected, the daemon shows its own icon whatever this says.",
     ),
     field(
         "app",
         "dock_badge",
         "Show a badge on the Dock icon",
-        "Shows how many sessions need you (blocked, waiting for an approval, failed or unread) on the Dock icon.",
+        "Shows how many sessions have a request waiting (an approval, a question, a plan) or a failure you have not seen on the Dock icon. Finished work is never counted.",
     ),
     // ---- keyboard ----
     choice(
@@ -335,8 +335,8 @@ const FIELDS: &[FieldText] = &[
     field(
         "panels.sessions",
         "needs_you",
-        "“Needs you” section",
-        "Shows a section on top with the sessions that are waiting for you.",
+        "Requests, Failed and Ready for review groups",
+        "Shows the groups on top of the sidebar: Requests (an approval, a question or a plan waits for you), Failed and Ready for review (finished work you have not seen yet).",
     ),
     choice(
         "panels.sessions",
@@ -726,7 +726,7 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "daemon",
         "notify.enabled",
         "Notifications",
-        "Raise a notification when an agent needs you or finishes something. Off, nothing is raised, in Hutan or in the notification centre.",
+        "Raise a notification when an agent asks you something, fails or finishes something. Off, nothing is raised, in Hutan or in the notification centre.",
     ),
     field(
         "daemon",

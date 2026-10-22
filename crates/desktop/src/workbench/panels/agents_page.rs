@@ -1,6 +1,6 @@
 //! The Agents page (AG-1, `docs/spikes/2026-10-20-chrome-v3.md` § 2): one retained tab of the
 //! center that answers "find the agent that needs a decision, understand why, and return to its
-//! actual work". An attention-first ledger: the groups **Needs you**, **Working**,
+//! actual work". An attention-first ledger: the groups **Requests**, **Failed**, **Ready for review**, **Working**,
 //! **Unconfirmed**, **Idle** and **Finished** (folded), one 64 pt row per agent session with its
 //! reason and its safe next action, subagents on disclosure.
 //!
@@ -1461,10 +1461,9 @@ impl AgentsPage {
             Row::Group {
                 group,
                 count,
-                requests,
                 foldable,
                 open,
-            } => self.group_row(group, count, requests, foldable, open, selected, look, cx),
+            } => self.group_row(group, count, foldable, open, selected, look, cx),
             Row::Workspace { name, count, .. } => self.workspace_row(&name, count, look),
             Row::Agent { session } => self.agent_row(session, selected, focused, look, cx),
             Row::Child { session, node } => self.child_row(session, &node, ix, selected, look, cx),
@@ -1482,7 +1481,6 @@ impl AgentsPage {
         &self,
         group: Group,
         count: usize,
-        requests: usize,
         foldable: bool,
         open: bool,
         selected: bool,
@@ -1512,7 +1510,7 @@ impl AgentsPage {
                     }))
             })
             .child(ui::section_label(
-                agents_text::group_label(group, count, requests),
+                agents_text::group_label(group, count),
                 &theme,
                 &tokens,
             ))

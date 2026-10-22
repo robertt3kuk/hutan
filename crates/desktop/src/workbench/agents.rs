@@ -884,7 +884,7 @@ impl Workbench {
         let inspector = super::model::PanelId::new("inspector");
         // A right panel the user (or a narrow window) collapsed to its rail stays collapsed and
         // keeps the panel it remembers: the Requests icon, with its count, is on the rail while
-        // the request waits, and the status bar's "needs you" says it once (CL-CHROME: no second
+        // the request waits, and the status bar's "N requests" says it once (CL-CHROME: no second
         // sentence, no change of the remembered panel).
         let on_rail = self
             .state

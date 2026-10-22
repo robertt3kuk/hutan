@@ -109,6 +109,7 @@ catalog! {
     StatusApprovals => ("status.approvals", "hand-palm.svg"),
     StateQuestion => ("state.question", "question.svg"),
     StateReview => ("state.review", "eye.svg"),
+    StatePlan => ("state.plan", "list-checks.svg"),
     StateInfo => ("state.info", "info.svg"),
     StatusAttention => ("status.attention", "warning.svg"),
     StatusConnected => ("status.connected", "plug.svg"),

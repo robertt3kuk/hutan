@@ -409,14 +409,16 @@ impl Workbench {
         {
             return;
         }
-        let needs_you = {
+        let wanted = {
             let store = self.sessions.read(cx);
             store.synced()
-                && (!store.needs_you().is_empty()
+                && (crate::sessions::Attention::ALL
+                    .into_iter()
+                    .any(|attention| !store.in_attention(attention).is_empty())
                     || !store.approvals().is_empty()
                     || !store.questions().is_empty())
         };
-        if needs_you {
+        if wanted {
             self.first_run.notify = NotifyOffer::Offered;
             cx.notify();
         }
@@ -586,7 +588,7 @@ impl Workbench {
             .text_color(theme.muted)
             .child(SharedString::from(format!(
                 "Hooks let Hutan see what {name} does in a terminal, so it can tell you when it \
-                 needs you. Writes {writes}: {place}. Only Hutan's own entries; changed files \
+                 asks you something. Writes {writes}: {place}. Only Hutan's own entries; changed files \
                  are backed up first.{home}"
             )))
             .into_any_element();

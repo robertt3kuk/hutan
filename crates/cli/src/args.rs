@@ -143,7 +143,7 @@ pub enum Command {
     /// Answer a question of an agent (`hutan answer <id> field=value ...`), or decline or cancel
     /// it (see `hutan questions`)
     Answer(AnswerArgs),
-    /// Notification intents the daemon raises when something needs you: list, acknowledge, act
+    /// Notification intents the daemon raises when something wants you: list, acknowledge, act
     /// on, or watch them
     #[command(subcommand)]
     Notify(NotifyCommand),

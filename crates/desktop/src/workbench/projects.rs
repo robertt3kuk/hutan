@@ -521,7 +521,7 @@ impl Workbench {
         order::sort(
             store.workspaces(),
             settings.sort,
-            &store.needs_you_by_workspace(),
+            &store.requests_by_workspace(),
         )
         .into_iter()
         .filter(|w| w.kind == WorkspaceKind::Workspace)

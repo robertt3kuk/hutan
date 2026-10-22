@@ -379,9 +379,7 @@ fn offer(view: &Entity<Workbench>, cx: &VisualTestContext) -> NotifyOffer {
 }
 
 #[gpui::test]
-fn the_first_thing_that_needs_you_while_hutan_is_behind_offers_notifications_once(
-    cx: &mut TestAppContext,
-) {
+fn the_first_request_while_hutan_is_behind_offers_notifications_once(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let fakes = Fakes::new();
     let (view, cx) = open_after_first_run(cx, &daemon, &fakes, "");
@@ -390,7 +388,7 @@ fn the_first_thing_that_needs_you_while_hutan_is_behind_offers_notifications_onc
     // Hutan is in front: something needs the user, and nothing is offered.
     something_needs_the_user(&daemon, "front");
     wait_until(cx, "the session to need the user", |cx| {
-        view.read_with(cx, |wb, cx| !wb.sessions().read(cx).needs_you().is_empty())
+        view.read_with(cx, |wb, cx| !wb.sessions().read(cx).requests().is_empty())
     });
     assert_eq!(offer(&view, cx), NotifyOffer::Hidden);
 
@@ -420,7 +418,7 @@ fn the_first_thing_that_needs_you_while_hutan_is_behind_offers_notifications_onc
     assert_eq!(offer(&view, cx), NotifyOffer::Hidden);
     something_needs_the_user(&daemon, "again");
     wait_until(cx, "three to need the user", |cx| {
-        view.read_with(cx, |wb, cx| wb.sessions().read(cx).needs_you().len() >= 3)
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).requests().len() >= 3)
     });
     assert_eq!(offer(&view, cx), NotifyOffer::Hidden, "asked once");
     assert_eq!(fakes.notifications.requests(), 1);
@@ -478,7 +476,7 @@ fn nothing_is_offered_where_the_system_cannot_ask_or_after_a_choice(cx: &mut Tes
     cx.deactivate_window();
     something_needs_the_user(&daemon, "behind");
     wait_until(cx, "the session to need the user", |cx| {
-        view.read_with(cx, |wb, cx| !wb.sessions().read(cx).needs_you().is_empty())
+        view.read_with(cx, |wb, cx| !wb.sessions().read(cx).requests().is_empty())
     });
     assert_eq!(offer(&view, cx), NotifyOffer::Hidden);
     close_window(cx);
@@ -491,7 +489,7 @@ fn nothing_is_offered_where_the_system_cannot_ask_or_after_a_choice(cx: &mut Tes
     cx.deactivate_window();
     something_needs_the_user(&daemon, "behind");
     wait_until(cx, "the session to need the user", |cx| {
-        view.read_with(cx, |wb, cx| !wb.sessions().read(cx).needs_you().is_empty())
+        view.read_with(cx, |wb, cx| !wb.sessions().read(cx).requests().is_empty())
     });
     assert_eq!(offer(&view, cx), NotifyOffer::Hidden);
 }

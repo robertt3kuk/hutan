@@ -1,6 +1,6 @@
 //! The menu bar status item (`app.menu_bar`): the orangutan glyph as a template image, the
 //! number of sessions that need the user next to it, and a menu (daemon state, the sessions
-//! that need you, Open Hutan, New Terminal, Keep Daemon Running After Hutan Quits, Start Daemon at
+//! that need attention, Open Hutan, New Terminal, Keep Daemon Running After Hutan Quits, Start Daemon at
 //! Login, Quit).
 //!
 //! This is the item of a running desktop. While no desktop is connected to the daemon, `hutand`
@@ -42,8 +42,8 @@ pub enum MenuSpec {
 pub struct StatusItemModel {
     /// `hutand connected`, `hutand stopped`, `hutand reconnecting…`.
     pub daemon: String,
-    /// The sessions that need the user, in daemon order.
-    pub needs_you: Vec<AttentionEntry>,
+    /// The sessions with a request waiting or an unseen failure, in daemon order.
+    pub attention: Vec<AttentionEntry>,
     /// The keep-running checkbox (`app.keep_running`): always usable.
     pub keep_running: bool,
     /// The start-at-login checkbox: on, whether it can be used, and what the system says.
@@ -55,7 +55,7 @@ pub struct StatusItemModel {
 impl StatusItemModel {
     /// The count next to the glyph; empty at zero.
     pub fn title(&self) -> String {
-        match self.needs_you.len() {
+        match self.attention.len() {
             0 => String::new(),
             n => n.to_string(),
         }
@@ -64,15 +64,15 @@ impl StatusItemModel {
     /// The menu, top to bottom.
     pub fn menu(&self) -> Vec<MenuSpec> {
         let mut menu = vec![MenuSpec::Label(self.daemon.clone()), MenuSpec::Separator];
-        let needing = self.needs_you.len();
+        let needing = self.attention.len();
         if needing > 0 {
             menu.push(MenuSpec::Label(if needing == 1 {
-                "1 needs you".to_owned()
+                "1 needs attention".to_owned()
             } else {
-                format!("{needing} need you")
+                format!("{needing} need attention")
             }));
             menu.extend(
-                self.needs_you
+                self.attention
                     .iter()
                     .take(MAX_LISTED)
                     .map(|entry| MenuSpec::Item {
@@ -462,10 +462,10 @@ mod tests {
         }
     }
 
-    fn model(needs_you: Vec<AttentionEntry>) -> StatusItemModel {
+    fn model(attention: Vec<AttentionEntry>) -> StatusItemModel {
         StatusItemModel {
             daemon: "hutand connected".to_owned(),
-            needs_you,
+            attention,
             keep_running: false,
             start_at_login: false,
             start_at_login_available: true,
@@ -511,7 +511,7 @@ mod tests {
         let model = model(vec![blocked.clone(), approval.clone()]);
         assert_eq!(model.title(), "2");
         let menu = model.menu();
-        assert!(menu.contains(&MenuSpec::Label("2 need you".to_owned())));
+        assert!(menu.contains(&MenuSpec::Label("2 need attention".to_owned())));
         assert!(menu.iter().any(|row| matches!(
             row,
             MenuSpec::Item { command: MenuCommand::FocusSession(id), title, .. }
@@ -525,7 +525,7 @@ mod tests {
         assert!(
             single
                 .menu()
-                .contains(&MenuSpec::Label("1 needs you".to_owned()))
+                .contains(&MenuSpec::Label("1 needs attention".to_owned()))
         );
     }
 

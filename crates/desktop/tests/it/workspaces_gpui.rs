@@ -615,7 +615,7 @@ fn sessions_that_need_you_stay_visible_in_filtered_workspaces(cx: &mut TestAppCo
     assert_eq!(
         rows(&panel, cx),
         [session.title],
-        "its blocked session is still in Needs you"
+        "its blocked session is still in Requests"
     );
 }
 

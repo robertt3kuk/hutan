@@ -31,8 +31,6 @@ pub enum Row {
     Group {
         group: Group,
         count: usize,
-        /// Needs-you only: how many requests wait in the group's sessions.
-        requests: usize,
         foldable: bool,
         open: bool,
     },
@@ -161,19 +159,11 @@ pub fn list(presentation: &AgentPresentation, query: &Query, open: &HashSet<Sess
             let foldable = group == Group::Finished;
             let open_group =
                 !foldable || query.finished_open || query.group == Some(Group::Finished);
-            let requests = members
-                .iter()
-                .map(|i| {
-                    let r = &presentation.records[*i];
-                    r.requests.len() + r.submitting
-                })
-                .sum();
             push(
                 listing,
                 Row::Group {
                     group,
                     count: members.len(),
-                    requests,
                     foldable: foldable && query.group != Some(Group::Finished),
                     open: open_group,
                 },
@@ -289,7 +279,9 @@ mod tests {
             title: title.into(),
             role: Role::Agent,
             state: match group {
-                Group::NeedsYou => State::Blocked,
+                Group::Requests => State::Blocked,
+                Group::Failed => State::Failed,
+                Group::Review => State::Completed,
                 Group::Working => State::Working,
                 Group::Unconfirmed => State::Unconfirmed,
                 Group::Idle => State::Idle,
@@ -353,14 +345,14 @@ mod tests {
     fn empty_groups_disappear_and_finished_is_folded_by_default() {
         let ws = WorkspaceId::new();
         let p = presentation(vec![
-            record("a", Group::NeedsYou, ws),
+            record("a", Group::Requests, ws),
             record("b", Group::Idle, ws),
             record("c", Group::Finished, ws),
         ]);
         let listing = list(&p, &Query::default(), &HashSet::new());
         assert_eq!(
             titles(&p, &listing),
-            ["# Needs you", "a", "# Idle", "b", "# Finished"]
+            ["# Requests", "a", "# Idle", "b", "# Finished"]
         );
         let open = Query {
             finished_open: true,
@@ -396,12 +388,12 @@ mod tests {
     fn keyboard_steps_skip_headings_and_clamp() {
         let ws = WorkspaceId::new();
         let p = presentation(vec![
-            record("a", Group::NeedsYou, ws),
+            record("a", Group::Requests, ws),
             record("b", Group::Idle, ws),
             record("c", Group::Idle, ws),
         ]);
         let listing = list(&p, &Query::default(), &HashSet::new());
-        // rows: # Needs you, a, # Idle, b, c
+        // rows: # Requests, a, # Idle, b, c
         let first = listing.first().unwrap();
         assert_eq!(titles(&p, &listing)[first], "a");
         let next = listing.step(Some(first), 1, 1).unwrap();
@@ -428,8 +420,8 @@ mod tests {
         let before = presentation(vec![a.clone(), b.clone()]);
         let listing = list(&before, &Query::default(), &HashSet::new());
         let at = listing.position(&wanted).unwrap();
-        // A needs-you session appears above: the row index moves, the key still finds it.
-        let c = record("c", Group::NeedsYou, ws);
+        // A request appears above: the row index moves, the key still finds it.
+        let c = record("c", Group::Requests, ws);
         let after = presentation(vec![c, a, b]);
         let relisted = list(&after, &Query::default(), &HashSet::new());
         let moved = relisted.position(&wanted).unwrap();
@@ -473,7 +465,7 @@ mod tests {
         let mut a = record("a", Group::Idle, team);
         a.container = Some(team);
         a.container_name = Some("Team".into());
-        let mut b = record("b", Group::NeedsYou, solo);
+        let mut b = record("b", Group::Requests, solo);
         b.project = "solo".into();
         let p = presentation(vec![b, a]);
         let query = Query {
@@ -483,7 +475,7 @@ mod tests {
         let listing = list(&p, &query, &HashSet::new());
         assert_eq!(
             titles(&p, &listing),
-            ["@ solo", "# Needs you", "b", "@ Team", "# Idle", "a"],
+            ["@ solo", "# Requests", "b", "@ Team", "# Idle", "a"],
             "the workspace with the more urgent session first"
         );
     }

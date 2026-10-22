@@ -719,13 +719,14 @@ fn a_blocked_agent_badges_the_row_the_tab_and_the_card_and_clears_on_resolution(
         });
     }
 
-    // The status bar counts the session as needing the user, and the event fired once.
+    // A subagent's wait is the row's badge and an event, never a request: the status bar does
+    // not count it. The event fired once.
     sessions.read_with(cx, |s, _| {
-        assert_eq!(s.needs_you(), [id]);
+        assert!(s.requests().is_empty());
         let info = s.session(id).unwrap();
         let presentation = s.presentation(info);
-        assert_eq!(presentation.label, "blocked");
-        assert!(presentation.needs_you);
+        assert_eq!(presentation.label, "working");
+        assert!(presentation.attention.is_none());
     });
     wait_until(cx, "the attention event", |_| !events.borrow().is_empty());
     assert_eq!(
@@ -753,7 +754,7 @@ fn a_blocked_agent_badges_the_row_the_tab_and_the_card_and_clears_on_resolution(
     rep.report(&daemon, Node::sub("n1", "root").working().name("worker"));
     wait_until(cx, "the marker to clear", |cx| badge(cx).blocked.is_empty());
     assert_eq!(badge(cx).running_text().as_deref(), Some("2"));
-    assert!(sessions.read_with(cx, |s, _| s.needs_you().is_empty()));
+    assert!(sessions.read_with(cx, |s, _| s.requests().is_empty()));
     assert_eq!(events.borrow().len(), 2, "resolving is not an event");
     // Blocking again after it cleared is news again.
     rep.report(&daemon, Node::sub("n2", "root").blocked().name("reviewer"));
@@ -782,12 +783,11 @@ fn a_blocked_agent_in_another_workspace_still_counts_for_the_status_bar(cx: &mut
     let (view, cx) = open(cx, &daemon);
     let sessions = view.read_with(cx, |wb, _| wb.sessions().clone());
     let rep = Reporter::new(there, "omp-extension", "omp");
-    rep.report(&daemon, Node::main("root").working().name("omp"));
-    rep.report(&daemon, Node::sub("r", "root").blocked().name("reviewer"));
-    wait_until(cx, "the session to need you", |cx| {
-        sessions.read_with(cx, |s, _| s.needs_you() == [there])
+    rep.report(&daemon, Node::main("root").blocked().name("omp"));
+    wait_until(cx, "the session to have a request waiting", |cx| {
+        sessions.read_with(cx, |s, _| s.requests() == [there])
     });
-    let by_workspace = sessions.read_with(cx, |s, _| s.needs_you_by_workspace());
+    let by_workspace = sessions.read_with(cx, |s, _| s.requests_by_workspace());
     assert_eq!(by_workspace.get(&other.id), Some(&1));
 }
 

@@ -7,11 +7,13 @@
 //! State, attention and observation are separate axes: a record carries its activity [`State`],
 //! its attention [`Reason`]s and its provenance independently. Reducer precedence:
 //!
-//! 1. Pending approvals and questions (the real objects), blocked agents, an unread failure, a
-//!    task awaiting review the user has not seen (unless a turn runs: working beats review), an
-//!    unread completion are *reasons*; the session is in **Needs you**. Review work the user
-//!    has seen is no reason and no state: the session is in the group of its state (*Idle*),
-//!    with [`AgentRecord::changes_to_review`] for the small *Changes to review* link.
+//! 1. Pending approvals, questions and plans (the real objects) and a blocked main agent put the
+//!    session in **Requests**: the only group that blocks an agent (a turn end alone, or a
+//!    subagent's wait, never does). An unseen failure is **Failed**; an unseen completion (a turn
+//!    or a session that ended), a task awaiting review the user has not seen (unless a turn
+//!    runs: working beats review) or a mark are **Ready for review**. These are *reasons*. Review
+//!    work the user has seen is no reason and no state: the session is in the group of its state
+//!    (*Idle*), with [`AgentRecord::changes_to_review`] for the small *Changes to review* link.
 //! 2. A session that ended, or a main agent whose node has an outcome, is **Finished**: an
 //!    obsolete "working" report never revives it.
 //! 3. A daemon-managed chat turn in progress is **Working**; otherwise the report or the root
@@ -37,7 +39,7 @@ use hutan_protocol::messages::{AgentState, SessionInfo, WorkspaceInfo, Workspace
 use hutan_protocol::worktree::PlacementKind;
 
 use super::agents::{self, Filters, activity_text, display_name, usage_label};
-use super::attention::{Tone, Unread, present};
+use super::attention::{Attention, Tone, Unread, present};
 use super::models::ModelNames;
 
 /// What an agent session is to the user.
@@ -147,10 +149,13 @@ impl State {
     }
 }
 
-/// The groups of the page, in the order they are listed.
+/// The groups of the page, in the order they are listed. The first three are the groups of
+/// attention: *Requests* block an agent; *Failed* and *Ready for review* never do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Group {
-    NeedsYou,
+    Requests,
+    Failed,
+    Review,
     Working,
     Unconfirmed,
     Idle,
@@ -160,8 +165,10 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Group; 6] = [
-        Group::NeedsYou,
+    pub const ALL: [Group; 8] = [
+        Group::Requests,
+        Group::Failed,
+        Group::Review,
         Group::Working,
         Group::Unconfirmed,
         Group::Idle,
@@ -171,7 +178,9 @@ impl Group {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Group::NeedsYou => "Needs you",
+            Group::Requests => "Requests",
+            Group::Failed => "Failed",
+            Group::Review => "Ready for review",
             Group::Working => "Working",
             Group::Unconfirmed => "Unconfirmed",
             Group::Idle => "Idle",
@@ -180,10 +189,12 @@ impl Group {
         }
     }
 
-    /// The name in a request to the page (`unconfirmed`, `needs-you`, …).
+    /// The name in a request to the page (`unconfirmed`, `requests`, …).
     pub const fn key(self) -> &'static str {
         match self {
-            Group::NeedsYou => "needs-you",
+            Group::Requests => "requests",
+            Group::Failed => "failed",
+            Group::Review => "review",
             Group::Working => "working",
             Group::Unconfirmed => "unconfirmed",
             Group::Idle => "idle",
@@ -195,20 +206,62 @@ impl Group {
     pub fn from_key(key: &str) -> Option<Group> {
         Group::ALL.into_iter().find(|g| g.key() == key)
     }
+
+    /// The group of attention this is, when it is one.
+    pub const fn attention(self) -> Option<Attention> {
+        match self {
+            Group::Requests => Some(Attention::Request),
+            Group::Failed => Some(Attention::Failed),
+            Group::Review => Some(Attention::Review),
+            _ => None,
+        }
+    }
 }
 
-/// Why a session needs the user, highest priority first (the order of the derive is the order
-/// of the page: approval, question, blocked, unread failure, review, completed-unread).
+/// Why a session is in a group of attention, highest priority first (the order of the derive is
+/// the order of the page: approval, question, plan, blocked, failure, review, finished-unseen).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ReasonKind {
     Approval,
     Question,
+    /// A plan waits for the user's approval.
+    Plan,
+    /// The main agent says it waits for the user without saying for what.
     Blocked,
     Failed,
     Review,
+    /// A turn or a session finished and the user has not seen it.
     CompletedUnread,
     /// The user marked the session unread.
     MarkedUnread,
+}
+
+impl ReasonKind {
+    /// The group a session with this as its highest reason is in.
+    pub const fn group(self) -> Group {
+        match self {
+            ReasonKind::Approval
+            | ReasonKind::Question
+            | ReasonKind::Plan
+            | ReasonKind::Blocked => Group::Requests,
+            ReasonKind::Failed => Group::Failed,
+            ReasonKind::Review | ReasonKind::CompletedUnread | ReasonKind::MarkedUnread => {
+                Group::Review
+            }
+        }
+    }
+
+    /// The state word of a row whose highest reason this is.
+    pub const fn label(self) -> &'static str {
+        match self {
+            ReasonKind::Approval | ReasonKind::Blocked => "Approval",
+            ReasonKind::Question => "Question",
+            ReasonKind::Plan => "Plan to approve",
+            ReasonKind::Failed => "Failed",
+            ReasonKind::Review | ReasonKind::CompletedUnread => "Ready for review",
+            ReasonKind::MarkedUnread => "Marked unread",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,6 +297,33 @@ pub struct Ask {
     pub id: QuestionId,
     pub title: String,
     pub requested_at_ms: u64,
+}
+
+/// The words a harness opens the question of a plan with (`Approve plan "Add the card"`).
+const PLAN_PREFIX: &str = "approve plan";
+
+/// Whether a question titled `title` asks the user to approve a plan.
+pub fn is_plan_title(title: &str) -> bool {
+    title
+        .trim_start()
+        .get(..PLAN_PREFIX.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(PLAN_PREFIX))
+}
+
+impl Ask {
+    /// Whether the question asks the user to approve a plan.
+    pub fn is_plan(&self) -> bool {
+        is_plan_title(&self.title)
+    }
+
+    /// The plan's name without the prompt around it; the whole title when it has none.
+    pub fn plan_title(&self) -> &str {
+        let rest = self.title.trim_start();
+        let rest = rest.get(PLAN_PREFIX.len()..).unwrap_or(rest);
+        let rest = rest.lines().next().unwrap_or("").trim();
+        let rest = rest.trim_matches(['"', '“', '”']).trim();
+        if rest.is_empty() { &self.title } else { rest }
+    }
 }
 
 /// Where the session works: the checkout, separate from the project.
@@ -357,9 +437,9 @@ impl AgentRecord {
         self.reasons.first()
     }
 
-    /// Whether the record is in the *Needs you* group.
-    pub fn needs_you(&self) -> bool {
-        self.group == Group::NeedsYou
+    /// Whether the record is in the *Requests* group: the only group that blocks an agent.
+    pub fn is_request(&self) -> bool {
+        self.group == Group::Requests
     }
 
     /// A text the search matches against: title, harness, model, location, branch, activity.
@@ -430,8 +510,13 @@ pub struct Counts {
     pub sessions: usize,
     pub subagents: usize,
     pub subagents_blocked: usize,
-    /// Unique sessions that need the user (not approval cards, not children).
-    pub needs_you: usize,
+    /// Unique sessions in *Requests*: an approval, a question or a plan waits (not approval
+    /// cards, not children).
+    pub request_sessions: usize,
+    /// Sessions in *Failed*.
+    pub failed: usize,
+    /// Sessions in *Ready for review*.
+    pub review: usize,
     pub working: usize,
     pub unconfirmed: usize,
     pub idle: usize,
@@ -451,7 +536,9 @@ impl Counts {
             counts.subagents_blocked += record.subagents_blocked;
             counts.requests += record.requests.len() + record.submitting;
             match record.group {
-                Group::NeedsYou => counts.needs_you += 1,
+                Group::Requests => counts.request_sessions += 1,
+                Group::Failed => counts.failed += 1,
+                Group::Review => counts.review += 1,
                 Group::Working => counts.working += 1,
                 Group::Unconfirmed => counts.unconfirmed += 1,
                 Group::Idle => counts.idle += 1,
@@ -523,9 +610,10 @@ impl AgentPresentation {
         Counts::of(self.in_scope(scope))
     }
 
-    /// Sessions that need the user, whatever the scope.
-    pub fn needs_you(&self) -> usize {
-        self.records.iter().filter(|r| r.needs_you()).count()
+    /// Sessions in the *Requests* group (approvals, questions, plans), whatever the scope: what
+    /// the status bar and the nav badge count.
+    pub fn requests(&self) -> usize {
+        self.records.iter().filter(|r| r.is_request()).count()
     }
 }
 
@@ -598,13 +686,13 @@ pub fn build(facts: &Facts<'_>) -> AgentPresentation {
     AgentPresentation::new(records, link, facts.revision)
 }
 
-/// The canonical order: by group; *Needs you* by the highest reason, then the oldest unresolved
+/// The canonical order: by group; *Requests* by the highest reason, then the oldest unresolved
 /// one first; the other groups by the latest semantic activity, unknown last; the session id
 /// breaks every tie.
 fn compare(a: &AgentRecord, b: &AgentRecord) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     a.group.cmp(&b.group).then_with(|| {
-        if a.group == Group::NeedsYou {
+        if a.group == Group::Requests {
             let kind = |r: &AgentRecord| r.headline().map(|h| h.kind);
             let since = |r: &AgentRecord| r.headline().and_then(|h| h.since_ms);
             kind(a)
@@ -741,11 +829,19 @@ impl Ctx<'_> {
                 since_ms: requests.iter().map(|r| r.requested_at_ms).min(),
             });
         }
-        if let Some(first) = asks.first() {
+        let (plans, questions): (Vec<&Ask>, Vec<&Ask>) = asks.iter().partition(|q| q.is_plan());
+        if let Some(first) = plans.first() {
+            reasons.push(Reason {
+                kind: ReasonKind::Plan,
+                text: format!("Plan: {}", first.plan_title()),
+                since_ms: plans.iter().map(|q| q.requested_at_ms).min(),
+            });
+        }
+        if let Some(first) = questions.first() {
             reasons.push(Reason {
                 kind: ReasonKind::Question,
                 text: format!("Question: {}", first.title),
-                since_ms: asks.iter().map(|q| q.requested_at_ms).min(),
+                since_ms: questions.iter().map(|q| q.requested_at_ms).min(),
             });
         }
         if live {
@@ -754,41 +850,36 @@ impl Ctx<'_> {
                 || reduced.state == State::Blocked
                 || info.state == SessionState::WaitingApproval
                 || chat.is_some_and(|c| c.pending_approvals > 0 || c.pending_questions > 0)
-                || report.is_some_and(|r| r.state == AgentState::Blocked);
-            // The main agent's own wait is the approval or question when there is one; the
-            // children's waits are separate evidence.
-            let main_reason = main_waits && requests.is_empty() && asks.is_empty();
-            let named: Vec<String> = if !blocked_children.is_empty() {
-                blocked_children.iter().map(|n| n.label.clone()).collect()
-            } else {
-                report
-                    .and_then(|r| r.blocked_sub.clone())
-                    .into_iter()
-                    .collect()
-            };
-            let since = root
-                .map(|n| n.last_activity_ms)
-                .or_else(|| report.map(|r| r.updated_at_ms));
-            let text = match (named.as_slice(), main_reason) {
-                ([], true) => Some(match report.and_then(|r| r.message.as_deref()) {
-                    Some(message) if !message.trim().is_empty() => {
-                        format!("Blocked: {}", activity_text(message))
-                    }
-                    _ if info.state == SessionState::WaitingApproval => {
-                        "Waiting for approval".to_owned()
-                    }
-                    _ => "Blocked: waiting for you".to_owned(),
-                }),
-                ([only], false) => Some(format!("{only} blocked")),
-                ([only], true) => Some(format!("{only} blocked, and the main agent waits")),
-                ([], false) => None,
-                (many, _) => Some(format!(
-                    "{} agents blocked: {}",
-                    many.len(),
-                    many.join(", ")
-                )),
-            };
-            if let Some(text) = text {
+                || report
+                    .is_some_and(|r| r.state == AgentState::Blocked && r.blocked_sub.is_none());
+            // The main agent's own wait is the approval or question when there is one. A
+            // subagent that waits while the main agent does not is no request: the row says
+            // how many subagents are blocked, and nothing more.
+            if main_waits && requests.is_empty() && asks.is_empty() {
+                let named: Vec<String> = if !blocked_children.is_empty() {
+                    blocked_children.iter().map(|n| n.label.clone()).collect()
+                } else {
+                    report
+                        .and_then(|r| r.blocked_sub.clone())
+                        .into_iter()
+                        .collect()
+                };
+                let since = root
+                    .map(|n| n.last_activity_ms)
+                    .or_else(|| report.map(|r| r.updated_at_ms));
+                let text = match named.as_slice() {
+                    [] => match report.and_then(|r| r.message.as_deref()) {
+                        Some(message) if !message.trim().is_empty() => {
+                            format!("Blocked: {}", activity_text(message))
+                        }
+                        _ if info.state == SessionState::WaitingApproval => {
+                            "Waiting for approval".to_owned()
+                        }
+                        _ => "Blocked: waiting for you".to_owned(),
+                    },
+                    [only] => format!("{only} blocked, and the main agent waits"),
+                    many => format!("{} agents blocked: {}", many.len(), many.join(", ")),
+                };
                 reasons.push(Reason {
                     kind: ReasonKind::Blocked,
                     text,
@@ -797,7 +888,8 @@ impl Ctx<'_> {
             }
         }
         let unread = self.facts.unread.get(&info.id).copied();
-        let unread_failed = unread == Some(Unread::Failed) && role != Role::Assistant;
+        let unread_failed =
+            matches!(unread, Some(Unread::Failed | Unread::FailedSeen)) && role != Role::Assistant;
         if unread_failed {
             let presentation = present(info, unread, self.facts.model_names);
             reasons.push(Reason {
@@ -823,7 +915,14 @@ impl Ctx<'_> {
         if unread == Some(Unread::Done) {
             reasons.push(Reason {
                 kind: ReasonKind::CompletedUnread,
-                text: "Completed · unread".to_owned(),
+                text: if chat.is_some() {
+                    "Turn finished"
+                } else if live {
+                    "Notification"
+                } else {
+                    "Completed"
+                }
+                .to_owned(),
                 since_ms: None,
             });
         }
@@ -839,8 +938,10 @@ impl Ctx<'_> {
         let snoozed = self.facts.snoozed.contains(&info.id);
         let group = if snoozed {
             Group::Snoozed
-        } else if !reasons.is_empty() || reduced.state == State::Blocked {
-            Group::NeedsYou
+        } else if let Some(first) = reasons.first() {
+            first.kind.group()
+        } else if reduced.state == State::Blocked {
+            Group::Requests
         } else {
             match reduced.state {
                 State::Working => Group::Working,
@@ -1023,6 +1124,8 @@ impl Ctx<'_> {
             (
                 match r.state {
                     AgentState::Working => State::Working,
+                    // A subagent's wait (`blocked_sub`) is not the main agent's.
+                    AgentState::Blocked if r.blocked_sub.is_some() => State::Working,
                     AgentState::Blocked => State::Blocked,
                     AgentState::Idle => State::Idle,
                 },
@@ -1493,7 +1596,7 @@ mod tests {
     }
 
     #[test]
-    fn a_blocked_child_rolls_up_once_with_its_ancestor_path() {
+    fn a_blocked_subagent_alone_is_no_request_but_one_the_main_agent_waits_on_is() {
         let home = home();
         let mut world = World::new(vec![home.clone()]);
         let id = world.add(session(home.id, "work"));
@@ -1511,14 +1614,33 @@ mod tests {
         let presentation = world.build();
         assert_eq!(presentation.records.len(), 1);
         let record = &presentation.records[0];
-        assert_eq!(record.group, Group::NeedsYou);
-        assert_eq!(record.reasons.len(), 1, "one reason, once");
-        assert_eq!(record.reasons[0].kind, ReasonKind::Blocked);
-        assert_eq!(record.reasons[0].text, "reviewer blocked");
-        assert_eq!(record.subagents_blocked, 1);
+        assert_eq!(
+            record.group,
+            Group::Working,
+            "a subagent's wait is not yours"
+        );
+        assert!(record.reasons.is_empty());
+        assert_eq!(record.subagents_blocked, 1, "the row still says it");
         let blocked = record.children.iter().find(|c| c.blocked).unwrap();
         assert_eq!(blocked.ancestors, ["worker"]);
-        assert_eq!(presentation.counts(Scope::All).needs_you, 1);
+        assert_eq!(presentation.counts(Scope::All).request_sessions, 0);
+
+        // The daemon's roll-up of a subagent's wait (`blocked_sub`) says the same: no request.
+        let mut rolled = report(AgentState::Blocked, 5);
+        rolled.blocked_sub = Some("reviewer".into());
+        world.state.sessions[0].agent = Some(rolled);
+        let presentation = world.build();
+        assert_eq!(presentation.records[0].group, Group::Working);
+        assert_eq!(presentation.requests(), 0);
+
+        // The main agent's own wait, with a subagent named, is one reason, once.
+        world.state.sessions[0].agent = Some(report(AgentState::Blocked, 6));
+        let presentation = world.build();
+        let record = &presentation.records[0];
+        assert_eq!(record.group, Group::Requests);
+        assert_eq!(record.reasons.len(), 1, "one reason, once");
+        assert_eq!(record.reasons[0].kind, ReasonKind::Blocked);
+        assert_eq!(presentation.counts(Scope::All).request_sessions, 1);
     }
 
     #[test]
@@ -1544,7 +1666,7 @@ mod tests {
         let presentation = world.build();
         let counts = presentation.counts(Scope::All);
         assert_eq!(
-            (counts.sessions, counts.needs_you, counts.requests),
+            (counts.sessions, counts.request_sessions, counts.requests),
             (1, 1, 3)
         );
         let record = &presentation.records[0];
@@ -1575,13 +1697,21 @@ mod tests {
     fn a_plain_shell_is_not_an_agent_even_with_unread_attention() {
         let home = home();
         let mut world = World::new(vec![home.clone()]);
-        let shell = world.add(session(home.id, "sh"));
+        let mut ended = session(home.id, "sh");
+        ended.state = SessionState::Exited {
+            code: Some(1),
+            signal: None,
+        };
+        let shell = world.add(ended);
         world.unread.insert(shell, Unread::Failed);
         let presentation = world.build();
         assert!(presentation.records.is_empty());
         // The global attention path still sees it.
         let info = &world.state.sessions[0];
-        assert!(present(info, world.unread.get(&shell).copied(), &world.model_names).needs_you);
+        assert_eq!(
+            present(info, world.unread.get(&shell).copied(), &world.model_names).attention,
+            Some(Attention::Failed)
+        );
     }
 
     #[test]
@@ -1631,9 +1761,95 @@ mod tests {
             [ReasonKind::Review, ReasonKind::CompletedUnread],
             "review ranks above completed-unread"
         );
-        assert_eq!(by(failed).group, Group::NeedsYou);
+        assert_eq!(by(failed).group, Group::Failed);
+        assert_eq!(by(done).group, Group::Review);
         // Failure outranks review in the list.
         assert_eq!(presentation.records[0].session, failed);
+    }
+
+    fn question(session: SessionId, title: &str, at: u64) -> hutan_protocol::chat::QuestionInfo {
+        hutan_protocol::chat::QuestionInfo {
+            id: QuestionId::new(),
+            session_id: session,
+            turn_id: None,
+            spec: hutan_core::QuestionSpec {
+                title: title.into(),
+                prompt: String::new(),
+                fields: Vec::new(),
+                raw_schema: None,
+                source: None,
+                expires: Default::default(),
+            },
+            requested_at_ms: at,
+        }
+    }
+
+    #[test]
+    fn a_question_and_a_plan_are_requests_each_with_its_own_reason() {
+        let home = home();
+        let mut world = World::new(vec![home.clone()]);
+        let mut ask = session(home.id, "asks");
+        ask.kind = SessionKind::Harness;
+        ask.state = SessionState::WaitingApproval;
+        let mut c = chat("omp", false, true);
+        c.pending_questions = 2;
+        ask.chat = Some(c);
+        let id = world.add(ask);
+        world.state.questions.push(question(id, "Which branch?", 5));
+        world
+            .state
+            .questions
+            .push(question(id, "Approve plan \"Add the card\"", 9));
+        let presentation = world.build();
+        let record = &presentation.records[0];
+        assert_eq!(record.group, Group::Requests);
+        assert_eq!(
+            record.reasons.iter().map(|r| r.kind).collect::<Vec<_>>(),
+            [ReasonKind::Question, ReasonKind::Plan]
+        );
+        assert_eq!(record.reasons[1].text, "Plan: Add the card");
+        assert_eq!(presentation.requests(), 1);
+        assert!(record.questions[1].is_plan() && !record.questions[0].is_plan());
+    }
+
+    #[test]
+    fn a_seen_failure_stays_in_failed_and_a_dismissed_one_goes() {
+        let home = home();
+        let mut world = World::new(vec![home.clone()]);
+        let mut info = session(home.id, "broke");
+        info.state = SessionState::Exited {
+            code: Some(1),
+            signal: None,
+        };
+        info.agent = Some(report(AgentState::Idle, 1));
+        let id = world.add(info);
+        world.unread.insert(id, Unread::FailedSeen);
+        let presentation = world.build();
+        assert_eq!(presentation.get(id).unwrap().group, Group::Failed);
+        assert_eq!(presentation.requests(), 0, "a failure is never a request");
+        world.unread.remove(&id);
+        assert_eq!(world.build().get(id).unwrap().group, Group::Finished);
+    }
+
+    #[test]
+    fn a_finished_turn_is_ready_for_review_never_a_request() {
+        let home = home();
+        let mut world = World::new(vec![home.clone()]);
+        let mut info = session(home.id, "turn");
+        info.kind = SessionKind::Harness;
+        info.chat = Some(chat("omp", false, true));
+        let id = world.add(info);
+        world.unread.insert(id, Unread::Done);
+        let presentation = world.build();
+        let record = presentation.get(id).unwrap();
+        assert_eq!(record.group, Group::Review);
+        assert_eq!(record.headline().unwrap().text, "Turn finished");
+        assert_eq!(presentation.requests(), 0);
+        let counts = presentation.counts(Scope::All);
+        assert_eq!(
+            (counts.request_sessions, counts.failed, counts.review),
+            (0, 0, 1)
+        );
     }
 
     #[test]
@@ -1667,7 +1883,7 @@ mod tests {
         );
         assert!(by(seen).reasons.is_empty());
         assert!(by(seen).changes_to_review);
-        assert_eq!(presentation.counts(Scope::All).needs_you, 0);
+        assert_eq!(presentation.counts(Scope::All).request_sessions, 0);
     }
 
     #[test]
@@ -1788,7 +2004,7 @@ mod tests {
     }
 
     #[test]
-    fn needs_you_orders_by_reason_then_oldest_first() {
+    fn requests_order_by_reason_then_oldest_first() {
         let home = home();
         let mut world = World::new(vec![home.clone()]);
         let mut chats = Vec::new();
@@ -1898,7 +2114,11 @@ mod tests {
         }
         let counts = world.build().counts(Scope::All);
         assert_eq!(
-            counts.needs_you + counts.working + counts.unconfirmed + counts.idle + counts.finished,
+            counts.request_sessions
+                + counts.working
+                + counts.unconfirmed
+                + counts.idle
+                + counts.finished,
             counts.sessions
         );
     }

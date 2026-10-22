@@ -10,6 +10,7 @@ use common::{TestDaemon, draw, open_with, screen_text, wait_until};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 use hutan_client::ConnectionState;
 use hutan_core::{SessionId, SessionState};
+use hutan_desktop::sessions::Attention;
 use hutan_desktop::theme::Density;
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::model::{ItemRef, LayoutPreset};
@@ -208,7 +209,7 @@ fn the_sessions_panel_lists_groups_and_filters(cx: &mut TestAppContext) {
             "Open in Split Right",
             "Open in Split Down",
             "Mark as unread",
-            "Snooze until it changes (nothing needs you here)",
+            "Snooze until it changes (nothing waits for you here)",
             "Mute notifications",
             "Rename…",
             "Restart",
@@ -420,8 +421,20 @@ fn unread_attention_is_read_when_the_session_is_focused(cx: &mut TestAppContext)
     let (view, cx) = open(cx, &daemon);
     wait_synced(&view, cx, 4);
     // Something else has focus (the welcome pane), so nothing is read.
+    // What nobody has looked at yet: a failure or finished work that is still unseen.
     let needs = |cx: &mut VisualTestContext| {
-        view.read_with(cx, |wb, cx| wb.sessions().read(cx).needs_you())
+        view.read_with(cx, |wb, cx| {
+            let store = wb.sessions().read(cx);
+            store
+                .sessions()
+                .iter()
+                .filter(|info| {
+                    let presentation = store.presentation(info);
+                    presentation.attention.is_some() && presentation.filled
+                })
+                .map(|info| info.id)
+                .collect::<Vec<_>>()
+        })
     };
     wait_until(cx, "the old session to be seen as ended", |cx| {
         session_state(&view, cx, old.id).is_some_and(|s| !s.is_live())
@@ -441,30 +454,42 @@ fn unread_attention_is_read_when_the_session_is_focused(cx: &mut TestAppContext)
         (failed.label.as_str(), failed.detail.as_str()),
         ("failed", "exit 3")
     );
-    assert!(failed.needs_you);
-    assert_eq!(presentation(cx, finishing.id).label, "done");
+    assert_eq!(failed.attention, Some(Attention::Failed));
+    let finished = presentation(cx, finishing.id);
+    assert_eq!(
+        (finished.label.as_str(), finished.attention),
+        ("review", Some(Attention::Review)),
+        "finished work is never a request"
+    );
     assert_eq!(presentation(cx, old.id).label, "exited");
     assert_eq!(presentation(cx, calm.id).label, "idle");
 
-    // The sessions panel lists them under "Needs you" first.
+    // The sessions panel lists them under their groups first: Failed, then Ready for review.
     draw(cx);
     let panel = view
         .read_with(cx, |wb, _| wb.panel::<SessionsPanel>("sessions"))
         .unwrap();
     let titles = panel.read_with(cx, |p, cx| p.visible_titles(cx));
-    let mut head: Vec<&str> = titles.iter().take(2).map(String::as_str).collect();
-    head.sort_unstable();
+    let head: Vec<&str> = titles.iter().take(2).map(String::as_str).collect();
     assert_eq!(head, ["failing", "finishing"], "{titles:?}");
 
-    // The group is a muted label over the same one-line rows; a row away from its project row
-    // says which project it is in, and the lane has a glyph for every state but idle.
+    // Each group is a muted label with its count over the same one-line rows; a row away from
+    // its project row says which project it is in, and the lane has a glyph for every state
+    // but idle.
     let rows = panel.read_with(cx, |p, cx| p.visible_rows(cx));
     assert_eq!(
         (rows[0].kind, rows[0].title.as_str()),
         (
             hutan_desktop::workbench::panels::RowKind::Section,
-            "Needs you"
+            "Failed · 1"
         )
+    );
+    assert!(
+        rows.iter().any(
+            |r| r.kind == hutan_desktop::workbench::panels::RowKind::Section
+                && r.title == "Ready for review · 1"
+        ),
+        "{rows:?}"
     );
     let row = |title: &str| rows.iter().find(|r| r.title == title).unwrap();
     assert!(
@@ -472,30 +497,39 @@ fn unread_attention_is_read_when_the_session_is_focused(cx: &mut TestAppContext)
             .subtitle
             .as_ref()
             .is_some_and(|s| s.container.is_some()),
-        "a Needs you row names its project"
+        "a Failed row names its project"
     );
-    assert_eq!(row("failing").state.as_deref(), Some("failed"));
+    assert_eq!(row("failing").state.as_deref(), Some("Failed"));
+    assert_eq!(row("finishing").state.as_deref(), Some("Ready for review"));
     let calm = row("calm");
     assert_eq!(calm.state, None, "an idle session has an empty lane");
     assert!(calm.subtitle.is_none(), "under its project row: one line");
 
-    // ⌘⇧J jumps to the first one that needs you; looking at it reads it.
+    // ⌘⇧J jumps to the failure first (a request would come before it) and looks at it: a
+    // failure the user has seen stays in its group, no longer unseen, and the jump skips it.
     cx.simulate_keystrokes("cmd-shift-j");
     let first = view
         .read_with(cx, |wb, _| wb.focused_session())
         .expect("a session is focused");
-    assert!(first == failing.id || first == finishing.id);
+    assert_eq!(first, failing.id);
     let remaining = needs(cx);
-    assert_eq!(remaining.len(), 1, "the focused one is read");
-    assert!(!remaining.contains(&first));
+    assert_eq!(remaining, [finishing.id], "the focused one is seen");
+    assert_eq!(
+        view.read_with(cx, |wb, cx| wb
+            .sessions()
+            .read(cx)
+            .in_attention(Attention::Failed)),
+        [failing.id],
+        "a seen failure stays listed in Failed"
+    );
     cx.simulate_keystrokes("cmd-shift-j");
     let second = view.read_with(cx, |wb, _| wb.focused_session()).unwrap();
-    assert_ne!(first, second);
+    assert_eq!(second, finishing.id);
     assert!(needs(cx).is_empty());
     cx.simulate_keystrokes("cmd-shift-j");
     assert_eq!(
         view.read_with(cx, |wb, _| wb.notice().map(ToString::to_string)),
-        Some("Nothing needs you".to_owned())
+        Some("No requests, failures or work to review".to_owned())
     );
 }
 
@@ -1472,7 +1506,9 @@ fn terminal_notifications_flag_attention_but_replays_after_a_reconnect_do_not(
     let (view, cx) = open_with(cx, settings_for(&daemon), connection, None);
     wait_synced(&view, cx, 1);
     let needs = |cx: &mut VisualTestContext| {
-        view.read_with(cx, |wb, cx| wb.sessions().read(cx).needs_you())
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).in_attention(Attention::Review)
+        })
     };
     assert!(needs(cx).is_empty());
 
@@ -1515,9 +1551,13 @@ fn terminal_notifications_flag_attention_but_replays_after_a_reconnect_do_not(
     });
     assert_eq!(
         (presentation.label.as_str(), presentation.detail.as_str()),
-        ("done", "notification")
+        ("review", "notification")
     );
-    assert!(presentation.needs_you);
+    assert_eq!(
+        presentation.attention,
+        Some(Attention::Review),
+        "a notification is finished work, never a request"
+    );
 
     // Focusing the session reads it; the process keeps running.
     open_session(&view, cx, info.id);

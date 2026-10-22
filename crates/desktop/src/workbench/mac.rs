@@ -391,7 +391,7 @@ impl Workbench {
         };
         StatusItemModel {
             daemon,
-            needs_you: self.sessions.read(cx).attention_entries(),
+            attention: self.sessions.read(cx).attention_entries(),
             keep_running: self.keep_running_enabled(),
             start_at_login: self.start_at_login_enabled(),
             start_at_login_available: self.start_at_login_available(),

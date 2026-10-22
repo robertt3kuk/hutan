@@ -92,8 +92,8 @@ pub fn updated_tooltip(record: &AgentRecord) -> Option<String> {
     Some(local_time_seconds_text(at))
 }
 
-/// The reason line of a *Needs you* row: the highest reason, `+2` for the others, and how many
-/// requests wait when there is more than one.
+/// The reason line of a row in a group of attention: the highest reason, `+2` for the others,
+/// and how many requests wait when there is more than one.
 pub fn reason_text(record: &AgentRecord) -> Option<String> {
     let headline = record.headline()?;
     let mut text = headline.text.clone();
@@ -111,13 +111,14 @@ pub fn reason_text(record: &AgentRecord) -> Option<String> {
 }
 
 /// The reason's own words, without the kind the state word already says (`Permission: ` for an
-/// approval, `Question: ` for a question): `edit: src/lib.rs +1 · 2 requests`. The line a
-/// *Needs you* row shows under its state word `Needs you · approval`.
+/// approval, `Question: ` for a question, `Plan: ` for a plan): `edit: src/lib.rs +1 · 2
+/// requests`. The line a *Requests* row shows under its state word `Approval`.
 pub fn reason_detail(record: &AgentRecord) -> Option<String> {
     let headline = record.headline()?;
     let own = match headline.kind {
         ReasonKind::Approval => headline.text.strip_prefix("Permission: "),
         ReasonKind::Question => headline.text.strip_prefix("Question: "),
+        ReasonKind::Plan => headline.text.strip_prefix("Plan: "),
         _ => None,
     };
     let Some(own) = own else {
@@ -139,24 +140,18 @@ pub fn reason_detail(record: &AgentRecord) -> Option<String> {
 
 /// The state word of a row, one per record: attention wins over the working state the agent
 /// is in (reducer precedence, chrome v3 § 2.2), so a session that waits for a decision says
-/// `Needs you · approval` and never also `Working`; every other record says its state. Work
-/// waiting for review that the user has seen is no state: the row says `Idle` and shows
-/// [`CHANGES_TO_REVIEW`] as a link beside it.
+/// `Approval` and never also `Working`; a finished one says `Ready for review`, a failed one
+/// `Failed`; every other record says its state. Work waiting for review that the user has
+/// seen is no state: the row says `Idle` and shows [`CHANGES_TO_REVIEW`] as a link beside it.
 pub fn state_word(record: &AgentRecord) -> String {
-    if !record.needs_you() {
+    if record.group.attention().is_none() {
         return record.state.label().to_owned();
     }
-    let kind = match record.headline().map(|reason| reason.kind) {
-        Some(ReasonKind::Approval) => "approval",
-        Some(ReasonKind::Question) => "question",
-        Some(ReasonKind::Blocked) => "blocked",
-        Some(ReasonKind::Failed) => "failed",
-        Some(ReasonKind::Review) => "review",
-        Some(ReasonKind::CompletedUnread) => "completed",
-        Some(ReasonKind::MarkedUnread) => "unread",
-        None => return "Needs you".to_owned(),
-    };
-    format!("Needs you · {kind}")
+    record
+        .headline()
+        .map_or(ReasonKind::Approval, |reason| reason.kind)
+        .label()
+        .to_owned()
 }
 
 /// The link a row shows beside its state word while its work waits for review and the user has
@@ -169,17 +164,20 @@ pub fn changes_link(record: &AgentRecord) -> bool {
     record.changes_to_review && record.checkout.is_some()
 }
 
-/// The leading glyph of a row and the tone of the state word: attention first (a triangle for a
-/// decision, a cross for a failure), else the state's own shape. Never colour alone.
+/// The leading glyph of a row and the tone of the state word: attention first (each kind of
+/// request, a failure and finished work have a shape of their own), else the state's own shape.
+/// Never colour alone.
 pub fn lead(record: &AgentRecord) -> (crate::icons::Icon, super::Tone) {
     use super::Tone;
     use crate::icons::Icon;
     match record.headline().map(|reason| reason.kind) {
-        Some(ReasonKind::Approval | ReasonKind::Question | ReasonKind::Blocked) => {
-            (Icon::StateBlocked, Tone::Warning)
-        }
+        Some(ReasonKind::Approval | ReasonKind::Blocked) => (Icon::StateApproval, Tone::Warning),
+        Some(ReasonKind::Question) => (Icon::StateQuestion, Tone::Warning),
+        Some(ReasonKind::Plan) => (Icon::StatePlan, Tone::Warning),
         Some(ReasonKind::Failed) => (Icon::StateFailed, Tone::Error),
-        _ => (record.state.glyph(), record.state.tone()),
+        Some(ReasonKind::Review | ReasonKind::CompletedUnread) => (Icon::StateReview, Tone::Accent),
+        Some(ReasonKind::MarkedUnread) => (Icon::StateUnread, Tone::Accent),
+        None => (record.state.glyph(), record.state.tone()),
     }
 }
 
@@ -318,7 +316,7 @@ impl Primary {
     }
 }
 
-/// The main button of `record`: the one decision a *Needs you* row waits for, else open.
+/// The main button of `record`: the one decision a *Requests* row waits for, else open.
 pub fn primary(record: &AgentRecord) -> Primary {
     if !record.requests.is_empty() {
         Primary::ReviewRequest
@@ -409,14 +407,9 @@ pub fn transcript(record: &AgentRecord) -> Avail {
     }
 }
 
-/// The group heading's text: `Needs you · 1`, `Idle · 2`; a *Needs you* group with more requests
-/// than sessions adds them (`Needs you · 1 · 3 requests`).
-pub fn group_label(group: Group, count: usize, requests: usize) -> String {
-    let mut text = format!("{} · {count}", group.label());
-    if group == Group::NeedsYou && requests > count {
-        text.push_str(&format!(" · {requests} requests"));
-    }
-    text
+/// The group heading's text: `Requests · 1`, `Ready for review · 2`, `Idle · 2`.
+pub fn group_label(group: Group, count: usize) -> String {
+    format!("{} · {count}", group.label())
 }
 
 #[cfg(test)]
@@ -543,54 +536,68 @@ mod tests {
 
     #[test]
     fn a_group_heading_is_its_name_and_count() {
-        assert_eq!(group_label(Group::Idle, 2, 0), "Idle · 2");
-        assert_eq!(group_label(Group::NeedsYou, 1, 1), "Needs you · 1");
-        assert_eq!(
-            group_label(Group::NeedsYou, 1, 3),
-            "Needs you · 1 · 3 requests"
-        );
+        assert_eq!(group_label(Group::Idle, 2), "Idle · 2");
+        assert_eq!(group_label(Group::Requests, 1), "Requests · 1");
+        assert_eq!(group_label(Group::Failed, 2), "Failed · 2");
+        assert_eq!(group_label(Group::Review, 3), "Ready for review · 3");
     }
 
     #[test]
-    fn a_session_waiting_for_a_decision_says_needs_you_and_never_working() {
+    fn a_session_waiting_for_a_decision_says_so_and_never_working() {
         use crate::sessions::presentation::{Reason, ReasonKind};
         let mut r = record();
         assert_eq!(state_word(&r), "Working");
         // The agent is still `Working` underneath; attention wins.
-        r.group = Group::NeedsYou;
+        r.group = Group::Requests;
         r.reasons = vec![Reason {
             kind: ReasonKind::Approval,
             text: "Permission: edit: src/lib.rs".into(),
             since_ms: None,
         }];
         assert_eq!(r.state, State::Working);
-        assert_eq!(state_word(&r), "Needs you · approval");
+        assert_eq!(state_word(&r), "Approval");
         assert_eq!(reason_detail(&r).unwrap(), "edit: src/lib.rs");
-        assert_eq!(lead(&r).0, crate::icons::Icon::StateBlocked);
+        assert_eq!(lead(&r).0, crate::icons::Icon::StateApproval);
         assert_eq!(lead(&r).1, crate::sessions::Tone::Warning);
         r.reasons[0] = Reason {
             kind: ReasonKind::Question,
             text: "Question: which branch".into(),
             since_ms: None,
         };
-        assert_eq!(state_word(&r), "Needs you · question");
+        assert_eq!(state_word(&r), "Question");
+        assert_eq!(lead(&r).0, crate::icons::Icon::StateQuestion);
+        r.reasons[0] = Reason {
+            kind: ReasonKind::Plan,
+            text: "Plan: Add the card".into(),
+            since_ms: None,
+        };
+        assert_eq!(state_word(&r), "Plan to approve");
+        assert_eq!(reason_detail(&r).unwrap(), "Add the card");
+        assert_eq!(lead(&r).0, crate::icons::Icon::StatePlan);
+        r.reasons[0] = Reason {
+            kind: ReasonKind::Question,
+            text: "Question: which branch".into(),
+            since_ms: None,
+        };
         assert_eq!(reason_detail(&r).unwrap(), "which branch");
         r.reasons[0] = Reason {
             kind: ReasonKind::Failed,
             text: "Failed: exit 1".into(),
             since_ms: None,
         };
-        assert_eq!(state_word(&r), "Needs you · failed");
+        r.group = Group::Failed;
+        assert_eq!(state_word(&r), "Failed");
+        assert_eq!(lead(&r).0, crate::icons::Icon::StateFailed);
         assert_eq!(reason_detail(&r), reason_text(&r));
         assert_eq!(lead(&r).1, crate::sessions::Tone::Error);
     }
 
     #[test]
-    fn seen_work_waiting_for_review_says_idle_with_a_link_unseen_says_needs_you() {
+    fn seen_work_waiting_for_review_says_idle_with_a_link_unseen_says_ready_for_review() {
         use crate::sessions::presentation::ReasonKind;
         let mut r = record();
         r.state = State::Idle;
-        r.group = Group::NeedsYou;
+        r.group = Group::Review;
         r.checkout = Some(Checkout {
             label: "Main checkout: main".into(),
             root: "/code".into(),
@@ -603,7 +610,8 @@ mod tests {
             text: "Review changes".into(),
             since_ms: None,
         }];
-        assert_eq!(state_word(&r), "Needs you · review");
+        assert_eq!(state_word(&r), "Ready for review");
+        assert_eq!(lead(&r).0, crate::icons::Icon::StateReview);
         assert!(!changes_link(&r));
         // Seen: one state word, and the link beside it (never "Ready for review · Idle").
         r.group = Group::Idle;
@@ -725,7 +733,7 @@ mod tests {
         use crate::sessions::presentation::{Reason, ReasonKind};
         let mut r = record();
         assert_eq!(reason_tooltip(&r, 1_000_000), None, "nothing to explain");
-        r.group = Group::NeedsYou;
+        r.group = Group::Requests;
         r.reasons = vec![
             Reason {
                 kind: ReasonKind::Approval,

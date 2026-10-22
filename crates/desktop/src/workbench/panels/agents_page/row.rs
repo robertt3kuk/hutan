@@ -77,7 +77,7 @@ impl AgentsPage {
         let layout = self.layout;
         let hover = theme.surface_hover;
         let primary = agents_text::primary(record);
-        let needs = record.needs_you();
+        let needs = record.group.attention().is_some();
         // The reason without the kind the state word already says; the activity otherwise.
         let status = after_word(
             &agents_text::reason_detail(record).unwrap_or_else(|| agents_text::status_line(record)),
@@ -468,7 +468,7 @@ impl AgentsPage {
             lines.push(fact("", provenance.clone(), look));
         }
         for reason in &record.reasons {
-            lines.push(fact("Needs you", reason.text.clone(), look));
+            lines.push(fact(reason.kind.label(), reason.text.clone(), look));
         }
         lines.push(fact(
             "Harness",

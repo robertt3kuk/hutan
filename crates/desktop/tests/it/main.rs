@@ -3,6 +3,7 @@ mod agents_gpui;
 mod agents_page_gpui;
 mod assistant_gpui;
 mod attention_controls_gpui;
+mod attention_groups_gpui;
 mod blocks_gpui;
 mod changes_fresh_gpui;
 mod chat_gpui;

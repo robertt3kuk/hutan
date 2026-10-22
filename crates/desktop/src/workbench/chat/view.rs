@@ -1280,7 +1280,7 @@ impl ChatView {
     /// The empty transcript: the mascot, one serif sentence, no button and, for Mawas, one muted
     /// line on what is sent to the model. Mawas's composer below holds the keyboard
     /// (placeholder `Ask Mawas…`), so asking needs no second way in; looking at what waits for
-    /// the user is Today's *Review what needs you*, ⌘⇧J and the Agents page.
+    /// the user is Today's *Review requests*, ⌘⇧J and the Agents page.
     fn render_empty(&self, look: &Look, cx: &App) -> AnyElement {
         let mawas = self.supports_context(cx);
         let (mascot, text) = match self.model.read(cx).status() {
@@ -1794,25 +1794,20 @@ impl Render for ChatView {
 }
 
 /// The words of the status line's state, and whether they are drawn in `fg` (the glyph alone
-/// in the state's color). What needs a decision is said as such — `Needs you · approval` — with
-/// the warning on the glyph; any other state is its word (`idle`, `working`), and a session that
-/// needs a look for another reason carries it (`failed · exit 1`), in the state's color.
+/// in the state's color). What waits for a decision is said as such — `Approval`, `Question`,
+/// `Plan to approve` — with the warning on the glyph; finished work and a failure say so
+/// (`Ready for review · turn finished`, `Failed · exit 1`) in the state's color; any other state
+/// is its word (`idle`, `working`).
 pub fn status_words(presentation: &crate::sessions::attention::Presentation) -> (String, bool) {
-    use crate::sessions::attention::Tone;
-    let detail = |word: &str| {
-        if presentation.detail.is_empty() {
-            word.to_owned()
-        } else {
-            format!("{word} · {}", presentation.detail)
-        }
+    let Some(word) = presentation.state_word() else {
+        return (presentation.label.clone(), false);
     };
-    if presentation.needs_you && presentation.tone == Tone::Warning {
-        (detail("Needs you"), true)
-    } else if presentation.needs_you {
-        (detail(&presentation.label), false)
+    let words = if presentation.detail.is_empty() {
+        word.to_owned()
     } else {
-        (presentation.label.clone(), false)
-    }
+        format!("{word} · {}", presentation.detail)
+    };
+    (words, presentation.is_request())
 }
 
 /// The chat header's mode chip (`UX-MODE-CHIP`, protocol 0.34).
@@ -1863,31 +1858,49 @@ mod mode_chip_tests {
     use hutan_protocol::chat::{ChatInfo, ChatMode};
 
     use super::{mode_chip, status_words};
-    use crate::sessions::attention::{Presentation, Tone};
+    use crate::sessions::attention::{Attention, Presentation, Tone};
 
     #[test]
-    fn the_status_line_says_what_needs_you_as_such() {
-        let p = |label: &str, detail: &str, tone, needs_you| Presentation {
+    fn the_status_line_says_what_waits_as_such() {
+        let p = |label: &str, detail: &str, tone, attention: Option<Attention>| Presentation {
             label: label.into(),
             detail: detail.into(),
             tone,
-            filled: needs_you,
-            needs_you,
+            filled: attention.is_some(),
+            attention,
         };
         assert_eq!(
-            status_words(&p("blocked", "approval", Tone::Warning, true)),
-            ("Needs you · approval".to_owned(), true)
+            status_words(&p("approval", "", Tone::Warning, Some(Attention::Request))),
+            ("Approval".to_owned(), true)
         );
         assert_eq!(
-            status_words(&p("blocked", "question", Tone::Warning, true)),
-            ("Needs you · question".to_owned(), true)
+            status_words(&p(
+                "question",
+                "2 questions",
+                Tone::Warning,
+                Some(Attention::Request)
+            )),
+            ("Question · 2 questions".to_owned(), true)
         );
         assert_eq!(
-            status_words(&p("failed", "exit 1", Tone::Error, true)),
-            ("failed · exit 1".to_owned(), false)
+            status_words(&p("plan", "", Tone::Warning, Some(Attention::Request))),
+            ("Plan to approve".to_owned(), true)
         );
         assert_eq!(
-            status_words(&p("idle", "OMP · opus", Tone::Muted, false)),
+            status_words(&p("failed", "exit 1", Tone::Error, Some(Attention::Failed))),
+            ("Failed · exit 1".to_owned(), false)
+        );
+        assert_eq!(
+            status_words(&p(
+                "review",
+                "turn finished",
+                Tone::Accent,
+                Some(Attention::Review)
+            )),
+            ("Ready for review · turn finished".to_owned(), false)
+        );
+        assert_eq!(
+            status_words(&p("idle", "OMP · opus", Tone::Muted, None)),
             ("idle".to_owned(), false)
         );
     }

@@ -19,12 +19,47 @@ use super::models::ModelNames;
 /// Why a session wants a look.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unread {
-    /// Exited 0 or sent a terminal notification.
+    /// Exited 0, ended a turn, or sent a terminal notification: finished work not seen yet.
     Done,
     /// Exited non-zero, was killed by a signal, or failed to start.
     Failed,
+    /// A failure the user has looked at: it stays in *Failed* (without a badge) until a new run
+    /// starts or the user marks it read.
+    FailedSeen,
     /// The user marked it unread (*Mark as unread*): it stays until the session is looked at.
     Marked,
+}
+
+impl Unread {
+    /// Whether the user has not looked at what this says yet (a seen failure is only listed).
+    pub fn is_unseen(self) -> bool {
+        self != Unread::FailedSeen
+    }
+}
+
+/// The three groups of what wants the user, most urgent first. *Requests* is the only one that
+/// blocks an agent; a finished turn alone is never a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Attention {
+    /// An approval, a question or a plan waits for an answer.
+    Request,
+    /// A turn or a session failed.
+    Failed,
+    /// Finished work the user has not seen yet (or marked unread).
+    Review,
+}
+
+impl Attention {
+    pub const ALL: [Attention; 3] = [Attention::Request, Attention::Failed, Attention::Review];
+
+    /// The group's name on every surface.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Attention::Request => "Requests",
+            Attention::Failed => "Failed",
+            Attention::Review => "Ready for review",
+        }
+    }
 }
 
 /// Color role of a state chip (mapped to theme colors by the UI).
@@ -47,10 +82,31 @@ pub struct Presentation {
     pub tone: Tone,
     /// Filled dot (needs a look or is active) rather than hollow.
     pub filled: bool,
-    pub needs_you: bool,
+    /// The group of attention the session is in, if any.
+    pub attention: Option<Attention>,
 }
 
 impl Presentation {
+    /// Whether a request (an approval, a question, a plan) waits: the only blocking attention.
+    pub fn is_request(&self) -> bool {
+        self.attention == Some(Attention::Request)
+    }
+
+    /// The state word of a row that is in a group of attention (`Approval`, `Question`,
+    /// `Plan to approve`, `Failed`, `Ready for review`); `None` for every other state, which
+    /// says its own label.
+    pub fn state_word(&self) -> Option<&'static str> {
+        self.attention?;
+        Some(match self.label.as_str() {
+            "approval" => "Approval",
+            "question" => "Question",
+            "plan" => "Plan to approve",
+            "failed" => "Failed",
+            "review" => "Ready for review",
+            _ => return None,
+        })
+    }
+
     /// The state word remains the accessible meaning; artwork is independently replaceable.
     pub fn icon(&self) -> crate::icons::Icon {
         use crate::icons::Icon;
@@ -59,6 +115,7 @@ impl Presentation {
             "blocked" => Icon::StateBlocked,
             "approval" => Icon::StateApproval,
             "question" => Icon::StateQuestion,
+            "plan" => Icon::StatePlan,
             "done" | "completed" | "exited" => Icon::StateCompleted,
             "failed" => Icon::StateFailed,
             "stopped" => Icon::StateStopped,
@@ -72,8 +129,8 @@ impl Presentation {
 }
 
 /// Why a session counts in the menu bar item and the Dock badge (design.md § Attention
-/// model → macOS surfaces). Finished-and-unread sessions are in the sidebar's *Needs you* but
-/// not here: a badge is for what blocks someone or went wrong.
+/// model → macOS surfaces). Finished work is in the sidebar's *Ready for review* but not here:
+/// a badge is for what blocks someone (*Requests*) or went wrong (*Failed*, not yet seen).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttentionKind {
     /// An agent in the session is blocked.
@@ -131,13 +188,11 @@ pub fn classify(
     if pending_questions > 0 {
         return Some(AttentionKind::Question);
     }
-    if !presentation.needs_you {
-        return None;
-    }
-    match presentation.tone {
-        Tone::Warning => Some(AttentionKind::Blocked),
-        Tone::Error => Some(AttentionKind::Failed),
-        Tone::Success | Tone::Accent | Tone::Muted => None,
+    match presentation.attention? {
+        Attention::Request => Some(AttentionKind::Blocked),
+        // A failure the user has looked at stays in the group, without a badge.
+        Attention::Failed if presentation.filled => Some(AttentionKind::Failed),
+        Attention::Failed | Attention::Review => None,
     }
 }
 
@@ -156,14 +211,14 @@ fn unread_for_end(state: &SessionState) -> Option<Unread> {
 }
 
 /// Presentation of `info` given its unread flag; a chat names its model as `names` know it. A
-/// session the user *marked unread* shows as needing a look whatever it does (an accent state,
-/// never a badge: [`classify`] leaves accent alone) until it is read again.
+/// session the user *marked unread* is a quiet *Ready for review* item whatever it does (an
+/// accent state, never a badge: [`classify`] leaves it alone) until it is read again.
 pub fn present(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames) -> Presentation {
     if unread != Some(Unread::Marked) {
         return present_state(info, unread, names);
     }
     let base = present_state(info, None, names);
-    if base.needs_you {
+    if base.attention.is_some() {
         return base;
     }
     Presentation {
@@ -174,7 +229,7 @@ pub fn present(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames) -
         },
         tone: Tone::Accent,
         filled: true,
-        needs_you: true,
+        attention: Some(Attention::Review),
         ..base
     }
 }
@@ -185,97 +240,102 @@ fn present_state(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames)
         (Some(code), None) => format!("exit {code}"),
         (None, None) => String::new(),
     };
+    let quiet = |label: &str, detail: String, tone: Tone, filled: bool| Presentation {
+        label: label.into(),
+        detail,
+        tone,
+        filled,
+        attention: None,
+    };
     match &info.state {
-        SessionState::Starting => Presentation {
-            label: "starting".into(),
-            detail: String::new(),
-            tone: Tone::Accent,
-            filled: false,
-            needs_you: false,
-        },
-        // A terminal notification from a running session: it has something to show.
-        SessionState::Running | SessionState::Idle if unread.is_some() => Presentation {
-            label: "done".into(),
-            detail: "notification".into(),
-            tone: Tone::Success,
-            filled: true,
-            needs_you: true,
-        },
+        SessionState::Starting => quiet("starting", String::new(), Tone::Accent, false),
+        // Finished work of a running session the user has not seen: a terminal notification, or
+        // a chat turn that ended. Never a request.
+        SessionState::Running | SessionState::Idle if unread == Some(Unread::Done) => {
+            Presentation {
+                label: "review".into(),
+                detail: if info.chat.is_some() {
+                    "turn finished".into()
+                } else {
+                    "notification".into()
+                },
+                tone: Tone::Accent,
+                filled: true,
+                attention: Some(Attention::Review),
+            }
+        }
         // An agent chat: the daemon runs the agent, so its state is exact.
         SessionState::Running | SessionState::Idle if info.chat.is_some() => {
             let busy = info.state == SessionState::Running;
-            Presentation {
-                label: if busy { "working" } else { "idle" }.into(),
-                detail: chat_detail(info, names),
-                tone: if busy { Tone::Accent } else { Tone::Muted },
-                filled: busy,
-                needs_you: false,
-            }
+            quiet(
+                if busy { "working" } else { "idle" },
+                chat_detail(info, names),
+                if busy { Tone::Accent } else { Tone::Muted },
+                busy,
+            )
         }
         SessionState::WaitingApproval if info.chat.is_some() => {
             let pending = info.chat.as_ref().map_or(0, |chat| chat.pending_approvals);
             let asked = info.chat.as_ref().map_or(0, |chat| chat.pending_questions);
             Presentation {
-                label: "blocked".into(),
+                // The word says what waits; the detail only counts when there is more than one.
+                label: if pending == 0 && asked > 0 {
+                    "question"
+                } else {
+                    "approval"
+                }
+                .into(),
                 detail: match (pending, asked) {
-                    (0, 0) | (1, 0) => "approval".to_owned(),
-                    (0, 1) => "question".to_owned(),
+                    (0 | 1, 0) | (0, 1) => String::new(),
                     (0, n) => format!("{n} questions"),
                     (n, 0) => format!("{n} approvals"),
                     (a, q) => format!("{a} approvals, {q} questions"),
                 },
                 tone: Tone::Warning,
                 filled: true,
-                needs_you: true,
+                attention: Some(Attention::Request),
             }
         }
         // A coding agent that reports (`agent.report`) says more than a bare "idle".
         SessionState::Running | SessionState::Idle => match &info.agent {
             Some(report) => present_agent(report),
-            None => Presentation {
-                label: "idle".into(),
-                detail: String::new(),
-                tone: Tone::Muted,
-                filled: false,
-                needs_you: false,
-            },
+            None => quiet("idle", String::new(), Tone::Muted, false),
         },
         SessionState::WaitingApproval => Presentation {
             label: "approval".into(),
             detail: String::new(),
             tone: Tone::Warning,
             filled: true,
-            needs_you: true,
+            attention: Some(Attention::Request),
         },
         SessionState::Exited { code, signal } => {
             let detail = exit_detail(*code, *signal);
             match unread {
                 Some(Unread::Done) => Presentation {
-                    label: "done".into(),
+                    label: "review".into(),
                     detail,
-                    tone: Tone::Success,
+                    tone: Tone::Accent,
                     filled: true,
-                    needs_you: true,
+                    attention: Some(Attention::Review),
                 },
-                Some(Unread::Failed) => Presentation {
+                Some(Unread::Failed | Unread::FailedSeen) => Presentation {
                     label: "failed".into(),
                     detail,
                     tone: Tone::Error,
-                    filled: true,
-                    needs_you: true,
+                    filled: unread == Some(Unread::Failed),
+                    attention: Some(Attention::Failed),
                 },
                 // A mark is applied over this in `present`, which never passes it down.
-                None | Some(Unread::Marked) => Presentation {
-                    label: "exited".into(),
+                None | Some(Unread::Marked) => quiet(
+                    "exited",
                     detail,
-                    tone: if matches!((code, signal), (Some(0), None)) {
+                    if matches!((code, signal), (Some(0), None)) {
                         Tone::Muted
                     } else {
                         Tone::Error
                     },
-                    filled: false,
-                    needs_you: false,
-                },
+                    false,
+                ),
             }
         }
         // An assistant that could not start says so in the Assistant panel, which offers Retry
@@ -287,17 +347,11 @@ fn present_state(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames)
                 label: "failed".into(),
                 detail: reason.clone(),
                 tone: Tone::Error,
-                filled: looked_after,
-                needs_you: looked_after,
+                filled: looked_after && unread != Some(Unread::FailedSeen),
+                attention: looked_after.then_some(Attention::Failed),
             }
         }
-        SessionState::Stopped => Presentation {
-            label: "stopped".into(),
-            detail: String::new(),
-            tone: Tone::Muted,
-            filled: false,
-            needs_you: false,
-        },
+        SessionState::Stopped => quiet("stopped", String::new(), Tone::Muted, false),
     }
 }
 
@@ -334,7 +388,7 @@ pub fn ended_text(state: &SessionState) -> Option<String> {
     }
 }
 
-/// Remembers which sessions the user has not looked at since they ended.
+/// Remembers which sessions the user has not looked at since they ended or finished a turn.
 #[derive(Debug, Default)]
 pub struct AttentionTracker {
     unread: BTreeMap<SessionId, Unread>,
@@ -343,6 +397,8 @@ pub struct AttentionTracker {
     /// Whether each known session was live in the last list; `None` until the first synchronised
     /// list of the current daemon epoch has been taken as the baseline.
     baseline: Option<HashMap<SessionId, bool>>,
+    /// Whether a chat turn ran in each known session in the last list (same baseline).
+    turns: HashMap<SessionId, bool>,
     epoch: Option<Epoch>,
 }
 
@@ -367,7 +423,8 @@ impl AttentionTracker {
 
     /// Looks at the latest synchronised session list. The first list of an epoch is the
     /// baseline (what was already over when the desktop arrived is not news); later lists flag
-    /// sessions that were live and now ended, and clear the flag of sessions that restarted.
+    /// sessions that were live and now ended, and chat sessions whose turn ended, and clear the
+    /// flag of sessions that restarted or started a new turn.
     pub fn observe(&mut self, epoch: Option<Epoch>, sessions: &[SessionInfo]) {
         if self.epoch != epoch {
             self.epoch = epoch;
@@ -377,6 +434,10 @@ impl AttentionTracker {
         }
         let now: HashMap<SessionId, bool> =
             sessions.iter().map(|s| (s.id, s.state.is_live())).collect();
+        let turns: HashMap<SessionId, bool> = sessions
+            .iter()
+            .map(|s| (s.id, s.chat.as_ref().is_some_and(|c| c.turn_active)))
+            .collect();
         if let Some(before) = &self.baseline {
             for session in sessions {
                 let was_live = before.get(&session.id).copied();
@@ -386,6 +447,12 @@ impl AttentionTracker {
                     if was_live == Some(false) {
                         self.unread.remove(&session.id);
                     }
+                    observe_turn(
+                        &mut self.unread,
+                        session,
+                        self.turns.get(&session.id).copied(),
+                        turns.get(&session.id).copied().unwrap_or(false),
+                    );
                 } else if was_live == Some(true)
                     && let Some(kind) = unread_for_end(&session.state)
                 {
@@ -396,6 +463,7 @@ impl AttentionTracker {
         self.unread.retain(|id, _| now.contains_key(id));
         self.snoozed.retain(|id, _| now.contains_key(id));
         self.baseline = Some(now);
+        self.turns = turns;
     }
 
     /// A terminal notification arrived for `session`: it wants a look unless something worse is
@@ -410,7 +478,24 @@ impl AttentionTracker {
         }
     }
 
-    /// The user looked at `session`.
+    /// The user looked at `session`: finished work and marks are seen; a failure stays listed
+    /// in *Failed* (no longer a badge) until a new run starts or [`Self::mark_read`]. Whether
+    /// anything changed.
+    pub fn look_at(&mut self, session: SessionId) -> bool {
+        match self.unread.get(&session).copied() {
+            Some(Unread::Failed) => {
+                self.unread.insert(session, Unread::FailedSeen);
+                true
+            }
+            Some(Unread::FailedSeen) | None => false,
+            Some(Unread::Done | Unread::Marked) => {
+                self.unread.remove(&session);
+                true
+            }
+        }
+    }
+
+    /// *Mark as read*: whatever is flagged about `session`, a failure too, is dismissed.
     pub fn mark_read(&mut self, session: SessionId) -> bool {
         self.unread.remove(&session).is_some()
     }
@@ -482,6 +567,31 @@ impl AttentionTracker {
     }
 }
 
+/// A chat turn that ended while nobody was asked anything is finished work not seen yet
+/// (*Ready for review*, never a request); a new turn is the work going on again. `was` is
+/// whether a turn ran in the previous list, `running` whether one runs now.
+fn observe_turn(
+    unread: &mut BTreeMap<SessionId, Unread>,
+    session: &SessionInfo,
+    was: Option<bool>,
+    running: bool,
+) {
+    let Some(chat) = &session.chat else {
+        return;
+    };
+    if running && was == Some(false) {
+        if unread.get(&session.id) == Some(&Unread::Done) {
+            unread.remove(&session.id);
+        }
+    } else if !running
+        && was == Some(true)
+        && !chat.is_assistant()
+        && chat.pending_approvals == 0
+        && chat.pending_questions == 0
+    {
+        unread.entry(session.id).or_insert(Unread::Done);
+    }
+}
 /// What the user did to the queue, kept in `desktop-state.json` (`attention`): client read
 /// state the daemon does not know (`docs/spikes/2026-10-20-chrome-v3.md` § 2.7).
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -505,17 +615,22 @@ fn present_agent(report: &AgentReport) -> Presentation {
         Some(message) => format!("{}: {message}", report.agent),
         None => report.agent.clone(),
     };
-    let (label, tone, filled, needs_you) = match report.state {
-        AgentState::Idle => ("idle", Tone::Muted, false, false),
-        AgentState::Working => ("working", Tone::Accent, true, false),
-        AgentState::Blocked => ("blocked", Tone::Warning, true, true),
+    let (label, tone, filled, attention) = match report.state {
+        AgentState::Idle => ("idle", Tone::Muted, false, None),
+        AgentState::Working => ("working", Tone::Accent, true, None),
+        // A subagent that waits while the main agent works (`blocked_sub`) is no request: the
+        // main agent is still at work. The main agent's own wait is a permission request.
+        AgentState::Blocked if report.blocked_sub.is_some() => {
+            ("working", Tone::Accent, true, None)
+        }
+        AgentState::Blocked => ("approval", Tone::Warning, true, Some(Attention::Request)),
     };
     Presentation {
         label: label.into(),
         detail,
         tone,
         filled,
-        needs_you,
+        attention,
     }
 }
 
@@ -565,7 +680,7 @@ mod tests {
         let failed = presentation_of(exited(2), Some(Unread::Failed));
         assert_eq!(classify(&failed, 0, 0), Some(AttentionKind::Failed));
         let done = presentation_of(exited(0), Some(Unread::Done));
-        assert!(done.needs_you);
+        assert!(done.attention.is_some());
         assert_eq!(
             classify(&done, 0, 0),
             None,
@@ -586,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn an_assistant_that_failed_to_start_is_not_in_needs_you_but_a_failed_chat_is() {
+    fn an_assistant_that_failed_to_start_is_not_in_failed_but_a_failed_chat_is() {
         let failed = || SessionState::Failed {
             reason: "agent request `session/new` failed".into(),
         };
@@ -595,7 +710,7 @@ mod tests {
             Some(Unread::Failed),
             &ModelNames::default(),
         );
-        assert!(chat_failed.needs_you);
+        assert!(chat_failed.attention.is_some());
         assert_eq!(classify(&chat_failed, 0, 0), Some(AttentionKind::Failed));
 
         let mut assistant = chat(failed(), false, 0);
@@ -604,7 +719,7 @@ mod tests {
         }
         let shown = present(&assistant, Some(Unread::Failed), &ModelNames::default());
         assert_eq!(shown.label, "failed", "the row still says what happened");
-        assert!(!shown.needs_you);
+        assert!(!shown.attention.is_some());
         assert_eq!(classify(&shown, 0, 0), None, "no badge for it either");
         assert_eq!(
             classify(&shown, 1, 0),
@@ -743,7 +858,10 @@ mod tests {
             tracker.unread(a),
             &ModelNames::default(),
         );
-        assert_eq!((live.label.as_str(), live.needs_you), ("done", true));
+        assert_eq!(
+            (live.label.as_str(), live.attention),
+            ("review", Some(Attention::Review))
+        );
     }
 
     #[test]
@@ -770,10 +888,17 @@ mod tests {
         let id = SessionId::new();
         let done = info(id, exited(0));
         let unread = present(&done, Some(Unread::Done), &ModelNames::default());
-        assert_eq!((unread.label.as_str(), unread.needs_you), ("done", true));
-        assert_eq!(unread.tone, Tone::Success);
+        assert_eq!(
+            (unread.label.as_str(), unread.attention),
+            ("review", Some(Attention::Review))
+        );
+        assert_eq!(unread.state_word(), Some("Ready for review"));
+        assert_eq!(unread.tone, Tone::Accent);
         let read = present(&done, None, &ModelNames::default());
-        assert_eq!((read.label.as_str(), read.needs_you), ("exited", false));
+        assert_eq!(
+            (read.label.as_str(), read.attention.is_some()),
+            ("exited", false)
+        );
         let failed = present(
             &info(id, exited(3)),
             Some(Unread::Failed),
@@ -826,7 +951,10 @@ mod tests {
             None,
             &ModelNames::default(),
         );
-        assert_eq!((idle.label.as_str(), idle.needs_you), ("idle", false));
+        assert_eq!(
+            (idle.label.as_str(), idle.attention.is_some()),
+            ("idle", false)
+        );
         assert_eq!(idle.detail, "codex · gpt-6.1-sol");
         let working = present(
             &chat(SessionState::Running, true, 0),
@@ -834,7 +962,11 @@ mod tests {
             &ModelNames::default(),
         );
         assert_eq!(
-            (working.label.as_str(), working.tone, working.needs_you),
+            (
+                working.label.as_str(),
+                working.tone,
+                working.attention.is_some()
+            ),
             ("working", Tone::Accent, false)
         );
         assert!(working.filled);
@@ -844,20 +976,36 @@ mod tests {
             &ModelNames::default(),
         );
         assert_eq!(
-            (blocked.label.as_str(), blocked.tone, blocked.needs_you),
-            ("blocked", Tone::Warning, true)
+            (
+                blocked.label.as_str(),
+                blocked.tone,
+                blocked.attention.is_some()
+            ),
+            ("approval", Tone::Warning, true)
         );
         assert_eq!(blocked.detail, "2 approvals");
+        assert_eq!(blocked.state_word(), Some("Approval"));
         let one = present(
             &chat(SessionState::WaitingApproval, true, 1),
             None,
             &ModelNames::default(),
         );
-        assert_eq!(one.detail, "approval");
+        assert_eq!(one.detail, "", "the word says what waits");
+        let asked = {
+            let mut session = chat(SessionState::WaitingApproval, true, 0);
+            if let Some(c) = session.chat.as_mut() {
+                c.pending_questions = 1;
+            }
+            present(&session, None, &ModelNames::default())
+        };
+        assert_eq!(
+            (asked.label.as_str(), asked.state_word()),
+            ("question", Some("Question"))
+        );
     }
 
     #[test]
-    fn a_reporting_agent_sets_the_label_and_a_blocked_one_needs_you() {
+    fn a_reporting_agent_sets_the_label_and_a_blocked_one_is_a_request() {
         let report = |state, message: Option<&str>| {
             let mut session = info(SessionId::new(), SessionState::Running);
             session.agent = Some(AgentReport {
@@ -880,7 +1028,7 @@ mod tests {
             ),
             ("working", "omp", Tone::Accent)
         );
-        assert!(working.filled && !working.needs_you);
+        assert!(working.filled && working.attention.is_none());
         let blocked = report(AgentState::Blocked, Some("approve rm"));
         assert_eq!(
             (
@@ -888,15 +1036,15 @@ mod tests {
                 blocked.detail.as_str(),
                 blocked.tone
             ),
-            ("blocked", "omp: approve rm", Tone::Warning)
+            ("approval", "omp: approve rm", Tone::Warning)
         );
-        assert!(blocked.filled && blocked.needs_you);
+        assert!(blocked.filled && blocked.is_request());
         let idle = report(AgentState::Idle, None);
         assert_eq!(
             (idle.label.as_str(), idle.detail.as_str(), idle.tone),
             ("idle", "omp", Tone::Muted)
         );
-        assert!(!idle.filled && !idle.needs_you);
+        assert!(!idle.filled && idle.attention.is_none());
     }
 
     #[test]
@@ -940,7 +1088,8 @@ mod tests {
 
         let idle = info(SessionId::new(), SessionState::Idle);
         let marked = present(&idle, Some(Unread::Marked), &ModelNames::default());
-        assert!(marked.needs_you && marked.filled);
+        assert_eq!(marked.attention, Some(Attention::Review));
+        assert!(marked.filled);
         assert_eq!(marked.tone, Tone::Accent, "no badge for a mark");
         assert!(marked.detail.ends_with("marked unread"));
         assert_eq!(classify(&marked, 0, 0), None);
@@ -950,7 +1099,108 @@ mod tests {
             Some(Unread::Marked),
             &ModelNames::default(),
         );
-        assert_eq!(blocked.label, "blocked");
+        assert_eq!(blocked.label, "approval");
+    }
+
+    #[test]
+    fn a_failure_is_seen_on_view_but_stays_until_it_is_dismissed_or_a_new_run_starts() {
+        let (a, b) = (SessionId::new(), SessionId::new());
+        let epoch = Some(Epoch::new());
+        let mut tracker = AttentionTracker::new();
+        tracker.observe(
+            epoch,
+            &[
+                info(a, SessionState::Running),
+                info(b, SessionState::Running),
+            ],
+        );
+        tracker.observe(epoch, &[info(a, exited(2)), info(b, exited(0))]);
+        assert_eq!(tracker.unread(a), Some(Unread::Failed));
+        assert_eq!(tracker.unread(b), Some(Unread::Done));
+
+        // Looking: finished work is seen and gone; the failure stays, seen.
+        assert!(tracker.look_at(a));
+        assert!(tracker.look_at(b));
+        assert!(!tracker.look_at(a), "nothing new to see");
+        assert_eq!(tracker.unread(a), Some(Unread::FailedSeen));
+        assert_eq!(tracker.unread(b), None);
+        let seen = present(
+            &info(a, exited(2)),
+            tracker.unread(a),
+            &ModelNames::default(),
+        );
+        assert_eq!(seen.attention, Some(Attention::Failed), "still listed");
+        assert!(!seen.filled, "no longer unseen");
+        assert_eq!(classify(&seen, 0, 0), None, "and no longer a badge");
+
+        // Dismissing ends it …
+        assert!(tracker.mark_read(a));
+        assert_eq!(tracker.unread(a), None);
+        // … and so does a new run.
+        tracker.observe(epoch, &[info(a, exited(2)), info(b, exited(0))]);
+        tracker.observe(epoch, &[info(a, SessionState::Running), info(b, exited(0))]);
+        tracker.observe(epoch, &[info(a, exited(4)), info(b, exited(0))]);
+        assert_eq!(tracker.unread(a), Some(Unread::Failed));
+        assert!(tracker.look_at(a));
+        tracker.observe(epoch, &[info(a, SessionState::Running), info(b, exited(0))]);
+        assert_eq!(tracker.unread(a), None, "a new run clears a seen failure");
+    }
+
+    #[test]
+    fn a_chat_turn_that_ends_is_ready_for_review_and_a_new_turn_clears_it() {
+        let epoch = Some(Epoch::new());
+        let mut tracker = AttentionTracker::new();
+        let mut session = chat(SessionState::Running, true, 0);
+        let id = session.id;
+        let with_turn = |session: &SessionInfo, active: bool| {
+            let mut next = session.clone();
+            if let Some(c) = next.chat.as_mut() {
+                c.turn_active = active;
+            }
+            next
+        };
+        // The first list is the baseline: a turn that runs then is not news when it ends later.
+        tracker.observe(epoch, std::slice::from_ref(&session));
+        assert_eq!(tracker.unread(id), None);
+        session = with_turn(&session, false);
+        tracker.observe(epoch, std::slice::from_ref(&session));
+        assert_eq!(
+            tracker.unread(id),
+            Some(Unread::Done),
+            "a finished turn is finished work not seen yet"
+        );
+        let shown = present(&session, tracker.unread(id), &ModelNames::default());
+        assert_eq!(
+            (shown.label.as_str(), shown.attention, shown.detail.as_str()),
+            ("review", Some(Attention::Review), "turn finished")
+        );
+        assert_eq!(classify(&shown, 0, 0), None, "never a request or a badge");
+
+        // A new turn is the work going on again.
+        session = with_turn(&session, true);
+        tracker.observe(epoch, std::slice::from_ref(&session));
+        assert_eq!(tracker.unread(id), None);
+
+        // A turn that stops on a question is waiting for the user, not finished work.
+        let mut asking = with_turn(&session, false);
+        if let Some(c) = asking.chat.as_mut() {
+            c.pending_questions = 1;
+        }
+        tracker.observe(epoch, std::slice::from_ref(&asking));
+        assert_eq!(tracker.unread(id), None);
+
+        // Mawas's own turns are conversation, not work to review.
+        let mut mawas = chat(SessionState::Running, true, 0);
+        if let Some(c) = mawas.chat.as_mut() {
+            c.assistant = true;
+        }
+        tracker.observe(epoch, std::slice::from_ref(&mawas));
+        let mut done = mawas.clone();
+        if let Some(c) = done.chat.as_mut() {
+            c.turn_active = false;
+        }
+        tracker.observe(epoch, std::slice::from_ref(&done));
+        assert_eq!(tracker.unread(mawas.id), None);
     }
 
     #[test]

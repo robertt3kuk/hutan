@@ -9,7 +9,7 @@
 //!   with a receipt; the router refuses them for an agent-originated connection. An agent
 //!   proposes (`memory.propose`): the proposal is stored, an approval of kind `control` with the
 //!   options `approve` / `reject` is raised (`approval.list`, notification intents, the desktop's
-//!   Needs you), and nothing changes until the user resolves it
+//!   Requests), and nothing changes until the user resolves it
 //!   (`memory.proposals.resolve`, or `approval.respond`). Approval applies the exact reviewed
 //!   payload against its `expected_revision`; an entry that moved on leaves the proposal in
 //!   state `conflict`.

@@ -1,13 +1,14 @@
-//! The **Today** rail of Mawas Home (`docs/assistant.md` § Home): what needs the user, what is
-//! working, what is coming. It is a view of the sessions store — the agent presentation every
+//! The **Today** rail of Mawas Home (`docs/assistant.md` § Home): what waits for the user, what
+//! is working, what is coming. It is a view of the sessions store — the agent presentation every
 //! surface reads — so it needs no polling and no request of its own, and a hidden Home does not
 //! draw it at all.
 //!
-//! *Needs you* lists what the Agents page lists in its *Needs you* group, in its order (the one
+//! *Requests* lists what the Agents page lists in its *Requests* group, in its order (the one
 //! reducer, `sessions::presentation`): each permission request with the options the daemon
-//! offered (answered in place; Mawas's own first), each question, and one row for every other
-//! session that needs the user (blocked, failed, work to review, unread). *Working* lists the
-//! agents that are running — never Mawas itself; a memory proposal is a card with its own
+//! offered (answered in place; Mawas's own first), each question and plan, and one row for a
+//! session that is blocked without saying on what. *Failed* and *Ready for review* list the
+//! sessions of those groups (one row each): a finished turn is never a request. *Working* lists
+//! the agents that are running — never Mawas itself; a memory proposal is a card with its own
 //! *Edit & approve*. *Memory* links to the Memory page; *Upcoming* says there are no schedules
 //! yet: Skills, Schedules and Traces have no link here until those services exist.
 
@@ -21,7 +22,9 @@ use hutan_core::{ApprovalId, QuestionId, SessionId};
 use super::assistant::AssistantPanel;
 use super::common::{agent_lead_glyph, agent_state_word, agent_title_line};
 use crate::icons::{Icon, icon};
-use crate::sessions::{AgentRecord, Group, ReasonKind, Role, SessionsStore, agents_text};
+use crate::sessions::{
+    AgentRecord, Attention, Group, ReasonKind, Role, SessionsStore, agents_text,
+};
 use crate::workbench::actions::{
     EditMemoryProposal, JumpToNextAttention, OpenMawasMemory, OpenSession,
 };
@@ -44,9 +47,9 @@ pub struct RailOption {
     pub kind: PermissionOptionKind,
 }
 
-/// What a *Needs you* row is about.
+/// What a row of Today is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NeedsKind {
+pub enum TodayKind {
     /// A permission request: Mawas's own (a Hutan tool it asks to use, or its harness's native
     /// tool) or another agent's.
     Approval {
@@ -61,8 +64,8 @@ pub enum NeedsKind {
         /// approve*, which opens the Memory page on it.
         memory: bool,
     },
-    /// An agent's question.
-    Question { question: QuestionId },
+    /// An agent's question or a plan to approve.
+    Question { question: QuestionId, plan: bool },
     /// An agent is blocked.
     Blocked,
     /// A session failed and nobody has looked.
@@ -73,15 +76,15 @@ pub enum NeedsKind {
     Unread,
 }
 
-/// One row of *Needs you*.
+/// One row of a group of attention.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NeedsRow {
+pub struct TodayRow {
     pub session: SessionId,
     /// What is asked, or the session's title.
     pub title: String,
     /// The session's title, or what is wrong.
     pub detail: String,
-    pub kind: NeedsKind,
+    pub kind: TodayKind,
 }
 
 /// One row of *Working*: the agent record the Agents page draws, so the row is the page's.
@@ -94,7 +97,12 @@ pub struct WorkingRow {
 /// What the rail shows.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Today {
-    pub needs_you: Vec<NeedsRow>,
+    /// *Requests*: what waits for an answer (an approval, a question, a plan).
+    pub requests: Vec<TodayRow>,
+    /// *Failed*: sessions that failed.
+    pub failed: Vec<TodayRow>,
+    /// *Ready for review*: finished work nobody has seen.
+    pub review: Vec<TodayRow>,
     /// Agent sessions confirmed working (the same predicate as the Agents page).
     pub working: Vec<WorkingRow>,
     /// Agent sessions whose state is unavailable: never counted as working or idle.
@@ -104,18 +112,30 @@ pub struct Today {
 /// A section of Today that has something in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
-    NeedsYou,
+    /// One of the three groups of attention.
+    Attention(Attention),
     Working,
 }
 
 impl Today {
+    /// The groups of attention in the order Today draws them, with their rows.
+    pub fn groups(&self) -> [(Attention, &[TodayRow]); 3] {
+        [
+            (Attention::Request, &self.requests),
+            (Attention::Failed, &self.failed),
+            (Attention::Review, &self.review),
+        ]
+    }
+
     /// The sections Today draws, in order: only those with content. With none, Today says so in
     /// one muted line instead of four empty sections.
     pub fn sections(&self) -> Vec<Section> {
-        let mut sections = Vec::new();
-        if !self.needs_you.is_empty() {
-            sections.push(Section::NeedsYou);
-        }
+        let mut sections: Vec<Section> = self
+            .groups()
+            .into_iter()
+            .filter(|(_, rows)| !rows.is_empty())
+            .map(|(attention, _)| Section::Attention(attention))
+            .collect();
         if !self.working.is_empty() || self.unconfirmed > 0 {
             sections.push(Section::Working);
         }
@@ -126,11 +146,12 @@ impl Today {
 /// The rail's content as of now, from the sessions store alone: the Agents page's records.
 pub fn today(store: &SessionsStore) -> Today {
     let presentation = store.agent_presentation();
-    let mut needs_you: Vec<NeedsRow> = Vec::new();
+    let (mut requests, mut failed, mut review): (Vec<TodayRow>, Vec<TodayRow>, Vec<TodayRow>) =
+        (Vec::new(), Vec::new(), Vec::new());
     for record in presentation
         .records
         .iter()
-        .filter(|record| record.group == Group::NeedsYou)
+        .filter(|record| record.group.attention().is_some())
     {
         let mawas = record.role == Role::Assistant;
         for request in &record.requests {
@@ -140,11 +161,11 @@ pub fn today(store: &SessionsStore) -> Today {
                 .find(|approval| approval.id == request.id)
                 .map(|approval| approval.kind);
             let control = kind == Some(hutan_core::agent::PermissionKind::Control);
-            needs_you.push(NeedsRow {
+            requests.push(TodayRow {
                 session: record.session,
                 title: request.title.clone(),
                 detail: record.title.clone(),
-                kind: NeedsKind::Approval {
+                kind: TodayKind::Approval {
                     approval: request.id,
                     options: request
                         .options
@@ -165,12 +186,13 @@ pub fn today(store: &SessionsStore) -> Today {
             });
         }
         for question in &record.questions {
-            needs_you.push(NeedsRow {
+            requests.push(TodayRow {
                 session: record.session,
                 title: question.title.clone(),
                 detail: record.title.clone(),
-                kind: NeedsKind::Question {
+                kind: TodayKind::Question {
                     question: question.id,
+                    plan: question.is_plan(),
                 },
             });
         }
@@ -185,13 +207,18 @@ pub fn today(store: &SessionsStore) -> Today {
         else {
             continue;
         };
-        let kind = match reason.kind {
-            ReasonKind::Approval | ReasonKind::Question | ReasonKind::Blocked => NeedsKind::Blocked,
-            ReasonKind::Failed => NeedsKind::Failed,
-            ReasonKind::Review => NeedsKind::Review,
-            ReasonKind::CompletedUnread | ReasonKind::MarkedUnread => NeedsKind::Unread,
+        let (kind, rows) = match reason.kind {
+            ReasonKind::Approval
+            | ReasonKind::Question
+            | ReasonKind::Plan
+            | ReasonKind::Blocked => (TodayKind::Blocked, &mut requests),
+            ReasonKind::Failed => (TodayKind::Failed, &mut failed),
+            ReasonKind::Review => (TodayKind::Review, &mut review),
+            ReasonKind::CompletedUnread | ReasonKind::MarkedUnread => {
+                (TodayKind::Unread, &mut review)
+            }
         };
-        needs_you.push(NeedsRow {
+        rows.push(TodayRow {
             session: record.session,
             title: record.title.clone(),
             detail: reason.text.clone(),
@@ -199,7 +226,7 @@ pub fn today(store: &SessionsStore) -> Today {
         });
     }
     // Mawas's requests first; everything else keeps the page's order.
-    needs_you.sort_by_key(|row| !matches!(row.kind, NeedsKind::Approval { mawas: true, .. }));
+    requests.sort_by_key(|row| !matches!(row.kind, TodayKind::Approval { mawas: true, .. }));
 
     // Working is what the Agents page calls Working: confirmed, and not waiting for the user.
     // Mawas is the one asking, not an agent at work.
@@ -220,7 +247,9 @@ pub fn today(store: &SessionsStore) -> Today {
         .filter(|record| record.group == Group::Unconfirmed)
         .count();
     Today {
-        needs_you,
+        requests,
+        failed,
+        review,
         working,
         unconfirmed,
     }
@@ -274,13 +303,13 @@ impl AssistantPanel {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let session = self.session(cx)?;
-        let asks: Vec<NeedsRow> = self
+        let asks: Vec<TodayRow> = self
             .today(cx)
-            .needs_you
+            .requests
             .into_iter()
             .filter(|row| {
                 row.session == session
-                    && matches!(row.kind, NeedsKind::Approval { control: true, .. })
+                    && matches!(row.kind, TodayKind::Approval { control: true, .. })
             })
             .collect();
         if asks.is_empty() {
@@ -306,9 +335,10 @@ impl AssistantPanel {
         )
     }
 
-    /// Today: only the sections that have something in them — *Needs you* (each request with
-    /// the options the daemon offered, and *Review what needs you*), *Working* (the Agents
-    /// page's rows) — or, with nothing at all, one muted line; and a `Memory ›` link row.
+    /// Today: only the sections that have something in them — *Requests* (each request with
+    /// the options the daemon offered, and *Review requests*), *Failed*, *Ready for review*,
+    /// *Working* (the Agents page's rows) — or, with nothing at all, one muted line; and a
+    /// `Memory ›` link row.
     /// `full` is the page below 640 pt, where Today is the whole body instead of a column.
     pub(super) fn render_rail(
         &self,
@@ -347,23 +377,29 @@ impl AssistantPanel {
         };
         let listed = today.sections();
         let mut sections: Vec<AnyElement> = Vec::new();
-        if listed.contains(&Section::NeedsYou) {
-            let mut items: Vec<AnyElement> = today
-                .needs_you
+        let mut offset = 0;
+        for (attention, rows) in today.groups() {
+            if rows.is_empty() {
+                continue;
+            }
+            let mut items: Vec<AnyElement> = rows
                 .iter()
                 .enumerate()
-                .map(|(row_index, row)| self.render_needs_row(row_index, row, true, look, cx))
+                .map(|(index, row)| self.render_needs_row(offset + index, row, true, look, cx))
                 .collect();
-            items.push(
-                link("today-review", "Review what needs you".into())
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(JumpToNextAttention), cx);
-                    })
-                    .child(probe(&self.env.regions, Region::Assistant("today-review")))
-                    .into_any_element(),
-            );
+            if attention == Attention::Request {
+                items.push(
+                    link("today-review", "Review requests".into())
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(JumpToNextAttention), cx);
+                        })
+                        .child(probe(&self.env.regions, Region::Assistant("today-review")))
+                        .into_any_element(),
+                );
+            }
+            offset += rows.len();
             sections.push(section(
-                format!("Needs you · {}", today.needs_you.len()),
+                format!("{} · {}", attention.label(), rows.len()),
                 items,
             ));
         }
@@ -465,7 +501,7 @@ impl AssistantPanel {
                 div()
                     .text_color(theme.muted)
                     .text_size(px(tokens.secondary_font_size))
-                    .child("Nothing needs you · nothing working · no schedules")
+                    .child("No requests · nothing working · no schedules")
                     .into_any_element(),
             );
         }
@@ -497,7 +533,7 @@ impl AssistantPanel {
     fn render_needs_row(
         &self,
         row_index: usize,
-        row: &NeedsRow,
+        row: &TodayRow,
         flat: bool,
         look: &Look,
         cx: &mut Context<Self>,
@@ -505,14 +541,13 @@ impl AssistantPanel {
         let (theme, tokens) = (look.theme, look.tokens);
         let session = row.session;
         let label = match &row.kind {
-            NeedsKind::Approval { memory: true, .. } => "Memory proposal",
-            NeedsKind::Approval { mawas: true, .. } => "Mawas asks",
-            NeedsKind::Approval { .. } => "Approval",
-            NeedsKind::Question { .. } => "Question",
-            NeedsKind::Blocked => "Blocked",
-            NeedsKind::Failed => "Failed",
-            NeedsKind::Review => "Review",
-            NeedsKind::Unread => "Unread",
+            TodayKind::Approval { memory: true, .. } => "Memory proposal",
+            TodayKind::Approval { mawas: true, .. } => "Mawas asks",
+            TodayKind::Approval { .. } | TodayKind::Blocked => "Approval",
+            TodayKind::Question { plan: true, .. } => "Plan to approve",
+            TodayKind::Question { .. } => "Question",
+            TodayKind::Failed => "Failed",
+            TodayKind::Review | TodayKind::Unread => "Ready for review",
         };
         // In the rail a request is a flat item of the card that is the rail itself; above the
         // conversation it is a card of its own. Never a card in a card.
@@ -546,7 +581,7 @@ impl AssistantPanel {
             );
         }
         match &row.kind {
-            NeedsKind::Approval {
+            TodayKind::Approval {
                 approval,
                 options,
                 memory,
@@ -604,11 +639,11 @@ impl AssistantPanel {
                         .children(edit),
                 );
             }
-            NeedsKind::Question { .. }
-            | NeedsKind::Blocked
-            | NeedsKind::Failed
-            | NeedsKind::Review
-            | NeedsKind::Unread => {
+            TodayKind::Question { .. }
+            | TodayKind::Blocked
+            | TodayKind::Failed
+            | TodayKind::Review
+            | TodayKind::Unread => {
                 card = card.child(
                     button(
                         SharedString::from(format!("today-open-{row_index}")),

@@ -17,6 +17,7 @@ use hutan_core::{
     AfterPolicy, DeliveryActor, DeliveryState, ReviewDecision, SessionId, Task, TaskId,
     TaskPlacement, TaskPlacementKind, TaskRun, TaskState, WorkspaceId,
 };
+use hutan_desktop::sessions::Attention;
 use hutan_desktop::sessions::attention::Tone;
 use hutan_desktop::sessions::launch::LaunchKind;
 use hutan_desktop::sessions::tasks::{TaskAction, TaskRowView};
@@ -1291,7 +1292,9 @@ fn review(env: &Env, task: &Task, decision: ReviewDecision, note: Option<&str>) 
 }
 
 #[gpui::test]
-fn a_finished_task_shows_its_delivery_pill_and_needs_you_without_a_badge(cx: &mut TestAppContext) {
+fn a_finished_task_shows_its_delivery_pill_and_is_ready_for_review_without_a_badge(
+    cx: &mut TestAppContext,
+) {
     let env = Env::new();
     let (task, _wt) = awaiting_task(&env, "Fix login");
     let session = *task.sessions.last().expect("the run has a session");
@@ -1307,8 +1310,8 @@ fn a_finished_task_shows_its_delivery_pill_and_needs_you_without_a_badge(cx: &mu
         (DeliveryState::AwaitingReview, Some("Awaiting review"))
     );
 
-    // The session ended before the window came; it needs the user, softly: the sidebar's
-    // Needs you lists it, the menu bar and the Dock do not count it.
+    // The session ended before the window came; it waits for review, softly: the sidebar's
+    // Ready for review lists it, the status bar, the menu bar and the Dock do not count it.
     let sessions = view.read_with(cx, |wb, _| wb.sessions().clone());
     wait_until(cx, "the session", |cx| {
         sessions.read_with(cx, |s, _| s.session(session).is_some())
@@ -1316,22 +1319,23 @@ fn a_finished_task_shows_its_delivery_pill_and_needs_you_without_a_badge(cx: &mu
     sessions.read_with(cx, |s, _| {
         let presentation = s.presentation(s.session(session).unwrap());
         assert_eq!(
-            (presentation.label.as_str(), presentation.needs_you),
-            ("review", true)
+            (presentation.label.as_str(), presentation.attention),
+            ("review", Some(Attention::Review))
         );
         assert_eq!(presentation.tone, Tone::Accent);
-        assert_eq!(s.needs_you(), [session]);
+        assert_eq!(s.in_attention(Attention::Review), [session]);
+        assert!(s.requests().is_empty(), "finished work is never a request");
         assert!(s.attention_entries().is_empty(), "a soft item has no badge");
     });
-    // Looking is not accepting, but it is seeing: read, it leaves Needs you and says its own
+    // Looking is not accepting, but it is seeing: read, it leaves Ready for review and says its own
     // state again, with the *Changes to review* link beside it; the pill stays.
     sessions.update(cx, |s, cx| s.mark_read(session, cx));
     sessions.read_with(cx, |s, _| {
         let presentation = s.presentation(s.session(session).unwrap());
         assert_ne!(presentation.label, "review", "seen review is no state");
-        assert!(!presentation.needs_you);
+        assert!(presentation.attention.is_none());
         assert!(s.changes_to_review(session));
-        assert!(s.needs_you().is_empty());
+        assert!(s.in_attention(Attention::Review).is_empty());
     });
     assert_eq!(
         rows(&panel, cx)[0].delivery_label,
@@ -1349,14 +1353,14 @@ fn a_finished_task_shows_its_delivery_pill_and_needs_you_without_a_badge(cx: &mu
     draw(cx);
     assert_eq!(rows(&panel, cx).len(), 1);
 
-    // … until it is accepted: the pill changes, the Needs-you item and the row go.
+    // … until it is accepted: the pill changes, the Ready-for-review item and the row go.
     review(&env, &task, ReviewDecision::Accept, None);
     wait_until(cx, "the accepted pill", |cx| {
         rows(&panel, cx).first().map(|r| r.delivery_label) == Some(Some("Accepted"))
             || rows(&panel, cx).is_empty()
     });
-    wait_until(cx, "the Needs-you item to go", |cx| {
-        sessions.read_with(cx, |s, _| s.needs_you().is_empty())
+    wait_until(cx, "the Ready-for-review item to go", |cx| {
+        sessions.read_with(cx, |s, _| s.in_attention(Attention::Review).is_empty())
     });
     wait_until(cx, "the finished task to be hidden", |cx| {
         rows(&panel, cx).is_empty()
@@ -2024,22 +2028,24 @@ fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAp
         })
     };
 
-    // The user's next message changes a file: the work needs the user, here and in Today alike.
+    // The user's next message changes a file: the work is ready for review, here and in Today
+    // alike, and never a request.
     send(session, "Change the greeting.");
     fs::write(env.root.join("a.txt"), "hello\n").unwrap();
     release(1);
     wait_until(cx, "the change to await review", |cx| label(cx) == "review");
     sessions.read_with(cx, |s, _| {
-        assert_eq!(s.needs_you(), [session]);
+        assert_eq!(s.in_attention(Attention::Review), [session]);
+        assert!(s.requests().is_empty());
         let page: Vec<SessionId> = s
             .agent_presentation()
             .records
             .iter()
-            .filter(|r| r.group == Group::NeedsYou)
+            .filter(|r| r.group == Group::Review)
             .map(|r| r.session)
             .collect();
         let today: Vec<SessionId> = hutan_desktop::workbench::panels::today(s)
-            .needs_you
+            .review
             .iter()
             .map(|row| row.session)
             .collect();
@@ -2051,7 +2057,7 @@ fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAp
     send(session, "Simplify total().");
     wait_until(cx, "the second turn to work", |cx| label(cx) == "working");
     assert_eq!(group(cx), Some(Group::Working));
-    assert!(sessions.read_with(cx, |s, _| s.needs_you().is_empty()));
+    assert!(sessions.read_with(cx, |s, _| s.in_attention(Attention::Review).is_empty()));
     fs::write(env.root.join("b.txt"), "total\n").unwrap();
     release(2);
     wait_until(cx, "the second change to await review", |cx| {
@@ -2059,14 +2065,14 @@ fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAp
     });
     sessions.read_with(cx, |s, _| {
         let record = s.agent_presentation().get(session).cloned().unwrap();
-        assert_eq!(agents_text::state_word(&record), "Needs you · review");
+        assert_eq!(agents_text::state_word(&record), "Ready for review");
         assert!(
             !agents_text::changes_link(&record),
             "unseen: no link, a reason"
         );
     });
 
-    // The user looks at the chat: it leaves Needs you, the status bar's count drops, the row
+    // The user looks at the chat: it leaves Ready for review, the row
     // says Idle — one word — with the *Changes to review* link beside it.
     cx.dispatch_action(actions::OpenSession(session.to_string()));
     wait_until(cx, "the chat to be seen", |cx| {
@@ -2074,7 +2080,7 @@ fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAp
     });
     assert_eq!(label(cx), "idle");
     sessions.read_with(cx, |s, _| {
-        assert!(s.needs_you().is_empty(), "the status bar counts nothing");
+        assert!(s.in_attention(Attention::Review).is_empty());
         let record = s.agent_presentation().get(session).cloned().unwrap();
         assert_eq!(agents_text::state_word(&record), "Idle");
         assert_eq!(record.group, Group::Idle);
@@ -2109,6 +2115,6 @@ fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAp
     wait_until(cx, "the review to go", |cx| {
         sessions.read_with(cx, |s, _| !s.changes_to_review(session))
     });
-    assert!(sessions.read_with(cx, |s, _| s.needs_you().is_empty()));
+    assert!(sessions.read_with(cx, |s, _| s.in_attention(Attention::Review).is_empty()));
     assert_eq!(env.task(look.id).unwrap().delivery, DeliveryState::None);
 }

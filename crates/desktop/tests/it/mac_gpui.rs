@@ -792,7 +792,7 @@ fn the_status_item_and_the_badge_follow_the_attention_model(cx: &mut TestAppCont
     // Nothing needs the user yet: the item is on the menu bar without a count.
     let shown = fakes.item.shown().expect("menu_bar defaults to on");
     assert_eq!(shown.daemon, "hutand connected");
-    assert!(shown.needs_you.is_empty());
+    assert!(shown.attention.is_empty());
     assert_eq!(shown.title(), "");
     assert_eq!(fakes.dock.badge(), 0);
 
@@ -803,9 +803,9 @@ fn the_status_item_and_the_badge_follow_the_attention_model(cx: &mut TestAppCont
     });
     let shown = fakes.item.shown().unwrap();
     assert_eq!(shown.title(), "1");
-    assert_eq!(shown.needs_you.len(), 1);
-    assert_eq!(shown.needs_you[0].session, blocked.id);
-    assert_eq!(shown.needs_you[0].kind, AttentionKind::Blocked);
+    assert_eq!(shown.attention.len(), 1);
+    assert_eq!(shown.attention[0].session, blocked.id);
+    assert_eq!(shown.attention[0].kind, AttentionKind::Blocked);
     assert!(shown.menu().iter().any(|row| matches!(
         row,
         MenuSpec::Item { command: MenuCommand::FocusSession(id), title, .. }
@@ -818,7 +818,7 @@ fn the_status_item_and_the_badge_follow_the_attention_model(cx: &mut TestAppCont
     let shown = fakes.item.shown().unwrap();
     assert_eq!(shown.title(), "2");
     let kinds: Vec<_> = shown
-        .needs_you
+        .attention
         .iter()
         .map(|e| (e.session, e.kind))
         .collect();
@@ -875,9 +875,9 @@ fn a_pending_approval_is_counted_with_the_session_it_blocks(cx: &mut TestAppCont
         fakes.dock.badge() == 1
     });
     let shown = fakes.item.shown().unwrap();
-    assert_eq!(shown.needs_you.len(), 1);
-    assert_eq!(shown.needs_you[0].session, chat.id);
-    assert_eq!(shown.needs_you[0].kind, AttentionKind::Approval);
+    assert_eq!(shown.attention.len(), 1);
+    assert_eq!(shown.attention[0].session, chat.id);
+    assert_eq!(shown.attention[0].kind, AttentionKind::Approval);
     assert_eq!(shown.title(), "1");
 }
 

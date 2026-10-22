@@ -678,14 +678,14 @@ fn an_approval_card_answers_through_the_daemon_and_resolves(cx: &mut TestAppCont
             store.approvals().len() == 1
                 && store
                     .session(info.id)
-                    .is_some_and(|s| store.presentation(s).label == "blocked")
+                    .is_some_and(|s| store.presentation(s).label == "approval")
         })
     });
     view.read_with(cx, |wb, cx| {
         let store = wb.sessions().read(cx);
-        assert_eq!(store.needs_you(), [info.id]);
+        assert_eq!(store.requests(), [info.id]);
         let presentation = store.presentation(store.session(info.id).unwrap());
-        assert!(presentation.needs_you);
+        assert!(presentation.is_request());
     });
     draw(cx);
     assert!(
@@ -755,7 +755,7 @@ fn an_approval_card_answers_through_the_daemon_and_resolves(cx: &mut TestAppCont
     // The session's state follows the turn's last event (`session.updated` is a separate
     // message): wait for it rather than assume it arrived with the footer.
     pump(cx, "the session to stop needing the user", |cx| {
-        view.read_with(cx, |wb, cx| wb.sessions().read(cx).needs_you().is_empty())
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).requests().is_empty())
     });
     view.read_with(cx, |wb, cx| {
         assert!(wb.sessions().read(cx).approvals().is_empty());

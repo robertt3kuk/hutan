@@ -79,7 +79,7 @@ pub struct SectionView {
     pub workspace: String,
     pub title: String,
     /// The one state word of the record, the Agents page's (`agents_text::state_word`):
-    /// `Needs you · approval` while it waits for a decision, never also `Working`.
+    /// `Approval` while it waits for a decision, never also `Working`.
     pub word: String,
     /// What the session needs, without the kind the word says (`edit: src/lib.rs +1`).
     pub detail: Option<String>,
@@ -259,7 +259,7 @@ impl AgentsPanel {
                     let listed = (settings.show_finished || record.group != Group::Finished)
                         && (!settings.only_blocked
                             || record.state == State::Blocked
-                            || record.group == Group::NeedsYou);
+                            || record.group == Group::Requests);
                     if listed {
                         vec![session_row(record)]
                     } else {
@@ -280,7 +280,7 @@ impl AgentsPanel {
                     }),
                     glyph,
                     tone,
-                    finished: record.state.is_finished() && !record.needs_you(),
+                    finished: record.state.is_finished() && !record.is_request(),
                     rows,
                 });
             }

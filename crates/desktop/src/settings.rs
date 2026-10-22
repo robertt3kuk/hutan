@@ -496,7 +496,7 @@ pub enum GroupBy {
 pub struct SessionsPanelSettings {
     /// `workspace`, `state` or `none`.
     pub group_by: GroupBy,
-    /// Show the "Needs you" section on top.
+    /// Show the Requests, Failed and Ready for review groups on top.
     pub needs_you: bool,
     /// Fields of a row, in order: `state`, `kind`, `title`, `age` on the first line, `folder`
     /// (where the session is now) and `placement` (`main` / `wt <branch>`) on the second.
@@ -679,7 +679,7 @@ pub enum WorkspaceSort {
     Manual,
     /// Most recent session activity first.
     Recent,
-    /// Workspaces with sessions that need you first, then by activity.
+    /// Workspaces with the most requests waiting first, then by activity.
     Attention,
     /// Alphabetical.
     Name,
@@ -1239,7 +1239,7 @@ pub struct AppSettings {
     /// Again…" (the Hutan menu, Settings, the command palette) opens the setup whatever this
     /// says.
     pub setup_done: bool,
-    /// Offer notifications once, the first time something needs you (an approval, a finished
+    /// Offer notifications once, the first time something wants you (an approval, a finished
     /// run) while Hutan is not the frontmost app: one line with *Notify me* and *No thanks*.
     /// Off after you answered or dismissed it, so it is asked once and never repeats; the
     /// system's own permission prompt only appears when you press *Notify me*.
@@ -1252,13 +1252,13 @@ pub struct AppSettings {
     /// and keep running is off) or `menu_bar` (keep Hutan in the menu bar, without a Dock icon;
     /// the daemon keeps running until you quit; needs `menu_bar`).
     pub on_last_window_close: LastWindowClose,
-    /// Show a menu bar item with the daemon state, a count of the sessions that need you and a
+    /// Show a menu bar item with the daemon state, a count of the sessions with a request waiting or an unseen failure and a
     /// menu to jump to them. Hides this item only, and only while Hutan runs: when no Hutan is
     /// connected to the daemon (it keeps running after Hutan quit) the daemon shows an item of
     /// its own, which is not optional.
     pub menu_bar: bool,
-    /// Show the number of sessions that need you (blocked, waiting for an approval, failed and
-    /// unread) as a badge on the Dock icon.
+    /// Show the number of sessions with a request waiting (an approval, a question, a plan) or an
+    /// unseen failure as a badge on the Dock icon; finished work is never counted.
     pub dock_badge: bool,
 }
 

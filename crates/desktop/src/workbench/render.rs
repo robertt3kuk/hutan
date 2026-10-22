@@ -1956,7 +1956,7 @@ impl Workbench {
                 store
                     .session(id)
                     .map(|info| store.presentation(info))
-                    .filter(|p| p.needs_you)
+                    .filter(|p| p.attention.is_some())
             })
             .filter(|_| !badge_blocked);
         let dragged = DraggedItem {
@@ -2191,7 +2191,7 @@ impl Workbench {
                 epoch: store.state().epoch.map(|e| e.to_string()),
                 sessions: store.sessions().len(),
                 workspace: store.active_workspace().map(|w| w.name.clone()),
-                needs_you: store.needs_you().len(),
+                requests: store.requests().len(),
                 approvals: store.approvals().len(),
                 terminal_theme: self.terminal_theme_name.clone(),
                 docks: {
