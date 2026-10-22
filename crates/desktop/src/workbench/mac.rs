@@ -140,6 +140,15 @@ impl Workbench {
         self.mac.start_at_login_available()
     }
 
+    /// Whether the start-at-login toggle does something: the desktop runs from Hutan.app and
+    /// its launch agent is in it.
+    pub fn start_at_login_usable(&self) -> bool {
+        crate::macos::status_item::start_at_login_usable(
+            self.start_at_login_available(),
+            self.start_at_login_status(),
+        )
+    }
+
     /// What the system said about the launch agent when it was last asked.
     pub fn start_at_login_status(&self) -> LoginItemStatus {
         self.mac.login_status()
@@ -205,6 +214,15 @@ impl Workbench {
     pub fn set_start_at_login(&mut self, on: bool, cx: &mut Context<Self>) {
         if !self.start_at_login_available() {
             self.set_notice("Starting at login is available in Hutan.app", cx);
+            return;
+        }
+        if on && self.mac.login_item.status() == LoginItemStatus::Missing {
+            self.set_notice(
+                "Cannot start Hutan's daemon at login: the launch agent is missing from \
+                 Hutan.app (Contents/Library/LaunchAgents); install Hutan again",
+                cx,
+            );
+            self.refresh_login_status(cx);
             return;
         }
         if let Err(error) = self
@@ -284,9 +302,16 @@ impl Workbench {
         let failure = match self.mac.login_item.register() {
             Err(error) => Some(format!("Cannot start Hutan's daemon at login: {error}")),
             Ok(()) => match self.mac.login_item.status() {
-                LoginItemStatus::NotFound => Some(
+                LoginItemStatus::Missing => Some(
                     "Cannot start Hutan's daemon at login: the launch agent is missing from \
-                     Hutan.app"
+                     Hutan.app (Contents/Library/LaunchAgents); install Hutan again"
+                        .to_owned(),
+                ),
+                // The system took the request without an error and still does not know the
+                // agent: say that, not a cause nobody saw.
+                LoginItemStatus::NotRegistered => Some(
+                    "Cannot start Hutan's daemon at login: macOS did not register the launch \
+                     agent"
                         .to_owned(),
                 ),
                 LoginItemStatus::RequiresApproval => {
@@ -297,7 +322,7 @@ impl Workbench {
                     );
                     None
                 }
-                LoginItemStatus::Enabled | LoginItemStatus::NotRegistered => None,
+                LoginItemStatus::Enabled => None,
             },
         };
         let Some(message) = failure else {

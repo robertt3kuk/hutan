@@ -359,18 +359,27 @@ fn a_registration_the_system_refuses_is_reported_and_the_setting_goes_back(
     assert!(!start_at_login_setting(&view, cx), "setting restored");
     assert!(notice(&view, cx).is_some_and(|n| n.contains("Operation not permitted")));
 
-    // The system cannot find the plist in the bundle.
-    fakes.login.set_after_register(LoginItemStatus::NotFound);
+    // The plist is not in the bundle.
+    fakes.login.set_after_register(LoginItemStatus::Missing);
     fakes.login.fail_register("");
     clear_notice(&view, cx);
     let fakes2 = Fakes::new();
-    fakes2.login.set_after_register(LoginItemStatus::NotFound);
+    fakes2.login.set_after_register(LoginItemStatus::Missing);
     close_window(cx);
     drop(view);
     let (view, cx) = open(cx, &daemon, &fakes2);
     dispatch(cx, daemon_actions::ToggleStartAtLogin);
     assert!(!start_at_login_setting(&view, cx));
     assert!(notice(&view, cx).is_some_and(|n| n.contains("missing from Hutan.app")));
+    // The menu says so and the toggle cannot be used any more.
+    assert_eq!(
+        start_at_login_menu_item(cx),
+        (
+            format!("{START_AT_LOGIN} (missing from Hutan.app)"),
+            false,
+            false
+        )
+    );
 
     // Unregistering can fail too: the setting stays on, as the system still has it.
     let fakes3 = Fakes::new();

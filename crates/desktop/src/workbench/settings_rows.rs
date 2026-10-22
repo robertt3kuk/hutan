@@ -24,7 +24,7 @@ fn status_tone(status: LoginItemStatus, theme: Theme) -> gpui::Hsla {
     match status {
         LoginItemStatus::Enabled => theme.success,
         LoginItemStatus::RequiresApproval => theme.warning,
-        LoginItemStatus::NotFound => theme.danger,
+        LoginItemStatus::Missing => theme.danger,
         LoginItemStatus::NotRegistered => theme.muted,
     }
 }

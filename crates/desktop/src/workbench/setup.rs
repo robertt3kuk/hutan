@@ -30,7 +30,7 @@ use super::ui::{self, ButtonKind, Mascot, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::cli_link::{CliLink, Manual, Plan};
 use crate::integrations::IntegrationStatus;
-use crate::macos::{LoginItemStatus, NotificationAnswer};
+use crate::macos::NotificationAnswer;
 use crate::settings::{
     AppSettings, AppearanceSettings, AssistantSettings, ChatSettings, EditorSettings,
     IntegrationsSettings, SendKey,
@@ -1759,22 +1759,12 @@ impl Workbench {
             }))
             .child(probe(&self.regions, Region::Setup("keep-running")));
         let available = self.start_at_login_available();
-        let login_note = if !available {
-            "Available when Hutan runs from Hutan.app.".to_owned()
-        } else {
-            match self.start_at_login_status() {
-                LoginItemStatus::RequiresApproval => {
-                    "Allow Hutan in System Settings → General → Login Items.".to_owned()
-                }
-                LoginItemStatus::NotFound => {
-                    "The launch agent is missing from Hutan.app.".to_owned()
-                }
-                _ => "Registers a Login Item; the daemon is restarted if it crashes.".to_owned(),
-            }
-        };
-        let login = ui::switch("start-at-login", state.start_at_login, available, &theme)
+        let usable = self.start_at_login_usable();
+        let login_note =
+            crate::macos::status_item::start_at_login_note(available, self.start_at_login_status());
+        let login = ui::switch("start-at-login", state.start_at_login, usable, &theme)
             .relative()
-            .when(available, |s| {
+            .when(usable, |s| {
                 s.on_click(cx.listener(|this, _, _, cx| {
                     let on = this.setup.state.as_ref().is_some_and(|s| !s.start_at_login);
                     this.setup_set_start_at_login(on, cx);

@@ -17,7 +17,8 @@ pub const AGENT_PLIST: &str = "dev.hutan.daemon.plist";
 /// The bundle identifier of Hutan.app (ADR 0007).
 pub const BUNDLE_ID: &str = "dev.hutan.Hutan";
 
-/// What the system says about the launch agent (`SMAppServiceStatus`).
+/// What the system says about the launch agent (`SMAppServiceStatus`), read with the bundle:
+/// see [`not_found_status`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoginItemStatus {
     /// Registered and allowed: launchd runs the daemon at login.
@@ -26,8 +27,8 @@ pub enum LoginItemStatus {
     RequiresApproval,
     /// Not registered.
     NotRegistered,
-    /// The system cannot find the plist in the app bundle.
-    NotFound,
+    /// The agent's plist is not in the app bundle: it cannot be registered.
+    Missing,
 }
 
 impl LoginItemStatus {
@@ -37,7 +38,7 @@ impl LoginItemStatus {
             LoginItemStatus::Enabled => "enabled",
             LoginItemStatus::RequiresApproval => "requires approval",
             LoginItemStatus::NotRegistered => "not registered",
-            LoginItemStatus::NotFound => "not found",
+            LoginItemStatus::Missing => "missing from Hutan.app",
         }
     }
 
@@ -47,6 +48,21 @@ impl LoginItemStatus {
             self,
             LoginItemStatus::Enabled | LoginItemStatus::RequiresApproval
         )
+    }
+}
+
+/// What `SMAppService`'s `notFound` means for the agent. macOS answers it for an agent that was
+/// never registered ("the service hasn't registered with the Service Management framework") as
+/// well as for one whose plist is not in the bundle: measured on macOS 27.0.1 with ad-hoc signed
+/// copies of Hutan.app in a scratch folder and in an `Applications` folder, with and without
+/// `Contents/Library/LaunchAgents/dev.hutan.daemon.plist` — `notFound` in all four
+/// (docs/packaging.md § Start at login). So the file decides: there, the agent is just not
+/// registered yet; absent, it is missing.
+pub fn not_found_status(plist_in_bundle: bool) -> LoginItemStatus {
+    if plist_in_bundle {
+        LoginItemStatus::NotRegistered
+    } else {
+        LoginItemStatus::Missing
     }
 }
 
@@ -268,7 +284,9 @@ mod system {
     use objc2_foundation::{NSBundle, NSString, NSUserDefaults};
     use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
-    use super::{AGENT_PLIST, BUNDLE_ID, LoginItem, LoginItemStatus, inside_app_bundle};
+    use super::{
+        AGENT_PLIST, BUNDLE_ID, LoginItem, LoginItemStatus, inside_app_bundle, not_found_status,
+    };
 
     /// The app's user default (`defaults read dev.hutan.Hutan LoginItemBundle`) that records
     /// the bundle a registration was made from: `SMAppService` does not say it, and every
@@ -278,6 +296,8 @@ mod system {
     /// `SMAppService.agent(plistName:)` of the bundled daemon agent.
     pub struct SystemLoginItem {
         service: Retained<SMAppService>,
+        /// `Contents/Library/LaunchAgents/dev.hutan.daemon.plist` of the running bundle.
+        plist: PathBuf,
     }
 
     impl SystemLoginItem {
@@ -289,14 +309,18 @@ mod system {
             if !inside_app_bundle(&exe) {
                 return None;
             }
-            let identifier = NSBundle::mainBundle().bundleIdentifier()?;
+            let bundle = NSBundle::mainBundle();
+            let identifier = bundle.bundleIdentifier()?;
             if identifier.to_string() != BUNDLE_ID {
                 return None;
             }
-            let plist = NSString::from_str(AGENT_PLIST);
+            let plist = PathBuf::from(bundle.bundlePath().to_string())
+                .join("Contents/Library/LaunchAgents")
+                .join(AGENT_PLIST);
+            let name = NSString::from_str(AGENT_PLIST);
             // SAFETY: a class method taking a valid NSString; it only creates the proxy object.
-            let service = unsafe { SMAppService::agentServiceWithPlistName(&plist) };
-            Some(Self { service })
+            let service = unsafe { SMAppService::agentServiceWithPlistName(&name) };
+            Some(Self { service, plist })
         }
     }
 
@@ -319,7 +343,7 @@ mod system {
             } else if status == SMAppServiceStatus::RequiresApproval {
                 LoginItemStatus::RequiresApproval
             } else if status == SMAppServiceStatus::NotFound {
-                LoginItemStatus::NotFound
+                not_found_status(self.plist.is_file())
             } else {
                 LoginItemStatus::NotRegistered
             }

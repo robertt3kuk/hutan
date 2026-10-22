@@ -282,7 +282,7 @@ fn failed_start<'a>(
     });
     let (view, cx) = open_with(
         cx,
-        SettingsStore::new(SettingsPaths::in_dir(&dir.join("config"))),
+        SettingsStore::new(SettingsPaths::in_dir(dir.join("config"))),
         connection,
         None,
     );

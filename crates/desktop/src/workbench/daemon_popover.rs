@@ -185,7 +185,7 @@ impl Workbench {
             "start_at_login",
             START_AT_LOGIN,
             login,
-            login_available,
+            self.start_at_login_usable(),
             if login_available {
                 format!(
                     "{} · {}",

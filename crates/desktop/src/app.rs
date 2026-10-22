@@ -4,7 +4,7 @@ use crate::cli_link::CliLink;
 use crate::harness_install::SystemRunner;
 use crate::instance;
 use crate::integrations::CliInstaller;
-use crate::macos::status_item::{KEEP_RUNNING, start_at_login_title};
+use crate::macos::status_item::{KEEP_RUNNING, start_at_login_title, start_at_login_usable};
 use crate::macos::{LoginItem, LoginItemStatus, MacServices};
 use crate::settings::{AppSettings, WorkspaceSort};
 use crate::workbench::actions::{self, ApplyPreset, daemon};
@@ -269,7 +269,10 @@ fn daemon_items(daemon_menu: &DaemonMenu) -> Vec<MenuItem> {
                 daemon_menu.start_at_login_status,
             ),
             daemon::ToggleStartAtLogin,
-            daemon_menu.start_at_login_available,
+            start_at_login_usable(
+                daemon_menu.start_at_login_available,
+                daemon_menu.start_at_login_status,
+            ),
         )
         .checked(daemon_menu.start_at_login),
         daemon_item(

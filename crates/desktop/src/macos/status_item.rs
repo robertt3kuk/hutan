@@ -103,7 +103,10 @@ impl StatusItemModel {
             title: start_at_login_title(self.start_at_login_available, self.start_at_login_status),
             command: MenuCommand::ToggleStartAtLogin,
             checked: self.start_at_login,
-            enabled: self.start_at_login_available,
+            enabled: start_at_login_usable(
+                self.start_at_login_available,
+                self.start_at_login_status,
+            ),
         });
         menu.push(MenuSpec::Separator);
         menu.push(item("Quit Hutan", MenuCommand::Quit));
@@ -133,6 +136,32 @@ pub fn start_at_login_title(available: bool, status: LoginItemStatus) -> String 
     match status {
         LoginItemStatus::Enabled | LoginItemStatus::NotRegistered => START_AT_LOGIN.to_owned(),
         other => format!("{START_AT_LOGIN} ({})", other.label()),
+    }
+}
+
+/// Whether the start-at-login checkbox can be used: the app runs from Hutan.app and the
+/// launch agent is in it.
+pub fn start_at_login_usable(available: bool, status: LoginItemStatus) -> bool {
+    available && status != LoginItemStatus::Missing
+}
+
+/// The line under the start-at-login switch (Setup's *Background* step): what it does, or
+/// why it cannot be used, or what it waits for.
+pub fn start_at_login_note(available: bool, status: LoginItemStatus) -> &'static str {
+    if !available {
+        return "Available when Hutan runs from Hutan.app.";
+    }
+    match status {
+        LoginItemStatus::RequiresApproval => {
+            "Allow Hutan in System Settings → General → Login Items."
+        }
+        LoginItemStatus::Missing => {
+            "The launch agent is missing from Hutan.app (Contents/Library/LaunchAgents): \
+             install Hutan again."
+        }
+        LoginItemStatus::Enabled | LoginItemStatus::NotRegistered => {
+            "Registers a Login Item; the daemon is restarted if it crashes."
+        }
     }
 }
 
@@ -413,6 +442,7 @@ mod tests {
     use hutan_core::SessionId;
 
     use super::*;
+    use crate::macos::login_item::not_found_status;
     use crate::sessions::attention::AttentionKind;
 
     #[test]
@@ -589,5 +619,44 @@ mod tests {
                 false
             )
         );
+    }
+
+    #[test]
+    fn an_agent_never_registered_is_not_called_missing() {
+        // What SMAppService answers before the first registration, the plist in the bundle.
+        let never = not_found_status(true);
+        assert_eq!(never, LoginItemStatus::NotRegistered);
+        assert_eq!(start_at_login_title(true, never), START_AT_LOGIN);
+        assert!(start_at_login_usable(true, never));
+        assert_eq!(
+            start_at_login_note(true, never),
+            "Registers a Login Item; the daemon is restarted if it crashes."
+        );
+        let mut model = model(vec![]);
+        model.start_at_login_status = never;
+        assert!(model.menu().iter().any(|row| matches!(
+            row,
+            MenuSpec::Item { command: MenuCommand::ToggleStartAtLogin, title, enabled: true, .. }
+                if title == START_AT_LOGIN
+        )));
+
+        // The same answer without the plist: missing, and the toggle says so and is off.
+        let missing = not_found_status(false);
+        assert_eq!(missing, LoginItemStatus::Missing);
+        assert_eq!(
+            start_at_login_title(true, missing),
+            format!("{START_AT_LOGIN} (missing from Hutan.app)")
+        );
+        assert!(!start_at_login_usable(true, missing));
+        assert!(start_at_login_note(true, missing).starts_with("The launch agent is missing"));
+        model.start_at_login_status = missing;
+        assert!(model.menu().iter().any(|row| matches!(
+            row,
+            MenuSpec::Item {
+                command: MenuCommand::ToggleStartAtLogin,
+                enabled: false,
+                ..
+            }
+        )));
     }
 }
