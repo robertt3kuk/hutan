@@ -178,6 +178,20 @@ impl PaneTree {
         }
     }
 
+    /// Every split shares its space equally among its children (Vim's `⌃W =`).
+    pub fn equalize(&mut self) {
+        if let PaneTree::Split {
+            ratios, children, ..
+        } = self
+        {
+            let n = children.len().max(1);
+            *ratios = vec![1.0 / n as f32; children.len()];
+            for child in children {
+                child.equalize();
+            }
+        }
+    }
+
     /// Unit-square rectangles for every pane, following the ratios.
     pub fn layout(&self, rect: Rect) -> Vec<(PaneId, Rect)> {
         let mut out = Vec::new();

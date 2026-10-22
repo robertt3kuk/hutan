@@ -145,6 +145,17 @@ pub trait VimHost {
     /// ↓: one line down at the same column. `false` when the caret did not move.
     fn move_down(&mut self) -> bool;
 
+    // ---- the window --------------------------------------------------------------------------
+
+    /// The lines in view: the first (0-based) and how many fit. `None` (the default) for a host
+    /// that shows no window; `⌃D` `⌃U` `⌃F` `⌃B` `⌃E` `⌃Y` do nothing there.
+    fn view(&self) -> Option<(usize, usize)> {
+        None
+    }
+
+    /// Scrolls so that line `top` is the first in view.
+    fn scroll_to(&mut self, _top: usize) {}
+
     // ---- undo --------------------------------------------------------------------------------
 
     /// Starts a group: every edit until [`end_group`](Self::end_group) undoes in one step. A

@@ -209,6 +209,9 @@ pub(crate) struct Core {
     pub insert_register: bool,
     /// `⌃O` in Insert mode: the Normal command after which Insert comes back.
     pub insert_once: Option<crate::insert::InsertOnce>,
+    /// How many lines `⌃D` / `⌃U` scroll once a count set it (Vim's `'scroll'`); half the
+    /// window until then.
+    pub scroll_lines: Option<usize>,
 }
 
 /// The modal state of one field. The text stays in the [`VimHost`] the keys are applied to.
@@ -290,10 +293,14 @@ pub(crate) fn text_keys(text: &str) -> Vec<Key> {
                     _ => continue,
                 }
             }
-            c if (c as u32) < 32 => match char::from_u32(c as u32 + 96) {
-                Some(letter) => Key::Ctrl(letter),
-                None => continue,
-            },
+            // ⌃A…⌃Z are letters, ⌃\ ⌃] ⌃^ ⌃_ the characters after `[`.
+            c if (c as u32) < 32 => {
+                let base = if (c as u32) < 27 { 96 } else { 64 };
+                match char::from_u32(c as u32 + base) {
+                    Some(letter) => Key::Ctrl(letter),
+                    None => continue,
+                }
+            }
             c => Key::Char(c),
         });
     }
@@ -1104,7 +1111,8 @@ impl Core {
                 Key::Escape => !visual,
                 Key::Enter => true,
                 Key::Tab => self.depth == 0,
-                Key::Ctrl(c) => !matches!(c, 'r' | 'v' | 'o' | 'i'),
+                // The rest (`⌃W` `⌃]` `⌃T` `⌃^` `⌃G`, …) are the owner's: windows, files.
+                Key::Ctrl(c) => !"rvoidufbeyaxl".contains(c),
                 _ => false,
             };
             if ignored {

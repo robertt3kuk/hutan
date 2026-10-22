@@ -83,6 +83,7 @@ pub use rules::IndentUnit;
 pub use style::{CodeStyle, rgb, rgba};
 pub use view::{
     CodeView, CodeViewEvent, Layout, MAX_COLUMN_LINES, OVERSCAN_LINES, PaintTimes, ViewStats,
+    VimWindow, WindowDirection,
 };
 pub use vim_host::{BufferHost, HostStep};
 

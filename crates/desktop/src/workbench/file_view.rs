@@ -20,7 +20,7 @@ use hutan_chat_view::diff::DiffLine;
 use hutan_code_view::{
     AcceptAgentChanges, CloseFind, CodeStyle, CodeView, CodeViewEvent, Conflict, ExRun, FailReason,
     FileBuffer, Find, FindNext, FindPrevious, FindQuery, FindReplace, LoadState, NextAgentHunk,
-    PreviousAgentHunk, RejectAgentHunk, Save, ToggleFollowAgent, VimKey, VimSettings,
+    PreviousAgentHunk, RejectAgentHunk, Save, ToggleFollowAgent, VimKey, VimSettings, VimWindow,
 };
 use hutan_settings::SettingsStore;
 use hutan_vim::ex::Ex;
@@ -68,6 +68,14 @@ pub enum FileViewEvent {
     Definition { offset: usize },
     /// Go back to where the last jump came from (E-12a).
     GoBack,
+    /// Vim's `⌃]` at byte `offset`: the definition, with a way back for `⌃T`.
+    TagJump { offset: usize },
+    /// Vim's `⌃T`.
+    TagBack,
+    /// Vim's `⌃^`: the file shown before this one.
+    AlternateFile,
+    /// Vim's `⌃W` commands for the panes.
+    VimWindow(VimWindow),
     /// The code view asks for completions (E-12b; see [`CodeViewEvent::CompletionRequested`]).
     Completion {
         request: u64,
@@ -184,6 +192,14 @@ impl FileView {
                     cx.emit(FileViewEvent::Definition { offset: *offset });
                 }
                 CodeViewEvent::GoBack => cx.emit(FileViewEvent::GoBack),
+                CodeViewEvent::TagJump { offset } => {
+                    cx.emit(FileViewEvent::TagJump { offset: *offset });
+                }
+                CodeViewEvent::TagBack => cx.emit(FileViewEvent::TagBack),
+                CodeViewEvent::AlternateFile => cx.emit(FileViewEvent::AlternateFile),
+                CodeViewEvent::VimWindow(command) => {
+                    cx.emit(FileViewEvent::VimWindow(*command));
+                }
                 CodeViewEvent::CompletionRequested {
                     request,
                     offset,

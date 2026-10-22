@@ -739,6 +739,31 @@ impl WorkbenchState {
         }
     }
 
+    /// Every split of the center shares its space equally (Vim's `⌃W =`).
+    pub fn equalize_panes(&mut self) {
+        self.center.equalize();
+    }
+
+    /// Focus moves to the next pane of the center (`forward`, wrapping) or the previous one, in
+    /// the order of the layout (Vim's `⌃W w` / `⌃W W`). Returns whether focus changed.
+    pub fn cycle_pane(&mut self, forward: bool) -> bool {
+        if self.zoomed.is_some() {
+            return false;
+        }
+        let ids: Vec<PaneId> = self.center.panes().iter().map(|p| p.id).collect();
+        if ids.len() < 2 {
+            return false;
+        }
+        let current = self.active_pane_id();
+        let at = ids.iter().position(|id| *id == current).unwrap_or(0);
+        let next = if forward {
+            (at + 1) % ids.len()
+        } else {
+            (at + ids.len() - 1) % ids.len()
+        };
+        self.focus_pane(ids[next]).is_ok()
+    }
+
     // ---- geometric focus ---------------------------------------------------------------
 
     /// Move focus to the geometrically adjacent pane or visible, non-empty dock. Returns whether

@@ -100,6 +100,29 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.definition_of(view, offset, false, window, cx);
+    }
+
+    /// Vim's `⌃]`: the definition, and where it was pressed is remembered for `⌃T` (*Go
+    /// Back*) also within the file.
+    pub(crate) fn tag_jump(
+        &mut self,
+        view: &Entity<FileView>,
+        offset: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.definition_of(view, offset, true, window, cx);
+    }
+
+    fn definition_of(
+        &mut self,
+        view: &Entity<FileView>,
+        offset: usize,
+        tag: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let code = view.read(cx).code().clone();
         let (path, position, caret) = {
             let buffer = view.read(cx).buffer().read(cx);
@@ -124,7 +147,7 @@ impl Workbench {
         cx.spawn_in(window, async move |this, cx| {
             let answer = call.await;
             this.update_in(cx, |this, window, cx| {
-                this.definition_arrived(&code, from, answer, window, cx);
+                this.definition_arrived(&code, from, tag, answer, window, cx);
             })
             .ok();
         })
@@ -135,6 +158,7 @@ impl Workbench {
         &mut self,
         code: &Entity<CodeView>,
         from: Jump,
+        tag: bool,
         answer: Result<LspLocations, ClientError>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -153,7 +177,8 @@ impl Workbench {
         let start = location.range.start;
         if location.path.display().to_string() == from.path {
             // In the same file: Vim's own jumplist takes it (its `⌃O`); without Vim, *Go Back*.
-            if code.read(cx).vim_mode().is_none() {
+            // `⌃]` keeps its way back too (`⌃T`).
+            if tag || code.read(cx).vim_mode().is_none() {
                 self.lsp.update(cx, |lsp, _| lsp.push_jump(from));
             }
             code.update(cx, |code, cx| {

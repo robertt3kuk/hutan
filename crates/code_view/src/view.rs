@@ -52,6 +52,15 @@ pub enum CodeViewEvent {
     /// Go back to where the last jump into this file came from (`⌃O` at the start of the
     /// view's own jumps, or without Vim).
     GoBack,
+    /// Vim's `⌃]`: go to the definition at byte `offset`, remembering where it was pressed for
+    /// `⌃T` (the tag stack).
+    TagJump { offset: usize },
+    /// Vim's `⌃T`: back to where the last `⌃]` was pressed.
+    TagBack,
+    /// Vim's `⌃^`: the alternate file (the file shown before this one).
+    AlternateFile,
+    /// Vim's `⌃W` commands, for the owner's panes.
+    VimWindow(VimWindow),
     /// Ask the language server for completions at byte `offset` (E-12b); the owner answers
     /// request `request` with [`CodeView::set_completions`]. `trigger`: the trigger character
     /// just typed; `incomplete`: asked again because the last answer was incomplete.
@@ -72,6 +81,33 @@ pub enum CodeViewEvent {
         trigger: Option<char>,
         retrigger: bool,
     },
+}
+
+/// A `⌃W` command of Vim mapped to Hutan's panes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VimWindow {
+    /// `s` (below) / `v` (beside): the pane splits with a second view of the file.
+    Split { vertical: bool },
+    /// `h` `j` `k` `l`: the neighbour pane that way.
+    Focus(WindowDirection),
+    /// `w` / `W`: the next / previous pane.
+    Cycle { forward: bool },
+    /// `q` (`:q`) and `c` (`:close`): the file's tab closes.
+    Close,
+    /// `o`: the pane fills the window (Hutan zooms it rather than closing the other panes and
+    /// the sessions in them; `⌃W o` again restores the layout).
+    Only,
+    /// `=`: every split shares its space equally.
+    Equalize,
+}
+
+/// Where `⌃W h` `j` `k` `l` look.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowDirection {
+    Left,
+    Down,
+    Up,
+    Right,
 }
 
 /// Where a pending reveal puts the caret: a 1-based line and column in characters (`hutan

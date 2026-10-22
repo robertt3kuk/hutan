@@ -193,6 +193,16 @@ pub(crate) enum Simple {
     /// `⌃O` (-1) and `⌃I` (+1).
     Jump(isize),
     Escape,
+    /// `⌃D` `⌃U` `⌃F` `⌃B` `⌃E` `⌃Y`.
+    Scroll(Scroll),
+    /// `⌃A` (`add`) / `⌃X` on the number at or after the caret; Visual `g⌃A` / `g⌃X` count up
+    /// line by line (`progressive`).
+    Increment {
+        add: bool,
+        progressive: bool,
+    },
+    /// `⌃L`: Vim redraws; nothing to do here.
+    Redraw,
     // Visual mode only.
     /// `o`
     SwapEnds,
@@ -206,6 +216,35 @@ pub(crate) enum Simple {
     VisualPut {
         before: bool,
     },
+}
+
+/// How a scroll key moves the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Scroll {
+    HalfDown,
+    HalfUp,
+    PageDown,
+    PageUp,
+    LineDown,
+    LineUp,
+}
+
+/// The scroll, increment and redraw commands of a ⌃ key (Normal and Visual mode alike).
+fn ctrl_simple(c: char) -> Option<Simple> {
+    Some(match c {
+        'd' => Simple::Scroll(Scroll::HalfDown),
+        'u' => Simple::Scroll(Scroll::HalfUp),
+        'f' => Simple::Scroll(Scroll::PageDown),
+        'b' => Simple::Scroll(Scroll::PageUp),
+        'e' => Simple::Scroll(Scroll::LineDown),
+        'y' => Simple::Scroll(Scroll::LineUp),
+        'a' | 'x' => Simple::Increment {
+            add: c == 'a',
+            progressive: false,
+        },
+        'l' => Simple::Redraw,
+        _ => return None,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -638,7 +677,12 @@ pub(crate) fn parse(keys: &[Key], cx: Context<'_>) -> Parse {
         Key::Ctrl('o') => return simple(Simple::Jump(-1), 1),
         Key::Ctrl('i') | Key::Tab => return simple(Simple::Jump(1), 1),
         Key::Delete => return operate(Op::Delete, Target::Motion(Motion::Right)),
-        Key::Ctrl(c) => return Parse::Unsupported(format!("<C-{c}>")),
+        Key::Ctrl(c) => {
+            return match ctrl_simple(*c) {
+                Some(s) => simple(s, 1),
+                None => Parse::Unsupported(format!("<C-{c}>")),
+            };
+        }
         Key::Char(_) => {}
         _ => return Parse::Invalid,
     }
@@ -785,7 +829,12 @@ fn parse_visual(keys: &[Key], i: usize, reg: Option<char>, n: Option<usize>) -> 
     }
     match key {
         Key::Ctrl('v') => return simple(Simple::Visual(Mode::VisualBlock), 1),
-        Key::Ctrl(c) => return Parse::Unsupported(format!("<C-{c}>")),
+        Key::Ctrl(c) => {
+            return match ctrl_simple(c) {
+                Some(s) => simple(s, 1),
+                None => Parse::Unsupported(format!("<C-{c}>")),
+            };
+        }
         Key::Delete => return done(Action::VisualOperate(Op::Delete, Widen::None)),
         Key::Char(_) => {}
         _ => return Parse::Invalid,
@@ -828,6 +877,13 @@ fn parse_visual(keys: &[Key], i: usize, reg: Option<char>, n: Option<usize>) -> 
             Some(Key::Escape) => Parse::Cancel,
             Some(Key::Char('J')) => simple(Simple::Join { spaces: false }, 2),
             Some(Key::Char('v')) => simple(Simple::Reselect, 2),
+            Some(Key::Ctrl(c @ ('a' | 'x'))) => simple(
+                Simple::Increment {
+                    add: *c == 'a',
+                    progressive: true,
+                },
+                2,
+            ),
             Some(Key::Char(n)) => Parse::Unsupported(format!("g{n}")),
             Some(_) => Parse::Invalid,
         },

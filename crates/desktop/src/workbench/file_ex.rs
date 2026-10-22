@@ -9,11 +9,12 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{Context, Entity, Window};
+use hutan_code_view::{VimWindow, WindowDirection};
 use hutan_vim::ex::Ex;
 
 use super::file_view::FileView;
 use super::files::FileOpen;
-use super::model::{Edge, ItemRef, PaneId};
+use super::model::{Direction, Edge, ItemRef, PaneId};
 use super::view::Workbench;
 
 /// Vim's "E37": unsaved changes would be lost.
@@ -112,6 +113,64 @@ impl Workbench {
             | Ex::Mark { .. }
             | Ex::Undo
             | Ex::Redo => {}
+        }
+    }
+
+    /// Vim's `⌃^`: the file whose code had the keyboard before this one's.
+    pub(crate) fn alternate_file(
+        &mut self,
+        view: &Entity<FileView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = view.read(cx).buffer().read(cx).path().display().to_string();
+        let alternate = self
+            .buffers
+            .recent
+            .iter()
+            .flatten()
+            .find(|path| **path != current && self.buffers.buffers.contains_key(*path))
+            .cloned();
+        match alternate {
+            Some(path) => self.open_file(FileOpen::picked(path), window, cx),
+            None => view.update(cx, |v, cx| v.say("E23: No alternate file", true, cx)),
+        }
+    }
+
+    /// Vim's `⌃W` commands on Hutan's panes: `s` `v` split like `:sp` `:vs`, `h` `j` `k` `l`
+    /// focus the neighbour, `w` `W` the next / previous pane, `q` `c` close the tab like `:q`,
+    /// `o` zooms the pane (the other panes and their sessions stay), `=` equalizes the splits.
+    pub(crate) fn vim_window(
+        &mut self,
+        pane: PaneId,
+        view: &Entity<FileView>,
+        command: VimWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match command {
+            VimWindow::Split { vertical } => {
+                self.run_file_command(pane, view, Ex::Split { vertical }, window, cx);
+            }
+            VimWindow::Close => {
+                self.run_file_command(pane, view, Ex::Quit { force: false }, window, cx);
+            }
+            VimWindow::Focus(direction) => {
+                let direction = match direction {
+                    WindowDirection::Left => Direction::Left,
+                    WindowDirection::Down => Direction::Down,
+                    WindowDirection::Up => Direction::Up,
+                    WindowDirection::Right => Direction::Right,
+                };
+                self.mutate(cx, |s| {
+                    s.focus_neighbor(direction);
+                });
+            }
+            VimWindow::Cycle { forward } => self.mutate(cx, |s| {
+                s.cycle_pane(forward);
+            }),
+            VimWindow::Only => self.mutate(cx, |s| s.toggle_zoom()),
+            VimWindow::Equalize => self.mutate(cx, |s| s.equalize_panes()),
         }
     }
 

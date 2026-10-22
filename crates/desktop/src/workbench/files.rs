@@ -95,6 +95,8 @@ pub(crate) struct Stored {
 #[derive(Default)]
 pub struct BufferStore {
     pub(crate) buffers: HashMap<String, Stored>,
+    /// The last two files whose code lost the keyboard, newest first: Vim's alternate file.
+    pub(crate) recent: [Option<String>; 2],
     /// Takes the connection's `fs.changed` notices while there are buffers.
     pub(crate) listener: Option<Task<()>>,
     /// `fs.changed` notices handled so far (tests wait on it).
@@ -446,6 +448,11 @@ impl Workbench {
                     this.overwrite_file(&path.display().to_string(), cx);
                 }
                 FileViewEvent::FocusLost(path) => {
+                    let key = path.display().to_string();
+                    let recent = &mut this.buffers.recent;
+                    if recent[0].as_deref() != Some(key.as_str()) {
+                        recent[1] = recent[0].replace(key);
+                    }
                     this.autosave_on_focus_change(&path.display().to_string(), cx);
                 }
                 FileViewEvent::Ex(command) => {
@@ -458,7 +465,14 @@ impl Workbench {
                 FileViewEvent::Definition { offset } => {
                     this.go_to_definition(view, *offset, window, cx);
                 }
-                FileViewEvent::GoBack => this.go_back(window, cx),
+                FileViewEvent::GoBack | FileViewEvent::TagBack => this.go_back(window, cx),
+                FileViewEvent::TagJump { offset } => {
+                    this.tag_jump(view, *offset, window, cx);
+                }
+                FileViewEvent::AlternateFile => this.alternate_file(view, window, cx),
+                FileViewEvent::VimWindow(command) => {
+                    this.vim_window(pane, view, *command, window, cx);
+                }
                 FileViewEvent::Completion {
                     request,
                     offset,

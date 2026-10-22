@@ -22,6 +22,8 @@ pub struct StringHost {
     pub ended: usize,
     /// How many bytes `slice` handed out.
     pub sliced: std::cell::Cell<usize>,
+    /// The first line in view of a window as tall as the recorder's Vim (`vim -es`: 23 lines).
+    pub top: usize,
 }
 
 impl StringHost {
@@ -212,6 +214,14 @@ impl VimHost for StringHost {
         let column = self.column(self.cursor);
         self.cursor = self.at_column(end + 1, self.line_end_of(end + 1), column);
         true
+    }
+
+    fn view(&self) -> Option<(usize, usize)> {
+        Some((self.top, 23))
+    }
+
+    fn scroll_to(&mut self, top: usize) {
+        self.top = top;
     }
 
     fn begin_group(&mut self) {

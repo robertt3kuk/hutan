@@ -646,6 +646,15 @@ impl Core {
                 }
             }
             Simple::Escape => self.leave_visual(host),
+            Simple::Scroll(how) => self.scroll(host, how, count),
+            Simple::Increment { add, progressive } => {
+                if self.mode.is_visual() {
+                    self.visual_increment(host, add, progressive, n);
+                } else {
+                    self.increment(host, add, n);
+                }
+            }
+            Simple::Redraw => {}
             Simple::SwapEnds => {
                 let cursor = host.cursor();
                 host.set_cursor(self.anchor);

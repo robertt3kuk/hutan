@@ -43,7 +43,7 @@ use crate::buffer::Coalesce;
 use crate::ex;
 use crate::layout::TAB_SIZE;
 use crate::rules::IndentUnit;
-use crate::view::{CodeView, CodeViewEvent};
+use crate::view::{CodeView, CodeViewEvent, VimWindow, WindowDirection};
 use crate::vim_host::BufferHost;
 
 /// How Vim behaves in a view: what the desktop's `editor.*` settings say.
@@ -72,6 +72,8 @@ pub(crate) struct VimState {
     message: Option<VimMessage>,
     /// `'tabstop'`, `'shiftwidth'` and `'expandtab'` follow the file until a `:set` of one.
     indent_from_file: bool,
+    /// `⌃W` was typed: the next key is a window command.
+    window_prefix: bool,
 }
 
 /// What [`CodeView::run_ex`] did with a command.
@@ -256,6 +258,7 @@ impl CodeView {
                     visual: Vec::new(),
                     message: None,
                     indent_from_file: true,
+                    window_prefix: false,
                 });
                 // A new state is in Insert: Escape takes it to Normal like any other.
                 self.vim_key(Key::Escape, cx);
@@ -295,7 +298,9 @@ impl CodeView {
         let Some(state) = &self.vim else {
             return String::new();
         };
-        let pending = if state.vim.command_line().is_some() {
+        let pending = if state.window_prefix {
+            "^W".to_owned()
+        } else if state.vim.command_line().is_some() {
             String::new()
         } else {
             state.vim.pending_keys()
@@ -418,6 +423,9 @@ impl CodeView {
             self.open_command_line(cx);
             return true;
         }
+        if mode == Mode::Normal && self.owner_key(idle, key, cx) {
+            return true;
+        }
         if mode == Mode::Normal && self.language_key(&pending, key, cx) {
             return true;
         }
@@ -436,6 +444,98 @@ impl CodeView {
             cx.emit(CodeViewEvent::GoBack);
         }
         handled
+    }
+
+    /// Vim's Normal-mode keys for the owner: `⌃W {c}` window commands, `⌃]` / `⌃T` the
+    /// definition and back, `⌃^` the alternate file; and `⌃G`, which shows the file's name,
+    /// state and the caret's place in it.
+    fn owner_key(&mut self, idle: bool, key: Key, cx: &mut Context<Self>) -> bool {
+        let Some(state) = self.vim.as_mut() else {
+            return false;
+        };
+        if std::mem::take(&mut state.window_prefix) {
+            let command = match key {
+                Key::Char('s' | 'S') | Key::Ctrl('s') => Some(VimWindow::Split { vertical: false }),
+                Key::Char('v') | Key::Ctrl('v') => Some(VimWindow::Split { vertical: true }),
+                Key::Char('h') | Key::Ctrl('h') | Key::Left => {
+                    Some(VimWindow::Focus(WindowDirection::Left))
+                }
+                Key::Char('j') | Key::Ctrl('j') | Key::Down => {
+                    Some(VimWindow::Focus(WindowDirection::Down))
+                }
+                Key::Char('k') | Key::Ctrl('k') | Key::Up => {
+                    Some(VimWindow::Focus(WindowDirection::Up))
+                }
+                Key::Char('l') | Key::Ctrl('l') | Key::Right => {
+                    Some(VimWindow::Focus(WindowDirection::Right))
+                }
+                Key::Char('w') | Key::Ctrl('w') => Some(VimWindow::Cycle { forward: true }),
+                Key::Char('W') => Some(VimWindow::Cycle { forward: false }),
+                Key::Char('q' | 'c') | Key::Ctrl('q') => Some(VimWindow::Close),
+                Key::Char('o') | Key::Ctrl('o') => Some(VimWindow::Only),
+                Key::Char('=') => Some(VimWindow::Equalize),
+                Key::Escape | Key::Ctrl('c') => None,
+                other => {
+                    let name = match other {
+                        Key::Char(c) => c.to_string(),
+                        Key::Ctrl(c) => format!("^{}", c.to_ascii_uppercase()),
+                        _ => String::new(),
+                    };
+                    state.message = Some(VimMessage {
+                        text: format!("Not supported: ^W{name}"),
+                        error: true,
+                    });
+                    None
+                }
+            };
+            if let Some(command) = command {
+                cx.emit(CodeViewEvent::VimWindow(command));
+            }
+            cx.emit(CodeViewEvent::Changed);
+            cx.notify();
+            return true;
+        }
+        if !idle {
+            return false;
+        }
+        match key {
+            Key::Ctrl('w') => {
+                state.window_prefix = true;
+                state.message = None;
+                cx.emit(CodeViewEvent::Changed);
+                cx.notify();
+            }
+            Key::Ctrl(']') => {
+                let offset = self.selections.primary().head;
+                cx.emit(CodeViewEvent::TagJump { offset });
+            }
+            Key::Ctrl('t') => cx.emit(CodeViewEvent::TagBack),
+            Key::Ctrl('^') => cx.emit(CodeViewEvent::AlternateFile),
+            Key::Ctrl('g') => {
+                let text = self.file_info(cx);
+                self.set_vim_message(text, false, cx);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// What `⌃G` shows: `"name" [Modified] 12 lines --50%--`.
+    fn file_info(&self, cx: &App) -> String {
+        let buffer = self.buffer().read(cx);
+        let text = buffer.text();
+        let mut lines = text.line_count();
+        if text.len() > 0 && text.char_before(text.len()) == Some('\n') {
+            lines = lines.saturating_sub(1);
+        }
+        let line = line_of(text, self.selections.primary().head) + 1;
+        let modified = if buffer.is_dirty() { " [Modified]" } else { "" };
+        let percent = line * 100 / lines.max(1);
+        let noun = if lines == 1 { "line" } else { "lines" };
+        format!(
+            "\"{}\"{modified} {lines} {noun} --{percent}%--",
+            buffer.path().display()
+        )
     }
 
     /// The keys of the language server in Normal mode (E-12a): `K` shows the hover popover at
@@ -515,6 +615,13 @@ impl CodeView {
         let id = cx.entity_id();
         let head = self.selections.primary().head;
         let unit = self.buffer().read(cx).indent_unit();
+        // Vim's window: the first whole line in view and how many fit.
+        let view = self.layout.map(|layout| {
+            let line_h = f32::from(layout.line_height).max(1.0);
+            let top = (self.scroll_y.max(0.0) / line_h).ceil() as usize;
+            let height = (f32::from(layout.bounds.size.height) / line_h).floor() as usize;
+            (top, height.max(1))
+        });
         let model = self.buffer().update(cx, |b, _| b.lend());
         let state = self.vim.as_mut()?;
         if state.indent_from_file {
@@ -532,6 +639,9 @@ impl CodeView {
             }
         }
         let mut host = BufferHost::new(model, head, editable, state.group_open);
+        if let Some((top, height)) = view {
+            host.set_view(top, height);
+        }
         let result = {
             let mut clip = AppClipboard(cx);
             f(state, &mut host, &mut clip)
@@ -543,6 +653,7 @@ impl CodeView {
                 error: message.error,
             });
         }
+        let scrolled = host.scrolled();
         let (model, cursor, open, steps) = host.finish();
         state.group_open = open;
         self.buffer()
@@ -550,6 +661,10 @@ impl CodeView {
         self.selections = Selections::cursor(cursor);
         self.marked.clear();
         self.goal = None;
+        if let (Some(top), Some(layout)) = (scrolled, self.layout) {
+            self.scroll_y = top as f32 * f32::from(layout.line_height);
+            self.clamp_scroll(cx);
+        }
         self.reveal_head(cx);
         cx.emit(CodeViewEvent::Changed);
         cx.notify();

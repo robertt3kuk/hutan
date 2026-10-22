@@ -767,3 +767,45 @@ fn the_problems_panel_lists_by_file_filters_and_opens_at_the_position(cx: &mut T
         })
     });
 }
+
+#[gpui::test]
+fn vim_ctrl_bracket_goes_to_the_definition_and_ctrl_t_comes_back(cx: &mut TestAppContext) {
+    let env = Env::new("always", |root| {
+        json!({
+            "definition": {
+                "uri": format!("file://{}", root.join("b.fake").display()),
+                "range": {"start": {"line": 2, "character": 3}, "end": {"line": 2, "character": 8}},
+            },
+        })
+    });
+    let (view, cx) = env.open(cx, "[editor]\nvim_mode = true\n");
+    std::fs::write(env.file("b.fake"), "one\ntwo\nfn alpha\n").unwrap();
+    let tab = open_file(&view, cx, &env.file("a.fake"), "use alpha;\n");
+    draw(cx);
+    cx.simulate_input("w");
+    let at = caret(&tab.code, cx);
+    assert_eq!(at, 4, "on `alpha`");
+
+    // ⌃] opens the definition, ⌃T returns to where it was pressed.
+    cx.simulate_keystrokes("ctrl-]");
+    let b = env.file("b.fake").display().to_string();
+    wait_until(cx, "b.fake at the definition", |cx| {
+        focused_path(&view, cx).as_deref() == Some(b.as_str())
+    });
+    let b_code = view.read_with(cx, |wb, cx| {
+        wb.focused_file_view().unwrap().read(cx).code().clone()
+    });
+    wait_until(cx, "the caret on the definition", |cx| {
+        caret(&b_code, cx) == 8 + 3
+    });
+    cx.simulate_keystrokes("ctrl-t");
+    wait_until(cx, "back in a.fake", |cx| {
+        focused_path(&view, cx).as_deref() == Some(tab.path.as_str())
+    });
+    let a_code = view.read_with(cx, |wb, cx| {
+        wb.focused_file_view().unwrap().read(cx).code().clone()
+    });
+    wait_until(cx, "the caret where ⌃] was pressed", |cx| {
+        caret(&a_code, cx) == at
+    });
+}

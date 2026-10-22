@@ -37,6 +37,10 @@ pub struct BufferHost {
     /// The column `↑`/`↓` keep in Insert mode, in characters.
     goal: Option<usize>,
     steps: Vec<HostStep>,
+    /// The lines in view (first, how many), when the view has been drawn.
+    view: Option<(usize, usize)>,
+    /// Where a scroll command asked the window's top to go.
+    scrolled: Option<usize>,
 }
 
 impl BufferHost {
@@ -52,6 +56,8 @@ impl BufferHost {
             group_open,
             goal: None,
             steps: Vec::new(),
+            view: None,
+            scrolled: None,
         }
     }
 
@@ -62,6 +68,16 @@ impl BufferHost {
     /// Whether the Vim undo group is open.
     pub fn group_open(&self) -> bool {
         self.group_open
+    }
+
+    /// The lines the view shows (first, how many): Vim's window for `⌃D` and the like.
+    pub fn set_view(&mut self, top: usize, height: usize) {
+        self.view = Some((top, height));
+    }
+
+    /// The top line a scroll command asked for.
+    pub fn scrolled(&self) -> Option<usize> {
+        self.scrolled
     }
 
     /// The text model and what was done to it.
@@ -261,6 +277,15 @@ impl VimHost for BufferHost {
 
     fn move_down(&mut self) -> bool {
         self.move_lines(false)
+    }
+
+    fn view(&self) -> Option<(usize, usize)> {
+        self.view
+            .map(|(top, height)| (self.scrolled.unwrap_or(top), height))
+    }
+
+    fn scroll_to(&mut self, top: usize) {
+        self.scrolled = Some(top);
     }
 
     fn begin_group(&mut self) {

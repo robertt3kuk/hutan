@@ -370,3 +370,139 @@ fn insert_mode_control_keys_edit_the_composer(cx: &mut TestAppContext) {
     cx.simulate_input(">");
     assert_eq!(draft(&model, cx), ">one two");
 }
+
+// ---- Normal mode -------------------------------------------------------------------------------
+
+fn panes(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
+    draw(cx);
+    view.read_with(cx, |wb, _| wb.state().panes().len())
+}
+
+fn active_pane(view: &Entity<Workbench>, cx: &VisualTestContext) -> String {
+    view.read_with(cx, |wb, _| format!("{:?}", wb.state().active_pane_id()))
+}
+
+#[gpui::test]
+fn ctrl_w_drives_the_panes(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
+    let dir = tempfile::tempdir().unwrap();
+    let _tab = open_text(&view, cx, dir.path(), "w.txt", "one\ntwo\n");
+    let first = panes(&view, cx);
+
+    // ⌃W v splits beside, ⌃W s below; the new pane has the keyboard.
+    let left = active_pane(&view, cx);
+    cx.simulate_keystrokes("ctrl-w");
+    cx.simulate_input("v");
+    assert_eq!(panes(&view, cx), first + 1);
+    let right = active_pane(&view, cx);
+    assert_ne!(left, right);
+    // ⌃W h / ⌃W l walk between them.
+    cx.simulate_keystrokes("ctrl-w");
+    cx.simulate_input("h");
+    draw(cx);
+    assert_eq!(active_pane(&view, cx), left);
+    cx.simulate_keystrokes("ctrl-w ctrl-l");
+    draw(cx);
+    assert_eq!(active_pane(&view, cx), right);
+    cx.simulate_keystrokes("ctrl-w");
+    cx.simulate_input("s");
+    assert_eq!(panes(&view, cx), first + 2);
+    // ⌃W w cycles, ⌃W = evens the splits out (nothing to see but no harm).
+    cx.simulate_keystrokes("ctrl-w");
+    cx.simulate_input("w");
+    draw(cx);
+    cx.simulate_keystrokes("ctrl-w");
+    cx.simulate_input("=");
+    // ⌃W q closes the file's tab in the pane that has the keyboard, as `:q` does.
+    cx.simulate_keystrokes("ctrl-w");
+    cx.simulate_input("q");
+    assert_eq!(panes(&view, cx), first + 1);
+    // The file's code still takes Vim keys afterwards.
+    let tab = view
+        .read_with(cx, |wb, _| wb.focused_file_view())
+        .expect("a file has the keyboard");
+    let code = tab.read_with(cx, |v, _| v.code().clone());
+    assert_eq!(
+        code.read_with(cx, |c, _| c.vim_mode()),
+        Some(VimMode::Normal)
+    );
+}
+
+#[gpui::test]
+fn normal_mode_control_keys_in_a_file_tab(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
+    let dir = tempfile::tempdir().unwrap();
+    let mut long = String::from("x 7 y\n");
+    for i in 2..=200 {
+        long.push_str(&format!("line {i}\n"));
+    }
+    let tab = open_text(&view, cx, dir.path(), "n.txt", &long);
+    let line = |cx: &mut VisualTestContext| {
+        tab.code.read_with(cx, |c, cx| {
+            let head = c.selections().primary().head;
+            c.buffer().read(cx).text().line_of_byte(head).unwrap()
+        })
+    };
+
+    // ⌃A / ⌃X on the number after the caret, with a count.
+    cx.simulate_keystrokes("ctrl-a");
+    assert!(text(&tab.buffer, cx).starts_with("x 8 y\n"));
+    cx.simulate_input("5");
+    cx.simulate_keystrokes("ctrl-x");
+    assert!(text(&tab.buffer, cx).starts_with("x 3 y\n"));
+    // ⌃D / ⌃U move by half the window and scroll it; ⌃E scrolls a line.
+    let scroll = tab.code.read_with(cx, |c, _| c.scroll_y());
+    cx.simulate_keystrokes("ctrl-d");
+    draw(cx);
+    let down = line(cx);
+    assert!(down > 3, "half a window down: line {down}");
+    assert!(
+        tab.code.read_with(cx, |c, _| c.scroll_y()) > scroll,
+        "the view scrolled"
+    );
+    cx.simulate_keystrokes("ctrl-u");
+    draw(cx);
+    assert_eq!(line(cx), 0);
+    cx.simulate_keystrokes("ctrl-f");
+    draw(cx);
+    assert!(line(cx) > down, "a page is more than half a window");
+    cx.simulate_keystrokes("ctrl-b");
+    draw(cx);
+    // ⌃L redraws: nothing changes.
+    let before = (line(cx), text(&tab.buffer, cx));
+    cx.simulate_keystrokes("ctrl-l");
+    assert_eq!((line(cx), text(&tab.buffer, cx)), before);
+    // ⌃G shows the file and where the caret is.
+    cx.simulate_input("gg");
+    cx.simulate_keystrokes("ctrl-g");
+    draw(cx);
+    let shown = tab
+        .view
+        .read_with(cx, |v, _| v.command_bar_text().map(str::to_owned))
+        .unwrap_or_default();
+    assert!(
+        shown.contains("n.txt") && shown.contains("[Modified]") && shown.contains("200 lines"),
+        "{shown}"
+    );
+
+    // ⌃^ goes to the file shown before, and back.
+    let other = open_text(&view, cx, dir.path(), "o.txt", "other\n");
+    let focused = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |wb, cx| {
+            wb.focused_file_view()
+                .map(|v| v.read(cx).buffer().read(cx).path().display().to_string())
+        })
+    };
+    let o_path = focused(cx).unwrap();
+    cx.simulate_keystrokes("ctrl-^");
+    wait_until(cx, "the alternate file", |cx| {
+        focused(cx).is_some_and(|p| p.ends_with("n.txt"))
+    });
+    cx.simulate_keystrokes("ctrl-6");
+    wait_until(cx, "back to o.txt", |cx| {
+        focused(cx).as_deref() == Some(o_path.as_str())
+    });
+    drop(other);
+}

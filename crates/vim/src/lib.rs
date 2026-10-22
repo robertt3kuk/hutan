@@ -30,11 +30,13 @@ mod insert;
 mod key;
 mod marks;
 mod normal;
+mod number;
 mod ops;
 mod pattern;
 mod register;
 mod text;
 mod vim;
+mod window;
 
 pub use host::{Clipboard, Edit, Transaction, VimHost};
 pub use key::{Key, Mode, Options, Outcome};
