@@ -2,9 +2,12 @@
 //! (`rewind.rs` has what they do). One primary button per surface (*Restore N files*), quiet
 //! labels, and every state said in words, never by colour alone.
 
+use std::path::Path;
+
 use gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px,
+    AnyElement, AppContext as _, Context, InteractiveElement, IntoElement, KeyDownEvent,
+    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::*,
+    px,
 };
 use hutan_core::{CheckpointKind, CheckpointState};
 use hutan_protocol::checkpoint::restore_label;
@@ -13,14 +16,33 @@ use super::actions;
 use super::chat::{Look, changed_text, diff_row};
 use super::harnesses::harness_name;
 use super::render::probe;
-use super::rewind::{DiffState, Group, Phase, SheetFocus};
+use super::rewind::{DiffState, Group, Phase, RewindHeader, SheetFocus};
+use super::style::TextTooltip;
 use super::ui::{self, FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
-use crate::theme::DensityExt as _;
+use super::workspaces::tilde;
+use crate::theme::{DensityExt as _, Theme, Tokens};
 
 /// How tall the sheet's file list and diff grow before they scroll.
 const LIST_MAX_HEIGHT: f32 = 220.0;
 const DIFF_MAX_HEIGHT: f32 = 220.0;
+
+/// A muted line of the sheet's header whose tooltip is the checkout's full path.
+fn muted_with_path(
+    id: &'static str,
+    text: &str,
+    path: &str,
+    theme: &Theme,
+    tokens: &Tokens,
+) -> impl IntoElement {
+    let path = SharedString::from(path.to_owned());
+    div()
+        .id(id)
+        .text_size(px(tokens.secondary_font_size))
+        .text_color(theme.muted)
+        .child(SharedString::from(text.to_owned()))
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip(path.clone())).into())
+}
 
 impl Workbench {
     /// The actions the turn footers, the menus and the palette dispatch.
@@ -70,6 +92,41 @@ impl Workbench {
             .join(", ")
     }
 
+    /// Where `checkout` is, said short: the name of the project whose folder it is, else the
+    /// folder (`~/…` under the home folder).
+    fn checkout_place(&self, checkout: &Path, cx: &gpui::App) -> String {
+        self.sessions
+            .read(cx)
+            .workspaces()
+            .iter()
+            .find(|w| w.project.as_ref().is_some_and(|p| p.root == checkout))
+            .map_or_else(|| tilde(checkout), |w| w.name.clone())
+    }
+
+    /// The open sheet's header once its plan is in: the facts line, the honest label, and the
+    /// checkout's full path (their tooltip).
+    pub fn rewind_sheet_header(&self, cx: &gpui::App) -> Option<RewindHeader> {
+        let preview = self.rewind.sheet.as_ref()?.preview.as_ref()?;
+        let agent = preview
+            .agent
+            .as_deref()
+            .map_or_else(|| "The agent".to_owned(), harness_name);
+        let turns = match preview.checkpoints.len() {
+            1 => "1 turn".to_owned(),
+            n => format!("{n} turns"),
+        };
+        let place = self.checkout_place(&preview.checkout, cx);
+        Some(RewindHeader {
+            facts: format!("{agent} · {turns} · {place}"),
+            label: restore_label(
+                preview.agent.as_deref(),
+                "this checkout",
+                preview.head_moved.as_ref(),
+            ),
+            checkout: preview.checkout.display().to_string(),
+        })
+    }
+
     pub(crate) fn render_rewind_sheet(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let sheet = self.rewind.sheet.as_ref()?;
         let theme = self.theme;
@@ -83,23 +140,10 @@ impl Workbench {
         } else {
             "Rewind files to before this turn"
         };
-        let mut facts: Vec<String> = Vec::new();
+        let header = self.rewind_sheet_header(cx);
         let mut shared = None;
         let mut busy = None;
-        let mut label = None;
         if let Some(preview) = &sheet.preview {
-            let mut line = vec![
-                preview
-                    .agent
-                    .as_deref()
-                    .map_or_else(|| "The agent".to_owned(), harness_name),
-            ];
-            line.push(match preview.checkpoints.len() {
-                1 => "1 turn".to_owned(),
-                n => format!("{n} turns"),
-            });
-            line.push(preview.checkout.display().to_string());
-            facts.push(line.join(" · "));
             if !preview.shared_with.is_empty() {
                 shared = Some(format!(
                     "Shared with {} — their files are left alone",
@@ -112,11 +156,6 @@ impl Workbench {
                     self.session_names(&preview.busy, cx)
                 ));
             }
-            label = Some(restore_label(
-                preview.agent.as_deref(),
-                &preview.checkout,
-                preview.head_moved.as_ref(),
-            ));
         }
         let harness = sheet
             .preview
@@ -391,11 +430,14 @@ impl Workbench {
                         }))
                         .child(probe(&regions, Region::Rewind("sheet")))
                         .child(div().font_weight(gpui::FontWeight::MEDIUM).child(title))
-                        .children(facts.into_iter().map(|line| {
-                            div()
-                                .text_size(px(tokens.secondary_font_size))
-                                .text_color(theme.muted)
-                                .child(SharedString::from(line))
+                        .children(header.as_ref().map(|header| {
+                            muted_with_path(
+                                "rewind-facts",
+                                &header.facts,
+                                &header.checkout,
+                                &theme,
+                                &tokens,
+                            )
                         }))
                         .children(shared.map(|line| {
                             div()
@@ -403,11 +445,14 @@ impl Workbench {
                                 .text_color(theme.muted)
                                 .child(SharedString::from(line))
                         }))
-                        .children(label.map(|label| {
-                            div()
-                                .text_size(px(tokens.secondary_font_size))
-                                .text_color(theme.muted)
-                                .child(SharedString::from(label))
+                        .children(header.as_ref().map(|header| {
+                            muted_with_path(
+                                "rewind-label",
+                                &header.label,
+                                &header.checkout,
+                                &theme,
+                                &tokens,
+                            )
                         }))
                         .children(notice.map(|notice| {
                             div()

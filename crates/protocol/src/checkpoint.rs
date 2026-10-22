@@ -11,7 +11,7 @@
 //! (kind `restore`), so restoring that one is Undo.
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use hutan_core::{CheckpointId, SessionId, WorkspaceId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -301,9 +301,11 @@ fn harness_name(agent: &str) -> &str {
 
 /// The words every preview of a restore shows (ADR 0019 Decision 9): it restores files only,
 /// the agent still remembers, and git history and what lies outside the checkout stay.
+/// `checkout` names the checkout: its path (the CLI), or `this checkout` where the path is shown
+/// elsewhere (the desktop's sheet, in a tooltip).
 pub fn restore_label(
     agent: Option<&str>,
-    checkout: &Path,
+    checkout: impl fmt::Display,
     head_moved: Option<&HeadMoved>,
 ) -> String {
     let harness = agent.map_or("The agent", harness_name);
@@ -319,11 +321,11 @@ pub fn restore_label(
             short(&moved.from),
             short(&moved.to),
             short(&moved.to),
-            checkout.display()
+            checkout
         ),
         None => format!(
             "Git history (commits, branches, stash) and anything outside {} are not rewound.",
-            checkout.display()
+            checkout
         ),
     };
     format!(
@@ -356,9 +358,9 @@ mod tests {
 
     #[test]
     fn the_label_says_files_only_who_remembers_and_what_stays() {
-        let checkout = Path::new("/work/repo");
+        let checkout = std::path::Path::new("/work/repo");
         assert_eq!(
-            restore_label(Some("claude"), checkout, None),
+            restore_label(Some("claude"), checkout.display(), None),
             "Restores files only. Claude Code still remembers this turn and may mention or redo \
              the changes. Git history (commits, branches, stash) and anything outside /work/repo \
              are not rewound."
@@ -367,10 +369,14 @@ mod tests {
             from: Some("0123456789abcdef".to_owned()),
             to: Some("fedcba9876543210".to_owned()),
         };
-        let text = restore_label(None, checkout, Some(&moved));
+        let text = restore_label(None, "this checkout", Some(&moved));
         assert!(text.contains("The agent still remembers"), "{text}");
         assert!(
             text.contains("HEAD moved from 0123456789 to fedcba9876 during the turns"),
+            "{text}"
+        );
+        assert!(
+            text.ends_with("anything outside this checkout are not rewound."),
             "{text}"
         );
     }

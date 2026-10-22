@@ -346,7 +346,7 @@ fn preview_text(preview: &CheckpointPreview, accepted: &BTreeSet<&str>, verb: &s
     lines.push(String::new());
     lines.push(restore_label(
         preview.agent.as_deref(),
-        &preview.checkout,
+        preview.checkout.display(),
         preview.head_moved.as_ref(),
     ));
     lines.join("\n")
