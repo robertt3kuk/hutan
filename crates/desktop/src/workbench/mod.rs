@@ -72,6 +72,7 @@ mod sidebars;
 mod start_failure;
 mod status_branch;
 pub mod style;
+mod term_splits;
 mod terminals;
 pub mod text_field;
 pub mod ui;

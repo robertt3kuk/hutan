@@ -1,8 +1,8 @@
 //! Layout operations on [`WorkbenchState`].
 
 use super::{
-    Axis, Direction, DockMode, DockPosition, Edge, FocusTarget, ItemRef, ModelError, Pane, PaneId,
-    PaneTree, PanelId, Rect, WorkbenchState,
+    Direction, DockMode, DockPosition, Edge, FocusTarget, ItemRef, ModelError, Pane, PaneId,
+    PanelId, Rect, WorkbenchState,
 };
 
 pub const MIN_DOCK_SIZE: f32 = 120.0;
@@ -666,43 +666,7 @@ impl WorkbenchState {
     /// Move the divider of the nearest ancestor split along `dir`'s axis one step in `dir`.
     /// `delta` is a fraction of that split. Returns whether anything moved.
     pub fn resize_pane(&mut self, pane: PaneId, dir: Direction, delta: f32) -> bool {
-        let Some(path) = self.center.path_to(pane) else {
-            return false;
-        };
-        let axis: Axis = dir.axis();
-        for depth in (0..path.len()).rev() {
-            let split_path = &path[..depth];
-            let child = path[depth];
-            let Some(PaneTree::Split {
-                axis: a, ratios, ..
-            }) = self.center.node_at(split_path)
-            else {
-                continue;
-            };
-            if *a != axis {
-                continue;
-            }
-            let n = ratios.len();
-            let divider = if dir.is_positive() {
-                if child + 1 < n {
-                    child
-                } else if child > 0 {
-                    child - 1
-                } else {
-                    continue;
-                }
-            } else if child > 0 {
-                child - 1
-            } else if child + 1 < n {
-                child
-            } else {
-                continue;
-            };
-            let before: f32 = ratios[..=divider].iter().sum();
-            let step = if dir.is_positive() { delta } else { -delta };
-            return self.center.set_divider(split_path, divider, before + step);
-        }
-        false
+        self.center.resize_leaf(pane, dir, delta)
     }
 
     /// Keyboard resize of whatever has focus: a pane moves its nearest divider, a dock changes
@@ -800,37 +764,7 @@ impl WorkbenchState {
                 let Some(cur) = layout.iter().find(|(p, _)| *p == id).map(|(_, r)| *r) else {
                     return false;
                 };
-                // Nearest along the axis, then most overlap, then top/left-most. Quantized so
-                // float noise from ratio arithmetic cannot reorder ties.
-                let quant = |v: f32| (v * 1e4).round() as i64;
-                let mut best: Option<((i64, i64, i64), PaneId)> = None;
-                for (pid, r) in &layout {
-                    if *pid == id {
-                        continue;
-                    }
-                    let (gap, overlap, across) = match dir {
-                        Direction::Right => {
-                            (r.x - (cur.x + cur.w), overlap(cur.y, cur.h, r.y, r.h), r.y)
-                        }
-                        Direction::Left => {
-                            (cur.x - (r.x + r.w), overlap(cur.y, cur.h, r.y, r.h), r.y)
-                        }
-                        Direction::Down => {
-                            (r.y - (cur.y + cur.h), overlap(cur.x, cur.w, r.x, r.w), r.x)
-                        }
-                        Direction::Up => {
-                            (cur.y - (r.y + r.h), overlap(cur.x, cur.w, r.x, r.w), r.x)
-                        }
-                    };
-                    if gap < -EPS || overlap <= EPS {
-                        continue;
-                    }
-                    let key = (quant(gap), -quant(overlap), quant(across));
-                    if best.as_ref().is_none_or(|(k, _)| key < *k) {
-                        best = Some((key, *pid));
-                    }
-                }
-                if let Some((_, pid)) = best {
+                if let Some(pid) = neighbor_in(&layout, id, dir) {
                     self.focus = FocusTarget::Pane(pid);
                     return true;
                 }
@@ -894,4 +828,33 @@ impl WorkbenchState {
 /// Length of the overlap of `[a, a + al]` and `[b, b + bl]`.
 fn overlap(a: f32, al: f32, b: f32, bl: f32) -> f32 {
     (a + al).min(b + bl) - a.max(b)
+}
+
+/// The leaf of `layout` next to `id` in direction `dir`: nearest along the axis, then the most
+/// overlap, then the top/left-most. Quantized so float noise from ratio arithmetic cannot
+/// reorder ties.
+pub(super) fn neighbor_in(layout: &[(PaneId, Rect)], id: PaneId, dir: Direction) -> Option<PaneId> {
+    const EPS: f32 = 1e-4;
+    let cur = layout.iter().find(|(p, _)| *p == id).map(|(_, r)| *r)?;
+    let quant = |v: f32| (v * 1e4).round() as i64;
+    let mut best: Option<((i64, i64, i64), PaneId)> = None;
+    for (pid, r) in layout {
+        if *pid == id {
+            continue;
+        }
+        let (gap, overlap, across) = match dir {
+            Direction::Right => (r.x - (cur.x + cur.w), overlap(cur.y, cur.h, r.y, r.h), r.y),
+            Direction::Left => (cur.x - (r.x + r.w), overlap(cur.y, cur.h, r.y, r.h), r.y),
+            Direction::Down => (r.y - (cur.y + cur.h), overlap(cur.x, cur.w, r.x, r.w), r.x),
+            Direction::Up => (cur.y - (r.y + r.h), overlap(cur.x, cur.w, r.x, r.w), r.x),
+        };
+        if gap < -EPS || overlap <= EPS {
+            continue;
+        }
+        let key = (quant(gap), -quant(overlap), quant(across));
+        if best.as_ref().is_none_or(|(k, _)| key < *k) {
+            best = Some((key, *pid));
+        }
+    }
+    best.map(|(_, pid)| pid)
 }

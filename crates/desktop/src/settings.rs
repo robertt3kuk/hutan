@@ -124,6 +124,9 @@ pub struct TerminalSettings {
     /// shell would run every line at once). Programs that handle bracketed paste are never
     /// asked about.
     pub confirm_multiline_paste: bool,
+    /// Dim the text of the terminal splits of a tab that do not have the keyboard by a few
+    /// percent, so the focused one is not told apart by its top edge alone.
+    pub dim_unfocused_splits: bool,
 }
 
 impl Default for TerminalSettings {
@@ -143,6 +146,7 @@ impl Default for TerminalSettings {
             tab_close: TabClose::Detach,
             open_files_with: OpenFilesWith::Editor,
             confirm_multiline_paste: true,
+            dim_unfocused_splits: true,
         }
     }
 }

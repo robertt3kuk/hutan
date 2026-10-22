@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use super::term_split::TermSplit;
+
 /// Identifier of a registered panel (`sessions`, `inspector`, …).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -352,8 +354,16 @@ pub enum ItemRef {
         path: String,
     },
     /// A file in the code view, by its canonical absolute path.
+    /// A file in the code view, by its canonical absolute path.
     File {
         path: String,
+    },
+    /// A terminal tab that holds a tree of terminal splits (Ghostty / iTerm style): every leaf is
+    /// its own daemon session, the tab has one title (the focused split's) and closes with its
+    /// last split. A tab with one terminal is [`ItemRef::Terminal`]; this form exists while it
+    /// has two or more.
+    TerminalSplit {
+        split: Box<TermSplit>,
     },
 }
 
@@ -379,6 +389,15 @@ enum ItemRepr {
     Changes {
         path: String,
     },
+    /// A tab of terminal splits: the tree (each leaf a pane of one terminal item), the focused
+    /// leaf, and whether it is zoomed. A binary from before splits reads this as a placeholder
+    /// (the sessions stay in the daemon and in the sessions panel).
+    TerminalSplit {
+        tree: PaneTree,
+        focus: PaneId,
+        #[serde(default, skip_serializing_if = "is_false")]
+        zoomed: bool,
+    },
 }
 
 /// A stored item, or one of a kind this binary does not know.
@@ -403,6 +422,18 @@ impl From<ItemRef> for ItemRepr {
                     .map_or_else(|| path.clone(), |n| n.to_string_lossy().into_owned()),
                 file: Some(path),
             },
+            ItemRef::TerminalSplit { split } => {
+                let TermSplit {
+                    tree,
+                    focus,
+                    zoomed,
+                } = *split;
+                ItemRepr::TerminalSplit {
+                    tree,
+                    focus,
+                    zoomed,
+                }
+            }
         }
     }
 }
@@ -420,6 +451,17 @@ impl From<ItemOnDisk> for ItemRef {
                 ItemRef::Placeholder { title }
             }
             ItemOnDisk::Known(ItemRepr::Changes { path }) => ItemRef::Changes { path },
+            ItemOnDisk::Known(ItemRepr::TerminalSplit {
+                tree,
+                focus,
+                zoomed,
+            }) => ItemRef::TerminalSplit {
+                split: Box::new(TermSplit {
+                    tree,
+                    focus,
+                    zoomed,
+                }),
+            },
             ItemOnDisk::Unknown(_) => ItemRef::placeholder("A tab of a newer Hutan"),
         }
     }
@@ -460,6 +502,45 @@ impl ItemRef {
             _ => None,
         }
     }
+
+    /// The terminal splits of a tab that has them.
+    pub fn as_term_split(&self) -> Option<&TermSplit> {
+        match self {
+            ItemRef::TerminalSplit { split } => Some(split),
+            _ => None,
+        }
+    }
+
+    /// The session a terminal or chat tab shows; for a tab of splits the focused split's.
+    pub fn session(&self) -> Option<&str> {
+        match self {
+            ItemRef::Terminal { session } | ItemRef::Chat { session } => Some(session),
+            ItemRef::TerminalSplit { split } => split.focused_session(),
+            _ => None,
+        }
+    }
+
+    /// Every session the tab shows: one for a terminal or chat, one per split, else none.
+    pub fn sessions(&self) -> Vec<&str> {
+        match self {
+            ItemRef::Terminal { session } | ItemRef::Chat { session } => vec![session],
+            ItemRef::TerminalSplit { split } => split.sessions(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether the tab shows `session` (as its terminal, chat or one of its splits).
+    pub fn shows_session(&self, session: &str) -> bool {
+        match self {
+            ItemRef::Terminal { session: s } | ItemRef::Chat { session: s } => s == session,
+            ItemRef::TerminalSplit { split } => split.leaf_of(session).is_some(),
+            _ => false,
+        }
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -281,6 +281,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "terminal",
+        "dim_unfocused_splits",
+        "Dim unfocused splits",
+        "In a terminal tab with splits, the splits that do not have the keyboard lose a few percent of their contrast, so the one you type in stands out by more than its top edge. Off, only the edge marks it.",
+    ),
+    field(
+        "terminal",
         "blocks",
         "Command blocks",
         "Groups each command and its output into a block with a marker bar, a status chip, and actions on hover such as copy and fold. Off, the terminal looks like a plain terminal.",

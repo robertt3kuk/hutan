@@ -286,6 +286,71 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::SplitUp, window, cx| {
             this.split_active(Edge::Top, window, cx)
         }))
+        .on_action(
+            cx.listener(|this, _: &actions::SplitTerminalRight, window, cx| {
+                this.split_terminal_tab(Edge::Right, window, cx)
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::SplitTerminalDown, window, cx| {
+                this.split_terminal_tab(Edge::Bottom, window, cx)
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::FocusSplitLeft, window, cx| {
+                this.focus_split_or_neighbor(Direction::Left, window, cx)
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::FocusSplitRight, window, cx| {
+                this.focus_split_or_neighbor(Direction::Right, window, cx)
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::FocusSplitUp, window, cx| {
+            this.focus_split_or_neighbor(Direction::Up, window, cx)
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::FocusSplitDown, window, cx| {
+                this.focus_split_or_neighbor(Direction::Down, window, cx)
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::ResizeSplitLeft, _, cx| {
+            this.resize_split_or_pane(Direction::Left, cx)
+        }))
+        .on_action(cx.listener(|this, _: &actions::ResizeSplitRight, _, cx| {
+            this.resize_split_or_pane(Direction::Right, cx)
+        }))
+        .on_action(cx.listener(|this, _: &actions::ResizeSplitUp, _, cx| {
+            this.resize_split_or_pane(Direction::Up, cx)
+        }))
+        .on_action(cx.listener(|this, _: &actions::ResizeSplitDown, _, cx| {
+            this.resize_split_or_pane(Direction::Down, cx)
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::ToggleSplitZoom, window, cx| {
+                this.toggle_split_zoom(window, cx)
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::CloseSplit, window, cx| {
+            this.close_focused_split(window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::CloseTerminalTab, window, cx| {
+                this.close_terminal_tab(window, cx)
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::MoveSplitToNewTab, window, cx| {
+                if let Some(session) = this
+                    .state
+                    .active_term_split()
+                    .and_then(|(_, _, s)| s.focused_session().map(str::to_owned))
+                {
+                    this.move_split_to_new_tab(&session, window, cx);
+                }
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::EqualizeSplits, _, cx| this.equalize_splits(cx)))
         .on_action(cx.listener(|this, _: &actions::CloseAllDocks, _, cx| {
             this.mutate(cx, |s| s.close_all_docks());
         }))
@@ -384,7 +449,10 @@ impl Workbench {
             }),
         )
         .on_action(cx.listener(|this, _: &actions::ClosePaneItem, window, cx| {
-            this.close_active_checked(window, cx);
+            // With splits ⌘W closes the focused split; the tab closes with its last one.
+            if !this.close_focused_split(window, cx) {
+                this.close_active_checked(window, cx);
+            }
         }))
         .on_action(
             cx.listener(|this, _: &actions::ToggleZoom, _, cx| {
@@ -1840,6 +1908,7 @@ impl Workbench {
             }
         };
 
+        let leaf_zones = matches!(pane.active_item(), Some(ItemRef::TerminalSplit { .. }));
         let zones: Vec<AnyElement> = if dragging {
             [
                 (
@@ -1884,6 +1953,8 @@ impl Workbench {
                 ),
             ]
             .into_iter()
+            // A tab of splits has edge zones on each of its splits instead.
+            .filter(|(name, ..)| !leaf_zones || *name == "center")
             .map(|(name, target, (l, t, w, h))| {
                 div()
                     .id(id(format!("drop-{pane_id}-{name}")))
@@ -1896,7 +1967,7 @@ impl Workbench {
                         s.bg(accent.opacity(0.25)).border_2().border_color(accent)
                     })
                     .on_drop(cx.listener(move |this, d: &DraggedItem, window, cx| {
-                        this.drop_item(d, target.clone(), window, cx);
+                        this.drop_on_pane_zone(d, target.clone(), None, window, cx);
                     }))
                     .into_any_element()
             })
@@ -1966,16 +2037,26 @@ impl Workbench {
                 cx,
             )
         });
-        let attention = session_of_item(item)
-            .and_then(|id| {
+        // The attention of any split of a tab of splits shows on the tab.
+        let tab_sessions: Vec<hutan_core::SessionId> = item
+            .sessions()
+            .into_iter()
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        let attention = tab_sessions
+            .iter()
+            .find_map(|id| {
                 let store = self.sessions.read(cx);
                 store
-                    .session(id)
+                    .session(*id)
                     .map(|info| store.presentation(info))
                     .filter(|p| p.attention.is_some())
             })
             .filter(|_| !badge_blocked);
-        let called = session_of_item(item).is_some_and(|id| self.sessions.read(cx).is_called(id));
+        let called = tab_sessions
+            .iter()
+            .any(|id| self.sessions.read(cx).is_called(*id));
+        let split_badge = self.split_count_badge(pane_id, index, item);
         let dragged = DraggedItem {
             source: ItemSource::Pane {
                 pane: pane_id,
@@ -2044,6 +2125,7 @@ impl Workbench {
             }))
             .child(crate::icons::glyph(icon))
             .child(div().max_w(px(TAB_TITLE_MAX)).truncate().child(title))
+            .children(split_badge)
             .children(badge)
             // A request called for this session while it was not on screen and nobody has
             // looked since: an accent dot (the one attention mark of the tab, then).
@@ -2097,23 +2179,29 @@ impl Workbench {
                     .hover(move |s| s.bg(hover).text_color(theme.fg))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        // `terminal.tab_close = close_session`: the × closes the session too.
-                        let session = this
+                        // `terminal.tab_close = close_session`: the × closes the session too
+                        // (every split's, in a tab of splits).
+                        let sessions: Vec<hutan_core::SessionId> = this
                             .state
                             .pane(pane_id)
                             .and_then(|p| p.items.get(index))
-                            .and_then(super::terminals::session_of_item);
-                        match session {
-                            Some(session)
-                                if this.terminal_settings.tab_close
-                                    == crate::settings::TabClose::CloseSession
-                                    && this.can_close_sessions(cx) =>
-                            {
+                            .map(|item| {
+                                item.sessions()
+                                    .into_iter()
+                                    .filter_map(|s| s.parse().ok())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        if !sessions.is_empty()
+                            && this.terminal_settings.tab_close
+                                == crate::settings::TabClose::CloseSession
+                            && this.can_close_sessions(cx)
+                        {
+                            for session in sessions {
                                 this.close_session(session, window, cx);
                             }
-                            _ => {
-                                this.close_tab_with_fade(pane_id, index, window, cx);
-                            }
+                        } else {
+                            this.close_tab_with_fade(pane_id, index, window, cx);
                         }
                         cx.stop_propagation();
                     }))
@@ -2164,6 +2252,9 @@ impl Workbench {
                 .into_any_element(),
             },
             ItemRef::Terminal { session } => self.render_terminal_item(pane, session, window, cx),
+            ItemRef::TerminalSplit { split } => {
+                self.render_terminal_split(pane, split, window, cx)
+            }
             ItemRef::Chat { session } => self.render_chat_item(pane, session, cx),
             ItemRef::Changes { path } => {
                 let view = self.changes_view(path, window, cx);

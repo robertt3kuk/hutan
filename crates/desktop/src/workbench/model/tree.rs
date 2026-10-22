@@ -1,6 +1,6 @@
 //! Pane-tree surgery: lookup, split, remove, normalize, geometry.
 
-use super::types::{Axis, Edge, Pane, PaneId, PaneTree, Rect};
+use super::types::{Axis, Direction, Edge, Pane, PaneId, PaneTree, Rect};
 
 /// Smallest share a child of a split may have after a resize.
 pub const MIN_RATIO: f32 = 0.05;
@@ -313,6 +313,18 @@ impl PaneTree {
     /// cumulative share before it equals `position` (clamped so both neighbours keep
     /// [`MIN_RATIO`]). Returns `false` when the path/divider does not exist.
     pub fn set_divider(&mut self, path: &[usize], divider: usize, position: f32) -> bool {
+        self.set_divider_min(path, divider, position, MIN_RATIO)
+    }
+
+    /// [`set_divider`](Self::set_divider) with the smallest share either neighbour may keep
+    /// given as `min` (still never more than half of the pair).
+    pub fn set_divider_min(
+        &mut self,
+        path: &[usize],
+        divider: usize,
+        position: f32,
+        min: f32,
+    ) -> bool {
         let Some(PaneTree::Split { ratios, .. }) = self.node_at_mut(path) else {
             return false;
         };
@@ -321,12 +333,68 @@ impl PaneTree {
         }
         let before: f32 = ratios[..divider].iter().sum();
         let pair = ratios[divider] + ratios[divider + 1];
-        let min = before + MIN_RATIO.min(pair / 2.0);
-        let max = before + pair - MIN_RATIO.min(pair / 2.0);
-        let position = position.clamp(min, max);
+        let min = min.max(MIN_RATIO).min(pair / 2.0);
+        let lo = before + min;
+        let hi = before + pair - min;
+        let position = position.clamp(lo, hi);
         ratios[divider] = position - before;
         ratios[divider + 1] = before + pair - position;
         true
+    }
+
+    /// Share the space of the split at `path` equally among its children (a double-click on a
+    /// divider). Returns `false` when `path` is not a split.
+    pub fn equalize_at(&mut self, path: &[usize]) -> bool {
+        match self.node_at_mut(path) {
+            Some(PaneTree::Split { ratios, .. }) => {
+                let n = ratios.len().max(1);
+                ratios.iter_mut().for_each(|r| *r = 1.0 / n as f32);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Move the divider of the nearest ancestor split of leaf `id` along `dir`'s axis one step
+    /// in `dir`, by `delta` of that split. Returns whether anything moved.
+    pub fn resize_leaf(&mut self, id: PaneId, dir: Direction, delta: f32) -> bool {
+        let Some(path) = self.path_to(id) else {
+            return false;
+        };
+        let axis = dir.axis();
+        for depth in (0..path.len()).rev() {
+            let split_path = &path[..depth];
+            let child = path[depth];
+            let Some(PaneTree::Split {
+                axis: a, ratios, ..
+            }) = self.node_at(split_path)
+            else {
+                continue;
+            };
+            if *a != axis {
+                continue;
+            }
+            let n = ratios.len();
+            let divider = if dir.is_positive() {
+                if child + 1 < n {
+                    child
+                } else if child > 0 {
+                    child - 1
+                } else {
+                    continue;
+                }
+            } else if child > 0 {
+                child - 1
+            } else if child + 1 < n {
+                child
+            } else {
+                continue;
+            };
+            let before: f32 = ratios[..=divider].iter().sum();
+            let step = if dir.is_positive() { delta } else { -delta };
+            return self.set_divider(split_path, divider, before + step);
+        }
+        false
     }
 }
 

@@ -42,10 +42,7 @@ impl WorkspaceLayout {
             .into_iter()
             .chain(stash)
             .flat_map(|pane| pane.items.iter())
-            .filter_map(|item| match item {
-                ItemRef::Terminal { session } | ItemRef::Chat { session } => Some(session.clone()),
-                _ => None,
-            })
+            .flat_map(|item| item.sessions().into_iter().map(str::to_owned))
             .collect()
     }
 }

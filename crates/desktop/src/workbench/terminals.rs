@@ -70,11 +70,20 @@ pub(crate) struct TerminalItem {
     pub(crate) _events: gpui::Subscription,
 }
 
-/// The session an item shows.
+/// The session an item shows; for a tab of terminal splits, the focused split's.
 pub fn session_of_item(item: &ItemRef) -> Option<SessionId> {
+    item.session().and_then(|session| session.parse().ok())
+}
+
+/// Every session a terminal tab shows (one per split).
+pub fn terminal_sessions_of_item(item: &ItemRef) -> Vec<SessionId> {
     match item {
-        ItemRef::Terminal { session } | ItemRef::Chat { session } => session.parse().ok(),
-        _ => None,
+        ItemRef::Terminal { .. } | ItemRef::TerminalSplit { .. } => item
+            .sessions()
+            .into_iter()
+            .filter_map(|session| session.parse().ok())
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -88,11 +97,10 @@ impl Workbench {
             .panes()
             .into_iter()
             .flat_map(|pane| {
-                pane.items.iter().filter_map(move |item| match item {
-                    ItemRef::Terminal { session } => {
-                        session.parse().ok().map(|session| (pane.id, session))
-                    }
-                    _ => None,
+                pane.items.iter().flat_map(move |item| {
+                    terminal_sessions_of_item(item)
+                        .into_iter()
+                        .map(move |session| (pane.id, session))
                 })
             })
             .collect()
@@ -128,12 +136,13 @@ impl Workbench {
         // Sessions hidden in the overview's stash stay attached (paced at zero cost).
         let mut wanted: HashSet<SessionId> = items.iter().map(|(_, s)| *s).collect();
         if let Some(saved) = &self.state.stashed {
-            wanted.extend(saved.center.panes().into_iter().flat_map(|p| {
-                p.items.iter().filter_map(|item| match item {
-                    ItemRef::Terminal { .. } => session_of_item(item),
-                    _ => None,
-                })
-            }));
+            wanted.extend(
+                saved
+                    .center
+                    .panes()
+                    .into_iter()
+                    .flat_map(|p| p.items.iter().flat_map(terminal_sessions_of_item)),
+            );
         }
         self.held.retain(|session, _| wanted.contains(session));
         self.collapse_watch
@@ -407,9 +416,16 @@ impl Workbench {
         let item = self.item_for(session, cx);
         // A session of another workspace brings that workspace's layout along.
         self.show_workspace_of(session, cx);
-        if let Some((pane, index)) = self.state.find_item(&item) {
+        let id = session.to_string();
+        if let Some((pane, index)) = self
+            .state
+            .find_item(&item)
+            .or_else(|| self.state.find_session_tab(&id))
+        {
             self.try_mutate(cx, |s| {
                 s.set_active_item(pane, index)?;
+                // A split of a tab of splits takes the keyboard inside its tab.
+                let _ = s.focus_term_split(pane, index, &id);
                 s.focus_pane(pane)
             });
         } else {
@@ -527,18 +543,29 @@ impl Workbench {
         pane: PaneId,
         cx: &gpui::App,
     ) -> (Option<hutan_core::WorkspaceId>, Option<PathBuf>) {
+        let session = self
+            .state
+            .pane(pane)
+            .and_then(|p| p.active_item())
+            .and_then(session_of_item);
+        self.session_split_target(session, cx)
+    }
+
+    /// Where a terminal started next to `session` begins: its current directory (it follows
+    /// OSC 7) in its workspace; without a known session the active workspace's root (Home when
+    /// none is shown), else `$HOME`.
+    pub(crate) fn session_split_target(
+        &self,
+        session: Option<SessionId>,
+        cx: &gpui::App,
+    ) -> (Option<hutan_core::WorkspaceId>, Option<PathBuf>) {
         let store = self.sessions.read(cx);
         let home_or_root = |workspace: Option<&hutan_protocol::messages::WorkspaceInfo>| {
             workspace
                 .and_then(|w| w.roots.first().cloned())
                 .or_else(std::env::home_dir)
         };
-        let info = self
-            .state
-            .pane(pane)
-            .and_then(|p| p.active_item())
-            .and_then(session_of_item)
-            .and_then(|id| store.session(id));
+        let info = session.and_then(|id| store.session(id));
         match info {
             Some(info) => {
                 let workspace = store.workspace(info.workspace_id);
@@ -1056,9 +1083,23 @@ impl Workbench {
                 hutan_terminal_view::ViewStatus::Ended(_)
             )
         });
+        let session_id = session.to_owned();
+        let menu_view = view.clone();
         let mut root = div()
             .relative()
             .size_full()
+            // Right-click: Split Right / Split Down / Close Split. A program that handles the
+            // mouse itself keeps the press (⇧ takes it back).
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                    if menu_view.read(cx).reports_mouse(event.modifiers) {
+                        return;
+                    }
+                    let entries = this.terminal_menu(&session_id);
+                    this.open_menu(event.position, entries, window, cx);
+                }),
+            )
             .child(super::render::cached_view(&self.regions, view));
         if self.daemon.stopped {
             // The user stopped the daemon: one banner with the way back, instead of Close.
@@ -1299,21 +1340,14 @@ impl Workbench {
             .on_click(cx.listener(move |this, _, window, cx| run(this, window, cx)))
     }
 
-    /// Closes (detaches) every tab showing `session`.
+    /// Closes (detaches) every tab showing `session`; in a tab of terminal splits only its split
+    /// goes.
     pub(crate) fn close_session_tabs(&mut self, session: SessionId, cx: &mut Context<Self>) {
-        for item in [
-            ItemRef::Terminal {
-                session: session.to_string(),
-            },
-            ItemRef::Chat {
-                session: session.to_string(),
-            },
-        ] {
-            while let Some((pane, index)) = self.state.find_item(&item) {
-                if self.try_mutate(cx, |s| s.close_item(pane, index)).is_none() {
-                    break;
-                }
-            }
+        let id = session.to_string();
+        if self.state.find_session_tab(&id).is_some() {
+            self.mutate(cx, |s| {
+                s.remove_session_tabs(&id);
+            });
         }
     }
 

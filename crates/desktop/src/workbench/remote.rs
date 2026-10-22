@@ -488,6 +488,13 @@ impl Workbench {
             let session = |id: &str| id.parse::<SessionId>().ok();
             let (kind, session_id, panel, path) = match item {
                 ItemRef::Terminal { session: id } => ("terminal", session(id), None, None),
+                // A tab of splits reports its focused split.
+                ItemRef::TerminalSplit { split } => (
+                    "terminal",
+                    split.focused_session().and_then(session),
+                    None,
+                    None,
+                ),
                 ItemRef::Chat { session: id } => ("chat", session(id), None, None),
                 ItemRef::Panel { panel } => ("panel", None, Some(panel.to_string()), None),
                 ItemRef::Placeholder { .. } => ("placeholder", None, None, None),

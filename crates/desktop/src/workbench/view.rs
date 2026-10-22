@@ -435,6 +435,13 @@ pub enum Region {
     /// The dot on the tab at `index` of a pane: a request called for its session and the user has
     /// not looked yet.
     TabCall(PaneId, usize),
+    /// The terminal of a split of a tab of terminal splits, by its session.
+    TermSplit(hutan_core::SessionId),
+    /// Divider `index` of a tab's terminal splits (every divider of the visible tree, in tree
+    /// order).
+    TermDivider(usize),
+    /// The tab-count badge (`⊞ 3`) of the tab at `index` of a pane.
+    TabSplits(PaneId, usize),
     /// A control of a file tab's language-server bar (`trust`, `not-now`, `copy`, `dismiss`).
     FileLsp(&'static str),
     /// Diagnostic row `index` of the Problems panel (the listed diagnostics, top to bottom,
@@ -496,6 +503,14 @@ pub(crate) enum Resizing {
         start_size: f32,
         /// A side dock was dragged 24 pt below its minimum: releasing collapses it to its rail.
         armed: bool,
+    },
+    TermSplit {
+        pane: PaneId,
+        path: Vec<usize>,
+        divider: usize,
+        horizontal: bool,
+        origin: f32,
+        extent: f32,
     },
     Split {
         path: Vec<usize>,
@@ -1449,10 +1464,10 @@ impl Workbench {
         cx: &App,
     ) -> (crate::icons::Icon, SharedString) {
         match item {
-            ItemRef::Terminal { session } | ItemRef::Chat { session } => {
-                let info = session
-                    .parse::<SessionId>()
-                    .ok()
+            ItemRef::Terminal { .. } | ItemRef::Chat { .. } | ItemRef::TerminalSplit { .. } => {
+                let info = item
+                    .session()
+                    .and_then(|session| session.parse::<SessionId>().ok())
                     .and_then(|id| self.sessions.read(cx).session(id).cloned());
                 match info {
                     Some(info) => (
@@ -1517,10 +1532,12 @@ impl Workbench {
         if let ItemRef::File { path } = item {
             return Some(path.clone());
         }
-        let (ItemRef::Terminal { session } | ItemRef::Chat { session }) = item else {
-            return None;
+        let id = match item {
+            ItemRef::Terminal { .. } | ItemRef::Chat { .. } | ItemRef::TerminalSplit { .. } => {
+                item.session()?.parse::<SessionId>().ok()?
+            }
+            _ => return None,
         };
-        let id = session.parse::<SessionId>().ok()?;
         let store = self.sessions.read(cx);
         let info = store.session(id)?;
         let folder = crate::sessions::tree::session_folder(info).map(|path| path.display());
@@ -2138,6 +2155,28 @@ impl Workbench {
                     *a = armed;
                 }
                 self.mutate(cx, |s| s.resize_dock(pos, size));
+            }
+            Resizing::TermSplit {
+                pane,
+                path,
+                divider,
+                horizontal,
+                origin,
+                extent,
+            } => {
+                if extent <= 0.0 {
+                    return;
+                }
+                let mouse = if horizontal {
+                    f32::from(event.position.x)
+                } else {
+                    f32::from(event.position.y)
+                };
+                let position = (mouse - origin) / extent;
+                let min = self.term_split_min_share(horizontal, extent);
+                self.mutate(cx, |s| {
+                    let _ = s.set_term_divider(pane, &path, divider, position, min);
+                });
             }
             Resizing::Split {
                 path,

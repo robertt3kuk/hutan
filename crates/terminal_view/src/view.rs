@@ -1434,6 +1434,13 @@ impl TerminalView {
         self.model.get().modes().mouse != MouseMode::None && !mods.shift && self.accepts_input()
     }
 
+    /// Whether a mouse press with `mods` goes to the program in the terminal (it turned on
+    /// mouse reporting; ⇧ always keeps the press for the terminal). Its owner leaves such a
+    /// press alone: no context menu over a program that handles the mouse itself.
+    pub fn reports_mouse(&self, mods: gpui::Modifiers) -> bool {
+        self.captures_mouse(mods)
+    }
+
     pub(crate) fn mouse_down(
         &mut self,
         event: &MouseDownEvent,

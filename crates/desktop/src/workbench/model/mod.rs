@@ -9,6 +9,7 @@ mod persist;
 mod preset;
 mod responsive;
 mod session_tabs;
+mod term_split;
 mod tree;
 mod types;
 mod workspace;
@@ -24,6 +25,7 @@ pub use responsive::{
     MIN_CENTER_WIDTH, Responsive,
 };
 pub use session_tabs::{MergedTabs, SessionTab};
+pub use term_split::{MIN_SPLIT_COLS, MIN_SPLIT_ROWS, TermSplit};
 pub use tree::MIN_RATIO;
 pub use types::{
     Axis, Direction, Dock, DockMode, DockModes, DockPosition, Docks, Edge, FocusTarget, ItemRef,
@@ -319,6 +321,9 @@ impl WorkbenchState {
             {
                 dock.active = dock.panels.first().cloned();
             }
+        }
+        for pane in self.center.panes_mut() {
+            term_split::normalize_pane_splits(pane);
         }
         for pane in self.center.panes_mut() {
             pane.items.retain(|item| match item.as_panel() {
