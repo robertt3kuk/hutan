@@ -14,15 +14,14 @@ use std::path::Path;
 
 use gpui::{
     AnyElement, App, AppContext as _, ClipboardItem, Entity, InteractiveElement as _, IntoElement,
-    MouseButton, ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
-    div, px,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
 use super::lsp::{LspBar, LspStore};
 use super::regions::Regions;
 use super::render::probe;
 use super::style::TextTooltip;
-use super::ui::{self, ButtonKind};
+use super::ui;
 use super::view::Region;
 use crate::theme::{Theme, Tokens};
 
@@ -100,43 +99,26 @@ pub fn render(
             let trust_store = lsp.clone();
             let dismiss_store = lsp.clone();
             let not_now_folder = folder.clone();
-            let trust = ui::button(
-                "file-lsp-trust",
-                if busy { "Trusting…" } else { "Trust" },
-                ButtonKind::Secondary,
-                !busy,
-                theme,
-                tokens,
-            )
-            .tooltip(|_, cx| {
-                cx.new(|_| {
-                    TextTooltip(
-                        "Let language servers run this project's build scripts, proc macros and the tools its settings name (`hutan lsp trust`)"
-                            .into(),
-                    )
+            let trust = ui::Button::new("file-lsp-trust", "Trust", theme, tokens)
+                .compact()
+                .primary()
+                .loading(busy)
+                .tooltip(
+                    "Let language servers run this project's build scripts, proc macros and the tools its settings name (`hutan lsp trust`)",
+                )
+                .on_click(move |_, _, cx| {
+                    let folder = folder.clone();
+                    trust_store.update(cx, |lsp, cx| lsp.trust(folder, cx));
                 })
-                .into()
-            })
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, _, cx| {
-                let folder = folder.clone();
-                trust_store.update(cx, |lsp, cx| lsp.trust(folder, cx));
-            })
-            .child(probe(regions, Region::FileLsp("trust")));
-            let not_now = ui::button(
-                "file-lsp-not-now",
-                "Not now",
-                ButtonKind::Ghost,
-                true,
-                theme,
-                tokens,
-            )
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, _, cx| {
-                let folder = not_now_folder.clone();
-                dismiss_store.update(cx, |lsp, cx| lsp.not_now(folder, cx));
-            })
-            .child(probe(regions, Region::FileLsp("not-now")));
+                .child(probe(regions, Region::FileLsp("trust")));
+            let not_now = ui::Button::new("file-lsp-not-now", "Not now", theme, tokens)
+                .compact()
+                .ghost()
+                .on_click(move |_, _, cx| {
+                    let folder = not_now_folder.clone();
+                    dismiss_store.update(cx, |lsp, cx| lsp.not_now(folder, cx));
+                })
+                .child(probe(regions, Region::FileLsp("not-now")));
             row.child(
                 div()
                     .flex_1()
@@ -145,8 +127,8 @@ pub fn render(
                     .text_color(theme.fg)
                     .child(SharedString::from(message)),
             )
-            .child(trust)
             .child(not_now)
+            .child(trust)
         }
         LspBar::Install {
             server_id,
@@ -163,33 +145,20 @@ pub fn render(
                 ),
                 None => "Hutan never installs anything".to_owned(),
             };
-            let copy = ui::button(
-                "file-lsp-copy",
-                "Copy Command",
-                ButtonKind::Secondary,
-                true,
-                theme,
-                tokens,
-            )
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(command.clone()));
-                copy_store.update(cx, |lsp, cx| lsp.dismiss(&copy_id, cx));
-            })
-            .child(probe(regions, Region::FileLsp("copy")));
-            let close = ui::button(
-                "file-lsp-dismiss",
-                "Dismiss",
-                ButtonKind::Ghost,
-                true,
-                theme,
-                tokens,
-            )
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, _, cx| {
-                dismiss_store.update(cx, |lsp, cx| lsp.dismiss(&server_id, cx));
-            })
-            .child(probe(regions, Region::FileLsp("dismiss")));
+            let copy = ui::Button::new("file-lsp-copy", "Copy command", theme, tokens)
+                .compact()
+                .on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(command.clone()));
+                    copy_store.update(cx, |lsp, cx| lsp.dismiss(&copy_id, cx));
+                })
+                .child(probe(regions, Region::FileLsp("copy")));
+            let close = ui::Button::new("file-lsp-dismiss", "Dismiss", theme, tokens)
+                .compact()
+                .ghost()
+                .on_click(move |_, _, cx| {
+                    dismiss_store.update(cx, |lsp, cx| lsp.dismiss(&server_id, cx));
+                })
+                .child(probe(regions, Region::FileLsp("dismiss")));
             row.child(
                 div()
                     .id("file-lsp-message")
@@ -200,8 +169,8 @@ pub fn render(
                     .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone().into())).into())
                     .child(SharedString::from(message)),
             )
-            .child(copy)
             .child(close)
+            .child(copy)
         }
     };
     Some(element.into_any_element())

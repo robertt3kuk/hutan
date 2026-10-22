@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use gpui::{
     AnyElement, AppContext as _, ClipboardItem, Context, Entity, Focusable as _, IntoElement,
-    ParentElement, StatefulInteractiveElement, Styled, Window, div, prelude::*, px,
+    ParentElement, Styled, Window, div, prelude::*, px,
 };
 use hutan_core::{SessionId, WorkspaceId};
 use hutan_protocol::messages::{SessionInfo, TerminalSpec};
@@ -1093,17 +1093,6 @@ impl Workbench {
                 .right(px(tokens.spacing * 3.0))
                 .flex()
                 .gap(px(tokens.spacing * 2.0));
-            if known && !live {
-                bar = bar.child(self.action_button(
-                    "ended-restart",
-                    "Restart",
-                    ui::ButtonKind::Secondary,
-                    cx,
-                    move |this, window, cx| {
-                        this.restart_session(id, window, cx);
-                    },
-                ));
-            }
             bar = bar.child(self.action_button(
                 "ended-close",
                 "Close",
@@ -1113,6 +1102,17 @@ impl Workbench {
                     this.close_session_tabs(id, cx);
                 },
             ));
+            if known && !live {
+                bar = bar.child(self.action_button(
+                    "ended-restart",
+                    "Restart",
+                    ui::ButtonKind::Primary,
+                    cx,
+                    move |this, window, cx| {
+                        this.restart_session(id, window, cx);
+                    },
+                ));
+            }
             root = root.child(bar);
         }
         if !self.daemon.stopped
@@ -1166,6 +1166,7 @@ impl Workbench {
                     .detach();
                 },
             )
+            .compact()
             .child(crate::workbench::render::probe(
                 &self.regions,
                 crate::workbench::Region::Recovery("terminal-dismiss"),
@@ -1216,15 +1217,9 @@ impl Workbench {
         let tokens = self.density.ui();
         let offer = self.hooks_offer(found.agent, cx);
         let label = gpui::SharedString::from(format!("Track as {}", found.agent));
-        let track = ui::button(
-            "untracked-track",
-            label,
-            ui::ButtonKind::Ghost,
-            true,
-            &theme,
-            &tokens,
-        )
-        .relative()
+        let track = ui::Button::new("untracked-track", label, &theme, &tokens)
+            .compact()
+            .ghost()
         .on_click(cx.listener(move |this, _, _, cx| {
             let tracking = this
                 .sessions
@@ -1297,9 +1292,10 @@ impl Workbench {
         kind: ui::ButtonKind,
         cx: &mut Context<Self>,
         run: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
-    ) -> gpui::Stateful<gpui::Div> {
+    ) -> ui::Button {
         let style = UiStyle::get(cx);
-        ui::button(id, label, kind, true, &style.theme, &style.density.ui())
+        ui::Button::new(id, label, &style.theme, &style.density.ui())
+            .kind(kind)
             .on_click(cx.listener(move |this, _, window, cx| run(this, window, cx)))
     }
 

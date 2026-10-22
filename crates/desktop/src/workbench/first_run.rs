@@ -458,11 +458,11 @@ impl Workbench {
                  in the background. Asked once.",
                 theme.fg,
                 vec![
-                    button("notify-yes", "Notify me", ButtonKind::Secondary)
-                        .on_click(cx.listener(|this, _, _, cx| this.notify_offer_accept(cx)))
-                        .into_any_element(),
                     button("notify-no", "No thanks", ButtonKind::Ghost)
                         .on_click(cx.listener(|this, _, _, cx| this.notify_offer_decline(cx)))
+                        .into_any_element(),
+                    button("notify-yes", "Notify me", ButtonKind::Primary)
+                        .on_click(cx.listener(|this, _, _, cx| this.notify_offer_accept(cx)))
                         .into_any_element(),
                 ],
             ),
@@ -574,18 +574,6 @@ impl Workbench {
         Some(HooksOffer {
             buttons: vec![
                 button(
-                    "hooks-install",
-                    SharedString::from(format!("Install hooks for {name}")),
-                    ButtonKind::Secondary,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.first_run.hooks_open = None;
-                    this.stop_asking_hooks();
-                    this.install_integration(agent, cx);
-                    cx.notify();
-                }))
-                .into_any_element(),
-                button(
                     "hooks-not-now",
                     SharedString::from("No thanks"),
                     ButtonKind::Ghost,
@@ -593,6 +581,18 @@ impl Workbench {
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.first_run.hooks_open = None;
                     this.stop_asking_hooks();
+                    cx.notify();
+                }))
+                .into_any_element(),
+                button(
+                    "hooks-install",
+                    SharedString::from(format!("Install hooks for {name}")),
+                    ButtonKind::Primary,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.first_run.hooks_open = None;
+                    this.stop_asking_hooks();
+                    this.install_integration(agent, cx);
                     cx.notify();
                 }))
                 .into_any_element(),

@@ -14,7 +14,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
+    Render, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
 use hutan_chat_view::diff::DiffLine;
 use hutan_code_view::{
@@ -379,69 +379,33 @@ impl FileView {
             .filter(|title| !title.is_empty());
         let at_caret = self.code.read(cx).agent_hunk_at_caret(cx).is_some();
         let icon_button = |id: &'static str, glyph, tip: &'static str| {
-            div()
-                .id(id)
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(tokens.control_height))
-                .rounded(px(tokens.radius))
-                .cursor_pointer()
-                .text_color(theme.muted)
-                .hover(|s| s.bg(theme.surface_hover))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.into())).into())
-                .child(crate::icons::glyph(glyph))
+            ui::IconButton::new(id, glyph, tip, theme, tokens).compact()
         };
-        let reject = ui::button(
-            "file-agent-reject",
-            "Reject",
-            ButtonKind::Secondary,
-            at_caret,
-            theme,
-            tokens,
-        )
-        .tooltip(move |_, cx| {
-            cx.new(|_| {
-                TextTooltip(if at_caret {
-                    "Put back what was there before this change (⌘⌥Z); ⌘Z undoes it".into()
-                } else {
-                    "Move the caret into a highlighted change (⌘⌥] / ⌘⌥[) to reject it".into()
-                })
-            })
-            .into()
-        })
-        .when(at_caret, |b| {
-            b.on_click(cx.listener(|this, _, _, cx| {
+        let reject_tip = if at_caret {
+            "Put back what was there before this change (⌘⌥Z); ⌘Z undoes it"
+        } else {
+            "Move the caret into a highlighted change (⌘⌥] / ⌘⌥[) to reject it"
+        };
+        let reject = ui::Button::new("file-agent-reject", "Reject", theme, tokens)
+            .compact()
+            .disabled(!at_caret)
+            .tooltip(reject_tip)
+            .on_click(cx.listener(|this, _, _, cx| {
                 this.reject_agent_hunk(cx);
             }))
-        })
-        .child(super::render::probe(
-            &self.regions,
-            super::view::Region::FileAgent("reject"),
-        ));
-        let accept = ui::button(
-            "file-agent-accept",
-            "Accept All",
-            ButtonKind::Ghost,
-            true,
-            theme,
-            tokens,
-        )
-        .tooltip(|_, cx| {
-            cx.new(|_| {
-                TextTooltip(
-                    "Keep the agent's changes to this file and stop highlighting them".into(),
-                )
-            })
-            .into()
-        })
-        .on_click(cx.listener(|this, _, _, cx| this.accept_agent_changes(cx)))
-        .child(super::render::probe(
-            &self.regions,
-            super::view::Region::FileAgent("accept"),
-        ));
+            .child(super::render::probe(
+                &self.regions,
+                super::view::Region::FileAgent("reject"),
+            ));
+        let accept = ui::Button::new("file-agent-accept", "Accept all", theme, tokens)
+            .compact()
+            .ghost()
+            .tooltip("Keep the agent's changes to this file and stop highlighting them")
+            .on_click(cx.listener(|this, _, _, cx| this.accept_agent_changes(cx)))
+            .child(super::render::probe(
+                &self.regions,
+                super::view::Region::FileAgent("accept"),
+            ));
         let follow = self.follow;
         let follow_toggle = div()
             .id("file-agent-follow")
@@ -1082,37 +1046,13 @@ impl FileView {
         let summary = self.code.read(cx).find_state().summary();
         let failed = self.code.read(cx).find_state().result.error.is_some();
         let toggle = |id: &'static str, label: &'static str, tip: &'static str, on: bool| {
-            let hover = theme.surface_hover;
-            div()
-                .id(id)
-                .flex_none()
-                .px(px(5.0))
-                .rounded(px(tokens.radius - 2.0))
-                .border_1()
-                // An option that is on is the selection's fill, not an accent outline.
-                .border_color(if on {
-                    gpui::transparent_black()
-                } else {
-                    theme.border
-                })
-                .when(on, |s| s.bg(theme.accent_soft))
-                .text_color(if on { theme.fg } else { theme.muted })
-                .cursor_pointer()
-                .hover(move |s| s.bg(hover))
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(SharedString::from(tip))).into())
-                .child(label)
+            ui::Button::new(id, label, theme, tokens)
+                .compact()
+                .selected(on)
+                .tooltip(tip)
         };
         let step = |id: &'static str, icon: crate::icons::Icon, tip: &'static str| {
-            let hover = theme.surface_hover;
-            div()
-                .id(id)
-                .flex_none()
-                .p(px(3.0))
-                .rounded(px(tokens.radius - 2.0))
-                .cursor_pointer()
-                .hover(move |s| s.bg(hover))
-                .tooltip(move |_, cx| cx.new(|_| TextTooltip(SharedString::from(tip))).into())
-                .child(crate::icons::icon(icon, 14.0, theme.muted))
+            ui::IconButton::new(id, icon, tip, theme, tokens).compact()
         };
         div()
             .id("file-find")
@@ -1285,40 +1225,20 @@ impl FileView {
                     )),
             )
             .child(
-                ui::button(
-                    "file-replace-one",
-                    "Replace",
-                    ButtonKind::Secondary,
-                    true,
-                    theme,
-                    tokens,
-                )
-                .tooltip(|_, cx| {
-                    cx.new(|_| TextTooltip("Replace this match (Return)".into()))
-                        .into()
-                })
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.replace_one(cx);
-                })),
+                ui::Button::new("file-replace-one", "Replace", theme, tokens)
+                    .compact()
+                    .tooltip("Replace this match (Return)")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.replace_one(cx);
+                    })),
             )
             .child(
-                ui::button(
-                    "file-replace-all",
-                    "Replace All",
-                    ButtonKind::Secondary,
-                    true,
-                    theme,
-                    tokens,
-                )
-                .tooltip(|_, cx| {
-                    cx.new(|_| {
-                        TextTooltip("Replace every match, as one undo step (⌘Return)".into())
-                    })
-                    .into()
-                })
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.replace_all(cx);
-                })),
+                ui::Button::new("file-replace-all", "Replace all", theme, tokens)
+                    .compact()
+                    .tooltip("Replace every match, as one undo step (⌘Return)")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.replace_all(cx);
+                    })),
             )
             .into_any_element()
     }
@@ -1353,55 +1273,45 @@ impl FileView {
         if matches!(conflict, Conflict::Changed { .. }) {
             let reload = path.clone();
             actions = actions.child(
-                ui::button(
-                    "file-conflict-reload",
-                    "Reload",
-                    ButtonKind::Secondary,
-                    true,
-                    theme,
-                    tokens,
-                )
-                .tooltip(|_, cx| {
-                    cx.new(|_| TextTooltip("Take the file from disk".into()))
-                        .into()
-                })
-                .on_click(cx.listener(move |_, _, _, cx| {
-                    cx.emit(FileViewEvent::Reload(reload.clone()));
-                })),
+                ui::Button::new("file-conflict-reload", "Reload", theme, tokens)
+                    .compact()
+                    .tooltip("Take the file from disk")
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(FileViewEvent::Reload(reload.clone()));
+                    })),
             );
         }
         let keep = path;
         actions = actions.child(
-            ui::button(
+            ui::Button::new(
                 "file-conflict-keep",
                 if matches!(conflict, Conflict::Deleted) {
-                    "Keep Mine (Save Again)"
+                    "Keep mine (save again)"
                 } else {
-                    "Keep Mine (Overwrite)"
+                    "Keep mine (overwrite)"
                 },
-                ButtonKind::Secondary,
-                true,
                 theme,
                 tokens,
             )
+            .compact()
             .on_click(cx.listener(move |_, _, _, cx| {
                 cx.emit(FileViewEvent::Overwrite(keep.clone()));
             })),
         );
         if can_diff {
             actions = actions.child(
-                ui::button(
+                ui::Button::new(
                     "file-conflict-diff",
                     if self.diff.is_some() {
-                        "Hide Diff"
+                        "Hide diff"
                     } else {
-                        "Show Diff"
+                        "Show diff"
                     },
-                    ButtonKind::Ghost,
-                    true,
                     theme,
                     tokens,
                 )
+                .compact()
+                .ghost()
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_diff(cx))),
             );
         }
@@ -1515,11 +1425,11 @@ impl FileView {
         let path = buffer.path().to_owned();
         let system_button = |label: &'static str, kind: ButtonKind| {
             let path = path.clone();
-            ui::button("file-open-system", label, kind, true, theme, tokens).on_click(cx.listener(
-                move |_, _, _, cx| {
+            ui::Button::new("file-open-system", label, theme, tokens)
+                .kind(kind)
+                .on_click(cx.listener(move |_, _, _, cx| {
                     cx.emit(FileViewEvent::OpenWithSystem(path.clone()));
-                },
-            ))
+                }))
         };
         match state {
             LoadState::Loading => ui::empty_state(
@@ -1539,20 +1449,14 @@ impl FileView {
                 let actions = div()
                     .flex()
                     .gap(px(tokens.spacing * 2.0))
+                    .child(system_button("Open with system", ButtonKind::Secondary))
                     .child(
-                        ui::button(
-                            "file-open-large",
-                            "Open Read-Only",
-                            ButtonKind::Primary,
-                            true,
-                            theme,
-                            tokens,
-                        )
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.emit(FileViewEvent::OpenLarge(open_path.clone()));
-                        })),
+                        ui::Button::new("file-open-large", "Open read-only", theme, tokens)
+                            .primary()
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.emit(FileViewEvent::OpenLarge(open_path.clone()));
+                            })),
                     )
-                    .child(system_button("Open with System", ButtonKind::Secondary))
                     .into_any_element();
                 ui::empty_state(
                     Mascot::Empty,
@@ -1587,7 +1491,7 @@ impl FileView {
                     }
                 };
                 let action = reason.system_can_open().then(|| {
-                    system_button("Open with System", ButtonKind::Primary).into_any_element()
+                    system_button("Open with system", ButtonKind::Primary).into_any_element()
                 });
                 ui::empty_state(Mascot::Error, text, action, theme, tokens).into_any_element()
             }
