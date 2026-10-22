@@ -14,8 +14,7 @@
 
 use gpui::{
     AnyElement, App, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div,
-    prelude::*, px,
+    MouseDownEvent, ParentElement, SharedString, Styled, Window, div, prelude::*, px,
 };
 use hutan_core::{SessionId, TaskRun};
 use hutan_protocol::worktree::{
@@ -28,7 +27,7 @@ use crate::sessions::presentation::harness_label;
 use crate::theme::{Theme, Tokens};
 use crate::workbench::chat::vim::{Outcome, Vim};
 use crate::workbench::chat::{Look, TextInput};
-use crate::workbench::panels::{edit_text, field_box, pill};
+use crate::workbench::panels::{chip, edit_text, field_box};
 use crate::workbench::render::probe;
 use crate::workbench::text_field::{FieldMut, FieldRef};
 use crate::workbench::ui::{self, StyledExt as _};
@@ -649,14 +648,13 @@ impl ChangesView {
                 (MergeStrategy::Rebase, "Rebase", "strategy-rebase"),
             ] {
                 strategies = strategies.child(
-                    pill(
+                    chip(
                         SharedString::from(format!("changes-{key}")),
                         label,
                         form.strategy == strategy,
                         theme,
                         tokens,
                     )
-                    .relative()
                     .on_click(
                         cx.listener(move |this, _, _, cx| this.set_finish_strategy(strategy, cx)),
                     )
@@ -705,8 +703,7 @@ impl ChangesView {
                 .items_center()
                 .gap(px(tokens.spacing * 2.0))
                 .child(
-                    pill("changes-finish-push", "Push", form.push, theme, tokens)
-                        .relative()
+                    chip("changes-finish-push", "Push", form.push, theme, tokens)
                         .on_click(cx.listener({
                             let next = !form.push;
                             move |this, _, _, cx| this.set_finish_push(next, cx)
@@ -739,32 +736,25 @@ impl ChangesView {
                 .justify_end()
                 .gap(px(tokens.spacing * 2.0))
                 .child(
-                    ui::button(
-                        "changes-finish-cancel",
-                        "Cancel",
-                        ui::ButtonKind::Ghost,
-                        !form.running,
-                        theme,
-                        tokens,
-                    )
-                    .relative()
-                    .on_click(cx.listener(|this, _, _, cx| this.close_finish(cx)))
-                    .child(probe(&self.env.regions, Region::Changes("finish-cancel"))),
+                    ui::Button::new("changes-finish-cancel", "Cancel", theme, tokens)
+                        .ghost()
+                        .disabled(form.running)
+                        .on_click(cx.listener(|this, _, _, cx| this.close_finish(cx)))
+                        .child(probe(&self.env.regions, Region::Changes("finish-cancel"))),
                 )
                 .child(
-                    ui::button(
+                    ui::Button::new(
                         "changes-finish-confirm",
                         if form.running {
                             "Finishing…"
                         } else {
                             "Finish"
                         },
-                        ui::ButtonKind::Primary,
-                        !form.running,
                         theme,
                         tokens,
                     )
-                    .relative()
+                    .primary()
+                    .loading(form.running)
                     .on_click(cx.listener(|this, _, _, cx| this.confirm_finish(cx)))
                     .child(probe(&self.env.regions, Region::Changes("finish-confirm"))),
                 ),
@@ -825,17 +815,10 @@ impl ChangesView {
             })
             .child(
                 div().flex().justify_end().child(
-                    ui::button(
-                        "changes-finish-done",
-                        "Done",
-                        ui::ButtonKind::Ghost,
-                        true,
-                        theme,
-                        tokens,
-                    )
-                    .relative()
-                    .on_click(cx.listener(|this, _, _, cx| this.dismiss_finished(cx)))
-                    .child(probe(&self.env.regions, Region::Changes("finish-done"))),
+                    ui::Button::new("changes-finish-done", "Done", theme, tokens)
+                        .ghost()
+                        .on_click(cx.listener(|this, _, _, cx| this.dismiss_finished(cx)))
+                        .child(probe(&self.env.regions, Region::Changes("finish-done"))),
                 ),
             )
             .into_any_element()

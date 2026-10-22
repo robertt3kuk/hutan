@@ -53,9 +53,9 @@ use crate::workbench::search_replace::{
     ReplaceFile, ReplaceLine, ReplaceOutcome, ReplaceRequest, SearchSpec, SkipReason, Skipped,
     plural, replacement_at,
 };
-use crate::workbench::style::{TextTooltip, UiStyle};
+use crate::workbench::style::UiStyle;
 use crate::workbench::text_field::FieldRef;
-use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, StyledExt as _};
+use crate::workbench::ui::{self, FocusRingExt as _, StyledExt as _};
 use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
 
 /// Height of every row of the list (file headers and matches alike: the list is uniform).
@@ -1331,42 +1331,24 @@ impl SearchPanel {
         tokens: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let hover = theme.surface_hover;
         let region = match key {
             "case_sensitive" => "case",
             "whole_word" => "word",
             _ => "regex",
         };
-        div()
-            .id(SharedString::from(format!("search-toggle-{key}")))
-            .relative()
-            .flex_none()
-            .px(px(4.0))
-            .h(px(18.0))
-            .flex()
-            .items_center()
-            .rounded(px(tokens.radius))
-            .text_size(px(tokens.secondary_font_size))
-            .cursor_pointer()
-            .when(on, |s| {
-                s.bg(theme.accent_soft)
-                    .text_color(theme.fg)
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .border_1()
-                    .border_color(theme.border)
-            })
-            .when(!on, move |s| {
-                s.text_color(theme.muted).hover(move |s| s.bg(hover))
-            })
-            .tooltip(move |_, cx| {
-                let text = format!("{tip}: {}", if on { "on" } else { "off" });
-                cx.new(|_| TextTooltip(text.into())).into()
-            })
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_option(key, cx)))
-            .child(label)
-            .child(probe(&self.env.regions, Region::Search(region)))
-            .into_any_element()
+        ui::Button::new(
+            SharedString::from(format!("search-toggle-{key}")),
+            label,
+            theme,
+            tokens,
+        )
+        .compact()
+        .ghost()
+        .selected(on)
+        .tooltip(format!("{tip}: {}", if on { "on" } else { "off" }))
+        .on_click(cx.listener(move |this, _, _, cx| this.toggle_option(key, cx)))
+        .child(probe(&self.env.regions, Region::Search(region)))
+        .into_any_element()
     }
 
     fn status_line(&self) -> Option<String> {
@@ -1820,30 +1802,16 @@ impl Render for SearchPanel {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let settings = self.settings();
-        let hover = theme.surface_hover;
         let show_replace = self.show_replace;
-        let replace_toggle = div()
-            .id("search-toggle-replace")
-            .relative()
-            .flex_none()
-            .px(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .text_size(px(tokens.secondary_font_size))
-            .text_color(if show_replace { theme.fg } else { theme.muted })
-            .when(show_replace, |s| s.font_weight(gpui::FontWeight::BOLD))
-            .tooltip(move |_, cx| {
-                let text = if show_replace {
-                    "Hide the replace field"
-                } else {
-                    "Replace (⌘⇧H)"
-                };
-                cx.new(|_| TextTooltip(text.into())).into()
+        let replace_toggle = ui::Button::new("search-toggle-replace", "⇄ Replace", &theme, &tokens)
+            .compact()
+            .selected(show_replace)
+            .tooltip(if show_replace {
+                "Hide the replace field"
+            } else {
+                "Replace (⌘⇧H)"
             })
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _, _, cx| this.set_replace_shown(!show_replace, cx)))
-            .child("⇄ Replace")
             .child(probe(&self.env.regions, Region::Search("toggle-replace")))
             .into_any_element();
         let header = panel_header_with("Search", "panels.search", vec![replace_toggle], cx);
@@ -1904,23 +1872,11 @@ impl Render for SearchPanel {
         if self.show_replace {
             let count = self.replace_count();
             let enabled = self.can_replace() && count.matches > 0;
-            let mut button = ui::button(
-                "search-replace-all",
-                "Replace All",
-                ButtonKind::Secondary,
-                enabled,
-                &theme,
-                &tokens,
-            )
-            .relative()
-            .tooltip(move |_, cx| {
-                cx.new(|_| TextTooltip("Replace every ticked match (asks first)".into()))
-                    .into()
-            });
-            if enabled {
-                button = button.on_click(cx.listener(|this, _, _, cx| this.ask_replace_all(cx)));
-            }
-            let button = button
+            let button = ui::Button::new("search-replace-all", "Replace all", &theme, &tokens)
+                .compact()
+                .disabled(!enabled)
+                .tooltip("Replace every ticked match (asks first)")
+                .on_click(cx.listener(|this, _, _, cx| this.ask_replace_all(cx)))
                 .child(probe(&self.env.regions, Region::Search("replace-all")))
                 .into_any_element();
             let field = self.render_field(
@@ -1996,12 +1952,14 @@ impl Render for SearchPanel {
                 .child("Reading the files' versions…")
         });
         let confirm = self.confirm.map(|count| {
-            let yes = ui::button("search-confirm", "Replace", ButtonKind::Primary, true, &theme, &tokens)
-                .relative()
+            let yes = ui::Button::new("search-confirm", "Replace", &theme, &tokens)
+                .compact()
+                .primary()
                 .on_click(cx.listener(|this, _, window, cx| this.confirm_replace(window, cx)))
                 .child(probe(&self.env.regions, Region::Search("confirm")));
-            let no = ui::button("search-cancel", "Cancel", ButtonKind::Secondary, true, &theme, &tokens)
-                .relative()
+            let no = ui::Button::new("search-cancel", "Cancel", &theme, &tokens)
+                .compact()
+                .ghost()
                 .on_click(cx.listener(|this, _, _, cx| this.cancel_replace(cx)))
                 .child(probe(&self.env.regions, Region::Search("cancel")));
             div()
@@ -2028,7 +1986,7 @@ impl Render for SearchPanel {
                         .text_color(theme.muted)
                         .child("Each file changes in one step: ⌘Z in its tab takes it back. Unsaved files change in their tab only."),
                 )
-                .child(div().flex().gap(px(tokens.spacing)).child(yes).child(no))
+                .child(div().flex().gap(px(tokens.spacing)).child(no).child(yes))
         });
         let replacing_note = self.replacing.is_some().then(|| {
             div()

@@ -49,6 +49,7 @@ use crate::workbench::actions::{ChosenFile, OpenChosenFile};
 use crate::workbench::files::FilePlace;
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::style::UiStyle;
+use crate::workbench::ui;
 
 /// Open folders watched at once; folders opened beyond it are listed again on the root's
 /// `fs.generation` instead (the connection may watch 256 paths, open files included).
@@ -1036,30 +1037,21 @@ impl Render for FilesPanel {
         if let Some(tree) = &mut self.tree {
             tree.set_show_ignored(show_ignored);
         }
-        let hover = theme.surface_hover;
-        let eye = div()
-            .id("files-show-ignored")
-            .flex_none()
-            .px(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .on_click(cx.listener(|this, _, _, cx| this.toggle_ignored(cx)))
-            .tooltip(move |_, cx| {
-                let text = if show_ignored {
-                    "Hide ignored files"
-                } else {
-                    "Show ignored files"
-                };
-                cx.new(|_| crate::workbench::style::TextTooltip(text.into()))
-                    .into()
-            })
-            .child(icon(
-                Icon::StateReview,
-                14.0,
-                if show_ignored { theme.fg } else { theme.muted },
-            ))
-            .into_any_element();
+        let eye = ui::IconButton::new(
+            "files-show-ignored",
+            Icon::StateReview,
+            if show_ignored {
+                "Hide ignored files"
+            } else {
+                "Show ignored files"
+            },
+            &theme,
+            &tokens,
+        )
+        .compact()
+        .toggled(show_ignored)
+        .on_click(cx.listener(|this, _, _, cx| this.toggle_ignored(cx)))
+        .into_any_element();
         let header = panel_header_with("Files", "panels.files", vec![eye], cx);
         let name: Option<SharedString> = self.root().and_then(|root| {
             root.file_name()

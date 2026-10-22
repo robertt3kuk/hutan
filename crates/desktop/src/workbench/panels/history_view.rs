@@ -26,82 +26,22 @@ use crate::theme::{DensityExt as _, Theme, Tokens};
 use crate::workbench::Region;
 use crate::workbench::actions::OpenSettingsFor;
 use crate::workbench::render::probe;
-use crate::workbench::style::{TextTooltip, UiStyle};
+use crate::workbench::style::UiStyle;
 use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, Mascot, StyledExt as _};
 use crate::workbench::vim_ui::{self, VimConfig};
 
-/// A chip: a small outlined label; the chosen one (`active`) is an `accent_soft` fill without
-/// the outline (the Tasks and Agents panels use it too).
-pub(crate) fn pill(
-    id: impl Into<SharedString>,
+/// A chip: a compact filter toggle; the chosen one (`active`) is an `accent_soft` fill without
+/// the outline (the Tasks, Changes and Agents panels use it too).
+pub(crate) fn chip(
+    id: impl Into<gpui::ElementId>,
     label: impl Into<SharedString>,
     active: bool,
     theme: &Theme,
     tokens: &Tokens,
-) -> gpui::Stateful<gpui::Div> {
-    let hover = theme.surface_hover;
-    div()
-        .id(id.into())
-        .flex_none()
-        .max_w_full()
-        .px(px(tokens.spacing * 2.0))
-        .h(px(tokens.font_size + 6.0))
-        .flex()
-        .items_center()
-        .rounded(px(crate::theme::pill_radius()))
-        .border_1()
-        .border_color(if active {
-            gpui::transparent_black()
-        } else {
-            theme.border
-        })
-        .text_size(px(tokens.secondary_font_size))
-        .text_color(if active { theme.fg } else { theme.muted })
-        .when(active, move |s| s.bg(theme.accent_soft))
-        .cursor_pointer()
-        .when(!active, move |s| s.hover(move |s| s.bg(hover)))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(div().min_w_0().truncate().child(label.into()))
-}
-
-/// A text button; `enabled == false` draws it dim and makes it inert.
-fn button(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    kind: ButtonKind,
-    enabled: bool,
-    theme: &Theme,
-    tokens: &Tokens,
-) -> gpui::Stateful<gpui::Div> {
-    ui::button(id.into(), label, kind, enabled, theme, tokens)
-        .h(px(tokens.font_size + 8.0))
-        .px(px(tokens.spacing * 2.0))
-        .text_size(px(tokens.secondary_font_size))
-}
-
-/// A square header button with an icon and a tooltip.
-fn icon_button(
-    id: &'static str,
-    glyph: Icon,
-    tip: &'static str,
-    theme: &Theme,
-    tokens: &Tokens,
-) -> gpui::Stateful<gpui::Div> {
-    let (hover, muted) = (theme.surface_hover, theme.muted);
-    div()
-        .id(id)
-        .relative()
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(24.0))
-        .rounded(px(tokens.radius))
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.into())).into())
-        .child(icon(glyph, 14.0, muted))
+) -> ui::Button {
+    ui::Button::new(id, label, theme, tokens)
+        .compact()
+        .selected(active)
 }
 
 /// Right (and left) padding of a row: the preview and the title never touch the panel's edge.
@@ -219,13 +159,14 @@ impl HistoryPanel {
         let mut controls = div().flex().flex_none().items_center().gap(px(2.0));
         if catalog && self.mode() == Mode::Catalog {
             controls = controls.child(
-                icon_button(
+                ui::IconButton::new(
                     "history-group",
                     Icon::ActionGroup,
                     "Group by",
                     theme,
                     tokens,
                 )
+                .compact()
                 .on_click(cx.listener(|this, e: &ClickEvent, _, cx| {
                     this.open_menu(Menu::GroupBy(e.position()), cx);
                 }))
@@ -235,38 +176,41 @@ impl HistoryPanel {
         if enabled {
             controls = controls
                 .child(
-                    icon_button(
+                    ui::IconButton::new(
                         "history-sources",
                         Icon::ActionFilter,
                         "Sources",
                         theme,
                         tokens,
                     )
+                    .compact()
                     .on_click(cx.listener(|this, e: &ClickEvent, _, cx| {
                         this.open_menu(Menu::Sources(e.position()), cx);
                     }))
                     .child(probe(&self.env.regions, Region::History("sources"))),
                 )
                 .child(
-                    icon_button(
+                    ui::IconButton::new(
                         "history-refresh",
                         Icon::ActionRefresh,
                         "Refresh",
                         theme,
                         tokens,
                     )
+                    .compact()
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_now(cx)))
                     .child(probe(&self.env.regions, Region::History("refresh"))),
                 );
         }
         controls = controls.child(
-            icon_button(
+            ui::IconButton::new(
                 "history-gear",
                 Icon::ActionSettings,
                 "History settings",
                 theme,
                 tokens,
             )
+            .compact()
             .on_click(|_, window, cx| {
                 window.dispatch_action(Box::new(OpenSettingsFor("history".to_owned())), cx);
             }),
@@ -439,46 +383,39 @@ impl HistoryPanel {
                     .items_center()
                     .gap(px(tokens.spacing * 2.0))
                     .child(
-                        button(
-                            "history-enable",
-                            self.busy.unwrap_or("Enable"),
-                            ButtonKind::Primary,
-                            !busy && !none,
-                            theme,
-                            tokens,
-                        )
-                        .when(!busy && !none, |b| {
-                            b.on_click(cx.listener(|this, _, _, cx| this.enable_indexing(cx)))
-                        })
-                        .child(probe(&self.env.regions, Region::History("enable"))),
-                    )
-                    .child(
-                        button(
+                        ui::Button::new(
                             "history-not-now",
                             "Not now",
-                            ButtonKind::Ghost,
-                            !busy,
                             theme,
                             tokens,
                         )
-                        .when(!busy, |b| {
-                            b.on_click(cx.listener(|this, _, _, cx| this.close_card(cx)))
-                        })
+                        .ghost()
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| this.close_card(cx)))
                         .child(probe(&self.env.regions, Region::History("not-now"))),
                     )
                     .child(
-                        div()
-                            .id("history-settings-link")
-                            .cursor_pointer()
-                            .text_color(theme.accent)
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        ui::Button::new(
+                            "history-enable",
+                            self.busy.unwrap_or("Enable"),
+                            theme,
+                            tokens,
+                        )
+                        .primary()
+                        .loading(busy)
+                        .disabled(none)
+                        .on_click(cx.listener(|this, _, _, cx| this.enable_indexing(cx)))
+                        .child(probe(&self.env.regions, Region::History("enable"))),
+                    )
+                    .child(
+                        ui::Button::new("history-settings-link", "Settings ›", theme, tokens)
+                            .link()
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(
                                     Box::new(OpenSettingsFor("history".to_owned())),
                                     cx,
                                 );
                             })
-                            .child("Settings ›")
                             .child(probe(&self.env.regions, Region::History("settings"))),
                     ),
             )
@@ -517,16 +454,9 @@ impl HistoryPanel {
             )
             .child(
                 div().flex().child(
-                    button(
-                        "history-setup",
-                        "Set up history…",
-                        ButtonKind::Secondary,
-                        true,
-                        theme,
-                        tokens,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.open_card(cx)))
-                    .child(probe(&self.env.regions, Region::History("setup"))),
+                    ui::Button::new("history-setup", "Set up history…", theme, tokens)
+                        .on_click(cx.listener(|this, _, _, cx| this.open_card(cx)))
+                        .child(probe(&self.env.regions, Region::History("setup"))),
                 ),
             )
             .into_any_element()
@@ -804,34 +734,30 @@ impl HistoryPanel {
                             .flex()
                             .gap(px(tokens.spacing))
                             .child(
-                                button(
+                                ui::Button::new("history-cancel", "Cancel", theme, tokens)
+                                    .compact()
+                                    .ghost()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cancel_confirmation(cx);
+                                    })),
+                            )
+                            .child(
+                                ui::Button::new(
                                     "history-confirm",
                                     match what {
                                         super::history::Confirm::Clear => "Clear index",
                                         super::history::Confirm::Rebuild => "Rebuild",
                                     },
-                                    ButtonKind::Secondary,
-                                    true,
                                     theme,
                                     tokens,
                                 )
+                                .compact()
+                                .kind(match what {
+                                    super::history::Confirm::Clear => ButtonKind::Destructive,
+                                    super::history::Confirm::Rebuild => ButtonKind::Primary,
+                                })
                                 .on_click(cx.listener(|this, _, _, cx| this.confirmed(cx)))
                                 .child(probe(&self.env.regions, Region::History("confirm"))),
-                            )
-                            .child(
-                                button(
-                                    "history-cancel",
-                                    "Cancel",
-                                    ButtonKind::Secondary,
-                                    true,
-                                    theme,
-                                    tokens,
-                                )
-                                .on_click(cx.listener(
-                                    |this, _, _, cx| {
-                                        this.cancel_confirmation(cx);
-                                    },
-                                )),
                             ),
                     )
                     .into_any_element()
@@ -841,44 +767,29 @@ impl HistoryPanel {
                 .items_center()
                 .gap(px(tokens.spacing))
                 .child(
-                    button(
-                        "history-clear",
-                        "Clear…",
-                        ButtonKind::Secondary,
-                        !busy,
-                        theme,
-                        tokens,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.ask(super::history::Confirm::Clear, cx);
-                    }))
-                    .child(probe(&self.env.regions, Region::History("clear"))),
+                    ui::Button::new("history-clear", "Clear…", theme, tokens)
+                        .compact()
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.ask(super::history::Confirm::Clear, cx);
+                        }))
+                        .child(probe(&self.env.regions, Region::History("clear"))),
                 )
                 .child(
-                    button(
-                        "history-rebuild",
-                        "Rebuild…",
-                        ButtonKind::Secondary,
-                        !busy,
-                        theme,
-                        tokens,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.ask(super::history::Confirm::Rebuild, cx);
-                    }))
-                    .child(probe(&self.env.regions, Region::History("rebuild"))),
+                    ui::Button::new("history-rebuild", "Rebuild…", theme, tokens)
+                        .compact()
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.ask(super::history::Confirm::Rebuild, cx);
+                        }))
+                        .child(probe(&self.env.regions, Region::History("rebuild"))),
                 )
                 .child(
-                    button(
-                        "history-disable",
-                        "Disable",
-                        ButtonKind::Secondary,
-                        !busy,
-                        theme,
-                        tokens,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.disable_indexing(cx)))
-                    .child(probe(&self.env.regions, Region::History("disable"))),
+                    ui::Button::new("history-disable", "Disable", theme, tokens)
+                        .compact()
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| this.disable_indexing(cx)))
+                        .child(probe(&self.env.regions, Region::History("disable"))),
                 )
                 .when_some(self.busy, |s, busy| {
                     s.child(div().text_color(theme.muted).child(busy))
@@ -1088,14 +999,13 @@ impl HistoryPanel {
                 .justify_center()
                 .py(px(tokens.spacing * 2.0))
                 .child(
-                    button(
+                    ui::Button::new(
                         "history-show-more",
                         format!("Show {remaining} more"),
-                        ButtonKind::Secondary,
-                        true,
                         &theme,
                         &tokens,
                     )
+                    .compact()
                     .on_click(cx.listener(|this, _, _, cx| this.show_more(cx)))
                     .child(probe(
                         &self.env.regions,
@@ -1320,16 +1230,22 @@ impl HistoryPanel {
                             )),
                     )
                     .child(
-                        icon_button("history-more", Icon::ActionMore, "Actions", theme, tokens)
-                            .id(("history-more", index))
-                            .on_click({
-                                let key = key.clone();
-                                cx.listener(move |this, e: &ClickEvent, _, cx| {
-                                    this.selected = Some(key.clone());
-                                    this.open_menu(Menu::Row(key.clone(), e.position()), cx);
-                                })
+                        ui::IconButton::new(
+                            ("history-more", index),
+                            Icon::ActionMore,
+                            "Actions",
+                            theme,
+                            tokens,
+                        )
+                        .compact()
+                        .on_click({
+                            let key = key.clone();
+                            cx.listener(move |this, e: &ClickEvent, _, cx| {
+                                this.selected = Some(key.clone());
+                                this.open_menu(Menu::Row(key.clone(), e.position()), cx);
                             })
-                            .child(probe(&self.env.regions, Region::HistoryItem("more", index))),
+                        })
+                        .child(probe(&self.env.regions, Region::HistoryItem("more", index))),
                     ),
             )
             .when_some(preview, |s, preview| {
@@ -1396,14 +1312,15 @@ impl HistoryPanel {
             } else {
                 ButtonKind::Secondary
             };
-            let mut b = button(
-                format!("history-act-{index}-{n}"),
+            let mut b = ui::Button::new(
+                SharedString::from(format!("history-act-{index}-{n}")),
                 entry.label,
-                kind,
-                entry.enabled,
                 theme,
                 tokens,
             )
+            .compact()
+            .kind(kind)
+            .disabled(!entry.enabled)
             .child(probe(&self.env.regions, Region::HistoryItem("action", n)));
             if entry.enabled {
                 b = b.on_click(cx.listener(move |this, _, window, cx| {

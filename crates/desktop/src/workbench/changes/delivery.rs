@@ -11,8 +11,8 @@
 
 use gpui::{
     AnyElement, App, Context, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, MouseDownEvent, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, prelude::*, px,
+    MouseButton, MouseDownEvent, ParentElement, SharedString, Styled, Window, div, prelude::*,
+    px,
 };
 use hutan_core::{DeliveryState, ReviewDecision, Task as DaemonTask, TaskId, TaskState};
 use hutan_protocol::worktree::{CommitSummary, DiffFile, WorktreeCommit, WorktreeMerged};
@@ -473,34 +473,24 @@ impl ChangesView {
             let accepted = task.delivery == DeliveryState::Accepted;
             let accept_enabled = !accepted && !self.delivery.reviewing;
             controls.push(
-                ui::button(
+                ui::Button::new(
                     "changes-accept",
                     if accepted { "Accepted" } else { "Accept" },
-                    ui::ButtonKind::Secondary,
-                    accept_enabled,
                     theme,
                     tokens,
                 )
-                .relative()
-                .when(accept_enabled, |s| {
-                    s.on_click(cx.listener(|this, _, _, cx| this.accept(cx)))
-                })
+                .disabled(!accept_enabled)
+                .on_click(cx.listener(|this, _, _, cx| this.accept(cx)))
                 .child(probe(&self.env.regions, Region::Changes("accept")))
                 .into_any_element(),
             );
             controls.push(
-                ui::button(
-                    "changes-request-changes",
-                    "Request changes…",
-                    ui::ButtonKind::Secondary,
-                    true,
-                    theme,
-                    tokens,
-                )
-                .relative()
-                .on_click(cx.listener(|this, _, window, cx| this.open_request_changes(window, cx)))
-                .child(probe(&self.env.regions, Region::Changes("request-changes")))
-                .into_any_element(),
+                ui::Button::new("changes-request-changes", "Request changes…", theme, tokens)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.open_request_changes(window, cx)),
+                    )
+                    .child(probe(&self.env.regions, Region::Changes("request-changes")))
+                    .into_any_element(),
             );
         }
         controls
@@ -631,28 +621,25 @@ impl ChangesView {
                 .justify_end()
                 .gap(px(tokens.spacing * 2.0))
                 .child(
-                    ui::button(
+                    ui::Button::new(
                         SharedString::from(format!("changes-{key_cancel}")),
                         "Cancel",
-                        ui::ButtonKind::Ghost,
-                        true,
                         theme,
                         tokens,
                     )
-                    .relative()
+                    .ghost()
                     .on_click(cx.listener(|this, _, _, cx| this.close_delivery_form(cx)))
                     .child(probe(&self.env.regions, Region::Changes(key_cancel))),
                 )
                 .child(
-                    ui::button(
+                    ui::Button::new(
                         SharedString::from(format!("changes-{key_send}")),
                         send,
-                        ui::ButtonKind::Primary,
-                        !form.running,
                         theme,
                         tokens,
                     )
-                    .relative()
+                    .primary()
+                    .loading(form.running)
                     .on_click(cx.listener(|this, _, _, cx| this.confirm_delivery_form(cx)))
                     .child(probe(&self.env.regions, Region::Changes(key_send))),
                 ),
@@ -789,19 +776,11 @@ impl ChangesView {
                                     )),
                             )
                             .child(
-                                ui::button(
-                                    "changes-commit-all",
-                                    "Commit all…",
-                                    ui::ButtonKind::Secondary,
-                                    true,
-                                    theme,
-                                    tokens,
-                                )
-                                .relative()
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_commit(window, cx);
-                                }))
-                                .child(probe(&self.env.regions, Region::Changes("commit-all"))),
+                                ui::Button::new("changes-commit-all", "Commit all…", theme, tokens)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_commit(window, cx);
+                                    }))
+                                    .child(probe(&self.env.regions, Region::Changes("commit-all"))),
                             ),
                     )
                     .child(

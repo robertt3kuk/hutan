@@ -34,7 +34,7 @@ use hutan_protocol::lsp::{
 use tokio::sync::broadcast::error::RecvError;
 
 use super::common::panel_header_with;
-use crate::icons::{Icon, icon};
+use crate::icons::Icon;
 use crate::settings::{ProblemsPanelSettings, ProblemsSeverity};
 use crate::theme::DensityExt as _;
 use crate::workbench::Region;
@@ -43,7 +43,7 @@ use crate::workbench::lsp::{languages_of, severity_of};
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
-use crate::workbench::ui::{self, ButtonKind};
+use crate::workbench::ui;
 
 /// Height of every row (file headers and diagnostics alike: the list is uniform).
 const ROW_HEIGHT: f32 = 24.0;
@@ -643,21 +643,16 @@ impl ProblemsPanel {
             let restart = line.restartable().then(|| {
                 let busy = self.restarting.contains(&line.server_id);
                 let id = line.server_id.clone();
-                ui::button(
+                ui::Button::new(
                     SharedString::from(format!("problems-restart-{index}")),
-                    if busy { "Restarting…" } else { "Restart" },
-                    ButtonKind::Ghost,
-                    !busy,
+                    "Restart",
                     theme,
                     tokens,
                 )
-                .flex_none()
-                .relative()
-                .tooltip(|_, cx| {
-                    cx.new(|_| TextTooltip("Start this language server again".into()))
-                        .into()
-                })
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .compact()
+                .ghost()
+                .loading(busy)
+                .tooltip("Start this language server again")
                 .on_click(cx.listener(move |this, _, _, cx| this.restart(id.clone(), cx)))
                 .child(probe(
                     &self.env.regions,
@@ -883,44 +878,25 @@ impl Render for ProblemsPanel {
         self.sync(cx);
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
-        let hover = theme.surface_hover;
         let filter = self.filter();
-        let severity = div()
-            .id("problems-severity")
-            .relative()
-            .flex_none()
-            .px(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .text_size(px(tokens.secondary_font_size))
-            .text_color(theme.muted)
-            .tooltip(|_, cx| {
-                cx.new(|_| TextTooltip("Which diagnostics to list (click to change)".into()))
-                    .into()
-            })
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        let severity = ui::Button::new("problems-severity", filter_label(filter), &theme, &tokens)
+            .compact()
+            .ghost()
+            .tooltip("Which diagnostics to list (click to change)")
             .on_click(cx.listener(|this, _, _, cx| this.cycle_filter(cx)))
-            .child(filter_label(filter))
             .child(probe(&self.env.regions, Region::Problems("severity")))
             .into_any_element();
-        let refresh = div()
-            .id("problems-refresh")
-            .relative()
-            .flex_none()
-            .px(px(tokens.spacing * 1.5))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .tooltip(|_, cx| {
-                cx.new(|_| TextTooltip("Read the problems again".into()))
-                    .into()
-            })
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
-            .child(icon(Icon::ActionRefresh, 14.0, theme.muted))
-            .child(probe(&self.env.regions, Region::Problems("refresh")))
-            .into_any_element();
+        let refresh = ui::IconButton::new(
+            "problems-refresh",
+            Icon::ActionRefresh,
+            "Read the problems again",
+            &theme,
+            &tokens,
+        )
+        .compact()
+        .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
+        .child(probe(&self.env.regions, Region::Problems("refresh")))
+        .into_any_element();
         let header = panel_header_with("Problems", "panels.problems", vec![severity, refresh], cx);
 
         let starting = self.still_starting();

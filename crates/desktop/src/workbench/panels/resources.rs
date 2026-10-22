@@ -832,38 +832,29 @@ impl ResourcesPanel {
         pid: Option<u32>,
         node: Option<String>,
         theme: &Theme,
+        tokens: &Tokens,
     ) -> AnyElement {
-        let hover = theme.surface_hover;
-        div()
-            .id(SharedString::from(format!("resources-more-{index}")))
-            .relative()
-            .flex_none()
-            .w(px(COL_ACTION))
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(3.0))
-            .text_color(theme.muted)
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover).text_color(theme.fg))
-            .on_mouse_down(MouseButton::Left, {
-                move |event: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    window.dispatch_action(
-                        Box::new(ShowResourceMenu(ResourceMenuAt {
-                            session: session.to_string(),
-                            pid,
-                            node: node.clone(),
-                            position: event.position,
-                        })),
-                        cx,
-                    );
-                }
-            })
-            .child(crate::icons::glyph(crate::icons::Icon::ActionMore))
-            .child(probe(&self.env.regions, Region::ResourceMenu(index)))
-            .into_any_element()
+        ui::IconButton::new(
+            SharedString::from(format!("resources-more-{index}")),
+            crate::icons::Icon::ActionMore,
+            "Actions",
+            theme,
+            tokens,
+        )
+        .compact()
+        .on_click(move |event, window, cx| {
+            window.dispatch_action(
+                Box::new(ShowResourceMenu(ResourceMenuAt {
+                    session: session.to_string(),
+                    pid,
+                    node: node.clone(),
+                    position: event.position(),
+                })),
+                cx,
+            );
+        })
+        .child(probe(&self.env.regions, Region::ResourceMenu(index)))
+        .into_any_element()
     }
 
     /// The right-click handler that opens the same menu as the `⋯` button.
@@ -1205,7 +1196,7 @@ impl ResourcesPanel {
         };
         let node = None;
         let row = row
-            .child(self.actions_cell(index, session, Some(process.pid), node.clone(), theme))
+            .child(self.actions_cell(index, session, Some(process.pid), node.clone(), theme, tokens))
             .child(probe(regions, Region::ResourceRow(index)));
         Self::menu_on_right_click(row, session, Some(process.pid), node).into_any_element()
     }
@@ -1336,7 +1327,7 @@ impl ResourcesPanel {
                 ));
         }
         let row = row
-            .child(self.actions_cell(index, session, None, None, theme))
+            .child(self.actions_cell(index, session, None, None, theme, tokens))
             .child(probe(regions, Region::ResourceRow(index)));
         Self::menu_on_right_click(row, session, None, None).into_any_element()
     }
@@ -1401,7 +1392,7 @@ impl ResourcesPanel {
                 ));
         }
         let row = row
-            .child(self.actions_cell(index, session, None, Some(node.clone()), theme))
+            .child(self.actions_cell(index, session, None, Some(node.clone()), theme, tokens))
             .child(probe(regions, Region::ResourceRow(index)));
         Self::menu_on_right_click(row, session, None, Some(node)).into_any_element()
     }

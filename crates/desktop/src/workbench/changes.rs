@@ -34,7 +34,7 @@ use hutan_protocol::worktree::{
 };
 
 use super::chat::{Look, counts_of, diff_row};
-use super::panels::pill;
+use super::panels::chip;
 use super::registry::PanelEnv;
 use super::render::probe;
 use super::style::UiStyle;
@@ -885,8 +885,7 @@ impl ChangesView {
             return None;
         }
         let choice = |id: &'static str, label: &'static str, filter: IndexFilter| {
-            pill(id, label, self.index_filter == filter, theme, tokens)
-                .relative()
+            chip(id, label, self.index_filter == filter, theme, tokens)
                 .on_click(cx.listener(move |this, _, _, cx| this.set_index_filter(filter, cx)))
                 .child(probe(&self.env.regions, Region::Changes(id)))
         };
@@ -993,14 +992,13 @@ impl ChangesView {
                     .children(self.render_review_controls(theme, tokens, cx))
                     .children(self.render_index_filter(theme, tokens, cx))
                     .child(
-                        pill(
+                        chip(
                             "changes-uncommitted",
                             "With uncommitted",
                             self.include_uncommitted,
                             theme,
                             tokens,
                         )
-                        .relative()
                         .on_click(cx.listener({
                             let next = !self.include_uncommitted;
                             move |this, _, _, cx| this.set_include_uncommitted(next, cx)
@@ -1009,34 +1007,19 @@ impl ChangesView {
                     )
                     .children(self.render_freshness(theme, tokens))
                     .child(
-                        ui::button(
-                            "changes-refresh",
-                            "Refresh",
-                            ui::ButtonKind::Ghost,
-                            true,
-                            theme,
-                            tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, _, cx| this.reload(cx)))
-                        .child(probe(&self.env.regions, Region::Changes("refresh"))),
+                        ui::Button::new("changes-refresh", "Refresh", theme, tokens)
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| this.reload(cx)))
+                            .child(probe(&self.env.regions, Region::Changes("refresh"))),
                     )
                     .child(
-                        ui::button(
-                            "changes-finish",
-                            "Finish…",
-                            ui::ButtonKind::Primary,
-                            finish_enabled,
-                            theme,
-                            tokens,
-                        )
-                        .relative()
-                        .when(finish_enabled, |s| {
-                            s.on_click(
+                        ui::Button::new("changes-finish", "Finish…", theme, tokens)
+                            .primary()
+                            .disabled(!finish_enabled)
+                            .on_click(
                                 cx.listener(|this, _, window, cx| this.open_finish(window, cx)),
                             )
-                        })
-                        .child(probe(&self.env.regions, Region::Changes("finish"))),
+                            .child(probe(&self.env.regions, Region::Changes("finish"))),
                     ),
             )
             .into_any_element()
@@ -1111,49 +1094,43 @@ impl ChangesView {
                         .child(SharedString::from(error)),
                 )
             })
-            .child(
-                div()
-                    .flex()
-                    .gap(px(tokens.spacing * 2.0))
-                    .child(
-                        ui::button(
-                            "changes-remove",
-                            if result.source_dirty {
-                                "Remove worktree and branch (discard its changes)"
-                            } else {
-                                "Remove worktree and branch"
-                            },
-                            if keep {
-                                ui::ButtonKind::Secondary
-                            } else {
-                                ui::ButtonKind::Primary
-                            },
-                            !merged.removing,
-                            theme,
-                            tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, _, cx| this.remove_worktree(cx)))
-                        .child(probe(&self.env.regions, Region::Changes("remove"))),
-                    )
-                    .child(
-                        ui::button(
-                            "changes-keep",
-                            "Keep",
-                            if keep {
-                                ui::ButtonKind::Primary
-                            } else {
-                                ui::ButtonKind::Ghost
-                            },
-                            true,
-                            theme,
-                            tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, _, cx| this.keep_worktree(cx)))
-                        .child(probe(&self.env.regions, Region::Changes("keep"))),
-                    ),
-            )
+            .child({
+                let remove = ui::Button::new(
+                    "changes-remove",
+                    if result.source_dirty {
+                        "Remove worktree and branch (discard its changes)"
+                    } else {
+                        "Remove worktree and branch"
+                    },
+                    theme,
+                    tokens,
+                )
+                .kind(if result.source_dirty {
+                    ui::ButtonKind::Destructive
+                } else if keep {
+                    ui::ButtonKind::Secondary
+                } else {
+                    ui::ButtonKind::Primary
+                })
+                .loading(merged.removing)
+                .on_click(cx.listener(|this, _, _, cx| this.remove_worktree(cx)))
+                .child(probe(&self.env.regions, Region::Changes("remove")));
+                let keep_button = ui::Button::new("changes-keep", "Keep", theme, tokens)
+                    .kind(if keep {
+                        ui::ButtonKind::Primary
+                    } else {
+                        ui::ButtonKind::Ghost
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| this.keep_worktree(cx)))
+                    .child(probe(&self.env.regions, Region::Changes("keep")));
+                // The default answer goes last.
+                let row = div().flex().gap(px(tokens.spacing * 2.0));
+                if keep {
+                    row.child(remove).child(keep_button)
+                } else {
+                    row.child(keep_button).child(remove)
+                }
+            })
             .into_any_element()
     }
 

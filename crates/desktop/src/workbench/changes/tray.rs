@@ -1106,39 +1106,31 @@ impl ChangesView {
                         )
                     })
                     .child(
-                        ui::button(
+                        ui::Button::new(
                             "changes-review-send",
-                            if self.review.sending {
-                                "Sending…"
-                            } else {
-                                "Send to agent"
-                            },
-                            ui::ButtonKind::Primary,
-                            can_send,
+                            "Send to agent",
                             theme,
                             tokens,
                         )
-                        .relative()
-                        .when(can_send, |s| {
-                            s.on_click(cx.listener(|this, _, _, cx| this.send_review(None, cx)))
-                        })
+                        .primary()
+                        .loading(self.review.sending)
+                        .disabled(!can_send)
+                        .on_click(cx.listener(|this, _, _, cx| this.send_review(None, cx)))
                         .child(probe(&self.env.regions, Region::Changes("review-send"))),
                     )
                     .child(
-                        ui::button(
+                        ui::IconButton::new(
                             "changes-review-menu",
-                            "",
-                            ui::ButtonKind::Secondary,
-                            !self.review.sending,
+                            crate::icons::Icon::ActionMenuDown,
+                            "Send to another agent",
                             theme,
                             tokens,
                         )
-                        .relative()
+                        .disabled(self.review.sending)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.review.menu_open = !this.review.menu_open;
                             cx.notify();
                         }))
-                        .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                         .child(probe(&self.env.regions, Region::Changes("review-menu"))),
                     ),
             );
@@ -1633,42 +1625,29 @@ impl ChangesView {
                     .justify_end()
                     .gap(px(tokens.spacing * 2.0))
                     .child(
-                        ui::button(
-                            "changes-comment-cancel",
-                            "Cancel",
-                            ui::ButtonKind::Ghost,
-                            true,
-                            theme,
-                            tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.cancel_comment(cx);
-                            window.focus(&this.review.focus, cx);
-                        }))
-                        .child(probe(&self.env.regions, Region::Changes("comment-cancel"))),
+                        ui::Button::new("changes-comment-cancel", "Cancel", theme, tokens)
+                            .ghost()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.cancel_comment(cx);
+                                window.focus(&this.review.focus, cx);
+                            }))
+                            .child(probe(&self.env.regions, Region::Changes("comment-cancel"))),
                     )
                     .child(
-                        ui::button(
+                        ui::Button::new(
                             "changes-comment-save",
-                            if editing.is_some() {
-                                format!("Save  {}", self.send_key().combo())
-                            } else {
-                                format!("Comment  {}", self.send_key().combo())
-                            },
-                            ui::ButtonKind::Primary,
-                            !empty,
+                            if editing.is_some() { "Save" } else { "Comment" },
                             theme,
                             tokens,
                         )
-                        .relative()
-                        .when(!empty, |s| {
-                            s.on_click(cx.listener(|this, _, window, cx| {
-                                if this.add_comment(cx) {
-                                    window.focus(&this.review.focus, cx);
-                                }
-                            }))
-                        })
+                        .primary()
+                        .shortcut(self.send_key().combo())
+                        .disabled(empty)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if this.add_comment(cx) {
+                                window.focus(&this.review.focus, cx);
+                            }
+                        }))
                         .child(probe(&self.env.regions, Region::Changes("comment-save"))),
                     ),
             )
@@ -1690,26 +1669,18 @@ impl ChangesView {
         let tone = state_label(comment).map_or(theme.accent, |(_, color)| color(theme));
         let state = state_label(comment);
         let action = |name: &'static str, label: &str| {
-            div()
-                .id(SharedString::from(format!(
-                    "changes-comment-{index}-{name}"
-                )))
-                .relative()
-                .flex_none()
-                .px(px(tokens.spacing * 1.5))
-                .rounded(px(tokens.radius))
-                .cursor_pointer()
-                .text_color(theme.muted)
-                .hover({
-                    let hover = theme.surface_hover;
-                    let fg = theme.fg;
-                    move |s| s.bg(hover).text_color(fg)
-                })
-                .child(SharedString::from(label.to_owned()))
-                .child(probe(
-                    &self.env.regions,
-                    Region::ChangesComment(index, name),
-                ))
+            ui::Button::new(
+                SharedString::from(format!("changes-comment-{index}-{name}")),
+                SharedString::from(label.to_owned()),
+                theme,
+                tokens,
+            )
+            .compact()
+            .ghost()
+            .child(probe(
+                &self.env.regions,
+                Region::ChangesComment(index, name),
+            ))
         };
         let mut card =
             div()

@@ -55,7 +55,7 @@ pub use files::{
     Tree as FileTree,
 };
 pub use files_git::{GitMark as FileGitMark, GitStatus as FileGitStatus};
-pub(crate) use history::pill;
+pub(crate) use history::chip;
 pub use history::{Confirm as HistoryConfirm, HistoryPanel, Mode as HistoryMode};
 pub use history_catalog::{
     ActionEntry as HistoryActionEntry, Entry as HistoryEntry, GroupBy as HistoryGroupBy,

@@ -51,7 +51,7 @@ use crate::workbench::registry::PanelEnv;
 use crate::workbench::text_field::FieldRef;
 use crate::workbench::vim_ui::{FieldEdit, VimConfig};
 
-pub(crate) use super::history_view::pill;
+pub(crate) use super::history_view::chip;
 
 /// How often the index status is read while indexing settles after Enable or Rebuild.
 const SETTLE_POLL: Duration = Duration::from_millis(500);

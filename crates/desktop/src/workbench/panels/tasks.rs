@@ -19,7 +19,7 @@ use hutan_core::{DeliveryState, TaskId, TaskState};
 use hutan_protocol::task::TaskUpdate;
 
 use super::common::{now_ms, panel_header_with, tone_color};
-use super::history::pill;
+use super::history::chip;
 use crate::sessions::tasks::{TaskAction, TaskFilters, TaskRowView, tree_rows};
 use crate::settings::{TasksScope, TasksSettings};
 use crate::theme::{DensityExt as _, Theme, Tokens};
@@ -319,24 +319,9 @@ impl Focusable for TasksPanel {
 
 // ---- rendering ----------------------------------------------------------------------------
 
-/// A compact text button for rows and forms.
 /// One line of a row's detail, cut with "…" at the row's width.
 fn clipped(text: impl Into<SharedString>) -> gpui::Div {
     div().min_w_0().max_w_full().truncate().child(text.into())
-}
-
-fn small_button(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    kind: ui::ButtonKind,
-    enabled: bool,
-    theme: &Theme,
-    tokens: &Tokens,
-) -> gpui::Stateful<gpui::Div> {
-    ui::button(id.into(), label, kind, enabled, theme, tokens)
-        .h(px(tokens.font_size + 8.0))
-        .px(px(tokens.spacing * 2.0))
-        .text_size(px(tokens.secondary_font_size))
 }
 
 impl Render for TasksPanel {
@@ -358,20 +343,13 @@ impl Render for TasksPanel {
             )
         };
 
-        let new_button = small_button(
-            "tasks-new",
-            "+ New task",
-            ui::ButtonKind::Secondary,
-            connected && supported,
-            &theme,
-            &tokens,
-        )
-        .relative()
-        .when(connected && supported, |s| {
-            s.on_click(|_, window, cx| open_launcher(window, cx))
-        })
-        .child(probe(&self.env.regions, Region::Tasks("new")))
-        .into_any_element();
+        let new_button = ui::Button::new("tasks-new", "New task", &theme, &tokens)
+            .compact()
+            .icon(crate::icons::Icon::ActionAdd)
+            .disabled(!(connected && supported))
+            .on_click(|_, window, cx| open_launcher(window, cx))
+            .child(probe(&self.env.regions, Region::Tasks("new")))
+            .into_any_element();
 
         let chips = div()
             .flex()
@@ -382,14 +360,13 @@ impl Render for TasksPanel {
             .px(px(tokens.spacing * 2.0))
             .pb(px(tokens.spacing))
             .child(
-                pill(
+                chip(
                     "tasks-chip-done",
                     "Done",
                     settings.show_done,
                     &theme,
                     &tokens,
                 )
-                .relative()
                 .on_click(cx.listener({
                     let value = !settings.show_done;
                     move |this, _, _, cx| {
@@ -400,7 +377,7 @@ impl Render for TasksPanel {
                 .child(probe(&self.env.regions, Region::Tasks("chip-done"))),
             )
             .child(
-                pill(
+                chip(
                     "tasks-chip-scope",
                     match settings.scope {
                         TasksScope::Workspace => "This workspace",
@@ -410,7 +387,6 @@ impl Render for TasksPanel {
                     &theme,
                     &tokens,
                 )
-                .relative()
                 .on_click(cx.listener({
                     let next = match settings.scope {
                         TasksScope::Workspace => TasksScope::All,
@@ -446,18 +422,12 @@ impl Render for TasksPanel {
                 (
                     "No tasks yet.",
                     Some(
-                        small_button(
-                            "tasks-empty-new",
-                            "New task…",
-                            ui::ButtonKind::Ghost,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(|_, window, cx| open_launcher(window, cx))
-                        .child(probe(&self.env.regions, Region::Tasks("empty-new")))
-                        .into_any_element(),
+                        ui::Button::new("tasks-empty-new", "New task…", &theme, &tokens)
+                            .compact()
+                            .ghost()
+                            .on_click(|_, window, cx| open_launcher(window, cx))
+                            .child(probe(&self.env.regions, Region::Tasks("empty-new")))
+                            .into_any_element(),
                     ),
                 )
             } else {
@@ -519,34 +489,22 @@ impl TasksPanel {
                     .flex_wrap()
                     .gap(px(tokens.spacing))
                     .child(
-                        small_button(
-                            "tasks-cascade-yes",
-                            "Delete them too",
-                            ui::ButtonKind::Primary,
-                            true,
-                            theme,
-                            tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.answer_cascade(true, window, cx);
-                        }))
-                        .child(probe(&self.env.regions, Region::Tasks("cascade-yes"))),
+                        ui::Button::new("tasks-cascade-no", "Keep", theme, tokens)
+                            .compact()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.answer_cascade(false, window, cx);
+                            }))
+                            .child(probe(&self.env.regions, Region::Tasks("cascade-no"))),
                     )
                     .child(
-                        small_button(
-                            "tasks-cascade-no",
-                            "Keep",
-                            ui::ButtonKind::Ghost,
-                            true,
-                            theme,
-                            tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.answer_cascade(false, window, cx);
-                        }))
-                        .child(probe(&self.env.regions, Region::Tasks("cascade-no"))),
+                        ui::Button::new("tasks-cascade-yes", "Delete them too", theme, tokens)
+                            .compact()
+                            .destructive()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.answer_cascade(true, window, cx);
+                            }))
+                            .child(probe(&self.env.regions, Region::Tasks("cascade-yes"))),
                     ),
             )
             .into_any_element()
@@ -681,19 +639,18 @@ impl TasksPanel {
             for action in &row.actions {
                 let action = *action;
                 actions = actions.child(
-                    small_button(
+                    ui::Button::new(
                         SharedString::from(format!("tasks-action-{index}-{}", action.key())),
                         action.label(),
-                        if action == TaskAction::Start {
-                            ui::ButtonKind::Primary
-                        } else {
-                            ui::ButtonKind::Secondary
-                        },
-                        true,
                         theme,
                         tokens,
                     )
-                    .relative()
+                    .compact()
+                    .kind(match action {
+                        TaskAction::Start => ui::ButtonKind::Primary,
+                        TaskAction::Delete => ui::ButtonKind::Destructive,
+                        _ => ui::ButtonKind::Secondary,
+                    })
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.run_action(id, action, window, cx);
                         cx.stop_propagation();
@@ -706,15 +663,14 @@ impl TasksPanel {
             }
             if row.reviewable {
                 actions = actions.child(
-                    small_button(
+                    ui::Button::new(
                         SharedString::from(format!("tasks-action-{index}-changes")),
                         "Changes",
-                        ui::ButtonKind::Ghost,
-                        true,
                         theme,
                         tokens,
                     )
-                    .relative()
+                    .compact()
+                    .ghost()
                     .on_click(cx.listener(move |_, _, window, cx| {
                         window.dispatch_action(Box::new(ReviewTaskChanges(id.to_string())), cx);
                         cx.stop_propagation();
