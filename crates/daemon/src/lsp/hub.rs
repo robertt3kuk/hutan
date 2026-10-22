@@ -338,7 +338,7 @@ impl Slot {
                 info.state = state_of(status.state);
                 info.pid = status.pid;
                 info.restarts = status.restarts;
-                info.reason = status.last_error;
+                info.reason = status.last_error.as_deref().map(summarize);
                 info.capabilities = capabilities_of(server);
             }
             (None, Some(down)) => {
@@ -354,6 +354,18 @@ impl Slot {
         }
         info
     }
+}
+
+/// A server's last error as one line: what a crashed server wrote to stderr runs over many lines
+/// (a rustup proxy repeats itself), and the last one is what says why.
+fn summarize(error: &str) -> String {
+    let last = error
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default();
+    convert::clip(last, 300)
 }
 
 fn doc_server(info: &LspServerInfo) -> DocServer {
@@ -941,7 +953,16 @@ impl LspHub {
             return infos;
         }
         // Room: the least recently used server without documents makes way.
-        let running = state.slots.values().filter(|s| s.server.is_some()).count();
+        // A server that ended (`failed`, `stopped`) holds no process and no room.
+        let running = state
+            .slots
+            .values()
+            .filter(|s| {
+                s.server
+                    .as_ref()
+                    .is_some_and(|server| !server.status().state.is_final())
+            })
+            .count();
         if running >= self.settings.max_servers as usize {
             let victim = state
                 .slots
@@ -2157,4 +2178,21 @@ fn tree_rss(source: &dyn ProcessSource, root: u32) -> u64 {
         total += source.inspect(pid).map_or(0, |p| p.rss_bytes);
     }
     total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::summarize;
+
+    #[test]
+    fn an_error_of_many_lines_is_summed_up_by_its_last() {
+        let stderr = "info: falling back\ninfo: unavailable\n\nerror: infinite recursion detected (exited with code 1)\n";
+        assert_eq!(
+            summarize(stderr),
+            "error: infinite recursion detected (exited with code 1)"
+        );
+        assert_eq!(summarize("exited with code 3"), "exited with code 3");
+        assert_eq!(summarize(""), "");
+        assert!(summarize(&"x".repeat(1000)).len() <= 300);
+    }
 }
