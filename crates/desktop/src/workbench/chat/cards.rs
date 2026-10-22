@@ -12,6 +12,7 @@ use super::widgets::{
 };
 use crate::workbench::harnesses::harness_name;
 use crate::workbench::render::probe;
+use crate::workbench::ui::motion;
 use crate::workbench::ui::{Button, StyledExt as _, approval_button_kind};
 use crate::workbench::view::Region;
 use gpui::{
@@ -31,6 +32,15 @@ use hutan_core::agent::{FileChangeKind, NoticeLevel, PlanStepStatus, ToolKind, T
 pub(super) const PART_BODY: u32 = 0;
 /// A file's diff in a file change card: `PART_DIFF + index`.
 pub(super) const PART_DIFF: u32 = 100;
+/// The approvals this window saw waiting and when each was answered: an answered card keeps its
+/// buttons folding away for the length of a collapse (`approval_card`), and no card that was
+/// not seen waiting does (a transcript loaded with its approvals answered).
+#[derive(Debug, Default)]
+pub(super) struct ApprovalsSeen {
+    waiting: std::collections::HashSet<ApprovalId>,
+    answered: std::collections::HashMap<ApprovalId, std::time::Instant>,
+}
+
 /// Lines of a command's output shown while it is collapsed.
 const TAIL_LINES: usize = 8;
 /// Most lines of a command's output drawn even when expanded.
@@ -960,6 +970,78 @@ impl ChatView {
                 "No answer: the turn ended or the agent withdrew the request".to_owned(),
             )),
         };
+        let now = cx.background_executor().now();
+        let key = SharedString::from(format!("approval-group-{}", approval.id));
+        let leaving = {
+            let mut seen = self.approvals_seen.borrow_mut();
+            if outcome.is_none() {
+                seen.waiting.insert(approval.id);
+                false
+            } else {
+                if seen.waiting.remove(&approval.id) {
+                    seen.answered.insert(approval.id, now);
+                }
+                let exit = motion::Kind::Collapse.exit_duration(cx.reduce_motion());
+                seen.answered
+                    .retain(|_, at| now.saturating_duration_since(*at) < exit);
+                seen.answered.contains_key(&approval.id)
+            }
+        };
+        let ordinal = self.pending.iter().position(|id| *id == approval.id);
+        let approval_id: ApprovalId = approval.id;
+        let agent = self.harness(cx);
+        // The group of buttons; the one that is still on screen while the answered card folds
+        // into its line has no handlers and no probes.
+        let build_group = |live: bool| -> AnyElement {
+            let buttons: Vec<AnyElement> = approval
+                .options
+                .iter()
+                .enumerate()
+                .map(|(number, option)| {
+                    let option_id = option.id.clone();
+                    let region = ordinal.map_or(usize::MAX, |ordinal| ordinal * 8 + number);
+                    let button = approval_option(
+                        SharedString::from(format!("approve-{}-{number}", approval.id)),
+                        number,
+                        option,
+                        scope_tooltip(number, option, &approval.title, agent.as_deref()),
+                        look,
+                    );
+                    if live {
+                        button
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.answer(approval_id, option_id.clone(), cx);
+                            }))
+                            .child(probe(&self.regions, Region::ChatOption(region)))
+                            .into_any_element()
+                    } else {
+                        button.into_any_element()
+                    }
+                })
+                .collect();
+            let group = approval_group(
+                approval.kind,
+                standalone.then_some(approval.title.as_str()),
+                approval.detail.as_deref(),
+                buttons,
+                always_note(&approval.options, &approval.title),
+                look,
+            )
+            .relative();
+            if standalone {
+                group
+                    .p(px(tokens.spacing * 3.0))
+                    .card(theme, tokens)
+                    .into_any_element()
+            } else {
+                group
+                    .pt(px(tokens.spacing * 3.0))
+                    .pl(px(16.0))
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .into_any_element()
+            }
+        };
         if let Some((mark, line)) = outcome {
             let line = if standalone {
                 format!(
@@ -969,54 +1051,19 @@ impl ChatView {
             } else {
                 line
             };
-            return approval_outcome(mark, line, look).into_any_element();
+            let line = approval_outcome(mark, line, look).into_any_element();
+            // The buttons fold away (a clipped height, fading) above the line they became.
+            return if leaving {
+                div()
+                    .child(motion::expand(key, false, build_group(false)))
+                    .child(line)
+                    .into_any_element()
+            } else {
+                line
+            };
         }
-        let ordinal = self.pending.iter().position(|id| *id == approval.id);
-        let approval_id: ApprovalId = approval.id;
-        let agent = self.harness(cx);
-        let buttons: Vec<AnyElement> = approval
-            .options
-            .iter()
-            .enumerate()
-            .map(|(number, option)| {
-                let option_id = option.id.clone();
-                let region = ordinal.map_or(usize::MAX, |ordinal| ordinal * 8 + number);
-                approval_option(
-                    SharedString::from(format!("approve-{}-{number}", approval.id)),
-                    number,
-                    option,
-                    scope_tooltip(number, option, &approval.title, agent.as_deref()),
-                    look,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.answer(approval_id, option_id.clone(), cx);
-                }))
-                .child(probe(&self.regions, Region::ChatOption(region)))
-                .into_any_element()
-            })
-            .collect();
-        let group = approval_group(
-            approval.kind,
-            standalone.then_some(approval.title.as_str()),
-            approval.detail.as_deref(),
-            buttons,
-            always_note(&approval.options, &approval.title),
-            look,
-        )
-        .relative();
-        if standalone {
-            group
-                .p(px(tokens.spacing * 3.0))
-                .card(theme, tokens)
-                .into_any_element()
-        } else {
-            group
-                .pt(px(tokens.spacing * 3.0))
-                .pl(px(16.0))
-                .border_t_1()
-                .border_color(theme.border)
-                .into_any_element()
-        }
+        // Waiting: drawn through the same fold, open, so that answering it can fold it.
+        motion::expand(key, true, build_group(true)).into_any_element()
     }
 }
 

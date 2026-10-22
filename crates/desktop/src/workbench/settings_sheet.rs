@@ -1201,34 +1201,50 @@ impl Workbench {
                     })
                 });
             nav.push(label.into_any_element());
-            if !open {
-                continue;
+            let pages: Vec<AnyElement> = own
+                .into_iter()
+                .map(|ns| {
+                    div()
+                        .id(SharedString::from(format!("ns-{ns}")))
+                        .flex()
+                        .items_center()
+                        .h(px(tokens.sidebar_row))
+                        .px(px(tokens.spacing * 2.0))
+                        .rounded(px(tokens.radius))
+                        .cursor_pointer()
+                        .when(ns == selected, |s| s.bg(theme.sidebar_accent))
+                        .when(ns != selected, |s| {
+                            s.hover(move |s| s.bg(theme.sidebar_hover))
+                        })
+                        // The keyboard on the category list: the focus ring, not an outline.
+                        .focus_ring(
+                            ns == selected && zone == SheetFocus::Categories,
+                            &theme,
+                            &tokens,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.select_settings_namespace(ns, cx);
+                        }))
+                        .child(SharedString::from(namespace_title(ns)))
+                        .into_any_element()
+                })
+                .collect();
+            if group == NavGroup::Advanced {
+                // Advanced folds and unfolds: its pages are always built, the fold shows them.
+                nav.push(
+                    div()
+                        .relative()
+                        .child(motion::expand(
+                            "nav-advanced",
+                            open,
+                            div().flex().flex_col().children(pages),
+                        ))
+                        .child(probe(&self.regions, Region::Settings("nav-advanced")))
+                        .into_any_element(),
+                );
+            } else if open {
+                nav.extend(pages);
             }
-            nav.extend(own.into_iter().map(|ns| {
-                div()
-                    .id(SharedString::from(format!("ns-{ns}")))
-                    .flex()
-                    .items_center()
-                    .h(px(tokens.sidebar_row))
-                    .px(px(tokens.spacing * 2.0))
-                    .rounded(px(tokens.radius))
-                    .cursor_pointer()
-                    .when(ns == selected, |s| s.bg(theme.sidebar_accent))
-                    .when(ns != selected, |s| {
-                        s.hover(move |s| s.bg(theme.sidebar_hover))
-                    })
-                    // The keyboard on the category list: the focus ring, not an outline.
-                    .focus_ring(
-                        ns == selected && zone == SheetFocus::Categories,
-                        &theme,
-                        &tokens,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.select_settings_namespace(ns, cx);
-                    }))
-                    .child(SharedString::from(namespace_title(ns)))
-                    .into_any_element()
-            }));
         }
 
         let mono = SharedString::from(super::terminals::mono_family(cx, &self.resolved_theme));

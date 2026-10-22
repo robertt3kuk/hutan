@@ -402,10 +402,19 @@ impl Workbench {
             .flex_none()
             .child(head)
             .children(panel.map(|panel| {
-                let wanted = self
+                // A dropdown that closed leaves; any other menu this draws (the ⋯ of a picker) is
+                // there because it is open.
+                let open = self
                     .sheet
                     .as_ref()
                     .is_some_and(|s| s.dropdown.as_deref() == Some(tag));
+                let leaving = !open
+                    && self
+                        .exits
+                        .dropdown
+                        .held(cx.background_executor().now())
+                        .is_some_and(|held| held == tag);
+                let wanted = !leaving;
                 div().absolute().top_full().right_0().size_0().child(
                     gpui::deferred(
                         gpui::anchored()

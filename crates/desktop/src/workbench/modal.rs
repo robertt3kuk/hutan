@@ -383,16 +383,13 @@ impl Workbench {
             checkbox: stored.checkbox.clone(),
             on_confirm: Rc::clone(&stored.on_confirm),
         };
-        let input_parts = modal
-            .input
-            .is_some()
-            .then(|| {
-                if wanted {
-                    self.overlay_parts(OverlayField::Modal, "", cx)
-                } else {
-                    Vec::new()
-                }
-            });
+        let input_parts = modal.input.is_some().then(|| {
+            if wanted {
+                self.overlay_parts(OverlayField::Modal, "", cx)
+            } else {
+                Vec::new()
+            }
+        });
         let theme = self.theme;
         let tokens = self.density.ui();
         Some(

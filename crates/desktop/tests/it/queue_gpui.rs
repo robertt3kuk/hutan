@@ -294,3 +294,117 @@ fn ctrl_enter_that_interrupts_the_turn_shows_stopping_like_stop_does(cx: &mut Te
         model.read_with(cx, |m, _| !m.stopping() && !m.transcript().turn_active())
     });
 }
+
+// ---- a chip that leaves folds away (UX-MOTION-2) -----------------------------------------------
+
+fn strip_height(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> f32 {
+    draw(cx);
+    view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("queue-strip")))
+        .map(|bounds| f32::from(bounds.size.height))
+        .expect("the strip is drawn")
+}
+
+/// Two chips queued behind a running turn, then ✕ on the second: the heights of the strip
+/// before, just after and well after the chip left.
+fn remove_the_second_chip(cx: &mut TestAppContext, reduce_motion: &str) -> (f32, f32, f32, f32) {
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("interrupt"));
+    let info = daemon.create_chat(&env.cwd());
+    let settings = SettingsStore::new(SettingsPaths::in_dir(daemon.home()));
+    settings
+        .write_user(
+            "appearance.reduce_motion",
+            toml::Value::String(reduce_motion.into()),
+        )
+        .unwrap();
+    hutan_desktop::workbench::ui::motion::note_input(false);
+    let (view, cx) = open_with(cx, settings, daemon.connection(), None);
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    view.update_in(cx, |wb, window, cx| wb.open_session(info.id, window, cx));
+    wait_until(cx, "the chat to load", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.chat_model_of(info.id)
+                .is_some_and(|m| *m.read(cx).status() == LoadStatus::Ready)
+        })
+    });
+    let model = view
+        .read_with(cx, |wb, _| wb.chat_model_of(info.id))
+        .unwrap();
+    cx.simulate_input("count");
+    cx.simulate_keystrokes("cmd-enter");
+    pump(cx, "the turn to run", |cx| {
+        model.read_with(cx, |m, _| m.transcript().turn_active())
+    });
+    cx.simulate_input("next");
+    cx.simulate_keystrokes("cmd-enter");
+    pump(cx, "the first chip", |cx| queued(&model, cx) == ["next"]);
+    cx.simulate_input("second");
+    cx.simulate_keystrokes("cmd-enter");
+    pump(cx, "the second chip", |cx| {
+        queued(&model, cx) == ["next", "second"]
+    });
+    pump(cx, "the chips to be drawn", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::ChatQueue("chip", 1)).is_some()
+        })
+    });
+    // Let the chips' own entrance end.
+    cx.executor().advance_clock(Duration::from_millis(300));
+    strip_height(&view, cx);
+    let full = strip_height(&view, cx);
+
+    // The pointer removes the second chip (the press is a pointer input).
+    click(&view, cx, Region::ChatQueue("remove", 1));
+    pump(cx, "the chip to go", |cx| queued(&model, cx) == ["next"]);
+    draw(cx);
+    let just_after = strip_height(&view, cx);
+    cx.executor().advance_clock(Duration::from_millis(15));
+    let later = strip_height(&view, cx);
+    cx.executor().advance_clock(Duration::from_millis(400));
+    strip_height(&view, cx);
+    let settled = strip_height(&view, cx);
+    cx.executor().advance_clock(Duration::from_millis(400));
+    assert_eq!(
+        strip_height(&view, cx),
+        settled,
+        "the strip does not jump after the exit"
+    );
+    (full, just_after, later, settled)
+}
+
+#[gpui::test]
+fn a_chip_that_is_removed_folds_away_and_the_strip_does_not_jump_after(cx: &mut TestAppContext) {
+    let (full, just_after, later, settled) = remove_the_second_chip(cx, "off");
+    assert!(
+        settled < full - 10.0,
+        "one chip row is gone: {full} -> {settled}"
+    );
+    assert!(
+        just_after <= full,
+        "it did not grow: {just_after} vs {full}"
+    );
+    assert!(
+        later < full,
+        "the strip was shrinking on the way: {full} / {just_after} / {later} / {settled}"
+    );
+    assert!(
+        later > settled,
+        "and was not yet at its end 15 ms in: {later} vs {settled}"
+    );
+}
+
+#[gpui::test]
+fn under_reduce_motion_a_removed_chip_does_not_fold(cx: &mut TestAppContext) {
+    let (full, just_after, later, settled) = remove_the_second_chip(cx, "on");
+    assert_eq!(just_after, full, "no height animation");
+    assert_eq!(later, full, "it only fades, in place, for its fade");
+    assert!(
+        settled < full - 10.0,
+        "then it is gone: {full} -> {settled}"
+    );
+}

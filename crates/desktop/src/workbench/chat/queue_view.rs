@@ -37,6 +37,23 @@ fn one_line(text: &str) -> String {
     }
 }
 
+/// A chip that left the queue and is still folding away.
+#[derive(Debug)]
+pub(super) struct GoneChip {
+    id: u64,
+    text: String,
+    /// Where it was in the queue.
+    index: usize,
+    at: std::time::Instant,
+}
+
+/// The queue as the last frame drew it, and the chips that left it since.
+#[derive(Debug, Default)]
+pub(super) struct QueueSeen {
+    items: Vec<(u64, String)>,
+    leaving: Vec<GoneChip>,
+}
+
 impl ChatView {
     /// The queued messages as chips above the composer; `None` while nothing is queued.
     pub(super) fn render_queue(&self, look: &Look, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -44,12 +61,56 @@ impl ChatView {
         let now_label = self.send_now_label(cx);
         let (items, held, editing) = {
             let model = self.model.read(cx);
-            let queue = model.queue()?;
-            if queue.items.is_empty() {
-                return None;
+            match model.queue() {
+                Some(queue) if !queue.items.is_empty() => {
+                    (queue.items.clone(), queue.held, model.editing())
+                }
+                _ => (Vec::new(), None, None),
             }
-            (queue.items.clone(), queue.held, model.editing())
         };
+        // The chips that left since the last frame stay, folding away, for the length of a chip's
+        // exit (none for a keyboard action, which `expand` turns instant).
+        let now = cx.background_executor().now();
+        let reduced = cx.reduce_motion();
+        let exit = motion::Kind::Chip.exit_duration(reduced);
+        let mut started = false;
+        let gone: Vec<(usize, u64, String)> = {
+            let mut guard = self.queue_seen.borrow_mut();
+            let seen = &mut *guard;
+            for (index, (id, text)) in seen.items.iter().enumerate() {
+                if !items.iter().any(|item| item.id == *id)
+                    && !seen.leaving.iter().any(|gone| gone.id == *id)
+                {
+                    seen.leaving.push(GoneChip {
+                        id: *id,
+                        text: text.clone(),
+                        index,
+                        at: now,
+                    });
+                    started = true;
+                }
+            }
+            seen.items = items.iter().map(|i| (i.id, i.text.clone())).collect();
+            seen.leaving
+                .retain(|gone| now.saturating_duration_since(gone.at) < exit);
+            seen.leaving
+                .iter()
+                .map(|gone| (gone.index, gone.id, gone.text.clone()))
+                .collect()
+        };
+        if started && !exit.is_zero() {
+            // The chip that only fades (Reduce Motion) asks for no frames: draw again once it
+            // has left.
+            cx.spawn(async move |view, cx| {
+                cx.background_executor().timer(exit).await;
+                view.update(cx, |_, cx| cx.notify()).ok();
+            })
+            .detach();
+        }
+        if items.is_empty() && gone.is_empty() {
+            return None;
+        }
+        let has_items = !items.is_empty();
         let header = div()
             .flex()
             .items_center()
@@ -81,12 +142,23 @@ impl ChatView {
                     }))
                     .child(probe(&self.regions, Region::Chat("queue-clear"))),
             );
-        let rows = items.into_iter().enumerate().map(|(index, item)| {
-            let id = item.id;
-            let open = editing == Some(id);
+        // One chip, as the live ones and as the ones that left are drawn. A live chip sits in a
+        // fold, open, so that leaving can fold it: its height runs to nothing while it fades and
+        // the chips under it rise with it, and the list does not jump at the end. The gap above
+        // a chip is part of the fold for the same reason.
+        let chip = |index: usize, id: u64, text: &str, open: bool, live: bool| {
+            let wrap = SharedString::from(format!("chat-queue-wrap-{id}"));
+            // Under Reduce Motion nothing folds: the chip that left only fades.
+            let fading = !live && reduced;
+            // What tells a chip that left from the live one at its old place.
+            let slot = if live {
+                index.to_string()
+            } else {
+                format!("gone-{id}")
+            };
             let small = |name: &'static str, label: &'static str| {
                 Button::new(
-                    SharedString::from(format!("chat-queue-{name}-{index}")),
+                    SharedString::from(format!("chat-queue-{name}-{slot}")),
                     label,
                     theme,
                     tokens,
@@ -94,8 +166,8 @@ impl ChatView {
                 .ghost()
                 .compact()
             };
-            div()
-                .id(SharedString::from(format!("chat-queue-item-{index}")))
+            let body = div()
+                .id(SharedString::from(format!("chat-queue-item-{slot}")))
                 .relative()
                 .flex()
                 .items_center()
@@ -117,53 +189,68 @@ impl ChatView {
                         .child(SharedString::from(if open {
                             "Editing in the composer…".to_owned()
                         } else {
-                            one_line(&item.text)
+                            one_line(text)
                         })),
                 )
-                .child(
-                    small("edit", "Edit")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.model.update(cx, |model, cx| model.edit_queued(id, cx));
-                        }))
-                        .child(probe(&self.regions, Region::ChatQueue("edit", index))),
-                )
-                .child(
-                    small("now", now_label)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.model
-                                .update(cx, |model, cx| model.send_queued_now(id, cx));
-                        }))
-                        .child(probe(&self.regions, Region::ChatQueue("now", index))),
-                )
+                .child(small("edit", "Edit").when(live, |b| {
+                    b.on_click(cx.listener(move |this, _, _, cx| {
+                        this.model.update(cx, |model, cx| model.edit_queued(id, cx));
+                    }))
+                    .child(probe(&self.regions, Region::ChatQueue("edit", index)))
+                }))
+                .child(small("now", now_label).when(live, |b| {
+                    b.on_click(cx.listener(move |this, _, _, cx| {
+                        this.model
+                            .update(cx, |model, cx| model.send_queued_now(id, cx));
+                    }))
+                    .child(probe(&self.regions, Region::ChatQueue("now", index)))
+                }))
                 .child(
                     IconButton::new(
-                        SharedString::from(format!("chat-queue-remove-{index}")),
+                        SharedString::from(format!("chat-queue-remove-{slot}")),
                         crate::icons::Icon::ActionClose,
                         "Remove from the queue",
                         theme,
                         tokens,
                     )
                     .compact()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.model
-                            .update(cx, |model, cx| model.remove_queued(id, cx));
-                    }))
-                    .child(probe(&self.regions, Region::ChatQueue("remove", index))),
+                    .when(live, |b| {
+                        b.on_click(cx.listener(move |this, _, _, cx| {
+                            this.model
+                                .update(cx, |model, cx| model.remove_queued(id, cx));
+                        }))
+                        .child(probe(&self.regions, Region::ChatQueue("remove", index)))
+                    }),
                 )
-                .child(probe(&self.regions, Region::ChatQueue("chip", index)))
+                .when(live, |s| {
+                    s.child(probe(&self.regions, Region::ChatQueue("chip", index)))
+                })
                 .presented(
                     SharedString::from(format!("chat-queue-chip-{id}")),
                     motion::Kind::Chip,
-                    true,
+                    !fading,
                     motion::Slide::None,
-                )
-        });
+                );
+            let spaced = div().pt(px(tokens.spacing)).child(body);
+            if fading {
+                spaced.into_any_element()
+            } else {
+                motion::expand(wrap, live, spaced).into_any_element()
+            }
+        };
+        let mut rows: Vec<AnyElement> = items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| chip(index, item.id, &item.text, editing == Some(item.id), true))
+            .collect();
+        for (index, id, text) in gone {
+            rows.insert(index.min(rows.len()), chip(index, id, &text, false, false));
+        }
         Some(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(tokens.spacing))
-                .child(header)
+                .children(has_items.then_some(header))
                 .children(rows)
                 .child(probe(&self.regions, Region::Chat("queue-strip")))
                 .into_any_element(),

@@ -814,7 +814,11 @@ fn an_overlay_that_closed_is_drawn_for_its_exit_at_its_token_and_then_not(cx: &m
         let mut o = opened(cx, kind, false);
         o.close();
         let at_close = o.step(Duration::ZERO);
-        assert_eq!(o.seen.value.get(), 1.0, "{kind:?}: leaves from where it was");
+        assert_eq!(
+            o.seen.value.get(),
+            1.0,
+            "{kind:?}: leaves from where it was"
+        );
         let half = o.step(Duration::from_millis(exit_ms / 2));
         assert!(half > at_close, "{kind:?}: drawn at half time");
         assert!(
@@ -823,9 +827,15 @@ fn an_overlay_that_closed_is_drawn_for_its_exit_at_its_token_and_then_not(cx: &m
             o.seen.value.get()
         );
         let before_end = o.step(Duration::from_millis(exit_ms / 2 - 1));
-        assert!(before_end > half, "{kind:?}: still drawn 1 ms before its token");
+        assert!(
+            before_end > half,
+            "{kind:?}: still drawn 1 ms before its token"
+        );
         let end = o.step(Duration::from_millis(1));
-        assert_eq!(end, before_end, "{kind:?}: not drawn once {exit_ms} ms passed");
+        assert_eq!(
+            end, before_end,
+            "{kind:?}: not drawn once {exit_ms} ms passed"
+        );
     }
 }
 
@@ -860,7 +870,11 @@ fn a_leaving_overlay_takes_no_clicks_and_an_open_one_does(cx: &mut TestAppContex
     o.close();
     o.step(Duration::from_millis(30));
     o.cx.simulate_click(spot, gpui::Modifiers::none());
-    assert_eq!(o.clicks.get(), 1, "leaving: the click goes to what is under it");
+    assert_eq!(
+        o.clicks.get(),
+        1,
+        "leaving: the click goes to what is under it"
+    );
 }
 
 #[gpui::test]
@@ -886,7 +900,11 @@ fn an_overlay_leaves_without_moving_under_reduce_motion(cx: &mut TestAppContext)
     }
     let before_end = o.seen.draws.get();
     o.step(Duration::from_millis(30));
-    assert_eq!(o.seen.draws.get(), before_end, "a fade of at most 150 ms, then gone");
+    assert_eq!(
+        o.seen.draws.get(),
+        before_end,
+        "a fade of at most 150 ms, then gone"
+    );
 }
 
 #[gpui::test]
@@ -895,7 +913,10 @@ fn a_settled_exit_adds_no_frames(cx: &mut TestAppContext) {
     let idle = frame(o.cx);
     o.close();
     o.step(Duration::ZERO);
-    assert!(frame(o.cx) > idle, "leaving: a frame is requested per frame");
+    assert!(
+        frame(o.cx) > idle,
+        "leaving: a frame is requested per frame"
+    );
     o.step(Duration::from_millis(110));
     frame(o.cx);
     assert_eq!(frame(o.cx), idle, "gone: back to the baseline");
@@ -961,7 +982,11 @@ mod in_the_workbench {
             "the keyboard left the palette when it closed"
         );
         step(cx, Duration::from_millis(99));
-        assert_eq!(leaving(&view, cx), ["palette"], "100 ms: not yet gone at 99");
+        assert_eq!(
+            leaving(&view, cx),
+            ["palette"],
+            "100 ms: not yet gone at 99"
+        );
         step(cx, Duration::from_millis(1));
         assert!(leaving(&view, cx).is_empty(), "gone at 100 ms");
     }
@@ -1009,7 +1034,10 @@ mod in_the_workbench {
         view.update_in(cx, |wb, window, cx| wb.close_settings(window, cx));
         let first = footer_top(&view, cx).expect("still drawn while it leaves");
         assert_ne!(focus_id(cx), in_sheet, "the keyboard is back at the close");
-        assert!((first - rest).abs() < 0.5, "starts where it was: {first} vs {rest}");
+        assert!(
+            (first - rest).abs() < 0.5,
+            "starts where it was: {first} vs {rest}"
+        );
         step(cx, Duration::from_millis(75));
         let middle = footer_top(&view, cx).expect("drawn at 75 ms");
         assert!(middle > rest && middle < rest + 8.0, "sinking: {middle}");
@@ -1055,7 +1083,11 @@ mod in_the_workbench {
             }
             step(cx, Duration::from_millis(30));
         }
-        assert_eq!(footer_top(&view, cx), None, "a fade of at most 150 ms, then gone");
+        assert_eq!(
+            footer_top(&view, cx),
+            None,
+            "a fade of at most 150 ms, then gone"
+        );
     }
 
     #[gpui::test]
@@ -1073,5 +1105,85 @@ mod in_the_workbench {
         frame(cx);
         frame(cx);
         assert_eq!(frame(cx), idle, "gone: back to the baseline");
+    }
+}
+
+mod folds {
+    use super::advance;
+    use crate::common::{draw, offline_connection, open_with};
+    use gpui::{Entity, TestAppContext, VisualTestContext};
+    use hutan_desktop::workbench::ui::motion;
+    use hutan_desktop::workbench::{Region, Workbench, actions};
+    use std::time::Duration;
+
+    fn advanced_height(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> f32 {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Settings("nav-advanced"))
+        })
+        .map_or(0.0, |bounds| f32::from(bounds.size.height))
+    }
+
+    fn open_settings<'a>(
+        cx: &'a mut TestAppContext,
+        reduced: bool,
+    ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+        let (connection, settings, _) = offline_connection();
+        settings
+            .write_user(
+                "appearance.reduce_motion",
+                toml::Value::String(if reduced { "on" } else { "off" }.into()),
+            )
+            .unwrap();
+        let (view, cx) = open_with(cx, settings, connection, None);
+        motion::note_input(false);
+        draw(cx);
+        advance(cx, Duration::from_millis(300));
+        cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
+        draw(cx);
+        advance(cx, Duration::from_millis(300));
+        draw(cx);
+        (view, cx)
+    }
+
+    #[gpui::test]
+    fn the_advanced_group_unfolds_and_folds_in_150_ms(cx: &mut TestAppContext) {
+        let (view, cx) = open_settings(cx, false);
+        assert_eq!(advanced_height(&view, cx), 0.0, "folded");
+        view.update(cx, |wb, cx| wb.sheet_toggle_advanced(cx));
+        // The first frame measures the content; the clock starts the frame after.
+        advanced_height(&view, cx);
+        advance(cx, Duration::from_millis(75));
+        let middle = advanced_height(&view, cx);
+        advance(cx, Duration::from_millis(80));
+        let open = advanced_height(&view, cx);
+        assert!(
+            middle > 0.0 && middle < open,
+            "on its way at 75 ms: {middle} of {open}"
+        );
+        advance(cx, Duration::from_millis(300));
+        assert_eq!(advanced_height(&view, cx), open, "and stays");
+
+        view.update(cx, |wb, cx| wb.sheet_toggle_advanced(cx));
+        advanced_height(&view, cx);
+        advance(cx, Duration::from_millis(75));
+        let closing = advanced_height(&view, cx);
+        assert!(
+            closing > 0.0 && closing < open,
+            "folding at 75 ms: {closing}"
+        );
+        advance(cx, Duration::from_millis(80));
+        assert_eq!(advanced_height(&view, cx), 0.0, "folded again at 150 ms");
+    }
+
+    #[gpui::test]
+    fn the_advanced_group_does_not_animate_under_reduce_motion(cx: &mut TestAppContext) {
+        let (view, cx) = open_settings(cx, true);
+        assert_eq!(advanced_height(&view, cx), 0.0);
+        view.update(cx, |wb, cx| wb.sheet_toggle_advanced(cx));
+        let open = advanced_height(&view, cx);
+        assert!(open > 0.0, "unfolded at once");
+        view.update(cx, |wb, cx| wb.sheet_toggle_advanced(cx));
+        assert_eq!(advanced_height(&view, cx), 0.0, "folded at once");
     }
 }

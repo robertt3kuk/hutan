@@ -50,6 +50,10 @@ pub struct ChatView {
     pub(super) sessions: Entity<SessionsStore>,
     pub(super) settings: SettingsStore,
     pub(super) regions: Regions,
+    /// The queue's chips as drawn last, and those that left (`queue_view.rs`).
+    pub(super) queue_seen: std::cell::RefCell<super::queue_view::QueueSeen>,
+    /// Approvals seen waiting, for the fold of the answered card (`cards.rs`).
+    pub(super) approvals_seen: std::cell::RefCell<super::cards::ApprovalsSeen>,
     focus_handle: FocusHandle,
     pub(super) list: ListState,
     seen_epoch: u64,
@@ -173,6 +177,8 @@ impl ChatView {
             sessions,
             settings,
             regions,
+            queue_seen: std::cell::RefCell::default(),
+            approvals_seen: std::cell::RefCell::default(),
             focus_handle: cx.focus_handle(),
             list,
             seen_epoch: 0,

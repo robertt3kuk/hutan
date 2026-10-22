@@ -218,7 +218,7 @@ impl Kind {
             },
             Self::Chip => Spec {
                 enter: BASE,
-                exit: FAST,
+                exit: BASE,
                 enter_ease: Ease::EaseOut,
                 exit_ease: Ease::EaseOut,
                 travel: 0.0,
