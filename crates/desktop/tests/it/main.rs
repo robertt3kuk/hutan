@@ -2,6 +2,7 @@ mod agent_edits_gpui;
 mod agents_gpui;
 mod agents_page_gpui;
 mod assistant_gpui;
+mod attention_calls_gpui;
 mod attention_controls_gpui;
 mod attention_groups_gpui;
 mod blocks_gpui;

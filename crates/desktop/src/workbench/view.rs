@@ -425,6 +425,11 @@ pub enum Region {
     Checkpoints(&'static str),
     /// A control of the "Restored N files · Undo" toast (`toast`, `undo`).
     RestoreToast(&'static str),
+    /// A control of the request toast at `index` (oldest first): `toast`, `review`, `dismiss`.
+    AttentionToast(usize, &'static str),
+    /// The dot on the tab at `index` of a pane: a request called for its session and the user has
+    /// not looked yet.
+    TabCall(PaneId, usize),
     /// A control of a file tab's language-server bar (`trust`, `not-now`, `copy`, `dismiss`).
     FileLsp(&'static str),
     /// Diagnostic row `index` of the Problems panel (the listed diagnostics, top to bottom,
@@ -697,6 +702,8 @@ pub struct Workbench {
     /// exit animation still needs the content.
     pub(crate) close_toast_exit: super::ui::motion::Ghost<super::closing::CloseToast>,
     pub(crate) restore_toast_exit: super::ui::motion::Ghost<super::rewind::RestoreToast>,
+    /// The toasts of requests that call for sessions not on screen (`attention_toast.rs`).
+    pub(crate) attention_toasts: super::attention_toast::AttentionToasts,
     /// The Rewind preview sheet, the Checkpoints list and the "Restored … · Undo" toast
     /// (`rewind.rs`).
     pub(crate) rewind: super::rewind::RewindState,
@@ -1018,6 +1025,7 @@ impl Workbench {
                 |this, _, change: &StoreChanged, window, cx| {
                     if change.intersects(StoreChanged::ATTENTION) {
                         this.sync_attention_marks(cx);
+                        this.prune_attention_toasts(cx);
                     }
                     if change.intersects(StoreChanged::ATTENTION | StoreChanged::AGENTS) {
                         this.maybe_offer_notifications(cx);
@@ -1073,6 +1081,13 @@ impl Workbench {
             cx.subscribe(&sessions, |this, _, _: &RecoverySummaryDue, cx| {
                 this.show_recovery_summary(cx);
             }),
+            cx.subscribe_in(
+                &sessions,
+                window,
+                |this, _, event: &crate::sessions::RequestCalled, window, cx| {
+                    this.on_request_called(event, window, cx);
+                },
+            ),
             cx.subscribe_in(
                 &sessions,
                 window,
@@ -1233,6 +1248,7 @@ impl Workbench {
             overlays: super::ui::motion::Presences::default(),
             close_toast_exit: super::ui::motion::Ghost::default(),
             restore_toast_exit: super::ui::motion::Ghost::default(),
+            attention_toasts: super::attention_toast::AttentionToasts::default(),
             rewind: super::rewind::RewindState::new(cx),
             recovery_open: false,
             recovery_review: false,

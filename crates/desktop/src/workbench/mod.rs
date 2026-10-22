@@ -5,6 +5,7 @@ pub mod agent_edits;
 pub(crate) mod agents;
 mod agents_page;
 mod assistant;
+mod attention_toast;
 mod changes;
 pub mod chat;
 mod closing;

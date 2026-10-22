@@ -44,6 +44,8 @@ actions!(
         RestartSession,
         CopySessionId,
         JumpToNextAttention,
+        ReviewRequest,
+        DismissAttentionToasts,
         SaveLayoutAsPreset,
         ResetLayout,
         UseNewDefaultLayout,
@@ -592,6 +594,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Session: Close…", CloseSession),
         command("Session: Copy Session ID", CopySessionId),
         command("Session: Jump to Next Attention", JumpToNextAttention),
+        command("Session: Review Request", ReviewRequest),
         command("Layout: Split Right", SplitRight),
         command("Layout: Split Down", SplitDown),
         command("Layout: Split Left", SplitLeft),
@@ -901,6 +904,7 @@ fn hutan_global_bindings() -> Vec<BindingSpec> {
         bind::<ActivatePreviousTab>("ctrl-shift-tab", None),
         bind::<ActivateNextTab>("ctrl-tab", None),
         bind::<JumpToNextAttention>("cmd-shift-j", None),
+        bind::<ReviewRequest>("cmd-shift-r", None),
         bind::<SplitRight>("cmd-d", None),
         bind::<SplitDown>("cmd-shift-d", None),
         bind::<ClosePaneItem>("cmd-w", None),
@@ -990,6 +994,7 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<setup::Continue>("enter", Some("Setup")),
         bind::<setup::Skip>("escape", Some("Setup")),
         bind::<CancelDockResize>("escape", Some(super::docks::RESIZE_CONTEXT)),
+        bind::<DismissAttentionToasts>("escape", Some(super::attention_toast::TOAST_CONTEXT)),
         bind::<hutan_code_view::MoveLeft>("left", Some(TYPING)),
         bind::<hutan_code_view::MoveRight>("right", Some(TYPING)),
         bind::<hutan_code_view::MoveUp>("up", Some(TYPING)),
@@ -1173,6 +1178,7 @@ fn zed_global_bindings() -> Vec<BindingSpec> {
         bind::<ActivatePreviousTab>("ctrl-shift-tab", None),
         bind::<ActivateNextTab>("ctrl-tab", None),
         bind::<JumpToNextAttention>("cmd-shift-j", None),
+        bind::<ReviewRequest>("cmd-shift-r", None),
         bind::<SplitRight>("cmd-k right", None),
         bind::<SplitRight>("cmd-\\", None),
         bind::<SplitRight>("cmd-d", None),
@@ -1356,6 +1362,7 @@ mod tests {
         // Hutan-only actions keep their keys.
         assert_eq!(last(NewAgent::name_for_type()), "shift-cmd-t");
         assert_eq!(last(JumpToNextAttention::name_for_type()), "shift-cmd-j");
+        assert_eq!(last(ReviewRequest::name_for_type()), "shift-cmd-r");
         assert_eq!(last(ToggleResources::name_for_type()), "alt-cmd-r");
         // Zed's project search (E-13b); the session history moved from ⌘⇧F to ⌘Y.
         assert_eq!(last(ShowSearch::name_for_type()), "shift-cmd-f");
@@ -1381,6 +1388,7 @@ mod tests {
             "ctrl-shift-tab | workbench::ActivatePreviousTab | -",
             "ctrl-tab | workbench::ActivateNextTab | -",
             "shift-cmd-j | workbench::JumpToNextAttention | -",
+            "shift-cmd-r | workbench::ReviewRequest | -",
             "cmd-d | workbench::SplitRight | -",
             "shift-cmd-d | workbench::SplitDown | -",
             "cmd-w | workbench::ClosePaneItem | -",
@@ -1445,6 +1453,7 @@ mod tests {
             "enter | setup::Continue | Setup",
             "escape | setup::Skip | Setup",
             "escape | workbench::CancelDockResize | DockResize",
+            "escape | workbench::DismissAttentionToasts | AttentionToast",
             "left | code_view::MoveLeft | CodeView && vim_mode != normal && vim_mode != visual",
             "right | code_view::MoveRight | CodeView && vim_mode != normal && vim_mode != visual",
             "up | code_view::MoveUp | CodeView && vim_mode != normal && vim_mode != visual",

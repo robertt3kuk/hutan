@@ -47,6 +47,7 @@ use super::attention::{
     Attention, AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread,
     classify, present,
 };
+use super::calls;
 use super::models::{self, ModelNames};
 use super::presentation::{self, AgentPresentation, Facts};
 use super::tasks::TaskBook;
@@ -190,6 +191,14 @@ pub struct UiOpenRequested {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionClosed {
     pub session_id: SessionId,
+}
+
+/// Emitted by [`SessionsStore`] when a request (an approval, a question, a blocked agent) calls
+/// for a session this window is not looking at (`notify.intent`, seen fresh): the workbench
+/// decides whether a toast says so.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RequestCalled {
+    pub intent: Box<NotificationIntent>,
 }
 
 /// What happened in a session that may have changed files of the checkout it works in.
@@ -396,6 +405,9 @@ pub struct SessionsStore {
     /// read: *Mark as read* acknowledges them, so their banners leave the notification centre.
     /// At most [`MAX_SURFACED`] ids; the daemon forgets intents too.
     surfaced: HashMap<SessionId, Vec<String>>,
+    /// The sessions a request called for while this window was not looking at them, until the
+    /// user looks (`is_called`, the dot on the tab); `true` once the state showed the request.
+    called: HashMap<SessionId, bool>,
     /// Terminals in which a known agent program runs that never reported, as the last process
     /// listing showed (`UX-ATTENTION-CONTROLS`); see [`SessionsStore::untracked_agent`].
     untracked: HashMap<SessionId, Untracked>,
@@ -449,6 +461,7 @@ impl EventEmitter<MemoryChanged> for SessionsStore {}
 impl EventEmitter<SessionClosed> for SessionsStore {}
 impl EventEmitter<CheckoutActivity> for SessionsStore {}
 impl EventEmitter<RecoverySummaryDue> for SessionsStore {}
+impl EventEmitter<RequestCalled> for SessionsStore {}
 
 impl std::fmt::Debug for SessionsStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -533,6 +546,7 @@ impl SessionsStore {
             hold_unread: None,
             reviews_seen: HashMap::new(),
             surfaced: HashMap::new(),
+            called: HashMap::new(),
             untracked: HashMap::new(),
             scan_task: None,
             scan_again: false,
@@ -599,6 +613,9 @@ impl SessionsStore {
                 changed |= StoreChanged::ATTENTION;
             }
             self.observe_blocked_nodes(cx);
+            if self.observe_calls() {
+                changed |= StoreChanged::ATTENTION;
+            }
             self.observe_recovery(cx);
             if was_connected && before.epoch == self.state.epoch {
                 self.observe_turn_ends(&before, cx);
@@ -867,7 +884,7 @@ impl SessionsStore {
             // The desktop shows approvals and agent state from its own state; it only notes the
             // intents (M6-B notifiers and `hutan notify watch` show them) so that reading the
             // session acknowledges them.
-            Notice::NotifyIntent { intent } => self.note_intent(intent),
+            Notice::NotifyIntent { intent } => self.note_intent(intent, cx),
             Notice::SessionExited { .. }
             | Notice::Bell { .. }
             | Notice::DaemonRestarted { .. }
@@ -1528,6 +1545,7 @@ impl SessionsStore {
                 if self.connection.supports_notify_mute() {
                     self.surfaced.remove(&looked_at);
                 }
+                self.see_call(looked_at, cx);
             }
             self.report_focus(cx);
             self.changed(StoreChanged::FOCUS, cx);
@@ -1582,6 +1600,7 @@ impl SessionsStore {
             return;
         }
         let read = self.attention.look_at(session);
+        self.see_call(session, cx);
         if self.see_review(session) || read {
             self.changed(StoreChanged::ATTENTION, cx);
         }
@@ -1596,6 +1615,7 @@ impl SessionsStore {
             self.hold_unread = None;
         }
         let read = self.attention.mark_read(session);
+        self.see_call(session, cx);
         if self.see_review(session) || read {
             self.changed(StoreChanged::ATTENTION, cx);
         }
@@ -1603,7 +1623,7 @@ impl SessionsStore {
     }
 
     /// Remembers an intent raised for a session, to acknowledge it when the session is read.
-    fn note_intent(&mut self, intent: &NotificationIntent) {
+    fn note_intent(&mut self, intent: &NotificationIntent, cx: &mut Context<Self>) {
         let total: usize = self.surfaced.values().map(Vec::len).sum();
         if total >= MAX_SURFACED {
             // The oldest are forgotten with their session's whole list; the daemon lets intents
@@ -1614,6 +1634,67 @@ impl SessionsStore {
             .entry(intent.session_id)
             .or_default()
             .push(intent.id.clone());
+        // A request for a session this window is not looking at: the tab gets its dot until it
+        // is seen, and the workbench may show a toast. An old intent is a replay.
+        if calls::is_request(intent.kind)
+            && self.looked_at() != Some(intent.session_id)
+            && ui_open_is_fresh(intent.created_at_ms, unix_ms())
+        {
+            self.called.insert(intent.session_id, false);
+            cx.emit(RequestCalled {
+                intent: Box::new(intent.clone()),
+            });
+            self.changed(StoreChanged::ATTENTION, cx);
+        }
+    }
+
+    /// Whether a call for `session` is still held: not seen, and its request not yet answered
+    /// (before the state has shown the request, too).
+    pub fn has_call(&self, session: SessionId) -> bool {
+        self.called.contains_key(&session)
+    }
+
+    /// Whether a request called for `session` while it was not on screen and the user has not
+    /// looked at it since: its tab shows a dot. Only while the request still waits.
+    pub fn is_called(&self, session: SessionId) -> bool {
+        self.called.contains_key(&session)
+            && self
+                .session(session)
+                .is_some_and(|info| self.presentation(info).attention == Some(Attention::Request))
+    }
+
+    /// The call for `session` is seen (the session is on screen, or marked read). Whether there
+    /// was one.
+    pub fn see_call(&mut self, session: SessionId, cx: &mut Context<Self>) -> bool {
+        let seen = self.called.remove(&session).is_some();
+        if seen {
+            self.changed(StoreChanged::ATTENTION, cx);
+        }
+        seen
+    }
+
+    /// Drops the calls whose request has been answered, or whose session is gone: a call is
+    /// confirmed once the state shows its request, and ends when that request does. Whether
+    /// anything changed.
+    fn observe_calls(&mut self) -> bool {
+        let ids: Vec<(SessionId, bool)> = self.called.iter().map(|(id, c)| (*id, *c)).collect();
+        let mut changed = false;
+        for (id, confirmed) in ids {
+            let request = self
+                .session(id)
+                .map(|info| self.presentation(info).attention == Some(Attention::Request));
+            match (request, confirmed) {
+                (Some(true), false) => {
+                    self.called.insert(id, true);
+                }
+                (Some(false) | None, true) => {
+                    self.called.remove(&id);
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+        changed
     }
 
     /// `notify.ack` for every intent noted for `session`. One that is gone already (acted on,

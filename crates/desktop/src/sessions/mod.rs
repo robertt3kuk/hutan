@@ -6,6 +6,7 @@ pub mod agents;
 pub mod agents_list;
 pub mod agents_text;
 pub mod attention;
+pub mod calls;
 pub mod checkpoints;
 pub mod launch;
 pub mod models;
@@ -29,8 +30,8 @@ pub use presentation::{
 };
 pub use store::{
     AccountsChanged, ActivityCause, CheckoutActivity, CloseFailure, MemoryChanged, REPLAY_WINDOW,
-    RecoverySummaryDue, SessionClosed, SessionsStore, StoreChanged, UI_OPEN_MAX_AGE_MS,
-    UiOpenRequested,
+    RecoverySummaryDue, RequestCalled, SessionClosed, SessionsStore, StoreChanged,
+    UI_OPEN_MAX_AGE_MS, UiOpenRequested,
 };
 pub use terminal::TerminalSession;
 pub use untracked::Untracked;

@@ -71,7 +71,7 @@ impl TabLook {
 }
 
 /// "⌘⇧O"-style hint for the highest-precedence binding of `action` in the current context.
-fn key_hint(window: &Window, action: &dyn Action) -> Option<SharedString> {
+pub(super) fn key_hint(window: &Window, action: &dyn Action) -> Option<SharedString> {
     let binding = window.highest_precedence_binding_for_action(action)?;
     let text: Vec<String> = binding.keystrokes().iter().map(|k| k.to_string()).collect();
     Some(text.join(" ").into())
@@ -170,6 +170,8 @@ impl Render for Workbench {
         let menu = self.render_context_menu(cx);
         let modal = self.render_modal(cx);
         let close_toast = self.render_close_toast(cx);
+        let attention_toasts = self.render_attention_toasts(window, cx);
+        let toast_up = attention_toasts.is_some();
         let restore_toast = self.render_restore_toast(cx);
         let checkpoints_list = self.render_checkpoints_list(cx);
         let rewind_sheet = self.render_rewind_sheet(cx);
@@ -185,10 +187,11 @@ impl Render for Workbench {
         let resizing_docks = matches!(self.resizing, Some(Resizing::Dock { .. }));
         let root = div()
             .id("workbench")
-            .key_context(if resizing_docks {
-                "Workbench DockResize"
-            } else {
-                "Workbench"
+            .key_context(match (resizing_docks, toast_up) {
+                (false, false) => "Workbench",
+                (true, false) => "Workbench DockResize",
+                (false, true) => "Workbench AttentionToast",
+                (true, true) => "Workbench DockResize AttentionToast",
             })
             .track_focus(&self.focus_handle)
             .relative()
@@ -255,6 +258,7 @@ impl Render for Workbench {
         .children(agent_picker)
         .children(launcher)
         .children(close_toast)
+        .children(attention_toasts)
         .children(restore_toast)
         .children(menu)
         .children(sheet)
@@ -793,6 +797,14 @@ impl Workbench {
         .on_action(
             cx.listener(|this, _: &actions::JumpToNextAttention, window, cx| {
                 this.jump_to_next_attention(window, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::ReviewRequest, window, cx| {
+            this.review_request(window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::DismissAttentionToasts, _, cx| {
+                this.dismiss_attention_toasts(cx);
             }),
         )
         .on_action(
@@ -1963,6 +1975,7 @@ impl Workbench {
                     .filter(|p| p.attention.is_some())
             })
             .filter(|_| !badge_blocked);
+        let called = session_of_item(item).is_some_and(|id| self.sessions.read(cx).is_called(id));
         let dragged = DraggedItem {
             source: ItemSource::Pane {
                 pane: pane_id,
@@ -2032,7 +2045,22 @@ impl Workbench {
             .child(crate::icons::glyph(icon))
             .child(div().max_w(px(TAB_TITLE_MAX)).truncate().child(title))
             .children(badge)
-            .children(attention.map(|p| {
+            // A request called for this session while it was not on screen and nobody has
+            // looked since: an accent dot (the one attention mark of the tab, then).
+            .children(called.then(|| {
+                div()
+                    .id(id(format!("tab-call-{pane_id}-{index}")))
+                    .flex_none()
+                    .size(px(7.0))
+                    .rounded_full()
+                    .bg(accent)
+                    .tooltip(|_, cx| {
+                        cx.new(|_| super::style::TextTooltip("Asked for you".into()))
+                            .into()
+                    })
+                    .child(probe(&self.regions, Region::TabCall(pane_id, index)))
+            }))
+            .children(attention.filter(|_| !called).map(|p| {
                 div()
                     .flex_none()
                     .size(px(7.0))
