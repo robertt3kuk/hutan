@@ -47,7 +47,7 @@ pub(crate) fn terminal_style(
             terminal,
             density,
             base.blocks.enabled,
-            !crate::theme::reduce_motion(),
+            !super::ui::motion::reduce_motion(),
         ),
         ..base
     }
@@ -1479,6 +1479,7 @@ impl Workbench {
             let appearance = self.settings.get::<AppearanceSettings>();
             self.chrome = appearance.appearance;
             self.density = appearance.density;
+            super::ui::motion::set_setting(cx, appearance.reduce_motion);
             self.refresh_theme(cx);
             self.publish_style(cx);
         }

@@ -13,6 +13,7 @@
 //! Things the system tells us (a menu item was chosen, the shortcut was pressed) arrive as
 //! [`MacEvent`]s on one bounded channel that the workbench drains on the main thread.
 
+pub mod accessibility;
 pub mod dock;
 pub mod focus;
 pub mod hotkey;

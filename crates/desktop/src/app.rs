@@ -565,12 +565,32 @@ pub fn run() {
     application.run(move |cx: &mut App| {
         init(cx, &LayoutPreset::builtin());
         watch_signals(cx);
+        watch_reduce_motion(cx);
         watch_instance(cx, requests);
         if let Err(err) = open_main(cx) {
             tracing::error!("cannot open the workbench window: {err:#}");
             cx.quit();
         }
     });
+}
+
+/// macOS Reduce Motion, read now and again whenever the system's display options change (no
+/// restart: `workbench::ui::motion`); `appearance.reduce_motion` can override it.
+fn watch_reduce_motion(cx: &mut App) {
+    use crate::macos::accessibility;
+    use crate::workbench::ui::motion;
+    motion::set_system(cx, accessibility::system_reduce_motion());
+    let (changed, mut changes) = tokio::sync::mpsc::channel(4);
+    let Some(observer) = accessibility::observe(changed) else {
+        return;
+    };
+    cx.spawn(async move |cx| {
+        let _observer = observer;
+        while changes.recv().await.is_some() {
+            cx.update(|cx| motion::set_system(cx, accessibility::system_reduce_motion()));
+        }
+    })
+    .detach();
 }
 
 /// SIGTERM / SIGINT / SIGHUP: layout saved, connection closed, exit code 0, the daemon

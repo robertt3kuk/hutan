@@ -96,6 +96,13 @@ const FIELDS: &[FieldText] = &[
         "Light or dark windows. System follows macOS and switches with it.",
         &[("system", "System"), ("light", "Light"), ("dark", "Dark")],
     ),
+    choice(
+        "appearance",
+        "reduce_motion",
+        "Reduce motion",
+        "Whether menus, sheets, toasts and groups fade and slide. System follows macOS (System Settings, Accessibility, Display) and changes with it at once. Reduced, nothing slides or changes height and fades stay under 150 ms.",
+        &[("system", "System"), ("on", "On"), ("off", "Off")],
+    ),
     field(
         "appearance",
         "light_theme",

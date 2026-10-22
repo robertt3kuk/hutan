@@ -40,6 +40,7 @@ mod mac_gpui;
 mod mawas_gpui;
 mod mcp_gpui;
 mod memory_gpui;
+mod motion_gpui;
 mod notify_gpui;
 mod perf_gpui;
 mod polish_gpui;

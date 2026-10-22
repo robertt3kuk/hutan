@@ -8,6 +8,8 @@
 //! outline; the accent is never a border (the drag-over targets are the one exception, guarded by
 //! the test at the end of this file); state is a glyph and a word, never a tinted pill.
 
+pub mod motion;
+
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::sync::{Arc, LazyLock};

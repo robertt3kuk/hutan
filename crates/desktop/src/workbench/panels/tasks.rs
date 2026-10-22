@@ -22,12 +22,13 @@ use super::common::{now_ms, panel_header_with, tone_color};
 use super::history::pill;
 use crate::sessions::tasks::{TaskAction, TaskFilters, TaskRowView, tree_rows};
 use crate::settings::{TasksScope, TasksSettings};
-use crate::theme::{DensityExt as _, Theme, Tokens, reduce_motion};
+use crate::theme::{DensityExt as _, Theme, Tokens};
 use crate::workbench::actions::{
     LauncherOpen, Notify, OpenLauncher, OpenSession, ReviewTaskChanges,
 };
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
+use crate::workbench::ui::motion::reduce_motion;
 use crate::workbench::ui::{self, StyledExt as _};
 use crate::workbench::{Region, style::UiStyle};
 

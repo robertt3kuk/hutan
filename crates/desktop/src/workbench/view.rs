@@ -810,6 +810,7 @@ impl Workbench {
         super::ui::apply_fonts(cx, frame.resolved.fonts());
         let theme = Theme::from_resolved(&frame.resolved);
         let terminal_explicit = crate::settings::TerminalExplicit::of(&settings);
+        super::ui::motion::set_setting(cx, appearance_settings.reduce_motion);
         let terminal_style = super::terminals::terminal_style(
             &terminal_settings,
             &frame.terminal,
@@ -996,6 +997,11 @@ impl Workbench {
             focus_modality,
             vim_keys,
             cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
+            // Reduce Motion changed (macOS or the setting): the terminal's block gutter pulse
+            // follows it.
+            cx.observe_global::<super::ui::motion::Inputs>(|this, cx| {
+                this.refresh_terminal_style(cx);
+            }),
             cx.on_app_quit(|this, cx| this.on_platform_quit(cx)),
             cx.subscribe_in(
                 &sessions,

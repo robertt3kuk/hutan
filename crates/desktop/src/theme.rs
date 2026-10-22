@@ -5,7 +5,7 @@
 //! [`metrics`] read, once per committed theme generation.
 
 use std::cell::RefCell;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use gpui::{BoxShadow, Hsla, Rgba as GpuiRgba, WindowAppearance, point, px};
 use hutan_settings::themes::{
@@ -488,24 +488,6 @@ pub fn resolve_frame(
 /// The built-in pack of a polarity, for code that runs before the user's selection is known.
 pub fn builtin_of(polarity: SystemAppearance) -> Arc<ResolvedTheme> {
     builtin_theme(builtin_for(polarity))
-}
-
-/// Whether the user asked macOS to reduce motion (System Settings ▸ Accessibility ▸ Display).
-/// Read once per process through `defaults`; anything unreadable counts as "motion is fine".
-/// The `HUTAN_REDUCE_MOTION` variable (`0` / `1`) overrides it.
-pub fn reduce_motion() -> bool {
-    static REDUCE: LazyLock<bool> = LazyLock::new(|| {
-        if let Some(value) = std::env::var_os("HUTAN_REDUCE_MOTION") {
-            return value == "1";
-        }
-        std::process::Command::new("/usr/bin/defaults")
-            .args(["read", "com.apple.universalaccess", "reduceMotion"])
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()
-            .is_some_and(|out| String::from_utf8_lossy(&out.stdout).trim() == "1")
-    });
-    *REDUCE
 }
 
 #[cfg(test)]

@@ -28,6 +28,17 @@ pub enum AppearanceMode {
     Dark,
 }
 
+/// `appearance.reduce_motion`: whether the interface moves. `system` follows macOS (System
+/// Settings ▸ Accessibility ▸ Display ▸ Reduce motion) live; `on` and `off` override it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ReduceMotionSetting {
+    #[default]
+    System,
+    On,
+    Off,
+}
+
 /// The user's overrides of one color pack: `[appearance.theme_overrides."<id>".colors]`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -56,6 +67,9 @@ pub struct AppearanceSettings {
     pub dark_theme: String,
     /// Independent monochrome icon pack from `<data dir>/icon-themes`.
     pub icon_theme: String,
+    /// `system` (follow macOS Reduce Motion live, default), `on` or `off`. Reduced, nothing
+    /// slides or changes height and fades are at most 150 ms; see `docs/design.md` § Motion.
+    pub reduce_motion: ReduceMotionSetting,
     /// Color overrides per pack id, applied on top of the pack.
     pub theme_overrides: BTreeMap<String, ThemeOverrides>,
 }
@@ -68,6 +82,7 @@ impl Default for AppearanceSettings {
             light_theme: LIGHT.to_owned(),
             dark_theme: DARK.to_owned(),
             icon_theme: "phosphor".to_owned(),
+            reduce_motion: ReduceMotionSetting::default(),
             theme_overrides: BTreeMap::new(),
         }
     }
@@ -91,6 +106,24 @@ mod tests {
             ("hutan-light", "hutan-dark")
         );
         assert!(a.theme_overrides.is_empty());
+    }
+
+    #[test]
+    fn reduce_motion_reads_system_on_off_and_defaults_to_system() {
+        assert_eq!(
+            AppearanceSettings::default().reduce_motion,
+            ReduceMotionSetting::System
+        );
+        for (text, expected) in [
+            ("system", ReduceMotionSetting::System),
+            ("on", ReduceMotionSetting::On),
+            ("off", ReduceMotionSetting::Off),
+        ] {
+            let a: AppearanceSettings =
+                toml::from_str(&format!("reduce_motion = \"{text}\"\n")).unwrap();
+            assert_eq!(a.reduce_motion, expected);
+        }
+        assert!(toml::from_str::<AppearanceSettings>("reduce_motion = \"maybe\"\n").is_err());
     }
 
     #[test]

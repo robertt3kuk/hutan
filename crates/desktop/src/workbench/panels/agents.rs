@@ -31,12 +31,13 @@ use crate::sessions::{
     AgentPresentation, AgentRecord, Counts, Group, Role, Scope, SessionsStore, State, Tone,
 };
 use crate::settings::{AgentsScope, AgentsSettings};
-use crate::theme::{DensityExt as _, reduce_motion};
+use crate::theme::DensityExt as _;
 use crate::workbench::Region;
 use crate::workbench::actions::{AgentNodeAt, OpenSession, ShowAgentNodeMenu, ShowAgentsPanelMenu};
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
+use crate::workbench::ui::motion::reduce_motion;
 use crate::workbench::ui::{self, Mascot};
 
 /// How often the durations (and the working dots) refresh while the panel is drawn.

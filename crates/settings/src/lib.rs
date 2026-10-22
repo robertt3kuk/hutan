@@ -21,7 +21,9 @@ pub mod themes;
 mod value;
 mod watch;
 
-pub use appearance::{AppearanceMode, AppearanceSettings, Density, ThemeOverrides};
+pub use appearance::{
+    AppearanceMode, AppearanceSettings, Density, ReduceMotionSetting, ThemeOverrides,
+};
 pub use error::{SettingsError, Severity};
 pub use keymap::{BindingSpec, Keystroke};
 pub use store::{
