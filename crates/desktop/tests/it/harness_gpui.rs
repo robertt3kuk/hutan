@@ -839,7 +839,7 @@ fn mawas_switch_model_marks_the_model_it_runs_and_names_it(cx: &mut TestAppConte
             .map(|r| r.model.id.clone())
             .collect()
     });
-    assert_eq!(marked, [running.clone()]);
+    assert_eq!(marked, std::slice::from_ref(&running));
     // The catalog is known now: Home's header names the model by its name.
     let name = view.read_with(cx, |wb, cx| {
         wb.sessions()
