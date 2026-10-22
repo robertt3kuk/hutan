@@ -2197,25 +2197,26 @@ impl gpui::EntityInputHandler for TerminalView {
 impl TerminalView {
     /// The hover actions bar of the block under the pointer, positioned on the block's first
     /// visible row at the right edge.
-    fn actions_bar(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let id = self.hover_block()?;
-        let actions = self.block_actions(id)?;
-        let layout = self.layout?;
+    /// The display row the actions bar of block `id` sits on: over the output, at the block's
+    /// top right, so the command line stays readable to its end and the exit badge stays
+    /// visible. A block with no output has only the one row, and the bar is on it.
+    pub fn block_actions_row(&self, id: u64) -> Option<usize> {
         let spans = self.block_spans();
         let display = self.display();
         let first = display
             .iter()
             .position(|shown| blocks::block_at(&spans, shown.line()) == Some(id))?;
-        // Over the output, at the block's top right: the command line stays readable to its
-        // end and the exit badge stays visible. A block with no output has only the one row.
-        let row = if display
+        let has_output = display
             .get(first + 1)
-            .is_some_and(|shown| blocks::block_at(&spans, shown.line()) == Some(id))
-        {
-            first + 1
-        } else {
-            first
-        };
+            .is_some_and(|shown| blocks::block_at(&spans, shown.line()) == Some(id));
+        Some(if has_output { first + 1 } else { first })
+    }
+
+    fn actions_bar(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let id = self.hover_block()?;
+        let actions = self.block_actions(id)?;
+        let layout = self.layout?;
+        let row = self.block_actions_row(id)?;
         let (background, foreground) = (self.theme.background(), self.theme.foreground());
         let surface = hsla(background.mix(foreground, 0.16));
         let text = hsla(foreground.mix(background, 0.2));

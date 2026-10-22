@@ -712,6 +712,9 @@ fn hovering_a_block_offers_its_actions(cx: &mut TestAppContext) {
         .expect("actions for a finished block");
     assert!(actions.copy_command && actions.copy_output && actions.rerun && actions.send_to_agent);
     assert_eq!(actions.folded, Some(false));
+    // The bar sits on the first row of the output (block 2's command is on row 4), so it
+    // never covers the command or the exit badge.
+    assert_eq!(view.read_with(cx, |v, _| v.block_actions_row(2)), Some(5));
     // The open prompt has nothing to offer.
     cx.simulate_mouse_move(at(3.0, 7.0), None, Modifiers::default());
     assert_eq!(view.read_with(cx, |v, _| v.hover_block()), Some(3));
