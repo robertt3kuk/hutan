@@ -932,7 +932,10 @@ async fn rustups_proxy_without_the_component_is_not_installed_with_the_command()
     );
     let reason = server.reason.as_deref().unwrap();
     assert!(reason.contains("rustup's proxy"), "{reason}");
-    assert!(reason.contains("Unknown binary 'rust-analyzer'"), "{reason}");
+    assert!(
+        reason.contains("Unknown binary 'rust-analyzer'"),
+        "{reason}"
+    );
     assert!(
         reason.contains("rustup component add rust-analyzer"),
         "{reason}"

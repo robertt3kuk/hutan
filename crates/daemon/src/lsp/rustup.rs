@@ -152,26 +152,44 @@ mod tests {
             "echo \"error: Unknown binary '$2' in official toolchain 'stable-aarch64-apple-darwin'.\" >&2; exit 1",
         );
         let reason = missing_component(&program, &BTreeMap::new(), dir.path()).unwrap();
-        assert!(reason.contains("rustup component add rust-analyzer"), "{reason}");
-        assert!(reason.contains("Unknown binary 'rust-analyzer'"), "{reason}");
-        assert!(!dir.path().join("ran").exists(), "the proxy itself never ran");
+        assert!(
+            reason.contains("rustup component add rust-analyzer"),
+            "{reason}"
+        );
+        assert!(
+            reason.contains("Unknown binary 'rust-analyzer'"),
+            "{reason}"
+        );
+        assert!(
+            !dir.path().join("ran").exists(),
+            "the proxy itself never ran"
+        );
     }
 
     #[test]
     fn a_proxy_that_names_itself_would_recurse() {
         let (dir, program) = proxy("echo \"$(dirname \"$0\")/rustup\"");
         let reason = missing_component(&program, &BTreeMap::new(), dir.path()).unwrap();
-        assert!(reason.contains("rustup component add rust-analyzer"), "{reason}");
+        assert!(
+            reason.contains("rustup component add rust-analyzer"),
+            "{reason}"
+        );
     }
 
     #[test]
     fn a_proxy_with_the_component_and_a_plain_program_serve() {
         let (dir, program) = proxy("echo /bin/sh");
-        assert_eq!(missing_component(&program, &BTreeMap::new(), dir.path()), None);
+        assert_eq!(
+            missing_component(&program, &BTreeMap::new(), dir.path()),
+            None
+        );
         // Not a proxy: nothing is asked.
         let plain = dir.path().join("plain");
         std::fs::write(&plain, "#!/bin/sh\n").unwrap();
-        assert_eq!(missing_component(&plain, &BTreeMap::new(), dir.path()), None);
+        assert_eq!(
+            missing_component(&plain, &BTreeMap::new(), dir.path()),
+            None
+        );
         assert_eq!(proxy_of(&dir.path().join("rustup")), None);
     }
 }

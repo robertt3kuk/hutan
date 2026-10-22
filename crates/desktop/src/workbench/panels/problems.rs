@@ -129,9 +129,10 @@ impl ServerLine {
             LspServerState::Ready => "ready".to_owned(),
             LspServerState::Failed => with("failed", self.reason.as_ref()),
             LspServerState::Stopped => with("stopped", self.reason.as_ref()),
-            LspServerState::NotInstalled => {
-                with("not installed", self.install.as_ref().or(self.reason.as_ref()))
-            }
+            LspServerState::NotInstalled => with(
+                "not installed",
+                self.install.as_ref().or(self.reason.as_ref()),
+            ),
             LspServerState::Untrusted => "folder not trusted".to_owned(),
         }
     }
@@ -1213,12 +1214,7 @@ mod tests {
             ],
         };
         let status = [
-            info(
-                "ra",
-                "rust-analyzer",
-                &["rust"],
-                Some("exited with code 1"),
-            ),
+            info("ra", "rust-analyzer", &["rust"], Some("exited with code 1")),
             info("fake", "fake", &["fake"], Some("idle")),
         ];
         let lines = server_lines(&result, &status);
@@ -1232,7 +1228,10 @@ mod tests {
             ]
         );
         assert_eq!(
-            lines.iter().map(ServerLine::restartable).collect::<Vec<_>>(),
+            lines
+                .iter()
+                .map(ServerLine::restartable)
+                .collect::<Vec<_>>(),
             [false, true, false]
         );
         assert!(lines[2].busy() && !lines[0].busy() && !lines[1].busy());

@@ -270,7 +270,10 @@ pub fn spoken_list<S: AsRef<str>>(items: &[S]) -> String {
         [one] => one.as_ref().to_owned(),
         [rest @ .., last] => format!(
             "{} and {}",
-            rest.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(", "),
+            rest.iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>()
+                .join(", "),
             last.as_ref()
         ),
     }
@@ -910,24 +913,26 @@ impl LspStore {
     /// The bar the file tab of `path` shows, if any: a folder to trust (until the user says
     /// *Not now* to it or a folder above it), or a server to install (until the user closes it).
     pub fn bar(&self, path: &str) -> Option<LspBar> {
-        self.servers_of(path).into_iter().find_map(|s| match s.state {
-            LspServerState::Untrusted if s.trust_pending => {
-                let folder = s.root?;
-                if self.not_now.iter().any(|closed| folder.starts_with(closed)) {
-                    return None;
+        self.servers_of(path)
+            .into_iter()
+            .find_map(|s| match s.state {
+                LspServerState::Untrusted if s.trust_pending => {
+                    let folder = s.root?;
+                    if self.not_now.iter().any(|closed| folder.starts_with(closed)) {
+                        return None;
+                    }
+                    Some(self.trust_bar(folder, &s.server_id))
                 }
-                Some(self.trust_bar(folder, &s.server_id))
-            }
-            LspServerState::NotInstalled if !self.dismissed.contains(&s.server_id) => {
-                Some(LspBar::Install {
-                    command: s.install.clone()?,
-                    server_id: s.server_id,
-                    name: s.name,
-                    setting: s.setting,
-                })
-            }
-            _ => None,
-        })
+                LspServerState::NotInstalled if !self.dismissed.contains(&s.server_id) => {
+                    Some(LspBar::Install {
+                        command: s.install.clone()?,
+                        server_id: s.server_id,
+                        name: s.name,
+                        setting: s.setting,
+                    })
+                }
+                _ => None,
+            })
     }
 
     /// The trust bar of `folder`: every server known to wait for it (its root at or below the

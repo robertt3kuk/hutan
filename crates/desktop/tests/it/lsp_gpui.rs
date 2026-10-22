@@ -60,7 +60,11 @@ impl Env {
 
     /// Like [`new`](Self::new), with `extra` appended to `daemon.toml` (more servers). The
     /// root also has a `Cargo.toml`, so a Rust server's root is the same folder.
-    pub(crate) fn with_extra(trust: &str, script: impl FnOnce(&Path) -> Value, extra: &str) -> Self {
+    pub(crate) fn with_extra(
+        trust: &str,
+        script: impl FnOnce(&Path) -> Value,
+        extra: &str,
+    ) -> Self {
         let work = tempfile::tempdir().unwrap();
         let base = work.path().canonicalize().unwrap();
         let root = base.join("repo");
@@ -563,9 +567,7 @@ fn the_trust_bar_names_every_server_of_the_folder_and_not_now_covers_the_folder(
 }
 
 #[gpui::test]
-fn the_problems_panel_shows_each_servers_state_and_restarts_a_failed_one(
-    cx: &mut TestAppContext,
-) {
+fn the_problems_panel_shows_each_servers_state_and_restarts_a_failed_one(cx: &mut TestAppContext) {
     use std::os::unix::fs::PermissionsExt as _;
     let programs = tempfile::tempdir().unwrap();
     let rust_analyzer = programs.path().join("rust-analyzer");
@@ -616,11 +618,14 @@ fn the_problems_panel_shows_each_servers_state_and_restarts_a_failed_one(
     // Restart only on the failed line.
     draw(cx);
     assert!(
-        view.read_with(cx, |wb, _| wb.region_bounds(Region::ProblemsServerRestart(0)))
+        view.read_with(cx, |wb, _| wb
+            .region_bounds(Region::ProblemsServerRestart(0)))
             .is_none()
     );
     let restart = view
-        .read_with(cx, |wb, _| wb.region_bounds(Region::ProblemsServerRestart(1)))
+        .read_with(cx, |wb, _| {
+            wb.region_bounds(Region::ProblemsServerRestart(1))
+        })
         .expect("Restart on the failed server's line");
 
     // The user mends the server; Restart starts it.
