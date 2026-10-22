@@ -34,9 +34,12 @@ fn uptime_text(uptime: Duration) -> String {
 
 impl Workbench {
     pub(crate) fn render_daemon_popover(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.daemon.popover {
-            return None;
-        }
+        let wanted = self.overlays.track(
+            "daemon-popover",
+            self.daemon.popover,
+            motion::Kind::Popover,
+            cx,
+        )?;
         let theme = self.theme;
         let tokens = self.density.ui();
         let connected = self.daemon_connected(cx);
@@ -204,7 +207,7 @@ impl Workbench {
                 .id("daemon-backdrop")
                 .absolute()
                 .inset_0()
-                .occlude()
+                .when(wanted, |s| s.occlude())
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _, window, cx| this.close_daemon_popover(window, cx)),
@@ -290,7 +293,7 @@ impl Workbench {
                         .presented(
                             "daemon-popover-motion",
                             motion::Kind::Popover,
-                            true,
+                            wanted,
                             motion::Slide::Rise,
                         ),
                 )

@@ -291,6 +291,11 @@ pub fn note_input(from_keyboard: bool) {
     KEYBOARD.store(from_keyboard, Ordering::Relaxed);
 }
 
+/// Whether the last input was a key (see [`note_input`]).
+pub fn keyboard_input() -> bool {
+    KEYBOARD.load(Ordering::Relaxed)
+}
+
 fn spec_now(kind: Kind, reduce: bool) -> Spec {
     let spec = kind.spec(reduce);
     if kind.follows_keyboard() && KEYBOARD.load(Ordering::Relaxed) {
@@ -722,6 +727,7 @@ pub struct Collapse<E> {
     id: ElementId,
     content: Option<E>,
     open: bool,
+    grow: bool,
 }
 
 impl<E> std::fmt::Debug for Collapse<E> {
@@ -747,6 +753,18 @@ pub fn expand<E: IntoElement + 'static>(
         id: id.into(),
         content: Some(content),
         open,
+        grow: false,
+    }
+}
+
+impl<E> Collapse<E> {
+    /// Mounted open, it grows from nothing instead of showing at once: for content the owner
+    /// builds only while it is open (and while it leaves, [`Presence`]), so the first frame of
+    /// the open state is the first frame of the content.
+    #[must_use]
+    pub fn from_closed(mut self) -> Self {
+        self.grow = true;
+        self
     }
 }
 
@@ -794,7 +812,7 @@ impl<E: IntoElement + 'static> Element for Collapse<E> {
         let target = if self.open { 1.0 } else { 0.0 };
         window.with_element_state(global_id, |state, window| {
             let mut state = state.unwrap_or_else(|| CollapseState {
-                tween: Tween::at(target, now),
+                tween: Tween::at(if self.grow { 0.0 } else { target }, now),
                 natural: Rc::new(Cell::new(None)),
             });
             let natural = state.natural.get();
@@ -1029,6 +1047,16 @@ pub fn mix(from: Hsla, to: Hsla, t: f32) -> Hsla {
     })
 }
 
+/// The background at transition value `value` of [`hover_fade`]: `0` at rest, `1` hovered, `2`
+/// pressed.
+pub fn tint(value: f32, rest: Hsla, hover: Hsla, pressed: Option<Hsla>) -> Hsla {
+    if value <= 1.0 {
+        mix(rest, hover, value)
+    } else {
+        mix(hover, pressed.unwrap_or(hover), value - 1.0)
+    }
+}
+
 #[derive(Default)]
 struct Pointer {
     hovered: Cell<bool>,
@@ -1089,14 +1117,7 @@ where
         Kind::Hover,
         target,
         element,
-        move |element, frame| {
-            let color = if frame.value <= 1.0 {
-                mix(rest, hover, frame.value)
-            } else {
-                mix(hover, pressed.unwrap_or(hover), frame.value - 1.0)
-            };
-            element.bg(color)
-        },
+        move |element, frame| element.bg(tint(frame.value, rest, hover, pressed)),
     )
 }
 
@@ -1224,6 +1245,22 @@ mod tests {
         assert!(!off.effective());
         assert!(system(true).effective());
         assert!(!system(false).effective());
+    }
+
+    #[test]
+    fn the_tint_runs_rest_hover_pressed() {
+        let (rest, hover, pressed) = (
+            gpui::hsla(0.0, 0.0, 0.0, 1.0),
+            gpui::hsla(0.0, 0.0, 0.5, 1.0),
+            gpui::hsla(0.0, 0.0, 1.0, 1.0),
+        );
+        assert_eq!(tint(0.0, rest, hover, Some(pressed)), rest);
+        assert!((tint(1.0, rest, hover, Some(pressed)).l - 0.5).abs() < 1e-3);
+        assert!((tint(2.0, rest, hover, Some(pressed)).l - 1.0).abs() < 1e-3);
+        assert!(
+            (tint(2.0, rest, hover, None).l - 0.5).abs() < 1e-3,
+            "without a pressed colour a press keeps the hover colour"
+        );
     }
 
     #[test]

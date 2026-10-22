@@ -13,6 +13,7 @@ use super::settings_labels::{field_help, field_title, value_label, words};
 use super::settings_schema::{Field, FieldKind, number_range, value_at};
 use super::settings_sheet::display_value;
 use super::style::TextTooltip;
+use super::ui::motion::{self, PresentExt as _};
 use super::ui::{FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
@@ -449,7 +450,12 @@ impl Workbench {
                             .anchor(gpui::Anchor::TopRight)
                             .offset(gpui::point(px(0.0), px(4.0)))
                             .snap_to_window_with_margin(px(8.0))
-                            .child(panel),
+                            .child(panel.presented(
+                                gpui::SharedString::from(format!("menu-motion-{key:?}")),
+                                motion::Kind::Popover,
+                                true,
+                                motion::Slide::Drop,
+                            )),
                     )
                     .priority(10),
                 )

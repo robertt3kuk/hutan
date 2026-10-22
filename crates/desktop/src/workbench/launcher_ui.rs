@@ -46,6 +46,14 @@ impl Workbench {
     }
 
     fn build_launcher(&mut self, inline: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let more_present = self.overlays.track(
+            "launcher-more",
+            self.launcher
+                .as_ref()
+                .is_some_and(|l| l.inline == inline && l.more_open),
+            motion::Kind::Collapse,
+            cx,
+        );
         let launcher = self.launcher.as_ref().filter(|l| l.inline == inline)?;
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -906,7 +914,7 @@ impl Workbench {
         let mut more_rows: Vec<AnyElement> = vec![
             row("", ring(LauncherStop::More, more_header.into_any_element())).into_any_element(),
         ];
-        if more_open {
+        if let Some(more_wanted) = more_present {
             let candidates = self.launcher_dependency_rows(cx);
             let hover = theme.surface_hover;
             let mut after = div()
@@ -956,26 +964,35 @@ impl Workbench {
                         .child(probe(&self.regions, Region::LauncherItem("after", at))),
                 );
             }
+            let after_row = row("After", ring(LauncherStop::After, after.into_any_element()));
+            let system_row = direct.then(|| {
+                row(
+                    "System",
+                    text_field(
+                        LauncherField::System,
+                        LauncherStop::System,
+                        "system",
+                        "Optional instructions for this direct chat",
+                        false,
+                        cx,
+                    ),
+                )
+            });
+            // The rows under More fold open and shut together (150 ms, none for the keyboard).
             more_rows.push(
-                row("After", ring(LauncherStop::After, after.into_any_element()))
-                    .into_any_element(),
+                motion::expand(
+                    "launcher-more-body",
+                    more_wanted,
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(tokens.spacing * if inline { 3.0 } else { 2.5 }))
+                        .child(after_row)
+                        .children(system_row),
+                )
+                .from_closed()
+                .into_any_element(),
             );
-            if direct {
-                more_rows.push(
-                    row(
-                        "System",
-                        text_field(
-                            LauncherField::System,
-                            LauncherStop::System,
-                            "system",
-                            "Optional instructions for this direct chat",
-                            false,
-                            cx,
-                        ),
-                    )
-                    .into_any_element(),
-                );
-            }
         }
 
         // ---- Start now / Queue ----

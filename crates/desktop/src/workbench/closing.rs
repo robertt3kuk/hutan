@@ -47,7 +47,95 @@ pub fn busy_text(busy: &SessionBusy) -> String {
     }
 }
 
+/// A tab that the × just closed, drawn while it fades (100 ms): the tab is gone from the layout
+/// at once, so the strip keeps this stand-in at its place until the fade is over.
+#[derive(Debug)]
+pub(crate) struct ClosingTab {
+    pane: super::model::PaneId,
+    index: usize,
+    icon: crate::icons::Icon,
+    title: SharedString,
+    until: std::time::Instant,
+    _timer: gpui::Task<()>,
+}
+
 impl Workbench {
+    /// The × of a tab: closes it, and when the tab went away at once, lets a ghost of it fade.
+    pub(crate) fn close_tab_with_fade(
+        &mut self,
+        pane: super::model::PaneId,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let items = |this: &Self| this.state.pane(pane).map_or(0, |p| p.items.len());
+        let before = items(self);
+        let ghost = self
+            .state
+            .pane(pane)
+            .and_then(|p| p.items.get(index))
+            .map(|item| self.item_icon_and_title(item, cx));
+        self.close_item_checked(pane, index, window, cx);
+        let (Some((icon, title)), true) = (ghost, items(self) < before) else {
+            return;
+        };
+        let exit = motion::Kind::TabClose.exit_duration(cx.reduce_motion());
+        if exit.is_zero() || motion::keyboard_input() {
+            return;
+        }
+        self.closing_tab = Some(ClosingTab {
+            pane,
+            index,
+            icon,
+            title,
+            until: cx.background_executor().now() + exit,
+            _timer: cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(exit).await;
+                this.update(cx, |this, cx| {
+                    this.closing_tab = None;
+                    cx.notify();
+                })
+                .ok();
+            }),
+        });
+        cx.notify();
+    }
+
+    /// The stand-in of the tab that was just closed in `pane`, with the index it sat at.
+    pub(crate) fn closing_tab_ghost(
+        &self,
+        pane: super::model::PaneId,
+        cx: &mut Context<Self>,
+    ) -> Option<(usize, AnyElement)> {
+        let ghost = self.closing_tab.as_ref().filter(|g| g.pane == pane)?;
+        if cx.background_executor().now() >= ghost.until {
+            return None;
+        }
+        let (theme, tokens) = (self.theme, self.density.ui());
+        let tab = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(tokens.spacing))
+            .pl(px(tokens.spacing * 2.0))
+            .pr(px(tokens.spacing))
+            .h(px(tokens.tab_height - 6.0))
+            .rounded_t(px(tokens.radius))
+            .text_color(theme.muted)
+            .child(crate::icons::glyph(ghost.icon))
+            .child(div().max_w(px(180.0)).truncate().child(ghost.title.clone()))
+            .child(div().size(px(tokens.font_size + 4.0)));
+        let faded = motion::transition(
+            "closing-tab",
+            motion::Kind::TabClose,
+            0.0,
+            tab,
+            |tab, frame| frame.fade(tab),
+        )
+        .from(1.0);
+        Some((ghost.index, faded.into_any_element()))
+    }
+
     /// The Undo toast, if one is showing.
     pub fn close_toast(&self) -> Option<&CloseToast> {
         self.close_toast.as_ref()

@@ -689,6 +689,8 @@ pub struct Workbench {
     /// "Closed … · Undo" (`closing.rs`).
     pub(crate) close_toast: Option<super::closing::CloseToast>,
     pub(crate) toast_rev: u64,
+    /// The tab the × just closed, while it fades (`closing.rs`).
+    pub(crate) closing_tab: Option<super::closing::ClosingTab>,
     /// Overlays while they leave (`ui::motion::Presences`).
     pub(crate) overlays: super::ui::motion::Presences,
     /// The toasts while they leave (`ui::motion::Ghost`): the state is cleared at dismissal, the
@@ -1227,6 +1229,7 @@ impl Workbench {
             notice: None,
             close_toast: None,
             toast_rev: 0,
+            closing_tab: None,
             overlays: super::ui::motion::Presences::default(),
             close_toast_exit: super::ui::motion::Ghost::default(),
             restore_toast_exit: super::ui::motion::Ghost::default(),

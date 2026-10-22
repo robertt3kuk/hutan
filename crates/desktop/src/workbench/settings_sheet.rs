@@ -1462,7 +1462,13 @@ impl Workbench {
                                     .bg(theme.surface)
                                     .border_t_1()
                                     .border_color(theme.border)
-                                    .children(problem_lines),
+                                    .children(problem_lines)
+                                    .presented(
+                                        "sheet-problems-motion",
+                                        motion::Kind::Popover,
+                                        true,
+                                        motion::Slide::None,
+                                    ),
                             )
                         })
                         .presented(

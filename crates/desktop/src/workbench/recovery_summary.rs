@@ -83,9 +83,12 @@ impl Workbench {
     }
 
     pub(crate) fn render_recovery_summary(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.recovery_open {
-            return None;
-        }
+        let wanted = self.overlays.track(
+            "recovery-summary",
+            self.recovery_open,
+            motion::Kind::Popover,
+            cx,
+        )?;
         let Some(summary) = self.sessions.read(cx).recovery_summary() else {
             // Everything was acknowledged (here or elsewhere): nothing left to show.
             self.recovery_open = false;
@@ -165,7 +168,7 @@ impl Workbench {
                     .presented(
                         "recovery-motion-row",
                         motion::Kind::Popover,
-                        true,
+                        wanted,
                         motion::Slide::Rise,
                     )
                     .into_any_element(),
@@ -391,7 +394,7 @@ impl Workbench {
                 .presented(
                     "recovery-motion",
                     motion::Kind::Popover,
-                    true,
+                    wanted,
                     motion::Slide::Rise,
                 )
                 .into_any_element(),

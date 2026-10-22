@@ -1716,7 +1716,7 @@ impl Workbench {
             self.tab_revealed.insert(pane_id, reveal);
             tab_scroll.scroll_to_item(pane.active);
         }
-        let tabs: Vec<AnyElement> = pane
+        let mut tabs: Vec<AnyElement> = pane
             .items
             .iter()
             .enumerate()
@@ -1724,6 +1724,9 @@ impl Workbench {
                 self.render_tab(pane_id, index, item, index == pane.active, focused, cx)
             })
             .collect();
+        if let Some((index, ghost)) = self.closing_tab_ghost(pane_id, cx) {
+            tabs.insert(index.min(tabs.len()), ghost);
+        }
 
         // The strip is chrome (the `sidebar` tone, like the title bar above it); its hairline is
         // drawn first and the active tab, a `bg` fill reaching the strip's bottom, covers it: the
@@ -2081,7 +2084,7 @@ impl Workbench {
                                 this.close_session(session, window, cx);
                             }
                             _ => {
-                                this.close_item_checked(pane_id, index, window, cx);
+                                this.close_tab_with_fade(pane_id, index, window, cx);
                             }
                         }
                         cx.stop_propagation();

@@ -427,3 +427,176 @@ fn the_setting_reaches_the_workbench_live(cx: &mut TestAppContext) {
     }
     assert!(!cx.update(|_, cx| cx.reduce_motion()));
 }
+
+/// A button that fades its fill: hover moves the transition, which stops asking for frames once
+/// it arrived.
+struct Fader;
+
+impl Render for Fader {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui::InteractiveElement as _;
+        let (rest, hover) = (
+            gpui::hsla(0.0, 0.0, 0.1, 1.0),
+            gpui::hsla(0.0, 0.0, 0.3, 1.0),
+        );
+        div().child(motion::hover_fade(
+            "fader",
+            div().id("fader-button").w(px(100.0)).h(px(40.0)),
+            rest,
+            hover,
+            None,
+            window,
+            cx,
+        ))
+    }
+}
+
+#[gpui::test]
+fn a_hover_fade_runs_for_100_ms_after_the_pointer_moves_and_then_rests(cx: &mut TestAppContext) {
+    set_reduce(cx, false);
+    let (_view, cx) = cx.add_window_view(|_, _| Fader);
+    // The test window's pointer starts on the button: let the first fade out run.
+    frame(cx);
+    advance(cx, Duration::from_millis(150));
+    frame(cx);
+    frame(cx);
+    assert_eq!(frame(cx), 0, "idle at rest");
+    cx.simulate_mouse_move(
+        gpui::point(px(500.0), px(300.0)),
+        None,
+        gpui::Modifiers::none(),
+    );
+    frame(cx);
+    assert!(frame(cx) >= 1, "fading out after the pointer left");
+    advance(cx, Duration::from_millis(100));
+    frame(cx);
+    frame(cx);
+    assert_eq!(frame(cx), 0, "arrived: no more frames");
+    cx.simulate_mouse_move(
+        gpui::point(px(50.0), px(20.0)),
+        None,
+        gpui::Modifiers::none(),
+    );
+    frame(cx);
+    assert!(frame(cx) >= 1, "fading in after the pointer arrived");
+    advance(cx, Duration::from_millis(100));
+    frame(cx);
+    frame(cx);
+    assert_eq!(frame(cx), 0, "arrived: no more frames");
+}
+
+// ---- the places that move, in a workbench -----------------------------------------------------
+
+mod places {
+    use super::{advance, frame};
+    use crate::common::{draw, offline_connection, open_with};
+    use gpui::{Entity, TestAppContext, VisualTestContext};
+    use hutan_desktop::workbench::{Region, Workbench, actions};
+    use std::time::Duration;
+
+    fn open_workbench<'a>(
+        cx: &'a mut TestAppContext,
+        reduce_motion: &str,
+    ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+        let (connection, settings, _) = offline_connection();
+        settings
+            .write_user(
+                "appearance.reduce_motion",
+                toml::Value::String(reduce_motion.into()),
+            )
+            .unwrap();
+        let (view, cx) = open_with(cx, settings, connection, None);
+        draw(cx);
+        (view, cx)
+    }
+
+    fn footer_top(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> f32 {
+        draw(cx);
+        let bounds = view
+            .read_with(cx, |wb, _| {
+                wb.region_bounds(Region::Settings("sheet-footer"))
+            })
+            .expect("the sheet is drawn");
+        f32::from(bounds.origin.y)
+    }
+
+    #[gpui::test]
+    fn the_settings_sheet_rises_8_px_into_place_in_200_ms(cx: &mut TestAppContext) {
+        let (view, cx) = open_workbench(cx, "off");
+        advance(cx, Duration::from_millis(300));
+        cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
+        let start = footer_top(&view, cx);
+        advance(cx, Duration::from_millis(100));
+        let middle = footer_top(&view, cx);
+        advance(cx, Duration::from_millis(150));
+        let end = footer_top(&view, cx);
+        assert!(
+            (start - end - 8.0).abs() < 0.5,
+            "starts 8 px low: {start} vs {end}"
+        );
+        assert!(
+            middle < start && middle > end,
+            "on its way at 100 ms: {middle}"
+        );
+        advance(cx, Duration::from_millis(300));
+        assert_eq!(footer_top(&view, cx), end, "and stays");
+    }
+
+    #[gpui::test]
+    fn the_settings_sheet_does_not_move_under_reduce_motion(cx: &mut TestAppContext) {
+        let (view, cx) = open_workbench(cx, "on");
+        cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
+        let start = footer_top(&view, cx);
+        advance(cx, Duration::from_millis(40));
+        let later = footer_top(&view, cx);
+        advance(cx, Duration::from_millis(300));
+        let end = footer_top(&view, cx);
+        assert_eq!((start, later), (end, end), "no movement at any frame");
+    }
+
+    #[gpui::test]
+    fn motion_adds_frames_only_while_something_moves(cx: &mut TestAppContext) {
+        let (view, cx) = open_workbench(cx, "off");
+        advance(cx, Duration::from_millis(300));
+        frame(cx);
+        frame(cx);
+        // What the idle workbench asks for on its own (a window of terminals and panels has
+        // callbacks of its own): the baseline motion must not add to once it is over.
+        let idle = frame(cx);
+        assert_eq!(frame(cx), idle, "the baseline is steady");
+
+        view.update_in(cx, |wb, window, cx| wb.show_daemon_status(window, cx));
+        frame(cx);
+        assert!(frame(cx) > idle, "entering: a frame is requested per frame");
+        advance(cx, Duration::from_millis(160));
+        frame(cx);
+        frame(cx);
+        assert_eq!(frame(cx), idle, "arrived: back to the baseline");
+
+        view.update_in(cx, |wb, window, cx| wb.close_daemon_popover(window, cx));
+        frame(cx);
+        assert!(frame(cx) > idle, "leaving: still drawn and fading");
+        advance(cx, Duration::from_millis(110));
+        cx.run_until_parked();
+        frame(cx);
+        frame(cx);
+        assert_eq!(frame(cx), idle, "gone: back to the baseline");
+    }
+
+    #[gpui::test]
+    fn typing_never_waits_for_an_animation(cx: &mut TestAppContext) {
+        let (view, cx) = open_workbench(cx, "off");
+        cx.dispatch_action(actions::OpenSettingsFor("appearance".into()));
+        draw(cx);
+        // The sheet is at its first frame: 200 ms of motion are ahead, and no clock has moved.
+        let before = footer_top(&view, cx);
+        cx.simulate_input("dens");
+        assert_eq!(
+            view.read_with(cx, |wb, _| wb.settings_sheet().unwrap().query().to_owned()),
+            "dens",
+            "every keystroke lands in the field at once"
+        );
+        // The keystrokes were a keyboard input: nothing slid while they landed.
+        assert!(footer_top(&view, cx) <= before);
+    }
+}

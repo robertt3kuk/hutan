@@ -3,6 +3,7 @@
 //! the send key saves it), Send now and ✕, and why the queue waits when it holds. The daemon
 //! owns the queue; this only draws what it last said and sends the user's choices.
 
+use crate::workbench::ui::motion::{self, PresentExt as _};
 use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString,
     StatefulInteractiveElement, Styled, div, prelude::*, px,
@@ -148,6 +149,12 @@ impl ChatView {
                         .child(probe(&self.regions, Region::ChatQueue("remove", index))),
                 )
                 .child(probe(&self.regions, Region::ChatQueue("chip", index)))
+                .presented(
+                    SharedString::from(format!("chat-queue-chip-{id}")),
+                    motion::Kind::Chip,
+                    true,
+                    motion::Slide::None,
+                )
         });
         Some(
             div()
