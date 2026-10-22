@@ -244,7 +244,7 @@ impl ChangesView {
             canonical,
             review: tray::Review::new(comments, cx),
             delivery: delivery::Delivery::new(cx),
-            files_open: false,
+            files_open: true,
             diff_x: ScrollHandle::new(),
             width: std::rc::Rc::default(),
             refreshed_ms: None,
@@ -604,7 +604,6 @@ impl ChangesView {
         }
         self.review.selection = None;
         self.selected = Some(file.to_owned());
-        self.files_open = false;
         self.load_patch(file, cx);
         cx.notify();
     }
@@ -617,7 +616,8 @@ impl ChangesView {
             .is_some_and(|width| width < px(NARROW_BELOW))
     }
 
-    /// Unfolds or folds the file strip of a narrow view.
+    /// Folds or unfolds the file list of a narrow view. It starts unfolded (every changed file
+    /// is a row under the strip) and stays as the user left it.
     pub fn toggle_files(&mut self, cx: &mut Context<Self>) {
         self.files_open = !self.files_open;
         cx.notify();
@@ -1199,24 +1199,36 @@ impl ChangesView {
             .border_b_1()
             .border_color(theme.border);
         let hover = theme.surface_hover;
-        let label = current
-            .and_then(|at| files.get(at))
-            .map_or_else(|| "Choose a file".to_owned(), |f| f.path.clone());
+        let label = if self.files_open {
+            format!(
+                "{} changed {}",
+                files.len(),
+                if files.len() == 1 { "file" } else { "files" }
+            )
+        } else {
+            current
+                .and_then(|at| files.get(at))
+                .map_or_else(|| "Choose a file".to_owned(), |f| f.path.clone())
+        };
         let (mark, color) = current
             .and_then(|at| files.get(at))
+            .filter(|_| !self.files_open)
             .map_or(("", theme.muted), |f| status_mark(f.status, theme));
-        let counts = current.and_then(|at| files.get(at)).map(|f| {
-            if f.binary {
-                div()
-                    .flex_none()
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.muted)
-                    .child("binary")
-                    .into_any_element()
-            } else {
-                counts_of(f.additions as usize, f.deletions as usize, &look)
-            }
-        });
+        let counts = current
+            .and_then(|at| files.get(at))
+            .filter(|_| !self.files_open)
+            .map(|f| {
+                if f.binary {
+                    div()
+                        .flex_none()
+                        .text_size(px(tokens.secondary_font_size))
+                        .text_color(theme.muted)
+                        .child("binary")
+                        .into_any_element()
+                } else {
+                    counts_of(f.additions as usize, f.deletions as usize, &look)
+                }
+            });
         strip = strip.child(
             div()
                 .id("changes-files-toggle")
@@ -1250,17 +1262,19 @@ impl ChangesView {
                         .truncate()
                         .child(SharedString::from(label)),
                 )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(px(tokens.secondary_font_size))
-                        .text_color(theme.muted)
-                        .child(SharedString::from(format!(
-                            "{} of {}",
-                            current.map_or(0, |at| at + 1),
-                            files.len()
-                        ))),
-                )
+                .when(!self.files_open, |s| {
+                    s.child(
+                        div()
+                            .flex_none()
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(theme.muted)
+                            .child(SharedString::from(format!(
+                                "{} of {}",
+                                current.map_or(0, |at| at + 1),
+                                files.len()
+                            ))),
+                    )
+                })
                 .children(counts)
                 .child(probe(&self.env.regions, Region::Changes("files-toggle"))),
         );

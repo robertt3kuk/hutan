@@ -6,6 +6,8 @@
 //! when the workspace or the connection changes, and again after [`REFRESH_AFTER`]) and has the
 //! Refresh button for the rest. It never reads a repository itself.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -14,13 +16,14 @@ use gpui::{
 };
 use hutan_client::ConnectionState;
 use hutan_core::WorkspaceId;
-use hutan_protocol::worktree::WorktreeInfo;
+use hutan_protocol::worktree::{DiffFile, WorktreeDiffRequest, WorktreeInfo};
 
 use crate::icons::{Icon, icon};
 use crate::sessions::CheckoutActivity;
 use crate::theme::DensityExt as _;
 use crate::workbench::Region;
 use crate::workbench::actions::ReviewChangesAt;
+use crate::workbench::chat::{Look, counts_of};
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::UiStyle;
@@ -29,6 +32,44 @@ use crate::workbench::workspaces::tilde;
 
 /// A drawn panel lists the checkouts again after this long.
 pub const REFRESH_AFTER: Duration = Duration::from_secs(15);
+
+/// Checkouts whose changes are counted for their rows; the rest show no count.
+const MAX_COUNTED: usize = 12;
+
+/// What a checkout changed, for its row: files and lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Counts {
+    pub files: usize,
+    pub added: usize,
+    pub removed: usize,
+}
+
+impl Counts {
+    /// The totals of a listing's files.
+    pub fn of(files: &[DiffFile]) -> Self {
+        files.iter().fold(
+            Self {
+                files: files.len(),
+                added: 0,
+                removed: 0,
+            },
+            |sum, f| Self {
+                added: sum.added + f.additions as usize,
+                removed: sum.removed + f.deletions as usize,
+                ..sum
+            },
+        )
+    }
+
+    /// `1 file` / `4 files`.
+    pub fn files_text(&self) -> String {
+        if self.files == 1 {
+            "1 file".to_owned()
+        } else {
+            format!("{} files", self.files)
+        }
+    }
+}
 
 /// What the panel knows about the checkouts.
 #[derive(Debug, Clone, PartialEq)]
@@ -55,6 +96,10 @@ pub struct ChangesPanel {
     reload_again: bool,
     generation: u64,
     task: Option<Task<()>>,
+    /// What each listed checkout changed (`worktree.diff`, the file list only), read after every
+    /// listing; a checkout that could not be counted has no entry.
+    counts: HashMap<PathBuf, Counts>,
+    counts_task: Option<Task<()>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -101,6 +146,8 @@ impl ChangesPanel {
             reload_again: false,
             generation: 0,
             task: None,
+            counts: HashMap::new(),
+            counts_task: None,
             _subscriptions: subscriptions,
         };
         panel.sync(cx);
@@ -145,6 +192,11 @@ impl ChangesPanel {
         &self.checkouts
     }
 
+    /// What `checkout` changed, once counted (tests).
+    pub fn counts(&self, checkout: &std::path::Path) -> Option<Counts> {
+        self.counts.get(checkout).copied()
+    }
+
     /// The listed checkouts, in the order the rows have.
     pub fn rows(&self) -> &[WorktreeInfo] {
         match &self.checkouts {
@@ -178,6 +230,8 @@ impl ChangesPanel {
                 self.loading = false;
                 self.reload_again = false;
                 self.checkouts = Checkouts::Idle;
+                self.counts.clear();
+                self.counts_task = None;
                 self.refreshed_ms = None;
                 self.refresh_error = None;
                 cx.notify();
@@ -215,7 +269,9 @@ impl ChangesPanel {
                 this.loading = false;
                 match result {
                     Ok(list) => {
-                        this.checkouts = Checkouts::Ready(ordered(list));
+                        let list = ordered(list);
+                        this.count(&list, cx);
+                        this.checkouts = Checkouts::Ready(list);
                         this.refreshed_ms = Some(hutan_client::time::now_ms());
                         this.refresh_error = None;
                     }
@@ -235,10 +291,66 @@ impl ChangesPanel {
         cx.notify();
     }
 
+    /// Reads what each checkout that may have changes changed (the dirty ones and the branches
+    /// of worktrees), at most [`MAX_COUNTED`], for the counts on the rows. A count that cannot
+    /// be read is left out; the row stays as it was.
+    fn count(&mut self, list: &[WorktreeInfo], cx: &mut Context<Self>) {
+        let wanted: Vec<PathBuf> = list
+            .iter()
+            .filter(|w| w.dirty || !w.main)
+            .take(MAX_COUNTED)
+            .map(|w| w.path.clone())
+            .collect();
+        self.counts.retain(|path, _| wanted.contains(path));
+        let generation = self.generation;
+        let reads: Vec<_> = wanted
+            .iter()
+            .map(|path| {
+                let request = WorktreeDiffRequest {
+                    path: path.clone(),
+                    base: None,
+                    include_uncommitted: true,
+                };
+                let read = self
+                    .env
+                    .sessions
+                    .update(cx, |store, cx| store.worktree_diff(request, cx));
+                (path.clone(), read)
+            })
+            .collect();
+        self.counts_task = Some(cx.spawn(async move |this, cx| {
+            for (path, read) in reads {
+                let result = read.await;
+                let alive = this
+                    .update(cx, |this, cx| {
+                        if this.generation != generation {
+                            return false;
+                        }
+                        match result {
+                            Ok(diff) => {
+                                this.counts.insert(path, Counts::of(&diff.files));
+                            }
+                            Err(_) => {
+                                this.counts.remove(&path);
+                            }
+                        }
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !alive {
+                    return;
+                }
+            }
+        }));
+    }
+
     fn row(&self, index: usize, worktree: &WorktreeInfo, cx: &mut Context<Self>) -> AnyElement {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let hover = theme.sidebar_accent;
+        let look = Look::of(cx);
+        let counted = self.counts.get(&worktree.path).filter(|c| c.files > 0);
         let path = worktree.path.clone();
         let click_path = path.display().to_string();
         let title = worktree
@@ -301,10 +413,29 @@ impl ChangesPanel {
                     .flex_col()
                     .child(
                         div()
-                            .truncate()
-                            .text_size(px(13.0))
-                            .text_color(theme.fg)
-                            .child(SharedString::from(title)),
+                            .flex()
+                            .items_center()
+                            .gap(px(tokens.spacing * 2.0))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(13.0))
+                                    .text_color(theme.fg)
+                                    .child(SharedString::from(title)),
+                            )
+                            .children(counted.map(|c| {
+                                div()
+                                    .id(SharedString::from(format!("changes-counts-{index}")))
+                                    .flex_none()
+                                    .flex()
+                                    .gap(px(tokens.spacing))
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(theme.muted)
+                                    .child(SharedString::from(format!("{} ·", c.files_text())))
+                                    .child(counts_of(c.added, c.removed, &look))
+                            })),
                     )
                     .child(
                         div()

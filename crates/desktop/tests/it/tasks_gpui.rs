@@ -1487,11 +1487,17 @@ fn a_narrow_changes_view_folds_the_files_into_a_strip_and_keeps_the_diff_and_com
     let pane = bounds(&view, cx, Region::Center).expect("the center is drawn");
     let root = bounds(&view, cx, Region::Changes("root")).expect("the view is drawn");
     assert!(root.size.width < gpui::px(720.0), "{root:?} is narrow");
-    // The file list is a strip: no rows until it is unfolded.
+    // The file list is a strip over the rows of every changed file (FX-E2E2-C).
     wait_until(cx, "the strip", |cx| {
         bounds(&view, cx, Region::Changes("files-toggle")).is_some()
     });
-    assert!(bounds(&view, cx, Region::ChangesFile(0)).is_none());
+    assert!(bounds(&view, cx, Region::ChangesFile(0)).is_some());
+    assert!(changes.read_with(cx, |c, _| c.files_open()));
+    // Folded by hand, the strip is the shown file alone.
+    click(&view, cx, Region::Changes("files-toggle"));
+    wait_until(cx, "the folded strip", |cx| {
+        bounds(&view, cx, Region::ChangesFile(0)).is_none()
+    });
     // The diff has the whole width, with its text, and Commit all… is inside the pane.
     let diff = bounds(&view, cx, Region::Changes("diff")).unwrap();
     assert!(
@@ -1517,7 +1523,7 @@ fn a_narrow_changes_view_folds_the_files_into_a_strip_and_keeps_the_diff_and_com
         "the 400-column line can be scrolled to"
     );
 
-    // The strip unfolds into the list; choosing a file shows it and folds the list again.
+    // The strip unfolds into the list; choosing a file shows it and leaves the list as it is.
     click(&view, cx, Region::Changes("files-toggle"));
     wait_until(cx, "the list", |cx| {
         bounds(&view, cx, Region::ChangesFile(1)).is_some()
@@ -1529,7 +1535,7 @@ fn a_narrow_changes_view_folds_the_files_into_a_strip_and_keeps_the_diff_and_com
         changes.read_with(cx, |c, _| c.selected().map(str::to_owned)),
         Some(second)
     );
-    assert!(!changes.read_with(cx, |c, _| c.files_open()));
+    assert!(changes.read_with(cx, |c, _| c.files_open()));
 
     // Wide again: the list sits beside the diff and there is no strip.
     cx.simulate_resize(gpui::size(gpui::px(1800.0), gpui::px(800.0)));
@@ -1537,6 +1543,48 @@ fn a_narrow_changes_view_folds_the_files_into_a_strip_and_keeps_the_diff_and_com
         bounds(&view, cx, Region::ChangesFile(0)).is_some()
             && bounds(&view, cx, Region::Changes("files-toggle")).is_none()
     });
+}
+
+/// FX-E2E2-C item 2: the narrow Changes view (the usual width beside both docks) showed one row,
+/// "1 of 4", with the other files behind a click. Every changed file is a row now, and the
+/// Changes panel's row says how many files and lines the checkout changed.
+#[gpui::test]
+fn a_narrow_changes_view_lists_all_four_changed_files_and_the_panel_row_counts_them(
+    cx: &mut TestAppContext,
+) {
+    let env = Env::new();
+    let wt = feature_worktree(&env);
+    fs::write(wt.join("c.txt"), "c\n").unwrap();
+    let (view, cx) = open(cx, &env);
+    let panel = {
+        cx.dispatch_action(actions::OpenPanel("changes".into()));
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.panel::<hutan_desktop::workbench::panels::ChangesPanel>("changes")
+        })
+        .expect("the Changes panel is drawn")
+    };
+    let changes = open_changes(&view, cx, &wt);
+    wait_until(cx, "four files", |cx| {
+        changes.read_with(cx, |c, _| c.files().len() == 4)
+    });
+    cx.simulate_resize(gpui::size(gpui::px(900.0), gpui::px(800.0)));
+    wait_until(cx, "every file row", |cx| {
+        (0..4).all(|i| region(&view, cx, Region::ChangesFile(i)).is_some())
+    });
+    let root = region(&view, cx, Region::Changes("root")).expect("the view is drawn");
+    assert!(root.size.width < gpui::px(720.0), "{root:?} is narrow");
+    assert!(changes.read_with(cx, |c, _| c.files_open()));
+
+    // The panel row: 4 files, with the lines (a.txt +2 −1, b.txt +1, untracked +2, c.txt +1).
+    let canonical = wt.canonicalize().unwrap();
+    wait_until(cx, "the counts of the checkout", |cx| {
+        panel.read_with(cx, |p, _| p.counts(&canonical).is_some())
+    });
+    let counts = panel.read_with(cx, |p, _| p.counts(&canonical)).unwrap();
+    assert_eq!(counts.files, 4);
+    assert_eq!(counts.files_text(), "4 files");
+    assert_eq!((counts.added, counts.removed), (6, 1));
 }
 
 #[gpui::test]

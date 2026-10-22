@@ -40,7 +40,10 @@ pub use assistant::{
 pub use assistant_rail::{
     NeedsKind, NeedsRow, RailOption, Section as TodaySection, Today, WorkingRow, today,
 };
-pub use changes::{ChangesPanel, Checkouts as ChangesCheckouts, REFRESH_AFTER as CHANGES_REFRESH};
+pub use changes::{
+    ChangesPanel, Checkouts as ChangesCheckouts, Counts as ChangesCounts,
+    REFRESH_AFTER as CHANGES_REFRESH,
+};
 pub use common::{
     age_label, agent_badge, kind_icon, placement_badge, recovery_chip, state_dot, time_tooltip,
     tone_color,
