@@ -435,6 +435,9 @@ pub struct SessionsStore {
     model_names_path: Option<PathBuf>,
     /// The last save of the model names; the next one waits for it.
     model_names_save: Option<Task<()>>,
+    /// Agents whose `chat.models` this run asked for because a chat showed a model without a
+    /// name: asked once per agent per run, never per row.
+    models_asked: std::collections::HashSet<String>,
     _tasks: Vec<Task<()>>,
 }
 
@@ -543,6 +546,7 @@ impl SessionsStore {
             model_names: ModelNames::default(),
             model_names_path: None,
             model_names_save: None,
+            models_asked: std::collections::HashSet::new(),
             _tasks: vec![state_task, notice_task],
         }
     }
@@ -568,6 +572,9 @@ impl SessionsStore {
         self.revision += 1;
         if connected {
             self.last_confirmed_ms = Some(unix_ms());
+        }
+        if connected {
+            self.fetch_missing_model_names(cx);
         }
         // A daemon of a new epoch is up: whoever started it (the CLI, autostart, another
         // client), the stop the user asked for is over.
@@ -2030,6 +2037,30 @@ impl SessionsStore {
             }
             answer
         })
+    }
+
+    /// A chat shows a model this desktop knows no name for: asks its agent's `chat.models`
+    /// once per agent per run (the answer fills the names). Names already known (a restart
+    /// with the cache) ask nothing.
+    fn fetch_missing_model_names(&mut self, cx: &mut Context<Self>) {
+        let missing: Vec<String> = self
+            .state
+            .sessions
+            .iter()
+            .filter_map(|s| s.chat.as_ref())
+            .filter(|chat| {
+                chat.provider_id.is_none()
+                    && !chat.model.is_empty()
+                    && !self.models_asked.contains(&chat.agent)
+                    && self.model_names.name(&chat.agent, &chat.model).is_none()
+            })
+            .map(|chat| chat.agent.clone())
+            .collect();
+        for agent in missing {
+            if self.models_asked.insert(agent.clone()) {
+                self.chat_models(&agent, cx).detach();
+            }
+        }
     }
 
     /// Reads the model names saved at `path` and keeps the ones learned from now on there
