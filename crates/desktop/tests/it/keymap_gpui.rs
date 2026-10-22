@@ -347,7 +347,7 @@ fn a_user_keymap_merges_on_top_of_the_chosen_base(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn cmd_k_arrows_split_and_cmd_k_cmd_arrows_focus_the_neighbor(cx: &mut TestAppContext) {
+fn splits_and_neighbor_focus_do_not_need_cmd_k_chords(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     let pane = |cx: &VisualTestContext| match state(&view, cx).focus {
         FocusTarget::Pane(id) => id,
@@ -360,60 +360,62 @@ fn cmd_k_arrows_split_and_cmd_k_cmd_arrows_focus_the_neighbor(cx: &mut TestAppCo
     };
     let first = pane(cx);
 
-    cx.simulate_keystrokes("cmd-k left");
+    // Split Left is a palette command now (it had only Zed's chord ⌘K ←).
+    cx.dispatch_action(actions::SplitLeft);
     assert_eq!(state(&view, cx).panes().len(), 2);
     let left = pane(cx);
     assert_ne!(left, first, "the new pane takes focus");
     assert!(bounds(cx, left).origin.x < bounds(cx, first).origin.x);
 
-    // ⌘K ⌘→ focuses the neighbor on the right; it does not split.
-    cx.simulate_keystrokes("cmd-k cmd-right");
+    // ⌘⌥→ focuses the neighbor on the right; it does not split.
+    cx.simulate_keystrokes("cmd-alt-right");
     assert_eq!(state(&view, cx).panes().len(), 2);
     assert_eq!(pane(cx), first);
-    cx.simulate_keystrokes("cmd-k cmd-left");
+    cx.simulate_keystrokes("cmd-alt-left");
     assert_eq!(pane(cx), left);
-    // ⌘⌥→ is the same action.
     cx.simulate_keystrokes("cmd-alt-right");
     assert_eq!(pane(cx), first);
 
-    cx.simulate_keystrokes("cmd-k right");
+    // ⌘D splits right and ⌘⇧D down; Up is a palette command like Left.
+    cx.simulate_keystrokes("cmd-d");
     assert_eq!(state(&view, cx).panes().len(), 3);
     let right = pane(cx);
     assert!(bounds(cx, right).origin.x > bounds(cx, first).origin.x);
-
-    cx.simulate_keystrokes("cmd-k up");
+    cx.dispatch_action(actions::SplitUp);
     assert_eq!(state(&view, cx).panes().len(), 4);
     let up = pane(cx);
     assert!(bounds(cx, up).origin.y < bounds(cx, right).origin.y);
-
-    cx.simulate_keystrokes("cmd-k down");
+    cx.simulate_keystrokes("cmd-shift-d");
     assert_eq!(state(&view, cx).panes().len(), 5);
     let down = pane(cx);
     assert!(bounds(cx, down).origin.y > bounds(cx, up).origin.y);
-    cx.simulate_keystrokes("cmd-k cmd-up");
+    cx.simulate_keystrokes("cmd-alt-up");
     assert_eq!(pane(cx), up);
     assert_eq!(state(&view, cx).panes().len(), 5);
-
-    // ⌘D and ⌘⇧D keep splitting right and down.
-    cx.simulate_keystrokes("cmd-d");
-    assert_eq!(state(&view, cx).panes().len(), 6);
 }
 
 #[gpui::test]
-fn cmd_k_alone_is_no_palette_key_in_the_zed_base(cx: &mut TestAppContext) {
+fn cmd_k_opens_the_palette_at_once_in_the_zed_base_and_nothing_waits_for_a_chord(
+    cx: &mut TestAppContext,
+) {
     let (view, cx) = open(cx);
+    // At once: no clock advance, the key is not the prefix of a chord that has to time out.
     cx.simulate_keystrokes("cmd-k");
-    cx.executor().advance_clock(Duration::from_millis(1100));
-    cx.run_until_parked();
     assert!(
-        !view.read_with(cx, |wb, _| wb.palette_open()),
-        "⌘K is only a chord prefix in the Zed base"
+        view.read_with(cx, |wb, _| wb.palette_open()),
+        "⌘K opens the palette in the Zed base"
     );
+    // ⌘K again (or Escape) closes it.
+    cx.simulate_keystrokes("escape");
+    assert!(!view.read_with(cx, |wb, _| wb.palette_open()));
+    // ⌘⇧P is still the key the palette's rows and tooltips show.
+    assert_eq!(hint(cx, &actions::TogglePalette).as_deref(), Some("⌘⇧P"));
+    // The chords' keys are gone from the rows; their commands are not.
     assert_eq!(
         hint(cx, &actions::FocusNeighborLeft).as_deref(),
-        Some("⌘K ⌘←")
+        Some("⌥⌘←")
     );
-    assert_eq!(hint(cx, &actions::SplitLeft).as_deref(), Some("⌘K ←"));
+    assert_eq!(hint(cx, &actions::SplitLeft), None);
 }
 
 #[gpui::test]
@@ -477,4 +479,31 @@ fn font_size_keys_write_the_user_setting(cx: &mut TestAppContext) {
     set_base(&view, cx, "hutan");
     cx.simulate_keystrokes("cmd-=");
     assert_eq!(size(cx), 14.0);
+}
+
+#[gpui::test]
+fn the_palette_ranks_names_that_start_with_the_query_and_commands_with_a_key_first(
+    cx: &mut TestAppContext,
+) {
+    let (view, cx) = open(cx);
+    cx.simulate_keystrokes("cmd-k");
+    assert!(view.read_with(cx, |wb, _| wb.palette_open()));
+    view.update(cx, |wb, cx| wb.set_palette_query("new", cx));
+    let titles = view.read_with(cx, |wb, _| wb.palette_titles());
+    let at = |wanted: &str| {
+        titles
+            .iter()
+            .position(|t| t.as_ref() == wanted)
+            .unwrap_or_else(|| panic!("{wanted} is listed for `new`: {titles:?}"))
+    };
+    // The review's case: `Session: New Terminal` (⌘T) used to come after commands where `new`
+    // is somewhere in the middle of the name.
+    assert!(at("Session: New Terminal") < 3, "{titles:?}");
+    // The names that start with `new` and have a key lead; the ones with `new` inside follow.
+    for inside in [
+        "Layout: Use New Default",
+        "Layout: Move Tab to New Split Right",
+    ] {
+        assert!(at("Session: New Terminal") < at(inside), "{titles:?}");
+    }
 }

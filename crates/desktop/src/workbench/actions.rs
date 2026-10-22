@@ -916,6 +916,10 @@ fn bind<A: Action>(keys: &str, context: Option<&str>) -> BindingSpec {
     }
 }
 
+/// The key context of everything that is not a terminal: where ⌘K opens the palette in the Zed
+/// base.
+const OUTSIDE_TERMINAL: &str = "!HutanTerminal";
+
 /// The key bindings of `base`; `keymap.toml` is merged on top. Where an action has several keys
 /// the preferred one (shown in palette rows and tooltips) comes last: the keymap gives later
 /// bindings precedence.
@@ -1136,6 +1140,8 @@ fn context_bindings() -> Vec<BindingSpec> {
             Some(super::file_view::KEY_CONTEXT),
         ),
         // Language servers (E-12a); Vim's Normal mode has `gd`, `K`, `]d` `[d` and `⌃O` itself.
+        // Hover is ⌘⌥I in both bases (Zed's chord ⌘K ⌘I is gone: ⌘K opens the palette).
+        bind::<hutan_code_view::ShowHover>("cmd-alt-i", Some(hutan_code_view::KEY_CONTEXT)),
         bind::<hutan_code_view::GoToDefinition>("f12", Some(hutan_code_view::KEY_CONTEXT)),
         bind::<hutan_code_view::NextDiagnostic>("f8", Some(hutan_code_view::KEY_CONTEXT)),
         bind::<hutan_code_view::PreviousDiagnostic>("shift-f8", Some(hutan_code_view::KEY_CONTEXT)),
@@ -1199,28 +1205,32 @@ fn numbered_bindings() -> Vec<BindingSpec> {
 /// read from Zed's published `default-macos.json`; Hutan-only actions keep keys Zed leaves
 /// free:
 ///
-/// - ⌘⇧P palette (⌘K is Zed's chord prefix, so it is not bound alone here), ⌘P quick open
+/// - ⌘⇧P palette (and ⌘K, outside terminals: Zed's ⌘K chords are not bound, so the key is not a
+///   prefix that waits for a second stroke), ⌘P quick open
 ///   (files, then the jump list's workspaces and sessions), ⌘⇧E the Files panel, ⌘⇧F / ⌘⇧H
 ///   find / replace in files (Zed's project search), ⌘O open, ⌘, settings, ⌘⇧N new workspace,
 ///   ⌘Y search history (Safari's history key: ⌘⇧F is project search here, as in Zed).
 /// - ⌘B left sidebar; ⌘⌥B / ⌘R / ⌘L right sidebar (⌘L is Orca's key and the one the tooltips
 ///   show; Zed's ⌘L is "go to line", which Hutan has no use for); ⌘J / ⌃\` bottom dock; ⌘⌥Y
 ///   close all docks.
-/// - ⌘K ←→↑↓ (and ⌘\\) split in that direction, ⌘K ⌘←→↑↓ and ⌘⌥←→↑↓ focus the neighbor pane;
-///   ⌘D / ⌘⇧D stay (they are Zed's split keys in the terminal).
+/// - ⌘\\ splits right; ⌘⌥←→↑↓ focus the neighbor pane; ⌘D / ⌘⇧D stay (they are Zed's split keys
+///   in the terminal). Zed's ⌘K ←→↑↓ (split) and ⌘K ⌘←→↑↓ (focus) chords and its ⌘K ⌘I hover
+///   chord are gone (CL-POLISH-4): ⌘K opens the palette, which lists *Layout: Split Left / Up*
+///   and the rest; hover is ⌘⌥I.
 /// - ⇧⎋ zoom pane, ⌘= / ⌘+ / ⌘- / ⌘0 terminal font size.
 /// - Kept from Hutan: ⌘T / ⌘⇧T / ⌘⌥T new session, ⌘⇧W stop, ⌘⇧J next attention, ⌘⇧O
 ///   overview, ⌘⌥R resources, ⌘⌥← … focus a neighbor, ⌘1…⌘9 tabs.
 fn zed_global_bindings() -> Vec<BindingSpec> {
     vec![
+        // ⌘K opens the palette too, except with the keyboard in a terminal (the preferred key,
+        // shown in rows and tooltips, is ⌘⇧P: the last binding).
+        bind::<TogglePalette>("cmd-k", Some(OUTSIDE_TERMINAL)),
         bind::<TogglePalette>("cmd-shift-p", None),
         bind::<QuickOpen>("cmd-p", None),
         bind::<ShowFiles>("cmd-shift-e", None),
         bind::<ShowProblems>("cmd-shift-m", None),
         bind::<ShowSearch>("cmd-shift-f", None),
         bind::<ShowSearchReplace>("cmd-shift-h", None),
-        // Zed's hover chord; ⌘K alone is the palette in the Hutan base, so it has no chord.
-        bind::<hutan_code_view::ShowHover>("cmd-k cmd-i", Some(hutan_code_view::KEY_CONTEXT)),
         bind::<OpenProject>("cmd-o", None),
         bind::<OpenSettings>("cmd-,", None),
         bind::<NewWorkspace>("cmd-shift-n", None),
@@ -1236,13 +1246,9 @@ fn zed_global_bindings() -> Vec<BindingSpec> {
         bind::<ActivateNextTab>("ctrl-tab", None),
         bind::<JumpToNextAttention>("cmd-shift-j", None),
         bind::<ReviewRequest>("cmd-shift-r", None),
-        bind::<SplitRight>("cmd-k right", None),
         bind::<SplitRight>("cmd-\\", None),
         bind::<SplitRight>("cmd-d", None),
-        bind::<SplitDown>("cmd-k down", None),
         bind::<SplitDown>("cmd-shift-d", None),
-        bind::<SplitLeft>("cmd-k left", None),
-        bind::<SplitUp>("cmd-k up", None),
         bind::<ClosePaneItem>("cmd-w", None),
         bind::<StopSession>("cmd-shift-w", None),
         bind::<ToggleZoom>("cmd-shift-enter", None),
@@ -1266,10 +1272,6 @@ fn zed_global_bindings() -> Vec<BindingSpec> {
         bind::<FocusNeighborRight>("cmd-alt-right", None),
         bind::<FocusNeighborUp>("cmd-alt-up", None),
         bind::<FocusNeighborDown>("cmd-alt-down", None),
-        bind::<FocusNeighborLeft>("cmd-k cmd-left", None),
-        bind::<FocusNeighborRight>("cmd-k cmd-right", None),
-        bind::<FocusNeighborUp>("cmd-k cmd-up", None),
-        bind::<FocusNeighborDown>("cmd-k cmd-down", None),
         bind::<ResizeLeft>("ctrl-cmd-left", None),
         bind::<ResizeRight>("ctrl-cmd-right", None),
         bind::<ResizeUp>("ctrl-cmd-up", None),
@@ -1391,7 +1393,8 @@ mod tests {
         let keys = |action: &str| bound(&zed, action);
         let last = |action: &str| keys(action).pop().unwrap_or_default();
         assert_eq!(last(TogglePalette::name_for_type()), "shift-cmd-p");
-        assert!(!keys(TogglePalette::name_for_type()).contains(&"cmd-k".to_owned()));
+        // ⌘K opens the palette outside terminals (CL-POLISH-4); ⌘⇧P stays the key it shows.
+        assert_eq!(keys(TogglePalette::name_for_type()), ["shift-cmd-p"]);
         // ⌘P is quick open: files first, then the jump list (E-13a, ADR 0012 amendment 8).
         assert_eq!(last(QuickOpen::name_for_type()), "cmd-p");
         assert!(keys(OpenJump::name_for_type()).is_empty());
@@ -1402,19 +1405,33 @@ mod tests {
         assert_eq!(last(ToggleBottomDock::name_for_type()), "cmd-j");
         assert_eq!(last(CloseAllDocks::name_for_type()), "alt-cmd-y");
         assert!(keys(ToggleBottomDock::name_for_type()).contains(&"ctrl-`".to_owned()));
-        for (action, chord) in [
-            (SplitLeft::name_for_type(), "cmd-k left"),
-            (SplitRight::name_for_type(), "cmd-k right"),
-            (SplitUp::name_for_type(), "cmd-k up"),
-            (SplitDown::name_for_type(), "cmd-k down"),
-            (FocusNeighborLeft::name_for_type(), "cmd-k cmd-left"),
-            (FocusNeighborRight::name_for_type(), "cmd-k cmd-right"),
-            (FocusNeighborUp::name_for_type(), "cmd-k cmd-up"),
-            (FocusNeighborDown::name_for_type(), "cmd-k cmd-down"),
+        // No ⌘K chord is left: ⌘K is the palette and does not wait for a second stroke.
+        assert!(
+            zed.iter()
+                .all(|b| format_keys(&b.keys) != "cmd-k"
+                    || b.action == TogglePalette::name_for_type()),
+            "only the palette has ⌘K"
+        );
+        assert!(zed.iter().any(|b| format_keys(&b.keys) == "cmd-k"));
+        assert!(
+            zed.iter()
+                .all(|b| !format_keys(&b.keys).starts_with("cmd-k ")),
+            "no chord starts with ⌘K"
+        );
+        // What the chords did is in the palette and on keys of its own: ⌘⌥ arrows focus the
+        // neighbor, ⌘\\ ⌘D ⌘⇧D split (Left and Up are palette commands).
+        for (action, key) in [
             (FocusNeighborLeft::name_for_type(), "alt-cmd-left"),
+            (FocusNeighborRight::name_for_type(), "alt-cmd-right"),
+            (FocusNeighborUp::name_for_type(), "alt-cmd-up"),
+            (FocusNeighborDown::name_for_type(), "alt-cmd-down"),
+            (SplitRight::name_for_type(), "cmd-d"),
+            (SplitDown::name_for_type(), "shift-cmd-d"),
         ] {
-            assert!(keys(action).contains(&chord.to_owned()), "{action}");
+            assert!(keys(action).contains(&key.to_owned()), "{action}");
         }
+        assert!(keys(SplitLeft::name_for_type()).is_empty());
+        assert!(keys(SplitUp::name_for_type()).is_empty());
         assert_eq!(last(IncreaseFontSize::name_for_type()), "cmd-+");
         assert_eq!(last(DecreaseFontSize::name_for_type()), "cmd--");
         assert_eq!(last(ResetFontSize::name_for_type()), "cmd-0");
@@ -1430,8 +1447,8 @@ mod tests {
     }
 
     /// Today's table, kept for people who learned it: `keymap.base = "hutan"` only gains keys
-    /// that were free (⌘P quick open and ⌘⇧E Files, E-13a; ⌘⇧F / ⌘⇧H search, E-13b); none it
-    /// had moves.
+    /// that were free (⌘P quick open and ⌘⇧E Files, E-13a; ⌘⇧F / ⌘⇧H search, E-13b; ⌘⌥I
+    /// hover in the editor, CL-POLISH-4); none it had moves.
     #[test]
     fn hutan_base_is_the_original_table() {
         let mut expected: Vec<String> = [
@@ -1594,6 +1611,7 @@ mod tests {
             "alt-cmd-z | code_view::RejectAgentHunk | FileView",
             "alt-cmd-] | code_view::NextAgentHunk | FileView",
             "alt-cmd-[ | code_view::PreviousAgentHunk | FileView",
+            "alt-cmd-i | code_view::ShowHover | CodeView",
             "f12 | code_view::GoToDefinition | CodeView",
             "f8 | code_view::NextDiagnostic | CodeView",
             "shift-f8 | code_view::PreviousDiagnostic | CodeView",
@@ -1621,15 +1639,15 @@ mod tests {
         assert_eq!(rendered(&default_bindings(KeymapBase::Hutan)), expected);
     }
 
-    /// Context bindings are the same in both bases, except Zed's ⌘K ⌘I hover chord: ⌘K alone is
-    /// the Hutan base's palette, so a chord on it would delay the palette there.
+    /// Context bindings are the same in both bases, except the Zed base's ⌘K for the palette,
+    /// which the keyboard in a terminal does not have (the Hutan base's ⌘K has no context).
     #[test]
     fn the_two_bases_share_every_context_binding() {
         let contextual = |bindings: &[BindingSpec]| -> Vec<BindingSpec> {
             bindings
                 .iter()
                 .filter(|b| b.context.is_some())
-                .filter(|b| b.action != hutan_code_view::ShowHover::name_for_type())
+                .filter(|b| b.action != TogglePalette::name_for_type())
                 .cloned()
                 .collect()
         };
@@ -1637,12 +1655,45 @@ mod tests {
             contextual(&default_bindings(KeymapBase::Zed)),
             contextual(&default_bindings(KeymapBase::Hutan))
         );
-        assert!(
-            default_bindings(KeymapBase::Zed)
-                .iter()
-                .any(|b| b.action == hutan_code_view::ShowHover::name_for_type()
-                    && format_keys(&b.keys) == "cmd-k cmd-i")
+        for base in [KeymapBase::Zed, KeymapBase::Hutan] {
+            assert!(
+                default_bindings(base)
+                    .iter()
+                    .any(|b| b.action == hutan_code_view::ShowHover::name_for_type()
+                        && format_keys(&b.keys) == "alt-cmd-i"),
+                "{base:?} has ⌘⌥I for hover"
+            );
+        }
+    }
+
+    /// ⌘K opens the palette in the Zed base wherever the keyboard is not in a terminal: its
+    /// context says so in the terminal's own key context.
+    #[test]
+    fn zed_cmd_k_is_the_palette_outside_terminals_only() {
+        let zed = default_bindings(KeymapBase::Zed);
+        let cmd_k = zed
+            .iter()
+            .find(|b| format_keys(&b.keys) == "cmd-k")
+            .expect("⌘K is bound in the Zed base");
+        assert_eq!(cmd_k.action, TogglePalette::name_for_type());
+        assert_eq!(
+            cmd_k.context.as_deref(),
+            Some(format!("!{}", hutan_terminal_view::KEY_CONTEXT).as_str())
         );
+        assert_eq!(
+            OUTSIDE_TERMINAL,
+            format!("!{}", hutan_terminal_view::KEY_CONTEXT)
+        );
+        let predicate = gpui::KeyBindingContextPredicate::parse(OUTSIDE_TERMINAL).unwrap();
+        let mut terminal = gpui::KeyContext::default();
+        terminal.add(hutan_terminal_view::KEY_CONTEXT);
+        let mut chat = gpui::KeyContext::default();
+        chat.add("Chat");
+        assert!(
+            !predicate.eval(&[terminal]),
+            "not with the keyboard in a terminal"
+        );
+        assert!(predicate.eval(&[chat]), "everywhere else");
     }
 
     #[test]

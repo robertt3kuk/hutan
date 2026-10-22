@@ -20,6 +20,7 @@ use tokio::sync::watch;
 
 use super::actions::daemon;
 use super::modal::{Modal, ModalChoice};
+use super::palette::Candidate;
 use super::panels::{
     CHIP_HINT, ChipKind, ConnectionChip, StatusTone, chip_of_connection, connection_label,
 };
@@ -481,7 +482,13 @@ impl Workbench {
         let offered = self.menu_state(cx);
         let commands = Rc::clone(&self.commands);
         if let Some(palette) = &mut self.palette {
-            palette.refilter(commands.iter().map(|c| c.title.as_ref()));
+            let keymap = cx.key_bindings();
+            let keymap = keymap.borrow();
+            palette.refilter(commands.iter().map(|c| Candidate {
+                title: c.title.as_ref(),
+                // The commands people use have a key: they rank above the ones that have none.
+                has_key: keymap.bindings_for_action(&*c.hint).next().is_some(),
+            }));
             palette
                 .matches
                 .retain(|&i| commands.get(i).is_some_and(|c| offered.offers(&*c.action)));

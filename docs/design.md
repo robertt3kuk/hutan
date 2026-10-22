@@ -4,7 +4,7 @@ Decisions taken with the user (2026-10-14):
 
 | Topic | Decision |
 |---|---|
-| Layout | **A + B-overview + palette**: sidebar + panes + inspector by default; Agents overview (the Agents page as a focus layout, ⌘⇧O); command palette ⌘⇧P (⌘K in the `hutan` keymap base) |
+| Layout | **A + B-overview + palette**: sidebar + panes + inspector by default; Agents overview (the Agents page as a focus layout, ⌘⇧O); command palette ⌘⇧P (and ⌘K, except with the keyboard in a terminal; the `hutan` keymap base binds ⌘K everywhere) |
 | Configurability | **Everything is a movable component.** Any panel can live in any dock or as a center tab; every component has its own settings section; layouts are saved as presets |
 | Style | **Native macOS chrome + own terminal themes**: transparent titlebar, vibrancy sidebar, SF Pro UI, system accent, light/dark follows the system; terminal and chat use Hutan themes |
 | Density | Setting: `compact` (default) / `comfortable` |
@@ -49,7 +49,7 @@ flowchart TB
 | Action | Mouse | Keyboard (default) |
 |---|---|---|
 | Split the terminal right / down (the new terminal starts in the focused terminal's cwd, inside the same tab) | terminal context menu *Split Right* / *Split Down* | ⌘D / ⌘⇧D with the keyboard in a terminal (§ Terminal splits) |
-| Split the pane right / down (a new pane with its own tab strip, for mixing kinds; it starts a new terminal in the focused terminal's cwd) | pane tab strip menu, tab menu | palette → *Layout: Split Right / Down*; Zed base ⌘K →↓ and ⌘\\; ⌘D / ⌘⇧D outside a terminal |
+| Split the pane right / down (a new pane with its own tab strip, for mixing kinds; it starts a new terminal in the focused terminal's cwd) | pane tab strip menu, tab menu | palette → *Layout: Split Right / Down* (also *Split Left / Up*); Zed base ⌘\\; ⌘D / ⌘⇧D outside a terminal |
 | Move tab to split | drag tab to a pane edge (drop zones); a terminal tab dropped on the edge of another terminal merges into it as a terminal split (⌥ at the drop makes a pane split instead) | palette → "Move tab to new split…" |
 | Move panel to another dock | drag panel tab to dock, or panel menu "Move to ▸" | palette → "Move panel…" |
 | Open panel as center tab | panel menu "Open as tab" | palette |
@@ -174,6 +174,7 @@ The saved layout (`desktop-state.json`) is version 7. Version 7 (MEM-SIDEBAR) ma
 | CL-SIDEBAR | toolbar **New session** (an immediate terminal) | **＋ Start** opens the Start sheet (*Plain terminal* is its What choice); ⌘T still opens a terminal at once |
 | CL-SIDEBAR | the session row's second line (`proj/api · main`), the idle hollow circle, the `blocked · approval` text under a Needs you row, the `Needs you · 2` count, the `⚠ 2` on a project row while the Needs you group is on | one-line rows; the state lane's glyph (its tooltip says the state and detail), the Agents page and the chat for the reason, the Agents nav pill and the status item for the count; a session's folder in its title's tooltip |
 | CL-SIDEBAR | the *respawned / resumed / interrupted / not restarted* word on a row | a muted glyph (`action.recover`, a warning for the ones that need a look) with the word and sentence in its tooltip, always; the summary card has one `state_label` per row |
+| CL-POLISH-4 | the Zed base's ⌘K chords: ⌘K ←→↑↓ (split), ⌘K ⌘←→↑↓ (focus a neighbor pane), ⌘K ⌘I (hover) | ⌘K opens the palette at once (it was a prefix that did nothing alone); focus is ⌘⌥←→↑↓, splits are ⌘D / ⌘⇧D / ⌘\\ and palette → *Layout: Split Left / Up*, hover is ⌘⌥I; a `keymap.toml` chord that starts with ⌘K makes ⌘K wait for its second stroke again |
 | CL-CHAT | the chat header's **Switch model…** button | the status line's model menu (`OMP · opus-4-6 ▾`, the same dialog, between turns); ⌘K *Chat: Switch Model…* unchanged |
 | CL-CHAT | *reject once* as a primary approval button | *Reject* is a secondary button with its key; `1`–`4` unchanged |
 | CL-CHAT | the per-option "Always" paragraphs under an approval's buttons | each *Always* button's tooltip (the same words) and one muted sentence under the buttons |
@@ -646,7 +647,7 @@ The user (2026-10-22): "terminal splits please". Terminal users expect the Ghost
 - **Mouse and menus.** A right-click on a terminal (not on a program that reports the mouse; ⇧ takes the click back) opens *Split Right*, *Split Down* and, in a tab of splits, *Move Split to New Tab* and *Close Split*. Dragging a terminal tab onto the edge of another terminal's tab (or of one of its splits) merges it as a split there; ⌥ at the drop makes a pane split as before, and any other kind of tab still makes a pane split. *Move Split to New Tab* gives the split a tab of its own, right after the tab it left.
 - **After a daemon restart** every split shows its own recovery card (`docs/design.md` § Attention model, `session.recovery`) with its Restart / Close buttons; a split whose session is gone says so and *Close* removes it from the tab.
 
-Parity: ⌘D / ⌘⇧D with the keyboard in a terminal used to split the pane (a new pane with its own tab strip); they now split inside the tab. Nothing is removed: the pane splits are *Layout: Split Right / Down* in the palette, the tab strip's menu, the tab's *Split Right / Down* entries, ⌘K arrows in the Zed base, and dropping a terminal tab with ⌥ held. ⌘⌥ arrows, ⌃⌘ arrows, ⌘⇧↩, ⌘W and ⌘⇧W in a terminal behave as before until the tab has a split.
+Parity: ⌘D / ⌘⇧D with the keyboard in a terminal used to split the pane (a new pane with its own tab strip); they now split inside the tab. Nothing is removed: the pane splits are *Layout: Split Right / Down* in the palette, the tab strip's menu, the tab's *Split Right / Down* entries, ⌘\\ in the Zed base, and dropping a terminal tab with ⌥ held. ⌘⌥ arrows, ⌃⌘ arrows, ⌘⇧↩, ⌘W and ⌘⇧W in a terminal behave as before until the tab has a split.
 
 ## File tabs (E-5, editing E-6)
 
@@ -665,7 +666,7 @@ A file opens in a center tab (`ItemRef::File`, `ui.layout` kind `file`, file ico
 - **Language servers (E-12a; under the hood: `docs/editor.md` § Language servers in file tabs).** No server is ever started, installed or trusted by the editor itself; it shows what the daemon's servers say.
   - **Diagnostics: no colour-only cue** (`docs/spikes/2026-10-21-editor.md` §2.5). Each severity has an underline *style* under its text — **error wavy, warning dotted, information and hint a thin straight line** — and a gutter glyph of its own *shape* in the column left of the numbers (which is always there, so the text never moves when one comes): **error ● disc, warning ▲ triangle, information ◆ diamond, hint ○ ring**, the most serious of the line; colours `editor.diagnostic.error|warning|info|hint` come on top. The same glyphs mark severities in the status item, the Problems panel and the hover popover. Messages are never drawn over the code on every line (Helix #1462): only the **caret's line** shows its most serious message as one quiet hint after the line's end (muted, its glyph first; inline errors where you are, Zed #4901); the rest is on hover. Diagnostics stay on their text while you type, until the server publishes again.
   - **Moving.** `]d` / `[d` (Vim Normal) and **F8 / ⇧F8** go to the next / previous diagnostic, wrapping around; ⌘K *Editor: Next Problem* / *Previous Problem*.
-  - **Hover.** Resting the pointer 500 ms on a word, `K` (Vim) or ⌘K ⌘I (Zed base; ⌘K *Editor: Show Hover*) opens a popover under it (the gutter's fill, a faint border, 6 px corners, a soft shadow, at most 72 columns wide and 16 lines tall, scrolling): the diagnostics there (glyph, message, source), then the server's text — its markdown as plain styled text, headings semibold, code blocks in the editor's monospace family. Moving off the word, Escape, moving the caret or typing closes it.
+  - **Hover.** Resting the pointer 500 ms on a word, `K` (Vim) or ⌘⌥I (both bases; ⌘K *Editor: Show Hover*) opens a popover under it (the gutter's fill, a faint border, 6 px corners, a soft shadow, at most 72 columns wide and 16 lines tall, scrolling): the diagnostics there (glyph, message, source), then the server's text — its markdown as plain styled text, headings semibold, code blocks in the editor's monospace family. Moving off the word, Escape, moving the caret or typing closes it.
   - **Go to definition.** **⌘-click**, `gd` (Vim) or **F12** opens the definition in this tab or in another file's tab (opened or focused, caret there). `⌃O` comes back (Vim's jumplist in the same file; across files the window's list, also *Editor: Go Back*).
   - **Completion popup (E-12b).** Opens under the start of the word being typed after one of the server's trigger characters (`.`, `:` …), after a short pause (20 ms) in a word, or on **⌃Space** (*Show Completions*; ⌃N / ⌃P in Vim's Insert mode). One surface: the gutter's fill, a hairline border, 6 px corners, no shadow; at most 10 rows of one line each: a **kind glyph** (a distinct character per kind in a small outlined square — `m` method, `ƒ` function, `S` struct, `v` variable, `k` keyword, `s` snippet … — coloured like that kind's syntax token, so the shape tells it without colour), the label with the matched characters **bold**, the first line of the detail muted on the right; deprecated items struck through; the selected row has the selection fill. To its right a second panel of the same surface (44 columns, as tall as the list) shows the selected item's detail in the monospace family and its documentation as markdown blocks, once the server resolved it. Typing filters in place (ranked by the server's order, then how well the typed characters match); a character that is neither a word character nor a trigger, a caret that leaves the word, or Escape closes it. **↑ ↓ / ⌃P ⌃N** move (wrapping), **Return / Tab** accept, a click accepts the row. An accepted item and its import are one undo step; a snippet selects its first placeholder and **Tab / ⇧Tab** go through the others to its end. Escape order (TI-1): an input method's composition ends first, then the popups close, and only then does Vim leave Insert.
   - **Signature help (E-12b).** After `(` or `,` (the server's signature triggers) a one-line popover of the same surface sits just above the caret: the signature in the monospace family with the **active parameter bold and underlined** (never colour alone), under it the parameter's (else the signature's) first paragraph of documentation, muted. It follows typing, closes on Escape or when the caret leaves the line, and sits above the completion popup's line, so the two never overlap.
@@ -887,12 +888,12 @@ The **Zed** base follows Zed's published macOS keymap (`default-macos.json`) whe
 
 | Action | Zed base | Hutan base |
 |---|---|---|
-| Command palette | ⌘⇧P (⌘K is Zed's chord prefix, not a palette key here) | ⌘K |
+| Command palette | ⌘⇧P, and ⌘K except with the keyboard in a terminal (CL-POLISH-4: Zed's ⌘K chords are gone, so ⌘K is no prefix that waits for a second stroke) | ⌘K |
 | Quick open: the active project's files (`path:line:col`), then every workspace, project and session; `?` + words searches the session history | ⌘P (Zed's quick open) | ⌘P |
 | Jump to any workspace, project or session only | ⌘P's Sessions section; palette | ⌘J |
 | Files panel (the project's tree, the focused tab's file selected) | ⌘⇧E | ⌘⇧E |
 | Problems panel (the language servers' diagnostics, the keyboard in its list) | ⌘⇧M | ⌘⇧M |
-| Go to definition / back · next / previous diagnostic · hover (file tabs) | F12 / ⌃O · F8 / ⇧F8 · ⌘K ⌘I (Vim Normal: `gd` / `⌃O` · `]d` / `[d` · `K`) | F12 / ⌃O · F8 / ⇧F8 · palette (Vim the same) |
+| Go to definition / back · next / previous diagnostic · hover (file tabs) | F12 / ⌃O · F8 / ⇧F8 · ⌘⌥I (Vim Normal: `gd` / `⌃O` · `]d` / `[d` · `K`) | F12 / ⌃O · F8 / ⇧F8 · ⌘⌥I (Vim the same) |
 | Open a folder as a project (recent projects, Open Folder…) | ⌘O | ⌘O |
 | Settings | ⌘, | ⌘, |
 | New workspace | ⌘⇧N | — |
@@ -927,9 +928,9 @@ The **Zed** base follows Zed's published macOS keymap (`default-macos.json`) whe
 
 The block keys apply while the primary screen shows (a program on the alternate screen — vim, htop — hides blocks and gets every key). Inside a focused terminal every other key goes to the PTY; Option-as-Meta follows `terminal.option_as_meta`. Global keys (docks, palette, splits) work while a terminal has focus.
 
-Chords (`keys = "cmd-k right"`) are GPUI multi-stroke bindings. A `keymap.toml` binding that is the prefix of another binding in the same context (for example `cmd-k` in the Zed base) is reported as a conflict.
+Chords (`keys = "cmd-k right"`) are GPUI multi-stroke bindings. A `keymap.toml` binding that is the prefix of another binding in the same context is reported as a conflict when both share a context. The Zed base has no chords of its own since CL-POLISH-4: ⌘K opens the palette at once instead of waiting for a second stroke; a chord of your own that starts with `cmd-k` brings the wait back.
 
-Elsewhere in the docs "⌘K" names the command palette as the Hutan base binds it (⌘K → "…"); in the Zed base the palette is ⌘⇧P.
+Elsewhere in the docs "⌘K" names the command palette (⌘K → "…"); both bases bind it, the Zed base also has ⌘⇧P, and with the keyboard in a terminal ⌘K does nothing there.
 
 ### Vim's keys and the keymap (FX-VIM-2)
 

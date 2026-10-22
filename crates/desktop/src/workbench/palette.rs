@@ -53,12 +53,62 @@ pub fn fuzzy_score(query: &str, text: &str) -> Option<i32> {
     (qi == query.len()).then_some(score)
 }
 
-/// Indices into `titles` that match `query`, best first; ties keep original order.
-pub fn filter_indices<'a>(query: &str, titles: impl IntoIterator<Item = &'a str>) -> Vec<usize> {
-    let mut scored: Vec<(i32, usize)> = titles
+/// A command as the palette ranks it: its title (`Category: Name`) and whether a key runs it.
+#[derive(Debug, Clone, Copy)]
+pub struct Candidate<'a> {
+    pub title: &'a str,
+    pub has_key: bool,
+}
+
+/// What a command's name starts with, past its `Category: ` prefix.
+fn label_of(title: &str) -> &str {
+    title.split_once(": ").map_or(title, |(_, label)| label)
+}
+
+/// How much better a command ranks for `query` than its subsequence score says: its name
+/// starts with the query (`new` → `Session: New Terminal`) most, a word of it starts with the
+/// query next, and a command with a key (the ones people use) a little on top of either.
+fn rank_bonus(query: &str, candidate: &Candidate<'_>) -> i32 {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return 0;
+    }
+    let title = candidate.title.to_lowercase();
+    let label = label_of(&title);
+    let mut bonus = 0;
+    if label.starts_with(&query) {
+        bonus += 80;
+    } else if title.match_indices(&query).any(|(at, _)| {
+        title[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric())
+    }) {
+        bonus += 40;
+    }
+    if candidate.has_key {
+        bonus += 30;
+    }
+    bonus
+}
+
+/// Indices into `candidates` that match `query`, best first; ties keep the original order. The
+/// subsequence score of [`fuzzy_score`] is lifted by [`rank_bonus`]: names that start with
+/// the query and commands with a key come first.
+pub fn rank_commands<'a>(
+    query: &str,
+    candidates: impl IntoIterator<Item = Candidate<'a>>,
+) -> Vec<usize> {
+    let mut scored: Vec<(i32, usize)> = candidates
         .into_iter()
         .enumerate()
-        .filter_map(|(i, t)| fuzzy_score(query, t).map(|s| (s, i)))
+        .filter_map(|(i, c)| {
+            // The letters of `Category: ` must not steal the match from the name's own
+            // (`Session: New Terminal` for `new` matches the `n` of Session first).
+            let title = fuzzy_score(query, c.title);
+            let label = fuzzy_score(query, label_of(c.title));
+            title.max(label).map(|s| (s + rank_bonus(query, &c), i))
+        })
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     scored.into_iter().map(|(_, i)| i).collect()
@@ -74,8 +124,8 @@ pub struct PaletteState {
 }
 
 impl PaletteState {
-    pub fn refilter<'a>(&mut self, titles: impl IntoIterator<Item = &'a str>) {
-        self.matches = filter_indices(&self.query, titles);
+    pub fn refilter<'a>(&mut self, candidates: impl IntoIterator<Item = Candidate<'a>>) {
+        self.matches = rank_commands(&self.query, candidates);
         self.selected = 0;
     }
 
@@ -111,9 +161,19 @@ mod tests {
         );
     }
 
+    fn plain<'a>(titles: impl IntoIterator<Item = &'a str>) -> Vec<Candidate<'a>> {
+        titles
+            .into_iter()
+            .map(|title| Candidate {
+                title,
+                has_key: false,
+            })
+            .collect()
+    }
+
     #[test]
     fn empty_query_matches_everything_in_order() {
-        assert_eq!(filter_indices("", ["b", "a", "c"]), vec![0, 1, 2]);
+        assert_eq!(rank_commands("", plain(["b", "a", "c"])), vec![0, 1, 2]);
     }
 
     #[test]
@@ -128,16 +188,59 @@ mod tests {
             "Layout: Split Right",
             "Panel: Open Sessions",
         ];
-        assert_eq!(filter_indices("split", titles)[0], 1);
-        assert_eq!(filter_indices("tld", titles)[0], 0);
-        let ranked = filter_indices("sess", titles);
+        assert_eq!(rank_commands("split", plain(titles))[0], 1);
+        assert_eq!(rank_commands("tld", plain(titles))[0], 0);
+        let ranked = rank_commands("sess", plain(titles));
         assert_eq!(ranked[0], 2);
+    }
+
+    /// The review's case (CL-POLISH-4): `new` listed `Chat: New Direct Chat…`, `Layout: Use New
+    /// Default` and `Move Tab to New Split Right…` before `Session: New Terminal ⌘T`.
+    #[test]
+    fn a_name_that_starts_with_the_query_and_a_command_with_a_key_come_first() {
+        let titles = [
+            "Layout: Use New Default",
+            "Move Tab to New Split Right…",
+            "Chat: New Direct Chat…",
+            "Session: New Terminal",
+            "Session: Rename…",
+            "Workspace: New Workspace…",
+        ];
+        let with_keys = [false, false, false, true, false, true];
+        let candidates = || {
+            titles
+                .iter()
+                .zip(with_keys)
+                .map(|(title, has_key)| Candidate { title, has_key })
+        };
+        let ranked = rank_commands("new", candidates());
+        // A name that starts with `new` and has a key beats one that only starts with it, and
+        // both beat the ones where `new` is somewhere inside; `Rename…` has the letters but is
+        // not a word start.
+        assert_eq!(ranked[..2], [3, 5], "the two with a key lead: {ranked:?}");
+        assert_eq!(ranked[2], 2);
+        assert!(!ranked.contains(&4), "`Rename…` has no `new` in it");
+        // Without the keys the names that start with the query still lead.
+        let bare = rank_commands("new", plain(titles));
+        assert!(bare[..3].iter().all(|i| [2, 3, 5].contains(i)), "{bare:?}");
+        // A key lifts a command among equals only.
+        let tie = [
+            Candidate {
+                title: "A: Open Logs",
+                has_key: false,
+            },
+            Candidate {
+                title: "B: Open Settings",
+                has_key: true,
+            },
+        ];
+        assert_eq!(rank_commands("open", tie), vec![1, 0]);
     }
 
     #[test]
     fn selection_wraps() {
         let mut p = PaletteState::default();
-        p.refilter(["a", "b", "c"]);
+        p.refilter(plain(["a", "b", "c"]));
         p.select_prev();
         assert_eq!(p.selected, 2);
         p.select_next();
@@ -146,7 +249,7 @@ mod tests {
             query: "zzz".into(),
             ..PaletteState::default()
         };
-        empty.refilter(["a"]);
+        empty.refilter(plain(["a"]));
         empty.select_next();
         assert_eq!(empty.selected_command(), None);
     }
