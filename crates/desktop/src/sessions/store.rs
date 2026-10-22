@@ -1154,7 +1154,10 @@ impl SessionsStore {
     pub fn changes_to_review(&self, session: SessionId) -> bool {
         self.review_seen(session) == Some(true)
             && self.session(session).is_some_and(|info| {
-                !Self::working(info, &present(info, self.attention.unread(info.id)))
+                !Self::working(
+                    info,
+                    &present(info, self.attention.unread(info.id), &self.model_names),
+                )
             })
     }
 
