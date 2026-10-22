@@ -42,6 +42,9 @@ use crate::workbench::ui::{Button, StyledExt as _};
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::VimConfig;
 
+/// How the page words a listing the daemon could not answer.
+const READ_FAILED: &str = "Could not read the memory";
+
 /// The widest a workspace's name gets on a filter chip before it is cut with "…".
 const FILTER_NAME_MAX: f32 = 120.0;
 
@@ -371,12 +374,21 @@ impl MemoryPanel {
                         this.loaded = true;
                         this.unsupported = false;
                         this.settle_cursor();
+                        if this
+                            .error
+                            .as_deref()
+                            .is_some_and(|e| e.starts_with(READ_FAILED))
+                        {
+                            this.error = None;
+                        }
                         if let Some(id) = this.edit_when_loaded.take() {
                             this.edit_proposal(id, cx);
                         }
                     }
                     (Err(error), _) | (_, Err(error)) => {
-                        this.error = Some(format!("Could not read the memory: {error}"));
+                        this.error = Some(format!("{READ_FAILED}: {error}"));
+                        // Listed again when the store next changes (the daemon came back).
+                        this.stale = true;
                     }
                 }
                 if std::mem::take(&mut this.refresh_again) {
@@ -1513,7 +1525,8 @@ impl MemoryPanel {
                     .flex_1()
                     .min_w_0()
                     .when(archived, |s| s.text_color(theme.muted))
-                    .when(!selected, |s| s.truncate())
+                    // The whole text shows while selected, unless the editor holds it below.
+                    .when(!selected || editing, |s| s.truncate())
                     .child(body.clone()),
             );
         if !selected {
