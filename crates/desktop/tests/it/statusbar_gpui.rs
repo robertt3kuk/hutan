@@ -174,7 +174,7 @@ fn reconnecting_the_bar_says_so_in_the_warning_colour_and_the_click_opens_the_po
 }
 
 #[gpui::test]
-fn stopped_by_you_the_bar_says_stopped_start_and_the_click_opens_the_popover(
+fn stopped_by_you_the_bar_says_stopped_start_and_the_click_starts_the_daemon(
     cx: &mut TestAppContext,
 ) {
     let daemon = TestDaemon::start();
@@ -195,14 +195,24 @@ fn stopped_by_you_the_bar_says_stopped_start_and_the_click_opens_the_popover(
     );
     assert!(drawn(&view, cx, "connection"));
 
-    click(&view, cx, Region::StatusItem("connection"));
-    assert!(popover_open(&view, cx));
+    // The menu's Status… still opens the popover, which offers Start daemon.
+    cx.dispatch_action(daemon_actions::Status);
+    cx.run_until_parked();
     draw(cx);
     assert!(
         view.read_with(cx, |wb, _| wb
             .region_bounds(Region::Popover("daemon-start"))
             .is_some()),
         "the popover offers Start daemon"
+    );
+    close_popover(&view, cx);
+
+    // The chip says Start and a click starts the daemon: no popover to click again in.
+    click(&view, cx, Region::StatusItem("connection"));
+    assert!(!popover_open(&view, cx));
+    assert!(
+        !view.read_with(cx, |wb, _| wb.daemon_stopped()),
+        "the click started the daemon"
     );
 }
 

@@ -613,7 +613,7 @@ fn stop_without_live_sessions_needs_no_confirmation(cx: &mut TestAppContext) {
             wb.daemon_busy().is_none() && wb.daemon_stopped()
         })
     });
-    // The popover shows the way back: Start (button and banner), no Restart/Stop.
+    // The popover shows the way back: one Start, no banner repeating it, no Restart/Stop.
     dispatch(cx, actions::daemon::Status);
     draw(cx);
     assert!(view.read_with(cx, |wb, _| {
@@ -621,7 +621,7 @@ fn stop_without_live_sessions_needs_no_confirmation(cx: &mut TestAppContext) {
     }));
     assert!(view.read_with(cx, |wb, _| {
         wb.region_bounds(Region::Popover("daemon-banner-start"))
-            .is_some()
+            .is_none()
     }));
     assert!(view.read_with(cx, |wb, _| {
         wb.region_bounds(Region::Popover("daemon-stop")).is_none()

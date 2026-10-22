@@ -237,27 +237,6 @@ impl Workbench {
                                 .child(div().size(px(8.0)).rounded_full().bg(dot))
                                 .child(SharedString::from(line)),
                         )
-                        .when(self.daemon.stopped, |s| {
-                            s.child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .px(px(tokens.spacing * 2.0))
-                                    .py(px(tokens.spacing))
-                                    .rounded(px(tokens.radius))
-                                    .border_1()
-                                    .border_color(theme.danger)
-                                    .child("Daemon stopped — Start it to reconnect")
-                                    .when(!busy, |s| {
-                                        s.child(button(
-                                            "daemon-banner-start",
-                                            "Start",
-                                            Box::new(daemon::Start),
-                                        ))
-                                    }),
-                            )
-                        })
                         .children(failure)
                         .child(div().flex().flex_col().gap(px(2.0)).children(
                             fields.into_iter().map(|(name, value)| {

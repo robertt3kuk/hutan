@@ -465,6 +465,9 @@ pub struct SessionsStore {
     /// The restart whose summary was already put up (`restarted_at_ms`): it is not shown again,
     /// whatever the user did with it.
     recovery_shown: Option<u64>,
+    /// Sessions this window is reopening (Undo of a close, History's Reopen): the daemon gives a
+    /// reopened session a recovery of its own, which says nothing the user does not know.
+    reopening: HashSet<SessionId>,
     /// The daemon's tasks (`task.list`, then `task.updated` / `task.removed`).
     tasks: TaskBook,
     /// The `task.list` in flight; dropped (cancelled) with the connection.
@@ -603,6 +606,7 @@ impl SessionsStore {
             scan_task: None,
             scan_again: false,
             recovery_shown: None,
+            reopening: HashSet::new(),
             tasks: TaskBook::default(),
             tasks_loading: None,
             assistant_pinned: std::collections::HashSet::new(),
@@ -751,7 +755,7 @@ impl SessionsStore {
     /// A window that opens after the restart is told too: what a restart did is news until it is
     /// acknowledged, wherever the user was.
     fn observe_recovery(&mut self, cx: &mut Context<Self>) {
-        let Some(summary) = recovery::summary(&self.state.sessions, relative_to_now) else {
+        let Some(summary) = self.recovery_summary() else {
             return;
         };
         if self.recovery_shown == Some(summary.restarted_at_ms) {
@@ -766,7 +770,17 @@ impl SessionsStore {
     /// What the daemon restart did to the sessions that are not acknowledged yet; `None` when
     /// there is nothing to say.
     pub fn recovery_summary(&self) -> Option<Summary> {
-        recovery::summary(&self.state.sessions, relative_to_now)
+        if self.reopening.is_empty() {
+            return recovery::summary(&self.state.sessions, relative_to_now);
+        }
+        let others: Vec<SessionInfo> = self
+            .state
+            .sessions
+            .iter()
+            .filter(|s| !self.reopening.contains(&s.id))
+            .cloned()
+            .collect();
+        recovery::summary(&others, relative_to_now)
     }
 
     /// `session.recovery_ack` for one session, or for all of them.
@@ -2541,18 +2555,35 @@ impl SessionsStore {
         })
     }
 
-    /// `session.reopen`: a closed session comes back.
+    /// `session.reopen`: a closed session comes back. The recovery the daemon attaches to it
+    /// (it is brought back the way a restart brings one back) is acknowledged at once: the user
+    /// asked for this session, so no restart card or chip is due.
     pub fn reopen(
         &mut self,
         session: SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<SessionInfo, String>> {
-        self.run(
+        self.reopening.insert(session);
+        let reopened = self.run(
             Request::SessionReopen(SessionRef {
                 session_id: session,
             }),
             cx,
-        )
+        );
+        cx.spawn(async move |this, cx| {
+            let result = reopened.await;
+            if result.is_ok()
+                && let Ok(ack) = this.update(cx, |store, cx| store.ack_recovery(Some(session), cx))
+            {
+                // Refused by an older daemon: the chip stays, harmless.
+                let _ = ack.await;
+            }
+            this.update(cx, |store, _| {
+                store.reopening.remove(&session);
+            })
+            .ok();
+            result
+        })
     }
 
     pub fn restart(

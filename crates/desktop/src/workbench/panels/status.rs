@@ -54,7 +54,7 @@ pub enum ChipKind {
     Busy,
     /// The connection dropped; the client is trying again.
     Reconnecting,
-    /// Stopped (by the user, or the connection is closed): *Start* is in the popover.
+    /// Stopped (by the user, or the connection is closed): a click starts the daemon.
     Stopped,
     /// The daemon could not start: *Details* are in the popover.
     Failed,
@@ -84,6 +84,9 @@ pub struct ConnectionChip {
 /// The click's way to the daemon's controls, said in every tooltip.
 pub const CHIP_HINT: &str = "Click for the daemon controls";
 
+/// What a click does while the daemon is stopped.
+pub const START_HINT: &str = "Click to start it";
+
 /// The chip of a connection that is not otherwise special: connecting, reconnecting, stopped.
 /// `Connected` is built by the workbench, which knows the daemon's version, pid and uptime.
 pub fn chip_of_connection(state: ConnectionState) -> ConnectionChip {
@@ -108,10 +111,15 @@ pub fn chip_of_connection(state: ConnectionState) -> ConnectionChip {
             "hutand is not running".to_owned(),
         ),
     };
+    let hint = if kind == ChipKind::Stopped {
+        START_HINT
+    } else {
+        CHIP_HINT
+    };
     ConnectionChip {
         kind,
         word,
-        tooltip: format!("{tooltip} · {CHIP_HINT}"),
+        tooltip: format!("{tooltip} · {hint}"),
     }
 }
 
@@ -224,12 +232,21 @@ pub fn builtin_status_items() -> StatusItemRegistry {
             // Below 700 px a daemon that is up is its dot alone; a daemon that is not keeps
             // its word, which is the state.
             let dot_only = ctx.width == BarWidth::Narrow && chip.kind == ChipKind::Up;
+            // A stopped daemon's chip says `Start`: the click starts it, with no second click
+            // in a popover. Every other state opens the daemon's controls.
+            let stopped = chip.kind == ChipKind::Stopped;
             let mut item = clickable("status-connection", ctx)
                 .flex()
                 .items_center()
                 .gap(px(6.0))
                 .tooltip(tooltip(chip.tooltip.clone()))
-                .on_click(|_, window, cx| window.dispatch_action(Box::new(daemon::Status), cx))
+                .on_click(move |_, window, cx| {
+                    if stopped {
+                        window.dispatch_action(Box::new(daemon::Start), cx)
+                    } else {
+                        window.dispatch_action(Box::new(daemon::Status), cx)
+                    }
+                })
                 .child(chip_mark(chip.kind, color));
             if !dot_only {
                 item = item.child(

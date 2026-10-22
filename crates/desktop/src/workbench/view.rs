@@ -1130,7 +1130,7 @@ impl Workbench {
                 },
             ),
             cx.subscribe(&sessions, |this, _, _: &RecoverySummaryDue, cx| {
-                this.show_recovery_summary(cx);
+                this.on_recovery_due(cx);
             }),
             // A command or a turn ended in a checkout: the branch may have changed.
             cx.subscribe(

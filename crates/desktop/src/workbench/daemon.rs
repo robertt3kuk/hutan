@@ -22,7 +22,8 @@ use super::actions::daemon;
 use super::modal::{Modal, ModalChoice};
 use super::palette::Candidate;
 use super::panels::{
-    CHIP_HINT, ChipKind, ConnectionChip, StatusTone, chip_of_connection, connection_label,
+    CHIP_HINT, ChipKind, ConnectionChip, START_HINT, StatusTone, chip_of_connection,
+    connection_label,
 };
 use super::view::Workbench;
 use crate::app::DaemonMenu;
@@ -106,6 +107,9 @@ pub(crate) struct DaemonControl {
     pub(crate) identity: super::lifecycle::IdentityCheck,
     /// Said once the next start connected (the update of an idle old daemon).
     pub(crate) start_notice: Option<String>,
+    /// When the user started a daemon they had stopped (this window's *Start*, or the CLI after
+    /// a stop it announced): the restart summary of that start is expected, so it is not news.
+    pub(crate) user_started: Option<Instant>,
 }
 
 impl DaemonControl {
@@ -127,9 +131,13 @@ impl DaemonControl {
             stuck_info: None,
             identity: super::lifecycle::IdentityCheck::new(own),
             start_notice: None,
+            user_started: None,
         }
     }
 }
+
+/// How long after the user started the daemon its restart summary is still theirs.
+const USER_START_WINDOW: Duration = Duration::from_secs(60);
 
 /// The app has the daemon actions ([`register_app_actions`]).
 struct AppActions;
@@ -364,7 +372,8 @@ impl Workbench {
     /// The `connection` status item, always drawn: a `state.ok` dot and `hutand` while the
     /// daemon is up (the tooltip says its version, pid, uptime, sessions and clients), else the
     /// state in its colour: `Reconnecting…`, `Starting…`, `Stopped · Start`,
-    /// `Can't start · Details`. A click opens the daemon popover.
+    /// `Can't start · Details`. A click opens the daemon popover, except on `Stopped · Start`,
+    /// where it starts the daemon.
     pub fn connection_chip(&self, cx: &App) -> ConnectionChip {
         if let Some(busy) = self.daemon.busy {
             let (word, tip) = busy.chip();
@@ -378,7 +387,7 @@ impl Workbench {
             return ConnectionChip {
                 kind: ChipKind::Stopped,
                 word: "Stopped · Start".to_owned(),
-                tooltip: format!("You stopped hutand · {CHIP_HINT}"),
+                tooltip: format!("You stopped hutand · {START_HINT}"),
             };
         }
         if let Some(kind) = self.start_failure_kind(cx) {
@@ -681,7 +690,16 @@ impl Workbench {
 
     /// Leaves the stopped state without launching anything and lets the connection bring a
     /// daemon back again should this one go away.
+    /// The daemon that is up now was started by the user a moment ago (and consumes the mark).
+    pub(crate) fn daemon_started_by_user(&mut self) -> bool {
+        self.daemon
+            .user_started
+            .take()
+            .is_some_and(|at| at.elapsed() < USER_START_WINDOW)
+    }
+
     fn resume_after_external_start(&mut self, cx: &mut Context<Self>) {
+        self.daemon.user_started = Some(Instant::now());
         self.set_daemon_stopped(false, cx);
         self.connection(cx).set_autostart(true);
         cx.notify();
@@ -778,6 +796,9 @@ impl Workbench {
             }),
             cx,
         );
+        if !restarting {
+            self.daemon.user_started = Some(Instant::now());
+        }
         self.set_daemon_stopped(false, cx);
         let mut state = connection.state();
         connection.start_daemon_now();

@@ -28,6 +28,25 @@ impl Workbench {
         self.recovery_open
     }
 
+    /// The store says a restart left something unacknowledged. After a clean stop that cut
+    /// nothing off, started by the user (they stopped the daemon and started it again), there
+    /// is nothing to decide: it is acknowledged without a card, chips or banners. Anything
+    /// else is shown.
+    pub(crate) fn on_recovery_due(&mut self, cx: &mut Context<Self>) {
+        let own_start = self.daemon_started_by_user();
+        let calm = own_start
+            && self
+                .sessions
+                .read(cx)
+                .recovery_summary()
+                .is_some_and(|summary| summary.is_calm());
+        if calm {
+            self.ack_recovery(None, cx);
+        } else {
+            self.show_recovery_summary(cx);
+        }
+    }
+
     /// Puts the summary up (the store says a restart left something unacknowledged).
     pub(crate) fn show_recovery_summary(&mut self, cx: &mut Context<Self>) {
         self.recovery_open = true;

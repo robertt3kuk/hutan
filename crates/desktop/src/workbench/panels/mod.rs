@@ -88,7 +88,7 @@ pub use resources_model::{
 pub use search::{ReplaceCount, ResultFile, SearchField, SearchPanel, SearchRow, SearchStatus};
 pub use sessions::{DraggedProject, DraggedWorkspace, RowKind, SessionsPanel, SidebarRow};
 pub use status::{
-    CHIP_HINT, ChipKind, ConnectionChip, Tone as StatusTone, builtin_status_items,
+    CHIP_HINT, ChipKind, ConnectionChip, START_HINT, Tone as StatusTone, builtin_status_items,
     chip_of_connection, connection_label,
 };
 pub use tasks::{CascadeAsk, TICK as TASKS_TICK, TasksPanel};

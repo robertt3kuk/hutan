@@ -3,12 +3,14 @@
 
 use crate::common;
 
-use common::{TestDaemon, draw, open_with, wait_until};
+use common::{ProcessDaemon, TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
+use hutan_client::{Connection, ConnectionState};
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::model::DockPosition;
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_settings::{SettingsPaths, SettingsStore};
+use hutan_terminal_view::ViewStatus;
 
 fn open<'a>(
     cx: &'a mut TestAppContext,
@@ -65,4 +67,103 @@ fn a_popover_button_over_a_dock_edge_takes_the_click(cx: &mut TestAppContext) {
         wanted + 3.0,
         "the dock was not dragged"
     );
+}
+
+// ---- 2. F2, F3: a stopped daemon, said once ----------------------------------------------------
+
+/// `Stopped · Start` starts the daemon with the one click, no popover opens, and the sessions
+/// that come back after the user's own stop and start raise no restart card or chip.
+#[gpui::test]
+fn the_stopped_chip_starts_the_daemon_at_once_without_a_restart_card(cx: &mut TestAppContext) {
+    let process = ProcessDaemon::new();
+    let session = process.create_session(&["sleep", "600"]);
+    let settings = SettingsStore::new(SettingsPaths::in_dir(&process.dir.path().join("config")));
+    let (view, cx) = open_with(cx, settings, Connection::start(process.options()), None);
+    wait_until(cx, "the session", |cx| {
+        view.read_with(cx, |wb, cx| {
+            let store = wb.sessions().read(cx);
+            store.synced() && store.sessions().len() == 1
+        })
+    });
+    view.update_in(cx, |wb, window, cx| wb.open_session(session.id, window, cx));
+    wait_until(cx, "the terminal", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.terminal_view_of(session.id)
+                .is_some_and(|v| v.read(cx).status() == &ViewStatus::Live)
+        })
+    });
+
+    // The popover's Stop; the daemon stays down.
+    cx.dispatch_action(actions::daemon::Status);
+    cx.run_until_parked();
+    draw(cx);
+    let stop = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Popover("daemon-stop")))
+        .expect("Stop");
+    cx.simulate_click(stop.center(), Modifiers::none());
+    cx.run_until_parked();
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
+    wait_until(cx, "the stop to finish", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.daemon_busy().is_none() && wb.daemon_stopped()
+        })
+    });
+    assert_eq!(view.read_with(cx, |wb, _| wb.daemon_popover_open()), true);
+    cx.dispatch_action(hutan_desktop::workbench::actions::palette::Dismiss);
+    draw(cx);
+    assert!(!view.read_with(cx, |wb, _| wb.daemon_popover_open()));
+
+    // The popover, opened while stopped, has one Start and no banner repeating it.
+    cx.dispatch_action(actions::daemon::Status);
+    cx.run_until_parked();
+    draw(cx);
+    let drawn = |cx: &VisualTestContext, name| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Popover(name)).is_some()
+        })
+    };
+    assert!(drawn(cx, "daemon-start"));
+    assert!(!drawn(cx, "daemon-banner-start"));
+    cx.dispatch_action(hutan_desktop::workbench::actions::palette::Dismiss);
+    draw(cx);
+
+    // One click on `Stopped · Start`.
+    let chip = view
+        .read_with(cx, |wb, _| {
+            wb.region_bounds(Region::StatusItem("connection"))
+        })
+        .expect("the connection item");
+    cx.simulate_click(chip.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        !view.read_with(cx, |wb, _| wb.daemon_popover_open()),
+        "no popover to click again"
+    );
+    wait_until(cx, "the daemon to start again", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.daemon_busy().is_none()
+                && wb.sessions().read(cx).connection_state() == ConnectionState::Connected
+                && !wb.daemon_stopped()
+        })
+    });
+    // The respawned session is not news: no card, and no chip once the acknowledgement is back.
+    wait_until(cx, "the respawned session", |cx| {
+        view.read_with(cx, |wb, cx| {
+            let store = wb.sessions().read(cx);
+            store.sessions().len() == 1 && store.sessions().iter().all(|s| s.state.is_live())
+        })
+    });
+    wait_until(cx, "the recovery to be acknowledged", |cx| {
+        assert!(
+            !view.read_with(cx, |wb, _| wb.recovery_summary_open()),
+            "no restart card after the user's own stop and start"
+        );
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .sessions()
+                .iter()
+                .all(|s| s.recovery.is_none())
+        })
+    });
 }

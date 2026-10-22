@@ -159,6 +159,8 @@ pub struct Summary {
     pub headline: String,
     /// `5 sessions: 2 shells respawned, 1 chat turn interrupted, 1 not restarted (omp not found)`.
     pub counts: String,
+    /// The daemon of this restart ended with a clean stop (the user stopped it, or an upgrade).
+    pub clean_stop: bool,
     /// The ones that need a decision first.
     pub rows: Vec<SummaryRow>,
 }
@@ -203,11 +205,18 @@ pub fn summary(sessions: &[SessionInfo], when: impl Fn(u64) -> String) -> Option
         restarted_at_ms,
         headline: headline(newest, &when),
         counts: counts(&notable, restarted_at_ms),
+        clean_stop: matches!(newest.daemon_stop, DaemonStop::Clean { .. }),
         rows,
     })
 }
 
 impl Summary {
+    /// The restart followed a clean stop and nothing was cut off or left down: there is nothing
+    /// to decide, and the user, who stopped the daemon, needs no card to tell them it came back.
+    pub fn is_calm(&self) -> bool {
+        self.clean_stop && self.rows.iter().all(|row| row.chip.tone != ChipTone::Warn)
+    }
+
     /// The summary as plain lines: the headline, the counts, then one line per session
     /// (`  respawned      build  A new shell started in …`), with what can be done about it.
     pub fn text(&self) -> String {

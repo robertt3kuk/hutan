@@ -1066,19 +1066,9 @@ impl Workbench {
             } else {
                 Mascot::Empty
             };
+            // While the daemon is stopped the status bar says so and starts it (one message).
             let action = if stopped {
-                Some(
-                    self.action_button(
-                        "daemon-start",
-                        "Start",
-                        ui::ButtonKind::Primary,
-                        cx,
-                        |this, _, cx| {
-                            this.start_daemon(cx);
-                        },
-                    )
-                    .into_any_element(),
-                )
+                None
             } else if !known && synced {
                 Some(
                     self.action_button(
@@ -1121,33 +1111,9 @@ impl Workbench {
                 }),
             )
             .child(super::render::cached_view(&self.regions, view));
-        if self.daemon.stopped {
-            // The user stopped the daemon: one banner with the way back, instead of Close.
-            root = root.child(
-                div()
-                    .absolute()
-                    .top(px(tokens.spacing * 2.0))
-                    .right(px(tokens.spacing * 3.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(tokens.spacing * 2.0))
-                    .child(
-                        div()
-                            .text_color(theme.muted)
-                            .text_size(px(tokens.font_size))
-                            .child("Daemon stopped"),
-                    )
-                    .child(self.action_button(
-                        "daemon-start",
-                        "Start",
-                        ui::ButtonKind::Primary,
-                        cx,
-                        |this, _, cx| {
-                            this.start_daemon(cx);
-                        },
-                    )),
-            );
-        } else if ended {
+        // A stopped daemon is said once, by the status bar's `Stopped · Start`; a terminal does
+        // not repeat it with a banner of its own.
+        if ended && !self.daemon.stopped {
             let mut bar = div()
                 .absolute()
                 .top(px(tokens.spacing * 2.0))
