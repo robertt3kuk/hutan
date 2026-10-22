@@ -391,6 +391,16 @@ impl Workbench {
         let mut chip = chip_of_connection(self.sessions.read(cx).connection_state());
         if chip.kind == ChipKind::Up {
             chip.tooltip = self.up_tooltip(cx);
+            // `status.connection.show_version`: the daemon says which version it is.
+            if self
+                .settings
+                .get::<crate::settings::StatusSettings>()
+                .connection
+                .show_version
+                && let Some(status) = &self.daemon.status
+            {
+                chip.word = format!("hutand {}", status.info.daemon_version);
+            }
         }
         chip
     }

@@ -10,6 +10,7 @@ mod changes;
 pub mod chat;
 mod closing;
 mod customize;
+mod customize_bar;
 mod daemon;
 mod daemon_popover;
 mod docks;
@@ -90,6 +91,7 @@ pub use changes::{
     index_mark,
 };
 pub use customize::{LAYOUT_TOAST_CONTEXT, LAYOUT_TOAST_TIME, LayoutToast, PanelPopover};
+pub use customize_bar::{DraggedStatusItem, StatusOption, status_item_title};
 pub use daemon::{DaemonBusy, log_file as daemon_log_file};
 pub use docks::{COLLAPSE_DRAG, RESIZE_CONTEXT};
 pub use files::{BufferStore, FileOpen};

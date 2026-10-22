@@ -395,6 +395,7 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<FilesPanelSettings>(),
         CatalogEntry::of::<crate::settings::ProblemsPanelSettings>(),
         CatalogEntry::of::<crate::settings::SearchPanelSettings>(),
+        CatalogEntry::of::<crate::settings::StatusSettings>(),
         CatalogEntry::of::<WorkspacesSettings>(),
         CatalogEntry::of::<TasksSettings>(),
         CatalogEntry::of::<NotificationsSettings>(),

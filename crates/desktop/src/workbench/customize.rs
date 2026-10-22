@@ -88,6 +88,8 @@ pub(crate) struct LayoutUndo {
     /// The user-layer values the change replaced, `None` when the key was not set (so undoing
     /// removes it).
     keys: Vec<(String, Option<toml::Value>)>,
+    /// The change moved panels (the docks and the center are undone too), not just settings.
+    docks_scope: bool,
 }
 
 /// The panel settings popover (`Panel settings…`): where it hangs and for which panel.
@@ -388,6 +390,28 @@ impl Workbench {
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut WorkbenchState, &mut StatusBarLayout) -> bool,
     ) -> bool {
+        self.customize(label, affected, true, cx, change)
+    }
+
+    /// [`Self::customize_layout`] for a change of the status bar alone: the preset's docks are
+    /// written as they were, whatever the window drifted to, and undoing leaves the docks alone.
+    pub(crate) fn customize_status(
+        &mut self,
+        label: String,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut StatusBarLayout) -> bool,
+    ) -> bool {
+        self.customize(label, &[], false, cx, move |_, status| change(status))
+    }
+
+    fn customize(
+        &mut self,
+        label: String,
+        affected: &[PanelId],
+        dock_scope: bool,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut WorkbenchState, &mut StatusBarLayout) -> bool,
+    ) -> bool {
         let docks = self.state.docks.clone();
         let center: Vec<_> = affected
             .iter()
@@ -408,7 +432,7 @@ impl Workbench {
             .map(|def| def.layout.docks.clone())
             .unwrap_or_else(|| LayoutPreset::default_preset().docks);
         let mut written = base;
-        for pos in DockPosition::ALL {
+        for pos in DockPosition::ALL.into_iter().filter(|_| dock_scope) {
             let live = self.state.docks.get(pos);
             let dock = written.get_mut(pos);
             let was_empty = dock.panels.is_empty();
@@ -460,6 +484,7 @@ impl Workbench {
             after: modes_of(&self.state.docks),
             center,
             keys: before,
+            docks_scope: dock_scope,
         });
         self.show_layout_toast(label, note, rev, cx);
         true
@@ -512,6 +537,54 @@ impl Workbench {
         Ok(())
     }
 
+    /// A change of settings keys alone (an item's option, the sidebar's sections): writes each
+    /// `(key, value)` into the user's `settings.toml` (`None` removes the key), shows the Undo
+    /// toast and remembers the values the keys had. Returns whether it was written.
+    pub(crate) fn customize_keys(
+        &mut self,
+        label: String,
+        writes: Vec<(String, Option<toml::Value>)>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let before: Vec<(String, Option<toml::Value>)> = writes
+            .iter()
+            .map(|(key, _)| {
+                (
+                    key.clone(),
+                    self.settings.layer_value(SettingsLayer::User, key),
+                )
+            })
+            .collect();
+        for (key, value) in &writes {
+            let result = match value {
+                Some(value) => self.settings.write_user(key, value.clone()),
+                None => {
+                    let (namespace, rest) = key.split_once('.').unwrap_or((key.as_str(), ""));
+                    self.settings
+                        .remove(SettingsLayer::User, namespace, rest)
+                        .map(|_| ())
+                }
+            };
+            if let Err(error) = result {
+                tracing::warn!("cannot save {key}: {error}");
+                self.set_notice(format!("Cannot save the change: {error}"), cx);
+                return false;
+            }
+        }
+        self.toast_rev += 1;
+        let rev = self.toast_rev;
+        self.layout_undo = Some(LayoutUndo {
+            preset: self.state.preset.clone(),
+            docks: self.state.docks.clone(),
+            after: modes_of(&self.state.docks),
+            center: Vec::new(),
+            keys: before,
+            docks_scope: false,
+        });
+        self.show_layout_toast(label, None, rev, cx);
+        true
+    }
+
     // ---- the Undo toast ----------------------------------------------------------------------
 
     fn show_layout_toast(
@@ -557,9 +630,9 @@ impl Workbench {
             let result = match previous {
                 Some(value) => self.settings.write_user(key, value.clone()),
                 None => {
-                    let rest = key.strip_prefix("layout.").unwrap_or(key);
+                    let (namespace, rest) = key.split_once('.').unwrap_or((key.as_str(), ""));
                     self.settings
-                        .remove(SettingsLayer::User, "layout", rest)
+                        .remove(SettingsLayer::User, namespace, rest)
                         .map(|_| ())
                 }
             };
@@ -569,43 +642,45 @@ impl Workbench {
         }
         self.refresh_layout_defs(cx);
         self.state.preset = undo.preset;
-        for (index, pos) in DockPosition::ALL.into_iter().enumerate() {
-            let before = undo.docks.get(pos);
-            let dock = self.state.docks.get_mut(pos);
-            dock.panels = before.panels.clone();
-            dock.more = before.more.clone();
-            dock.active = before.active.clone();
-            if (dock.visible, dock.collapsed) == undo.after[index] {
-                dock.visible = before.visible;
-                dock.collapsed = before.collapsed;
-            }
-        }
-        // Panels that sat among the center's tabs go back to their tab; the ones that did not
-        // leave it.
-        for (panel, position) in &undo.center {
-            for pane in self.state.center.panes_mut() {
-                pane.items.retain(|item| item.as_panel() != Some(panel));
-                pane.active = pane.active.min(pane.items.len().saturating_sub(1));
-            }
-            if let Some((pane, index)) = position {
-                let fallback = self.state.active_pane_id();
-                let at = if self.state.pane(*pane).is_some() {
-                    *pane
-                } else {
-                    fallback
-                };
-                if let Some(pane) = self.state.center.pane_mut(at) {
-                    let index = (*index).min(pane.items.len());
-                    pane.items.insert(
-                        index,
-                        super::model::ItemRef::Panel {
-                            panel: panel.clone(),
-                        },
-                    );
+        if undo.docks_scope {
+            for (index, pos) in DockPosition::ALL.into_iter().enumerate() {
+                let before = undo.docks.get(pos);
+                let dock = self.state.docks.get_mut(pos);
+                dock.panels = before.panels.clone();
+                dock.more = before.more.clone();
+                dock.active = before.active.clone();
+                if (dock.visible, dock.collapsed) == undo.after[index] {
+                    dock.visible = before.visible;
+                    dock.collapsed = before.collapsed;
                 }
             }
+            // Panels that sat among the center's tabs go back to their tab; the ones that did
+            // not leave it.
+            for (panel, position) in &undo.center {
+                for pane in self.state.center.panes_mut() {
+                    pane.items.retain(|item| item.as_panel() != Some(panel));
+                    pane.active = pane.active.min(pane.items.len().saturating_sub(1));
+                }
+                if let Some((pane, index)) = position {
+                    let fallback = self.state.active_pane_id();
+                    let at = if self.state.pane(*pane).is_some() {
+                        *pane
+                    } else {
+                        fallback
+                    };
+                    if let Some(pane) = self.state.center.pane_mut(at) {
+                        let index = (*index).min(pane.items.len());
+                        pane.items.insert(
+                            index,
+                            super::model::ItemRef::Panel {
+                                panel: panel.clone(),
+                            },
+                        );
+                    }
+                }
+            }
+            self.state.normalize();
         }
-        self.state.normalize();
         self.after_change(cx);
     }
 

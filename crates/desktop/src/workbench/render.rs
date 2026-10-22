@@ -6,7 +6,7 @@ use super::model::{
     Pane, PaneId, PaneTree, PanelDest,
 };
 use super::panels::AgentsRequest;
-use super::registry::{BarWidth, DockState, PerDock, StatusContext, StatusData};
+use super::registry::{BarWidth, DockState, PerDock, StatusContext, StatusData, StatusSide};
 use super::terminals::session_of_item;
 use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, Mascot, StyledExt as _};
@@ -2346,7 +2346,13 @@ impl Workbench {
             connection: self.connection_chip(cx),
             sessions: store.sessions().len(),
             workspace: self.workspace_label(cx),
-            branch: self.workspace_branch(cx),
+            // `status.workspace.show_branch`.
+            branch: self.workspace_branch(cx).filter(|_| {
+                self.settings
+                    .get::<crate::settings::StatusSettings>()
+                    .workspace
+                    .show_branch
+            }),
             requests: store.requests().len(),
             // The agents at work as of the last time the daemon said so: not while it is gone.
             working: if self.daemon_connected(cx) {
@@ -2407,21 +2413,48 @@ impl Workbench {
             height: tokens.status_bar,
         };
         let status_bar = self.status_bar();
-        let render_side = |ids: &[String]| -> Vec<AnyElement> {
-            ids.iter()
-                .filter_map(|item| self.status_items.get(item))
-                .map(|spec| {
-                    div()
-                        .relative()
-                        .child((spec.render)(&ctx))
-                        .child(probe(&self.regions, Region::StatusItem(spec.id)))
-                        .into_any_element()
-                })
-                .collect()
-        };
-        let left = render_side(&status_bar.left);
+        let render_side =
+            |side: StatusSide, ids: &[String], cx: &mut Context<Self>| -> Vec<AnyElement> {
+                ids.iter()
+                    .filter_map(|item| self.status_items.get(item))
+                    .map(|spec| self.status_item_slot(spec.id, side, (spec.render)(&ctx), cx))
+                    .collect()
+            };
+        let left = render_side(StatusSide::Left, &status_bar.left, cx);
+        let right = render_side(StatusSide::Right, &status_bar.right, cx);
         let whats_new = self.render_whats_new(cx);
-        let right = render_side(&status_bar.right);
+        let left_group = self.status_group(
+            StatusSide::Left,
+            div()
+                .id(super::customize_bar::group_id(StatusSide::Left))
+                // However long a notice is, it gives way to ellipsis: the right side of the
+                // bar (⌘⇧P, the editor's position) never leaves the window.
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap(px(tokens.spacing * 3.0))
+                .children(left)
+                .children(whats_new)
+                .children(
+                    self.notice
+                        .clone()
+                        // A notice is words, not an action: `fg`, never the accent.
+                        .map(|n| div().min_w_0().truncate().text_color(theme.fg).child(n)),
+                ),
+            cx,
+        );
+        let right_group = self.status_group(
+            StatusSide::Right,
+            div()
+                .id(super::customize_bar::group_id(StatusSide::Right))
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(tokens.spacing * 2.0))
+                .children(right),
+            cx,
+        );
         div()
             .id("status-bar")
             .flex()
@@ -2436,32 +2469,16 @@ impl Workbench {
             .border_color(theme.border)
             .text_color(theme.muted)
             .text_size(px(tokens.secondary_font_size))
-            .child(
-                div()
-                    // However long a notice is, it gives way to ellipsis: the right side of the
-                    // bar (⌘⇧P, the editor's position) never leaves the window.
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(tokens.spacing * 3.0))
-                    .children(left)
-                    .children(whats_new)
-                    .children(
-                        self.notice
-                            .clone()
-                            // A notice is words, not an action: `fg`, never the accent.
-                            .map(|n| div().min_w_0().truncate().text_color(theme.fg).child(n)),
-                    ),
+            // Right click on the bar itself: the checklist of its items.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    let entries = this.status_checklist(event.position);
+                    this.open_menu(event.position, entries, window, cx);
+                }),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(tokens.spacing * 2.0))
-                    .children(right),
-            )
+            .child(left_group)
+            .child(right_group)
             .child(probe(&self.regions, Region::StatusBar))
             .into_any_element()
     }

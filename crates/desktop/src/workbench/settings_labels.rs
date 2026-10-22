@@ -62,6 +62,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("panels.files", "Files"),
     ("panels.problems", "Problems"),
     ("panels.search", "Search"),
+    ("status", "Status bar"),
     ("workspaces", "Workspaces"),
     ("history", "History"),
     ("chat", "Chat"),
@@ -423,6 +424,19 @@ const FIELDS: &[FieldText] = &[
             ("warning", "Errors and warnings"),
             ("error", "Errors only"),
         ],
+    ),
+    // ---- status bar ----
+    field(
+        "status",
+        "workspace.show_branch",
+        "Show the branch",
+        "Shows the branch checked out in the project after its name in the status bar. The item's right-click menu switches it too.",
+    ),
+    field(
+        "status",
+        "connection.show_version",
+        "Show the daemon's version",
+        "Says which version of the daemon is running (hutand 0.2.0) in the status bar while it is up. The item's right-click menu switches it too.",
     ),
     // ---- search ----
     field(

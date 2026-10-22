@@ -587,3 +587,197 @@ fn dragging_a_rail_icon_reorders_the_rail_and_the_order_survives_a_restart(
     assert_eq!(state(&view, cx).preset, "custom");
     assert_eq!(state(&view, cx).docks.right.panels, order);
 }
+
+// ---- the status bar -----------------------------------------------------------------------------
+
+fn bar(view: &Entity<Workbench>, cx: &VisualTestContext) -> (Vec<String>, Vec<String>) {
+    let bar = view.read_with(cx, |wb, _| wb.status_bar());
+    (bar.left, bar.right)
+}
+
+fn names(items: &[&str]) -> Vec<String> {
+    items.iter().map(|s| (*s).to_owned()).collect()
+}
+
+#[gpui::test]
+fn the_status_bar_checklist_hides_and_shows_items_and_a_custom_preset_holds_the_bar(
+    cx: &mut TestAppContext,
+) {
+    let (view, settings, cx) = open(cx);
+    let builtin = bar(&view, cx);
+    let at = bounds(&view, cx, Region::StatusBar).center();
+    right_click(&view, cx, at);
+    let entries = menu(&view, cx);
+    assert_eq!(entries[0].0, "Status bar, left", "{entries:?}");
+    for (label, checked) in [
+        ("Daemon state", true),
+        ("Command palette key", true),
+        ("Session count", false),
+    ] {
+        assert!(
+            entries.iter().any(|(l, on)| l == label && *on == checked),
+            "{label} {checked} in {entries:?}"
+        );
+    }
+    assert!(entries.iter().any(|(l, _)| l == "Not shown"));
+
+    // Hide the palette key: it leaves the bar, the list stays open with it unchecked.
+    run_entry(&view, cx, "Command palette key");
+    assert!(!bar(&view, cx).1.contains(&"palette_hint".to_owned()));
+    assert!(
+        menu(&view, cx)
+            .iter()
+            .any(|(l, on)| l == "Command palette key" && !on)
+    );
+    common::draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb
+            .region_bounds(Region::StatusItem("palette_hint"))
+            .is_none()),
+        "the item is no longer drawn"
+    );
+    // Show Density: it joins the right group, at its end.
+    run_entry(&view, cx, "Density");
+    assert_eq!(bar(&view, cx).1.last().map(String::as_str), Some("density"));
+
+    // Kept in Custom's `status_bar`, and the built-in bar did not change.
+    let saved = layout(&settings);
+    assert_eq!(saved.preset, "custom");
+    let custom = &saved.presets["custom"].status_bar;
+    assert_eq!(custom.left, builtin.0);
+    assert!(!custom.right.contains(&"palette_hint".to_owned()));
+    assert!(custom.right.contains(&"density".to_owned()));
+    let defs = saved.preset_defs();
+    let default = defs.iter().find(|d| d.layout.name == "default").unwrap();
+    assert_eq!(default.status_bar.left, builtin.0);
+    assert_eq!(default.status_bar.right, builtin.1);
+
+    // Undo (⌘Z) puts Density away; the second change was the one the toast undoes.
+    cx.simulate_keystrokes("escape");
+    cx.simulate_keystrokes("cmd-z");
+    assert!(!bar(&view, cx).1.contains(&"density".to_owned()));
+
+    // Reset status bar: the preset follows the built-in bar again and `status_bar` is gone.
+    right_click(&view, cx, at);
+    run_entry(&view, cx, "Reset status bar");
+    assert_eq!(bar(&view, cx), builtin);
+    let text = std::fs::read_to_string(settings.paths().unwrap().user).unwrap();
+    assert!(!text.contains("status_bar"), "{text}");
+}
+
+#[gpui::test]
+fn dragging_a_status_item_reorders_the_bar_and_across_to_the_other_side(cx: &mut TestAppContext) {
+    let home = tempfile::tempdir().unwrap();
+    let path = home
+        .path()
+        .join(hutan_desktop::workbench::persistence::STATE_FILE);
+    let (connection, settings, _) = offline_connection();
+    let after = {
+        let (view, cx) = open_with(cx, settings.clone(), connection, Some(path));
+        assert_eq!(
+            bar(&view, cx).1.last().map(String::as_str),
+            Some("palette_hint")
+        );
+        // The palette key is dropped on the daemon's state: it goes first, on the left.
+        let from = bounds(&view, cx, Region::StatusItem("palette_hint")).center();
+        let to = bounds(&view, cx, Region::StatusItem("connection")).center();
+        drag(cx, from, to);
+        let (left, right) = bar(&view, cx);
+        assert_eq!(
+            left.first().map(String::as_str),
+            Some("palette_hint"),
+            "{left:?}"
+        );
+        assert_eq!(left.get(1).map(String::as_str), Some("connection"));
+        assert!(!right.contains(&"palette_hint".to_owned()));
+        assert_eq!(
+            view.read_with(cx, |wb, _| wb.layout_toast().map(|t| t.label().to_owned())),
+            Some("Moved command palette key to the left of the status bar".to_owned())
+        );
+        (left, right)
+    };
+    // It stays: the preset holds it, a restart reads it.
+    assert_eq!(layout(&settings).presets["custom"].status_bar.left, after.0);
+    let (connection, _, _) = offline_connection();
+    let (view, cx) = open_with(cx, settings, connection, None);
+    assert_eq!(bar(&view, cx), after);
+}
+
+#[gpui::test]
+fn an_items_own_menu_has_its_options_and_its_place(cx: &mut TestAppContext) {
+    let (view, settings, cx) = open(cx);
+    let at = bounds(&view, cx, Region::StatusItem("connection")).center();
+    right_click(&view, cx, at);
+    assert_eq!(
+        labels(&view, cx),
+        [
+            "Show version",
+            "Move to the right side",
+            "Move earlier",
+            "Move later",
+            "Hide",
+            "Status bar items"
+        ]
+    );
+    assert!(
+        view.read_with(cx, |wb, _| wb.context_menu_disabled())
+            .iter()
+            .any(|l| l == "Move earlier"),
+        "the first item cannot move earlier"
+    );
+    run_entry(&view, cx, "Show version");
+    assert!(
+        settings
+            .get::<hutan_desktop::settings::StatusSettings>()
+            .connection
+            .show_version
+    );
+    let text = std::fs::read_to_string(settings.paths().unwrap().user).unwrap();
+    assert!(text.contains("show_version = true"), "{text}");
+    // Undo restores the key (it was not set: the key is gone).
+    cx.simulate_keystrokes("cmd-z");
+    assert!(
+        !settings
+            .get::<hutan_desktop::settings::StatusSettings>()
+            .connection
+            .show_version
+    );
+    let text = std::fs::read_to_string(settings.paths().unwrap().user).unwrap();
+    assert!(!text.contains("show_version"), "{text}");
+
+    // *Move later* puts the daemon's state after the project item.
+    right_click(&view, cx, at);
+    run_entry(&view, cx, "Move later");
+    assert_eq!(
+        bar(&view, cx).0,
+        names(&["workspace", "connection", "attention"]),
+        "the daemon's state moved one place later"
+    );
+
+    // The project item's option: show the branch (on by default), with its Undo.
+    let options = view.read_with(cx, |wb, _| wb.status_item_options("workspace"));
+    assert_eq!(options.len(), 1);
+    assert_eq!((options[0].label, options[0].on), ("Show branch", true));
+    view.update(cx, |wb, cx| wb.toggle_status_option(options[0].key, cx));
+    assert!(
+        !settings
+            .get::<hutan_desktop::settings::StatusSettings>()
+            .workspace
+            .show_branch
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.layout_toast().map(|t| t.label().to_owned())),
+        Some("Hid the branch in the status bar".to_owned())
+    );
+    cx.simulate_keystrokes("cmd-z");
+    assert!(
+        settings
+            .get::<hutan_desktop::settings::StatusSettings>()
+            .workspace
+            .show_branch
+    );
+    // Items without options have none.
+    assert!(view.read_with(cx, |wb, _| {
+        wb.status_item_options("palette_hint").is_empty()
+    }));
+}

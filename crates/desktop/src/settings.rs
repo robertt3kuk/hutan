@@ -677,6 +677,45 @@ impl Setting for SearchPanelSettings {
     const NAMESPACE: &'static str = "panels.search";
 }
 
+/// The `status` namespace: the options of the status bar's items, one table per item (the
+/// item's own context menu writes them; `layout.presets.<name>.status_bar` says which items
+/// show and where).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct StatusSettings {
+    /// The `workspace` item: the project and its branch.
+    pub workspace: StatusWorkspaceSettings,
+    /// The `connection` item: the daemon's state.
+    pub connection: StatusConnectionSettings,
+}
+
+/// `status.workspace`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct StatusWorkspaceSettings {
+    /// Show the branch checked out in the project, after its name.
+    pub show_branch: bool,
+}
+
+impl Default for StatusWorkspaceSettings {
+    fn default() -> Self {
+        Self { show_branch: true }
+    }
+}
+
+/// `status.connection`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct StatusConnectionSettings {
+    /// Say which version of the daemon is running (`hutand 0.2.0`) while it is up; its
+    /// tooltip has the version either way.
+    pub show_version: bool,
+}
+
+impl Setting for StatusSettings {
+    const NAMESPACE: &'static str = "status";
+}
+
 /// How the sidebar orders workspaces, and the projects inside each level (pinned ones always
 /// come first).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
@@ -1606,6 +1645,7 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<FilesPanelSettings>();
     store.register::<ProblemsPanelSettings>();
     store.register::<SearchPanelSettings>();
+    store.register::<StatusSettings>();
     store.register::<WorkspacesSettings>();
     store.register::<SidebarSettings>();
     store.register::<HistorySettings>();
