@@ -29,7 +29,8 @@ use super::agents::Models;
 use super::panels::ScopeKey;
 use super::settings_daemon::sections;
 use super::settings_labels::{daemon_field_help, daemon_field_title, words};
-use super::settings_rows::{menu_option, menu_panel, note, sheet_row, small_button};
+use super::settings_rows::{menu_option, menu_panel, note, sheet_row};
+use super::ui::Button;
 use super::view::Workbench;
 use crate::theme::DensityExt as _;
 
@@ -758,13 +759,14 @@ impl Workbench {
                 }
                 (None, None) => String::new(),
             };
-            let revoke = small_button(
+            let revoke = Button::new(
                 SharedString::from(format!("grant-revoke-{id}")),
                 words::GRANT_REVOKE,
-                false,
                 &theme,
                 &tokens,
             )
+            .destructive()
+            .compact()
             .on_click(cx.listener(move |this, _, _, cx| this.revoke_mawas_grant(id, cx)));
             out.push(sheet_row(
                 SharedString::from(format!("grant-{id}")),
@@ -782,14 +784,10 @@ impl Workbench {
                 .justify_end()
                 .py(px(tokens.spacing * 2.0))
                 .child(
-                    small_button(
-                        "grant-revoke-all",
-                        words::GRANT_REVOKE_ALL,
-                        false,
-                        &theme,
-                        &tokens,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.revoke_all_mawas_grants(cx))),
+                    Button::new("grant-revoke-all", words::GRANT_REVOKE_ALL, &theme, &tokens)
+                        .destructive()
+                        .compact()
+                        .on_click(cx.listener(|this, _, _, cx| this.revoke_all_mawas_grants(cx))),
                 )
                 .into_any_element(),
         );
@@ -869,13 +867,14 @@ impl Workbench {
         }
 
         let mut buttons: Vec<AnyElement> = vec![
-            small_button(
+            Button::new(
                 SharedString::from(format!("ainherit-{id}")),
                 words::INHERIT,
-                inheriting,
                 &theme,
                 &tokens,
             )
+            .compact()
+            .selected(inheriting)
             .on_click(cx.listener(move |this, _, _, cx| this.assistant_inherit(scope, cx)))
             .into_any_element(),
         ];
@@ -886,13 +885,14 @@ impl Workbench {
                 _ => false,
             } || (backend == AssistantBackend::Provider && providers_open);
             buttons.push(
-                small_button(
+                Button::new(
                     SharedString::from(format!("abackend-{id}-{}", backend.as_str())),
                     backend_name(backend),
-                    active,
                     &theme,
                     &tokens,
                 )
+                .compact()
+                .selected(active)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.assistant_choose_backend(scope, backend, cx);
                 }))
@@ -929,13 +929,14 @@ impl Workbench {
                                 && c.provider.as_deref() == Some(provider.id.as_str())
                         });
                         let pid = provider.id.clone();
-                        small_button(
+                        Button::new(
                             SharedString::from(format!("aprovider-{id}-{}", provider.id)),
                             SharedString::from(provider.name.clone()),
-                            active,
                             &theme,
                             &tokens,
                         )
+                        .compact()
+                        .selected(active)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.assistant_configure(
                                 scope,
@@ -997,13 +998,14 @@ impl Workbench {
         };
         let toggle = menu.clone();
         let (backend, provider) = (config.backend, config.provider.clone());
-        let head = small_button(
+        let head = Button::new(
             SharedString::from(format!("amodel-{id}")),
             SharedString::from(format!("{}: {label}", words::MODEL_TITLE)),
-            open,
             &theme,
             &tokens,
         )
+        .compact()
+        .selected(open)
         .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
         .on_click(cx.listener(move |this, _, _, cx| {
             let opening = this
@@ -1115,13 +1117,14 @@ impl Workbench {
                       value: Option<bool>,
                       active: bool,
                       cx: &mut Context<Self>| {
-            small_button(
+            Button::new(
                 SharedString::from(format!("aperm-{permission}-{name}")),
                 label,
-                active,
                 &theme,
                 &tokens,
             )
+            .compact()
+            .selected(active)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.assistant_permission_set(permission, value, cx);
             }))

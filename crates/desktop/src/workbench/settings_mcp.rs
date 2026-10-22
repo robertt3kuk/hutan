@@ -20,8 +20,9 @@ use serde_json::{Value as Json, json};
 use super::render::probe;
 use super::settings_daemon::{EDIT_PREFIX, MCP_KEYS};
 use super::settings_labels::{daemon_field_help, daemon_field_title, words};
-use super::settings_rows::{SheetRow, note, small_button};
+use super::settings_rows::{SheetRow, note};
 use super::ui::FocusRingExt as _;
+use super::ui::{self, Button};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::theme::DensityExt as _;
@@ -514,8 +515,8 @@ impl Workbench {
         rows.push(match &self.daemon_settings.mcp_form {
             Some(form) => self.render_mcp_form(form, cx),
             None => {
-                let add = small_button("mcp-add", words::MCP_ADD, false, &theme, &tokens)
-                    .relative()
+                let add = Button::new("mcp-add", words::MCP_ADD, &theme, &tokens)
+                    .compact()
                     .on_click(cx.listener(|this, _, _, cx| this.mcp_begin_add(cx)))
                     .child(probe(&self.regions, Region::Settings("mcp-add")));
                 let row = div()
@@ -564,14 +565,13 @@ impl Workbench {
                 .flex()
                 .gap(px(tokens.spacing))
                 .child(
-                    small_button(
+                    Button::new(
                         SharedString::from(format!("mcp-edit-{name}")),
                         words::MCP_EDIT,
-                        false,
                         &theme,
                         &tokens,
                     )
-                    .relative()
+                    .compact()
                     .on_click(
                         cx.listener(move |this, _, _, cx| this.mcp_begin_edit(&edit_name, cx)),
                     )
@@ -581,14 +581,14 @@ impl Workbench {
                     )),
                 )
                 .child(
-                    small_button(
+                    Button::new(
                         SharedString::from(format!("mcp-remove-{name}")),
                         words::MCP_REMOVE,
-                        false,
                         &theme,
                         &tokens,
                     )
-                    .relative()
+                    .destructive()
+                    .compact()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.mcp_remove(&remove_name, window, cx);
                     }))
@@ -711,8 +711,9 @@ impl Workbench {
                            on: bool,
                            remote: bool,
                            cx: &mut Context<Self>| {
-            small_button(id, label, on, &theme, &tokens)
-                .relative()
+            Button::new(id, label, &theme, &tokens)
+                .compact()
+                .selected(on)
                 .on_click(cx.listener(move |this, _, _, cx| this.mcp_set_remote(remote, cx)))
                 .child(probe(&self.regions, Region::Settings(id)))
         };
@@ -747,8 +748,9 @@ impl Workbench {
                              on: bool,
                              sse: bool,
                              cx: &mut Context<Self>| {
-                small_button(id, label, on, &theme, &tokens)
-                    .relative()
+                Button::new(id, label, &theme, &tokens)
+                    .compact()
+                    .selected(on)
                     .on_click(cx.listener(move |this, _, _, cx| this.mcp_set_sse(sse, cx)))
                     .child(probe(&self.regions, Region::Settings(id)))
             };
@@ -822,20 +824,19 @@ impl Workbench {
                 )
             })
             .child(
-                div()
-                    .flex()
-                    .gap(px(tokens.spacing * 2.0))
+                ui::dialog_footer()
                     .child(
-                        small_button("mcp-save", save_label, true, &theme, &tokens)
-                            .relative()
-                            .on_click(cx.listener(|this, _, _, cx| this.mcp_save(cx)))
-                            .child(probe(&self.regions, Region::Settings("mcp-save"))),
-                    )
-                    .child(
-                        small_button("mcp-cancel", words::MCP_CANCEL, false, &theme, &tokens)
-                            .relative()
+                        Button::new("mcp-cancel", words::MCP_CANCEL, &theme, &tokens)
+                            .compact()
                             .on_click(cx.listener(|this, _, _, cx| this.mcp_cancel(cx)))
                             .child(probe(&self.regions, Region::Settings("mcp-cancel"))),
+                    )
+                    .child(
+                        Button::new("mcp-save", save_label, &theme, &tokens)
+                            .compact()
+                            .primary()
+                            .on_click(cx.listener(|this, _, _, cx| this.mcp_save(cx)))
+                            .child(probe(&self.regions, Region::Settings("mcp-save"))),
                     ),
             )
             .into_any_element()

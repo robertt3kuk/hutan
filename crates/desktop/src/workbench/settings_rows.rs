@@ -4,7 +4,7 @@
 
 use gpui::{
     AnyElement, App, AppContext as _, Context, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px, transparent_black,
+    SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px,
 };
 use serde_json::Value as Json;
 
@@ -14,7 +14,7 @@ use super::settings_schema::{Field, FieldKind, number_range, value_at};
 use super::settings_sheet::display_value;
 use super::style::TextTooltip;
 use super::ui::motion::{self, PresentExt as _};
-use super::ui::{FocusRingExt as _, StyledExt as _};
+use super::ui::{Button, FocusRingExt as _, IconButton, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::macos::LoginItemStatus;
@@ -28,35 +28,6 @@ fn status_tone(status: LoginItemStatus, theme: Theme) -> gpui::Hsla {
         LoginItemStatus::Missing => theme.danger,
         LoginItemStatus::NotRegistered => theme.muted,
     }
-}
-
-/// A compact button of the sheet's rows: the secondary button's shape ([`StyledExt::outlined`]);
-/// `active` marks the open or selected one of a group with the selection fill and no outline.
-pub(super) fn small_button(
-    id: impl Into<gpui::ElementId>,
-    label: impl Into<SharedString>,
-    active: bool,
-    theme: &Theme,
-    tokens: &Tokens,
-) -> gpui::Stateful<gpui::Div> {
-    let hover = theme.surface_hover;
-    let soft = theme.accent_soft;
-    div()
-        .id(id.into())
-        .px(px(tokens.spacing * 2.0))
-        .h(px(tokens.control_height - 2.0))
-        .flex()
-        .gap(px(tokens.spacing))
-        .flex_none()
-        .items_center()
-        .outlined(theme, tokens)
-        // The selected one of a group is a fill without the outline.
-        .when(active, move |s| {
-            s.border_color(transparent_black()).bg(soft)
-        })
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-        .child(label.into())
 }
 
 /// The height of a row of the sheet: 56 px comfortable, 52 px compact.
@@ -250,22 +221,11 @@ pub(super) fn reset_button(
     tip: impl Into<SharedString>,
     theme: &Theme,
     tokens: &Tokens,
-) -> gpui::Stateful<gpui::Div> {
-    let hover = theme.surface_hover;
-    let tip: SharedString = tip.into();
-    div()
-        .id(id.into())
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(tokens.control_height - 4.0))
-        .rounded(px(tokens.radius))
-        .text_color(theme.muted)
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
-        .child("↺")
+) -> Button {
+    Button::new(id, "↺", theme, tokens)
+        .ghost()
+        .compact()
+        .tooltip(tip)
 }
 
 /// A line of small muted text.
@@ -413,15 +373,13 @@ impl Workbench {
     pub(super) fn menu_anchor(
         &self,
         tag: &str,
-        head: gpui::Stateful<gpui::Div>,
+        head: impl ParentElement + IntoElement,
         panel: Option<gpui::Stateful<gpui::Div>>,
         close: fn(&mut Self, &mut Context<Self>),
         cx: &Context<Self>,
     ) -> AnyElement {
         let key = menu_key(tag);
-        let head = head
-            .relative()
-            .child(probe(&self.regions, Region::SettingsMenu(key)));
+        let head = head.child(probe(&self.regions, Region::SettingsMenu(key)));
         let regions = self.regions.clone();
         let menu_probe = probe(&self.regions, Region::Settings("menu"));
         let panel = panel.map(|panel| {
@@ -500,18 +458,18 @@ impl Workbench {
                     Json::String(s) => words::not_available(s),
                     other => display_value(other),
                 };
-                let head = small_button(
+                let head = Button::new(
                     SharedString::from(format!("dropdown-{key}")),
                     SharedString::from(label),
-                    open,
                     &theme,
                     &tokens,
                 )
+                .compact()
+                .selected(open)
                 .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.toggle_dropdown(&k, &row, cx);
                 }))
-                .relative()
                 .child(probe(&self.regions, Region::Settings("dropdown")));
                 let panel = open.then(|| {
                     menu_panel(
@@ -648,7 +606,6 @@ impl Workbench {
                 &self.theme,
                 &self.density.ui(),
             )
-            .relative()
             .child(probe(
                 &self.regions,
                 Region::SettingsItem("reset", self.field_index(field)),
@@ -692,13 +649,13 @@ impl Workbench {
                 available && status == LoginItemStatus::RequiresApproval,
                 |s| {
                     s.child(
-                        small_button(
+                        Button::new(
                             SharedString::from("open-login-items"),
                             "Open login items",
-                            false,
                             &theme,
                             &tokens,
                         )
+                        .compact()
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.open_login_items(cx);
                         })),
@@ -758,11 +715,10 @@ impl Workbench {
             let k = key.clone();
             let (k_up, k_down) = (key.clone(), key.clone());
             let step = |id: String, label: &'static str, enabled: bool| {
-                div()
-                    .id(SharedString::from(id))
-                    .text_color(if enabled { theme.fg } else { theme.border })
-                    .when(enabled, |s| s.cursor_pointer())
-                    .child(label)
+                Button::new(SharedString::from(id), label, &theme, &tokens)
+                    .ghost()
+                    .compact()
+                    .disabled(!enabled)
             };
             let unknown = choices.is_some_and(|c| !c.contains(item));
             let shown = if unknown {
@@ -796,14 +752,17 @@ impl Workbench {
                     )),
                 )
                 .child(
-                    div()
-                        .id(SharedString::from(format!("remove-{key}-{index}")))
-                        .text_color(theme.muted)
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.sheet_remove_list_item(&k, index, cx);
-                        }))
-                        .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
+                    IconButton::new(
+                        SharedString::from(format!("remove-{key}-{index}")),
+                        crate::icons::Icon::ActionClose,
+                        "Remove",
+                        &theme,
+                        &tokens,
+                    )
+                    .compact()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.sheet_remove_list_item(&k, index, cx);
+                    })),
                 )
         });
         let add: AnyElement = if choices.is_some() {
@@ -812,13 +771,14 @@ impl Workbench {
             } else {
                 let (k, row) = (key.clone(), format!("f:{key}"));
                 let tag = menu.clone();
-                let head = small_button(
+                let head = Button::new(
                     SharedString::from(format!("add-{key}")),
                     words::ADD_CHOICE,
-                    menu_open,
                     &theme,
                     &tokens,
                 )
+                .compact()
+                .selected(menu_open)
                 .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.toggle_dropdown(&tag, &row, cx);
@@ -868,13 +828,13 @@ impl Workbench {
                     .into_any_element(),
                 None => {
                     let k = key.clone();
-                    small_button(
+                    Button::new(
                         SharedString::from(format!("add-{key}")),
                         "+ add",
-                        false,
                         &theme,
                         &tokens,
                     )
+                    .compact()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.sheet_begin_edit(&k, cx);
                     }))
@@ -948,19 +908,13 @@ impl Workbench {
             })
             .when(resettable, |s| {
                 s.child(
-                    super::ui::button(
-                        "reset-page",
-                        words::RESET_PAGE,
-                        super::ui::ButtonKind::Ghost,
-                        true,
-                        &theme,
-                        &tokens,
-                    )
-                    .relative()
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.sheet_reset_page(window, cx);
-                    }))
-                    .child(probe(&self.regions, Region::Settings("reset-page"))),
+                    Button::new("reset-page", words::RESET_PAGE, &theme, &tokens)
+                        .destructive()
+                        .ghost()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.sheet_reset_page(window, cx);
+                        }))
+                        .child(probe(&self.regions, Region::Settings("reset-page"))),
                 )
             })
             .into_any_element()

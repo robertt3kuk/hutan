@@ -8,14 +8,15 @@
 //! closes it. Typing anywhere but the search box goes back to the search box.
 
 use gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, Context, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Styled,
+    Window, div, px,
 };
 use hutan_protocol::daemon_settings::DaemonSettingKind;
 
 use super::settings_daemon::{MCP_KEYS, choice_text, choices_of, sections};
 use super::settings_labels::{value_label, words};
 use super::settings_schema::FieldKind;
+use super::ui::Button;
 use super::ui::FocusRingExt as _;
 use super::view::Workbench;
 use super::vim_ui::OverlayField;
@@ -554,22 +555,16 @@ impl Workbench {
             )
             .child(
                 div().flex().child(
-                    super::settings_rows::small_button(
-                        "clear-search",
-                        words::CLEAR_SEARCH,
-                        false,
-                        &theme,
-                        &tokens,
-                    )
-                    .relative()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.set_settings_query("", cx);
-                        this.edits.sheet_query.reset();
-                    }))
-                    .child(super::render::probe(
-                        &self.regions,
-                        super::view::Region::Settings("clear-search"),
-                    )),
+                    Button::new("clear-search", words::CLEAR_SEARCH, &theme, &tokens)
+                        .compact()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.set_settings_query("", cx);
+                            this.edits.sheet_query.reset();
+                        }))
+                        .child(super::render::probe(
+                            &self.regions,
+                            super::view::Region::Settings("clear-search"),
+                        )),
                 ),
             )
             .into_any_element()

@@ -32,9 +32,9 @@ use super::model::PanelId;
 use super::panels::{HistoryPanel, format_bytes};
 use super::render::probe;
 use super::settings_labels::words;
-use super::settings_rows::{note, sheet_row, small_button};
+use super::settings_rows::{note, sheet_row};
 use super::settings_schema::Field;
-use super::ui::{self, ButtonKind, FocusRingExt as _};
+use super::ui::{self, Button, FocusRingExt as _, IconButton};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::integrations::IntegrationStatus;
@@ -321,18 +321,16 @@ impl Workbench {
             );
         }
         let usable = connected && !index.unsupported && index.status.is_some() && !index.busy;
-        let toggle = small_button(
+        let toggle = Button::new(
             "toggle-history-index",
             if on { "On" } else { "Off" },
-            on,
             &theme,
             &tokens,
         )
-        .relative()
-        .when(usable, |s| {
-            s.on_click(cx.listener(move |this, _, _, cx| this.set_history_indexing(!on, cx)))
-        })
-        .when(!usable, |s| s.opacity(0.6))
+        .compact()
+        .selected(on)
+        .disabled(!usable)
+        .on_click(cx.listener(move |this, _, _, cx| this.set_history_indexing(!on, cx)))
         .child(probe(&self.regions, Region::Settings("history-index")));
         sheet_row(
             "field-history-index",
@@ -423,26 +421,20 @@ impl Workbench {
                 || words::CANNOT_LOCATE.to_owned(),
                 |p| p.display().to_string(),
             );
-            let reveal = ui::button(
+            let reveal = Button::new(
                 SharedString::from(format!("data-reveal-{i}")),
                 words::REVEAL,
-                ButtonKind::Secondary,
-                true,
                 &theme,
                 &tokens,
             )
-            .relative()
             .on_click(cx.listener(move |this, _, _, cx| this.reveal_data(target, cx)))
             .child(probe(&self.regions, Region::SettingsItem("reveal", i)));
-            let open = ui::button(
+            let open = Button::new(
                 SharedString::from(format!("data-open-{i}")),
                 words::OPEN,
-                ButtonKind::Secondary,
-                true,
                 &theme,
                 &tokens,
             )
-            .relative()
             .on_click(cx.listener(move |this, _, _, cx| this.open_data(target, cx)))
             .child(probe(&self.regions, Region::SettingsItem("open", i)));
             let (title, help) = words::data_target(i);
@@ -508,32 +500,23 @@ impl Workbench {
         ));
 
         // The daemon's lifetime: the Daemon menu's flows, with their confirmations.
-        let restart = ui::button(
+        let restart = Button::new(
             "data-restart-daemon",
             words::RESTART_DAEMON,
-            ButtonKind::Secondary,
-            !busy,
             &theme,
             &tokens,
         )
-        .relative()
+        .disabled(!(!busy))
         .when(!busy, |s| {
             s.on_click(cx.listener(|this, _, window, cx| this.restart_daemon(window, cx)))
         })
         .child(probe(&self.regions, Region::Settings("restart-daemon")));
-        let stop = ui::button(
-            "data-stop-daemon",
-            words::STOP_DAEMON,
-            ButtonKind::Secondary,
-            !busy,
-            &theme,
-            &tokens,
-        )
-        .relative()
-        .when(!busy, |s| {
-            s.on_click(cx.listener(|this, _, window, cx| this.stop_daemon(window, cx)))
-        })
-        .child(probe(&self.regions, Region::Settings("stop-daemon")));
+        let stop = Button::new("data-stop-daemon", words::STOP_DAEMON, &theme, &tokens)
+            .disabled(!(!busy))
+            .when(!busy, |s| {
+                s.on_click(cx.listener(|this, _, window, cx| this.stop_daemon(window, cx)))
+            })
+            .child(probe(&self.regions, Region::Settings("stop-daemon")));
         rows.push(sheet_row(
             "data-daemon",
             words::DAEMON_TITLE,
@@ -596,15 +579,14 @@ impl Workbench {
                 &mut Window,
                 &mut Context<Workbench>,
             )| {
-                ui::button(
+                Button::new(
                     SharedString::from(format!("hooks-{region}-{id}")),
                     label,
-                    ButtonKind::Secondary,
-                    usable,
                     &theme,
                     &tokens,
                 )
-                .relative()
+                .disabled(!usable)
+                .when(region == "uninstall", |b| b.destructive())
                 .when(usable, |s| {
                     s.on_click(cx.listener(move |this, _, window, cx| run(this, id, window, cx)))
                 })
@@ -796,15 +778,12 @@ impl Workbench {
         let mut rows: Vec<AnyElement> = Vec::new();
         for (index, key) in keys.iter().enumerate() {
             let k = key.clone();
-            let revoke = ui::button(
+            let revoke = Button::new(
                 SharedString::from(format!("revoke-{index}")),
                 words::REVOKE,
-                ButtonKind::Secondary,
-                true,
                 &theme,
                 &tokens,
             )
-            .relative()
             .on_click(cx.listener(move |this, _, _, cx| this.revoke_start_exemption(&k, cx)))
             .child(probe(&self.regions, Region::SettingsItem("revoke", index)));
             rows.push(
@@ -820,19 +799,12 @@ impl Workbench {
                     .into_any_element(),
             );
         }
-        let all = ui::button(
-            "revoke-all",
-            words::REVOKE_ALL,
-            ButtonKind::Secondary,
-            !keys.is_empty(),
-            &theme,
-            &tokens,
-        )
-        .relative()
-        .when(!keys.is_empty(), |s| {
-            s.on_click(cx.listener(|this, _, _, cx| this.revoke_all_start_exemptions(cx)))
-        })
-        .child(probe(&self.regions, Region::Settings("revoke-all")));
+        let all = Button::new("revoke-all", words::REVOKE_ALL, &theme, &tokens)
+            .disabled(!(!keys.is_empty()))
+            .when(!keys.is_empty(), |s| {
+                s.on_click(cx.listener(|this, _, _, cx| this.revoke_all_start_exemptions(cx)))
+            })
+            .child(probe(&self.regions, Region::Settings("revoke-all")));
         let list = if keys.is_empty() {
             vec![note(words::EXEMPTIONS_EMPTY, &theme, &tokens).into_any_element()]
         } else {
@@ -921,28 +893,12 @@ impl Workbench {
                     .into_any_element(),
             );
         }
-        let open = ui::button(
-            "keymap-open",
-            words::OPEN_KEYMAP,
-            ButtonKind::Secondary,
-            true,
-            &theme,
-            &tokens,
-        )
-        .relative()
-        .on_click(cx.listener(|this, _, _, cx| this.open_data(DataTarget::Keymap, cx)))
-        .child(probe(&self.regions, Region::Settings("open-keymap")));
-        let reload = ui::button(
-            "keymap-reload",
-            words::RELOAD,
-            ButtonKind::Secondary,
-            true,
-            &theme,
-            &tokens,
-        )
-        .relative()
-        .on_click(cx.listener(|this, _, _, cx| this.reload_keymap(cx)))
-        .child(probe(&self.regions, Region::Settings("reload-keymap")));
+        let open = Button::new("keymap-open", words::OPEN_KEYMAP, &theme, &tokens)
+            .on_click(cx.listener(|this, _, _, cx| this.open_data(DataTarget::Keymap, cx)))
+            .child(probe(&self.regions, Region::Settings("open-keymap")));
+        let reload = Button::new("keymap-reload", words::RELOAD, &theme, &tokens)
+            .on_click(cx.listener(|this, _, _, cx| this.reload_keymap(cx)))
+            .child(probe(&self.regions, Region::Settings("reload-keymap")));
         sheet_row(
             "field-bindings",
             words::BINDINGS_TITLE,
@@ -1156,19 +1112,22 @@ impl Workbench {
                     )
                     .child(value_box)
                     .child(
-                        div()
-                            .id(SharedString::from(format!("env-remove-{index}")))
-                            .relative()
-                            .text_color(if elsewhere { theme.border } else { theme.muted })
-                            .when(!elsewhere, |s| s.cursor_pointer())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.sheet_map_remove(&k_remove, &n_remove, cx);
-                            }))
-                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
-                            .child(probe(
-                                &self.regions,
-                                Region::SettingsItem("env-remove", index),
-                            )),
+                        IconButton::new(
+                            SharedString::from(format!("env-remove-{index}")),
+                            crate::icons::Icon::ActionClose,
+                            "Remove",
+                            &theme,
+                            &tokens,
+                        )
+                        .compact()
+                        .disabled(elsewhere)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.sheet_map_remove(&k_remove, &n_remove, cx);
+                        }))
+                        .child(probe(
+                            &self.regions,
+                            Region::SettingsItem("env-remove", index),
+                        )),
                     )
                     .into_any_element(),
             );
@@ -1193,14 +1152,13 @@ impl Workbench {
                 .into_any_element(),
             None => {
                 let k = key.clone();
-                small_button(
+                Button::new(
                     SharedString::from(format!("add-{key}")),
                     words::ENV_ADD,
-                    false,
                     &theme,
                     &tokens,
                 )
-                .relative()
+                .compact()
                 .on_click(cx.listener(move |this, _, _, cx| this.sheet_begin_edit(&k, cx)))
                 .child(probe(&self.regions, Region::Settings("env-add")))
                 .into_any_element()
@@ -1405,14 +1363,13 @@ impl Workbench {
             if editable && !builtin.contains(name) {
                 let n = name.clone();
                 buttons = buttons.child(
-                    small_button(
+                    Button::new(
                         SharedString::from(format!("preset-rename-{index}")),
                         words::PRESET_RENAME,
-                        false,
                         &theme,
                         &tokens,
                     )
-                    .relative()
+                    .compact()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.ask_rename_layout_preset(&n, window, cx);
                     }))
@@ -1425,18 +1382,18 @@ impl Workbench {
             if editable && !in_use {
                 let n = name.clone();
                 buttons = buttons.child(
-                    small_button(
+                    Button::new(
                         SharedString::from(format!("preset-delete-{index}")),
                         if builtin.contains(name) {
                             words::PRESET_RESTORE_SHORT
                         } else {
                             words::PRESET_DELETE
                         },
-                        false,
                         &theme,
                         &tokens,
                     )
-                    .relative()
+                    .compact()
+                    .destructive()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.ask_delete_layout_preset(&n, window, cx);
                     }))
@@ -1459,8 +1416,8 @@ impl Workbench {
                     .into_any_element(),
             );
         }
-        let save = small_button("preset-save", words::PRESET_SAVE, false, &theme, &tokens)
-            .relative()
+        let save = Button::new("preset-save", words::PRESET_SAVE, &theme, &tokens)
+            .compact()
             .on_click(cx.listener(|this, _, window, cx| this.save_layout_as_preset(window, cx)))
             .child(probe(&self.regions, Region::Settings("preset-save")));
         div()

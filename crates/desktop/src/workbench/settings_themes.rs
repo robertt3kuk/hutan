@@ -32,11 +32,11 @@ use hutan_settings::{AppearanceSettings, SystemAppearance};
 
 use super::render::probe;
 use super::settings_labels::{field_help, field_title, words};
-use super::settings_rows::{SheetRow, menu_option, menu_panel, note, small_button};
+use super::settings_rows::{SheetRow, menu_option, menu_panel, note};
 use super::settings_schema::Field;
 use super::settings_theme_preview as sample;
 use super::style::TextTooltip;
-use super::ui::{FocusRingExt as _, StyledExt as _};
+use super::ui::{Button, FocusRingExt as _, IconButton, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::theme::{DensityExt as _, Theme, Tokens};
 
@@ -690,15 +690,15 @@ impl Workbench {
             );
         }
 
-        let head = small_button(
+        let head = Button::new(
             SharedString::from(format!("dropdown-{key}")),
             SharedString::from(head_label),
-            open,
             &theme,
             &tokens,
         )
+        .compact()
+        .selected(open)
         .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
-        .relative()
         .on_click(cx.listener(move |this, _, _, cx| this.toggle_pack_picker(pack_field, cx)))
         .child(probe(
             &self.regions,
@@ -784,31 +784,24 @@ impl Workbench {
             .as_ref()
             .is_some_and(|s| s.pack_menu == Some(pack_field));
         let more_tag = format!("pack-more-{}", pack_field.key());
-        let more_head = div()
-            .id(SharedString::from(more_tag.clone()))
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(tokens.control_height))
-            .rounded(px(tokens.radius))
-            .text_color(theme.muted)
-            .cursor_pointer()
-            .when(menu_open, |s| s.bg(theme.accent_soft).text_color(theme.fg))
-            .hover(move |s| s.bg(theme.surface_hover))
-            .tooltip(|_, cx| cx.new(|_| TextTooltip(words::PACK_MORE_TIP.into())).into())
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if let Some(sheet) = &mut this.sheet {
-                    sheet.pack_menu = (sheet.pack_menu != Some(pack_field)).then_some(pack_field);
-                    cx.notify();
-                }
-            }))
-            .child(crate::icons::glyph(crate::icons::Icon::ActionMore))
-            .relative()
-            .child(probe(
-                &self.regions,
-                Region::SettingsItem("pack-more", pack_field.index()),
-            ));
+        let more_head = IconButton::new(
+            SharedString::from(more_tag.clone()),
+            crate::icons::Icon::ActionMore,
+            words::PACK_MORE_TIP,
+            &theme,
+            &tokens,
+        )
+        .toggled(menu_open)
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if let Some(sheet) = &mut this.sheet {
+                sheet.pack_menu = (sheet.pack_menu != Some(pack_field)).then_some(pack_field);
+                cx.notify();
+            }
+        }))
+        .child(probe(
+            &self.regions,
+            Region::SettingsItem("pack-more", pack_field.index()),
+        ));
         let more = self.menu_anchor(
             &more_tag,
             more_head,

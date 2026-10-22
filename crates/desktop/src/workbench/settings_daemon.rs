@@ -34,12 +34,11 @@ use super::settings_labels::{
 };
 use super::settings_mcp::McpForm;
 use super::settings_pages::{DataTarget, valid_env_name};
-use super::settings_rows::{
-    SheetRow, menu_option, menu_panel, note, reset_button, small_button, source_chip,
-};
+use super::settings_rows::{SheetRow, menu_option, menu_panel, note, reset_button, source_chip};
 use super::settings_sheet::{Edit, display_value};
 use super::style::TextTooltip;
 use super::ui::FocusRingExt as _;
+use super::ui::{Button, IconButton};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::theme::{DensityExt as _, Theme, Tokens};
@@ -928,8 +927,8 @@ impl Workbench {
         let tokens = self.density.ui();
         let action = match self.daemon.busy {
             Some(busy) => note(busy.label(), &theme, &tokens).into_any_element(),
-            None => small_button("restart-now", words::RESTART_NOW, false, &theme, &tokens)
-                .relative()
+            None => Button::new("restart-now", words::RESTART_NOW, &theme, &tokens)
+                .compact()
                 .on_click(cx.listener(|this, _, window, cx| this.restart_daemon(window, cx)))
                 .child(probe(&self.regions, Region::Settings("restart-now")))
                 .into_any_element(),
@@ -982,28 +981,17 @@ impl Workbench {
                     .flex()
                     .gap(px(tokens.spacing * 2.0))
                     .child(
-                        small_button(
-                            "open-daemon-toml",
-                            words::OPEN_DAEMON_TOML,
-                            false,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, _, cx| this.open_daemon_toml(cx)))
-                        .child(probe(&self.regions, Region::Settings("open-daemon-toml"))),
+                        Button::new("open-daemon-toml", words::OPEN_DAEMON_TOML, &theme, &tokens)
+                            .compact()
+                            .on_click(cx.listener(|this, _, _, cx| this.open_daemon_toml(cx)))
+                            .child(probe(&self.regions, Region::Settings("open-daemon-toml"))),
                     )
                     .child(
-                        small_button(
-                            "check-daemon-toml",
-                            words::CHECK_AGAIN,
-                            false,
-                            &theme,
-                            &tokens,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.refresh_daemon_settings(cx);
-                        })),
+                        Button::new("check-daemon-toml", words::CHECK_AGAIN, &theme, &tokens)
+                            .compact()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.refresh_daemon_settings(cx);
+                            })),
                     ),
             )
             .into_any_element()
@@ -1050,16 +1038,10 @@ impl Workbench {
                     .flex()
                     .py(px(tokens.spacing * 2.0))
                     .child(
-                        small_button(
-                            "open-daemon-toml",
-                            words::OPEN_DAEMON_TOML,
-                            false,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, _, cx| this.open_daemon_toml(cx)))
-                        .child(probe(&self.regions, Region::Settings("open-daemon-toml"))),
+                        Button::new("open-daemon-toml", words::OPEN_DAEMON_TOML, &theme, &tokens)
+                            .compact()
+                            .on_click(cx.listener(|this, _, _, cx| this.open_daemon_toml(cx)))
+                            .child(probe(&self.regions, Region::Settings("open-daemon-toml"))),
                     )
                     .into_any_element(),
             );
@@ -1416,13 +1398,13 @@ impl Workbench {
                             .child(SharedString::from(shown)),
                     )
                     .child(
-                        small_button(
+                        Button::new(
                             SharedString::from(format!("dchoose-{key}")),
                             words::CHOOSE_PATH,
-                            false,
                             &theme,
                             &tokens,
                         )
+                        .compact()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.daemon_choose_path(&k_choose, cx);
                         })),
@@ -1460,18 +1442,18 @@ impl Workbench {
         };
         let (k, row) = (key.clone(), format!("d:{key}"));
         let toggle = tag.clone();
-        let head = small_button(
+        let head = Button::new(
             SharedString::from(format!("ddropdown-{key}")),
             SharedString::from(label),
-            open,
             &theme,
             &tokens,
         )
+        .compact()
+        .selected(open)
         .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
         .on_click(cx.listener(move |this, _, _, cx| {
             this.toggle_dropdown(&toggle, &row, cx);
         }))
-        .relative()
         .child(probe(&self.regions, Region::Settings("ddropdown")));
         let panel = open.then(|| {
             menu_panel(
@@ -1610,14 +1592,17 @@ impl Workbench {
                     )
                 })
                 .child(
-                    div()
-                        .id(SharedString::from(format!("dremove-{key}-{index}")))
-                        .text_color(theme.muted)
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.daemon_list_remove(&k_remove, index, cx);
-                        }))
-                        .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
+                    IconButton::new(
+                        SharedString::from(format!("dremove-{key}-{index}")),
+                        crate::icons::Icon::ActionClose,
+                        "Remove",
+                        &theme,
+                        &tokens,
+                    )
+                    .compact()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.daemon_list_remove(&k_remove, index, cx);
+                    })),
                 )
         });
         let add: AnyElement = if let Some(choices) = &choices {
@@ -1627,13 +1612,14 @@ impl Workbench {
             } else {
                 let row = format!("d:{key}");
                 let tag = menu.clone();
-                let head = small_button(
+                let head = Button::new(
                     SharedString::from(format!("dadd-{key}")),
                     words::ADD_CHOICE,
-                    menu_open,
                     &theme,
                     &tokens,
                 )
+                .compact()
+                .selected(menu_open)
                 .child(crate::icons::glyph(crate::icons::Icon::ActionMenuDown))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.toggle_dropdown(&tag, &row, cx);
@@ -1683,13 +1669,13 @@ impl Workbench {
                     .into_any_element(),
                 None => {
                     let k = key.clone();
-                    small_button(
+                    Button::new(
                         SharedString::from(format!("dadd-{key}")),
                         "+ add",
-                        false,
                         &theme,
                         &tokens,
                     )
+                    .compact()
                     .on_click(cx.listener(move |this, _, _, cx| this.daemon_begin_edit(&k, cx)))
                     .into_any_element()
                 }
@@ -1768,14 +1754,17 @@ impl Workbench {
                             .into_any_element()
                     })
                     .child(
-                        div()
-                            .id(SharedString::from(format!("dvar-remove-{key}-{name}")))
-                            .text_color(theme.muted)
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.daemon_map_remove(&k_remove, &n_remove, cx);
-                            }))
-                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
+                        IconButton::new(
+                            SharedString::from(format!("dvar-remove-{key}-{name}")),
+                            crate::icons::Icon::ActionClose,
+                            "Remove",
+                            &theme,
+                            &tokens,
+                        )
+                        .compact()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.daemon_map_remove(&k_remove, &n_remove, cx);
+                        })),
                     )
             })
             .collect::<Vec<_>>();
@@ -1783,13 +1772,13 @@ impl Workbench {
             Some(_) => box_of(self, cx).into_any_element(),
             None => {
                 let k = key.clone();
-                small_button(
+                Button::new(
                     SharedString::from(format!("dadd-{key}")),
                     words::ENV_ADD,
-                    false,
                     &theme,
                     &tokens,
                 )
+                .compact()
                 .on_click(cx.listener(move |this, _, _, cx| this.daemon_begin_edit(&k, cx)))
                 .into_any_element()
             }

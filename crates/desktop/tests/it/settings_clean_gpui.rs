@@ -221,6 +221,11 @@ fn a_choice_is_a_popover_that_moves_no_row_and_escape_gives_the_keyboard_back_to
     );
 
     // The same with the pointer: the click on the head opens it and leaves the row focused.
+    // The pointer takes over from the keyboard: the focused row's full help folds back to one
+    // line and rows below it move up. Aim at the head where it is after that, not before.
+    hutan_desktop::workbench::ui::set_keyboard_focus(false);
+    cx.update(|window, _| window.refresh());
+    draw(cx);
     let head = bounds(&view, cx, Region::Settings("dropdown")).unwrap();
     cx.simulate_click(head.center(), gpui::Modifiers::none());
     cx.run_until_parked();
