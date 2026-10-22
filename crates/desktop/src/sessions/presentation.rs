@@ -1839,23 +1839,36 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_turn_is_ready_for_review_never_a_request() {
+    fn a_finished_turn_is_ready_for_review_only_when_it_changed_files() {
         let home = home();
         let mut world = World::new(vec![home.clone()]);
         let mut info = session(home.id, "turn");
         info.kind = SessionKind::Harness;
         info.chat = Some(chat("omp", false, true));
-        let id = world.add(info);
-        world.unread.insert(id, Unread::Done);
+        let read_only = world.add(info.clone());
+        info.id = SessionId::new();
+        info.title = "edits".into();
+        let changing = world.add(info);
+        // Both turns ended unseen; only the second left work for review (FX-REVIEW's signal).
+        world.unread.insert(read_only, Unread::Turn);
+        world.unread.insert(changing, Unread::Turn);
+        world.reviews.insert(changing);
         let presentation = world.build();
-        let record = presentation.get(id).unwrap();
-        assert_eq!(record.group, Group::Review);
-        assert_eq!(record.headline().unwrap().text, "Turn finished");
-        assert_eq!(presentation.requests(), 0);
+
+        let quiet = presentation.get(read_only).unwrap();
+        assert_eq!(quiet.group, Group::Idle, "a read-only turn gets no group");
+        assert!(quiet.reasons.is_empty());
+
+        let reviewed = presentation.get(changing).unwrap();
+        assert_eq!(reviewed.group, Group::Review);
+        assert_eq!(reviewed.headline().unwrap().text, "Review changes");
+
+        assert_eq!(presentation.requests(), 0, "never a request");
         let counts = presentation.counts(Scope::All);
         assert_eq!(
             (counts.request_sessions, counts.failed, counts.review),
-            (0, 0, 1)
+            (0, 0, 1),
+            "only the changing turn is counted"
         );
     }
 

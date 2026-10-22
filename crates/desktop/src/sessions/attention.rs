@@ -19,10 +19,14 @@ use super::models::ModelNames;
 /// Why a session wants a look.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unread {
-    /// Exited 0, ended a turn, or sent a terminal notification: finished work not seen yet.
+    /// Exited 0 or sent a terminal notification: finished work not seen yet.
     Done,
     /// Exited non-zero, was killed by a signal, or failed to start.
     Failed,
+    /// A chat turn ended and the user has not looked yet. Only a mark on the row (the dot and the
+    /// title's weight), never a group: whether the turn left work for review is the task's
+    /// business (FX-REVIEW: it changed files), and that is *Ready for review* by its own rule.
+    Turn,
     /// A failure the user has looked at: it stays in *Failed* (without a badge) until a new run
     /// starts or the user marks it read.
     FailedSeen,
@@ -249,16 +253,12 @@ fn present_state(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames)
     };
     match &info.state {
         SessionState::Starting => quiet("starting", String::new(), Tone::Accent, false),
-        // Finished work of a running session the user has not seen: a terminal notification, or
-        // a chat turn that ended. Never a request.
+        // Finished work of a running session the user has not seen: a terminal notification.
+        // Never a request.
         SessionState::Running | SessionState::Idle if unread == Some(Unread::Done) => {
             Presentation {
                 label: "review".into(),
-                detail: if info.chat.is_some() {
-                    "turn finished".into()
-                } else {
-                    "notification".into()
-                },
+                detail: "notification".into(),
                 tone: Tone::Accent,
                 filled: true,
                 attention: Some(Attention::Review),
@@ -326,7 +326,7 @@ fn present_state(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames)
                     attention: Some(Attention::Failed),
                 },
                 // A mark is applied over this in `present`, which never passes it down.
-                None | Some(Unread::Marked) => quiet(
+                None | Some(Unread::Marked | Unread::Turn) => quiet(
                     "exited",
                     detail,
                     if matches!((code, signal), (Some(0), None)) {
@@ -341,8 +341,8 @@ fn present_state(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames)
         // An assistant that could not start says so in the Assistant panel, which offers Retry
         // and another backend; it is not a session the user went away from.
         SessionState::Failed { reason } => {
-            let looked_after =
-                unread.is_some() && !info.chat.as_ref().is_some_and(|chat| chat.is_assistant());
+            let looked_after = !matches!(unread, None | Some(Unread::Turn))
+                && !info.chat.as_ref().is_some_and(|chat| chat.is_assistant());
             Presentation {
                 label: "failed".into(),
                 detail: reason.clone(),
@@ -488,7 +488,7 @@ impl AttentionTracker {
                 true
             }
             Some(Unread::FailedSeen) | None => false,
-            Some(Unread::Done | Unread::Marked) => {
+            Some(Unread::Done | Unread::Turn | Unread::Marked) => {
                 self.unread.remove(&session);
                 true
             }
@@ -567,8 +567,9 @@ impl AttentionTracker {
     }
 }
 
-/// A chat turn that ended while nobody was asked anything is finished work not seen yet
-/// (*Ready for review*, never a request); a new turn is the work going on again. `was` is
+/// A chat turn that ended while nobody was asked anything is an unseen mark on its row, no group
+/// (a turn that changed files is *Ready for review* by the task's own rule); a new turn is the
+/// work going on again. `was` is
 /// whether a turn ran in the previous list, `running` whether one runs now.
 fn observe_turn(
     unread: &mut BTreeMap<SessionId, Unread>,
@@ -580,7 +581,7 @@ fn observe_turn(
         return;
     };
     if running && was == Some(false) {
-        if unread.get(&session.id) == Some(&Unread::Done) {
+        if unread.get(&session.id) == Some(&Unread::Turn) {
             unread.remove(&session.id);
         }
     } else if !running
@@ -589,7 +590,7 @@ fn observe_turn(
         && chat.pending_approvals == 0
         && chat.pending_questions == 0
     {
-        unread.entry(session.id).or_insert(Unread::Done);
+        unread.entry(session.id).or_insert(Unread::Turn);
     }
 }
 /// What the user did to the queue, kept in `desktop-state.json` (`attention`): client read
@@ -1147,7 +1148,7 @@ mod tests {
     }
 
     #[test]
-    fn a_chat_turn_that_ends_is_ready_for_review_and_a_new_turn_clears_it() {
+    fn a_chat_turn_that_ends_is_an_unseen_mark_never_a_group_and_a_new_turn_clears_it() {
         let epoch = Some(Epoch::new());
         let mut tracker = AttentionTracker::new();
         let mut session = chat(SessionState::Running, true, 0);
@@ -1166,15 +1167,25 @@ mod tests {
         tracker.observe(epoch, std::slice::from_ref(&session));
         assert_eq!(
             tracker.unread(id),
-            Some(Unread::Done),
-            "a finished turn is finished work not seen yet"
+            Some(Unread::Turn),
+            "a finished turn is an unseen mark on its row"
         );
+        assert!(tracker.unread(id).unwrap().is_unseen());
         let shown = present(&session, tracker.unread(id), &ModelNames::default());
         assert_eq!(
-            (shown.label.as_str(), shown.attention, shown.detail.as_str()),
-            ("review", Some(Attention::Review), "turn finished")
+            shown.attention, None,
+            "no group: whether it changed files is the task's rule"
         );
         assert_eq!(classify(&shown, 0, 0), None, "never a request or a badge");
+
+        // Looking at it clears the mark.
+        assert!(tracker.look_at(id));
+        assert_eq!(tracker.unread(id), None);
+        session = with_turn(&session, true);
+        tracker.observe(epoch, std::slice::from_ref(&session));
+        session = with_turn(&session, false);
+        tracker.observe(epoch, std::slice::from_ref(&session));
+        assert_eq!(tracker.unread(id), Some(Unread::Turn));
 
         // A new turn is the work going on again.
         session = with_turn(&session, true);
