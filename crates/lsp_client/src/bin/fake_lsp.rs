@@ -8,6 +8,7 @@
 //! {
 //!   "capabilities": {"positionEncoding": "utf-8", "textDocumentSync": 2, "hoverProvider": true},
 //!   "diagnostics": true,            // after didOpen/didChange: one error per "error" in the text
+//!   "warnings": true,               // with "diagnostics": one warning per "warning" too
 //!   "progress": 2,                  // after initialized: create a token, begin, N reports, end
 //!   "hover": "echo",                // or any text; "echo" answers with the mirror as JSON
 //!   "definition": {"uri": "...", "range": {...}},
@@ -41,6 +42,7 @@ use serde_json::{Value, json};
 struct Script {
     capabilities: Option<Value>,
     diagnostics: bool,
+    warnings: bool,
     progress: Option<u32>,
     hover: Option<String>,
     definition: Option<Value>,
@@ -169,19 +171,24 @@ fn to_position(text: &str, byte: usize, utf8: bool) -> Value {
     json!({"line": line, "character": character})
 }
 
-fn publish(out: &Out, uri: &str, doc: &Doc, utf8: bool) {
-    let diagnostics: Vec<Value> = doc
-        .text
-        .match_indices("error")
-        .map(|(at, word)| {
-            json!({
-                "range": {
-                    "start": to_position(&doc.text, at, utf8),
-                    "end": to_position(&doc.text, at + word.len(), utf8),
-                },
-                "severity": 1,
-                "source": "fake",
-                "message": "found error",
+fn publish(out: &Out, uri: &str, doc: &Doc, utf8: bool, warnings: bool) {
+    let mut words = vec![("error", 1, "found error")];
+    if warnings {
+        words.push(("warning", 2, "found warning"));
+    }
+    let diagnostics: Vec<Value> = words
+        .into_iter()
+        .flat_map(|(needle, severity, message)| {
+            doc.text.match_indices(needle).map(move |(at, word)| {
+                json!({
+                    "range": {
+                        "start": to_position(&doc.text, at, utf8),
+                        "end": to_position(&doc.text, at + word.len(), utf8),
+                    },
+                    "severity": severity,
+                    "source": "fake",
+                    "message": message,
+                })
             })
         })
         .collect();
@@ -397,7 +404,7 @@ fn main() {
                 doc.version = item["version"].as_i64().unwrap_or(0);
                 doc.opens += 1;
                 if script.diagnostics {
-                    publish(&out, &uri, doc, utf8);
+                    publish(&out, &uri, doc, utf8, script.warnings);
                 }
             }
             "textDocument/didChange" => {
@@ -422,7 +429,7 @@ fn main() {
                 doc.version = params["textDocument"]["version"].as_i64().unwrap_or(0);
                 doc.changes += 1;
                 if script.diagnostics {
-                    publish(&out, &uri, doc, utf8);
+                    publish(&out, &uri, doc, utf8, script.warnings);
                 }
             }
             "textDocument/didSave" => log(&out, &format!("saved {uri}")),
