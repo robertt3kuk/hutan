@@ -158,9 +158,10 @@ pub fn agent_badge(
     )
 }
 
-/// The placement badge of a session row: `main` or `wt <branch>`, framed like the other row
-/// badges, with a warning border and `⚠` while another live agent works in the same checkout.
-/// Its tooltip names the checkout.
+/// The placement badge of a session row's second line: `wt <branch>` (a worktree is news; the
+/// main checkout every row would repeat), neutral text, never a tinted pill. A checkout another
+/// live agent works in is the row's [`shared_checkout_marker`] glyph, not a colour here; the
+/// tooltip names the checkout.
 pub fn placement_badge(
     theme: &Theme,
     badge: &PlacementBadge,
@@ -171,31 +172,17 @@ pub fn placement_badge(
 ) -> AnyElement {
     let tokens = UiStyle::get(cx).density.ui();
     let tip = SharedString::from(badge.tooltip.clone());
-    let (color, text) = if badge.shared {
-        (theme.warning, badge.text.clone())
-    } else {
-        (theme.muted, badge.text.clone())
-    };
     div()
         .id(SharedString::from(format!("placement-badge-{session}")))
         .relative()
         .flex_none()
         .flex()
         .items_center()
-        .gap(px(2.0))
         .max_w(px(130.0))
         .truncate()
-        // A quiet badge is text on the row's own fill and lines up with the title above it; only
-        // the warning has a tint to pad.
-        .px(px(if badge.shared {
-            tokens.spacing * 2.0
-        } else {
-            0.0
-        }))
-        .rounded(px(crate::theme::pill_radius()))
-        .bg(color.opacity(if badge.shared { 0.14 } else { 0.0 }))
+        // Text on the row's own fill, lined up with the title above it.
         .text_size(px(tokens.secondary_font_size))
-        .text_color(color)
+        .text_color(theme.muted)
         .cursor_pointer()
         .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -208,11 +195,32 @@ pub fn placement_badge(
                 cx,
             );
         })
-        .when(badge.shared, |s| {
-            s.child(crate::icons::glyph(Icon::VcsSharedWarning))
-        })
-        .child(SharedString::from(text))
+        .child(SharedString::from(badge.text.clone()))
         .child(probe(regions, Region::PlacementBadge(site, session)))
+        .into_any_element()
+}
+
+/// The 16 px `warning` glyph a row wears while another live agent works in the same checkout;
+/// the tooltip says who and where. The one place the warning colour marks this: a row keeps its
+/// one-line height.
+pub fn shared_checkout_marker(
+    theme: &Theme,
+    badge: &PlacementBadge,
+    session: SessionId,
+    regions: &crate::workbench::regions::Regions,
+) -> AnyElement {
+    let tip = SharedString::from(badge.tooltip.clone());
+    div()
+        .id(SharedString::from(format!("shared-checkout-{session}")))
+        .relative()
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(16.0))
+        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .child(icon(Icon::VcsSharedWarning, 14.0, theme.warning))
+        .child(probe(regions, Region::SharedCheckout(session)))
         .into_any_element()
 }
 
@@ -254,21 +262,25 @@ pub fn recovery_chip(
             .child(probe(regions, Region::RecoveryChip(site, session)))
             .into_any_element();
     }
-    let color = match chip.tone {
-        hutan_client::recovery::ChipTone::Info => theme.accent,
-        hutan_client::recovery::ChipTone::Warn => theme.warning,
-    };
+    // A word with its sentence in the tooltip: a neutral pill; a restart that needs a look wears
+    // the 16 px warning glyph in front of it, the pill never a warning colour.
     let tip = SharedString::from(chip.detail.clone());
     div()
         .id(SharedString::from(format!("recovery-chip-{session}")))
         .relative()
         .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(tokens.spacing))
         .px(px(tokens.spacing * 2.0))
         .rounded(px(crate::theme::pill_radius()))
-        .bg(color.opacity(0.14))
+        .bg(theme.surface_hover)
         .text_size(px(tokens.secondary_font_size))
-        .text_color(color)
+        .text_color(theme.fg)
         .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+        .when(chip.tone == hutan_client::recovery::ChipTone::Warn, |s| {
+            s.child(icon(Icon::StateWarning, 14.0, theme.warning))
+        })
         .child(chip.label)
         .child(probe(regions, Region::RecoveryChip(site, session)))
         .into_any_element()

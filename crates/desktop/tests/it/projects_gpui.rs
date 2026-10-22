@@ -633,11 +633,36 @@ fn session_rows_are_one_line_and_only_a_checkout_that_is_news_adds_a_second(
     });
     let listed = rows(&panel, cx);
     assert!(row(&listed, "s-other").shared);
-    assert_eq!(
-        row(&listed, "s-main").badge.as_deref(),
-        Some("shared checkout"),
-        "a shared main checkout keeps its warning badge, in words"
+    // Sharing is a 16 px warning glyph in the row's trailing slot, not a pill on a second line:
+    // the row keeps its one-line height.
+    for title in ["s-main", "s-other"] {
+        let shared = row(&listed, title);
+        assert!(
+            shared.badge.is_none() && shared.subtitle.is_none(),
+            "{title} stays one line: {shared:?}"
+        );
+    }
+    wait_until(cx, "the warning glyph", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::SharedCheckout(w.s_main.id))
+                .is_some_and(|b| (f32::from(b.size.width) - 16.0).abs() <= 1.0)
+        })
+    });
+    assert!(
+        view.read_with(cx, |wb, _| wb
+            .region_bounds(Region::SharedCheckout(w.s_wt.id))
+            .is_none()),
+        "a session alone in its worktree has no marker"
     );
+    let one_line = view.read_with(cx, |wb, _| {
+        wb.region_bounds(Region::SessionRow(w.s_main.id))
+            .map(|b| f32::from(b.size.height))
+    });
+    let plain = view.read_with(cx, |wb, _| {
+        wb.region_bounds(Region::SessionRow(w.s_notes.id))
+            .map(|b| f32::from(b.size.height))
+    });
+    assert_eq!(one_line, plain, "a shared checkout does not grow its row");
     assert!(!row(&listed, "s-wt").shared, "another checkout");
 }
 

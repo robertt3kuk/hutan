@@ -151,6 +151,16 @@ impl IndexFilter {
     }
 }
 
+/// The toolbar's Finish…: the surface's primary until the Finish panel is open, which has its
+/// own primary (Finish): then it is a secondary, and disabled, so the view never shows two.
+fn toolbar_finish_kind(finish_open: bool) -> ui::ButtonKind {
+    if finish_open {
+        ui::ButtonKind::Secondary
+    } else {
+        ui::ButtonKind::Primary
+    }
+}
+
 /// The marker of a file's row: `staged`, `unstaged` or `both`; none for a committed-only file.
 pub fn index_mark(file: &DiffFile) -> Option<&'static str> {
     match (file.staged, file.unstaged) {
@@ -939,6 +949,7 @@ impl ChangesView {
         });
         let look = Look::of(cx);
         let finish_enabled = self.can_finish(cx);
+        let finish_open = self.finish_open();
         // The title and counts on the left, the actions on the right. When the pane is too
         // narrow the actions wrap under the title (and wrap again among themselves) instead of
         // running out of the pane: Finish is always reachable.
@@ -1013,9 +1024,11 @@ impl ChangesView {
                             .child(probe(&self.env.regions, Region::Changes("refresh"))),
                     )
                     .child(
+                        // The Finish panel has its own Finish button: while it is open this one is
+                        // a disabled secondary, so a surface never shows two primaries.
                         ui::Button::new("changes-finish", "Finish…", theme, tokens)
-                            .primary()
-                            .disabled(!finish_enabled)
+                            .kind(toolbar_finish_kind(finish_open))
+                            .disabled(!finish_enabled || finish_open)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.open_finish(window, cx)),
                             )
@@ -1294,21 +1307,9 @@ impl ChangesView {
                 continue;
             }
             let (mark, color) = status_mark(file.status, theme);
-            let index_chip = index_mark(file).map(|text| {
-                div()
-                    .flex_none()
-                    .px(px(tokens.spacing))
-                    .rounded(px(crate::theme::pill_radius()))
-                    .border_1()
-                    .border_color(theme.border)
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(if text == "unstaged" {
-                        theme.warning
-                    } else {
-                        theme.muted
-                    })
-                    .child(text)
-            });
+            // staged / unstaged / both: a neutral pill, never a warning colour (a state word is
+            // text, and "unstaged" is not an alarm).
+            let index_chip = index_mark(file).map(|text| ui::pill(text, theme, tokens));
             let selected = self.selected.as_deref() == Some(file.path.as_str());
             let path = file.path.clone();
             let name = match &file.old_path {
@@ -1581,6 +1582,12 @@ impl ChangesView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_toolbar_finish_is_a_secondary_while_the_finish_panel_has_the_primary() {
+        assert_eq!(toolbar_finish_kind(false), ui::ButtonKind::Primary);
+        assert_eq!(toolbar_finish_kind(true), ui::ButtonKind::Secondary);
+    }
 
     #[test]
     fn hunks_are_the_runs_of_lines_from_each_header() {

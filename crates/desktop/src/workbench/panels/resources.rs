@@ -1256,11 +1256,8 @@ impl ResourcesPanel {
             );
         }
         if let Some(badge) = line.placement.as_ref().filter(|_| roomy) {
-            let (color, text) = if badge.shared {
-                (theme.warning, badge.text.clone())
-            } else {
-                (theme.muted, badge.text.clone())
-            };
+            // Neutral words; sharing is the 16 px warning glyph, never a tinted pill.
+            let (color, text) = (theme.muted, badge.text.clone());
             let tip = SharedString::from(badge.tooltip.clone());
             let mut chip = div()
                 .id(SharedString::from(format!("resources-placement-{index}")))
@@ -1268,12 +1265,19 @@ impl ResourcesPanel {
                 .min_w_0()
                 .max_w(px(130.0))
                 .truncate()
-                .px(px(tokens.spacing * 2.0))
-                .rounded(px(crate::theme::pill_radius()))
-                .bg(color.opacity(if badge.shared { 0.14 } else { 0.0 }))
+                .flex()
+                .items_center()
+                .gap(px(tokens.spacing))
                 .text_size(px(tokens.secondary_font_size))
                 .text_color(color)
                 .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                .when(badge.shared, |s| {
+                    s.child(crate::icons::icon(
+                        crate::icons::Icon::VcsSharedWarning,
+                        14.0,
+                        theme.warning,
+                    ))
+                })
                 .child(SharedString::from(text))
                 .child(probe(regions, Region::ResourceCell(index, "name.2")));
             chip.style().flex_shrink = Some(4.0);

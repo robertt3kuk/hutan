@@ -302,6 +302,8 @@ pub enum Region {
     SessionRow(hutan_core::SessionId),
     /// The muted marker of a session's row (its notifications are muted, `notify.mute`).
     SessionMuted(hutan_core::SessionId),
+    /// The warning glyph of a session's row: another live agent works in the same checkout.
+    SharedCheckout(hutan_core::SessionId),
     /// The *Changes to review* link of a session's row (its seen work waits for review).
     SessionReview(hutan_core::SessionId),
     /// A control of the "Closed … · Undo" toast (`undo`).

@@ -171,7 +171,7 @@ fn rows_and_tabs_show_main_and_worktree_badges(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn two_agents_in_one_checkout_turn_the_badge_into_a_warning(cx: &mut TestAppContext) {
+fn two_agents_in_one_checkout_put_a_warning_glyph_on_both_rows(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (_keep, root, _wt) = repo_with_worktree();
     let workspace = daemon.create_workspace("proj", &[&root]).id;
@@ -207,17 +207,25 @@ fn two_agents_in_one_checkout_turn_the_badge_into_a_warning(cx: &mut TestAppCont
         tip.contains("⚠ Another live agent works in this checkout"),
         "{tip}"
     );
+    // On the rows it is a 16 px glyph in the trailing slot, not a badge on a second line.
+    let marker = |view: &Entity<Workbench>, cx: &VisualTestContext, id: SessionId| {
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::SharedCheckout(id)))
+    };
     wait_until(cx, "the warning on the rows", |cx| {
-        drawn(&view, cx, first, BadgeSite::Row) && drawn(&view, cx, second, BadgeSite::Row)
+        marker(&view, cx, first).is_some() && marker(&view, cx, second).is_some()
     });
+    assert!(
+        !drawn(&view, cx, first, BadgeSite::Row),
+        "no second line for a shared main checkout"
+    );
 
     // One agent leaves: the warning goes with it, and the row is one line again.
     claude.release(&daemon, None, None);
     wait_until(cx, "the warning to clear", |cx| {
         badge_text(&view, cx, first) == Some(("main".into(), false))
     });
-    wait_until(cx, "the badge to leave the row", |cx| {
-        !drawn(&view, cx, first, BadgeSite::Row)
+    wait_until(cx, "the marker to leave the row", |cx| {
+        marker(&view, cx, first).is_none()
     });
 }
 

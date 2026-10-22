@@ -25,7 +25,7 @@ use hutan_protocol::messages::{SessionInfo, WorkspaceInfo, WorkspaceKind};
 
 use super::common::{
     age_label, agent_badge, panel_header_controls, placement, placement_badge, recovery_chip,
-    session_icon, state_dot, time_tooltip,
+    session_icon, shared_checkout_marker, state_dot, time_tooltip,
 };
 use crate::icons::{Icon, icon};
 use crate::sessions::tree::{
@@ -462,7 +462,11 @@ impl SessionsPanel {
                             depth: row.depth,
                             title: row.info.title.clone(),
                             folder: row.subtitle.as_ref().and_then(|s| s.folder.clone()),
-                            shared: badge.is_some_and(|b| b.shared),
+                            shared: row
+                                .info
+                                .placement
+                                .as_ref()
+                                .is_some_and(|p| !p.shared_with.is_empty()),
                             badge: badge.map(|b| b.text.clone()),
                             pinned: false,
                             count: None,
@@ -1734,6 +1738,15 @@ impl SessionsPanel {
                 cx,
             )
         });
+        // Another live agent in the same checkout: a 16 px warning glyph in the row's trailing
+        // slot (its tooltip has the sentence), never a pill that makes a second line.
+        let mut shared = (info
+            .placement
+            .as_ref()
+            .is_some_and(|p| !p.shared_with.is_empty()))
+        .then(|| crate::sessions::placement_badge(info))
+        .flatten()
+        .map(|badge| shared_checkout_marker(&theme, &badge, info.id, &self.env.regions));
         // The marker of a session whose notifications are muted (`notify.mute`).
         let mut muted = info.muted.then(|| {
             div()
@@ -1873,6 +1886,7 @@ impl SessionsPanel {
                     })
                     .children(badge.take())
                     .children(recovery.take())
+                    .children(shared.take())
                     .children(review.take())
                     .children(muted.take()),
                 "age" => line.child(

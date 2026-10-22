@@ -56,13 +56,15 @@ pub fn placement_badge(session: &SessionInfo) -> Option<PlacementBadge> {
     })
 }
 
-/// What a quiet sidebar row says about where its session works: the badge of
-/// [`placement_badge`] only when that is news, i.e. the session is in a linked worktree (not the
-/// main checkout every row would repeat) or another live agent works in the same checkout.
+/// What a quiet sidebar row says about where its session works, on a second line: the badge of
+/// [`placement_badge`] only when the session is in a linked worktree (not the main checkout every
+/// row would repeat). A checkout another live agent works in is not a line of its own: the row
+/// wears a warning glyph in its trailing slot and keeps its one-line height.
 pub fn row_placement_badge(session: &SessionInfo) -> Option<PlacementBadge> {
     let placement = session.placement.as_ref()?;
-    let news = placement.kind == PlacementKind::Worktree || !placement.shared_with.is_empty();
-    news.then(|| placement_badge(session)).flatten()
+    (placement.kind == PlacementKind::Worktree)
+        .then(|| placement_badge(session))
+        .flatten()
 }
 
 #[cfg(test)]
@@ -139,8 +141,8 @@ mod tests {
         );
         assert_eq!(
             badge(placement(PlacementKind::Main, Some("master"), 1)),
-            Some(("shared checkout".to_owned(), true)),
-            "a shared main checkout says so in words"
+            None,
+            "a shared main checkout is a glyph in the row, not a second line"
         );
         assert_eq!(
             badge(placement(PlacementKind::Worktree, Some("x"), 1)),

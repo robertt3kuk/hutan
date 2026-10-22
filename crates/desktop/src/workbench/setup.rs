@@ -1538,9 +1538,11 @@ impl Workbench {
         } else {
             if self.harness_install_available() {
                 buttons = buttons.child(
-                    action("install", "Install…", ButtonKind::Primary).on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(InstallHarness(id.to_owned())), cx);
-                    }),
+                    action("install", "Install…", ButtonKind::Secondary).on_click(
+                        |_, window, cx| {
+                            window.dispatch_action(Box::new(InstallHarness(id.to_owned())), cx);
+                        },
+                    ),
                 );
             }
             buttons = buttons.child(
@@ -2007,7 +2009,6 @@ impl Workbench {
                     .gap(px(tokens.spacing * 2.0))
                     .child(
                         Button::new("open-folder", "Open a folder", &theme, &tokens)
-                            .primary()
                             .shortcut("⌘O")
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.finish_setup(Some(SetupFinish::OpenFolder), window, cx);
