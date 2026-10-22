@@ -419,6 +419,7 @@ pub fn settings_store() -> SettingsStore {
     let store = SettingsStore::new(paths);
     crate::settings::register_all(&store);
     crate::settings::migrate_start_at_login(&store, &user_file);
+    crate::settings::migrate_dock_badge(&store, &user_file);
     store
 }
 

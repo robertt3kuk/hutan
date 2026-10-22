@@ -1,5 +1,5 @@
-//! The Dock badge (`app.dock_badge`): the number of sessions that need the user on the app's
-//! Dock tile, empty at zero.
+//! The Dock badge (`notifications.dock_badge`): the number of sessions with a request waiting on
+//! the app's Dock tile, empty at zero, `99+` above 99.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -46,9 +46,13 @@ impl DockBadge for FakeDock {
     }
 }
 
-/// The text of the badge label: the count, or none at zero.
+/// The text of the badge label: the count, `99+` above 99, none at zero.
 pub fn badge_label(count: usize) -> Option<String> {
-    (count > 0).then(|| count.to_string())
+    match count {
+        0 => None,
+        1..=99 => Some(count.to_string()),
+        _ => Some("99+".to_owned()),
+    }
 }
 
 /// `NSApp.dockTile.badgeLabel`.
@@ -80,5 +84,7 @@ mod tests {
     fn the_label_is_empty_at_zero() {
         assert_eq!(badge_label(0), None);
         assert_eq!(badge_label(3).as_deref(), Some("3"));
+        assert_eq!(badge_label(99).as_deref(), Some("99"));
+        assert_eq!(badge_label(100).as_deref(), Some("99+"));
     }
 }

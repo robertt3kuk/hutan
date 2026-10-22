@@ -906,8 +906,7 @@ fn the_settings_sheet_lists_the_app_namespace(cx: &mut TestAppContext) {
             "ask_notifications",
             "ask_hooks",
             "on_last_window_close",
-            "menu_bar",
-            "dock_badge"
+            "menu_bar"
         ]
     );
 }

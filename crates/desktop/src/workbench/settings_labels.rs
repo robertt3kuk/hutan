@@ -172,10 +172,10 @@ const FIELDS: &[FieldText] = &[
         "A menu bar icon with the daemon's state, how many sessions have a request waiting or an unseen failure, and a menu to jump to them. While no Hutan window is connected, the daemon shows its own icon whatever this says.",
     ),
     field(
-        "app",
+        "notifications",
         "dock_badge",
         "Show a badge on the Dock icon",
-        "Shows how many sessions have a request waiting (an approval, a question, a plan) or a failure you have not seen on the Dock icon. Finished work is never counted.",
+        "Shows how many sessions have a request waiting (an approval, a question, a plan) on the Dock icon, and nothing at zero. Only requests count: a failure or finished work never does.",
     ),
     // ---- keyboard ----
     choice(

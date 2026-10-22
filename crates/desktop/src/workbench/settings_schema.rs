@@ -11,8 +11,8 @@ use serde_json::Value as Json;
 use crate::settings::{
     AgentsSettings, AppSettings, AssistantSettings, ChatSettings, EditorSettings,
     FilesPanelSettings, HistorySettings, InspectorPanelSettings, IntegrationsSettings,
-    KeymapSettings, LauncherSettings, LayoutSettings, ResourcesSettings, SessionsPanelSettings,
-    SidebarSettings, TasksSettings, TerminalSettings, WorkspacesSettings,
+    KeymapSettings, LauncherSettings, LayoutSettings, NotificationsSettings, ResourcesSettings,
+    SessionsPanelSettings, SidebarSettings, TasksSettings, TerminalSettings, WorkspacesSettings,
 };
 use crate::workbench::settings_labels::{field_search_text, namespace_title, page_keywords};
 
@@ -397,7 +397,7 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<crate::settings::SearchPanelSettings>(),
         CatalogEntry::of::<WorkspacesSettings>(),
         CatalogEntry::of::<TasksSettings>(),
-        CatalogEntry::custom("notifications"),
+        CatalogEntry::of::<NotificationsSettings>(),
         // Agents
         CatalogEntry::of::<AssistantSettings>(),
         CatalogEntry::of::<AgentsSettings>(),

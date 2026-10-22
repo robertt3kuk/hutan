@@ -4,7 +4,7 @@
 //! closes.
 //!
 //! Each is driven by settings (`app.keep_running`, `app.start_at_login`, `app.menu_bar`,
-//! `app.dock_badge`, `assistant.global_shortcut`) and follows the attention model. The
+//! `notifications.dock_badge`, `assistant.global_shortcut`) and follows the attention model. The
 //! `sync_*` methods compare the wanted state with what was last handed to the system and only
 //! call the trait when something changed, so they are cheap to run on every session update and
 //! on every settings reload. Nothing here knows whether the traits are real.
@@ -19,7 +19,7 @@ use crate::macos::{
     DockBadge, GlobalHotkey, LoginItem, LoginItemStatus, MacEvent, MacServices, MenuCommand,
     NotificationPermission, Presence, Shortcut, StatusItemHost, StatusItemModel,
 };
-use crate::settings::{AppSettings, AssistantSettings, LastWindowClose};
+use crate::settings::{AppSettings, AssistantSettings, LastWindowClose, NotificationsSettings};
 use hutan_settings::ChangeSet;
 
 /// State of the macOS integration inside the workbench.
@@ -413,10 +413,11 @@ impl Workbench {
         }
     }
 
-    /// Sets the Dock badge to the number of sessions that need the user (`app.dock_badge`).
+    /// Sets the Dock badge to the number of sessions with a request waiting
+    /// (`notifications.dock_badge`): requests only, never failures or finished work.
     pub(crate) fn sync_dock(&mut self, cx: &mut Context<Self>) {
-        let count = if self.settings.get::<AppSettings>().dock_badge {
-            self.sessions.read(cx).attention_entries().len()
+        let count = if self.settings.get::<NotificationsSettings>().dock_badge {
+            self.sessions.read(cx).requests().len()
         } else {
             0
         };
@@ -502,6 +503,9 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if changes.contains("notifications") {
+            self.sync_dock(cx);
+        }
         if changes.contains("app") {
             self.sync_start_at_login(cx);
             self.sync_status_item(cx);

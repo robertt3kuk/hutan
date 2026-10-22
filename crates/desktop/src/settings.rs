@@ -1257,9 +1257,6 @@ pub struct AppSettings {
     /// connected to the daemon (it keeps running after Hutan quit) the daemon shows an item of
     /// its own, which is not optional.
     pub menu_bar: bool,
-    /// Show the number of sessions with a request waiting (an approval, a question, a plan) or an
-    /// unseen failure as a badge on the Dock icon; finished work is never counted.
-    pub dock_badge: bool,
 }
 
 impl Default for AppSettings {
@@ -1272,7 +1269,6 @@ impl Default for AppSettings {
             ask_hooks: true,
             on_last_window_close: LastWindowClose::Quit,
             menu_bar: true,
-            dock_badge: true,
         }
     }
 }
@@ -1303,6 +1299,56 @@ impl AppSettings {
 
 impl Setting for AppSettings {
     const NAMESPACE: &'static str = "app";
+}
+
+/// The `notifications` namespace: how Hutan calls you from the desktop. What the *daemon* does
+/// with a notification (the system's banner, its sound, whether a finished turn gets one) is in
+/// `daemon.toml` `[notify]` and is shown on the same Settings page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct NotificationsSettings {
+    /// Show the number of sessions with a request waiting (an approval, a question, a plan) as a
+    /// badge on the Dock icon. Only requests count: failures and finished work never do.
+    pub dock_badge: bool,
+}
+
+impl Default for NotificationsSettings {
+    fn default() -> Self {
+        Self { dock_badge: true }
+    }
+}
+
+impl Setting for NotificationsSettings {
+    const NAMESPACE: &'static str = "notifications";
+}
+
+/// A `settings.toml` that turned the Dock badge off as `app.dock_badge` gets
+/// `notifications.dock_badge = false`, so that what the user chose keeps working. A file that
+/// already names `notifications.dock_badge` is left alone. `true` when the file was migrated.
+pub fn migrate_dock_badge(store: &SettingsStore, user_file: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(user_file) else {
+        return false;
+    };
+    let Ok(table) = text.parse::<toml::Table>() else {
+        return false;
+    };
+    let old = table
+        .get("app")
+        .and_then(toml::Value::as_table)
+        .and_then(|app| app.get("dock_badge"))
+        .and_then(toml::Value::as_bool);
+    let named = table
+        .get("notifications")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|notifications| notifications.contains_key("dock_badge"));
+    if old != Some(false) || named {
+        return false;
+    }
+    if let Err(error) = store.write_user("notifications.dock_badge", toml::Value::Boolean(false)) {
+        tracing::warn!("cannot migrate app.dock_badge to notifications.dock_badge: {error}");
+        return false;
+    }
+    true
 }
 
 /// Settings written before `app.start_at_login` existed: `app.keep_running = true` meant "the
@@ -1462,6 +1508,7 @@ impl Setting for KeymapSettings {
 pub fn register_all(store: &SettingsStore) {
     store.register::<AppearanceSettings>();
     store.register::<AppSettings>();
+    store.register::<NotificationsSettings>();
     store.register::<AssistantSettings>();
     store.register::<KeymapSettings>();
     store.register::<IntegrationsSettings>();
@@ -1832,10 +1879,11 @@ mod tests {
             "nothing outlives the app and nothing is registered with the system by default"
         );
         assert!(!app.setup_done, "the first-run setup is still to come");
-        assert!(app.menu_bar && app.dock_badge);
+        assert!(app.menu_bar);
+        assert!(NotificationsSettings::default().dock_badge);
         let parsed: AppSettings = toml::from_str("keep_running = true\nmenu_bar = false").unwrap();
         assert!(parsed.keep_running && !parsed.start_at_login);
-        assert!(!parsed.menu_bar && parsed.dock_badge);
+        assert!(!parsed.menu_bar);
         assert!(AssistantSettings::default().global_shortcut.is_empty());
         let off: AssistantSettings = toml::from_str("global_shortcut = \"\"").unwrap();
         assert!(off.global_shortcut.is_empty());
@@ -1885,6 +1933,27 @@ mod tests {
             let (done, app, _) = migrated(text);
             assert!(!done && !app.start_at_login, "{text}");
         }
+    }
+
+    #[test]
+    fn a_dock_badge_turned_off_under_app_stays_off_under_notifications() {
+        let run = |text: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            let paths = hutan_settings::SettingsPaths::in_dir(dir.path());
+            std::fs::write(&paths.user, text).unwrap();
+            let store = SettingsStore::new(paths.clone());
+            register_all(&store);
+            let done = migrate_dock_badge(&store, &paths.user);
+            (done, store.get::<NotificationsSettings>().dock_badge)
+        };
+        assert_eq!(run("[app]\ndock_badge = false\n"), (true, false));
+        // On is the default; a file that already names the new key is left alone.
+        assert_eq!(run("[app]\ndock_badge = true\n"), (false, true));
+        assert_eq!(
+            run("[app]\ndock_badge = false\n[notifications]\ndock_badge = true\n"),
+            (false, true)
+        );
+        assert_eq!(run(""), (false, true));
     }
 
     #[test]

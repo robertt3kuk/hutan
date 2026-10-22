@@ -265,7 +265,12 @@ fn a_login_item_registered_from_another_copy_of_the_app_is_registered_again(
         LoginItemStatus::Enabled
     );
     // Once: a settings reload does not register it again.
-    set(&view, cx, "app.dock_badge", toml::Value::Boolean(false));
+    set(
+        &view,
+        cx,
+        "notifications.dock_badge",
+        toml::Value::Boolean(false),
+    );
     assert_eq!(fakes.login.calls().len(), 2);
 }
 
@@ -812,11 +817,14 @@ fn the_status_item_and_the_badge_follow_the_attention_model(cx: &mut TestAppCont
             if *id == blocked.id && title.starts_with("agent — blocked")
     )));
 
-    // A session fails while the user is elsewhere: it counts too.
+    // A session fails while the user is elsewhere: the menu bar item counts it, the Dock badge
+    // does not (a badge is for requests only).
     std::fs::write(&go, "").unwrap();
-    wait_until(cx, "the failure to be counted", |_| fakes.dock.badge() == 2);
+    wait_until(cx, "the failure to be counted", |_| {
+        fakes.item.shown().is_some_and(|m| m.title() == "2")
+    });
+    assert_eq!(fakes.dock.badge(), 1);
     let shown = fakes.item.shown().unwrap();
-    assert_eq!(shown.title(), "2");
     let kinds: Vec<_> = shown
         .attention
         .iter()
@@ -830,10 +838,13 @@ fn the_status_item_and_the_badge_follow_the_attention_model(cx: &mut TestAppCont
         ]
     );
 
-    // Looking at the failed session clears it; the badge steps down.
+    // Looking at the failed session clears it from the menu bar item; the badge was not
+    // counting it.
     view.update_in(cx, |wb, window, cx| wb.open_session(failing.id, window, cx));
-    wait_until(cx, "the failure to be read", |_| fakes.dock.badge() == 1);
-    assert_eq!(fakes.item.shown().unwrap().title(), "1");
+    wait_until(cx, "the failure to be read", |_| {
+        fakes.item.shown().is_some_and(|m| m.title() == "1")
+    });
+    assert_eq!(fakes.dock.badge(), 1);
 
     // The agent is unblocked: nothing is left, and the badge is gone.
     let applied: AgentApplied = daemon.call(Request::AgentReport(AgentReportRequest {
@@ -853,7 +864,7 @@ fn the_status_item_and_the_badge_follow_the_attention_model(cx: &mut TestAppCont
     assert_eq!(fakes.item.shown().unwrap().title(), "");
 
     // Every step was one transition, never a repeated value.
-    assert_eq!(fakes.dock.history(), [0, 1, 2, 1, 0]);
+    assert_eq!(fakes.dock.history(), [0, 1, 0]);
 }
 
 #[gpui::test]
@@ -916,7 +927,12 @@ fn the_menu_bar_item_comes_and_goes_with_its_setting(cx: &mut TestAppContext) {
     assert_eq!(fakes.item.hides(), 1);
 
     // Unrelated changes do not bring it back or remove it twice.
-    set(&view, cx, "app.dock_badge", toml::Value::Boolean(false));
+    set(
+        &view,
+        cx,
+        "notifications.dock_badge",
+        toml::Value::Boolean(false),
+    );
     assert!(fakes.item.shown().is_none());
     assert_eq!(fakes.item.hides(), 1);
 
@@ -936,12 +952,22 @@ fn the_dock_badge_follows_its_setting(cx: &mut TestAppContext) {
     report_blocked(&daemon, blocked.id);
     wait_until(cx, "the count", |_| fakes.dock.badge() == 1);
 
-    set(&view, cx, "app.dock_badge", toml::Value::Boolean(false));
+    set(
+        &view,
+        cx,
+        "notifications.dock_badge",
+        toml::Value::Boolean(false),
+    );
     assert_eq!(fakes.dock.badge(), 0, "off: the badge is cleared");
     // The menu bar item still counts: the two are separate settings.
     assert_eq!(fakes.item.shown().unwrap().title(), "1");
 
-    set(&view, cx, "app.dock_badge", toml::Value::Boolean(true));
+    set(
+        &view,
+        cx,
+        "notifications.dock_badge",
+        toml::Value::Boolean(true),
+    );
     assert_eq!(fakes.dock.badge(), 1);
     assert_eq!(fakes.dock.history(), [0, 1, 0, 1]);
 }
@@ -958,7 +984,9 @@ fn menu_bar_choices_drive_the_window(cx: &mut TestAppContext) {
     let (view, cx) = open_with_services(cx, &daemon, mac);
     wait_synced(&view, cx, 1);
     std::fs::write(&go, "").unwrap();
-    wait_until(cx, "the failure", |_| fakes.dock.badge() == 1);
+    wait_until(cx, "the failure", |_| {
+        fakes.item.shown().is_some_and(|m| m.title() == "1")
+    });
 
     // "build — failed" in the menu: its tab opens and the failure counts as seen.
     tx.try_send(MacEvent::Menu(MenuCommand::FocusSession(failing.id)))
@@ -966,7 +994,9 @@ fn menu_bar_choices_drive_the_window(cx: &mut TestAppContext) {
     wait_until(cx, "the session to open", |cx| {
         view.read_with(cx, |wb, _| wb.terminal_view_of(failing.id).is_some())
     });
-    wait_until(cx, "the badge to clear", |_| fakes.dock.badge() == 0);
+    wait_until(cx, "the failure to be read", |_| {
+        fakes.item.shown().is_some_and(|m| m.title().is_empty())
+    });
 
     // New Terminal.
     tx.try_send(MacEvent::Menu(MenuCommand::NewTerminal))
@@ -1167,8 +1197,7 @@ fn the_new_namespaces_and_fields_are_in_the_settings_sheet(cx: &mut TestAppConte
             "ask_notifications",
             "ask_hooks",
             "on_last_window_close",
-            "menu_bar",
-            "dock_badge"
+            "menu_bar"
         ]
     );
     view.update(cx, |wb, cx| wb.select_settings_namespace("assistant", cx));
