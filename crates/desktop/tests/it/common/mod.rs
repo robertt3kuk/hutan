@@ -738,9 +738,7 @@ pub struct ProcessDaemon {
 impl ProcessDaemon {
     pub fn new() -> Self {
         use std::os::unix::fs::PermissionsExt;
-        let exe = std::env::current_exe().unwrap();
-        let profile_dir = exe.parent().and_then(|deps| deps.parent()).unwrap();
-        let hutand = profile_dir.join("hutand");
+        let hutand = hutand_beside_tests();
         assert!(
             hutand.is_file(),
             "hutand not built: run `cargo build -p hutan-daemon --bin hutand` (or `just test`)"
@@ -795,9 +793,78 @@ impl ProcessDaemon {
         }
     }
 
+    /// The `hutand` the launcher starts, symlinks resolved.
+    #[allow(dead_code)]
+    pub fn hutand(&self) -> PathBuf {
+        hutand_beside_tests().canonicalize().unwrap()
+    }
+
+    /// How many daemons were started for this home so far (by the launcher or
+    /// [`spawn_from`](Self::spawn_from)).
+    #[allow(dead_code)]
+    pub fn starts(&self) -> usize {
+        std::fs::read_to_string(self.dir.path().join("pids"))
+            .map(|text| text.lines().count())
+            .unwrap_or(0)
+    }
+
+    /// Starts `exe` (a `hutand` elsewhere: another install) on this home, and waits until it
+    /// answers. Stopped on drop like the launcher's daemons.
+    #[allow(dead_code)]
+    pub fn spawn_from(&self, exe: &Path) {
+        use std::io::Write as _;
+        use std::os::unix::process::CommandExt as _;
+        let child = std::process::Command::new(exe)
+            .env("HUTAN_HOME", self.home())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut pids = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.dir.path().join("pids"))
+            .unwrap();
+        writeln!(pids, "{}", child.id()).unwrap();
+        let deadline = Instant::now() + WAIT;
+        while std::os::unix::net::UnixStream::connect(self.socket()).is_err() {
+            assert!(
+                Instant::now() < deadline,
+                "{} did not come up",
+                exe.display()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// One request on a fresh connection (which starts the daemon if it is not running).
     pub fn call<T: DeserializeOwned + Send + 'static>(&self, request: Request) -> T {
         let options = self.options();
+        self.runtime.block_on(async move {
+            let client = Client::connect(options).await.unwrap();
+            client.call(request).await.unwrap()
+        })
+    }
+
+    /// One request from a `kind` client (`hutan daemon stop` is a CLI's `daemon.shutdown`)
+    /// that never starts a daemon.
+    #[allow(dead_code)]
+    pub fn call_as<T: DeserializeOwned + Send + 'static>(
+        &self,
+        kind: ClientKind,
+        request: Request,
+    ) -> T {
+        let options = ConnectOptions {
+            socket: Some(self.socket()),
+            autostart: None,
+            client: ClientInfo {
+                kind,
+                version: "test".into(),
+                origin: None,
+            },
+        };
         self.runtime.block_on(async move {
             let client = Client::connect(options).await.unwrap();
             client.call(request).await.unwrap()
@@ -823,6 +890,13 @@ impl Drop for ProcessDaemon {
         let _ = std::fs::write(self.dir.path().join("closed"), "");
         self.reaper.reap();
     }
+}
+
+/// `target/<profile>/hutand`, beside this test binary's `deps/`.
+fn hutand_beside_tests() -> PathBuf {
+    let exe = std::env::current_exe().unwrap();
+    let profile_dir = exe.parent().and_then(|deps| deps.parent()).unwrap();
+    profile_dir.join("hutand")
 }
 
 // Real shells -----------------------------------------------------------------------------

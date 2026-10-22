@@ -30,6 +30,7 @@ mod icons_gpui;
 mod keymap_gpui;
 mod launcher_gpui;
 mod layout_gpui;
+mod lifecycle_gpui;
 mod links_gpui;
 mod lsp_gpui;
 mod mac_gpui;
