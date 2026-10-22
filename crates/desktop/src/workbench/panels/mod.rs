@@ -65,6 +65,9 @@ pub use inspector::{BlockRow, InspectorPanel};
 pub use memory::{
     EditorTarget as MemoryEditorTarget, MemoryPanel, ScopeChoice as MemoryScopeChoice,
 };
+pub use problems::{
+    Problem, ProblemRow, Problems, ProblemsPanel, filter_label as problems_filter_label,
+};
 pub use resources::{
     Link as ResourcesLink, MAX_INTERVAL_MS, REFRESH_AFTER as RESOURCES_REFRESH, ResourcesPanel,
     WATCH as RESOURCES_WATCH,
@@ -75,7 +78,6 @@ pub use resources_model::{
     Item as ResourceItem, Line as ResourceLine, ProcessLine as ResourceProcessLine,
     SessionLine as ResourceSessionLine, Target as ResourceTarget,
 };
-pub use problems::{Problem, ProblemRow, Problems, ProblemsPanel, filter_label as problems_filter_label};
 pub use sessions::{DraggedProject, DraggedWorkspace, RowKind, SessionsPanel, SidebarRow};
 pub use status::{Tone as StatusTone, builtin_status_items, connection_label};
 pub use tasks::{CascadeAsk, TICK as TASKS_TICK, TasksPanel};

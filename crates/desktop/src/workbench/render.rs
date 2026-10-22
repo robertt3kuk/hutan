@@ -981,13 +981,15 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::ShowProblems, window, cx| {
             this.show_problems(window, cx);
         }))
-        .on_action(cx.listener(|this, a: &actions::OpenAtPosition, window, cx| {
-            let position = hutan_protocol::lsp::LspPosition {
-                line: a.0.line,
-                character: a.0.character,
-            };
-            this.open_at_lsp(a.0.path.clone().into(), position, false, window, cx);
-        }))
+        .on_action(
+            cx.listener(|this, a: &actions::OpenAtPosition, window, cx| {
+                let position = hutan_protocol::lsp::LspPosition {
+                    line: a.0.line,
+                    character: a.0.character,
+                };
+                this.open_at_lsp(a.0.path.clone().into(), position, false, window, cx);
+            }),
+        )
         .on_action(
             cx.listener(|this, _: &actions::RevealActiveFile, window, cx| {
                 this.reveal_active_file(window, cx);

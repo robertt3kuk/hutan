@@ -19,9 +19,9 @@ use gpui::{
 use super::lsp::{LspBar, LspStore};
 use super::regions::Regions;
 use super::render::probe;
-use super::view::Region;
 use super::style::TextTooltip;
 use super::ui::{self, ButtonKind};
+use super::view::Region;
 use crate::theme::{Theme, Tokens};
 
 /// What the bar says (tests read it too).

@@ -16,9 +16,7 @@ use std::time::Duration;
 
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
-use hutan_code_view::{
-    CodeView, FileBuffer, GlyphShape, LoadState, Severity, UnderlineStyle,
-};
+use hutan_code_view::{CodeView, FileBuffer, GlyphShape, LoadState, Severity, UnderlineStyle};
 use hutan_desktop::workbench::file_view::FileView;
 use hutan_desktop::workbench::lsp::CHANGE_DEBOUNCE;
 use hutan_desktop::workbench::panels::{ProblemRow, ProblemsPanel};
@@ -108,12 +106,7 @@ struct Tab {
 
 /// Writes `text` to `file`, opens it in a tab and waits until its text is in and the daemon
 /// has it as a document.
-fn open_file(
-    view: &Entity<Workbench>,
-    cx: &mut VisualTestContext,
-    file: &Path,
-    text: &str,
-) -> Tab {
+fn open_file(view: &Entity<Workbench>, cx: &mut VisualTestContext, file: &Path, text: &str) -> Tab {
     std::fs::write(file, text).unwrap();
     view.update_in(cx, |wb, window, cx| {
         wb.open_file(FileOpen::picked(file), window, cx);
@@ -201,7 +194,9 @@ fn diagnostics_have_a_style_and_a_shape_per_severity_and_follow_edits_until_repl
 
     // No cue is colour alone: an underline style and a gutter glyph shape per severity.
     draw(cx);
-    let drawn = tab.code.read_with(cx, |c, _| c.drawn_diagnostics().to_vec());
+    let drawn = tab
+        .code
+        .read_with(cx, |c, _| c.drawn_diagnostics().to_vec());
     let summary: Vec<_> = drawn
         .iter()
         .map(|d| (d.line, d.severity, d.underline, d.glyph))
@@ -258,9 +253,7 @@ fn diagnostics_have_a_style_and_a_shape_per_severity_and_follow_edits_until_repl
             .read_with(cx, |c, _| c.drawn_diagnostics().is_empty())
     );
     assert_eq!(diagnostics(&other.buffer, cx), [(0, 3, Severity::Error)]);
-    let server_text = view.read_with(cx, |wb, cx| {
-        wb.lsp().read(cx).is_synced(&tab.path)
-    });
+    let server_text = view.read_with(cx, |wb, cx| wb.lsp().read(cx).is_synced(&tab.path));
     assert!(server_text, "nothing of a.fake waits to be sent");
 }
 
@@ -376,7 +369,10 @@ fn vim_jumps_between_diagnostics_goes_to_definitions_across_files_and_back(
     let jumps = view.read_with(cx, |wb, cx| wb.lsp().read(cx).jumps().to_vec());
     assert_eq!(jumps.len(), 1);
     assert_eq!(jumps[0].path, tab.path);
-    assert_eq!((jumps[0].position.line, jumps[0].position.character), (0, 4));
+    assert_eq!(
+        (jumps[0].position.line, jumps[0].position.character),
+        (0, 4)
+    );
 
     // `⌃O` comes back to where `gd` was pressed.
     cx.simulate_keystrokes("ctrl-o");
@@ -405,12 +401,7 @@ fn without_vim_f8_and_f12_jump(cx: &mut TestAppContext) {
         })
     });
     let (view, cx) = env.open(cx, "");
-    let tab = open_file(
-        &view,
-        cx,
-        &env.file("a.fake"),
-        "x error\ny error\nfn\n",
-    );
+    let tab = open_file(&view, cx, &env.file("a.fake"), "x error\ny error\nfn\n");
     wait_until(cx, "the diagnostics", |cx| {
         diagnostics(&tab.buffer, cx).len() == 2
     });
@@ -478,12 +469,7 @@ fn the_trust_bar_shows_for_an_untrusted_folder_and_trust_starts_the_server(
 fn the_problems_panel_lists_by_file_filters_and_opens_at_the_position(cx: &mut TestAppContext) {
     let env = Env::new("always", |_| json!({"diagnostics": true, "warnings": true}));
     let (view, cx) = env.open(cx, "");
-    let a = open_file(
-        &view,
-        cx,
-        &env.file("a.fake"),
-        "one error\nwarning two\n",
-    );
+    let a = open_file(&view, cx, &env.file("a.fake"), "one error\nwarning two\n");
     let b = open_file(&view, cx, &env.file("b.fake"), "\n  error\n");
     wait_until(cx, "every diagnostic", |cx| {
         diagnostics(&a.buffer, cx).len() == 2 && diagnostics(&b.buffer, cx).len() == 1
@@ -498,7 +484,8 @@ fn the_problems_panel_lists_by_file_filters_and_opens_at_the_position(cx: &mut T
     let panel = view
         .read_with(cx, |wb, _| wb.panel::<ProblemsPanel>("problems"))
         .unwrap();
-    let places: Vec<String> = panel.read_with(cx, |p, _| p.listed().iter().map(|p| p.place()).collect());
+    let places: Vec<String> =
+        panel.read_with(cx, |p, _| p.listed().iter().map(|p| p.place()).collect());
     assert_eq!(
         places,
         [
@@ -566,7 +553,8 @@ fn the_problems_panel_lists_by_file_filters_and_opens_at_the_position(cx: &mut T
     }
     wait_until(cx, "errors only", |cx| {
         panel.read_with(cx, |p, _| {
-            p.settled() && p.listed().iter().all(|p| p.severity == Severity::Error)
+            p.settled()
+                && p.listed().iter().all(|p| p.severity == Severity::Error)
                 && p.listed().len() == 2
         })
     });

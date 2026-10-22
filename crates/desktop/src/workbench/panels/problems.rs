@@ -253,10 +253,7 @@ impl ProblemsPanel {
     fn sync(&mut self, cx: &mut Context<Self>) {
         let (state, supported) = {
             let store = self.env.sessions.read(cx);
-            (
-                store.connection_state(),
-                store.connection().supports_lsp(),
-            )
+            (store.connection_state(), store.connection().supports_lsp())
         };
         let wanted = (state, self.filter());
         if self.asked == Some(wanted) {
@@ -490,7 +487,7 @@ impl ProblemsPanel {
                         .map_or_else(|| path.clone(), |n| n.to_string_lossy().into_owned());
                     let dir = Path::new(&path)
                         .parent()
-                        .map(|p| crate::workbench::workspaces::tilde(p))
+                        .map(crate::workbench::workspaces::tilde)
                         .unwrap_or_default();
                     let mut counts = Vec::new();
                     for (severity, n) in [
@@ -544,7 +541,12 @@ impl ProblemsPanel {
                         Severity::Info | Severity::Hint => theme.accent,
                     };
                     let is_selected = self.selected == Some(index);
-                    let first_line = problem.message.lines().next().unwrap_or_default().to_owned();
+                    let first_line = problem
+                        .message
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .to_owned();
                     let tip = match &problem.origin {
                         Some(origin) => format!(
                             "{} {}: {}\n{origin}",
@@ -663,7 +665,10 @@ impl Render for ProblemsPanel {
             .rounded(px(tokens.radius))
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
-            .tooltip(|_, cx| cx.new(|_| TextTooltip("Read the problems again".into())).into())
+            .tooltip(|_, cx| {
+                cx.new(|_| TextTooltip("Read the problems again".into()))
+                    .into()
+            })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
             .child(icon(Icon::ActionRefresh, 14.0, theme.muted))
@@ -744,8 +749,8 @@ impl Render for ProblemsPanel {
                 empty_state_owned("Cannot read the problems", error.clone(), &theme, &tokens)
             }
             Problems::Idle => {
-                let connected = self.env.sessions.read(cx).connection_state()
-                    == ConnectionState::Connected;
+                let connected =
+                    self.env.sessions.read(cx).connection_state() == ConnectionState::Connected;
                 if connected {
                     empty_state(
                         "No language servers",
@@ -841,7 +846,12 @@ mod tests {
     use super::*;
     use hutan_protocol::lsp::{LspDiagnostic, LspFileDiagnostics, LspPosition, LspRange};
 
-    fn diagnostic(line: u32, character: u32, severity: LspSeverity, message: &str) -> LspDiagnostic {
+    fn diagnostic(
+        line: u32,
+        character: u32,
+        severity: LspSeverity,
+        message: &str,
+    ) -> LspDiagnostic {
         let at = LspPosition { line, character };
         LspDiagnostic {
             range: LspRange { start: at, end: at },
