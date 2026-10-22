@@ -2,6 +2,11 @@
 
 Generated 2026-10-22 from `rg '\.on_click\('` over `crates/desktop/src`, `crates/chat_view`, `crates/code_view` and `crates/terminal_view` (`chat_view` and `code_view` hold no click handlers: they are model and layout crates; the drawing is in `crates/desktop/src/workbench/chat`). One row per click handler, read from its constructor. **Current look** names the helper that styled it before UX-BUTTONS (`ui::button` with its kind, a per-file `small_button`/`icon_button`/`round_button` wrapper, or a hand-styled `div().id().on_click`); **Target** is the variant it moves to. Rows, tabs, menu items, disclosure headers, fields and checkboxes are selectable surfaces, not buttons: they keep their own hover and selected fills and are listed so the exclusion is explicit. The classification reads each site's constructor and enclosing function; the commit that migrates a surface corrects any row it finds wrong (the table is amended in the closing docs commit). Placement and key rules for every surface: primary trailing, Cancel leading (Esc), Return = the one primary, destructive never default, labels verb-first sentence case.
 
+## Outcome (UX-BUTTONS, closing)
+
+The tables below were classified by constructor and function name before the migration and are kept as the record of what was found; some rows name the wrong target. What the code does now: every row marked *Button* or *IconButton* is a `ui::Button` / `ui::IconButton` (compact in bars, panel headers, rows and cards), and the helpers the tables name (`ui::button`, `ui::round_button`, `ui::key_hint`, the per-file `small_button` / `icon_button` / `dock_button`) are gone. What is not a button stays hand-built and is listed with its reason in `workbench::ui::button::audit` (rows, tabs, menu entries, disclosures, checkboxes, choice cards, the status bar's text items, the terminal's own overlays in `hutan-terminal-view`); that test fails on a new hand-built pointer cursor. The rule set is `docs/design.md` § Buttons.
+
+
 ## Sheets and dialogs (112)
 
 | Site | Element (id / label) | Current look | Target |

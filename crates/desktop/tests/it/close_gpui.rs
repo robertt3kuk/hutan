@@ -201,3 +201,41 @@ fn return_never_confirms_a_destructive_dialog_and_escape_cancels_it(cx: &mut Tes
     );
     assert_eq!(state(&view, cx, session.id), Some(SessionState::Running));
 }
+
+#[gpui::test]
+fn return_confirms_a_primary_dialog_and_escape_cancels_it(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let _session = daemon.create_session(&["cat"], None);
+    let (view, cx) = open(cx, &daemon);
+    wait_sessions(&view, cx, "the session", 1);
+    let workspace = view.read_with(cx, |wb, cx| {
+        wb.sessions().read(cx).workspaces().first().map(|w| w.id)
+    });
+    let workspace = workspace.expect("a workspace exists");
+
+    // With the sidebar hidden the rename is a prompt, a primary dialog (Rename · ↩).
+    cx.dispatch_action(hutan_desktop::workbench::actions::ToggleLeftDock);
+    draw(cx);
+    view.update_in(cx, |wb, window, cx| {
+        wb.rename_workspace(workspace, window, cx);
+    });
+    draw(cx);
+    assert!(view.read_with(cx, |wb, _| {
+        wb.modal().is_some_and(|m| !m.destructive)
+    }));
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(view.read_with(cx, |wb, _| !wb.modal_open()), "Escape cancels");
+
+    view.update_in(cx, |wb, window, cx| {
+        wb.rename_workspace(workspace, window, cx);
+    });
+    draw(cx);
+    cx.simulate_input("renamed");
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| !wb.modal_open()),
+        "Return confirms a primary dialog"
+    );
+}

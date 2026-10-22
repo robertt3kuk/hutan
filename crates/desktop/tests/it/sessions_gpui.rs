@@ -268,7 +268,10 @@ fn stop_and_restart_from_the_ui(cx: &mut TestAppContext) {
     assert!(!view.read_with(cx, |wb, _| wb.modal_open()));
     assert!(session_state(&view, cx, info.id).unwrap().is_live());
 
-    cx.simulate_keystrokes("cmd-shift-w enter");
+    // Stopping is a destructive confirmation: Return would cancel it, so the button is pressed.
+    cx.simulate_keystrokes("cmd-shift-w");
+    assert!(view.read_with(cx, |wb, _| wb.modal_open()));
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
     wait_until(cx, "the session to stop", |cx| {
         session_state(&view, cx, info.id) == Some(SessionState::Stopped)
     });
