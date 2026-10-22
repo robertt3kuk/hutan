@@ -4,15 +4,15 @@
 //! owns the queue; this only draws what it last said and sends the user's choices.
 
 use crate::workbench::ui::motion::{self, PresentExt as _};
+use crate::workbench::ui::{Button, IconButton};
 use gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, div, prelude::*, px,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, div,
+    prelude::*, px,
 };
 use hutan_protocol::chat::QueueHold;
 
 use super::markdown_view::Look;
 use super::view::ChatView;
-use super::widgets::{ButtonKind, button};
 use crate::workbench::render::probe;
 use crate::workbench::view::Region;
 
@@ -74,7 +74,8 @@ impl ChatView {
                 )
             })
             .child(
-                button("chat-queue-clear", "Clear", ButtonKind::Ghost, true, look)
+                Button::new("chat-queue-clear", "Clear", &look.theme, &look.tokens)
+                    .ghost()
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.model.update(cx, |model, cx| model.clear_queue(cx));
                     }))
@@ -83,17 +84,15 @@ impl ChatView {
         let rows = items.into_iter().enumerate().map(|(index, item)| {
             let id = item.id;
             let open = editing == Some(id);
-            let hover = theme.surface_hover;
-            let small = |name: &'static str, label: Option<&'static str>| {
-                div()
-                    .id(SharedString::from(format!("chat-queue-{name}-{index}")))
-                    .px(px(tokens.spacing))
-                    .rounded(px(tokens.radius - 2.0))
-                    .cursor_pointer()
-                    .text_color(theme.muted)
-                    .hover(move |s| s.bg(hover))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .children(label.map(SharedString::from))
+            let small = |name: &'static str, label: &'static str| {
+                Button::new(
+                    SharedString::from(format!("chat-queue-{name}-{index}")),
+                    label,
+                    theme,
+                    tokens,
+                )
+                .ghost()
+                .compact()
             };
             div()
                 .id(SharedString::from(format!("chat-queue-item-{index}")))
@@ -122,14 +121,14 @@ impl ChatView {
                         })),
                 )
                 .child(
-                    small("edit", Some("Edit"))
+                    small("edit", "Edit")
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.model.update(cx, |model, cx| model.edit_queued(id, cx));
                         }))
                         .child(probe(&self.regions, Region::ChatQueue("edit", index))),
                 )
                 .child(
-                    small("now", Some(now_label))
+                    small("now", now_label)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.model
                                 .update(cx, |model, cx| model.send_queued_now(id, cx));
@@ -137,16 +136,19 @@ impl ChatView {
                         .child(probe(&self.regions, Region::ChatQueue("now", index))),
                 )
                 .child(
-                    // Only the glyph: an empty text child would add a line box under it.
-                    small("remove", None)
-                        .flex()
-                        .items_center()
-                        .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.model
-                                .update(cx, |model, cx| model.remove_queued(id, cx));
-                        }))
-                        .child(probe(&self.regions, Region::ChatQueue("remove", index))),
+                    IconButton::new(
+                        SharedString::from(format!("chat-queue-remove-{index}")),
+                        crate::icons::Icon::ActionClose,
+                        "Remove from the queue",
+                        theme,
+                        tokens,
+                    )
+                    .compact()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.model
+                            .update(cx, |model, cx| model.remove_queued(id, cx));
+                    }))
+                    .child(probe(&self.regions, Region::ChatQueue("remove", index))),
                 )
                 .child(probe(&self.regions, Region::ChatQueue("chip", index)))
                 .presented(

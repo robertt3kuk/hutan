@@ -6,16 +6,15 @@
 //! button without `checkpoint.restore`. The buttons dispatch to the workbench, which owns the
 //! preview sheet and the Undo toast (`workbench/rewind.rs`).
 
+use crate::workbench::ui::Button;
 use gpui::{
-    AnyElement, Context, IntoElement, ParentElement, SharedString, StatefulInteractiveElement,
-    Styled, div, prelude::*, px,
+    AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, div, prelude::*, px,
 };
 use hutan_core::TurnId;
 use hutan_core::{CheckpointAvailability, CheckpointInfo, CheckpointState};
 
 use super::markdown_view::Look;
 use super::view::ChatView;
-use super::widgets::{ButtonKind, button};
 use crate::workbench::actions::{self, CheckpointAt};
 use crate::workbench::render::probe;
 use crate::workbench::view::Region;
@@ -112,21 +111,15 @@ impl ChatView {
         };
         let control = match action {
             FooterAction::Rewind => Some(
-                button(
-                    ("chat-rewind", index),
-                    "Rewind…",
-                    ButtonKind::Ghost,
-                    true,
-                    look,
-                )
-                // A quiet inline action: the line's own spacing, not a toolbar button's.
-                .relative()
-                .px(px(tokens.spacing))
-                .child(probe(&self.regions, Region::ChatRewind(index)))
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(Box::new(actions::RewindCheckpoint(at)), cx);
-                })
-                .into_any_element(),
+                Button::new(("chat-rewind", index), "Rewind…", &look.theme, &look.tokens)
+                    .ghost()
+                    // A quiet inline action: the compact size, not a toolbar button's.
+                    .compact()
+                    .child(probe(&self.regions, Region::ChatRewind(index)))
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(actions::RewindCheckpoint(at)), cx);
+                    })
+                    .into_any_element(),
             ),
             FooterAction::Undo(restore) => {
                 let undo = CheckpointAt {
@@ -140,15 +133,14 @@ impl ChatView {
                         .gap(px(tokens.spacing))
                         .child(div().text_color(theme.fg).child("Restored —"))
                         .child(
-                            button(
+                            Button::new(
                                 ("chat-restored-undo", index),
                                 "Undo",
-                                ButtonKind::Ghost,
-                                true,
-                                look,
+                                &look.theme,
+                                &look.tokens,
                             )
-                            .relative()
-                            .px(px(tokens.spacing))
+                            .ghost()
+                            .compact()
                             .child(probe(&self.regions, Region::ChatRewind(index)))
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(Box::new(actions::UndoRestore(undo)), cx);

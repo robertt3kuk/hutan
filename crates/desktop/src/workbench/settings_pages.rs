@@ -506,13 +506,13 @@ impl Workbench {
             &theme,
             &tokens,
         )
-        .disabled(!(!busy))
+        .disabled(busy)
         .when(!busy, |s| {
             s.on_click(cx.listener(|this, _, window, cx| this.restart_daemon(window, cx)))
         })
         .child(probe(&self.regions, Region::Settings("restart-daemon")));
         let stop = Button::new("data-stop-daemon", words::STOP_DAEMON, &theme, &tokens)
-            .disabled(!(!busy))
+            .disabled(busy)
             .when(!busy, |s| {
                 s.on_click(cx.listener(|this, _, window, cx| this.stop_daemon(window, cx)))
             })
@@ -800,7 +800,7 @@ impl Workbench {
             );
         }
         let all = Button::new("revoke-all", words::REVOKE_ALL, &theme, &tokens)
-            .disabled(!(!keys.is_empty()))
+            .disabled(keys.is_empty())
             .when(!keys.is_empty(), |s| {
                 s.on_click(cx.listener(|this, _, _, cx| this.revoke_all_start_exemptions(cx)))
             })

@@ -21,7 +21,7 @@ use super::context::{is_gateway_chat, is_harness_chat};
 use super::input::TextInput;
 use super::markdown_view::Look;
 use super::model::{ChatModel, LoadStatus};
-use super::widgets::{ButtonKind, button, context_text, context_tooltip, round_button};
+use super::widgets::{ButtonKind, context_text, context_tooltip};
 use crate::sessions::SessionsStore;
 use crate::settings::{ChatSettings, SendKey};
 use crate::workbench::actions::{self, RestartSessionById};
@@ -30,7 +30,7 @@ use crate::workbench::panels::{recovery_chip, tone_color};
 use crate::workbench::render::probe;
 use crate::workbench::send_key::{send_key_control, stop_asking, write_send_key};
 use crate::workbench::text_field::{EditableText, FieldRef, FieldState, edit_keys};
-use crate::workbench::ui::{self, Mascot, StyledExt as _};
+use crate::workbench::ui::{self, Button, IconButton, Mascot, StyledExt as _};
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::{self, CaretShape, VimConfig};
 
@@ -891,7 +891,6 @@ impl ChatView {
         // the session; this row says its state, who runs it and what is open to change, then
         // the session's menu. A waiting approval is the state's to say and the card's to ask,
         // not a count beside it. Chips are neutral; only a mode that approves everything warns.
-        let hover = theme.surface_hover;
         div()
             .relative()
             .flex()
@@ -945,31 +944,23 @@ impl ChatView {
             }))
             .child(div().flex_1())
             .child(
-                div()
-                    .id("chat-menu")
-                    .relative()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(tokens.control_height - 4.0))
-                    .rounded(px(tokens.radius))
-                    .text_color(theme.muted)
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(hover))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(move |event, window, cx| {
-                        window.dispatch_action(
-                            Box::new(actions::ShowSessionMenu(actions::SessionMenuAt {
-                                session: session.to_string(),
-                                position: event.position(),
-                            })),
-                            cx,
-                        );
-                    })
-                    .tooltip(tooltip("More".into()))
-                    .child(crate::icons::glyph(crate::icons::Icon::ActionMore))
-                    .child(probe(&self.regions, Region::Chat("menu"))),
+                IconButton::new(
+                    "chat-menu",
+                    crate::icons::Icon::ActionMore,
+                    "More",
+                    theme,
+                    tokens,
+                )
+                .on_click(move |event, window, cx| {
+                    window.dispatch_action(
+                        Box::new(actions::ShowSessionMenu(actions::SessionMenuAt {
+                            session: session.to_string(),
+                            position: event.position(),
+                        })),
+                        cx,
+                    );
+                })
+                .child(probe(&self.regions, Region::Chat("menu"))),
             )
             .child(probe(&self.regions, Region::Chat("header")))
             .into_any_element()
@@ -993,28 +984,22 @@ impl ChatView {
         {
             let id = chat.provider_id.clone()?;
             Some(
-                button(
-                    "chat-fix-key",
-                    "Set key…",
-                    ButtonKind::Secondary,
-                    true,
-                    look,
-                )
-                .child(probe(&self.regions, Region::Chat("fix-key")))
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(Box::new(actions::SetProviderKey(id.clone())), cx)
-                })
-                .into_any_element(),
+                Button::new("chat-fix-key", "Set key…", &look.theme, &look.tokens)
+                    .child(probe(&self.regions, Region::Chat("fix-key")))
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(actions::SetProviderKey(id.clone())), cx)
+                    })
+                    .into_any_element(),
             )
         } else if message.contains("not found:") {
             Some(
-                button(
+                Button::new(
                     "chat-fix-model",
                     "Pick another model…",
-                    ButtonKind::Secondary,
-                    !chat.turn_active,
-                    look,
+                    &look.theme,
+                    &look.tokens,
                 )
+                .disabled(chat.turn_active)
                 .child(probe(&self.regions, Region::Chat("fix-model")))
                 .when(!chat.turn_active, |b| {
                     b.on_click(move |_, window, cx| {
@@ -1043,7 +1028,6 @@ impl ChatView {
             ),
             _ => return None,
         };
-        let hover = theme.surface_hover;
         let recovery = self.provider_error_action(&text, look, cx);
         Some(
             div()
@@ -1061,17 +1045,17 @@ impl ChatView {
                 .children(recovery)
                 .when(dismissable, |s| {
                     s.child(
-                        div()
-                            .id("chat-error-dismiss")
-                            .px(px(tokens.spacing))
-                            .rounded(px(tokens.radius - 2.0))
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(hover))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.model.update(cx, |model, cx| model.clear_error(cx));
-                            }))
-                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
+                        IconButton::new(
+                            "chat-error-dismiss",
+                            crate::icons::Icon::ActionClose,
+                            "Dismiss",
+                            theme,
+                            tokens,
+                        )
+                        .compact()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.model.update(cx, |model, cx| model.clear_error(cx));
+                        })),
                     )
                 })
                 .child(probe(&self.regions, Region::Chat("banner")))
@@ -1137,25 +1121,24 @@ impl ChatView {
                 )
                 .when(retry, |s| {
                     s.child(
-                        button(
+                        Button::new(
                             "chat-recovery-retry",
                             "Retry last message",
-                            ButtonKind::Secondary,
-                            true,
-                            look,
+                            &look.theme,
+                            &look.tokens,
                         )
                         .on_click(cx.listener(|this, _, _, cx| this.retry_last_message(cx)))
                         .child(probe(&self.regions, Region::Chat("retry-last"))),
                     )
                 })
                 .child(
-                    button(
+                    Button::new(
                         "chat-recovery-dismiss",
                         "Dismiss",
-                        ButtonKind::Ghost,
-                        true,
-                        look,
+                        &look.theme,
+                        &look.tokens,
                     )
+                    .ghost()
                     .on_click(cx.listener(|this, _, _, cx| {
                         let ack = this
                             .sessions
@@ -1200,17 +1183,17 @@ impl ChatView {
             return None;
         }
         let loading = model.loading_earlier();
-        let load = button(
+        let load = Button::new(
             "chat-load-earlier",
             if loading {
                 "Loading…"
             } else {
                 "Load earlier"
             },
-            ButtonKind::Secondary,
-            !loading,
-            look,
-        );
+            &look.theme,
+            &look.tokens,
+        )
+        .disabled(loading);
         let load = if loading {
             load
         } else {
@@ -1246,7 +1229,6 @@ impl ChatView {
     /// arrived: one click goes to the end and follows it again.
     fn render_jump(&self, text: String, look: &Look, cx: &mut Context<Self>) -> AnyElement {
         let (theme, tokens) = (&look.theme, &look.tokens);
-        let accent = theme.accent;
         div()
             .absolute()
             .bottom(px(tokens.spacing * 3.0))
@@ -1255,23 +1237,9 @@ impl ChatView {
             .flex()
             .justify_center()
             .child(
-                div()
-                    .id("chat-jump-latest")
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .h(px(tokens.control_height))
-                    .px(px(tokens.spacing * 4.0))
-                    .rounded(px(crate::theme::pill_radius()))
-                    .bg(accent)
-                    .text_color(theme.on_accent())
-                    .text_size(px(tokens.secondary_font_size))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(accent.opacity(0.88)))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                Button::new("chat-jump-latest", SharedString::from(text), theme, tokens)
+                    .compact()
                     .on_click(cx.listener(|this, _, _, cx| this.jump_to_latest(cx)))
-                    .child(SharedString::from(text))
                     .child(probe(&self.regions, Region::Chat("jump-latest"))),
             )
             .into_any_element()
@@ -1355,7 +1323,6 @@ impl ChatView {
                 .child(probe(&self.regions, Region::Chat(region)))
         });
         let settings = self.settings.clone();
-        let hover = theme.surface_hover;
         div()
             .flex()
             .items_center()
@@ -1365,23 +1332,23 @@ impl ChatView {
             .child("Which key sends a message?")
             .children(choices)
             .child(
-                div()
-                    .id("chat-send-key-dismiss")
-                    .relative()
-                    .px(px(tokens.spacing))
-                    .rounded(px(tokens.radius - 2.0))
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(hover))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Err(error) = stop_asking(&settings) {
-                            this.model.update(cx, |model, cx| {
-                                model.set_error(format!("Could not save the setting: {error}"), cx);
-                            });
-                        }
-                        cx.notify();
-                    }))
-                    .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
-                    .child(probe(&self.regions, Region::Chat("send-key-dismiss"))),
+                IconButton::new(
+                    "chat-send-key-dismiss",
+                    crate::icons::Icon::ActionClose,
+                    "Dismiss",
+                    theme,
+                    tokens,
+                )
+                .compact()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Err(error) = stop_asking(&settings) {
+                        this.model.update(cx, |model, cx| {
+                            model.set_error(format!("Could not save the setting: {error}"), cx);
+                        });
+                    }
+                    cx.notify();
+                }))
+                .child(probe(&self.regions, Region::Chat("send-key-dismiss"))),
             )
             .into_any_element()
     }
@@ -1503,7 +1470,6 @@ impl ChatView {
         let session = self.session;
         let chip_row = div().flex().flex_wrap().gap(px(tokens.spacing)).children(
             chips.iter().enumerate().map(|(index, chip)| {
-                let hover = theme.surface_hover;
                 div()
                     .relative()
                     .flex()
@@ -1518,18 +1484,18 @@ impl ChatView {
                     .text_size(px(tokens.secondary_font_size))
                     .child(SharedString::from(chip.label.clone()))
                     .child(
-                        div()
-                            .id(SharedString::from(format!("chat-chip-remove-{index}")))
-                            .px(px(tokens.spacing))
-                            .rounded(px(tokens.radius - 2.0))
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(hover))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.model
-                                    .update(cx, |model, cx| model.remove_chip(index, cx));
-                            }))
-                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
+                        IconButton::new(
+                            SharedString::from(format!("chat-chip-remove-{index}")),
+                            crate::icons::Icon::ActionClose,
+                            "Remove",
+                            theme,
+                            tokens,
+                        )
+                        .compact()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.model
+                                .update(cx, |model, cx| model.remove_chip(index, cx));
+                        })),
                     )
                     .child(probe(&self.regions, Region::ChatChip(index)))
             }),
@@ -1544,28 +1510,34 @@ impl ChatView {
             .overflow_y_scroll()
             .child(self.input_text(typing_here, look, cx));
 
-        let send = round_button(
+        let send = IconButton::new(
             "chat-send",
             crate::icons::Icon::ActionForward,
-            true,
-            can_send,
-            SEND_SIZE,
-            look,
+            "Send",
+            &look.theme,
+            &look.tokens,
         )
+        .round()
+        .side(SEND_SIZE)
+        .primary()
+        .disabled(!can_send)
         .when(can_send, |s| {
             s.on_click(cx.listener(|this, _, _, cx| {
                 this.send(cx);
             }))
         })
         .child(probe(&self.regions, Region::Chat("send")));
-        let interrupt = round_button(
+        let interrupt = IconButton::new(
             "chat-interrupt",
             crate::icons::Icon::ActionInterrupt,
-            true,
-            !stopping,
-            SEND_SIZE,
-            look,
+            "Stop",
+            &look.theme,
+            &look.tokens,
         )
+        .round()
+        .side(SEND_SIZE)
+        .primary()
+        .disabled(stopping)
         .when(!stopping, |s| {
             s.on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
                 this.stop_clicked(event.position(), window, cx);
@@ -1574,44 +1546,45 @@ impl ChatView {
         .child(probe(&self.regions, Region::Chat("interrupt")));
         // While a turn runs: the send key's button queues, Send now does not wait (it says
         // when it interrupts the turn).
-        let queue_button = round_button(
+        let queue_button = IconButton::new(
             "chat-queue",
             crate::icons::Icon::ActionForward,
-            false,
-            can_queue,
-            SEND_SIZE,
-            look,
+            "Queue",
+            &look.theme,
+            &look.tokens,
         )
+        .kind(ButtonKind::Secondary)
+        .round()
+        .side(SEND_SIZE)
+        .disabled(!can_queue)
         .when(can_queue, |s| {
             s.on_click(cx.listener(|this, _, _, cx| {
                 this.send(cx);
             }))
         })
         .child(probe(&self.regions, Region::Chat("queue")));
-        let send_now = button(
-            "chat-send-now",
-            send_now_label,
-            ButtonKind::Ghost,
-            can_queue,
-            look,
-        )
-        .when(can_queue, |s| {
-            s.on_click(cx.listener(|this, _, _, cx| {
-                this.send_now(cx);
-            }))
-        })
-        .child(probe(&self.regions, Region::Chat("send-now")));
-        let save = button("chat-edit-save", "Save", ButtonKind::Primary, true, look)
+        let send_now = Button::new("chat-send-now", send_now_label, &look.theme, &look.tokens)
+            .ghost()
+            .disabled(!can_queue)
+            .when(can_queue, |s| {
+                s.on_click(cx.listener(|this, _, _, cx| {
+                    this.send_now(cx);
+                }))
+            })
+            .child(probe(&self.regions, Region::Chat("send-now")));
+        let save = Button::new("chat-edit-save", "Save", &look.theme, &look.tokens)
+            .primary()
             .on_click(cx.listener(|this, _, _, cx| {
                 this.send(cx);
             }))
             .child(probe(&self.regions, Region::Chat("edit-save")));
-        let cancel = button("chat-edit-cancel", "Cancel", ButtonKind::Ghost, true, look)
+        let cancel = Button::new("chat-edit-cancel", "Cancel", &look.theme, &look.tokens)
+            .ghost()
             .on_click(cx.listener(|this, _, _, cx| {
                 this.model.update(cx, |model, cx| model.cancel_edit(cx));
             }))
             .child(probe(&self.regions, Region::Chat("edit-cancel")));
-        let restart = button("chat-restart", "Restart", ButtonKind::Secondary, true, look)
+        let restart = Button::new("chat-restart", "Restart", &look.theme, &look.tokens)
             .on_click(move |_, window, cx| {
                 window.dispatch_action(Box::new(RestartSessionById(session.to_string())), cx);
             })
@@ -1665,7 +1638,7 @@ impl ChatView {
                             })
                             .when(gate.running, |s| s.child(interrupt))
                             .when(!editing && !gate.running && !gate.restartable, |s| {
-                                s.child(send.opacity(if sending { 0.6 } else { 1.0 }))
+                                s.child(send.loading(sending))
                             }),
                     ),
             )

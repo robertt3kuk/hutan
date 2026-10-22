@@ -10,8 +10,8 @@ use std::path::PathBuf;
 
 use gpui::{
     AnyElement, App, ClipboardEntry, Context, ExternalPaths, InteractiveElement, IntoElement,
-    MouseButton, ObjectFit, ParentElement, PathPromptOptions, SharedString,
-    StatefulInteractiveElement, Styled, StyledImage as _, Window, div, img, prelude::*, px,
+    ObjectFit, ParentElement, PathPromptOptions, SharedString, StatefulInteractiveElement, Styled,
+    StyledImage as _, Window, div, img, prelude::*, px,
 };
 use hutan_protocol::assistant::AttachmentKind;
 
@@ -21,6 +21,7 @@ use super::rich::{chip_for_image_data, chip_for_path, chip_for_text, is_long_pas
 use super::view::ChatView;
 use crate::workbench::harnesses::harness_name;
 use crate::workbench::render::probe;
+use crate::workbench::ui::IconButton;
 use crate::workbench::view::Region;
 
 /// Side of an image chip's thumbnail.
@@ -210,7 +211,6 @@ impl ChatView {
             .flex_wrap()
             .gap(px(tokens.spacing))
             .children(chips.iter().enumerate().map(|(index, chip)| {
-                let hover = theme.surface_hover;
                 let refusal = self.chip_refusal(chip, cx);
                 let refused = refusal.is_some();
                 let color = if refused { theme.danger } else { theme.accent };
@@ -265,18 +265,18 @@ impl ChatView {
                         )
                     })
                     .child(
-                        div()
-                            .id(SharedString::from(format!("chat-context-remove-{index}")))
-                            .px(px(tokens.spacing))
-                            .rounded(px(tokens.radius - 2.0))
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(hover))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.model
-                                    .update(cx, |model, cx| model.remove_context(index, cx));
-                            }))
-                            .child(crate::icons::glyph(crate::icons::Icon::ActionClose)),
+                        IconButton::new(
+                            SharedString::from(format!("chat-context-remove-{index}")),
+                            crate::icons::Icon::ActionClose,
+                            "Remove",
+                            theme,
+                            tokens,
+                        )
+                        .compact()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.model
+                                .update(cx, |model, cx| model.remove_context(index, cx));
+                        })),
                     )
                     .child(probe(&self.regions, Region::ChatContextChip(index)))
             }))

@@ -27,11 +27,12 @@ use hutan_protocol::messages::WorkspaceKind;
 use super::common::{edit_text, field_box};
 use crate::sessions::MemoryChanged;
 use crate::workbench::chat::vim::Vim;
-use crate::workbench::chat::{ButtonKind, Look, TextInput, button};
+use crate::workbench::chat::{Look, TextInput};
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::text_field::{FieldMut, FieldRef};
 use crate::workbench::ui;
+use crate::workbench::ui::Button;
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::VimConfig;
 
@@ -874,15 +875,11 @@ impl MemoryPanel {
                     .child(archived),
             )
             .child(
-                button(
-                    "memory-add",
-                    "Add",
-                    ButtonKind::Primary,
-                    self.connected(cx),
-                    look,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.start_add(cx)))
-                .child(probe(&self.env.regions, Region::Memory("add"))),
+                Button::new("memory-add", "Add", &look.theme, &look.tokens)
+                    .primary()
+                    .disabled(!(self.connected(cx)))
+                    .on_click(cx.listener(|this, _, _, cx| this.start_add(cx)))
+                    .child(probe(&self.env.regions, Region::Memory("add"))),
             )
             .child(probe(&self.env.regions, Region::Memory("header")))
             .into_any_element()
@@ -946,25 +943,25 @@ impl MemoryPanel {
                 .text_size(px(tokens.secondary_font_size))
                 .child("Nothing is saved unless you approve."),
         );
-        let approve = button(
+        let approve = Button::new(
             SharedString::from(format!("memory-approve-{index}")),
             "Approve",
-            ButtonKind::Primary,
-            true,
-            look,
+            &look.theme,
+            &look.tokens,
         )
+        .primary()
         .on_click(cx.listener(move |this, _, _, cx| this.approve(id, cx)))
         .child(probe(
             &self.env.regions,
             Region::MemoryItem("approve", index),
         ));
-        let edit = button(
+        let edit = Button::new(
             SharedString::from(format!("memory-edit-approve-{index}")),
             "Edit & approve",
-            ButtonKind::Secondary,
-            editable,
-            look,
+            &look.theme,
+            &look.tokens,
         )
+        .disabled(!editable)
         .when(editable, |b| {
             b.on_click(cx.listener(move |this, _, _, cx| this.edit_proposal(id, cx)))
         })
@@ -972,12 +969,11 @@ impl MemoryPanel {
             &self.env.regions,
             Region::MemoryItem("edit-approve", index),
         ));
-        let reject = button(
+        let reject = Button::new(
             SharedString::from(format!("memory-reject-{index}")),
             "Reject",
-            ButtonKind::Secondary,
-            true,
-            look,
+            &look.theme,
+            &look.tokens,
         )
         .on_click(cx.listener(move |this, _, _, cx| this.reject(id, cx)))
         .child(probe(
@@ -1128,21 +1124,15 @@ impl MemoryPanel {
                     .flex()
                     .gap(px(tokens.spacing))
                     .child(
-                        button(
-                            "memory-save",
-                            match editor.target {
+                        Button::new("memory-save", match editor.target {
                                 EditorTarget::Proposal(_) => "Approve with this text",
                                 _ => "Save",
-                            },
-                            ButtonKind::Primary,
-                            true,
-                            look,
-                        )
+                            }, &look.theme, &look.tokens).primary()
                         .on_click(cx.listener(|this, _, _, cx| this.save_editor(cx)))
                         .child(probe(&self.env.regions, Region::Memory("save"))),
                     )
                     .child(
-                        button("memory-cancel", "Cancel", ButtonKind::Secondary, true, look)
+                        Button::new("memory-cancel", "Cancel", &look.theme, &look.tokens)
                             .on_click(cx.listener(|this, _, _, cx| this.cancel_editor(cx)))
                             .child(probe(&self.env.regions, Region::Memory("cancel"))),
                     ),
@@ -1198,13 +1188,13 @@ impl MemoryPanel {
                       cx: &mut Context<Self>,
                       run: fn(&mut Self, &str, &mut Context<Self>)| {
             let id = id.clone();
-            button(
+            Button::new(
                 SharedString::from(format!("memory-{name}-{index}")),
                 label,
-                ButtonKind::Ghost,
-                true,
-                look,
+                &look.theme,
+                &look.tokens,
             )
+            .ghost()
             .on_click(cx.listener(move |this, _, _, cx| run(this, &id, cx)))
             .child(probe(&self.env.regions, Region::MemoryItem(name, index)))
         };

@@ -3,8 +3,8 @@
 
 use gpui::{
     AnyElement, App, ClipboardItem, ElementId, Font, FontStyle, FontWeight, InteractiveElement,
-    InteractiveText, IntoElement, MouseButton, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, StyledText, TextRun, UnderlineStyle, div, font, px,
+    InteractiveText, IntoElement, ParentElement, SharedString, StatefulInteractiveElement, Styled,
+    StyledText, TextRun, UnderlineStyle, div, font, px,
 };
 use hutan_chat_view::markdown::{Block, Inline, Span, flatten};
 
@@ -12,7 +12,7 @@ use super::view::Regions;
 use crate::theme::{DensityExt as _, Theme, Tokens};
 use crate::workbench::render::probe;
 use crate::workbench::style::{TerminalStyle, UiStyle};
-use crate::workbench::ui::{StyledExt as _, prose_font};
+use crate::workbench::ui::{Button, StyledExt as _, prose_font};
 use crate::workbench::view::Region;
 
 /// What the chat view draws with: chrome colors, density tokens and the monospace font. Message
@@ -212,7 +212,6 @@ pub fn code_block(text: &str, lang: Option<&str>, look: &Look, ids: &mut Ids) ->
     let body_id = ids.next("code");
     let copy_probe = ids.copy_probe();
     let copied = text.to_owned();
-    let hover = theme.surface_hover;
     div()
         .relative()
         .card(theme, tokens)
@@ -230,18 +229,12 @@ pub fn code_block(text: &str, lang: Option<&str>, look: &Look, ids: &mut Ids) ->
                 .text_color(theme.muted)
                 .child(SharedString::from(lang.unwrap_or("text").to_owned()))
                 .child(
-                    div()
-                        .id(copy_id)
-                        .relative()
-                        .px(px(tokens.spacing))
-                        .rounded(px(tokens.radius - 2.0))
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(hover).text_color(theme.fg))
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    Button::new(copy_id, "Copy", theme, tokens)
+                        .ghost()
+                        .compact()
                         .on_click(move |_, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()));
                         })
-                        .child("Copy")
                         .children(copy_probe),
                 ),
         )

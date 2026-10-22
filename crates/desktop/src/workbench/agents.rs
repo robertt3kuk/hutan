@@ -19,7 +19,7 @@ use hutan_protocol::blocks::BlockPart;
 use hutan_protocol::messages::SessionInfo;
 
 use super::actions::palette;
-use super::chat::{ButtonKind, ChatModel, ChatView, Chip, ContextChip, Look, button, cut_to};
+use super::chat::{ChatModel, ChatView, Chip, ContextChip, Look, cut_to};
 use super::harnesses::HARNESSES;
 use super::launcher::LauncherPreset;
 use super::model::{FocusTarget, ItemRef, PaneId};
@@ -28,7 +28,7 @@ use super::persistence;
 use super::render::probe;
 use super::terminals::session_of_item;
 use super::ui::motion::{self, PresentExt as _};
-use super::ui::{self, StyledExt as _};
+use super::ui::{self, Button, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
 use crate::sessions::models::{ModelRow, picker_rows};
@@ -584,14 +584,14 @@ impl Workbench {
                 .map(|provider| {
                     let id = provider.id.clone();
                     let selected = picker.provider_id.as_deref() == Some(id.as_str());
-                    button(
+                    Button::new(
                         format!("agent-provider-{id}"),
                         format!("Direct model · {}", provider.name),
-                        ButtonKind::Secondary,
-                        !picker.creating,
-                        &look,
+                        &look.theme,
+                        &look.tokens,
                     )
-                    .when(selected, |s| s.bg(theme.accent_soft))
+                    .disabled(picker.creating)
+                    .selected(selected)
                     .on_click(
                         cx.listener(move |this, _, _, cx| this.choose_direct_provider(&id, cx)),
                     )
@@ -785,13 +785,13 @@ impl Workbench {
                                 .gap(px(tokens.spacing * 2.0))
                                 .pt(px(tokens.spacing * 2.0))
                                 .child(
-                                    button(
+                                    Button::new(
                                         "agent-cancel",
                                         "Cancel",
-                                        ButtonKind::Ghost,
-                                        true,
-                                        &look,
+                                        &look.theme,
+                                        &look.tokens,
                                     )
+                                    .ghost()
                                     .on_click(cx.listener(
                                         |this, _, window, cx| {
                                             this.close_agent_picker(window, cx);
@@ -799,17 +799,18 @@ impl Workbench {
                                     )),
                                 )
                                 .child(
-                                    button(
+                                    Button::new(
                                         "agent-start",
                                         if picker.creating {
                                             "Switching…"
                                         } else {
                                             "Switch ↩"
                                         },
-                                        ButtonKind::Primary,
-                                        can_start,
-                                        &look,
+                                        &look.theme,
+                                        &look.tokens,
                                     )
+                                    .primary()
+                                    .disabled(!can_start)
                                     .when(can_start, |s| {
                                         s.on_click(cx.listener(|this, _, window, cx| {
                                             this.agent_picker_confirm(window, cx);

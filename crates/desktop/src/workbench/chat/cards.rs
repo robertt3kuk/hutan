@@ -12,7 +12,7 @@ use super::widgets::{
 };
 use crate::workbench::harnesses::harness_name;
 use crate::workbench::render::probe;
-use crate::workbench::ui::{StyledExt as _, approval_button_kind};
+use crate::workbench::ui::{Button, StyledExt as _, approval_button_kind};
 use crate::workbench::view::Region;
 use gpui::{
     AnyElement, App, Context, FontWeight, InteractiveElement, IntoElement, ParentElement,
@@ -505,7 +505,6 @@ impl ChatView {
         } else {
             tail_lines(output, TAIL_LINES)
         };
-        let hover = theme.surface_hover;
         div()
             .flex()
             .flex_col()
@@ -533,19 +532,22 @@ impl ChatView {
                         .text_size(px(tokens.font_size - 0.5))
                         .when(hidden > 0, |s| {
                             s.child(
-                                div()
-                                    .id(ids.next("output-more"))
-                                    .text_color(theme.muted)
-                                    .cursor_pointer()
-                                    .hover(move |s| s.bg(hover))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.toggle(index, id, PART_BODY, cx);
-                                    }))
-                                    .child(SharedString::from(format!(
+                                Button::new(
+                                    ids.next("output-more"),
+                                    SharedString::from(format!(
                                         "… {hidden} earlier line{} (click to {})",
                                         if hidden == 1 { "" } else { "s" },
                                         if open { "collapse" } else { "show" }
-                                    ))),
+                                    )),
+                                    theme,
+                                    tokens,
+                                )
+                                .link()
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.toggle(index, id, PART_BODY, cx);
+                                    },
+                                )),
                             )
                         })
                         .child(div().child(SharedString::from(shown.to_owned())))
@@ -560,15 +562,11 @@ impl ChatView {
             })
             .when(open && hidden == 0 && total > TAIL_LINES, |s| {
                 s.child(
-                    div()
-                        .id(ids.next("output-less"))
-                        .text_color(theme.muted)
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(hover))
+                    Button::new(ids.next("output-less"), "collapse", theme, tokens)
+                        .link()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.toggle(index, id, PART_BODY, cx);
-                        }))
-                        .child("collapse"),
+                        })),
                 )
             })
             .into_any_element()
@@ -659,31 +657,17 @@ impl ChatView {
                                     .child(probe(&self.regions, Region::ChatPart(index, part))),
                             )
                             .children(target.map(|target| {
-                                div()
-                                    .id(ids.next("open"))
-                                    .relative()
-                                    .flex_none()
-                                    .px(px(tokens.spacing * 1.5))
-                                    .rounded(px(tokens.radius - 2.0))
-                                    .cursor_pointer()
-                                    .text_color(theme.muted)
-                                    .text_size(px(tokens.secondary_font_size))
-                                    .hover(move |s| s.bg(hover))
-                                    .tooltip({
-                                        let tip = SharedString::from(match target.line {
-                                            Some(line) => format!(
-                                                "Open {} at line {line} (its first change)",
-                                                target.path
-                                            ),
-                                            None => format!("Open {}", target.path),
-                                        });
-                                        move |_, cx| {
-                                            cx.new(|_| {
-                                                crate::workbench::style::TextTooltip(tip.clone())
-                                            })
-                                            .into()
-                                        }
-                                    })
+                                let tip = SharedString::from(match target.line {
+                                    Some(line) => format!(
+                                        "Open {} at line {line} (its first change)",
+                                        target.path
+                                    ),
+                                    None => format!("Open {}", target.path),
+                                });
+                                Button::new(ids.next("open"), "Open", theme, tokens)
+                                    .ghost()
+                                    .compact()
+                                    .tooltip(tip)
                                     .on_click(move |_, window, cx| {
                                         cx.stop_propagation();
                                         window.dispatch_action(
@@ -693,7 +677,6 @@ impl ChatView {
                                             cx,
                                         );
                                     })
-                                    .child("Open")
                                     .child(probe(&self.regions, Region::ChatOpen(index, part)))
                             })),
                     )

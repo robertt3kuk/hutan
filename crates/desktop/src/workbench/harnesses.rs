@@ -11,14 +11,14 @@ use std::collections::HashMap;
 
 use gpui::{
     AnyElement, Context, Entity, InteractiveElement, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Window, div, prelude::*, px,
+    Styled, Subscription, Window, div, prelude::*, px,
 };
 use hutan_protocol::account::{AccountInfo, AccountStatus};
 
 use super::agents::Models;
-use super::chat::{ButtonKind, Look, button};
+use super::chat::Look;
 use super::render::probe;
-use super::ui::{self, Mascot, StyledExt as _};
+use super::ui::{self, Button, Mascot, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::sessions::{AccountsChanged, SessionsStore};
 
@@ -370,17 +370,17 @@ impl Workbench {
             .prose(&tokens)
             .text_color(theme.muted)
             .child("Hutan uses the logins you made in each harness. It never sees, stores or forwards a token: Log in and Log out open the harness's own flow in a terminal.");
-        let refresh = button(
+        let refresh = Button::new(
             "accounts-refresh",
             if listing == Listing::Loading {
                 "Checking…"
             } else {
                 "Refresh"
             },
-            ButtonKind::Secondary,
-            listing != Listing::Loading,
-            &look,
+            &look.theme,
+            &look.tokens,
         )
+        .disabled(!(listing != Listing::Loading))
         .on_click(cx.listener(|this, _, _, cx| this.refresh_accounts(cx)))
         .child(probe(&self.regions, Region::Account("*", "refresh")));
         let mut body = div()
@@ -448,26 +448,27 @@ impl Workbench {
             Detection::Unknown => ("unknown", theme.muted),
         };
         let id = harness.id;
-        let login = button(
+        let login = Button::new(
             format!("account-login-{id}"),
             "Log in",
-            ButtonKind::Primary,
-            found,
-            look,
+            &look.theme,
+            &look.tokens,
         )
+        .primary()
+        .disabled(!found)
         .when(found, |b| {
             b.on_click(cx.listener(move |this, _, window, cx| {
                 this.account_flow(id, None, true, window, cx);
             }))
         })
         .child(probe(&self.regions, Region::Account(id, "login")));
-        let logout = button(
+        let logout = Button::new(
             format!("account-logout-{id}"),
             "Log out",
-            ButtonKind::Secondary,
-            found,
-            look,
+            &look.theme,
+            &look.tokens,
         )
+        .disabled(!found)
         .when(found, |b| {
             b.on_click(cx.listener(move |this, _, window, cx| {
                 this.account_flow(id, None, false, window, cx);
@@ -511,13 +512,13 @@ impl Workbench {
                     ))
                     .when(!found && self.harness_install_available(), |s| {
                         s.child(
-                            button(
+                            Button::new(
                                 format!("account-install-{id}"),
                                 "Install…",
-                                ButtonKind::Primary,
-                                true,
-                                look,
+                                &look.theme,
+                                &look.tokens,
                             )
+                            .primary()
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(
                                     Box::new(super::actions::InstallHarness(id.to_owned())),
@@ -591,13 +592,13 @@ impl Workbench {
         ));
         if per_provider {
             line = line.child(
-                button(
+                Button::new(
                     format!("account-logout-{harness}-{index}"),
                     "Log out",
-                    ButtonKind::Ghost,
-                    true,
-                    look,
+                    &look.theme,
+                    &look.tokens,
                 )
+                .ghost()
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.account_flow(harness, Some(provider.clone()), false, window, cx);
                 })),

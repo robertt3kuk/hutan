@@ -15,10 +15,10 @@ use super::input::TextInput;
 use super::markdown_view::{Ids, Look, blocks};
 use super::question::{Input, QuestionForm};
 use super::view::ChatView;
-use super::widgets::{ButtonKind, approval_outcome, button};
+use super::widgets::approval_outcome;
 use crate::workbench::render::probe;
 use crate::workbench::text_field::{EditableText, FieldMut, FieldRef, FieldState, edit_keys};
-use crate::workbench::ui::{FocusRingExt as _, StyledExt as _};
+use crate::workbench::ui::{Button, FocusRingExt as _, StyledExt as _};
 use crate::workbench::view::Region;
 
 /// How many options one field offers as buttons before the rest are cut (a form with a hundred
@@ -467,39 +467,40 @@ impl ChatView {
                         .items_center()
                         .gap(px(tokens.spacing * 2.0))
                         .child(
-                            button(
+                            Button::new(
                                 SharedString::from(format!("question-submit-{id}")),
                                 "Submit ⌘↩",
-                                ButtonKind::Primary,
-                                !sending,
-                                look,
+                                &look.theme,
+                                &look.tokens,
                             )
+                            .primary()
+                            .disabled(sending)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.submit_question(id, cx);
                             }))
                             .child(probe(&self.regions, Region::ChatQuestion(0))),
                         )
                         .child(
-                            button(
+                            Button::new(
                                 SharedString::from(format!("question-decline-{id}")),
                                 "Decline",
-                                ButtonKind::Secondary,
-                                !sending,
-                                look,
+                                &look.theme,
+                                &look.tokens,
                             )
+                            .disabled(sending)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.decline_question(id, cx);
                             }))
                             .child(probe(&self.regions, Region::ChatQuestion(1))),
                         )
                         .child(
-                            button(
+                            Button::new(
                                 SharedString::from(format!("question-cancel-{id}")),
                                 "Cancel",
-                                ButtonKind::Secondary,
-                                !sending,
-                                look,
+                                &look.theme,
+                                &look.tokens,
                             )
+                            .disabled(sending)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.cancel_question(id, cx);
                             }))
@@ -540,12 +541,11 @@ impl ChatView {
                     )
                     .child(
                         div().flex().child(
-                            button(
+                            Button::new(
                                 SharedString::from(format!("question-copy-{id}")),
                                 "Copy",
-                                ButtonKind::Secondary,
-                                true,
-                                look,
+                                &look.theme,
+                                &look.tokens,
                             )
                             .on_click(move |_, _, cx| {
                                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(

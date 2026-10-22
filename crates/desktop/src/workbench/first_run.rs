@@ -536,7 +536,7 @@ impl Workbench {
         let button = |id: &'static str, label: SharedString, kind: ButtonKind| {
             Button::new(id, label, &theme, &tokens)
                 .kind(kind)
-                .disabled(!(!self.integration_busy()))
+                .disabled(self.integration_busy())
                 .child(probe(&self.regions, Region::Offer(id)))
         };
         if !open {

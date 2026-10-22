@@ -3,8 +3,8 @@
 //! tool, the inspector's Requests).
 
 use gpui::{
-    AnyElement, AppContext as _, FontWeight, Hsla, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, div, px,
+    AnyElement, FontWeight, Hsla, ParentElement as _, SharedString, Styled as _, div,
+    prelude::FluentBuilder as _, px,
 };
 use hutan_chat_view::ContextUse;
 use hutan_core::agent::{PermissionKind, PermissionOption, PermissionOptionKind};
@@ -13,31 +13,7 @@ use super::markdown_view::Look;
 
 use crate::icons::Icon;
 use crate::workbench::ui;
-pub use crate::workbench::ui::ButtonKind;
-
-/// A text button (see [`ui::button`]) styled by the chat's [`Look`]. A disabled one is drawn dim
-/// and ignores the mouse (the caller adds the click handler only when enabled).
-pub fn button(
-    id: impl Into<gpui::ElementId>,
-    label: impl Into<SharedString>,
-    kind: ButtonKind,
-    enabled: bool,
-    look: &Look,
-) -> gpui::Stateful<gpui::Div> {
-    ui::button(id, label, kind, enabled, &look.theme, &look.tokens)
-}
-
-/// A round icon button (see [`ui::round_button`]).
-pub fn round_button(
-    id: impl Into<gpui::ElementId>,
-    glyph: crate::icons::Icon,
-    primary: bool,
-    enabled: bool,
-    size: f32,
-    look: &Look,
-) -> gpui::Stateful<gpui::Div> {
-    ui::round_button(id, glyph, primary, enabled, size, &look.theme)
-}
+pub use crate::workbench::ui::{Button, ButtonKind};
 
 /// A small neutral label ("exit 0", "running"); the state's color is on the glyph beside it.
 pub fn pill(text: impl Into<SharedString>, look: &Look) -> gpui::Div {
@@ -236,26 +212,11 @@ pub fn approval_option(
     option: &PermissionOption,
     tooltip: Option<String>,
     look: &Look,
-) -> gpui::Stateful<gpui::Div> {
-    let kind = ui::approval_button_kind(option.kind);
-    let button = button(id, option.label.clone(), kind, true, look)
-        .relative()
-        .child(ui::key_hint(
-            (number + 1).to_string(),
-            kind,
-            &look.theme,
-            &look.tokens,
-        ));
-    match tooltip {
-        Some(tip) => {
-            let tip = SharedString::from(tip);
-            button.tooltip(move |_, cx| {
-                cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
-                    .into()
-            })
-        }
-        None => button,
-    }
+) -> Button {
+    Button::new(id, option.label.clone(), &look.theme, &look.tokens)
+        .kind(ui::approval_button_kind(option.kind))
+        .shortcut((number + 1).to_string())
+        .when_some(tooltip, |button, tip| button.tooltip(tip))
 }
 
 /// A request waiting for an answer, as one group: the question (13 px medium), what it is about

@@ -7,10 +7,11 @@
 //! opened here); the daemon resolves every chip when the message is sent. While the form is a
 //! menu it leaves the keyboard to the composer; a form with a field takes the typing.
 
+use crate::workbench::ui::Button;
+use crate::workbench::ui::IconButton;
 use gpui::{
     AnyElement, App, Context, Focusable, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Task, div,
-    prelude::*, px,
+    ParentElement, SharedString, StatefulInteractiveElement, Styled, Task, div, prelude::*, px,
 };
 use hutan_client::ClientError;
 use hutan_core::TerminalId;
@@ -26,7 +27,7 @@ use super::input::TextInput;
 use super::markdown_view::Look;
 use super::view::ChatView;
 use super::vim::{Outcome, Vim};
-use super::widgets::{ButtonKind, button};
+use super::widgets::ButtonKind;
 use crate::workbench::panels::edit_text;
 use crate::workbench::panels::{HISTORY_DEBOUNCE, hit_title, source_label};
 use crate::workbench::render::probe;
@@ -663,17 +664,11 @@ impl ChatView {
                         ))),
                 )
                 .child(
-                    button(
-                        "chat-mention",
-                        "Attach ↹",
-                        ButtonKind::Secondary,
-                        true,
-                        look,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.accept_mention(cx);
-                    }))
-                    .child(probe(&self.regions, Region::Attach("mention"))),
+                    Button::new("chat-mention", "Attach ↹", &look.theme, &look.tokens)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.accept_mention(cx);
+                        }))
+                        .child(probe(&self.regions, Region::Attach("mention"))),
                 )
                 .into_any_element(),
         )
@@ -681,14 +676,17 @@ impl ChatView {
 
     /// The Attach button of the composer's footer.
     pub(super) fn render_attach_button(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
-        super::widgets::round_button(
+        IconButton::new(
             "chat-attach",
             crate::icons::Icon::ActionAddContext,
-            self.attach.is_some(),
-            true,
-            28.0,
-            look,
+            "Attach",
+            &look.theme,
+            &look.tokens,
         )
+        .kind(ButtonKind::Secondary)
+        .round()
+        .side(28.0)
+        .toggled(self.attach.is_some())
         .on_click(cx.listener(|this, _, _, cx| this.toggle_attach_menu(cx)))
         .child(probe(&self.regions, Region::Attach("button")))
         .into_any_element()
@@ -749,27 +747,15 @@ impl ChatView {
             .gap(px(tokens.spacing * 2.0))
             .child(div().text_color(theme.muted).child(what))
             .child(
-                button(
-                    format!("attach-{what}-dec"),
-                    "−",
-                    ButtonKind::Secondary,
-                    true,
-                    look,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.step_attach_count(-1, cx)))
-                .child(probe(&self.regions, Region::Attach("less"))),
+                Button::new(format!("attach-{what}-dec"), "−", &look.theme, &look.tokens)
+                    .on_click(cx.listener(|this, _, _, cx| this.step_attach_count(-1, cx)))
+                    .child(probe(&self.regions, Region::Attach("less"))),
             )
             .child(SharedString::from(value.to_string()))
             .child(
-                button(
-                    format!("attach-{what}-inc"),
-                    "+",
-                    ButtonKind::Secondary,
-                    true,
-                    look,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.step_attach_count(1, cx)))
-                .child(probe(&self.regions, Region::Attach("more"))),
+                Button::new(format!("attach-{what}-inc"), "+", &look.theme, &look.tokens)
+                    .on_click(cx.listener(|this, _, _, cx| this.step_attach_count(1, cx)))
+                    .child(probe(&self.regions, Region::Attach("more"))),
             )
             .into_any_element()
     }
@@ -804,20 +790,16 @@ impl ChatView {
                     .child("Esc closes · nothing is read until you send"),
             )
             .child(
-                div()
-                    .id("chat-attach-close")
-                    .relative()
-                    .px(px(tokens.spacing))
-                    .rounded(px(tokens.radius - 2.0))
-                    .cursor_pointer()
-                    .hover({
-                        let hover = theme.surface_hover;
-                        move |s| s.bg(hover)
-                    })
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(|this, _, _, cx| this.close_attach(cx)))
-                    .child(crate::icons::glyph(crate::icons::Icon::ActionClose))
-                    .child(probe(&self.regions, Region::Attach("close"))),
+                IconButton::new(
+                    "chat-attach-close",
+                    crate::icons::Icon::ActionClose,
+                    "Close",
+                    theme,
+                    tokens,
+                )
+                .compact()
+                .on_click(cx.listener(|this, _, _, cx| this.close_attach(cx)))
+                .child(probe(&self.regions, Region::Attach("close"))),
             );
         let body = match stage {
             Stage::Menu => self.render_attach_menu(look, cx),
@@ -853,12 +835,11 @@ impl ChatView {
         let tokens = &look.tokens;
         let item =
             |id: &'static str, label: &'static str, kind: MentionKind, cx: &mut Context<Self>| {
-                button(
+                Button::new(
                     format!("chat-attach-{id}"),
                     label,
-                    ButtonKind::Secondary,
-                    true,
-                    look,
+                    &look.theme,
+                    &look.tokens,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.open_attach(kind, "", cx)))
                 .child(probe(&self.regions, Region::Attach(id)))
@@ -869,12 +850,11 @@ impl ChatView {
             .flex_wrap()
             .gap(px(tokens.spacing * 2.0))
             .child(
-                button(
+                Button::new(
                     "chat-attach-files",
                     "Attach file or image…",
-                    ButtonKind::Secondary,
-                    true,
-                    look,
+                    &look.theme,
+                    &look.tokens,
                 )
                 .on_click(cx.listener(|this, _, window, cx| this.pick_files(window, cx)))
                 .child(probe(&self.regions, Region::Attach("files"))),
@@ -992,24 +972,22 @@ impl ChatView {
                     let terminal = row.terminal;
                     let open = expanded == Some(terminal);
                     let buttons = vec![
-                        button(
+                        Button::new(
                             format!("attach-recent-{terminal}"),
                             "Recent output",
-                            ButtonKind::Secondary,
-                            true,
-                            look,
+                            &look.theme,
+                            &look.tokens,
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.attach_recent(terminal, cx);
                         }))
                         .child(probe(&self.regions, Region::Attach("recent")))
                         .into_any_element(),
-                        button(
+                        Button::new(
                             format!("attach-blocks-{terminal}"),
                             "Blocks",
-                            ButtonKind::Secondary,
-                            true,
-                            look,
+                            &look.theme,
+                            &look.tokens,
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.toggle_blocks(terminal, cx);
@@ -1081,19 +1059,21 @@ impl ChatView {
                                         &format!("$ {command}"),
                                         &detail,
                                         vec![
-                                            button(
-                                                format!("attach-block-button-{terminal}-{id}"),
-                                                "Attach block",
-                                                ButtonKind::Secondary,
-                                                true,
-                                                look,
-                                            )
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.attach_block(terminal, id, cx);
-                                            }))
-                                            .child(probe(&self.regions, Region::Attach("block")))
-                                            .into_any_element(),
-                                        ],
+                                                Button::new(
+                                                    format!("attach-block-button-{terminal}-{id}"),
+                                                    "Attach block",
+                                                    &look.theme,
+                                                    &look.tokens,
+                                                )
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.attach_block(terminal, id, cx);
+                                                }))
+                                                .child(probe(
+                                                    &self.regions,
+                                                    Region::Attach("block"),
+                                                ))
+                                                .into_any_element(),
+                                            ],
                                         look,
                                     ))
                                     .into_any_element(),
@@ -1136,18 +1116,13 @@ impl ChatView {
                 for (at, row) in transcripts.into_iter().enumerate() {
                     let (id, source) = (row.session_id.clone(), row.source.clone());
                     let button_id = format!("attach-transcript-{at}");
-                    let attach = button(
-                        button_id.clone(),
-                        "Attach",
-                        ButtonKind::Secondary,
-                        true,
-                        look,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.attach_transcript(&id, &source, cx);
-                    }))
-                    .child(probe(&self.regions, Region::Attach("transcript")))
-                    .into_any_element();
+                    let attach =
+                        Button::new(button_id.clone(), "Attach", &look.theme, &look.tokens)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.attach_transcript(&id, &source, cx);
+                            }))
+                            .child(probe(&self.regions, Region::Attach("transcript")))
+                            .into_any_element();
                     rows.push(self.list_row(
                         at,
                         format!("attach-row-{at}"),
@@ -1220,19 +1195,15 @@ impl ChatView {
         look: &Look,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        button(
-            "chat-attach-confirm",
-            label,
-            ButtonKind::Primary,
-            enabled,
-            look,
-        )
-        .when(enabled, |b| {
-            b.on_click(cx.listener(|this, _, _, cx| {
-                this.confirm_attach(cx);
-            }))
-        })
-        .child(probe(&self.regions, Region::Attach("confirm")))
-        .into_any_element()
+        Button::new("chat-attach-confirm", label, &look.theme, &look.tokens)
+            .primary()
+            .disabled(!enabled)
+            .when(enabled, |b| {
+                b.on_click(cx.listener(|this, _, _, cx| {
+                    this.confirm_attach(cx);
+                }))
+            })
+            .child(probe(&self.regions, Region::Attach("confirm")))
+            .into_any_element()
     }
 }

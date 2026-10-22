@@ -42,12 +42,12 @@ use crate::workbench::actions::{
     ShowAssistantScopeMenu,
 };
 use crate::workbench::agents::Models;
-use crate::workbench::chat::{ButtonKind, ChatModel, ChatView, ContextChip, Look, button};
+use crate::workbench::chat::{ChatModel, ChatView, ContextChip, Look};
 use crate::workbench::harnesses::{self, Detection, HARNESSES, Listing};
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::TextTooltip;
-use crate::workbench::ui::{self, Mascot, StyledExt as _};
+use crate::workbench::ui::{self, Button, Mascot, StyledExt as _};
 use crate::workbench::view::Region;
 
 /// A conversation the panel keeps: one per scope.
@@ -1424,13 +1424,13 @@ impl AssistantPanel {
                 None => "Automatic".to_owned(),
             };
             models.push(
-                button(
+                Button::new(
                     "assistant-model-default",
                     automatic,
-                    ButtonKind::Primary,
-                    true,
-                    look,
+                    &look.theme,
+                    &look.tokens,
                 )
+                .primary()
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.use_backend(default_choice.clone(), None, cx);
                 }))
@@ -1469,13 +1469,13 @@ impl AssistantPanel {
                             label = format!("✓ {label}");
                         }
                         models.push(
-                            button(
+                            Button::new(
                                 format!("assistant-model-{index}"),
                                 label,
-                                ButtonKind::Ghost,
-                                true,
-                                look,
+                                &look.theme,
+                                &look.tokens,
                             )
+                            .ghost()
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.use_backend(chosen.clone(), Some(id.clone()), cx);
                             }))
@@ -1548,23 +1548,17 @@ impl AssistantPanel {
                 .harnesses
                 .update(cx, |directory, cx| directory.refresh(cx));
         }
-        let retry = button(
-            "assistant-retry",
-            "Retry",
-            ButtonKind::Secondary,
-            true,
-            look,
-        )
-        .on_click(cx.listener(|this, _, _, cx| this.retry(cx)))
-        .child(probe(&self.env.regions, Region::Assistant("retry")))
-        .into_any_element();
-        let models = button(
+        let retry = Button::new("assistant-retry", "Retry", &look.theme, &look.tokens)
+            .on_click(cx.listener(|this, _, _, cx| this.retry(cx)))
+            .child(probe(&self.env.regions, Region::Assistant("retry")))
+            .into_any_element();
+        let models = Button::new(
             "assistant-models",
             "Add a provider…",
-            ButtonKind::Primary,
-            true,
-            look,
+            &look.theme,
+            &look.tokens,
         )
+        .primary()
         .on_click(|_, window, cx| window.dispatch_action(Box::new(ManageProviders), cx))
         .child(probe(&self.env.regions, Region::Assistant("models")))
         .into_any_element();
@@ -1614,16 +1608,11 @@ impl AssistantPanel {
                 let mut buttons: Vec<AnyElement> = Vec::new();
                 if omp_ready && can_choose {
                     buttons.push(
-                        button(
-                            "assistant-use-omp",
-                            "Use OMP",
-                            ButtonKind::Primary,
-                            true,
-                            look,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| this.use_omp_everywhere(cx)))
-                        .child(probe(&self.env.regions, Region::Assistant("use-omp")))
-                        .into_any_element(),
+                        Button::new("assistant-use-omp", "Use OMP", &look.theme, &look.tokens)
+                            .primary()
+                            .on_click(cx.listener(|this, _, _, cx| this.use_omp_everywhere(cx)))
+                            .child(probe(&self.env.regions, Region::Assistant("use-omp")))
+                            .into_any_element(),
                     );
                 }
                 buttons.push(models);
@@ -1654,13 +1643,13 @@ impl AssistantPanel {
             Opened::Failed(Failure::Other(error)) => {
                 // The configured backend failed to start: offer another one, not only a
                 // provider (a harness backend has nothing to do with provider keys).
-                let change = button(
+                let change = Button::new(
                     "assistant-change-backend",
                     "Change backend…",
-                    ButtonKind::Primary,
-                    true,
-                    look,
+                    &look.theme,
+                    &look.tokens,
                 )
+                .primary()
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_switcher(cx)))
                 .child(probe(
                     &self.env.regions,
@@ -1669,23 +1658,18 @@ impl AssistantPanel {
                 .into_any_element();
                 // A harness the daemon could not find: offer to install it from its source.
                 let install = crate::harness_install::harness_of_missing(&error).map(|harness| {
-                    button(
-                        "assistant-install",
-                        "Install…",
-                        ButtonKind::Primary,
-                        true,
-                        look,
-                    )
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(
-                            Box::new(crate::workbench::actions::InstallHarness(
-                                harness.to_owned(),
-                            )),
-                            cx,
-                        );
-                    })
-                    .child(probe(&self.env.regions, Region::Assistant("install")))
-                    .into_any_element()
+                    Button::new("assistant-install", "Install…", &look.theme, &look.tokens)
+                        .primary()
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::workbench::actions::InstallHarness(
+                                    harness.to_owned(),
+                                )),
+                                cx,
+                            );
+                        })
+                        .child(probe(&self.env.regions, Region::Assistant("install")))
+                        .into_any_element()
                 });
                 let mut buttons: Vec<AnyElement> = install.into_iter().collect();
                 buttons.push(change);

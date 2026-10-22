@@ -1,10 +1,11 @@
 //! Model-provider settings. Configuration belongs to the daemon; keys are write-only inputs.
 
-use super::chat::{ButtonKind, Look, button};
+use super::chat::Look;
 use super::modal::PromptSpec;
 use super::ui::StyledExt as _;
 use super::view::Workbench;
 use crate::theme::DensityExt as _;
+use crate::workbench::ui::Button;
 use gpui::{
     AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, Window, div, prelude::*,
     px,
@@ -519,12 +520,11 @@ impl Workbench {
             ("openai-compatible", "Add compatible"),
         ] {
             add = add.child(
-                button(
+                Button::new(
                     format!("provider-add-{kind}"),
                     label,
-                    ButtonKind::Secondary,
-                    true,
-                    &look,
+                    &look.theme,
+                    &look.tokens,
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.edit_provider(None, kind, window, cx)
@@ -536,22 +536,15 @@ impl Workbench {
                 .flex()
                 .gap(px(6.0))
                 .child(
-                    button(
-                        "provider-refresh",
-                        "Refresh",
-                        ButtonKind::Secondary,
-                        true,
-                        &look,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh_providers(cx))),
+                    Button::new("provider-refresh", "Refresh", &look.theme, &look.tokens)
+                        .on_click(cx.listener(|this, _, _, cx| this.refresh_providers(cx))),
                 )
                 .child(
-                    button(
+                    Button::new(
                         "provider-discover",
                         "Discover local",
-                        ButtonKind::Secondary,
-                        true,
-                        &look,
+                        &look.theme,
+                        &look.tokens,
                     )
                     .on_click(cx.listener(|this, _, _, cx| this.discover_providers(cx))),
                 ),
@@ -613,12 +606,11 @@ impl Workbench {
                         .flex_wrap()
                         .gap(px(6.0))
                         .child(
-                            button(
+                            Button::new(
                                 format!("provider-edit-{id}"),
                                 "Edit",
-                                ButtonKind::Secondary,
-                                true,
-                                &look,
+                                &look.theme,
+                                &look.tokens,
                             )
                             .on_click(cx.listener(
                                 move |this, _, window, cx| {
@@ -627,25 +619,24 @@ impl Workbench {
                             )),
                         )
                         .child(
-                            button(
+                            Button::new(
                                 format!("provider-key-{id}"),
                                 "Set key…",
-                                ButtonKind::Secondary,
-                                true,
-                                &look,
+                                &look.theme,
+                                &look.tokens,
                             )
                             .on_click(cx.listener(
                                 move |this, _, window, cx| this.set_provider_key(&key, window, cx),
                             )),
                         )
                         .child(
-                            button(
+                            Button::new(
                                 format!("provider-clear-{id}"),
                                 "Clear key",
-                                ButtonKind::Secondary,
-                                has_key,
-                                &look,
+                                &look.theme,
+                                &look.tokens,
                             )
+                            .disabled(!has_key)
                             .on_click(cx.listener(
                                 move |this, _, window, cx| {
                                     if has_key {
@@ -655,12 +646,11 @@ impl Workbench {
                             )),
                         )
                         .child(
-                            button(
+                            Button::new(
                                 format!("provider-models-{id}"),
                                 "Models / refresh",
-                                ButtonKind::Secondary,
-                                true,
-                                &look,
+                                &look.theme,
+                                &look.tokens,
                             )
                             .on_click(
                                 cx.listener(move |this, _, _, cx| {
@@ -669,12 +659,11 @@ impl Workbench {
                             ),
                         )
                         .child(
-                            button(
+                            Button::new(
                                 format!("provider-remove-{id}"),
                                 "Remove…",
-                                ButtonKind::Secondary,
-                                true,
-                                &look,
+                                &look.theme,
+                                &look.tokens,
                             )
                             .on_click(cx.listener(
                                 move |this, _, window, cx| {

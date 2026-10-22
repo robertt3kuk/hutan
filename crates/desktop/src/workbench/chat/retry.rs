@@ -6,15 +6,12 @@
 //! The words are the daemon's (`GatewayError`'s `Display`, carried by `turn_failed`), so the
 //! classification reads them; GPUI-free parts first, unit tested.
 
-use gpui::{
-    AnyElement, Context, IntoElement, ParentElement, SharedString, StatefulInteractiveElement,
-    Styled, div, px,
-};
+use crate::workbench::ui::Button;
+use gpui::{AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, div, px};
 use hutan_chat_view::Body;
 
 use super::markdown_view::Look;
 use super::view::ChatView;
-use super::widgets::{ButtonKind, button};
 use crate::workbench::render::probe;
 use crate::workbench::view::Region;
 
@@ -148,15 +145,9 @@ impl ChatView {
                         .child(probe(&self.regions, Region::Chat("retry-countdown")))
                 }))
                 .child(
-                    button(
-                        "chat-retry-now",
-                        "Retry now",
-                        ButtonKind::Secondary,
-                        true,
-                        look,
-                    )
-                    .child(probe(&self.regions, Region::Chat("retry-now")))
-                    .on_click(cx.listener(|this, _, _, cx| this.retry_last_message(cx))),
+                    Button::new("chat-retry-now", "Retry now", &look.theme, &look.tokens)
+                        .child(probe(&self.regions, Region::Chat("retry-now")))
+                        .on_click(cx.listener(|this, _, _, cx| this.retry_last_message(cx))),
                 )
                 .into_any_element(),
         )

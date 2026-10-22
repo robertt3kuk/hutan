@@ -28,9 +28,9 @@ use crate::sessions::{
 use crate::workbench::actions::{
     EditMemoryProposal, JumpToNextAttention, OpenMawasMemory, OpenSession,
 };
-use crate::workbench::chat::{ButtonKind, Look, button};
+use crate::workbench::chat::Look;
 use crate::workbench::render::probe;
-use crate::workbench::ui::{self, StyledExt as _};
+use crate::workbench::ui::{self, Button, StyledExt as _};
 use crate::workbench::view::Region;
 
 /// The width of the rail.
@@ -594,13 +594,13 @@ impl AssistantPanel {
                     .map(|(index, option)| {
                         let id = option.id.clone();
                         let kind = ui::approval_button_kind(option.kind);
-                        button(
+                        Button::new(
                             SharedString::from(format!("today-option-{row_index}-{index}")),
                             option.label.clone(),
-                            kind,
-                            true,
-                            look,
+                            &look.theme,
+                            &look.tokens,
                         )
+                        .kind(kind)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.answer_from_today(approval, id.clone(), cx);
                         }))
@@ -612,12 +612,11 @@ impl AssistantPanel {
                     })
                     .collect();
                 let edit = memory.then(|| {
-                    button(
+                    Button::new(
                         SharedString::from(format!("today-edit-approve-{row_index}")),
                         "Edit & approve",
-                        ButtonKind::Secondary,
-                        true,
-                        look,
+                        &look.theme,
+                        &look.tokens,
                     )
                     .on_click(move |_, window, cx| {
                         window.dispatch_action(
@@ -645,12 +644,11 @@ impl AssistantPanel {
             | TodayKind::Review
             | TodayKind::Unread => {
                 card = card.child(
-                    button(
+                    Button::new(
                         SharedString::from(format!("today-open-{row_index}")),
                         "Open",
-                        ButtonKind::Secondary,
-                        true,
-                        look,
+                        &look.theme,
+                        &look.tokens,
                     )
                     .on_click(move |_, window, cx| {
                         window.dispatch_action(Box::new(OpenSession(session.to_string())), cx);
