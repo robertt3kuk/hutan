@@ -118,6 +118,9 @@ impl ChatView {
                     true,
                     look,
                 )
+                // A quiet inline action: the line's own spacing, not a toolbar button's.
+                .relative()
+                .px(px(tokens.spacing))
                 .child(probe(&self.regions, Region::ChatRewind(index)))
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(actions::RewindCheckpoint(at)), cx);
@@ -143,6 +146,8 @@ impl ChatView {
                                 true,
                                 look,
                             )
+                            .relative()
+                            .px(px(tokens.spacing))
                             .child(probe(&self.regions, Region::ChatRewind(index)))
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(Box::new(actions::UndoRestore(undo)), cx);

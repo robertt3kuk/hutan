@@ -414,6 +414,10 @@ impl ChatModel {
     /// Puts `note` in the composer for the user to send (after a restore of files, CK-5): the
     /// whole draft when it is empty, else after what was typed.
     pub fn add_note(&mut self, note: &str, cx: &mut Context<Self>) {
+        // A second restore of the same files says the same: once is enough.
+        if self.input.text().contains(note) {
+            return;
+        }
         let text = if self.input.is_empty() {
             note.to_owned()
         } else {
