@@ -4,6 +4,9 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+### Changed
+- Attention has three groups: **Requests** (an agent waits for your approval, answer or plan — the only thing the status bar counts), **Failed**, and **Ready for review** (a turn that changed files, until you look). A turn that changed nothing only marks its row unread. "Needs you" is gone.
+
 ### Fixed
 - One session, one tab: opening a Mawas session from anywhere focuses Mawas Home instead of a second tab; the same title and icon everywhere; saved layouts with duplicate tabs are merged.
 - Resources panel: fixed columns with ellipsis and tooltips, no overlapping text at any width, session titles instead of raw ids, one header.
