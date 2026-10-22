@@ -1,7 +1,8 @@
 //! The branch the `workspace` status item shows (FX-STATUSBAR): the branch checked out in the
 //! main checkout of the project the user works in, as the daemon lists it (`worktree.list`; the
-//! desktop never reads a repository). A focused session that works in a linked worktree says its
-//! own branch instead: that is the checkout the user is in.
+//! desktop never reads a repository). The visible tab's session, when it works in a linked
+//! worktree, says its own branch instead: that is the checkout the user is in, whichever pane or sidebar has the
+//! keyboard.
 //!
 //! The listing is asked for when the status bar is drawn and the project changed or the answer
 //! is [`REFRESH`] old, and again after a command or a turn ended in a checkout
@@ -91,12 +92,16 @@ impl Workbench {
         }));
     }
 
-    /// The branch of the checkout the user is in: the focused session's worktree branch, else
-    /// the project's main checkout.
+    /// The branch of the checkout the user is in: the worktree branch of the session of the tab
+    /// they see (the active tab of the active pane: where the keyboard is does not matter, it
+    /// may be in the sidebar), else the project's main checkout.
     pub fn workspace_branch(&self, cx: &App) -> Option<String> {
         let store = self.sessions.read(cx);
-        let placement = store
-            .focused()
+        let placement = self
+            .state
+            .active_pane()
+            .and_then(|pane| pane.active_item())
+            .and_then(super::terminals::session_of_item)
             .and_then(|id| store.session(id))
             .and_then(|session| session.placement.as_ref())
             .filter(|placement| placement.kind == PlacementKind::Worktree);

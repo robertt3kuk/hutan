@@ -492,3 +492,30 @@ fn a_zoomed_split_says_so_on_its_tab_and_keeps_the_count(cx: &mut TestAppContext
     settle(cx);
     assert_eq!(label(cx).as_deref(), Some("⊞ 2"));
 }
+
+// ---- 7. F10: rail tooltips follow a reorder ----------------------------------------------------
+
+#[gpui::test]
+fn rail_tooltips_follow_the_icons_when_the_panels_are_reordered(cx: &mut TestAppContext) {
+    let (connection, settings, _) = offline_connection();
+    let (view, cx) = open_with(cx, settings, connection, None);
+    let tips = |cx: &VisualTestContext| {
+        view.read_with(cx, |wb, cx| {
+            wb.rail_tooltips(DockPosition::Right, cx)
+                .into_iter()
+                .map(|(panel, tip)| (panel.to_string(), tip.to_string()))
+                .collect::<Vec<_>>()
+        })
+    };
+    let before = tips(cx);
+    assert!(before.len() >= 2, "{before:?}");
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            s.docks.get_mut(DockPosition::Right).panels.reverse()
+        });
+    });
+    draw(cx);
+    let after = tips(cx);
+    let expected: Vec<_> = before.into_iter().rev().collect();
+    assert_eq!(after, expected, "every icon says its own panel");
+}

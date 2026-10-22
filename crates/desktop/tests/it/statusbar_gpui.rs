@@ -18,7 +18,7 @@ use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_client::{Connection, ConnectionState};
 use hutan_core::SessionId;
 use hutan_desktop::workbench::actions::{self, daemon as daemon_actions};
-use hutan_desktop::workbench::model::{AGENTS_PAGE, ItemRef};
+use hutan_desktop::workbench::model::{AGENTS_PAGE, DockPosition, ItemRef};
 use hutan_desktop::workbench::panels::{ChipKind, ConnectionChip};
 use hutan_desktop::workbench::{Region, StatusBarLayout, Workbench};
 use hutan_protocol::messages::{
@@ -366,6 +366,38 @@ fn the_workspace_item_follows_the_active_project_and_its_branch(cx: &mut TestApp
         view.read_with(cx, |wb, _| wb.picker().is_some()),
         "the workspace item opens the jump palette"
     );
+}
+
+/// F11: the branch follows the tab that is shown, whether the keyboard is in a pane or in a
+/// sidebar (it used to say the main checkout's branch as soon as the sidebar had focus).
+#[gpui::test]
+fn the_branch_follows_the_visible_tab_even_when_the_sidebar_has_the_keyboard(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let repos = repos();
+    open_project(&daemon, &repos.api);
+    let in_api = session_at(&daemon, "in-api", &repos.api);
+    let in_worktree = session_at(&daemon, "in-worktree", &repos.api_wt);
+    let (view, cx) = open_daemon(cx, &daemon, daemon.connection());
+    let shows = |cx: &mut VisualTestContext, branch: &str| {
+        wait_until(cx, branch, |cx| {
+            workspace_item(&view, cx).1.as_deref() == Some(branch)
+        });
+    };
+    view.update_in(cx, |wb, window, cx| wb.open_session(in_api, window, cx));
+    shows(cx, "main");
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_session(in_worktree, window, cx)
+    });
+    shows(cx, "topic");
+
+    // The keyboard moves to the left dock: the tab on screen is the same, so is the branch.
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| s.focus_dock(DockPosition::Left));
+    });
+    draw(cx);
+    assert_eq!(workspace_item(&view, cx).1.as_deref(), Some("topic"));
 }
 
 // ---- the working count -----------------------------------------------------------------------

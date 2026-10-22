@@ -661,6 +661,26 @@ impl Workbench {
     /// panel the body shows collapses the body to the rail; any other icon opens that panel (also
     /// while the body is collapsed). Icons are `muted`, the active one `fg` (on the selected fill
     /// while the body shows): the rail spends no accent.
+    /// The tooltip of every icon of `pos`'s rail, in the order the rail draws them: each is the
+    /// title of the panel its icon opens, whatever order the panels were in before.
+    pub fn rail_tooltips(&self, pos: DockPosition, cx: &gpui::App) -> Vec<(PanelId, SharedString)> {
+        self.state
+            .docks
+            .get(pos)
+            .panels
+            .iter()
+            .map(|panel| {
+                let (_, title) = self.item_icon_and_title(
+                    &ItemRef::Panel {
+                        panel: panel.clone(),
+                    },
+                    cx,
+                );
+                (panel.clone(), title)
+            })
+            .collect()
+    }
+
     pub(super) fn right_rail(
         &mut self,
         dock: &Dock,
@@ -715,7 +735,10 @@ impl Workbench {
                 rail_button(
                     self,
                     RailButton {
-                        id: SharedString::from(format!("strip-{panel}")),
+                        // The place is in the id: a panel that moves is a new element, so a
+                        // tooltip shown for its old place goes with it (it said "Files" over
+                        // the icon that took its place).
+                        id: SharedString::from(format!("strip-{index}-{panel}")),
                         face,
                         label: title,
                         background: pressed.then_some(theme.right_sidebar_accent),
