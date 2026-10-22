@@ -221,9 +221,9 @@ fn nav_items_switch_the_left_page_and_the_back_row_returns_to_projects(cx: &mut 
     // sidebar's page as it is; a second click focuses the same tab.
     click(&view, cx, Region::Nav("agents"));
     assert_eq!(page(cx).as_str(), "tasks");
-    assert_eq!(selected_nav(&view, cx), ["tasks", "agents"]);
+    assert_eq!(selected_nav(&view, cx), ["agents", "tasks"]);
     click(&view, cx, Region::Nav("agents"));
-    assert_eq!(selected_nav(&view, cx), ["tasks", "agents"]);
+    assert_eq!(selected_nav(&view, cx), ["agents", "tasks"]);
 
     // The back row, and a second click on the selected row, both return to Projects.
     click(&view, cx, Region::Nav("projects"));

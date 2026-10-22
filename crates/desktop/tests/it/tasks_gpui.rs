@@ -378,15 +378,24 @@ fn the_tasks_nav_row_appears_with_the_first_task_and_goes_with_the_last(cx: &mut
         nav_keys(&view, cx)
     );
     assert!(region(&view, cx, Region::Nav("tasks")).is_none());
+    let agents_before = region(&view, cx, Region::Nav("agents")).expect("the Agents row");
 
     let first = env.plain("Build", &[]);
     wait_until(cx, "the Tasks row to reveal itself", |cx| {
-        nav_keys(&view, cx).first().map(String::as_str) == Some("tasks")
+        nav_keys(&view, cx).contains(&"tasks".to_owned())
     });
     draw(cx);
     assert!(region(&view, cx, Region::Nav("tasks")).is_some());
-    // Agents is still there, after it.
-    assert_eq!(nav_keys(&view, cx)[..2], ["tasks", "agents"]);
+    // It comes in below the rows that were there: they do not move.
+    assert_eq!(
+        nav_keys(&view, cx).last().map(String::as_str),
+        Some("tasks")
+    );
+    assert_eq!(
+        region(&view, cx, Region::Nav("agents")),
+        Some(agents_before),
+        "the Agents row stays where it was"
+    );
 
     let _: hutan_protocol::task::TaskDeleted =
         env.daemon

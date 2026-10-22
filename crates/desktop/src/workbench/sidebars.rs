@@ -122,23 +122,14 @@ impl Workbench {
     /// The rows of the left nav, top to bottom, with the page the dock shows marked (and, for
     /// Agents, the page when it is the tab on screen). Agents is always there and Mawas while
     /// it is enabled; **Tasks** reveals itself with the first task (or while its page is the one
-    /// showing, so the row of the page you are on never vanishes). Jumping is the filter field
+    /// showing, so the row of the page you are on never vanishes), below them, so that it moves
+    /// nothing that was already there. Jumping is the filter field
     /// and ⌘P, not a row.
     pub fn nav_entries(&self, cx: &gpui::App) -> Vec<NavEntry> {
         let dock = &self.state.docks.left;
         let page = dock.active.as_ref();
         let selected = |panel: &str| page.is_some_and(|a| a.as_str() == panel);
         let mut entries = Vec::new();
-        if selected("tasks") || !self.sessions.read(cx).tasks().is_empty() {
-            entries.push(NavEntry {
-                key: "tasks".to_owned(),
-                label: "Tasks".into(),
-                icon: Icon::NavTasks,
-                badge: None,
-                target: NavTarget::Page(PanelId::new("tasks")),
-                selected: selected("tasks"),
-            });
-        }
         entries.extend([NavEntry {
             key: "agents".to_owned(),
             label: "Agents".into(),
@@ -159,6 +150,18 @@ impl Workbench {
                 badge: None,
                 target: NavTarget::Assistant,
                 selected: self.state.active_center_item().as_ref() == Some(&home),
+            });
+        }
+        // Tasks has a row once there is a task (or while its page is open). It goes below the
+        // others: appearing with the first terminal, it moves nothing that was already there.
+        if selected("tasks") || !self.sessions.read(cx).tasks().is_empty() {
+            entries.push(NavEntry {
+                key: "tasks".to_owned(),
+                label: "Tasks".into(),
+                icon: Icon::NavTasks,
+                badge: None,
+                target: NavTarget::Page(PanelId::new("tasks")),
+                selected: selected("tasks"),
             });
         }
         // Whatever else the user keeps in the left dock stays reachable. Files (E-13a) has its
