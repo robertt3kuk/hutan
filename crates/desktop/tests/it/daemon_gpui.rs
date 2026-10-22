@@ -507,7 +507,7 @@ fn open_logs_reveals_the_log_file_and_has_no_other_side_effects(cx: &mut TestApp
 }
 
 #[gpui::test]
-fn the_palette_lists_every_daemon_command(cx: &mut TestAppContext) {
+fn the_palette_lists_every_daemon_command_that_applies(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon, None);
     wait_synced(&view, cx, 0);
@@ -528,15 +528,24 @@ fn the_palette_lists_every_daemon_command(cx: &mut TestAppContext) {
         "Daemon: Open Logs",
         "Daemon: Toggle Keep Daemon Running After Hutan Quits",
         "Daemon: Open Login Items",
+    ] {
+        assert!(
+            titles.iter().any(|t| t == expected),
+            "{expected} in {titles:?}"
+        );
+    }
+    // The recovery commands only while their failure is current (daemon_menu_gpui).
+    for absent in [
         "Daemon: Start with Empty Data…",
         "Daemon: Show the Stuck Daemon",
         "Daemon: Stop the Stuck Daemon…",
         "Daemon: Copy Start Error Details",
         "Daemon: Copy Update Command",
+        "Daemon: Use This App's Service",
     ] {
         assert!(
-            titles.iter().any(|t| t == expected),
-            "{expected} in {titles:?}"
+            !titles.iter().any(|t| t == absent),
+            "{absent} not in {titles:?}"
         );
     }
 }
@@ -918,10 +927,7 @@ fn the_daemon_menu_follows_the_connection(cx: &mut TestAppContext) {
             "Stop Daemon",
             "Start Daemon",
             "Open Logs",
-            // Only enabled while the daemon could not start (start_failure_gpui).
-            "Start with Empty Data…",
-            "Stop the Stuck Daemon…",
-            "Copy Start Error Details",
+            // The recovery items only while the daemon could not start (daemon_menu_gpui).
             "Keep Daemon Running After Hutan Quits",
             // Outside Hutan.app (no login item here): present but disabled.
             "Start Daemon at Login (available in Hutan.app)",

@@ -11,12 +11,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{App, BackgroundExecutor, Context, SharedString, Task, Window};
+use hutan_client::identity::Mismatch;
 use hutan_client::{ClientError, Connection, ConnectionState, StoreState};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::messages::{DaemonShutdown, DaemonStatusInfo, Empty, Request};
 use serde_json::Value;
 use tokio::sync::watch;
 
+use super::actions::daemon;
 use super::modal::{Modal, ModalChoice};
 use super::panels::{StatusTone, connection_label};
 use super::view::Workbench;
@@ -110,6 +112,79 @@ impl DaemonControl {
             start_notice: None,
         }
     }
+}
+
+/// The app has the daemon actions ([`register_app_actions`]).
+struct AppActions;
+
+impl gpui::Global for AppActions {}
+
+/// Handles the daemon actions app-wide, once per app. AppKit enables an item of the `Daemon`
+/// menu when GPUI says its action is available (`App::is_action_available`): on the focused
+/// element's dispatch path in the active window, or app-wide. The path does not reach the
+/// workbench's root in every focus case, and there is none while no window is active; an
+/// app-wide handler is found in all of them. Whether an item can act now is the menu's own
+/// business (`app::daemon_items`).
+///
+/// The handler runs the action on the workbench window (the active one, else the first),
+/// deferred because the dispatch may come from inside that window's own update. An action
+/// that shows something there (the popover, a confirmation) brings the window forward when it
+/// was not active.
+pub(crate) fn register_app_actions(cx: &mut App) {
+    if cx.has_global::<AppActions>() {
+        return;
+    }
+    cx.set_global(AppActions);
+    on::<daemon::Status>(cx, true, |wb, window, cx| wb.show_daemon_status(window, cx));
+    on::<daemon::Restart>(cx, true, |wb, window, cx| wb.restart_daemon(window, cx));
+    on::<daemon::Stop>(cx, true, |wb, window, cx| wb.stop_daemon(window, cx));
+    on::<daemon::Start>(cx, false, |wb, _, cx| wb.start_daemon(cx));
+    on::<daemon::OpenLogs>(cx, false, |wb, _, cx| wb.open_daemon_logs(cx));
+    on::<daemon::ToggleKeepRunning>(cx, false, |wb, _, cx| wb.toggle_keep_running(cx));
+    on::<daemon::ToggleStartAtLogin>(cx, false, |wb, _, cx| wb.toggle_start_at_login(cx));
+    on::<daemon::OpenLoginItems>(cx, false, |wb, _, cx| wb.open_login_items(cx));
+    on::<daemon::StartWithEmptyData>(cx, true, |wb, window, cx| {
+        wb.start_with_empty_data(window, cx)
+    });
+    on::<daemon::ShowStuckDaemon>(cx, true, |wb, _, cx| wb.show_stuck_daemon(cx));
+    on::<daemon::StopStuckDaemon>(cx, true, |wb, window, cx| wb.stop_stuck_daemon(window, cx));
+    on::<daemon::CopyStartError>(cx, false, |wb, _, cx| wb.copy_start_error(cx));
+    on::<daemon::CopyUpdateCommand>(cx, false, |wb, _, cx| wb.copy_update_command(cx));
+    on::<daemon::UseOwnDaemon>(cx, false, |wb, _, cx| wb.use_own_daemon(cx));
+    on::<daemon::DismissMismatch>(cx, false, |wb, _, cx| wb.dismiss_daemon_mismatch(cx));
+}
+
+/// One app-wide daemon action: `run` on the workbench window; `forward` brings it forward
+/// first when it is not the active window.
+fn on<A: gpui::Action>(
+    cx: &mut App,
+    forward: bool,
+    run: fn(&mut Workbench, &mut Window, &mut Context<Workbench>),
+) {
+    cx.on_action(move |_: &A, cx| {
+        let active = cx
+            .active_window()
+            .and_then(|window| window.downcast::<Workbench>());
+        let Some(handle) = active.or_else(|| {
+            cx.windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<Workbench>())
+        }) else {
+            tracing::debug!("{} without a workbench window", A::name_for_type());
+            return;
+        };
+        cx.defer(move |cx| {
+            let ran = handle.update(cx, |workbench, window, cx| {
+                if forward && !window.is_window_active() {
+                    workbench.bring_forward(window, cx);
+                }
+                run(workbench, window, cx);
+            });
+            if let Err(error) = ran {
+                tracing::debug!("the workbench window went away: {error}");
+            }
+        });
+    });
 }
 
 /// `hutand.log` where the daemon writes it, next to `desktop.log` ([`crate::crash::log_dir`]).
@@ -271,26 +346,38 @@ impl Workbench {
 
     // ---- menu bar ----------------------------------------------------------------------------
 
-    fn menu_state(&self, cx: &App) -> DaemonMenu {
+    pub(crate) fn menu_state(&self, cx: &App) -> DaemonMenu {
+        let mismatch = self.daemon_mismatch().map(|m| &m.kind);
         DaemonMenu {
             running: self.daemon_connected(cx),
+            busy: self.daemon.busy.is_some(),
             keep_running: self.keep_running_enabled(),
             start_at_login: self.start_at_login_enabled(),
             start_at_login_available: self.start_at_login_available(),
             start_at_login_status: self.start_at_login_status(),
             start_failure: self.start_failure_kind(cx),
+            newer_daemon: matches!(mismatch, Some(Mismatch::Newer)),
+            other_daemon: matches!(
+                mismatch,
+                Some(Mismatch::Different | Mismatch::Foreign { .. })
+            ),
         }
     }
 
-    /// Rebuilds the menu bar for the current layout presets and daemon state.
+    /// Rebuilds the menu bar for the current layout presets and daemon state, and the open
+    /// palette's list, which offers the same recovery commands.
     pub(crate) fn refresh_menus(&mut self, cx: &mut Context<Self>) {
         let state = self.menu_state(cx);
         cx.set_menus(crate::app::menus(&self.presets, &self.state.preset, &state));
         self.daemon.menu = Some((state, self.state.preset.clone()));
+        if self.palette.is_some() {
+            self.refilter_palette(cx);
+            cx.notify();
+        }
     }
 
-    /// Rebuilds the menu bar when the daemon menu's checks or enabled items, or the preset View
-    /// → Layout Preset checks, changed.
+    /// Rebuilds the menu bar when the daemon menu's checks, enabled or listed items, or the
+    /// preset View → Layout Preset checks, changed.
     pub(crate) fn sync_menus(&mut self, cx: &mut Context<Self>) {
         let current = self
             .daemon
@@ -300,6 +387,26 @@ impl Workbench {
         if current != Some((self.menu_state(cx), self.state.preset.as_str())) {
             self.refresh_menus(cx);
         }
+    }
+
+    /// Matches the open palette's query again, leaving out the recovery commands that do not
+    /// apply now ([`DaemonMenu::offers`]): the palette lists what the `Daemon` menu lists.
+    pub(crate) fn refilter_palette(&mut self, cx: &App) {
+        let offered = self.menu_state(cx);
+        let commands = Rc::clone(&self.commands);
+        if let Some(palette) = &mut self.palette {
+            palette.refilter(commands.iter().map(|c| c.title.as_ref()));
+            palette
+                .matches
+                .retain(|&i| commands.get(i).is_some_and(|c| offered.offers(&*c.action)));
+        }
+    }
+
+    /// An operation on the daemon starts or ends: the menu follows (nothing in it can act
+    /// meanwhile).
+    fn set_busy(&mut self, busy: Option<DaemonBusy>, cx: &mut Context<Self>) {
+        self.daemon.busy = busy;
+        self.sync_menus(cx);
     }
 
     /// The connection changed: keep the menu, the popover data and the terminals current.
@@ -497,11 +604,14 @@ impl Workbench {
         let connection = self.connection(cx);
         // Off first: the connection must not bring the daemon back while it shuts down.
         connection.set_autostart(false);
-        self.daemon.busy = Some(if restart {
-            DaemonBusy::Restarting
-        } else {
-            DaemonBusy::Stopping
-        });
+        self.set_busy(
+            Some(if restart {
+                DaemonBusy::Restarting
+            } else {
+                DaemonBusy::Stopping
+            }),
+            cx,
+        );
         if !restart {
             self.set_daemon_stopped(true, cx);
         }
@@ -524,13 +634,13 @@ impl Workbench {
             Err(error) => {
                 tracing::warn!("cannot stop the daemon: {error}");
                 self.connection(cx).set_autostart(true);
-                self.daemon.busy = None;
+                self.set_busy(None, cx);
                 self.set_daemon_stopped(false, cx);
                 self.set_notice(format!("Cannot stop the daemon: {error}"), cx);
             }
             Ok(()) if restart => self.begin_start(true, cx),
             Ok(()) => {
-                self.daemon.busy = None;
+                self.set_busy(None, cx);
                 // A daemon may have been started while the stop was finishing.
                 self.follow_daemon_started(cx);
                 self.sync_status_item(cx);
@@ -543,11 +653,14 @@ impl Workbench {
     /// connection.
     pub(crate) fn begin_start(&mut self, restarting: bool, cx: &mut Context<Self>) {
         let connection = self.connection(cx);
-        self.daemon.busy = Some(if restarting {
-            DaemonBusy::Restarting
-        } else {
-            DaemonBusy::Starting
-        });
+        self.set_busy(
+            Some(if restarting {
+                DaemonBusy::Restarting
+            } else {
+                DaemonBusy::Starting
+            }),
+            cx,
+        );
         self.set_daemon_stopped(false, cx);
         let mut state = connection.state();
         connection.start_daemon_now();
@@ -555,7 +668,7 @@ impl Workbench {
         self.daemon.task = Some(cx.spawn(async move |this, cx| {
             let started = wait_connected(&mut state, START_WAIT).await;
             this.update(cx, |this, cx| {
-                this.daemon.busy = None;
+                this.set_busy(None, cx);
                 this.sync_status_item(cx);
                 if started {
                     if let Some(notice) = this.daemon.start_notice.take() {

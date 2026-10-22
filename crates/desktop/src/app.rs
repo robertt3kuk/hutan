@@ -22,10 +22,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// What the `Daemon` menu shows: whether the daemon is up (Restart and Stop apply) or not
-/// (Start applies), and the two checkboxes.
+/// (Start applies), whether an operation is under way (none applies), the two checkboxes, and
+/// what a recovery item would recover from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DaemonMenu {
     pub running: bool,
+    /// The app is stopping, starting or restarting the daemon.
+    pub busy: bool,
     /// `app.keep_running`.
     pub keep_running: bool,
     /// `app.start_at_login`, whether it can be used (the app runs from Hutan.app) and what the
@@ -35,17 +38,49 @@ pub struct DaemonMenu {
     pub start_at_login_status: LoginItemStatus,
     /// Why the daemon could not start, while it could not.
     pub start_failure: Option<StartFailureKind>,
+    /// The daemon that answers is newer than this app (the line under the title bar offers
+    /// *Copy Update Command*).
+    pub newer_daemon: bool,
+    /// The daemon that answers is another build or from elsewhere (the line offers *Use This
+    /// App's Service*).
+    pub other_daemon: bool,
 }
 
 impl Default for DaemonMenu {
     fn default() -> Self {
         Self {
             running: true,
+            busy: false,
             keep_running: false,
             start_at_login: false,
             start_at_login_available: false,
             start_at_login_status: LoginItemStatus::NotRegistered,
             start_failure: None,
+            newer_daemon: false,
+            other_daemon: false,
+        }
+    }
+}
+
+impl DaemonMenu {
+    /// Whether `action` applies now. A recovery action applies only while what it recovers
+    /// from is current (and nothing is under way): the menu and the palette list it only
+    /// then. Every other action always applies.
+    pub fn offers(&self, action: &dyn gpui::Action) -> bool {
+        let action = action.as_any();
+        let failure = self.start_failure.filter(|_| !self.busy);
+        if action.is::<daemon::StartWithEmptyData>() {
+            failure == Some(StartFailureKind::NewerData)
+        } else if action.is::<daemon::CopyUpdateCommand>() {
+            failure == Some(StartFailureKind::NewerData) || self.newer_daemon
+        } else if action.is::<daemon::ShowStuckDaemon>() || action.is::<daemon::StopStuckDaemon>() {
+            failure == Some(StartFailureKind::Stuck)
+        } else if action.is::<daemon::CopyStartError>() {
+            failure.is_some()
+        } else if action.is::<daemon::UseOwnDaemon>() {
+            self.other_daemon && !self.busy
+        } else {
+            true
         }
     }
 }
@@ -180,41 +215,98 @@ pub fn menus(presets: &[LayoutPreset], current: &str, daemon_menu: &DaemonMenu) 
 }
 
 /// The `Daemon` menu. While the daemon could not start, its reason comes first (disabled) and
-/// the action that fits it is enabled.
+/// the recovery items that fit it follow *Open Logs*; they are not there otherwise
+/// ([`DaemonMenu::offers`]). Every other item is always there, enabled exactly when it can act.
 fn daemon_items(daemon_menu: &DaemonMenu) -> Vec<MenuItem> {
-    let failure = daemon_menu.start_failure;
+    let idle = !daemon_menu.busy;
+    let running = daemon_menu.running;
     let mut items = vec![MenuItem::action("Status…", daemon::Status)];
-    if let Some(kind) = failure {
-        items.push(MenuItem::action(kind.menu_text(), daemon::Status).disabled(true));
+    if let Some(kind) = daemon_menu.start_failure {
+        items.push(daemon_item(kind.menu_text(), daemon::Status, false));
     }
     items.extend([
         MenuItem::separator(),
-        MenuItem::action("Restart Daemon", daemon::Restart).disabled(!daemon_menu.running),
-        MenuItem::action("Stop Daemon", daemon::Stop).disabled(!daemon_menu.running),
-        MenuItem::action("Start Daemon", daemon::Start).disabled(daemon_menu.running),
+        daemon_item("Restart Daemon", daemon::Restart, running && idle),
+        daemon_item("Stop Daemon", daemon::Stop, running && idle),
+        daemon_item("Start Daemon", daemon::Start, !running && idle),
         MenuItem::action("Open Logs", daemon::OpenLogs),
-        MenuItem::separator(),
-        MenuItem::action("Start with Empty Data…", daemon::StartWithEmptyData)
-            .disabled(failure != Some(StartFailureKind::NewerData)),
-        MenuItem::action("Stop the Stuck Daemon…", daemon::StopStuckDaemon)
-            .disabled(failure != Some(StartFailureKind::Stuck)),
-        MenuItem::action("Copy Start Error Details", daemon::CopyStartError)
-            .disabled(failure.is_none()),
+    ]);
+    let recovery: Vec<MenuItem> = [
+        recovery_item(
+            daemon_menu,
+            "Copy Update Command",
+            daemon::CopyUpdateCommand,
+        ),
+        recovery_item(
+            daemon_menu,
+            "Start with Empty Data…",
+            daemon::StartWithEmptyData,
+        ),
+        recovery_item(
+            daemon_menu,
+            "Stop the Stuck Daemon…",
+            daemon::StopStuckDaemon,
+        ),
+        recovery_item(
+            daemon_menu,
+            "Copy Start Error Details",
+            daemon::CopyStartError,
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !recovery.is_empty() {
+        items.push(MenuItem::separator());
+        items.extend(recovery);
+    }
+    items.extend([
         MenuItem::separator(),
         MenuItem::action(KEEP_RUNNING, daemon::ToggleKeepRunning).checked(daemon_menu.keep_running),
-        MenuItem::action(
+        daemon_item(
             start_at_login_title(
                 daemon_menu.start_at_login_available,
                 daemon_menu.start_at_login_status,
             ),
             daemon::ToggleStartAtLogin,
+            daemon_menu.start_at_login_available,
         )
-        .checked(daemon_menu.start_at_login)
-        .disabled(!daemon_menu.start_at_login_available),
-        MenuItem::action("Open Login Items", daemon::OpenLoginItems)
-            .disabled(daemon_menu.start_at_login_status != LoginItemStatus::RequiresApproval),
+        .checked(daemon_menu.start_at_login),
+        daemon_item(
+            "Open Login Items",
+            daemon::OpenLoginItems,
+            daemon_menu.start_at_login_status == LoginItemStatus::RequiresApproval,
+        ),
     ]);
     items
+}
+
+/// A `Daemon` menu item that acts only when `can_act`. AppKit enables a menu item by asking
+/// GPUI whether its action is available (`App::is_action_available`), not by the item's
+/// `disabled` flag, and the daemon actions are always available (handled app-wide,
+/// `workbench::daemon::register_app_actions`). So an item that cannot act carries
+/// [`daemon::Unavailable`], which nothing handles, as well as the flag.
+fn daemon_item(
+    name: impl Into<gpui::SharedString>,
+    action: impl gpui::Action,
+    can_act: bool,
+) -> MenuItem {
+    if can_act {
+        MenuItem::action(name, action)
+    } else {
+        MenuItem::action(name, daemon::Unavailable).disabled(true)
+    }
+}
+
+/// A recovery item of the `Daemon` menu, while it applies.
+fn recovery_item(
+    daemon_menu: &DaemonMenu,
+    name: &'static str,
+    action: impl gpui::Action,
+) -> Option<MenuItem> {
+    daemon_menu
+        .offers(&action)
+        .then(|| MenuItem::action(name, action))
 }
 
 /// Window options for the workbench: transparent titlebar with inset traffic lights and a

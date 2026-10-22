@@ -56,6 +56,16 @@ fn drawn(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) -
     view.read_with(cx, |wb, _| wb.region_bounds(region).is_some())
 }
 
+/// Whether the `Daemon` menu has an item `name`.
+fn daemon_menu_lists(cx: &mut VisualTestContext, name: &str) -> bool {
+    let menus = cx.update(|_, cx| cx.get_menus()).expect("menus are set");
+    menus
+        .iter()
+        .filter(|m| m.name.as_ref() == "Daemon")
+        .flat_map(|m| &m.items)
+        .any(|item| matches!(item, gpui::OwnedMenuItem::Action { name: n, .. } if n == name))
+}
+
 fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
     draw(cx);
     let bounds = view
@@ -203,6 +213,10 @@ fn a_newer_daemon_asks_to_update_the_app_and_is_left_running(cx: &mut TestAppCon
         ))
     );
     assert!(drawn(&view, cx, Region::Offer("daemon-mismatch-update")));
+    assert!(
+        daemon_menu_lists(cx, "Copy Update Command"),
+        "the Daemon menu offers it too"
+    );
     pump_for(cx, Duration::from_millis(500));
     assert_eq!(process.starts(), 1, "a newer daemon is never replaced");
 
@@ -210,6 +224,7 @@ fn a_newer_daemon_asks_to_update_the_app_and_is_left_running(cx: &mut TestAppCon
     click(&view, cx, Region::Offer("daemon-mismatch-dismiss"));
     assert_eq!(mismatch(&view, cx), None);
     assert!(!drawn(&view, cx, Region::Offer("daemon-mismatch")));
+    assert!(!daemon_menu_lists(cx, "Copy Update Command"));
     assert_eq!(process.starts(), 1);
     assert!(settled(&view, cx).is_some());
 }

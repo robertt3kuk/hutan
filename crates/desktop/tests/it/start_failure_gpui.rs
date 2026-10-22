@@ -116,7 +116,7 @@ fn newer_data_shows_the_reason_and_start_with_empty_data_moves_it_and_connects(
         view.read_with(cx, |wb, cx| wb.daemon_status_line(cx)),
         "hutand: data from a newer Hutan"
     );
-    // The Daemon menu says the same and enables the fitting action only.
+    // The Daemon menu says the same and lists the fitting actions only.
     wait_until(cx, "the menu to follow", |cx| {
         enabled(&daemon_menu(cx), "Start with Empty Data…") == Some(true)
     });
@@ -125,7 +125,8 @@ fn newer_data_shows_the_reason_and_start_with_empty_data_moves_it_and_connects(
         enabled(&menu, "Not Running: Data From a Newer Hutan"),
         Some(false)
     );
-    assert_eq!(enabled(&menu, "Stop the Stuck Daemon…"), Some(false));
+    assert_eq!(enabled(&menu, "Copy Update Command"), Some(true));
+    assert_eq!(enabled(&menu, "Stop the Stuck Daemon…"), None);
     assert_eq!(enabled(&menu, "Copy Start Error Details"), Some(true));
     // And the popover.
     cx.dispatch_action(daemon_actions::Status);
@@ -173,10 +174,7 @@ fn newer_data_shows_the_reason_and_start_with_empty_data_moves_it_and_connects(
         None
     );
     assert!(!home.join("hutand-start-error.json").exists());
-    assert_eq!(
-        enabled(&daemon_menu(cx), "Start with Empty Data…"),
-        Some(false)
-    );
+    assert_eq!(enabled(&daemon_menu(cx), "Start with Empty Data…"), None);
 }
 
 #[gpui::test]

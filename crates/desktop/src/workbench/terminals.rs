@@ -1529,9 +1529,6 @@ impl Workbench {
             &self.panels,
             self.assistant_enabled(),
         ));
-        if let Some(palette) = &mut self.palette {
-            palette.refilter(self.commands.iter().map(|c| c.title.as_ref()));
-        }
         self.refresh_menus(cx);
         if layout.preset != previous.preset {
             self.apply_preset_named(&layout.preset.clone(), cx);

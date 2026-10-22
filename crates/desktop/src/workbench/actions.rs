@@ -170,7 +170,9 @@ pub mod setup {
 }
 
 /// Daemon controls (design.md § Daemon lifecycle). The `Daemon` menu, the status-bar popover
-/// and the palette all dispatch these, so there is one implementation.
+/// and the palette all dispatch these, so there is one implementation. They are handled
+/// app-wide (`workbench::daemon::register_app_actions`), so the menu finds them whatever has
+/// focus, or when no window does.
 pub mod daemon {
     use gpui::actions;
     actions!(
@@ -192,7 +194,11 @@ pub mod daemon {
             CopyUpdateCommand,
             // When the daemon is not this app's build (`daemon_mismatch`):
             UseOwnDaemon,
-            DismissMismatch
+            DismissMismatch,
+            // What a `Daemon` menu item that cannot act now carries: nothing handles it, so
+            // the menu's validation (`App::is_action_available`, which AppKit asks instead of
+            // reading the item's `disabled` flag) shows the item disabled.
+            Unavailable
         ]
     );
 }

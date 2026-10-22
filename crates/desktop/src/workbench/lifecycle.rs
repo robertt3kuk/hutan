@@ -167,6 +167,7 @@ impl Workbench {
             return;
         }
         self.daemon.identity.restarted = true;
+        self.sync_menus(cx);
         self.daemon.start_notice = Some(match mismatch.kind {
             Mismatch::Foreign { .. } => "Using this app's background service".to_owned(),
             _ => format!("Updated the background service to {}", mismatch.own.version),
@@ -179,6 +180,7 @@ impl Workbench {
     /// the next daemon).
     pub fn dismiss_daemon_mismatch(&mut self, cx: &mut Context<Self>) {
         if self.daemon.identity.shown.take().is_some() {
+            self.sync_menus(cx);
             cx.notify();
         }
     }

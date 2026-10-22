@@ -13,6 +13,7 @@ mod common;
 mod completion_gpui;
 mod control_gpui;
 mod daemon_gpui;
+mod daemon_menu_gpui;
 mod daemon_settings_gpui;
 mod direct_gpui;
 mod dock_gpui;

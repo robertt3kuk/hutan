@@ -889,70 +889,6 @@ impl Workbench {
             this.request_quit(window, cx);
         }))
         .on_action(
-            cx.listener(|this, _: &actions::daemon::Status, window, cx| {
-                this.show_daemon_status(window, cx);
-            }),
-        )
-        .on_action(
-            cx.listener(|this, _: &actions::daemon::Restart, window, cx| {
-                this.restart_daemon(window, cx);
-            }),
-        )
-        .on_action(cx.listener(|this, _: &actions::daemon::Stop, window, cx| {
-            this.stop_daemon(window, cx);
-        }))
-        .on_action(cx.listener(|this, _: &actions::daemon::Start, _, cx| {
-            this.start_daemon(cx);
-        }))
-        .on_action(cx.listener(|this, _: &actions::daemon::OpenLogs, _, cx| {
-            this.open_daemon_logs(cx);
-        }))
-        .on_action(cx.listener(
-            |this, _: &actions::daemon::StartWithEmptyData, window, cx| {
-                this.start_with_empty_data(window, cx);
-            },
-        ))
-        .on_action(
-            cx.listener(|this, _: &actions::daemon::ShowStuckDaemon, _, cx| {
-                this.show_stuck_daemon(cx);
-            }),
-        )
-        .on_action(
-            cx.listener(|this, _: &actions::daemon::StopStuckDaemon, window, cx| {
-                this.stop_stuck_daemon(window, cx);
-            }),
-        )
-        .on_action(
-            cx.listener(|this, _: &actions::daemon::CopyStartError, _, cx| {
-                this.copy_start_error(cx);
-            }),
-        )
-        .on_action(
-            cx.listener(|this, _: &actions::daemon::CopyUpdateCommand, _, cx| {
-                this.copy_update_command(cx);
-            }),
-        )
-        .on_action(
-            cx.listener(|this, _: &actions::daemon::UseOwnDaemon, _, cx| {
-                this.use_own_daemon(cx);
-            }),
-        )
-        .on_action(
-            cx.listener(|this, _: &actions::daemon::DismissMismatch, _, cx| {
-                this.dismiss_daemon_mismatch(cx);
-            }),
-        )
-        .on_action(
-            cx.listener(|this, _: &actions::daemon::ToggleKeepRunning, _, cx| {
-                this.toggle_keep_running(cx);
-            }),
-        )
-        .on_action(
-            cx.listener(|this, _: &actions::daemon::ToggleStartAtLogin, _, cx| {
-                this.toggle_start_at_login(cx);
-            }),
-        )
-        .on_action(
             cx.listener(|this, action: &actions::InstallHarness, window, cx| {
                 this.install_harness(&action.0, window, cx);
             }),
@@ -960,11 +896,6 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::RunSetup, window, cx| {
             this.open_setup(window, cx);
         }))
-        .on_action(
-            cx.listener(|this, _: &actions::daemon::OpenLoginItems, _, cx| {
-                this.open_login_items(cx);
-            }),
-        )
         .on_action(cx.listener(|this, _: &actions::OpenProject, window, cx| {
             if this
                 .picker()

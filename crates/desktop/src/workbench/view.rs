@@ -1243,6 +1243,7 @@ impl Workbench {
         }
         this.schedule_publish(cx);
         this.rebind_keys(cx);
+        super::daemon::register_app_actions(cx);
         this.refresh_menus(cx);
         this.sync_session_focus(cx);
         this.sync_mac_all(cx);
@@ -1744,9 +1745,8 @@ impl Workbench {
     }
 
     pub fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut state = PaletteState::default();
-        state.refilter(self.commands.iter().map(|c| c.title.as_ref()));
-        self.palette = Some(state);
+        self.palette = Some(PaletteState::default());
+        self.refilter_palette(cx);
         self.edits.palette.reset();
         self.context_menu = None;
         self.picker = None;
@@ -1762,10 +1762,9 @@ impl Workbench {
     }
 
     pub fn set_palette_query(&mut self, query: &str, cx: &mut Context<Self>) {
-        let commands = Rc::clone(&self.commands);
         if let Some(palette) = &mut self.palette {
             palette.query = query.to_owned();
-            palette.refilter(commands.iter().map(|c| c.title.as_ref()));
+            self.refilter_palette(cx);
             cx.notify();
         }
     }
