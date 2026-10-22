@@ -8,6 +8,7 @@ use crate::common;
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::{SessionId, SessionState};
+use hutan_desktop::workbench::model::DockPosition;
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_protocol::messages::{AgentApplied, AgentReportRequest, AgentState, Request};
 use hutan_settings::{SettingsPaths, SettingsStore};
@@ -72,6 +73,22 @@ fn the_hover_close_closes_an_idle_session_without_a_dialog_and_undo_brings_it_ba
             wb.close_toast().is_some_and(|t| t.session == session.id)
         })
     });
+
+    // The toast is bottom right of the center, clear of the left sidebar (its footer holds Start)
+    // and above the status bar.
+    draw(cx);
+    let (undo, left, status) = view.read_with(cx, |wb, _| {
+        (
+            wb.region_bounds(Region::CloseToast("undo")).unwrap(),
+            wb.region_bounds(Region::Dock(DockPosition::Left)).unwrap(),
+            wb.region_bounds(Region::StatusBar).unwrap(),
+        )
+    });
+    assert!(
+        undo.left() >= left.right(),
+        "the toast is off the sidebar: {undo:?} vs {left:?}"
+    );
+    assert!(undo.bottom() <= status.top(), "{undo:?} vs {status:?}");
 
     click(&view, cx, Region::CloseToast("undo"));
     wait_sessions(&view, cx, "the session to come back", 1);

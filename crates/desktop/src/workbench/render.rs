@@ -172,6 +172,7 @@ impl Render for Workbench {
         let close_toast = self.render_close_toast(cx);
         let attention_toasts = self.render_attention_toasts(window, cx);
         let restore_toast = self.render_restore_toast(cx);
+        let toasts = self.toast_stack(close_toast, attention_toasts, restore_toast);
         let checkpoints_list = self.render_checkpoints_list(cx);
         let rewind_sheet = self.render_rewind_sheet(cx);
         let daemon_popover = self.render_daemon_popover(cx);
@@ -255,9 +256,7 @@ impl Render for Workbench {
         .children(picker)
         .children(agent_picker)
         .children(launcher)
-        .children(close_toast)
-        .children(attention_toasts)
-        .children(restore_toast)
+        .children(toasts)
         .children(menu)
         .children(sheet)
         .children(setup)

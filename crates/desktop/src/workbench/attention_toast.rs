@@ -27,6 +27,9 @@ use crate::theme::DensityExt as _;
 /// The key context the root has while a toast shows: Escape dismisses the toasts then.
 pub const TOAST_CONTEXT: &str = "AttentionToast";
 
+/// The widest a toast is.
+const TOAST_MAX_WIDTH: f32 = 360.0;
+
 /// The toasts on screen, the timer of the next one to go, and the ones on their way out.
 #[derive(Default)]
 pub struct AttentionToasts {
@@ -217,6 +220,39 @@ impl Workbench {
         self.open_session(session, window, cx);
     }
 
+    /// Every toast of the window in one column at the bottom right of the center, 16 px above
+    /// the status bar and 16 px left of the right dock: the earlier request toasts on top, the
+    /// "Closed … Undo" and "Restored … Undo" toasts under them. Never over the left sidebar,
+    /// whose footer holds Start.
+    pub(crate) fn toast_stack(
+        &self,
+        close: Option<AnyElement>,
+        attention: Option<AnyElement>,
+        restore: Option<AnyElement>,
+    ) -> Option<AnyElement> {
+        let toasts: Vec<AnyElement> = [attention, close, restore].into_iter().flatten().collect();
+        if toasts.is_empty() {
+            return None;
+        }
+        let tokens = self.density.ui();
+        Some(
+            div()
+                .id("toast-stack")
+                .absolute()
+                .bottom(px(tokens.status_bar + tokens.spacing * 4.0))
+                .right(px(
+                    self.dock_extent(super::model::DockPosition::Right) + tokens.spacing * 4.0
+                ))
+                .max_w(px(TOAST_MAX_WIDTH))
+                .flex()
+                .flex_col()
+                .items_end()
+                .gap(px(tokens.spacing * 2.0))
+                .children(toasts)
+                .into_any_element(),
+        )
+    }
+
     /// The toasts, bottom right above the status bar. The newest is lowest. A toast that went
     /// (dismissed, answered, expired, replaced) is drawn for its exit, without input.
     pub(crate) fn render_attention_toasts(
@@ -308,7 +344,7 @@ impl Workbench {
                     .flex()
                     .items_center()
                     .gap(px(tokens.spacing * 3.0))
-                    .popover(&theme, &tokens)
+                    .toast(&theme, &tokens)
                     .px(px(tokens.spacing * 3.0))
                     .py(px(tokens.spacing * 2.0))
                     .child(SharedString::from(toast.text));
@@ -341,9 +377,6 @@ impl Workbench {
                 .key_context(TOAST_CONTEXT)
                 .track_focus(&focus)
                 .tab_stop(true)
-                .absolute()
-                .bottom(px(tokens.status_bar + tokens.spacing * 3.0))
-                .right(px(tokens.spacing * 4.0))
                 .flex()
                 .flex_col()
                 .items_end()

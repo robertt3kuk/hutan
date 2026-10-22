@@ -303,19 +303,16 @@ impl Workbench {
                 motion::Slide::Rise,
                 div()
                     .id("close-toast")
-                    .absolute()
-                    .bottom(px(tokens.status_bar + tokens.spacing * 3.0))
-                    .left(px(tokens.spacing * 4.0))
                     .flex()
                     .items_center()
                     .gap(px(tokens.spacing * 3.0))
-                    .popover(&theme, &tokens)
+                    .toast(&theme, &tokens)
                     .px(px(tokens.spacing * 3.0))
                     .py(px(tokens.spacing * 2.0))
                     .child(SharedString::from(format!("Closed {}", toast.title)))
                     .child(
                         Button::new("close-undo", "Undo", &theme, &tokens)
-                            .ghost()
+                            .link()
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.undo_close(window, cx)),
                             )

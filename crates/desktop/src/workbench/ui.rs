@@ -134,9 +134,23 @@ pub trait StyledExt: Styled + Sized {
         self.line_clamp(lines).text_ellipsis()
     }
 
-    /// A card: a `surface` fill with the card radius. No border, no shadow: cards are fills.
+    /// A card: a `surface` fill with the card radius. No shadow: cards are fills. On a light
+    /// pack the fill is 1.05:1 against `bg`, so it carries a 6 % hairline ([`Theme::card_edge`]);
+    /// on a dark pack the fill alone is the card.
     fn card(self, theme: &Theme, tokens: &Tokens) -> Self {
-        self.bg(theme.surface).rounded(px(tokens.card_radius))
+        self.bg(theme.surface)
+            .rounded(px(tokens.card_radius))
+            .light_edge(theme)
+    }
+
+    /// The light packs' 6 % hairline around a `surface` fill that would otherwise melt into
+    /// `bg`; nothing on a dark pack.
+    fn light_edge(self, theme: &Theme) -> Self {
+        if theme.dark {
+            self
+        } else {
+            self.border_1().border_color(theme.card_edge())
+        }
     }
 
     /// A text input or a secondary button: `surface` with a 1 px `border` hairline and the
@@ -152,7 +166,16 @@ pub trait StyledExt: Styled + Sized {
     /// 6 px inner padding.
     fn popover(mut self, theme: &Theme, tokens: &Tokens) -> Self {
         self.style().box_shadow = Some(theme.shadow());
-        self.card(theme, tokens).p(px(6.0))
+        self.bg(theme.surface)
+            .rounded(px(tokens.card_radius))
+            .p(px(6.0))
+    }
+
+    /// A toast: a popover with the light packs' hairline and a deeper shadow
+    /// ([`Theme::toast_shadow`]), because it floats over content of every tone.
+    fn toast(mut self, theme: &Theme, tokens: &Tokens) -> Self {
+        self.style().box_shadow = Some(theme.toast_shadow());
+        self.popover(theme, tokens).light_edge(theme)
     }
 
     /// The shared geometry of a row in a list or menu; the caller adds the hover and selected

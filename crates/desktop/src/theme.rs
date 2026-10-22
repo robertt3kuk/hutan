@@ -431,6 +431,23 @@ impl Theme {
         }]
     }
 
+    /// The shadow of a toast: the popover shadow, at least 18 % opaque on a light pack where 12 %
+    /// is hardly there over a pane of the same tone.
+    pub fn toast_shadow(&self) -> Vec<BoxShadow> {
+        let mut shadow = self.shadow();
+        if !self.dark {
+            for layer in &mut shadow {
+                layer.color.a = layer.color.a.max(0.18);
+            }
+        }
+        shadow
+    }
+
+    /// The hairline of a card on a light pack: black at 6 %.
+    pub fn card_edge(&self) -> Hsla {
+        gpui::black().opacity(0.06)
+    }
+
     /// Dimming layer behind modals and sheets: `ui.scrim`.
     pub fn scrim(&self) -> Hsla {
         self.scrim_color
@@ -592,6 +609,19 @@ mod tests {
         assert_eq!(rgba_of(Theme::light().border).a, 1.0);
         // 18/255: the nearest 8-bit alpha to 7 %.
         assert!((rgba_of(Theme::dark().border).a - 0.07).abs() < 0.5 / 255.0 + 1e-6);
+    }
+
+    #[test]
+    fn a_toast_shadow_is_at_least_18_percent_in_light_and_a_card_edge_is_black_at_6() {
+        let (dark, light) = (Theme::dark(), Theme::light());
+        let near = |got: f32, want: f32| (got - want).abs() < 0.5 / 255.0 + 1e-6;
+        assert!(near(rgba_of(light.toast_shadow()[0].color).a, 0.18));
+        assert!(
+            near(rgba_of(dark.toast_shadow()[0].color).a, 0.40),
+            "dark keeps its own"
+        );
+        let edge = rgba_of(light.card_edge());
+        assert!(near(edge.a, 0.06) && edge.r == 0.0 && edge.g == 0.0 && edge.b == 0.0);
     }
 
     #[test]
