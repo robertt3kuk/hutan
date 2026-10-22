@@ -355,9 +355,10 @@ impl DockSetting {
     }
 }
 
-/// Status items per side, by id (`connection`, `sessions`, `attention`, `density`, `theme`,
-/// `palette_hint`, and the dock buttons `dock_left`, `dock_bottom`, `dock_right`); unknown ids
-/// are skipped.
+/// Status items per side, by id (`connection`, `workspace`, `working`, `sessions`, `attention`,
+/// `approvals`, `density`, `theme`, `palette_hint`, the editor's items, and the dock buttons
+/// `dock_left`, `dock_bottom`, `dock_right`); unknown ids are skipped. A side left out takes the
+/// built-in bar's.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct StatusBarSetting {
@@ -1393,6 +1394,84 @@ pub fn migrate_start_at_login(store: &SettingsStore, user_file: &Path) -> bool {
 /// The diagnostics source of [`migrate_start_at_login`]'s note.
 const MIGRATION_NOTE: &str = "app.migration";
 
+/// The status bar of the built-in presets from CL-CHROME until FX-STATUSBAR: the left side and
+/// the right side, as *Save Layout as Preset* wrote them into `layout.presets.<name>.status_bar`.
+const CL_CHROME_STATUS_BAR: (&[&str], &[&str]) = (
+    &["attention", "connection"],
+    &[
+        "editor.diagnostics",
+        "editor.mode",
+        "editor.position",
+        "editor.language",
+        "palette_hint",
+    ],
+);
+
+/// A preset saved while the built-in status bar was the CL-CHROME one (`attention`,
+/// `connection`, the editor's items, `palette_hint`) did not choose that bar: it was written
+/// out with the layout. Such a `layout.presets.<name>.status_bar` is removed from
+/// `settings.toml`, so the preset follows the built-in default again (FX-STATUSBAR: the
+/// connection always, the project and branch, the agents at work). A status bar that differs
+/// in any item or its order was edited by the user and is left alone; a side the table does not
+/// name was never chosen and counts as the old default. Runs once: the key is gone afterwards.
+/// `user_file` is the file `store` reads. Returns the presets that were moved.
+pub fn migrate_status_bar(store: &SettingsStore, user_file: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(user_file) else {
+        return Vec::new();
+    };
+    let Ok(table) = text.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let Some(presets) = table
+        .get("layout")
+        .and_then(toml::Value::as_table)
+        .and_then(|layout| layout.get("presets"))
+        .and_then(toml::Value::as_table)
+    else {
+        return Vec::new();
+    };
+    let mut moved = Vec::new();
+    for (name, preset) in presets {
+        let Some(bar) = preset
+            .as_table()
+            .and_then(|preset| preset.get("status_bar"))
+            .and_then(toml::Value::as_table)
+        else {
+            continue;
+        };
+        let is_old = |side: &str, old: &[&str]| match bar.get(side) {
+            None => true,
+            Some(toml::Value::Array(items)) => items
+                .iter()
+                .map(toml::Value::as_str)
+                .eq(old.iter().copied().map(Some)),
+            Some(_) => false,
+        };
+        if !(is_old("left", CL_CHROME_STATUS_BAR.0) && is_old("right", CL_CHROME_STATUS_BAR.1)) {
+            continue;
+        }
+        match store.remove(
+            hutan_settings::SettingsLayer::User,
+            "layout",
+            &format!("presets.{name}.status_bar"),
+        ) {
+            Ok(true) => {
+                tracing::info!(
+                    preset = %name,
+                    "layout.presets.{name}.status_bar was the CL-CHROME default: the preset now \
+                     follows the built-in status bar (FX-STATUSBAR)"
+                );
+                moved.push(name.clone());
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!("cannot move layout.presets.{name}.status_bar: {error}");
+            }
+        }
+    }
+    moved
+}
+
 /// The `assistant` namespace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -1954,6 +2033,87 @@ mod tests {
             (false, true)
         );
         assert_eq!(run(""), (false, true));
+    }
+
+    /// Runs [`migrate_status_bar`] over `text`; the presets moved, the file afterwards and the
+    /// status bar each preset ends up with.
+    fn status_bars_migrated(text: &str) -> (Vec<String>, String, Vec<(String, StatusBarLayout)>) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = hutan_settings::SettingsPaths::in_dir(dir.path());
+        std::fs::write(&paths.user, text).unwrap();
+        let store = SettingsStore::new(paths.clone());
+        register_all(&store);
+        let moved = migrate_status_bar(&store, &paths.user);
+        let bars = store
+            .get::<LayoutSettings>()
+            .preset_defs()
+            .into_iter()
+            .map(|def| (def.layout.name, def.status_bar))
+            .collect();
+        (moved, std::fs::read_to_string(&paths.user).unwrap(), bars)
+    }
+
+    const OLD_BAR: &str = r#"status_bar = { left = ["attention", "connection"], right = ["editor.diagnostics", "editor.mode", "editor.position", "editor.language", "palette_hint"] }"#;
+
+    #[test]
+    fn a_preset_saved_with_the_cl_chrome_bar_gets_the_new_default_once() {
+        let text =
+            format!("[layout.presets.mine]\n{OLD_BAR}\n[layout.presets.mine.left]\nsize = 300\n");
+        let (moved, file, bars) = status_bars_migrated(&text);
+        assert_eq!(moved, ["mine"]);
+        assert!(!file.contains("status_bar"), "{file}");
+        assert!(
+            file.contains("size = 300"),
+            "the rest of the preset stays: {file}"
+        );
+        let mine = bars.iter().find(|(name, _)| name == "mine").unwrap();
+        assert_eq!(mine.1, StatusBarLayout::default());
+        assert_eq!(mine.1.left, ["connection", "workspace", "attention"]);
+
+        // Once: the second run finds nothing.
+        let (again, _, _) = status_bars_migrated(&file);
+        assert!(again.is_empty());
+    }
+
+    #[test]
+    fn a_side_the_table_does_not_name_counts_as_the_old_default() {
+        let text =
+            "[layout.presets.mine]\nstatus_bar = { left = [\"attention\", \"connection\"] }\n";
+        let (moved, file, _) = status_bars_migrated(text);
+        assert_eq!(moved, ["mine"]);
+        assert!(!file.contains("status_bar"), "{file}");
+    }
+
+    #[test]
+    fn a_status_bar_the_user_chose_is_left_alone() {
+        for text in [
+            // Another item on the left.
+            "[layout.presets.mine]\nstatus_bar = { left = [\"connection\", \"sessions\", \"attention\"], right = [\"palette_hint\"] }\n",
+            // The old items in another order.
+            "[layout.presets.mine]\nstatus_bar = { left = [\"connection\", \"attention\"] }\n",
+            // Old left, customised right.
+            "[layout.presets.mine]\nstatus_bar = { left = [\"attention\", \"connection\"], right = [\"density\"] }\n",
+            // The pre-CL-CHROME bar.
+            "[layout.presets.mine]\nstatus_bar = { left = [\"connection\", \"workspace\", \"sessions\", \"attention\", \"approvals\"], right = [\"density\", \"theme\", \"palette_hint\"] }\n",
+            // Nothing to migrate, no presets, a broken file.
+            "[layout.presets.mine]\nsize = 1\n",
+            "",
+            "[layout.presets.mine\nstatus_bar = 1",
+        ] {
+            let (moved, file, _) = status_bars_migrated(text);
+            assert!(moved.is_empty(), "{text}");
+            assert_eq!(file, text, "the file is untouched");
+        }
+        let text = "[layout.presets.mine]\nstatus_bar = { left = [\"connection\", \"sessions\"], right = [\"palette_hint\"] }\n";
+        let (_, _, bars) = status_bars_migrated(text);
+        let mine = bars.iter().find(|(name, _)| name == "mine").unwrap();
+        assert_eq!(
+            (mine.1.left.clone(), mine.1.right.clone()),
+            (
+                vec!["connection".to_owned(), "sessions".to_owned()],
+                vec!["palette_hint".to_owned()]
+            )
+        );
     }
 
     #[test]

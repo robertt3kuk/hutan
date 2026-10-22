@@ -17,10 +17,10 @@ use common::{ProcessDaemon, TestDaemon, draw, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_client::{Connection, ConnectionState};
 use hutan_core::SessionId;
-use hutan_desktop::workbench::actions::daemon as daemon_actions;
+use hutan_desktop::workbench::actions::{self, daemon as daemon_actions};
 use hutan_desktop::workbench::model::{AGENTS_PAGE, ItemRef};
 use hutan_desktop::workbench::panels::{ChipKind, ConnectionChip};
-use hutan_desktop::workbench::{Region, Workbench};
+use hutan_desktop::workbench::{Region, StatusBarLayout, Workbench};
 use hutan_protocol::messages::{
     Request, SessionCreate, SessionResult, SessionSpec, TerminalSpec, WorkspaceOpen,
     WorkspaceOpened,
@@ -396,4 +396,62 @@ fn the_working_count_appears_with_agents_at_work_and_goes_when_they_stop(cx: &mu
     claude.release(&daemon, None, None);
     wait_until(cx, "nobody working", |cx| working(cx) == 0);
     assert!(!drawn(&view, cx, "working"), "hidden again at 0");
+}
+
+// ---- the presets' bars -----------------------------------------------------------------------
+
+#[gpui::test]
+fn a_customised_preset_keeps_its_bar_and_one_saved_with_the_cl_chrome_bar_gets_the_new_one(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let paths = SettingsPaths::in_dir(daemon.home());
+    fs::write(
+        &paths.user,
+        r#"
+[layout.presets.mine]
+status_bar = { left = ["connection", "sessions"], right = ["density", "palette_hint"] }
+
+[layout.presets.saved]
+status_bar = { left = ["attention", "connection"], right = ["editor.diagnostics", "editor.mode", "editor.position", "editor.language", "palette_hint"] }
+"#,
+    )
+    .unwrap();
+    let store = SettingsStore::new(paths.clone());
+    // What the app does when it builds its settings store.
+    assert_eq!(
+        hutan_desktop::settings::migrate_status_bar(&store, &paths.user),
+        ["saved"]
+    );
+    let (view, cx) = open_with(cx, store, daemon.connection(), None);
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).synced())
+    });
+    let bar = |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.status_bar());
+
+    // The built-in presets and the migrated one show the new bar.
+    assert_eq!(bar(cx), StatusBarLayout::default());
+    for name in ["saved", "focus"] {
+        cx.dispatch_action(actions::ApplyPreset(name.to_owned()));
+        cx.run_until_parked();
+        assert_eq!(bar(cx), StatusBarLayout::default(), "{name}");
+        assert!(
+            drawn(&view, cx, "connection"),
+            "{name}: the daemon is in the bar"
+        );
+    }
+
+    // The one the user edited keeps what it has: no workspace item, no working count.
+    cx.dispatch_action(actions::ApplyPreset("mine".to_owned()));
+    cx.run_until_parked();
+    assert_eq!(
+        bar(cx),
+        StatusBarLayout {
+            left: vec!["connection".to_owned(), "sessions".to_owned()],
+            right: vec!["density".to_owned(), "palette_hint".to_owned()],
+        }
+    );
+    assert!(drawn(&view, cx, "connection"));
+    assert!(drawn(&view, cx, "sessions"));
+    assert!(!drawn(&view, cx, "workspace"));
 }
