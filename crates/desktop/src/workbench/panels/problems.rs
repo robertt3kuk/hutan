@@ -162,6 +162,8 @@ pub struct ProblemsPanel {
     problems: Problems,
     /// The diagnostic the keyboard is on (an index into the problems).
     selected: Option<usize>,
+    /// The keyboard came while the list was not read yet: its first row is selected once it is.
+    select_first: bool,
     scroll: UniformListScrollHandle,
     /// The connection state and filter the list was read for.
     asked: Option<(ConnectionState, ProblemsSeverity)>,
@@ -192,6 +194,7 @@ impl ProblemsPanel {
             focus: cx.focus_handle(),
             problems: Problems::Idle,
             selected: None,
+            select_first: false,
             scroll: UniformListScrollHandle::new(),
             asked: None,
             loading: false,
@@ -323,6 +326,10 @@ impl ProblemsPanel {
                             .selected
                             .map(|i| i.min(problems.len().saturating_sub(1)))
                             .filter(|_| !problems.is_empty());
+                        if this.select_first && !problems.is_empty() {
+                            this.select_first = false;
+                            this.selected = Some(0);
+                        }
                         this.problems = Problems::Ready {
                             problems,
                             rows,
@@ -379,8 +386,12 @@ impl ProblemsPanel {
     /// Puts the keyboard in the list, on its first diagnostic when none is selected.
     pub fn focus_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
-        if self.selected.is_none() && !self.listed().is_empty() {
-            self.select(0);
+        if self.selected.is_none() {
+            if self.listed().is_empty() {
+                self.select_first = true;
+            } else {
+                self.select(0);
+            }
         }
         cx.notify();
     }
