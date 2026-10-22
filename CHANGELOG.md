@@ -19,7 +19,9 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - Attention that clears: an agent that is working is never shown as needing you; only turns that changed files ask for review; looking at the result quiets it; Finish closes it.
 - Finish = commit and push from the Changes view (no PR), with staged/unstaged markers and a message pre-filled from the changed files (`Update app.py and store.rs`) plus one line per agent that made them.
 - A session whose finished work you have seen goes back to its own state with a small *Changes to review* link, instead of staying in *Needs you*.
-- Clearer approvals (one primary *Allow once*), chat retry, mute per session, the agent's real mode shown, model display names in headers and pickers.
+- Clearer approvals (one primary *Allow once*), chat retry, mute per session, the agent's real mode shown.
+- Models: display names everywhere (also after a restart, kept offline); pickers mark the current model, order by family and newest first, and tell apart same-named variants.
+- Language servers: the Problems panel shows each server's state with Restart for a failed one; the trust bar names every server the folder would start and one answer covers the folder; a rustup `rust-analyzer` without the component is reported as not installed with the install command.
 
 ### Workspace and look
 - Quiet, consistent visual design: new tokens and primitives, title bar and tabs, sidebar, chat, Agents page, Mawas Home and Settings sheet redesigned; keyboard-only focus ring.
