@@ -782,6 +782,15 @@ impl Workbench {
         let sessions = cx.new(|cx| SessionsStore::new(options.connection, cx));
         sessions.update(cx, |store, cx| {
             store.set_terminal_colors(DefaultColors::from(&terminal_style.palette), cx);
+            // The models' names as last learned: a chat reads by name before any harness is
+            // asked again (none is, just for that).
+            store.use_model_names_file(
+                options
+                    .state_path
+                    .as_deref()
+                    .map(|p| p.with_file_name(crate::sessions::models::MODEL_NAMES_FILE)),
+                cx,
+            );
         });
         let regions = super::regions::Regions::default();
         let lsp = cx.new(|cx| super::lsp::LspStore::new(sessions.read(cx).connection().clone()));

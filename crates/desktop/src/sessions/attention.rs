@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, HashMap};
 use hutan_core::{Epoch, SessionId, SessionState};
 use hutan_protocol::messages::{AgentReport, AgentState, SessionInfo};
 
+use super::models::ModelNames;
+
 /// Why a session wants a look.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unread {
@@ -153,14 +155,14 @@ fn unread_for_end(state: &SessionState) -> Option<Unread> {
     }
 }
 
-/// Presentation of `info` given its unread flag. A session the user *marked unread* shows as
-/// needing a look whatever it does (an accent state, never a badge: [`classify`] leaves accent
-/// alone) until it is read again.
-pub fn present(info: &SessionInfo, unread: Option<Unread>) -> Presentation {
+/// Presentation of `info` given its unread flag; a chat names its model as `names` know it. A
+/// session the user *marked unread* shows as needing a look whatever it does (an accent state,
+/// never a badge: [`classify`] leaves accent alone) until it is read again.
+pub fn present(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames) -> Presentation {
     if unread != Some(Unread::Marked) {
-        return present_state(info, unread);
+        return present_state(info, unread, names);
     }
-    let base = present_state(info, None);
+    let base = present_state(info, None, names);
     if base.needs_you {
         return base;
     }
@@ -177,7 +179,7 @@ pub fn present(info: &SessionInfo, unread: Option<Unread>) -> Presentation {
     }
 }
 
-fn present_state(info: &SessionInfo, unread: Option<Unread>) -> Presentation {
+fn present_state(info: &SessionInfo, unread: Option<Unread>, names: &ModelNames) -> Presentation {
     let exit_detail = |code: Option<i32>, signal: Option<i32>| match (code, signal) {
         (_, Some(sig)) => format!("signal {sig}"),
         (Some(code), None) => format!("exit {code}"),
@@ -204,7 +206,7 @@ fn present_state(info: &SessionInfo, unread: Option<Unread>) -> Presentation {
             let busy = info.state == SessionState::Running;
             Presentation {
                 label: if busy { "working" } else { "idle" }.into(),
-                detail: chat_detail(info),
+                detail: chat_detail(info, names),
                 tone: if busy { Tone::Accent } else { Tone::Muted },
                 filled: busy,
                 needs_you: false,
@@ -299,10 +301,11 @@ fn present_state(info: &SessionInfo, unread: Option<Unread>) -> Presentation {
     }
 }
 
-/// `codex · gpt-6.1-sol`: which agent and model a chat session runs.
-fn chat_detail(info: &SessionInfo) -> String {
+/// `codex · gpt-6.1-sol`: which agent and model a chat session runs (the model by name when
+/// `names` know it).
+fn chat_detail(info: &SessionInfo, names: &ModelNames) -> String {
     match &info.chat {
-        Some(chat) => format!("{} · {}", chat.agent, chat.model),
+        Some(chat) => format!("{} · {}", chat.agent, names.label(&chat.agent, &chat.model)),
         None => String::new(),
     }
 }
@@ -550,7 +553,11 @@ mod tests {
     }
 
     fn presentation_of(state: SessionState, unread: Option<Unread>) -> Presentation {
-        present(&info(SessionId::new(), state), unread)
+        present(
+            &info(SessionId::new(), state),
+            unread,
+            &ModelNames::default(),
+        )
     }
 
     #[test]
@@ -583,7 +590,11 @@ mod tests {
         let failed = || SessionState::Failed {
             reason: "agent request `session/new` failed".into(),
         };
-        let chat_failed = present(&chat(failed(), false, 0), Some(Unread::Failed));
+        let chat_failed = present(
+            &chat(failed(), false, 0),
+            Some(Unread::Failed),
+            &ModelNames::default(),
+        );
         assert!(chat_failed.needs_you);
         assert_eq!(classify(&chat_failed, 0, 0), Some(AttentionKind::Failed));
 
@@ -591,7 +602,7 @@ mod tests {
         if let Some(c) = assistant.chat.as_mut() {
             c.assistant = true;
         }
-        let shown = present(&assistant, Some(Unread::Failed));
+        let shown = present(&assistant, Some(Unread::Failed), &ModelNames::default());
         assert_eq!(shown.label, "failed", "the row still says what happened");
         assert!(!shown.needs_you);
         assert_eq!(classify(&shown, 0, 0), None, "no badge for it either");
@@ -727,7 +738,11 @@ mod tests {
         assert_eq!(tracker.unread(a), Some(Unread::Done));
         tracker.observe(epoch, &[info(a, SessionState::Running)]);
         assert_eq!(tracker.unread(a), Some(Unread::Done), "still unread");
-        let live = present(&info(a, SessionState::Running), tracker.unread(a));
+        let live = present(
+            &info(a, SessionState::Running),
+            tracker.unread(a),
+            &ModelNames::default(),
+        );
         assert_eq!((live.label.as_str(), live.needs_you), ("done", true));
     }
 
@@ -754,18 +769,27 @@ mod tests {
     fn presentation_follows_the_unread_flag() {
         let id = SessionId::new();
         let done = info(id, exited(0));
-        let unread = present(&done, Some(Unread::Done));
+        let unread = present(&done, Some(Unread::Done), &ModelNames::default());
         assert_eq!((unread.label.as_str(), unread.needs_you), ("done", true));
         assert_eq!(unread.tone, Tone::Success);
-        let read = present(&done, None);
+        let read = present(&done, None, &ModelNames::default());
         assert_eq!((read.label.as_str(), read.needs_you), ("exited", false));
-        let failed = present(&info(id, exited(3)), Some(Unread::Failed));
+        let failed = present(
+            &info(id, exited(3)),
+            Some(Unread::Failed),
+            &ModelNames::default(),
+        );
         assert_eq!(
             (failed.label.as_str(), failed.detail.as_str()),
             ("failed", "exit 3")
         );
         assert_eq!(
-            present(&info(id, SessionState::Running), None).label,
+            present(
+                &info(id, SessionState::Running),
+                None,
+                &ModelNames::default()
+            )
+            .label,
             "idle"
         );
         assert_eq!(
@@ -797,22 +821,38 @@ mod tests {
 
     #[test]
     fn a_chat_session_is_working_during_a_turn_and_blocked_on_an_approval() {
-        let idle = present(&chat(SessionState::Idle, false, 0), None);
+        let idle = present(
+            &chat(SessionState::Idle, false, 0),
+            None,
+            &ModelNames::default(),
+        );
         assert_eq!((idle.label.as_str(), idle.needs_you), ("idle", false));
         assert_eq!(idle.detail, "codex · gpt-6.1-sol");
-        let working = present(&chat(SessionState::Running, true, 0), None);
+        let working = present(
+            &chat(SessionState::Running, true, 0),
+            None,
+            &ModelNames::default(),
+        );
         assert_eq!(
             (working.label.as_str(), working.tone, working.needs_you),
             ("working", Tone::Accent, false)
         );
         assert!(working.filled);
-        let blocked = present(&chat(SessionState::WaitingApproval, true, 2), None);
+        let blocked = present(
+            &chat(SessionState::WaitingApproval, true, 2),
+            None,
+            &ModelNames::default(),
+        );
         assert_eq!(
             (blocked.label.as_str(), blocked.tone, blocked.needs_you),
             ("blocked", Tone::Warning, true)
         );
         assert_eq!(blocked.detail, "2 approvals");
-        let one = present(&chat(SessionState::WaitingApproval, true, 1), None);
+        let one = present(
+            &chat(SessionState::WaitingApproval, true, 1),
+            None,
+            &ModelNames::default(),
+        );
         assert_eq!(one.detail, "approval");
     }
 
@@ -829,7 +869,7 @@ mod tests {
                 updated_at_ms: 1,
                 blocked_sub: None,
             });
-            present(&session, None)
+            present(&session, None, &ModelNames::default())
         };
         let working = report(AgentState::Working, None);
         assert_eq!(
@@ -899,7 +939,7 @@ mod tests {
         assert!(!tracker.mark_unread(a), "a failure is stronger");
 
         let idle = info(SessionId::new(), SessionState::Idle);
-        let marked = present(&idle, Some(Unread::Marked));
+        let marked = present(&idle, Some(Unread::Marked), &ModelNames::default());
         assert!(marked.needs_you && marked.filled);
         assert_eq!(marked.tone, Tone::Accent, "no badge for a mark");
         assert!(marked.detail.ends_with("marked unread"));
@@ -908,6 +948,7 @@ mod tests {
         let blocked = present(
             &chat(SessionState::WaitingApproval, false, 1),
             Some(Unread::Marked),
+            &ModelNames::default(),
         );
         assert_eq!(blocked.label, "blocked");
     }

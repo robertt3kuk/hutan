@@ -8,7 +8,6 @@ use gpui::{
 };
 
 use super::agents::Models;
-use super::harnesses;
 use super::launcher::{
     LaunchAgent, LaunchWhere, LauncherField, LauncherStop, Readiness, WorktreeList, readiness_note,
 };
@@ -402,10 +401,6 @@ impl Workbench {
         if kind == LaunchKind::Chat {
             let models = self.launcher_models(cx);
             let chosen = self.launcher_chosen_model(cx);
-            let agent_id = match &launcher.agent {
-                LaunchAgent::Harness(id) => id.clone(),
-                LaunchAgent::Direct(_) => String::new(),
-            };
             let body: Option<AnyElement> = match &models {
                 Models::Loading => {
                     Some(note("Loading the models…".into(), theme.muted).into_any_element())
@@ -481,8 +476,10 @@ impl Workbench {
                             .rounded(px(tokens.radius))
                             .border_1()
                             .border_color(theme.border);
-                        for (at, model) in list.iter().enumerate() {
-                            let model_group = harnesses::model_group(&agent_id, model);
+                        for (at, row) in self.launcher_model_rows(list, cx).into_iter().enumerate()
+                        {
+                            let model = row.model;
+                            let model_group = row.group.clone();
                             if model_group.is_some() && group.as_ref() != Some(&model_group) {
                                 items = items.child(
                                     ui::section_label(
@@ -495,7 +492,7 @@ impl Workbench {
                                 );
                             }
                             group = Some(model_group);
-                            let selected = chosen.as_ref().is_some_and(|c| c.id == model.id);
+                            let selected = row.current;
                             let mid = model.id.clone();
                             let is_default = model.is_default;
                             items = items.child(
@@ -518,18 +515,18 @@ impl Workbench {
                                             cx,
                                         );
                                     }))
-                                    .child(div().w(px(14.0)).text_color(theme.muted).child(
-                                        crate::icons::glyph(if selected {
-                                            crate::icons::Icon::StateUnread
-                                        } else {
-                                            crate::icons::Icon::StateIdle
-                                        }),
-                                    ))
+                                    .child(ui::current_mark(selected, &theme))
                                     .child(
                                         div()
                                             .flex_none()
                                             .child(SharedString::from(model.display_name.clone())),
                                     )
+                                    .children(row.variant.clone().map(|variant| {
+                                        div()
+                                            .flex_none()
+                                            .text_color(theme.muted)
+                                            .child(SharedString::from(variant))
+                                    }))
                                     .when(model.is_default, |s| {
                                         s.child(div().text_color(theme.muted).child("default"))
                                     })

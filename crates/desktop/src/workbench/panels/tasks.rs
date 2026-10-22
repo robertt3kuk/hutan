@@ -102,7 +102,13 @@ impl TasksPanel {
     pub fn rows(&self, now_ms: u64, cx: &gpui::App) -> Vec<TaskRowView> {
         let store = self.env.sessions.read(cx);
         let parent = |id| store.workspace(id).and_then(|w| w.parent_id);
-        tree_rows(store.tasks(), self.filters(cx), &parent, now_ms)
+        tree_rows(
+            store.tasks(),
+            self.filters(cx),
+            &parent,
+            now_ms,
+            store.model_names(),
+        )
     }
 
     /// The row whose actions are shown.

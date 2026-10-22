@@ -25,8 +25,7 @@ use super::widgets::{ButtonKind, button, context_text, context_tooltip, round_bu
 use crate::sessions::SessionsStore;
 use crate::settings::{ChatSettings, SendKey};
 use crate::workbench::actions::{self, RestartSessionById};
-use crate::workbench::agents::Models;
-use crate::workbench::harnesses::{HarnessDirectory, harness_name};
+use crate::workbench::harnesses::harness_name;
 use crate::workbench::panels::{recovery_chip, tone_color};
 use crate::workbench::render::probe;
 use crate::workbench::send_key::{send_key_control, stop_asking, write_send_key};
@@ -83,9 +82,6 @@ pub struct ChatView {
     /// The composer has had the keyboard: from then on it may show the first-run question
     /// about the send key.
     send_key_armed: bool,
-    /// The harnesses' model catalogs (display names for the header), when the workbench gave
-    /// them.
-    harnesses: Option<Entity<HarnessDirectory>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -194,17 +190,8 @@ impl ChatView {
             question_focus: None,
             attach: None,
             send_key_armed: false,
-            harnesses: None,
             _subscriptions: subscriptions,
         }
-    }
-
-    /// Gives the view the harnesses' model catalogs, so the header can show a model by its
-    /// display name.
-    pub fn use_harnesses(&mut self, harnesses: Entity<HarnessDirectory>, cx: &mut Context<Self>) {
-        self._subscriptions
-            .push(cx.observe(&harnesses, |_, _, cx| cx.notify()));
-        self.harnesses = Some(harnesses);
     }
 
     /// Transcript cards built so far.
@@ -463,17 +450,31 @@ impl ChatView {
             .map(|context| context_text(&context))
     }
 
-    /// The display name the harness's model catalog gives `model`, when the catalog has been
-    /// asked for (the Start… sheet and Switch model do) and lists it.
-    fn known_model_name(&self, agent: &str, model: &str, cx: &App) -> Option<String> {
-        let directory = self.harnesses.as_ref()?.read(cx);
-        match directory.models(agent)? {
-            Models::Ready(list) => list
-                .iter()
-                .find(|m| m.id == model)
-                .map(|m| m.display_name.clone()),
-            _ => None,
-        }
+    /// The header's "who runs it" words (`OMP · Claude Haiku 5.5`) and the model's whole id when
+    /// the words do not say it (for the tooltip). The model reads by the display name the desktop
+    /// last learned from the harness's catalog (kept between runs: no harness is asked for it),
+    /// else by the last segment of its id. `None` for a session that is no chat.
+    pub fn who(&self, info: &SessionInfo, cx: &App) -> Option<(String, Option<String>)> {
+        let chat = info.chat.as_ref()?;
+        let known = self.sessions.read(cx).model_name(&chat.agent, &chat.model);
+        let model = model_label(&chat.model, known);
+        let full_model = (chat.model != model).then(|| chat.model.clone());
+        let detail = if is_gateway_chat(&chat.agent) {
+            format!(
+                "{} · {}",
+                chat.provider_id.as_deref().unwrap_or("provider"),
+                model
+            )
+        } else if is_harness_chat(&chat.agent) {
+            // The harness decides what asks and what is sandboxed: no Hutan policy to show.
+            format!("{} · {}", harness_name(&chat.agent), model)
+        } else {
+            format!(
+                "{} · {} · approvals {} · sandbox {}",
+                chat.agent, model, chat.approval_policy, chat.sandbox
+            )
+        };
+        Some((detail, full_model))
     }
 
     // ---- commands --------------------------------------------------------------------------
@@ -790,33 +791,8 @@ impl ChatView {
         }
         let presentation = self.sessions.read(cx).presentation(info);
         let chat = info.chat.as_ref();
-        // The model as a person reads it: the harness's display name when the catalog has been
-        // asked, else the last segment of the id; the whole id is in the tooltip.
-        let model_name = chat.map(|chat| {
-            let known = self.known_model_name(&chat.agent, &chat.model, cx);
-            model_label(&chat.model, known.as_deref())
-        });
-        let full_model = chat
-            .zip(model_name.as_deref())
-            .filter(|(chat, name)| chat.model != *name)
-            .map(|(chat, _)| chat.model.clone());
-        let detail = chat.zip(model_name.as_deref()).map(|(chat, model)| {
-            if is_gateway_chat(&chat.agent) {
-                format!(
-                    "{} · {}",
-                    chat.provider_id.as_deref().unwrap_or("provider"),
-                    model
-                )
-            } else if is_harness_chat(&chat.agent) {
-                // The harness decides what asks and what is sandboxed: no Hutan policy to show.
-                format!("{} · {}", harness_name(&chat.agent), model)
-            } else {
-                format!(
-                    "{} · {} · approvals {} · sandbox {}",
-                    chat.agent, model, chat.approval_policy, chat.sandbox
-                )
-            }
-        });
+        let (detail, full_model) = self.who(info, cx).unzip();
+        let full_model = full_model.flatten();
         let session = self.session;
         let context = self.model.read(cx).transcript().context_use();
         // `UX-MODE-CHIP` (protocol 0.34): the mode a harness reports, read only.

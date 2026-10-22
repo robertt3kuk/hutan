@@ -440,6 +440,7 @@ mod tests {
             agent: "omp".into(),
             harness: "OMP".into(),
             model: None,
+            model_id: None,
             workspace: WorkspaceId::new(),
             container: None,
             project: "hutan".into(),

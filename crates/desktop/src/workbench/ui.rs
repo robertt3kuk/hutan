@@ -457,6 +457,18 @@ pub fn section_label(text: impl Into<SharedString>, theme: &Theme, tokens: &Toke
         .child(text.into())
 }
 
+/// The leading mark of a picker row: a check for the one in use (the current model), blank
+/// otherwise, so the names of all rows line up.
+pub fn current_mark(current: bool, theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .w(px(14.0))
+        .text_color(theme.accent)
+        .when(current, |s| {
+            s.child(crate::icons::glyph(crate::icons::Icon::StateCompleted))
+        })
+}
+
 /// Which mascot image a view shows (`assets/brand/05-mascot/png`): the states of the empty
 /// states, and the poses the first-run setup uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

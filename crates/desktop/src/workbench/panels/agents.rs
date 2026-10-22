@@ -26,6 +26,7 @@ use crate::sessions::agents::{
     usage_label, visible_rows,
 };
 use crate::sessions::agents_text;
+use crate::sessions::models::ModelNames;
 use crate::sessions::{
     AgentPresentation, AgentRecord, Counts, Group, Role, Scope, SessionsStore, State, Tone,
 };
@@ -90,7 +91,7 @@ pub struct SectionView {
     pub rows: Vec<RowView>,
 }
 
-fn row_view(row: &NodeRow<'_>, now_ms: u64) -> RowView {
+fn row_view(row: &NodeRow<'_>, now_ms: u64, names: &ModelNames) -> RowView {
     let node = row.node;
     let g = glyph(node);
     let label = agents::display_name(node).to_owned();
@@ -111,7 +112,7 @@ fn row_view(row: &NodeRow<'_>, now_ms: u64) -> RowView {
         foldable: row.foldable,
         collapsed: row.collapsed,
         hidden: row.hidden,
-        model: node.model.clone(),
+        model: node.model.as_deref().map(|id| names.label(&node.agent, id)),
         duration: duration_ms(node, now_ms).map(format_duration),
         usage: node.usage.as_ref().and_then(usage_label),
         activity: node
@@ -251,7 +252,7 @@ impl AgentsPanel {
                         .collect();
                     visible_rows(tree, filters, &expanded)
                         .iter()
-                        .map(|row| row_view(row, now_ms))
+                        .map(|row| row_view(row, now_ms, store.model_names()))
                         .collect()
                 }
                 None => {

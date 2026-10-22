@@ -619,12 +619,13 @@ impl Workbench {
         };
         match &launcher.agent {
             LaunchAgent::Harness(id) => match self.env.harnesses.read(cx).models(id) {
-                Some(Models::Ready(models)) => {
-                    let mut shown: Vec<ModelInfo> =
-                        models.iter().filter(|m| !m.hidden).cloned().collect();
-                    shown.sort_by_key(|m| harnesses::model_group(id, m));
-                    Models::Ready(shown)
-                }
+                // In the pickers' order: by provider, family, newest first (`sessions::models`).
+                Some(Models::Ready(models)) => Models::Ready(
+                    crate::sessions::models::picker_rows(id, models, "", None, true)
+                        .into_iter()
+                        .map(|row| row.model.clone())
+                        .collect(),
+                ),
                 Some(other) => other.clone(),
                 None => Models::Loading,
             },
@@ -671,6 +672,27 @@ impl Workbench {
                 })
             }
         }
+    }
+
+    /// The rows of the Start sheet's model menu over `list` (what [`launcher_models`] gave): in
+    /// the pickers' order for a harness (a provider's list keeps its own), the dated twin told
+    /// apart, and the model a start would use marked current.
+    ///
+    /// [`launcher_models`]: Self::launcher_models
+    pub fn launcher_model_rows<'a>(
+        &self,
+        list: &'a [ModelInfo],
+        cx: &gpui::App,
+    ) -> Vec<crate::sessions::models::ModelRow<'a>> {
+        let Some(launcher) = self.launcher.as_ref() else {
+            return Vec::new();
+        };
+        let (agent, ordered) = match &launcher.agent {
+            LaunchAgent::Harness(id) => (id.as_str(), true),
+            LaunchAgent::Direct(_) => ("", false),
+        };
+        let current = self.launcher_chosen_model(cx).map(|m| m.id);
+        crate::sessions::models::picker_rows(agent, list, "", current.as_deref(), ordered)
     }
 
     /// The warning that another live agent already works in the checkout the sheet would use.
@@ -2472,6 +2494,7 @@ impl Workbench {
             },
             &parent,
             0,
+            store.model_names(),
         )
     }
 }

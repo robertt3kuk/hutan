@@ -20,7 +20,7 @@ use hutan_protocol::messages::SessionInfo;
 
 use super::actions::palette;
 use super::chat::{ButtonKind, ChatModel, ChatView, Chip, ContextChip, Look, button, cut_to};
-use super::harnesses::{self, HARNESSES};
+use super::harnesses::HARNESSES;
 use super::launcher::LauncherPreset;
 use super::model::{FocusTarget, ItemRef, PaneId};
 use super::panels::AssistantPanel;
@@ -30,6 +30,7 @@ use super::terminals::session_of_item;
 use super::ui::{self, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::vim_ui::OverlayField;
+use crate::sessions::models::{ModelRow, picker_rows};
 use crate::settings::ChatSettings;
 use crate::theme::DensityExt as _;
 
@@ -61,31 +62,41 @@ pub struct AgentPicker {
     /// The harness of the chat (`omp`, `claude`); a direct chat has none (`provider_id` says
     /// what).
     pub agent: String,
+    /// The model the chat runs now, and for a direct chat its provider: the row marked current.
+    pub current: Option<String>,
+    pub current_provider: Option<String>,
 }
 
 impl AgentPicker {
-    /// The models the dialog lists. OMP's are grouped by provider (stable within a group).
-    pub fn shown(&self) -> Vec<&ModelInfo> {
+    /// The rows the dialog lists: the models that match the filter, OMP's grouped by provider
+    /// and every harness's in the pickers' order (`sessions::models`); a provider's list keeps
+    /// its own. The model the chat runs is marked current.
+    pub fn rows(&self) -> Vec<ModelRow<'_>> {
         match &self.models {
             Models::Ready(models) => {
-                let query = self.model_query.to_lowercase();
-                let mut shown: Vec<&ModelInfo> = models
-                    .iter()
-                    .filter(|m| {
-                        !m.hidden
-                            && (query.is_empty()
-                                || m.id.to_lowercase().contains(&query)
-                                || m.display_name.to_lowercase().contains(&query))
-                    })
-                    .collect();
-                if self.provider_id.is_none() {
-                    let agent = self.agent.as_str();
-                    shown.sort_by_key(|m| harnesses::model_group(agent, m));
-                }
-                shown
+                let harness = self.provider_id.is_none();
+                let current = self
+                    .current
+                    .as_deref()
+                    .filter(|_| harness || self.provider_id == self.current_provider);
+                picker_rows(&self.agent, models, &self.model_query, current, harness)
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The models the dialog lists, in the order of [`rows`](Self::rows).
+    pub fn shown(&self) -> Vec<&ModelInfo> {
+        self.rows().into_iter().map(|row| row.model).collect()
+    }
+
+    /// Where the cursor starts: on the model in use, else on the default.
+    pub(crate) fn initial_selection(&self) -> usize {
+        let rows = self.rows();
+        rows.iter()
+            .position(|row| row.current)
+            .or_else(|| rows.iter().position(|row| row.model.is_default))
+            .unwrap_or(0)
     }
 
     /// The model a new chat would start with.
@@ -233,8 +244,6 @@ impl Workbench {
         let settings = self.settings.clone();
         let regions = self.regions.clone();
         let view = cx.new(|cx| ChatView::new(session, model, sessions, settings, regions, cx));
-        let harnesses = self.env.harnesses.clone();
-        view.update(cx, |view, cx| view.use_harnesses(harnesses, cx));
         self.chats.insert((pane, session), view.clone());
         view
     }
@@ -373,6 +382,11 @@ impl Workbench {
         self.context_menu = None;
         self.launcher = None;
         let direct = agent.is_none();
+        let running = self
+            .sessions
+            .read(cx)
+            .session(session)
+            .and_then(|info| info.chat.clone());
         self.agent_picker = Some(AgentPicker {
             models: Models::Loading,
             selected: 0,
@@ -383,6 +397,11 @@ impl Workbench {
             switch_session: session,
             direct,
             agent: agent.unwrap_or_default(),
+            current: running
+                .as_ref()
+                .map(|chat| chat.model.clone())
+                .filter(|m| !m.is_empty()),
+            current_provider: running.and_then(|chat| chat.provider_id),
         });
         window.focus(&self.agent_focus, cx);
         self.edits.agent.reset();
@@ -471,11 +490,7 @@ impl Workbench {
             && picker.models != models
         {
             picker.models = models;
-            picker.selected = picker
-                .shown()
-                .iter()
-                .position(|model| model.is_default)
-                .unwrap_or(0);
+            picker.selected = picker.initial_selection();
         }
         cx.notify();
     }
@@ -562,12 +577,12 @@ impl Workbench {
         } else {
             Vec::new()
         };
-        let shown = picker.shown();
+        let rows = picker.rows();
         let mut models: Vec<AnyElement> = Vec::new();
         let mut group: Option<Option<String>> = None;
-        for (index, model) in shown.iter().enumerate() {
-            let model_group = harnesses::model_group(&picker.agent, model)
-                .filter(|_| picker.provider_id.is_none());
+        for (index, row) in rows.iter().enumerate() {
+            let model = row.model;
+            let model_group = row.group.clone();
             // OMP's models come grouped by provider; a header opens each group.
             if model_group.is_some() && group.as_ref() != Some(&model_group) {
                 models.push(
@@ -597,21 +612,19 @@ impl Workbench {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.agent_picker_choose(index, cx);
                     }))
-                    .child(
-                        div()
-                            .w(px(14.0))
-                            .text_color(theme.muted)
-                            .child(crate::icons::glyph(if selected {
-                                crate::icons::Icon::StateUnread
-                            } else {
-                                crate::icons::Icon::StateIdle
-                            })),
-                    )
+                    // The model the chat runs carries the check; the cursor is the filled row.
+                    .child(ui::current_mark(row.current, &theme))
                     .child(
                         div()
                             .flex_none()
                             .child(SharedString::from(model.display_name.clone())),
                     )
+                    .children(row.variant.clone().map(|variant| {
+                        div()
+                            .flex_none()
+                            .text_color(theme.muted)
+                            .child(SharedString::from(variant))
+                    }))
                     .when(model.is_default, |s| {
                         s.child(div().text_color(theme.muted).child("default"))
                     })

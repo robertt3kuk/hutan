@@ -8,6 +8,7 @@ pub mod agents_text;
 pub mod attention;
 pub mod checkpoints;
 pub mod launch;
+pub mod models;
 mod placement;
 pub mod presentation;
 mod store;

@@ -47,6 +47,7 @@ use super::attention::{
     AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread, classify,
     present,
 };
+use super::models::{self, ModelNames};
 use super::presentation::{self, AgentPresentation, Facts};
 use super::tasks::TaskBook;
 use super::terminal::TerminalSession;
@@ -428,6 +429,12 @@ pub struct SessionsStore {
     dir_watches: HashMap<PathBuf, usize>,
     /// The checkpoints of agent chats (`checkpoints.rs`): turn footers, the Checkpoints list.
     checkpoints: Entity<super::checkpoints::CheckpointStore>,
+    /// The display names of the harnesses' models, from every catalog this desktop was given,
+    /// kept in `model_names_path` between runs.
+    model_names: ModelNames,
+    model_names_path: Option<PathBuf>,
+    /// The last save of the model names; the next one waits for it.
+    model_names_save: Option<Task<()>>,
     _tasks: Vec<Task<()>>,
 }
 
@@ -533,6 +540,9 @@ impl SessionsStore {
             last_confirmed_ms: None,
             dir_watches: HashMap::new(),
             checkpoints,
+            model_names: ModelNames::default(),
+            model_names_path: None,
+            model_names_save: None,
             _tasks: vec![state_task, notice_task],
         }
     }
@@ -1110,7 +1120,7 @@ impl SessionsStore {
 
     /// [`presentation`](Self::presentation) before a snooze is applied.
     fn raw_presentation(&self, info: &SessionInfo) -> Presentation {
-        let presentation = present(info, self.attention.unread(info.id));
+        let presentation = present(info, self.attention.unread(info.id), &self.model_names);
         if !presentation.needs_you
             && info.state.is_live()
             && let Some(tree) = self.state.trees.get(&info.id)
@@ -1250,6 +1260,7 @@ impl SessionsStore {
             answered_approvals: &self.answered,
             answered_questions: &self.answered_questions,
             last_confirmed_ms: self.last_confirmed_ms,
+            model_names: &self.model_names,
             revision: self.revision,
         }));
         self.presentation_builds
@@ -1995,7 +2006,8 @@ impl SessionsStore {
         })
     }
 
-    /// `chat.models`: what `agent` offers.
+    /// `chat.models`: what `agent` offers. The names of the answer are remembered (and saved),
+    /// so every surface shows the models by name, also after a restart.
     pub fn chat_models(
         &mut self,
         agent: &str,
@@ -2003,13 +2015,59 @@ impl SessionsStore {
     ) -> Task<Result<Vec<ModelInfo>, String>> {
         let connection = self.connection.clone();
         let agent = agent.to_owned();
-        cx.spawn(async move |_, _| {
-            connection
+        cx.spawn(async move |this, cx| {
+            let answer = connection
                 .chat_models(&agent)
                 .await
                 .map(|answer| answer.models)
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string());
+            if let Ok(models) = &answer {
+                this.update(cx, |this, cx| this.learn_model_names(&agent, models, cx))
+                    .ok();
+            }
+            answer
         })
+    }
+
+    /// Reads the model names saved at `path` and keeps the ones learned from now on there
+    /// (`None`: nothing is saved).
+    pub fn use_model_names_file(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
+        self.model_names = path.as_deref().map(ModelNames::load).unwrap_or_default();
+        self.model_names_path = path;
+        self.revision += 1;
+        cx.notify();
+    }
+
+    /// The display names of the harnesses' models, as far as this desktop knows them.
+    pub fn model_names(&self) -> &ModelNames {
+        &self.model_names
+    }
+
+    /// The display name of `model` in the catalog of `agent`, as far as this desktop knows it.
+    pub fn model_name(&self, agent: &str, model: &str) -> Option<&str> {
+        self.model_names.name(agent, model)
+    }
+
+    /// Takes `models` as the catalog of `agent` (see [`ModelNames::learn`]).
+    pub fn learn_model_names(&mut self, agent: &str, models: &[ModelInfo], cx: &mut Context<Self>) {
+        if !self.model_names.learn(agent, models) {
+            return;
+        }
+        self.revision += 1;
+        if let Some(path) = self.model_names_path.clone() {
+            let json = self.model_names.to_json();
+            // One write after the other: an older catalog never lands over a newer one.
+            let previous = self.model_names_save.take();
+            self.model_names_save = Some(cx.background_spawn(async move {
+                if let Some(previous) = previous {
+                    previous.await;
+                }
+                if let Err(error) = models::save(&path, &json) {
+                    tracing::warn!(%error, path = %path.display(), "saving the model names failed");
+                }
+            }));
+        }
+        cx.notify();
     }
 
     /// `account.login` / `account.logout`: the harness's own flow in a terminal session. The

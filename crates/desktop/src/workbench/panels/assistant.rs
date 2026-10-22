@@ -24,7 +24,6 @@ use gpui::{
     Subscription, Window, canvas, div, prelude::*, px,
 };
 use hutan_client::{ClientError, ConnectionState};
-use hutan_core::agent::ModelInfo;
 use hutan_core::{SessionId, WorkspaceId};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::assistant::{
@@ -37,6 +36,7 @@ use serde_json::json;
 
 use super::common::state_dot;
 use crate::icons::{Icon, icon};
+use crate::sessions::models::picker_rows;
 use crate::workbench::actions::{
     ManageProviders, ShowAssistantModeMenu, ShowAssistantModelMenu, ShowAssistantMoreMenu,
     ShowAssistantScopeMenu,
@@ -1239,9 +1239,9 @@ impl AssistantPanel {
             .into_any_element()
     }
 
-    /// The model the shown assistant's session runs, when it runs on `choice`; `None` when the
-    /// panel shows no session yet, another backend, or a session whose model is not known.
-    fn running_model(&self, choice: &BackendChoice, cx: &App) -> Option<String> {
+    /// The model id the shown assistant's session runs, when it runs on `choice`; `None` when
+    /// the panel shows no session yet, another backend, or a session whose model is not known.
+    fn running_model_id(&self, choice: &BackendChoice, cx: &App) -> Option<String> {
         let session = self.session(cx)?;
         let chat = self.env.sessions.read(cx).session(session)?.chat.clone()?;
         let same = match choice {
@@ -1251,6 +1251,21 @@ impl AssistantPanel {
             }
         };
         (same && !chat.model.is_empty()).then_some(chat.model)
+    }
+
+    /// [`running_model_id`](Self::running_model_id) as a person reads it: by its display name
+    /// when the desktop knows the harness's catalog.
+    fn running_model(&self, choice: &BackendChoice, cx: &App) -> Option<String> {
+        let id = self.running_model_id(choice, cx)?;
+        Some(match choice {
+            BackendChoice::Harness(kind) => self
+                .env
+                .sessions
+                .read(cx)
+                .model_names()
+                .label(kind.as_str(), &id),
+            BackendChoice::Provider(_) => id,
+        })
     }
 
     /// The header's backend and model: what the shown assistant runs on, opening the chooser.
@@ -1273,11 +1288,13 @@ impl AssistantPanel {
                 } else {
                     harnesses::harness_name(&chat.agent)
                 };
+                // The model by its display name when the desktop knows the harness's catalog.
+                let model = store.model_names().label(&chat.agent, &chat.model);
                 Some(match (automatic, chat.model.is_empty()) {
                     (true, true) => format!("Automatic · {backend}"),
-                    (true, false) => format!("Automatic · {backend} · {}", chat.model),
+                    (true, false) => format!("Automatic · {backend} · {model}"),
                     (false, true) => format!("{backend} · Automatic"),
-                    (false, false) => format!("{backend} · {}", chat.model),
+                    (false, false) => format!("{backend} · {model}"),
                 })
             })
             .unwrap_or_else(|| "Choose backend".to_owned())
@@ -1434,14 +1451,27 @@ impl AssistantPanel {
                         .into_any_element(),
                 ),
                 Models::Ready(list) => {
-                    let list: Vec<ModelInfo> = list.into_iter().filter(|m| !m.hidden).collect();
-                    for (index, model) in list.into_iter().enumerate() {
+                    // In the pickers' order, the dated twin told apart, the running one checked.
+                    let (agent, ordered) = match &chosen {
+                        BackendChoice::Harness(kind) => (kind.as_str(), true),
+                        BackendChoice::Provider(_) => ("", false),
+                    };
+                    let running = self.running_model_id(&chosen, cx);
+                    let rows = picker_rows(agent, &list, "", running.as_deref(), ordered);
+                    for (index, row) in rows.into_iter().enumerate() {
                         let chosen = chosen.clone();
-                        let id = model.id.clone();
+                        let id = row.model.id.clone();
+                        let mut label = row.model.display_name.clone();
+                        if let Some(variant) = &row.variant {
+                            label = format!("{label} {variant}");
+                        }
+                        if row.current {
+                            label = format!("✓ {label}");
+                        }
                         models.push(
                             button(
                                 format!("assistant-model-{index}"),
-                                model.display_name.clone(),
+                                label,
                                 ButtonKind::Ghost,
                                 true,
                                 look,

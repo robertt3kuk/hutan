@@ -14,6 +14,7 @@ use hutan_core::{
 
 use super::Tone;
 use super::agents::format_duration;
+use super::models::ModelNames;
 
 /// Every task the daemon told this window about.
 #[derive(Debug, Clone, Default)]
@@ -312,8 +313,8 @@ pub fn placement_label(task: &Task) -> (String, Option<String>) {
     }
 }
 
-/// The run of a task in a few words.
-pub fn run_label(run: Option<&TaskRun>) -> String {
+/// The run of a task in a few words; a chat's model by its name when `names` know it.
+pub fn run_label(run: Option<&TaskRun>, names: &ModelNames) -> String {
     match run {
         None => "shell".to_owned(),
         Some(TaskRun::Terminal { argv }) => {
@@ -325,7 +326,7 @@ pub fn run_label(run: Option<&TaskRun>) -> String {
             format!("$ {short}")
         }
         Some(TaskRun::Chat { agent, model }) => match model {
-            Some(model) => format!("{agent} chat · {model}"),
+            Some(model) => format!("{agent} chat · {}", names.label(agent, model)),
             None => format!("{agent} chat"),
         },
     }
@@ -349,6 +350,7 @@ pub fn tree_rows(
     filters: TaskFilters,
     parent: &dyn Fn(WorkspaceId) -> Option<WorkspaceId>,
     now_ms: u64,
+    names: &ModelNames,
 ) -> Vec<TaskRowView> {
     let visible: Vec<&Task> = book
         .ordered()
@@ -405,7 +407,7 @@ pub fn tree_rows(
             placement,
             reviewable: branch.is_some() || !task.sessions.is_empty(),
             branch,
-            run: run_label(task.run.as_ref()),
+            run: run_label(task.run.as_ref(), names),
             elapsed: elapsed(task, now_ms),
             outcome: task.outcome.clone(),
             also_after: also.remove(&task.id).unwrap_or_default(),
@@ -477,7 +479,13 @@ mod tests {
         let lint = task("Lint", 2, TaskState::Ready, &[]);
         let test = task("Test", 3, TaskState::Ready, &[&build]);
         let ship = task("Ship", 4, TaskState::Todo, &[&test, &lint]);
-        let rows = tree_rows(&book(&[&ship, &test, &lint, &build]), ALL, &no_parent, 0);
+        let rows = tree_rows(
+            &book(&[&ship, &test, &lint, &build]),
+            ALL,
+            &no_parent,
+            0,
+            &ModelNames::default(),
+        );
         let shape: Vec<(&str, usize)> = rows.iter().map(|r| (r.title.as_str(), r.depth)).collect();
         assert_eq!(
             shape,
@@ -503,6 +511,7 @@ mod tests {
             },
             &no_parent,
             0,
+            &ModelNames::default(),
         );
         let shape: Vec<(&str, usize)> = rows.iter().map(|r| (r.title.as_str(), r.depth)).collect();
         assert_eq!(
@@ -510,7 +519,10 @@ mod tests {
             [("Test", 0), ("Failed", 0)],
             "failed tasks always show"
         );
-        assert_eq!(tree_rows(&all, ALL, &no_parent, 0).len(), 4);
+        assert_eq!(
+            tree_rows(&all, ALL, &no_parent, 0, &ModelNames::default()).len(),
+            4
+        );
     }
 
     #[test]
@@ -521,7 +533,13 @@ mod tests {
             show_done: true,
             workspace: Some(b.workspace_id),
         };
-        let rows = tree_rows(&book(&[&a, &b]), only_b, &no_parent, 0);
+        let rows = tree_rows(
+            &book(&[&a, &b]),
+            only_b,
+            &no_parent,
+            0,
+            &ModelNames::default(),
+        );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].title, "B");
 
@@ -533,7 +551,13 @@ mod tests {
             show_done: true,
             workspace: Some(workspace),
         };
-        let rows = tree_rows(&book(&[&a, &b]), shown, &in_workspace, 0);
+        let rows = tree_rows(
+            &book(&[&a, &b]),
+            shown,
+            &in_workspace,
+            0,
+            &ModelNames::default(),
+        );
         assert_eq!(
             rows.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(),
             ["A"]
@@ -552,7 +576,13 @@ mod tests {
             argv: vec!["cargo".into(), "test".into()],
         });
         t.started_at_ms = Some(10_000);
-        let row = &tree_rows(&book(&[&t]), ALL, &no_parent, 75_000)[0];
+        let row = &tree_rows(
+            &book(&[&t]),
+            ALL,
+            &no_parent,
+            75_000,
+            &ModelNames::default(),
+        )[0];
         assert_eq!(row.placement, "wt task/fix-login-bug");
         assert_eq!(row.branch.as_deref(), Some("task/fix-login-bug"));
         assert_eq!(row.run, "$ cargo test");
@@ -567,7 +597,13 @@ mod tests {
             agent: "omp".into(),
             model: None,
         });
-        let row = &tree_rows(&book(&[&t]), ALL, &no_parent, 75_000)[0];
+        let row = &tree_rows(
+            &book(&[&t]),
+            ALL,
+            &no_parent,
+            75_000,
+            &ModelNames::default(),
+        )[0];
         assert_eq!(
             row.elapsed.as_deref(),
             Some("30s"),
@@ -577,7 +613,7 @@ mod tests {
         assert_eq!(row.run, "omp chat");
 
         let plain = task("Plain", 2, TaskState::Todo, &[]);
-        let row = &tree_rows(&book(&[&plain]), ALL, &no_parent, 0)[0];
+        let row = &tree_rows(&book(&[&plain]), ALL, &no_parent, 0, &ModelNames::default())[0];
         assert_eq!(
             (row.placement.as_str(), row.run.as_str()),
             ("main", "shell")
@@ -673,6 +709,7 @@ mod tests {
             },
             &no_parent,
             0,
+            &ModelNames::default(),
         );
         let shown: Vec<(&str, Option<&str>)> = rows
             .iter()

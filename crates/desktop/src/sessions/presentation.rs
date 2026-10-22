@@ -38,6 +38,7 @@ use hutan_protocol::worktree::PlacementKind;
 
 use super::agents::{self, Filters, activity_text, display_name, usage_label};
 use super::attention::{Tone, Unread, present};
+use super::models::ModelNames;
 
 /// What an agent session is to the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -297,8 +298,11 @@ pub struct AgentRecord {
     pub agent: String,
     /// What a person reads: `OMP`, `Claude Code`, `Codex`.
     pub harness: String,
-    /// The model as reported; never inferred.
+    /// The model as a person reads it: its display name in the harness's catalog, else the id
+    /// as reported; never inferred.
     pub model: Option<String>,
+    /// The model's id as reported (the tooltip says it when the name differs).
+    pub model_id: Option<String>,
     pub workspace: WorkspaceId,
     /// The workspace the project is in, when it is in one.
     pub container: Option<WorkspaceId>,
@@ -361,11 +365,12 @@ impl AgentRecord {
     /// A text the search matches against: title, harness, model, location, branch, activity.
     pub fn haystack(&self) -> String {
         let mut text = format!(
-            "{} {} {} {} {}",
+            "{} {} {} {} {} {}",
             self.title,
             self.harness,
             self.agent,
             self.model.as_deref().unwrap_or(""),
+            self.model_id.as_deref().unwrap_or(""),
             self.location()
         );
         if let Some(checkout) = &self.checkout {
@@ -542,6 +547,8 @@ pub struct Facts<'a> {
     pub answered_questions: &'a HashSet<QuestionId>,
     /// When this window last saw the daemon's state confirmed.
     pub last_confirmed_ms: Option<u64>,
+    /// The display names of the harnesses' models.
+    pub model_names: &'a ModelNames,
     pub revision: u64,
 }
 
@@ -712,7 +719,9 @@ impl Ctx<'_> {
             .collect();
 
         // ---- the children and who is blocked ----
-        let children = tree.map(children_of).unwrap_or_default();
+        let children = tree
+            .map(|tree| children_of(tree, self.facts.model_names))
+            .unwrap_or_default();
         let blocked_nodes = tree.map(agents::blocked_nodes).unwrap_or_default();
         let blocked_children: Vec<&agents::BlockedNode> =
             blocked_nodes.iter().filter(|n| !n.main).collect();
@@ -790,7 +799,7 @@ impl Ctx<'_> {
         let unread = self.facts.unread.get(&info.id).copied();
         let unread_failed = unread == Some(Unread::Failed) && role != Role::Assistant;
         if unread_failed {
-            let presentation = present(info, unread);
+            let presentation = present(info, unread, self.facts.model_names);
             reasons.push(Reason {
                 kind: ReasonKind::Failed,
                 text: if presentation.detail.is_empty() {
@@ -847,10 +856,13 @@ impl Ctx<'_> {
             .or_else(|| info.agent.as_ref().map(|r| r.agent.clone()))
             .or_else(|| root.map(|n| n.agent.clone()))
             .unwrap_or_default();
-        let model = root
+        let model_id = root
             .and_then(|n| n.model.clone())
             .or_else(|| chat.map(|c| c.model.clone()))
             .filter(|m| !m.trim().is_empty());
+        let model = model_id
+            .as_deref()
+            .map(|id| self.facts.model_names.label(&agent, id));
         let report_ms = info.agent.as_ref().map(|r| r.updated_at_ms);
         let updated_at_ms = [report_ms, tree.and_then(latest_activity)]
             .into_iter()
@@ -923,6 +935,7 @@ impl Ctx<'_> {
             harness: harness_label(&agent),
             agent,
             model,
+            model_id,
             workspace: info.workspace_id,
             container,
             project,
@@ -1088,7 +1101,7 @@ impl Ctx<'_> {
 }
 
 /// Every subagent of `tree`, parents first, siblings in the order they started.
-fn children_of(tree: &AgentObservation) -> Vec<Child> {
+fn children_of(tree: &AgentObservation, names: &ModelNames) -> Vec<Child> {
     let expanded: HashSet<String> = tree.nodes.keys().cloned().collect();
     let rows = agents::visible_rows(
         tree,
@@ -1137,7 +1150,7 @@ fn children_of(tree: &AgentObservation) -> Vec<Child> {
                 .as_deref()
                 .map(activity_text)
                 .filter(|a| !a.is_empty() && !finished),
-            model: node.model.clone(),
+            model: node.model.as_deref().map(|id| names.label(&node.agent, id)),
             started_at_ms: node.started_at_ms,
             ended_at_ms: node.ended_at_ms,
             usage: node.usage.as_ref().and_then(usage_label),
@@ -1298,6 +1311,7 @@ mod tests {
         seen: HashSet<SessionId>,
         snoozed: HashSet<SessionId>,
         answered: HashMap<ApprovalId, String>,
+        model_names: ModelNames,
     }
 
     impl World {
@@ -1317,6 +1331,7 @@ mod tests {
                 seen: HashSet::new(),
                 snoozed: HashSet::new(),
                 answered: HashMap::new(),
+                model_names: ModelNames::default(),
             }
         }
 
@@ -1336,6 +1351,7 @@ mod tests {
                 answered_approvals: &self.answered,
                 answered_questions: &HashSet::new(),
                 last_confirmed_ms: Some(NOW),
+                model_names: &self.model_names,
                 revision: 7,
             })
         }
@@ -1404,6 +1420,42 @@ mod tests {
         world.add(info);
         let presentation = world.build();
         assert_eq!(presentation.records[0].state, State::Working);
+    }
+
+    #[test]
+    fn a_model_reads_by_its_catalog_name_and_keeps_its_id() {
+        let home = home();
+        let mut world = World::new(vec![home.clone()]);
+        let mut info = session(home.id, "chat");
+        info.kind = SessionKind::Harness;
+        let mut c = chat("omp", false, true);
+        c.model = "anthropic/claude-haiku-5-5".into();
+        info.chat = Some(c);
+        world.add(info);
+        let record = world.build().records[0].clone();
+        // Nothing known: the id as reported.
+        assert_eq!(record.model.as_deref(), Some("anthropic/claude-haiku-5-5"));
+        world.model_names.learn(
+            "omp",
+            &[hutan_core::agent::ModelInfo {
+                id: "anthropic/claude-haiku-5-5".into(),
+                display_name: "Claude Haiku 5.5".into(),
+                description: String::new(),
+                is_default: false,
+                hidden: false,
+                default_reasoning_effort: None,
+                reasoning_efforts: Vec::new(),
+            }],
+        );
+        let record = world.build().records[0].clone();
+        assert_eq!(record.model.as_deref(), Some("Claude Haiku 5.5"));
+        assert_eq!(
+            record.model_id.as_deref(),
+            Some("anthropic/claude-haiku-5-5")
+        );
+        // The search (lower case) finds it by either.
+        assert!(record.haystack().contains("claude haiku 5.5"));
+        assert!(record.haystack().contains("anthropic/claude-haiku-5-5"));
     }
 
     #[test]
@@ -1525,7 +1577,7 @@ mod tests {
         assert!(presentation.records.is_empty());
         // The global attention path still sees it.
         let info = &world.state.sessions[0];
-        assert!(present(info, world.unread.get(&shell).copied()).needs_you);
+        assert!(present(info, world.unread.get(&shell).copied(), &world.model_names).needs_you);
     }
 
     #[test]

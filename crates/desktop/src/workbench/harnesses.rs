@@ -13,7 +13,6 @@ use gpui::{
     AnyElement, Context, Entity, InteractiveElement, IntoElement, ParentElement, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Window, div, prelude::*, px,
 };
-use hutan_core::agent::ModelInfo;
 use hutan_protocol::account::{AccountInfo, AccountStatus};
 
 use super::agents::Models;
@@ -266,18 +265,6 @@ impl HarnessDirectory {
         })
         .detach();
     }
-}
-
-/// The models of an OMP chat grouped by provider: the id is `provider/model`.
-pub fn model_group(agent: &str, model: &ModelInfo) -> Option<String> {
-    (agent == OMP)
-        .then(|| {
-            model
-                .id
-                .split_once('/')
-                .map(|(provider, _)| provider.to_owned())
-        })
-        .flatten()
 }
 
 /// What a harness row of the picker or the Accounts page says about the logins: `anthropic,

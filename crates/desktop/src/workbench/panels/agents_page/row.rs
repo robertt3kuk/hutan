@@ -269,13 +269,23 @@ impl AgentsPage {
                         .child(SharedString::from(record.harness.clone())),
                 )
                 // A missing model is not a column: "Model not reported" lives in the details.
+                // The model reads by name; the tooltip carries its id.
                 .children(record.model.as_ref().map(|model| {
+                    let id = record
+                        .model_id
+                        .clone()
+                        .filter(|id| id != model)
+                        .map(SharedString::from);
                     div()
+                        .id(SharedString::from(format!("agents-model-{session}")))
                         .h(px(16.0))
                         .truncate()
                         .text_size(px(tokens.secondary_font_size))
                         .text_color(theme.muted)
                         .child(SharedString::from(model.clone()))
+                        .when_some(id, |s, id| {
+                            s.tooltip(move |_, cx| cx.new(|_| TextTooltip(id.clone())).into())
+                        })
                 }))
         });
         let time_column = (layout != Layout::Narrow).then(|| {
@@ -462,9 +472,12 @@ impl AgentsPage {
         }
         lines.push(fact(
             "Harness",
-            match &record.model {
-                Some(model) => format!("{} · {model}", record.harness),
-                None => format!("{} · Model not reported", record.harness),
+            match (&record.model, &record.model_id) {
+                (Some(model), Some(id)) if id != model => {
+                    format!("{} · {model} ({id})", record.harness)
+                }
+                (Some(model), _) => format!("{} · {model}", record.harness),
+                (None, _) => format!("{} · Model not reported", record.harness),
             },
             look,
         ));
