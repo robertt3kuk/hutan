@@ -764,15 +764,25 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_main_checkout_keeps_its_warning_on_the_second_line() {
+    fn a_shared_main_checkout_is_a_glyph_in_the_row_not_a_second_line() {
         use hutan_protocol::worktree::PlacementKind;
         let api = project("api", 0);
         let shared = placed(session("s", &api), PlacementKind::Main, "/work/api", 2);
-        let badge = subtitle(&shared, inputs(false, None))
-            .unwrap()
-            .badge
-            .unwrap();
-        assert!(badge.shared);
+        assert_eq!(subtitle(&shared, inputs(false, None)), None);
+        // In a linked worktree the line stays, for the worktree.
+        let wt = placed(
+            session("s", &api),
+            PlacementKind::Worktree,
+            "/work/api-wt",
+            2,
+        );
+        assert!(
+            subtitle(&wt, inputs(false, None))
+                .unwrap()
+                .badge
+                .unwrap()
+                .shared
+        );
     }
 
     #[test]
