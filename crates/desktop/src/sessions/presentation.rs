@@ -1325,6 +1325,7 @@ mod tests {
                     approvals: Vec::new(),
                     questions: Vec::new(),
                     trees: BTreeMap::new(),
+                    daemon_start: None,
                 },
                 unread: BTreeMap::new(),
                 reviews: HashSet::new(),

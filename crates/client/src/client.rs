@@ -81,6 +81,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::process::Child;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::{sleep, timeout};
 use tokio_util::codec::{FramedRead, FramedWrite};
@@ -88,6 +89,7 @@ use tracing::{debug, warn};
 
 use crate::error::ClientError;
 use crate::socket::default_socket_path;
+use crate::start_failure::{DaemonFiles, StartFailure, StartOutcome};
 
 /// Capability for `terminal.set_colors`; the client sends colors only to daemons advertising it.
 pub(crate) const COLORS_CAPABILITY: &str = "terminal.colors";
@@ -293,7 +295,8 @@ struct Pending {
 
 impl Client {
     /// Connects and handshakes. If the socket is absent (or stale) and `opts.autostart` is set,
-    /// spawns `hutand` and waits up to 3 s for it.
+    /// spawns `hutand` and waits up to 15 s for it; a daemon that does not come up fails with
+    /// [`ClientError::DaemonStart`].
     pub async fn connect(opts: ConnectOptions) -> Result<Self, ClientError> {
         Ok(Self::connect_resuming(opts, None).await?.client)
     }
@@ -1856,7 +1859,7 @@ async fn write_loop(
     }
 }
 
-fn is_unreachable(e: &io::Error) -> bool {
+pub(crate) fn is_unreachable(e: &io::Error) -> bool {
     matches!(
         e.kind(),
         io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
@@ -1886,7 +1889,9 @@ impl AutostartThrottle {
 }
 
 /// Dials `socket`. When it is unreachable and `autostart` is set, spawns `hutand` if `permit`
-/// agrees and waits up to [`AUTOSTART_WAIT`] for it; otherwise returns the dial error.
+/// agrees and waits up to [`AUTOSTART_WAIT`] for it; otherwise returns the dial error. A
+/// started daemon that exits first, or does not answer in time, fails with
+/// [`ClientError::DaemonStart`]: its start-error record, else the end of its stderr.
 async fn dial(
     socket: &Path,
     autostart: Option<&Path>,
@@ -1900,38 +1905,81 @@ async fn dial(
     let Some(binary) = autostart.filter(|_| is_unreachable(&first) && permit()) else {
         return Err(first.into());
     };
-    spawn_daemon(binary, socket_explicit.then_some(socket))?;
-    let connected = timeout(AUTOSTART_WAIT, async {
-        loop {
-            sleep(AUTOSTART_POLL).await;
-            match UnixStream::connect(socket).await {
-                Ok(stream) => return Ok(stream),
-                Err(e) if is_unreachable(&e) => {}
-                Err(e) => return Err(e),
-            }
-        }
-    })
-    .await
-    .map_err(|_| ClientError::AutostartTimeout {
-        socket: socket.to_owned(),
-    })?;
-    Ok(connected?)
+    let files = DaemonFiles::for_socket(socket);
+    let spawned_ms = crate::time::now_ms();
+    let mut child = spawn_daemon(binary, socket_explicit.then_some(socket), &files)?;
+    let outcome = match timeout(AUTOSTART_WAIT, wait_for_socket(socket, &mut child)).await {
+        Ok(Ok(stream)) => return Ok(stream),
+        Ok(Err(Waited::Io(e))) => return Err(e.into()),
+        Ok(Err(Waited::Exited(code))) => StartOutcome::Exited { code },
+        Err(_) => StartOutcome::TimedOut,
+    };
+    let failure = StartFailure::collect(&files, outcome, spawned_ms);
+    debug!(%failure, "autostarted hutand did not come up");
+    Err(ClientError::DaemonStart(Box::new(failure)))
 }
 
-/// Starts `hutand` in its own process group with no stdio, so it outlives this process and
-/// terminal signals.
-fn spawn_daemon(binary: &Path, socket: Option<&Path>) -> Result<(), ClientError> {
+/// `hutand`'s exit code when another daemon holds the lock (`crates/daemon/src/main.rs`).
+const EXIT_ALREADY_RUNNING: i32 = 2;
+
+enum Waited {
+    Io(io::Error),
+    Exited(Option<i32>),
+}
+
+/// Polls `socket` until it answers. A `child` that fails ends the wait at once; one that exits
+/// cleanly or because another daemon holds the lock does not, since that other daemon may
+/// still bring the socket up.
+async fn wait_for_socket(socket: &Path, child: &mut Child) -> Result<UnixStream, Waited> {
+    let mut running = true;
+    loop {
+        tokio::select! {
+            status = child.wait(), if running => {
+                let status = status.map_err(Waited::Io)?;
+                match status.code() {
+                    Some(0 | EXIT_ALREADY_RUNNING) => running = false,
+                    code => return Err(Waited::Exited(code)),
+                }
+            }
+            () = sleep(AUTOSTART_POLL) => {}
+        }
+        match UnixStream::connect(socket).await {
+            Ok(stream) => return Ok(stream),
+            Err(e) if is_unreachable(&e) => {}
+            Err(e) => return Err(Waited::Io(e)),
+        }
+    }
+}
+
+/// Starts `hutand` in its own process group, so it outlives this process and terminal
+/// signals. Its stderr goes to `hutand-start.log` (truncated; the daemon writes there only
+/// while it starts), so a start that fails can say why.
+fn spawn_daemon(
+    binary: &Path,
+    socket: Option<&Path>,
+    files: &DaemonFiles,
+) -> Result<Child, ClientError> {
+    let stderr = match files.open_start_log() {
+        Ok(file) => Stdio::from(file),
+        Err(error) => {
+            warn!(
+                path = %files.start_log().display(),
+                %error,
+                "cannot open the start log; hutand's stderr is discarded"
+            );
+            Stdio::null()
+        }
+    };
     let mut command = tokio::process::Command::new(binary);
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(stderr)
         .process_group(0)
         .kill_on_drop(false);
     if let Some(socket) = socket {
         command.env("HUTAN_SOCKET", socket);
     }
-    // The child is intentionally not awaited; tokio reaps it in the background if it exits.
-    drop(command.spawn()?);
-    Ok(())
+    // Dropping the child does not stop it; tokio reaps it in the background once it exits.
+    Ok(command.spawn()?)
 }

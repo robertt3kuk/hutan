@@ -36,9 +36,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::chat::ChatUpdate;
-use crate::client::{AutostartThrottle, COLORS_CAPABILITY, Client, ConnectOptions, Resumed};
+use crate::client::{
+    AutostartThrottle, COLORS_CAPABILITY, Client, ConnectOptions, Resumed, is_unreachable,
+};
 use crate::connection::Shared;
 use crate::error::ClientError;
+use crate::socket::default_socket_path;
+use crate::start_failure::{DaemonFiles, StartFailure};
 use crate::store::{ConnectionState, Effects, Notice, StoreState};
 use crate::terminal::{Command, GoneReason, TerminalUpdate};
 
@@ -333,6 +337,8 @@ pub(crate) struct Supervisor {
     applied: Seq,
     terminals: Terminals,
     throttle: AutostartThrottle,
+    /// Where the daemon behind the socket leaves its start-error record.
+    files: Option<DaemonFiles>,
 }
 
 impl Supervisor {
@@ -342,6 +348,11 @@ impl Supervisor {
         commands: mpsc::Receiver<Command>,
         cancel: CancellationToken,
     ) -> Self {
+        let files = opts
+            .socket
+            .clone()
+            .or_else(default_socket_path)
+            .map(|socket| DaemonFiles::for_socket(&socket));
         Self {
             opts,
             shared,
@@ -351,6 +362,7 @@ impl Supervisor {
             applied: Seq::default(),
             terminals: Terminals::default(),
             throttle: AutostartThrottle::default(),
+            files,
         }
     }
 
@@ -364,17 +376,21 @@ impl Supervisor {
             });
             match self.dial(resume).await {
                 None => break,
-                Some(Ok(resumed)) => match self.serve(resumed).await {
-                    Served::Stopped => break,
-                    Served::Lost { connected } => {
-                        if connected {
-                            attempt = 0;
+                Some(Ok(resumed)) => {
+                    self.state.daemon_start = None;
+                    match self.serve(resumed).await {
+                        Served::Stopped => break,
+                        Served::Lost { connected } => {
+                            if connected {
+                                attempt = 0;
+                            }
+                            attempt += 1;
                         }
-                        attempt += 1;
                     }
-                },
+                }
                 Some(Err(error)) => {
                     debug!(%error, "connecting to hutand failed");
+                    self.note_failure(error).await;
                     attempt += 1;
                 }
             }
@@ -409,6 +425,38 @@ impl Supervisor {
     fn set_connection(&mut self, connection: ConnectionState) {
         self.state.connection = connection;
         self.publish();
+    }
+
+    /// Keeps [`StoreState::daemon_start`] current after a failed dial: an autostart's failure
+    /// as it is; otherwise, while nothing answers, the record a daemon left (a record that is
+    /// gone takes its failure with it, one without a record stays until something replaces it).
+    async fn note_failure(&mut self, error: ClientError) {
+        let unreachable = match error {
+            ClientError::DaemonStart(failure) => {
+                self.state.daemon_start = Some(*failure);
+                return;
+            }
+            ClientError::Io(error) => is_unreachable(&error),
+            _ => false,
+        };
+        let Some(files) = self.files.clone().filter(|_| unreachable) else {
+            return;
+        };
+        let recorded = tokio::task::spawn_blocking(move || StartFailure::recorded(&files))
+            .await
+            .ok()
+            .flatten();
+        let current = self.state.daemon_start.as_ref();
+        match recorded {
+            Some(recorded)
+                if current.and_then(|c| c.record.as_ref()) != recorded.record.as_ref() =>
+            {
+                self.state.daemon_start = Some(recorded);
+            }
+            Some(_) => {}
+            None if current.is_some_and(|c| c.record.is_some()) => self.state.daemon_start = None,
+            None => {}
+        }
     }
 
     /// `None` when cancelled.

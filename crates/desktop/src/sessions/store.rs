@@ -507,6 +507,7 @@ impl SessionsStore {
                 approvals: Vec::new(),
                 questions: Vec::new(),
                 trees: Default::default(),
+                daemon_start: None,
             }),
             attention: AttentionTracker::new(),
             focused: None,

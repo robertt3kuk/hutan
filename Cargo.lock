@@ -2593,6 +2593,7 @@ dependencies = [
  "hutan-daemon",
  "hutan-protocol",
  "libc",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

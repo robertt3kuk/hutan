@@ -264,6 +264,13 @@ impl Connection {
         }
     }
 
+    /// Allows autostart and dials now, starting `hutand` without waiting for the autostart
+    /// interval: what *Start* does after the cause of a failed start was dealt with.
+    pub fn start_daemon_now(&self) {
+        self.shared.autostart.store(true, Ordering::Release);
+        self.shared.kick.notify_one();
+    }
+
     /// Whether a missing daemon is started ([`set_autostart`](Self::set_autostart)).
     pub fn autostart(&self) -> bool {
         self.shared.autostart.load(Ordering::Acquire)

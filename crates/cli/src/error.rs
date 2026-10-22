@@ -1,7 +1,7 @@
 use std::io;
 use std::path::Path;
 
-use hutan_client::ClientError;
+use hutan_client::{ClientError, StartFailure};
 use hutan_protocol::ErrorBody;
 
 pub const EXIT_REMOTE: u8 = 1;
@@ -51,7 +51,7 @@ impl CliError {
                 "cannot connect to hutand at {} ({e}); start it with `hutan daemon start`",
                 socket.display()
             )),
-            e @ ClientError::AutostartTimeout { .. } => Self::Unreachable(e.to_string()),
+            ClientError::DaemonStart(failure) => Self::Unreachable(start_failure_text(&failure)),
             ClientError::Disconnected => {
                 Self::Unreachable("lost the connection to hutand".to_owned())
             }
@@ -59,6 +59,15 @@ impl CliError {
             other => Self::Failed(other.to_string()),
         }
     }
+}
+
+/// What `hutan` prints when the daemon it started did not come up: the sentence, what the
+/// daemon recorded or printed, and where to look further.
+pub fn start_failure_text(failure: &StartFailure) -> String {
+    format!(
+        "{}\nRun `hutan daemon why` for the record and the end of the daemon's log.",
+        failure.details().trim_end()
+    )
 }
 
 pub fn is_unreachable(e: &io::Error) -> bool {

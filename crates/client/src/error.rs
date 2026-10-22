@@ -1,7 +1,8 @@
 use std::io;
-use std::path::PathBuf;
 
 use hutan_protocol::{ErrorBody, ProtocolError};
+
+use crate::start_failure::StartFailure;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
@@ -17,8 +18,10 @@ pub enum ClientError {
     Disconnected,
     #[error("handshake failed: {0}")]
     Handshake(String),
-    #[error("hutand did not start accepting connections on {} in time", .socket.display())]
-    AutostartTimeout { socket: PathBuf },
+    /// An autostarted `hutand` exited before its socket answered, or did not answer in time;
+    /// carries the daemon's start-error record or what it printed.
+    #[error("{0}")]
+    DaemonStart(Box<StartFailure>),
     #[error("cannot determine the hutand socket path; set HUTAN_SOCKET or HUTAN_HOME")]
     NoSocketPath,
 }

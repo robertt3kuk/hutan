@@ -14,6 +14,8 @@ use hutan_protocol::messages::{Event, SessionInfo, SessionSnapshot, WorkspaceInf
 use hutan_protocol::notify::NotificationIntent;
 use hutan_protocol::resources::ResourceSample;
 
+use crate::start_failure::StartFailure;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
     /// The first connection attempt is in progress.
@@ -47,6 +49,9 @@ pub struct StoreState {
     /// The observation tree of every session that has agents (capability `agent.tree`):
     /// the main agent and its subagents.
     pub trees: BTreeMap<SessionId, AgentObservation>,
+    /// Why the daemon is not there, while it is not: the failure of the last autostart, or the
+    /// start-error record a daemon left next to the socket. `None` while connected.
+    pub daemon_start: Option<StartFailure>,
 }
 
 /// Transient events that are not part of [`StoreState`].
@@ -223,6 +228,7 @@ impl StoreState {
             approvals: Vec::new(),
             questions: Vec::new(),
             trees: BTreeMap::new(),
+            daemon_start: None,
         }
     }
 
