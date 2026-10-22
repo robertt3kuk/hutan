@@ -13,6 +13,7 @@ use hutan_core::SessionId;
 use hutan_protocol::messages::SessionBusy;
 
 use super::render::probe;
+use super::ui::motion;
 use super::ui::{self, StyledExt as _};
 use super::view::{Region, Workbench};
 use crate::sessions::CloseFailure;
@@ -201,34 +202,43 @@ impl Workbench {
     }
 
     pub(crate) fn render_close_toast(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let toast = self.close_toast.clone()?;
+        let toast =
+            self.close_toast_exit
+                .follow(self.close_toast.as_ref(), motion::Kind::Toast, cx)?;
         let (theme, tokens) = (self.theme, self.density.ui());
+        let (wanted, toast) = (toast.wanted, toast.value);
         Some(
-            div()
-                .id("close-toast")
-                .absolute()
-                .bottom(px(tokens.status_bar + tokens.spacing * 3.0))
-                .left(px(tokens.spacing * 4.0))
-                .flex()
-                .items_center()
-                .gap(px(tokens.spacing * 3.0))
-                .popover(&theme, &tokens)
-                .px(px(tokens.spacing * 3.0))
-                .py(px(tokens.spacing * 2.0))
-                .child(SharedString::from(format!("Closed {}", toast.title)))
-                .child(
-                    ui::button(
-                        "close-undo",
-                        "Undo",
-                        ui::ButtonKind::Ghost,
-                        true,
-                        &theme,
-                        &tokens,
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| this.undo_close(window, cx)))
-                    .child(probe(&self.regions, Region::CloseToast("undo"))),
-                )
-                .into_any_element(),
+            motion::present(
+                "close-toast-motion",
+                motion::Kind::Toast,
+                wanted,
+                motion::Slide::Rise,
+                div()
+                    .id("close-toast")
+                    .absolute()
+                    .bottom(px(tokens.status_bar + tokens.spacing * 3.0))
+                    .left(px(tokens.spacing * 4.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(tokens.spacing * 3.0))
+                    .popover(&theme, &tokens)
+                    .px(px(tokens.spacing * 3.0))
+                    .py(px(tokens.spacing * 2.0))
+                    .child(SharedString::from(format!("Closed {}", toast.title)))
+                    .child(
+                        ui::button(
+                            "close-undo",
+                            "Undo",
+                            ui::ButtonKind::Ghost,
+                            true,
+                            &theme,
+                            &tokens,
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| this.undo_close(window, cx)))
+                        .child(probe(&self.regions, Region::CloseToast("undo"))),
+                    ),
+            )
+            .into_any_element(),
         )
     }
 }

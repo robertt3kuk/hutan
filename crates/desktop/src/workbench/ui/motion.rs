@@ -500,49 +500,47 @@ pub fn transition<E: IntoElement + 'static>(
     }
 }
 
-/// Fades `element` in when it first appears (opacity `0 → 1`).
-pub fn fade_in<E: IntoElement + Styled + 'static>(
-    id: impl Into<ElementId>,
-    kind: Kind,
-    element: E,
-) -> Transition<E> {
-    transition(id, kind, 1.0, element, |element, frame| frame.fade(element)).from(0.0)
+/// Which way a surface travels while it enters ([`Kind`]'s `travel` pixels; it leaves the way it
+/// came).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Slide {
+    /// Fade only.
+    None,
+    /// Starts below its place and rises into it: toasts, popovers that open above their trigger.
+    Rise,
+    /// Starts above its place and settles down: menus that hang from their trigger, sheets.
+    Drop,
 }
 
-/// Fades and slides a floating `element` in when it first appears: popovers, menus, sheets,
-/// toasts. Starts `kind`'s travel below its place; `from_above` starts it above instead (a menu
-/// that hangs from its trigger).
-pub fn slide_fade_in<E: IntoElement + Styled + 'static>(
+/// `element` between hidden and shown as `wanted` flips: it enters when it first appears (opacity
+/// `0 → 1`, plus the slide of `kind` for a floating surface), leaves when `wanted` turns false,
+/// and a flip in either direction continues from the value on screen. Settled hidden it is
+/// invisible and takes no input. The owner keeps building it while it leaves ([`Ghost`],
+/// [`Presence`]); a surface that never leaves passes `true`.
+///
+/// The slide is a margin, so use `Slide::Rise`/`Slide::Drop` on floating (absolute) surfaces only.
+pub fn present<E: IntoElement + Styled + 'static>(
     id: impl Into<ElementId>,
     kind: Kind,
-    from_above: bool,
-    element: E,
-) -> Transition<E> {
-    transition(id, kind, 1.0, element, move |element, mut frame| {
-        if from_above {
-            frame.shift = -frame.shift;
-        }
-        frame.slide_fade(element)
-    })
-    .from(0.0)
-}
-
-/// Fades `element` between shown and hidden as `shown` flips, retargeting from the current
-/// opacity; settled hidden it is invisible and takes no input. The owner keeps building it while
-/// it leaves ([`Presence`]).
-pub fn fade<E: IntoElement + Styled + 'static>(
-    id: impl Into<ElementId>,
-    kind: Kind,
-    shown: bool,
+    wanted: bool,
+    slide: Slide,
     element: E,
 ) -> Transition<E> {
     transition(
         id,
         kind,
-        if shown { 1.0 } else { 0.0 },
+        if wanted { 1.0 } else { 0.0 },
         element,
-        |element, frame| {
-            let element = frame.fade(element);
+        move |element, frame| {
+            let element = match slide {
+                Slide::None => frame.fade(element),
+                Slide::Rise => frame.slide_fade(element),
+                Slide::Drop => Frame {
+                    shift: -frame.shift,
+                    ..frame
+                }
+                .slide_fade(element),
+            };
             if frame.visible() {
                 element
             } else {
@@ -550,6 +548,7 @@ pub fn fade<E: IntoElement + Styled + 'static>(
             }
         },
     )
+    .from(0.0)
 }
 
 impl<E: IntoElement + 'static> IntoElement for Transition<E> {
@@ -874,6 +873,65 @@ impl Presence {
     /// Still wanted, as last [`set`](Self::set).
     pub fn wanted(&self) -> bool {
         self.wanted
+    }
+}
+
+/// The last value of something that went away, kept for its exit: for owners whose state is
+/// cleared when the thing is dismissed (a toast), where [`Presence`] alone has nothing to build.
+///
+/// ```ignore
+/// let toast = self.toast_ghost.follow(self.toast.as_ref(), Kind::Toast, cx)?;
+/// // `toast.value` to build from, `toast.wanted` to hand to `motion::present`.
+/// ```
+#[derive(Debug)]
+pub struct Ghost<T> {
+    last: Option<T>,
+    presence: Presence,
+}
+
+/// What [`Ghost::follow`] says to draw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Drawn<T> {
+    pub value: T,
+    /// `false` while it leaves.
+    pub wanted: bool,
+}
+
+impl<T> Default for Ghost<T> {
+    fn default() -> Self {
+        Self {
+            last: None,
+            presence: Presence::new(false),
+        }
+    }
+}
+
+impl<T: Clone> Ghost<T> {
+    /// Call once per render with the current value (`None`: nothing is wanted). `Some` while it
+    /// is wanted and while it leaves; `None` once the exit is over.
+    pub fn follow<V: 'static>(
+        &mut self,
+        current: Option<&T>,
+        kind: Kind,
+        cx: &mut Context<V>,
+    ) -> Option<Drawn<T>> {
+        if let Some(value) = current {
+            self.last = Some(value.clone());
+            self.presence.set(true, kind, cx);
+            return Some(Drawn {
+                value: value.clone(),
+                wanted: true,
+            });
+        }
+        self.presence.set(false, kind, cx);
+        let now = cx.background_executor().now();
+        if !self.presence.draws(now) {
+            self.last = None;
+        }
+        self.last.clone().map(|value| Drawn {
+            value,
+            wanted: false,
+        })
     }
 }
 

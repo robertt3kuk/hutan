@@ -18,6 +18,7 @@ use super::harnesses::harness_name;
 use super::render::probe;
 use super::rewind::{DiffState, Group, Phase, RewindHeader, SheetFocus};
 use super::style::TextTooltip;
+use super::ui::motion;
 use super::ui::{self, FocusRingExt as _, StyledExt as _};
 use super::view::{Region, Workbench};
 use super::workspaces::tilde;
@@ -795,38 +796,47 @@ impl Workbench {
     }
 
     pub(crate) fn render_restore_toast(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let toast = self.rewind.toast.clone()?;
+        let toast =
+            self.restore_toast_exit
+                .follow(self.rewind.toast.as_ref(), motion::Kind::Toast, cx)?;
         let (theme, tokens) = (self.theme, self.density.ui());
+        let (wanted, toast) = (toast.wanted, toast.value);
         Some(
-            div()
-                .id("restore-toast")
-                .absolute()
-                .bottom(px(tokens.status_bar + tokens.spacing * 3.0))
-                .left(px(tokens.spacing * 4.0))
-                .flex()
-                .items_center()
-                .gap(px(tokens.spacing * 3.0))
-                .popover(&theme, &tokens)
-                .px(px(tokens.spacing * 3.0))
-                .py(px(tokens.spacing * 2.0))
-                .child(SharedString::from(toast.text()))
-                .child(probe(&self.regions, Region::RestoreToast("toast")))
-                .child(
-                    ui::button(
-                        "restore-undo",
-                        "Undo",
-                        ui::ButtonKind::Ghost,
-                        true,
-                        &theme,
-                        &tokens,
-                    )
-                    .relative()
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.undo_restore_toast(window, cx)),
-                    )
-                    .child(probe(&self.regions, Region::RestoreToast("undo"))),
-                )
-                .into_any_element(),
+            motion::present(
+                "restore-toast-motion",
+                motion::Kind::Toast,
+                wanted,
+                motion::Slide::Rise,
+                div()
+                    .id("restore-toast")
+                    .absolute()
+                    .bottom(px(tokens.status_bar + tokens.spacing * 3.0))
+                    .left(px(tokens.spacing * 4.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(tokens.spacing * 3.0))
+                    .popover(&theme, &tokens)
+                    .px(px(tokens.spacing * 3.0))
+                    .py(px(tokens.spacing * 2.0))
+                    .child(SharedString::from(toast.text()))
+                    .child(probe(&self.regions, Region::RestoreToast("toast")))
+                    .child(
+                        ui::button(
+                            "restore-undo",
+                            "Undo",
+                            ui::ButtonKind::Ghost,
+                            true,
+                            &theme,
+                            &tokens,
+                        )
+                        .relative()
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.undo_restore_toast(window, cx)),
+                        )
+                        .child(probe(&self.regions, Region::RestoreToast("undo"))),
+                    ),
+            )
+            .into_any_element(),
         )
     }
 }

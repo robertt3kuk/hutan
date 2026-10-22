@@ -689,6 +689,10 @@ pub struct Workbench {
     /// "Closed … · Undo" (`closing.rs`).
     pub(crate) close_toast: Option<super::closing::CloseToast>,
     pub(crate) toast_rev: u64,
+    /// The toasts while they leave (`ui::motion::Ghost`): the state is cleared at dismissal, the
+    /// exit animation still needs the content.
+    pub(crate) close_toast_exit: super::ui::motion::Ghost<super::closing::CloseToast>,
+    pub(crate) restore_toast_exit: super::ui::motion::Ghost<super::rewind::RestoreToast>,
     /// The Rewind preview sheet, the Checkpoints list and the "Restored … · Undo" toast
     /// (`rewind.rs`).
     pub(crate) rewind: super::rewind::RewindState,
@@ -1220,6 +1224,8 @@ impl Workbench {
             notice: None,
             close_toast: None,
             toast_rev: 0,
+            close_toast_exit: super::ui::motion::Ghost::default(),
+            restore_toast_exit: super::ui::motion::Ghost::default(),
             rewind: super::rewind::RewindState::new(cx),
             recovery_open: false,
             recovery_review: false,
