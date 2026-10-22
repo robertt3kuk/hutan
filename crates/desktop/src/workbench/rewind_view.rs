@@ -853,9 +853,16 @@ impl Workbench {
                     .items_center()
                     .gap(px(tokens.spacing * 3.0))
                     .toast(&theme, &tokens)
+                    .undo_toast(&tokens)
+                    .max_w(px(super::closing::UNDO_TOAST_MAX_WIDTH))
                     .px(px(tokens.spacing * 3.0))
                     .py(px(tokens.spacing * 2.0))
-                    .child(SharedString::from(toast.text()))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .child(SharedString::from(toast.text())),
+                    )
                     .child(probe(&self.regions, Region::RestoreToast("toast")))
                     .child(
                         Button::new("restore-undo", "Undo", &theme, &tokens)

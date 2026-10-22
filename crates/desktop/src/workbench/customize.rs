@@ -706,14 +706,17 @@ impl Workbench {
                     .id("layout-toast")
                     .flex()
                     .flex_col()
+                    .justify_center()
                     .gap(px(2.0))
                     .toast(&theme, &tokens)
+                    .undo_toast(&tokens)
                     .px(px(tokens.spacing * 3.0))
                     .py(px(tokens.spacing * 2.0))
                     .child(
                         div()
                             .flex()
                             .items_center()
+                            .min_h(px(tokens.button_height_compact))
                             .gap(px(tokens.spacing * 3.0))
                             .child(toast.label.clone())
                             .child(
@@ -728,6 +731,7 @@ impl Workbench {
                     .children(toast.note.clone().map(|note| {
                         div()
                             .text_size(px(tokens.secondary_font_size))
+                            .line_height(px(super::ui::undo_note_line(&tokens)))
                             .text_color(theme.muted)
                             .child(note)
                     }))

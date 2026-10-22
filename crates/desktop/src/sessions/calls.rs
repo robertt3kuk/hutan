@@ -57,10 +57,21 @@ impl ToastStack {
         Self::default()
     }
 
-    /// Shows `text` for `session` from `now`: a toast the session already has is replaced (its
-    /// time starts over), and past [`MAX_TOASTS`] the oldest goes. Returns the new toast's id.
+    /// Shows `text` for `session` from `now`. A toast the session already has stays as it is: its
+    /// words never change once they appeared (a second call of the same request would only put
+    /// a vaguer sentence over the first); its time starts over, and its id is returned. Past
+    /// [`MAX_TOASTS`] the oldest goes. Returns the toast's id.
     pub fn push(&mut self, now: Instant, session: SessionId, text: String) -> u64 {
-        self.remove_where(|toast| toast.session == session);
+        if let Some((toast, clock)) = self
+            .entries
+            .iter_mut()
+            .find(|(toast, _)| toast.session == session)
+        {
+            if let Clock::Running(deadline) = clock {
+                *deadline = now + TOAST_TIME;
+            }
+            return toast.id;
+        }
         self.next_id += 1;
         let id = self.next_id;
         self.entries.push((
@@ -246,14 +257,18 @@ mod tests {
     }
 
     #[test]
-    fn a_second_request_of_a_session_replaces_its_toast_and_restarts_the_time() {
+    fn a_second_request_of_a_session_keeps_its_toast_text_and_restarts_the_time() {
         let now = Instant::now();
         let mut stack = ToastStack::new();
         let a = session();
         stack.push(now, a, "first".into());
         stack.push(now + Duration::from_secs(4), a, "second".into());
         assert_eq!(stack.len(), 1);
-        assert_eq!(stack.newest().unwrap().text, "second");
+        assert_eq!(
+            stack.newest().unwrap().text,
+            "first",
+            "the words never change once they appeared"
+        );
         // The first one's five seconds are over, the second's are not.
         assert!(stack.expire(now + TOAST_TIME).is_empty());
         assert_eq!(stack.expire(now + Duration::from_secs(9)).len(), 1);

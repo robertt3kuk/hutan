@@ -22,6 +22,9 @@ use crate::sessions::CloseFailure;
 /// How long the Undo toast stays.
 pub const TOAST_TIME: Duration = Duration::from_secs(5);
 
+/// The widest an Undo toast is: a long label is cut, never wrapped to a second line.
+pub const UNDO_TOAST_MAX_WIDTH: f32 = 360.0;
+
 /// "Closed <title> · Undo".
 #[derive(Debug, Clone)]
 pub struct CloseToast {
@@ -349,9 +352,16 @@ impl Workbench {
                     .items_center()
                     .gap(px(tokens.spacing * 3.0))
                     .toast(&theme, &tokens)
+                    .undo_toast(&tokens)
+                    .max_w(px(UNDO_TOAST_MAX_WIDTH))
                     .px(px(tokens.spacing * 3.0))
                     .py(px(tokens.spacing * 2.0))
-                    .child(SharedString::from(format!("Closed {}", toast.title)))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .child(SharedString::from(format!("Closed {}", toast.title))),
+                    )
                     .child(
                         Button::new("close-undo", "Undo", &theme, &tokens)
                             .link()

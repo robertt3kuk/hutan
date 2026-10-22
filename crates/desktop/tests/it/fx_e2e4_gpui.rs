@@ -3,12 +3,12 @@
 
 use crate::common;
 
-use common::{ProcessDaemon, TestDaemon, draw, open_with, wait_until};
+use common::{ProcessDaemon, TestDaemon, draw, offline_connection, open_with, settle, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
 use hutan_client::{Connection, ConnectionState};
 use hutan_core::SessionId;
 use hutan_desktop::workbench::actions;
-use hutan_desktop::workbench::model::{DockPosition, TermSplit};
+use hutan_desktop::workbench::model::{DockPosition, PanelDest, PanelId, TermSplit};
 use hutan_desktop::workbench::{Region, Workbench};
 use hutan_protocol::messages::{Request, SessionCreate, SessionResult, SessionSpec, TerminalSpec};
 use hutan_settings::{SettingsPaths, SettingsStore};
@@ -260,4 +260,97 @@ fn undo_of_close_split_puts_the_session_back_in_its_split(cx: &mut TestAppContex
                 .all(|s| s.recovery.is_none())
         })
     });
+}
+
+// ---- 4. F6: toasts -----------------------------------------------------------------------------
+
+/// An Undo toast is as high with its second line (the note) as without it, so the next one does
+/// not jump and Undo stays under the pointer.
+#[gpui::test]
+fn an_undo_toast_keeps_its_height_with_or_without_a_note(cx: &mut TestAppContext) {
+    let (connection, settings, _) = offline_connection();
+    let (view, cx) = open_with(cx, settings, connection, None);
+    let height = |view: &Entity<Workbench>, cx: &mut VisualTestContext| {
+        settle(cx);
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::LayoutToast("toast")))
+            .expect("the toast is drawn")
+            .size
+            .height
+    };
+    // The first change on a built-in preset says why a Custom preset appeared: two lines.
+    view.update(cx, |wb, cx| {
+        wb.place_panel(
+            &PanelId::new("changes"),
+            PanelDest::Dock(DockPosition::Left),
+            cx,
+        );
+    });
+    assert!(view.read_with(cx, |wb, _| wb.layout_toast().unwrap().note().is_some()));
+    let with_note = height(&view, cx);
+    // The next one goes into Custom itself: one line.
+    view.update(cx, |wb, cx| {
+        wb.place_panel(
+            &PanelId::new("history"),
+            PanelDest::Dock(DockPosition::Left),
+            cx,
+        );
+    });
+    assert!(view.read_with(cx, |wb, _| wb.layout_toast().unwrap().note().is_none()));
+    let without_note = height(&view, cx);
+    assert_eq!(with_note, without_note);
+}
+
+/// A second call of a session that already has a toast does not change the toast's words.
+#[gpui::test]
+fn a_toast_keeps_its_text_when_the_same_session_calls_again(cx: &mut TestAppContext) {
+    use hutan_desktop::sessions::RequestCalled;
+    use hutan_protocol::notify::{IntentKind, NotificationIntent};
+
+    let daemon = TestDaemon::start();
+    let (shown, elsewhere) = (terminal(&daemon), terminal(&daemon));
+    let (view, cx) = open(cx, &daemon);
+    wait_until(cx, "the sessions", |cx| {
+        view.read_with(cx, |wb, cx| {
+            let store = wb.sessions().read(cx);
+            store.synced() && store.session(shown).is_some() && store.session(elsewhere).is_some()
+        })
+    });
+    view.update_in(cx, |wb, window, cx| wb.open_session(shown, window, cx));
+    let call = |kind, body: &str, n: u32| RequestCalled {
+        intent: Box::new(NotificationIntent {
+            id: format!("intent-{n}"),
+            kind,
+            session_id: elsewhere,
+            workspace_id: None,
+            title: "Claude Code".into(),
+            body: body.into(),
+            actions: Vec::new(),
+            created_at_ms: 0,
+            expires_at_ms: None,
+        }),
+    };
+    let sessions = view.read_with(cx, |wb, _| wb.sessions().clone());
+    sessions.update(cx, |_, cx| {
+        cx.emit(call(
+            IntentKind::ApprovalRequired,
+            "Edit src/lib.rs: adds a test",
+            1,
+        ));
+    });
+    cx.run_until_parked();
+    let text = |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.attention_toasts());
+    let first = text(cx);
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert!(
+        first[0].text.contains("asks to edit src/lib.rs"),
+        "{}",
+        first[0].text
+    );
+    sessions.update(cx, |_, cx| {
+        cx.emit(call(IntentKind::AgentBlocked, "", 2));
+    });
+    cx.run_until_parked();
+    let second = text(cx);
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].text, first[0].text, "the words never change");
 }

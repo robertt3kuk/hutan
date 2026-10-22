@@ -178,6 +178,14 @@ pub trait StyledExt: Styled + Sized {
         self.popover(theme, tokens).light_edge(theme)
     }
 
+    /// The height every "… · Undo" toast has, with or without a second line (the note of a
+    /// layout toast): one toast never makes the next one a different size, so Undo stays where
+    /// the eye and the pointer are. The first row is as high as a compact button, the note has
+    /// its own line height.
+    fn undo_toast(self, tokens: &Tokens) -> Self {
+        self.min_h(px(undo_toast_height(tokens)))
+    }
+
     /// The shared geometry of a row in a list or menu; the caller adds the hover and selected
     /// fills (`surface_hover`, `accent_soft`).
     fn row(self, height: f32, tokens: &Tokens) -> Self {
@@ -190,6 +198,17 @@ pub trait StyledExt: Styled + Sized {
 }
 
 impl<T: Styled + Sized> StyledExt for T {}
+
+/// The line height of the note under an Undo toast's first row.
+pub fn undo_note_line(tokens: &Tokens) -> f32 {
+    (tokens.secondary_font_size * 1.4).ceil()
+}
+
+/// The outer height of an Undo toast: its vertical padding twice, the border twice, a row as
+/// high as a compact button, the gap and a note line.
+pub fn undo_toast_height(tokens: &Tokens) -> f32 {
+    tokens.spacing * 4.0 + 2.0 + tokens.button_height_compact + 2.0 + undo_note_line(tokens)
+}
 
 thread_local! {
     /// Whether the last input that could move focus was a key (a Tab or arrow, or a keystroke
