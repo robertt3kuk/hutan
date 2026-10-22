@@ -913,7 +913,8 @@ fn the_keyboard_page_lists_keymap_bindings_and_search_filters_them(cx: &mut Test
             .map(|s| s.namespace().to_owned())),
         Some("keymap".to_owned())
     );
-    draw(cx);
+    // The sheet slides in (UX-MOTION); clicks land where it settles.
+    crate::common::settle(cx);
 
     // Open and Reload are on the page; Reload reads the file again.
     assert!(drawn(&view, cx, Region::Settings("open-keymap")));
