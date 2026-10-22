@@ -969,9 +969,12 @@ impl CodeView {
                     .child(
                         div()
                             .flex_none()
-                            .w(px(cell * 2.0))
+                            .w(line_h * 0.8)
+                            .h(line_h * 0.8)
                             .flex()
+                            .items_center()
                             .justify_center()
+                            .text_size(px(self.style.font_size * 0.8))
                             .rounded(px(3.0))
                             .border_1()
                             .border_color(glyph_border)
