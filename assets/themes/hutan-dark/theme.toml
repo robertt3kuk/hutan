@@ -100,6 +100,7 @@ spacing = 4
 "text.prose.size" = 15
 "text.prose.line-height" = 1.6
 "control.height" = 28
+"button.height-compact" = 24
 "terminal.padding" = 8
 "terminal.block-gutter" = 3
 
@@ -117,6 +118,7 @@ spacing = 6
 "text.prose.size" = 15
 "text.prose.line-height" = 1.6
 "control.height" = 28
+"button.height-compact" = 24
 "terminal.padding" = 12
 "terminal.block-gutter" = 4
 
@@ -133,6 +135,11 @@ spacing = 6
 "nav.gap" = 2
 "strip.button.size" = 28
 "strip.gap" = 4
+"button.padding-x" = 12
+"button.padding-x-compact" = 8
+"button.icon.hit" = 28
+"button.icon.size" = 16
+"button.disabled-opacity" = 0.45
 "terminal.font-size" = 13
 "terminal.line-height" = 1.2
 "shadow.offset-x" = 0

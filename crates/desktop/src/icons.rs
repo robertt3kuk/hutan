@@ -68,6 +68,12 @@ pub fn icon(id: Icon, size: f32, color: Hsla) -> gpui::Div {
     element(id, size).text_color(color)
 }
 
+/// An icon of `size` px that paints in its parent's text color (a hover that changes the text
+/// color changes the icon).
+pub fn sized(id: Icon, size: f32) -> gpui::Div {
+    element(id, size)
+}
+
 fn element(id: Icon, size: f32) -> gpui::Div {
     let active = ACTIVE.read().unwrap_or_else(|e| e.into_inner());
     let asset = Arc::clone(active.current.get(id));

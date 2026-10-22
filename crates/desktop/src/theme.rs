@@ -40,6 +40,8 @@ pub struct Tokens {
     pub prose_line_height: f32,
     /// Height of buttons and single-line fields.
     pub control_height: f32,
+    /// Height of a compact button (inline, card footers): 24 px in both densities.
+    pub button_height_compact: f32,
     /// Space between a terminal view's edge and its text on every side: 8 px compact, 12 px
     /// comfortable.
     pub terminal_padding: f32,
@@ -67,6 +69,7 @@ impl Tokens {
             prose_font_size: get(DensityKey::TextProseSize),
             prose_line_height: get(DensityKey::TextProseLineHeight),
             control_height: get(DensityKey::ControlHeight),
+            button_height_compact: get(DensityKey::ButtonHeightCompact),
             terminal_padding: get(DensityKey::TerminalPadding),
             block_gutter: get(DensityKey::TerminalBlockGutter),
         }
@@ -92,6 +95,14 @@ pub struct Metrics {
     pub nav_gap: f32,
     pub strip_button_size: f32,
     pub strip_gap: f32,
+    /// Horizontal padding of a default and of a compact button.
+    pub button_padding_x: f32,
+    pub button_padding_x_compact: f32,
+    /// Side of an icon button's hit region, and the glyph inside it.
+    pub button_icon_hit: f32,
+    pub button_icon_size: f32,
+    /// Opacity of a disabled button.
+    pub button_disabled_opacity: f32,
     /// The pack's terminal font size and line height; the user's `terminal.*` settings win.
     pub terminal_font_size: f32,
     pub terminal_line_height: f32,
@@ -116,6 +127,11 @@ impl Metrics {
             nav_gap: m(Metric::NavGap),
             strip_button_size: m(Metric::StripButtonSize),
             strip_gap: m(Metric::StripGap),
+            button_padding_x: m(Metric::ButtonPaddingX),
+            button_padding_x_compact: m(Metric::ButtonPaddingXCompact),
+            button_icon_hit: m(Metric::ButtonIconHit),
+            button_icon_size: m(Metric::ButtonIconSize),
+            button_disabled_opacity: m(Metric::ButtonDisabledOpacity),
             terminal_font_size: m(Metric::TerminalFontSize),
             terminal_line_height: m(Metric::TerminalLineHeight),
             shadow_offset: (m(Metric::ShadowOffsetX), m(Metric::ShadowOffsetY)),
@@ -280,6 +296,14 @@ pub struct Theme {
     /// `markdown.inline-code.background`.
     pub link: Hsla,
     pub code_bg: Hsla,
+    /// Button states: `button.primary.hover` / `.pressed`, `button.hover` / `.pressed` (secondary,
+    /// ghost and icon buttons) and `button.destructive.hover` / `.pressed`.
+    pub button_primary_hover: Hsla,
+    pub button_primary_pressed: Hsla,
+    pub button_hover: Hsla,
+    pub button_pressed: Hsla,
+    pub button_danger_hover: Hsla,
+    pub button_danger_pressed: Hsla,
     on_accent: Hsla,
     shadow_color: Hsla,
     scrim_color: Hsla,
@@ -348,6 +372,12 @@ impl Theme {
             diff_hunk_fg: color(Color::DiffHunkForeground),
             link: color(Color::MarkdownLink),
             code_bg: color(Color::MarkdownInlineCodeBackground),
+            button_primary_hover: color(Color::ButtonPrimaryHover),
+            button_primary_pressed: color(Color::ButtonPrimaryPressed),
+            button_hover: color(Color::ButtonHover),
+            button_pressed: color(Color::ButtonPressed),
+            button_danger_hover: color(Color::ButtonDestructiveHover),
+            button_danger_pressed: color(Color::ButtonDestructivePressed),
             on_accent: color(Color::OnAccent),
             shadow_color: color(Color::Shadow),
             scrim_color: color(Color::Scrim),
@@ -772,6 +802,10 @@ mod tests {
         assert_eq!((c.terminal_padding, m.terminal_padding), (8.0, 12.0));
         assert_eq!((c.block_gutter, m.block_gutter), (3.0, 4.0));
         assert_eq!((c.control_height, m.control_height), (28.0, 28.0));
+        assert_eq!(
+            (c.button_height_compact, m.button_height_compact),
+            (24.0, 24.0)
+        );
         assert_eq!(Density::default(), Density::Compact);
         let shared = metrics();
         assert_eq!(
@@ -787,6 +821,16 @@ mod tests {
             (13.0, 16.0, 18.0)
         );
         assert_eq!((shared.strip_button_size, shared.strip_gap), (28.0, 4.0));
+        assert_eq!(
+            (
+                shared.button_padding_x,
+                shared.button_padding_x_compact,
+                shared.button_icon_hit,
+                shared.button_icon_size,
+                shared.button_disabled_opacity
+            ),
+            (12.0, 8.0, 28.0, 16.0, 0.45)
+        );
         assert_eq!(
             (shared.terminal_font_size, shared.terminal_line_height),
             (13.0, 1.2)

@@ -203,6 +203,13 @@ The chrome pairs are the workbench's (design direction `docs/spikes/2026-10-21-c
 
 `ui.text.faint` is disabled text only and is not checked; placeholders are `ui.text.muted`. `ui.focus` is the optional keyboard focus ring color (2 px, drawn only while focus came from the keyboard); a pack that leaves it out gets the macOS keyboard focus indicator color, which the desktop reads at runtime.
 
+## Buttons
+
+`ui::Button` and `ui::IconButton` (`docs/design.md` § Buttons) read these tokens, all optional (a pack that leaves them out gets the derived or built-in value):
+
+- Colors: `button.primary.hover` / `button.primary.pressed` (accent at 0.88 / 0.76 alpha), `button.hover` (`ui.surface.hover`) and `button.pressed` (`ui.surface.hover` one step towards `ui.foreground`) for secondary, ghost and icon buttons, `button.destructive.hover` / `button.destructive.pressed` (`state.error` at 0.12 / 0.22 alpha). A destructive button's text and border are `state.error`; a primary button's text is `ui.on-accent`; the keyboard focus ring is `ui.focus`.
+- Numbers: the default height is `control.height` (28), the compact one `button.height-compact` (24, per density); `button.padding-x` (12) and `button.padding-x-compact` (8); an icon button's hit region `button.icon.hit` (28, its hover fill 4 px smaller) with a `button.icon.size` (16) glyph; `button.disabled-opacity` (0.45).
+
 ## Differences from the hard-coded look
 
 The built-in packs reproduce the previous colors, sizes and fonts. The only deliberate differences are 8-bit alpha quantization of values that were fractions: the dark hairline `#ffffff12` is alpha 0.0706 (was 0.07), the shadow alphas are 0.1216 (light) and 0.4 (dark) (were 0.12, 0.40), and the scrim 0.2784 and 0.5020 (were 0.28, 0.50). Derived tints keep the exact old fractions (0.08, 0.10, 0.16, 0.22, 0.28, 0.13, 0.07). The status bar is 24 px in both densities, as drawn; the unused 22 / 26 table is gone.
@@ -315,6 +322,12 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | `editor.diff-gutter.modified` | opaque | `diff.modified` | Gutter bar of lines modified since the last commit. |
 | `editor.diff-gutter.removed` | opaque | `diff.removed` | Gutter mark where lines were removed since the last commit. |
 | `editor.agent-changed` | may be translucent | `ui.accent` at alpha 0.2 (dark) / 0.16 (light) | Background of lines an agent changed. |
+| `button.primary.hover` | may be translucent | `ui.accent` at alpha 0.88 | Fill of a primary button under the pointer. |
+| `button.primary.pressed` | may be translucent | `ui.accent` at alpha 0.76 | Fill of a primary button while it is pressed. |
+| `button.hover` | may be translucent | `ui.surface.hover` | Fill of a secondary, ghost or icon button under the pointer. |
+| `button.pressed` | may be translucent | `ui.surface.hover` mixed 0.12 of the way to `ui.foreground` | Fill of a secondary, ghost or icon button while it is pressed: one step past the hover. |
+| `button.destructive.hover` | may be translucent | `state.error` at alpha 0.12 | Fill of a destructive button under the pointer (its text and border are `state.error`). |
+| `button.destructive.pressed` | may be translucent | `state.error` at alpha 0.22 | Fill of a destructive button while it is pressed. |
 | `syntax.comment` | opaque | `ui.text.muted` | Comments. |
 | `syntax.string` | opaque | `terminal.ansi.green` | Strings, character literals, raw text and dates. |
 | `syntax.string.escape` | opaque | `terminal.ansi.cyan` | Escape sequences inside strings. |
@@ -355,6 +368,7 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | `text.prose.size` | 8 to 40 | 15 | 15 | Prose size in the chat view and empty states. |
 | `text.prose.line-height` | 0.8 to 3 | 1.6 | 1.6 | Prose line height as a multiple of its size. |
 | `control.height` | 1 to 1200 | 28 | 28 | Height of buttons and single-line fields. |
+| `button.height-compact` | 1 to 1200 | 24 | 24 | Height of a compact button (inline, card footers). |
 | `terminal.padding` | 0 to 1200 | 8 | 12 | Space between a terminal view's edge and its text. |
 | `terminal.block-gutter` | 0 to 16 | 3 | 4 | Width of the block gutter bar at a terminal's left edge. |
 
@@ -374,6 +388,11 @@ Generated from the token registry (`crates/settings/src/themes/tokens.rs`) by `U
 | `nav.gap` | 0 to 1200 | 2 | Gap between nav rows. |
 | `strip.button.size` | 1 to 1200 | 28 | Size of an icon button of the right strip. |
 | `strip.gap` | 0 to 1200 | 4 | Gap between strip buttons. |
+| `button.padding-x` | 0 to 1200 | 12 | Horizontal padding of a default button. |
+| `button.padding-x-compact` | 0 to 1200 | 8 | Horizontal padding of a compact button. |
+| `button.icon.hit` | 1 to 1200 | 28 | Side of an icon button's hit region; the hover fill is 4 px smaller. |
+| `button.icon.size` | 8 to 64 | 16 | Glyph size inside an icon button. |
+| `button.disabled-opacity` | 0.1 to 1 | 0.45 | Opacity of a disabled button. |
 | `terminal.font-size` | 4 to 72 | 13 | Default terminal font size; `terminal.font_size` wins. |
 | `terminal.line-height` | 0.8 to 3 | 1.2 | Default terminal line height; `terminal.line_height` wins. |
 | `shadow.offset-x` | -128 to 128 | 0 | Horizontal offset of the shadow. |

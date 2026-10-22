@@ -185,6 +185,14 @@ colors! {
     EditorDiffGutterRemoved = "editor.diff-gutter.removed", true, Alias(Color::DiffRemoved), "Gutter mark where lines were removed since the last commit.";
     EditorAgentChanged = "editor.agent-changed", false, AlphaByPolarity { of: Color::Accent, dark: 0.20, light: 0.16 }, "Background of lines an agent changed.";
 
+    // ---- buttons (UX-BUTTONS): the states of `ui::Button`; every one derived ----
+    ButtonPrimaryHover = "button.primary.hover", false, Alpha(Color::Accent, 0.88), "Fill of a primary button under the pointer.";
+    ButtonPrimaryPressed = "button.primary.pressed", false, Alpha(Color::Accent, 0.76), "Fill of a primary button while it is pressed.";
+    ButtonHover = "button.hover", false, Alias(Color::SurfaceHover), "Fill of a secondary, ghost or icon button under the pointer.";
+    ButtonPressed = "button.pressed", false, Mix { from: Color::SurfaceHover, toward: Color::Foreground, amount: 0.12 }, "Fill of a secondary, ghost or icon button while it is pressed: one step past the hover.";
+    ButtonDestructiveHover = "button.destructive.hover", false, Alpha(Color::StateError, 0.12), "Fill of a destructive button under the pointer (its text and border are `state.error`).";
+    ButtonDestructivePressed = "button.destructive.pressed", false, Alpha(Color::StateError, 0.22), "Fill of a destructive button while it is pressed.";
+
     // ---- syntax (E-4): the 22 names of `hutan_syntax::Token`, in its order. Text colors, so
     // opaque; the defaults are the normal ANSI colors, which the terminal contrast check holds
     // to 4.5:1, and the muted and editor foregrounds ----
@@ -357,6 +365,7 @@ numbers! {
     TextProseSize = "text.prose.size", 8.0, 40.0, "Prose size in the chat view and empty states.";
     TextProseLineHeight = "text.prose.line-height", 0.8, 3.0, "Prose line height as a multiple of its size.";
     ControlHeight = "control.height", 1.0, 1200.0, "Height of buttons and single-line fields.";
+    ButtonHeightCompact = "button.height-compact", 1.0, 1200.0, "Height of a compact button (inline, card footers).";
     TerminalPadding = "terminal.padding", 0.0, 1200.0, "Space between a terminal view's edge and its text.";
     TerminalBlockGutter = "terminal.block-gutter", 0.0, 16.0, "Width of the block gutter bar at a terminal's left edge.";
 }
@@ -375,6 +384,11 @@ numbers! {
     NavGap = "nav.gap", 0.0, 1200.0, "Gap between nav rows.";
     StripButtonSize = "strip.button.size", 1.0, 1200.0, "Size of an icon button of the right strip.";
     StripGap = "strip.gap", 0.0, 1200.0, "Gap between strip buttons.";
+    ButtonPaddingX = "button.padding-x", 0.0, 1200.0, "Horizontal padding of a default button.";
+    ButtonPaddingXCompact = "button.padding-x-compact", 0.0, 1200.0, "Horizontal padding of a compact button.";
+    ButtonIconHit = "button.icon.hit", 1.0, 1200.0, "Side of an icon button's hit region; the hover fill is 4 px smaller.";
+    ButtonIconSize = "button.icon.size", 8.0, 64.0, "Glyph size inside an icon button.";
+    ButtonDisabledOpacity = "button.disabled-opacity", 0.1, 1.0, "Opacity of a disabled button.";
     TerminalFontSize = "terminal.font-size", 4.0, 72.0, "Default terminal font size; `terminal.font_size` wins.";
     TerminalLineHeight = "terminal.line-height", 0.8, 3.0, "Default terminal line height; `terminal.line_height` wins.";
     ShadowOffsetX = "shadow.offset-x", -128.0, 128.0, "Horizontal offset of the shadow.";
@@ -474,8 +488,8 @@ mod tests {
         let required = Color::ALL.iter().filter(|c| c.is_required()).count();
         // 17 chrome colors + shadow + scrim, 4 terminal core colors + 16 ANSI colors.
         assert_eq!(required, 17 + 2 + 4 + 16);
-        assert_eq!(DensityKey::COUNT, 15);
-        assert_eq!(Metric::COUNT, 18);
+        assert_eq!(DensityKey::COUNT, 16);
+        assert_eq!(Metric::COUNT, 23);
     }
 
     #[test]

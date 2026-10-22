@@ -24,6 +24,9 @@ use hutan_settings::themes::Fonts;
 
 use crate::theme::{Theme, Tokens, mascot_size, pill_radius};
 
+mod button;
+pub use button::{Button, ButtonKind, ButtonSize, IconButton, approval_button_kind, spinner};
+
 /// The font files macOS ships New York in. GPUI cannot select the system serif by name (CoreText
 /// lists it as `.New York`, hidden from family lookups), so the files are registered with the
 /// text system and found under that family name. A pack lists `.New York` (or `New York`) in its
@@ -213,6 +216,12 @@ pub fn keyboard_focus_observer() -> impl IntoElement {
     .size_0()
 }
 
+/// Whether the ring draws: the element has focus and focus came from the keyboard, never from
+/// a mouse press.
+pub fn ring_shown(focused: bool, from_keyboard: bool) -> bool {
+    focused && from_keyboard
+}
+
 /// The keyboard focus ring on any element with children.
 pub trait FocusRingExt: ParentElement + Styled + Sized {
     /// While `focused` and focus came from the keyboard: a 2 px ring in `focus` (`ui.focus`, or
@@ -220,7 +229,7 @@ pub trait FocusRingExt: ParentElement + Styled + Sized {
     /// plus that gap. Drawn as an absolute child, so it changes no layout; nothing at all when
     /// focus came from the mouse.
     fn focus_ring(self, focused: bool, theme: &Theme, tokens: &Tokens) -> Self {
-        if !(focused && keyboard_focus()) {
+        if !ring_shown(focused, keyboard_focus()) {
             return self;
         }
         // 1 px gap + 2 px ring outside the element's edge.
@@ -241,30 +250,7 @@ pub trait FocusRingExt: ParentElement + Styled + Sized {
 
 impl<T: ParentElement + Styled + Sized> FocusRingExt for T {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ButtonKind {
-    /// `accent` fill, `on_accent` (dark ink) text: the one default commit of a surface.
-    Primary,
-    /// [`StyledExt::outlined`]: `surface` with a `border` hairline.
-    Secondary,
-    /// Text only, hover fill.
-    Ghost,
-}
-
-/// How an approval option's button looks, wherever a request is answered (the chat card, the
-/// inspector's Requests): only *allow once* is primary, the one default commit of the decision;
-/// rejecting, "Always", cancel and the agent's own kinds are secondary. The harness's option
-/// order never makes a standing rule the easy click, and nothing is activated by Return or by
-/// a click beside the buttons.
-pub fn approval_button_kind(kind: hutan_core::agent::PermissionOptionKind) -> ButtonKind {
-    use hutan_core::agent::PermissionOptionKind as Kind;
-    match kind {
-        Kind::AllowOnce => ButtonKind::Primary,
-        Kind::RejectOnce | Kind::AllowAlways | Kind::RejectAlways | Kind::Cancel | Kind::Other => {
-            ButtonKind::Secondary
-        }
-    }
-}
+// ---- legacy button functions: removed when the last surface moves to `Button` (UX-BUTTONS) ----
 
 /// The key a button answers to (`1`), drawn inside the button after its label: 11 px, `muted`,
 /// or the primary button's `on_accent` ink, so it reads on the fill.
@@ -280,7 +266,7 @@ pub fn key_hint(
         .font_weight(FontWeight::NORMAL)
         .text_color(match kind {
             ButtonKind::Primary => theme.on_accent(),
-            ButtonKind::Secondary | ButtonKind::Ghost => theme.muted,
+            _ => theme.muted,
         })
         .child(key.into())
 }
@@ -299,7 +285,7 @@ pub fn button(
 ) -> Stateful<gpui::Div> {
     let hover = match kind {
         ButtonKind::Primary => theme.accent.opacity(0.88),
-        ButtonKind::Secondary | ButtonKind::Ghost => theme.surface_hover,
+        _ => theme.surface_hover,
     };
     let mut button = div()
         .id(id.into())
@@ -318,7 +304,11 @@ pub fn button(
     button = match kind {
         ButtonKind::Primary => button.bg(theme.accent).text_color(theme.on_accent()),
         ButtonKind::Secondary => button.outlined(theme, tokens).text_color(theme.fg),
-        ButtonKind::Ghost => button.text_color(theme.fg),
+        ButtonKind::Ghost | ButtonKind::Link => button.text_color(theme.fg),
+        ButtonKind::Destructive => button
+            .border_1()
+            .border_color(theme.danger)
+            .text_color(theme.danger),
     };
     if enabled {
         button.cursor_pointer().hover(move |s| s.bg(hover))
@@ -836,6 +826,19 @@ pub fn step_dots(current: usize, total: usize, theme: &Theme) -> gpui::Div {
 mod tests {
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_focus_ring_shows_only_for_keyboard_focus() {
+        assert!(super::ring_shown(true, true));
+        assert!(
+            !super::ring_shown(true, false),
+            "a mouse click leaves no ring"
+        );
+        assert!(
+            !super::ring_shown(false, true),
+            "an unfocused button has none"
+        );
+    }
 
     /// The only places the accent may color a border: drag-over targets, per file (relative to
     /// `crates/desktop/src`), with how many there are. A new drop target is added here on

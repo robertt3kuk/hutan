@@ -6,6 +6,7 @@ mod attention_calls_gpui;
 mod attention_controls_gpui;
 mod attention_groups_gpui;
 mod blocks_gpui;
+mod buttons_gpui;
 mod changes_fresh_gpui;
 mod chat_gpui;
 mod checkpoints_gpui;
