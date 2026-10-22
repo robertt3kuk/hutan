@@ -17,7 +17,8 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - Checkpoints: every agent turn that changes files in a git checkout is snapshotted in hidden git refs. *Rewind…* on the turn shows exactly which files go back, flags files edited since, and restores only what you tick; *Undo* reverts the restore, also after a restart. `hutan checkpoint ls|diff|restore|undo|rm`.
 - Message queue: typing while the agent works queues the message (editable chips); ⌃↩ sends now (Codex steers the running turn, other agents are interrupted first); Stop clears or keeps the queue.
 - Attention that clears: an agent that is working is never shown as needing you; only turns that changed files ask for review; looking at the result quiets it; Finish closes it.
-- Finish = commit and push from the Changes view (no PR), with staged/unstaged markers and a message pre-filled from the work.
+- Finish = commit and push from the Changes view (no PR), with staged/unstaged markers and a message pre-filled from the changed files (`Update app.py and store.rs`) plus one line per agent that made them.
+- A session whose finished work you have seen goes back to its own state with a small *Changes to review* link, instead of staying in *Needs you*.
 - Clearer approvals (one primary *Allow once*), chat retry, mute per session, the agent's real mode shown, model display names in headers and pickers.
 
 ### Workspace and look
