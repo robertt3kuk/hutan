@@ -18,11 +18,15 @@ use gpui::{
     Bounds, Entity, Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext,
     point, px,
 };
-use hutan_core::{SessionId, WorkspaceId};
+use hutan_core::{SessionId, SessionState, WorkspaceId};
 use hutan_desktop::sessions::tree::folder_label;
+use hutan_desktop::sessions::{ScopeKind, ScopeLabel};
 use hutan_desktop::settings::{SidebarOrganize, SidebarSettings};
 use hutan_desktop::workbench::actions;
-use hutan_desktop::workbench::panels::{RowKind, SessionsPanel, SidebarRow};
+use hutan_desktop::workbench::panels::{
+    AgentsPanel, ChangesPanel, FilesPanel, ProblemsPanel, RowKind, SearchPanel, SessionsPanel,
+    SidebarRow,
+};
 use hutan_desktop::workbench::{BadgeSite, Region, Workbench};
 use hutan_protocol::messages::{
     Empty, Request, SessionCreate, SessionInfo, SessionResult, SessionSpec, TerminalSpec,
@@ -1424,4 +1428,417 @@ fn the_jump_palette_lists_workspaces_projects_and_sessions(cx: &mut TestAppConte
         view.read_with(cx, |wb, _| wb.focused_session()),
         Some(w.s_notes.id)
     );
+}
+
+// ---- the sidebar is attached to the container you work in (SB-ATTACH) ---------------------------
+
+/// The container the window shows, as the keyboard cycle sees it: the project, else the
+/// workspace.
+fn current(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<WorkspaceId> {
+    view.read_with(cx, |wb, cx| {
+        let store = wb.sessions().read(cx);
+        store.active_project_id().or(store.active_workspace_id())
+    })
+}
+
+fn home_id(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> WorkspaceId {
+    view.read_with(cx, |wb, cx| {
+        wb.sessions()
+            .read(cx)
+            .workspaces()
+            .iter()
+            .find(|w| w.kind == WorkspaceKind::Home)
+            .map(|w| w.id)
+            .expect("Home is listed")
+    })
+}
+
+fn is_running(view: &Entity<Workbench>, cx: &mut VisualTestContext, id: SessionId) -> bool {
+    view.read_with(cx, |wb, cx| {
+        wb.sessions()
+            .read(cx)
+            .session(id)
+            .is_some_and(|s| s.state == SessionState::Running)
+    })
+}
+
+fn label(name: &str, kind: ScopeKind, branch: Option<&str>) -> Option<ScopeLabel> {
+    Some(ScopeLabel {
+        name: name.to_owned(),
+        kind,
+        branch: branch.map(str::to_owned),
+    })
+}
+
+/// The panels scoped to the container, drawn once each (the views stay cached afterwards).
+struct Scoped {
+    files: Entity<FilesPanel>,
+    changes: Entity<ChangesPanel>,
+    search: Entity<SearchPanel>,
+    problems: Entity<ProblemsPanel>,
+    agents: Entity<AgentsPanel>,
+}
+
+impl Scoped {
+    fn open(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Self {
+        // Each panel is shown from the workbench itself: a dock panel that took the keyboard
+        // (Files, Changes) would otherwise sit between the action and its handler.
+        let settle = |cx: &mut VisualTestContext| {
+            draw(cx);
+            draw(cx);
+            view.update_in(cx, |wb, window, cx| {
+                use gpui::Focusable as _;
+                window.focus(&wb.focus_handle(cx), cx);
+            });
+        };
+        cx.dispatch_action(actions::ShowFiles);
+        settle(cx);
+        cx.dispatch_action(actions::OpenPanel("changes".into()));
+        settle(cx);
+        cx.dispatch_action(actions::ShowSearch);
+        settle(cx);
+        cx.dispatch_action(actions::ShowProblems);
+        settle(cx);
+        cx.dispatch_action(actions::OpenPanel("agents".into()));
+        settle(cx);
+        let get = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |wb, _| {
+                (
+                    wb.panel::<FilesPanel>("files"),
+                    wb.panel::<ChangesPanel>("changes"),
+                    wb.panel::<SearchPanel>("search"),
+                    wb.panel::<ProblemsPanel>("problems"),
+                    wb.panel::<AgentsPanel>("agents"),
+                )
+            })
+        };
+        let (files, changes, search, problems, agents) = get(cx);
+        Self {
+            files: files.expect("Files is drawn"),
+            changes: changes.expect("Changes is drawn"),
+            search: search.expect("Search is drawn"),
+            problems: problems.expect("Problems is drawn"),
+            agents: agents.expect("the Agents rail is drawn"),
+        }
+    }
+
+    /// What each panel says it is about: Files and Search name the project (or the worktree
+    /// picked), the other three the container.
+    fn scopes(&self, cx: &mut VisualTestContext) -> [Option<ScopeLabel>; 5] {
+        cx.read(|cx| {
+            [
+                self.files.read(cx).scope(cx),
+                self.search.read(cx).scope(cx),
+                self.changes.read(cx).scope(cx),
+                self.problems.read(cx).scope(cx),
+                self.agents.read(cx).scope(cx),
+            ]
+        })
+    }
+}
+
+#[gpui::test]
+fn only_the_active_container_is_expanded_and_the_others_show_their_counts(cx: &mut TestAppContext) {
+    let w = World::new();
+    let (view, cx) = w.synced_attached(cx);
+    let panel = panel(&view, cx);
+
+    // A request waits in `web` and an agent works in `notes`; neither container is active.
+    let asking = Reporter::new(w.s_web.id, "omp-extension", "omp");
+    asking.report(&w.daemon, Node::main("root").blocked().name("omp"));
+    let busy = Reporter::new(w.s_notes.id, "omp-extension", "omp");
+    busy.report(&w.daemon, Node::main("root").working().name("omp"));
+
+    cx.dispatch_action(actions::OpenWorkspace(w.api.id.to_string()));
+    wait_until(cx, "the counts of the other containers", |cx| {
+        let listed = rows(&panel, cx);
+        listed.iter().any(|r| r.title == "web" && r.needs == 1)
+            && listed.iter().any(|r| r.title == "notes" && r.working == 1)
+    });
+    let listed = rows(&panel, cx);
+
+    // `api` is the container in use: its sessions and its worktree sit under it, and it is the
+    // one selected row.
+    let api = row(&listed, "api");
+    assert!(api.active && api.filled && !api.collapsed, "{api:?}");
+    assert_eq!(api.branch.as_deref(), Some("main"));
+    assert_eq!(
+        rows_under(&listed, "api"),
+        ["s-main", "topic", "s-wt"],
+        "its sessions, its worktree, the worktree's sessions"
+    );
+    let topic = row(&listed, "topic");
+    assert_eq!(topic.kind, RowKind::Worktree);
+    assert_eq!(topic.branch.as_deref(), Some("topic"));
+
+    // Every other container is collapsed: no session of it is listed, and its row says how many
+    // there are, how many work, and how many wait.
+    for (title, count) in [("web", "1"), ("notes", "1")] {
+        let other = row(&listed, title);
+        assert!(other.collapsed && !other.active, "{other:?}");
+        assert_eq!(other.count.as_deref(), Some(count), "{title}");
+        assert!(
+            rows_under(&listed, title).is_empty(),
+            "{title} lists no session"
+        );
+    }
+    assert_eq!(row(&listed, "web").needs, 1);
+    assert_eq!(row(&listed, "notes").working, 1);
+    assert_eq!(
+        row(&listed, "notes").branch,
+        None,
+        "a folder outside git never shows a branch"
+    );
+    assert!(
+        row(&listed, "lab").collapsed && row(&listed, "Home").collapsed,
+        "the empty containers are collapsed too"
+    );
+    // The workspace holding the active project says what its other project needs.
+    assert_eq!(row(&listed, "shop").needs, 1);
+
+    // The chevron opens one container without switching to it.
+    panel.update(cx, |p, cx| p.toggle_container(w.notes.id, cx));
+    wait_until(cx, "notes' sessions", |cx| {
+        rows_under(&rows(&panel, cx), "notes") == ["s-notes"]
+    });
+    assert_eq!(active_project(&view, cx), Some(w.api.id), "still on api");
+}
+
+/// The titles of the rows under the container row `title` (not a session row: the "Requests"
+/// section lists sessions of its own), down to the next row at its depth or above.
+fn rows_under(listed: &[SidebarRow], title: &str) -> Vec<String> {
+    let Some(at) = listed
+        .iter()
+        .position(|r| r.title == title && r.kind != RowKind::Session)
+    else {
+        return Vec::new();
+    };
+    listed[at + 1..]
+        .iter()
+        .take_while(|r| r.depth > listed[at].depth)
+        .map(|r| r.title.clone())
+        .collect()
+}
+
+#[gpui::test]
+fn switching_container_swaps_the_tabs_and_every_scope_label_and_keeps_sessions_running(
+    cx: &mut TestAppContext,
+) {
+    let w = World::new();
+    let state_path = w.daemon.home().join("desktop-state.json");
+    let (view, cx) = w.synced_with(cx, Some(state_path), false);
+    let state = |cx: &mut VisualTestContext| view.read_with(cx, |wb, _| wb.state().clone());
+    let scoped = Scoped::open(&view, cx);
+
+    // Working in `api` (a project of the workspace `shop`): its tabs in the center; Files and
+    // Search name the project and its branch, Changes, Problems and the Agents rail the workspace.
+    open_session(&view, cx, w.s_main.id);
+    open_session(&view, cx, w.s_web.id);
+    assert_eq!(active(&view, cx), Some(w.shop.id));
+    let shop_center = state(cx).center;
+    let shop_tabs = state(cx).panes()[0].items.clone();
+    assert_eq!(shop_tabs.len(), 2);
+    let shop = label("shop", ScopeKind::Workspace, None);
+    let web = label("web", ScopeKind::Repository, Some("main"));
+    assert_eq!(
+        scoped.scopes(cx),
+        [web.clone(), web, shop.clone(), shop.clone(), shop]
+    );
+    wait_until(cx, "Files to list web", |cx| {
+        scoped
+            .files
+            .read_with(cx, |p, _| p.root() == Some(w.folders.web.as_path()))
+    });
+    // The panel on show (the Agents rail) draws its chip.
+    let chip = |cx: &mut VisualTestContext| {
+        draw(cx);
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Scope("agents")))
+            .is_some()
+    };
+    assert!(chip(cx), "the Agents rail shows its scope chip");
+
+    // Switch to the folder `notes`: the center is notes' own, and every panel names it.
+    open_session(&view, cx, w.s_notes.id);
+    assert_eq!(active(&view, cx), Some(w.notes.id));
+    assert!(chip(cx), "and still does after the switch");
+    assert_ne!(state(cx).center, shop_center);
+    assert_eq!(state(cx).panes()[0].items.len(), 1);
+    let notes = label("notes", ScopeKind::Folder, None);
+    assert_eq!(scoped.scopes(cx), std::array::from_fn(|_| notes.clone()));
+    wait_until(cx, "Files to list notes", |cx| {
+        scoped
+            .files
+            .read_with(cx, |p, _| p.root() == Some(w.folders.notes.as_path()))
+    });
+    // The sidebar followed: only `notes` lists its session now.
+    let sessions_panel = panel(&view, cx);
+    let listed = rows(&sessions_panel, cx);
+    assert!(row(&listed, "notes").active);
+    assert_eq!(rows_under(&listed, "notes"), ["s-notes"]);
+    assert!(rows_under(&listed, "api").is_empty() && rows_under(&listed, "web").is_empty());
+
+    // Nothing was closed: every terminal keeps running, and coming back restores the tabs.
+    for id in [w.s_main.id, w.s_wt.id, w.s_web.id, w.s_notes.id] {
+        assert!(is_running(&view, cx, id), "{id} still runs");
+    }
+    cx.dispatch_action(actions::OpenWorkspace(w.shop.id.to_string()));
+    assert_eq!(active(&view, cx), Some(w.shop.id));
+    assert_eq!(state(cx).center, shop_center, "the tabs are back as left");
+    assert_eq!(state(cx).panes()[0].items, shop_tabs);
+    let shop = label("shop", ScopeKind::Workspace, None);
+    assert_eq!(scoped.scopes(cx)[2], shop);
+    for id in [w.s_main.id, w.s_wt.id, w.s_web.id, w.s_notes.id] {
+        assert!(is_running(&view, cx, id), "{id} still runs");
+    }
+}
+
+#[gpui::test]
+fn a_worktree_row_picks_the_worktree_for_files_and_search_and_the_project_row_goes_back(
+    cx: &mut TestAppContext,
+) {
+    let w = World::new();
+    let (view, cx) = w.synced_attached(cx);
+    let scoped = Scoped::open(&view, cx);
+    cx.dispatch_action(actions::OpenPanel("sessions".into()));
+    let sidebar = panel(&view, cx);
+    cx.dispatch_action(actions::OpenWorkspace(w.api.id.to_string()));
+    wait_until(cx, "the worktree row", |cx| {
+        rows(&sidebar, cx)
+            .iter()
+            .any(|r| r.kind == RowKind::Worktree)
+    });
+    wait_until(cx, "Files to list api", |cx| {
+        scoped
+            .files
+            .read_with(cx, |p, _| p.root() == Some(w.folders.api.as_path()))
+    });
+    assert_eq!(
+        scoped.scopes(cx)[0],
+        label("api", ScopeKind::Repository, Some("main"))
+    );
+
+    // Click the worktree row: Files and Search are about the worktree, the others about the
+    // container; the row is the selected one.
+    let at = center_of_region(&view, cx, Region::worktree(&w.folders.api_wt));
+    cx.simulate_click(at, Modifiers::none());
+    let topic = label("api", ScopeKind::Worktree, Some("topic"));
+    wait_until(cx, "the worktree to be picked", |cx| {
+        scoped.scopes(cx)[0] == topic
+    });
+    let scopes = scoped.scopes(cx);
+    assert_eq!(scopes[1], topic, "Search follows too");
+    let api = label("api", ScopeKind::Repository, Some("main"));
+    assert_eq!(
+        scopes[2..],
+        std::array::from_fn::<_, 3, _>(|_| label("shop", ScopeKind::Workspace, None)),
+        "Changes, Problems and the Agents rail keep naming the container"
+    );
+    wait_until(cx, "Files to list the worktree", |cx| {
+        scoped
+            .files
+            .read_with(cx, |p, _| p.root() == Some(w.folders.api_wt.as_path()))
+    });
+    let listed = rows(&sidebar, cx);
+    assert!(row(&listed, "topic").filled, "{listed:?}");
+    assert!(!row(&listed, "api").filled, "one selected fill");
+    assert_eq!(active_project(&view, cx), Some(w.api.id));
+
+    // The project row goes back to the project's own folder.
+    let at = row_center(&view, cx, w.api.id);
+    cx.simulate_click(at, Modifiers::none());
+    wait_until(cx, "Files back on the project folder", |cx| {
+        scoped
+            .files
+            .read_with(cx, |p, _| p.root() == Some(w.folders.api.as_path()))
+    });
+    assert_eq!(scoped.scopes(cx)[0], api);
+    assert!(is_running(&view, cx, w.s_wt.id));
+}
+
+#[gpui::test]
+fn next_and_previous_container_cycle_through_the_sidebar_order(cx: &mut TestAppContext) {
+    let w = World::new();
+    let (view, cx) = w.synced_attached(cx);
+    let home = home_id(&view, cx);
+    cx.dispatch_action(actions::OpenWorkspace(w.api.id.to_string()));
+    wait_until(cx, "api to be shown", |cx| {
+        current(&view, cx) == Some(w.api.id)
+    });
+
+    // A workspace's projects, an empty workspace, the projects of no workspace, Home.
+    let order = [w.api.id, w.web.id, w.lab.id, w.notes.id, home];
+    assert_eq!(view.read_with(cx, |wb, cx| wb.container_cycle(cx)), order);
+
+    for expected in order[1..].iter().chain([&order[0]]) {
+        cx.dispatch_action(actions::NextContainer);
+        assert_eq!(current(&view, cx), Some(*expected), "next");
+    }
+    // Backwards from the first wraps to the last.
+    cx.dispatch_action(actions::PreviousContainer);
+    assert_eq!(current(&view, cx), Some(home), "previous wraps around");
+    for expected in order[..4].iter().rev() {
+        cx.dispatch_action(actions::PreviousContainer);
+        assert_eq!(current(&view, cx), Some(*expected), "previous");
+    }
+
+    // The default keymap binds ⌃⌥↓ / ⌃⌥↑ to them.
+    cx.simulate_keystrokes("ctrl-alt-down");
+    assert_eq!(current(&view, cx), Some(w.web.id), "ctrl-alt-down");
+    cx.simulate_keystrokes("ctrl-alt-up");
+    assert_eq!(current(&view, cx), Some(w.api.id), "ctrl-alt-up");
+
+    // Cycling closed nothing.
+    for id in [w.s_main.id, w.s_wt.id, w.s_web.id, w.s_notes.id] {
+        assert!(is_running(&view, cx, id), "{id} still runs");
+    }
+}
+
+#[gpui::test]
+fn show_all_sessions_restores_the_full_tree(cx: &mut TestAppContext) {
+    let w = World::new();
+    let (view, cx) = w.synced_attached(cx);
+    let sidebar = panel(&view, cx);
+    cx.dispatch_action(actions::OpenWorkspace(w.api.id.to_string()));
+    wait_until(cx, "api to be shown", |cx| {
+        current(&view, cx) == Some(w.api.id)
+    });
+    let attached = outline(&sidebar, cx);
+    assert!(
+        !attached
+            .iter()
+            .any(|l| l.ends_with("s-web") || l.ends_with("s-notes")),
+        "{attached:?}"
+    );
+
+    // The setting (the sidebar menu's "Show All Sessions") lists every container's sessions.
+    view.update(cx, |wb, cx| wb.toggle_show_all_sessions(cx));
+    wait_until(cx, "every session to be listed", |cx| {
+        let listed = outline(&sidebar, cx);
+        listed.iter().any(|l| l.ends_with("S s-web"))
+            && listed.iter().any(|l| l.ends_with("S s-notes"))
+    });
+    assert_eq!(
+        outline(&sidebar, cx),
+        [
+            "W shop",
+            "  P api",
+            "    S s-main",
+            "    T topic",
+            "      S s-wt",
+            "  P web",
+            "    S s-web",
+            "W lab",
+            "- No workspace",
+            "P notes",
+            "  S s-notes",
+            "H Home",
+        ]
+    );
+
+    // And off again: back to the active container only.
+    view.update(cx, |wb, cx| wb.toggle_show_all_sessions(cx));
+    wait_until(cx, "the tree to be attached again", |cx| {
+        !outline(&sidebar, cx).iter().any(|l| l.ends_with("S s-web"))
+    });
+    assert_eq!(outline(&sidebar, cx), attached);
 }

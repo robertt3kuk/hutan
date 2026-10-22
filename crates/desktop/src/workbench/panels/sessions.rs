@@ -437,6 +437,16 @@ impl SessionsPanel {
             .collect()
     }
 
+    /// The chevron of a container row: lists its sessions when they are folded and folds them
+    /// when they are listed, whatever the default (the container in use, or every one with
+    /// `sidebar.show_all_sessions`) says.
+    pub fn toggle_container(&mut self, id: WorkspaceId, cx: &mut Context<Self>) {
+        if !self.toggled.remove(&id) {
+            self.toggled.insert(id);
+        }
+        cx.notify();
+    }
+
     /// Every row currently listed, top to bottom.
     pub fn visible_rows(&self, cx: &gpui::App) -> Vec<SidebarRow> {
         let store = self.env.sessions.read(cx);
@@ -1765,12 +1775,7 @@ impl SessionsPanel {
                     .flex_none()
                     .w(px(12.0))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !this.toggled.remove(&id) {
-                            this.toggled.insert(id);
-                        }
-                        cx.notify();
-                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_container(id, cx)))
                     .child(crate::icons::glyph(if collapsed {
                         crate::icons::Icon::ActionDisclose
                     } else {
