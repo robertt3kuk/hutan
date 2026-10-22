@@ -28,6 +28,8 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 ### Workspace and look
 - Quiet, consistent visual design: new tokens and primitives, title bar and tabs, sidebar, chat, Agents page, Mawas Home and Settings sheet redesigned; keyboard-only focus ring.
 - Two-step first run; Start sheet with pinned primary button; empty states; theme and icon pickers with live preview and `hutan theme` commands.
+- **Setup** you can run any time (Hutan menu, Settings → General, palette, `hutan setup`): one flow with your current answers filled in — agents, Vim and the send key, history, background service, appearance; skipping a step keeps its value.
+- After a reinstall Hutan offers to run the setup again (optional; projects, sessions and settings stay); after an update it shows *What's new* from this changelog.
 - Terminal: link hints, drop and paste of files, resize fixes, command toolbar off the command line.
 
 ### Reliability
