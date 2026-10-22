@@ -43,6 +43,7 @@ mod recovery_gpui;
 mod resources_gpui;
 mod review_comments_gpui;
 mod rich_input_gpui;
+mod search_gpui;
 mod sessions_gpui;
 mod settings_clean_gpui;
 mod settings_gpui;

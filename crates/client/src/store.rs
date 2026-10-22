@@ -152,6 +152,14 @@ pub enum Notice {
         root: std::path::PathBuf,
         generation: u64,
     },
+    /// How far a running `fs.search` of this connection got (`fs.search.progress`, protocol
+    /// 0.33, capability `fs`; [`Connection::fs_search`](crate::Connection::fs_search)): the
+    /// files looked at and the hits found so far, a few a second. Outside the event sequence.
+    FsSearchProgress {
+        search_id: String,
+        files_searched: u64,
+        hits: u32,
+    },
     /// A language server changed state (`lsp.state`, protocol 0.39, capability `lsp`): the
     /// whole entry as it is now. Sent to every connection.
     LspState {
@@ -487,9 +495,16 @@ impl StoreState {
                     .notices
                     .push(Notice::FsGeneration { root, generation });
             }
-            // The search's stream is no state of the sessions list; whoever asks for it reads
-            // it from `Client::events`.
-            Event::FsSearchProgress { .. } => {}
+            // The search's progress, for whoever runs the search on this connection.
+            Event::FsSearchProgress {
+                search_id,
+                files_searched,
+                hits,
+            } => effects.notices.push(Notice::FsSearchProgress {
+                search_id,
+                files_searched,
+                hits,
+            }),
             // Language servers (protocol 0.39): the servers' state and the diagnostics of the
             // open documents are no state of the sessions list; they reach whoever shows them
             // (the editor, the Problems panel) as notices.

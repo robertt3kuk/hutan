@@ -609,6 +609,19 @@ The `problems` panel (settings `panels.problems`; default dock: bottom; ⌘⇧M 
 - **Keyboard and mouse.** Opening it puts the keyboard in the list on the first diagnostic; ↑ ↓ move (the selected row is filled `sidebar_accent` while the list has the keyboard), **Return** or a **click** opens the file in the focused pane with the caret on the diagnostic and gives it the keyboard.
 - **Empty states, text only.** *No problems* (with what the filter hides), *Reading problems…*, *Not connected*, *No language servers* (an older hutand), *Cannot read the problems* with the daemon's words.
 
+## Search panel (E-13b)
+
+The `search` panel (settings `panels.search`; a page of the left sidebar, its nav row shown only while it is the page; ⌘⇧F / ⌘⇧H in both keymap bases, ⌘K *Search: Find in Files* / *Search: Replace in Files*, View → Search) finds text in the active project's files through the daemon (the same search as `hutan fs search`) and replaces it. Under the hood: `docs/editor.md` § Searching and replacing across files.
+
+- **Header.** *Search*, then **⇄ Replace** (shows or hides the replace field; bold while shown), ⚙.
+- **Fields.** The query (a search glyph before it) with three toggles at its right end — **Aa** *Match case* (off is smart case), **ab** *Whole word*, **.\*** *Regular expression* — each filled with `accent_soft`, outlined in `accent` and bold while on (not colour alone; the tooltip says on or off; they are `panels.search.case_sensitive|whole_word|regex`). Under it, when shown, the replacement with **Replace All** (secondary) at its right; then *Files to include* and *Files to exclude* (comma-separated globs relative to the project, `src/**/*.rs, *.md`). ⌘⇧F with a one-line selection in the focused file tab puts it in the query; the query's text is selected, so typing replaces it.
+- **Status line** (muted, secondary size): *Searching… 12 400 files looked at, 37 lines so far* while the daemon searches; *42 matches in 7 files* once it answered, followed by *· stopped at 1 000 results* when the search reached `panels.search.max_results`; *No results in 3 120 files*; a failure in `danger` with ✕ and the daemon's words (an invalid regular expression says why).
+- **Rows** (all 22 px, a uniform list): a file row — its name semibold, its folder muted, its match count in a muted pill, and after a *Replace All* that left it alone ⚠ *skipped: changed since the search* in `warning` — then one row per match, indented: the line number faint, the line from its first non-blank (or "…" and the 24 characters before a match far into it) with the match **semibold, underlined, on `accent_soft`**. While the replace field holds text, each match row previews the change: the match struck through, muted, on the removed tint, and the new text semibold and underlined on the added tint.
+- **Checkboxes** (while replacing): every match and every file has one (the completed / to-do circle glyphs; a file with some matches unticked shows the working ring); a file's toggles all its matches. A line whose matches lie past the 512 characters shown is listed without a checkbox and is never replaced.
+- **Replace All** asks first, in a strip under the fields (`accent` outline on `accent_soft`): **Replace 42 matches in 7 files?** — *Each file changes in one step: ⌘Z in its tab takes it back. Unsaved files change in their tab only.* — **Replace** (primary) and **Cancel**; Return answers yes, Escape no. Files without a tab open in one behind the active tab. Afterwards a card under the fields says *Replaced 40 matches in 6 files (1 unsaved) · skipped 1 file: src/a.rs* and lists the skipped files with ⚠ and the reason (*changed since the search*, *changed on disk while saving: see its tab*, *cannot be read: …*); a click opens one. The replaced matches leave the list.
+- **Keyboard and mouse.** In any field ↑ ↓ move between matches (file rows are skipped), **Return** in the query opens the selected match in the focused pane with the caret on it (a search still waiting for the pause starts at once instead), Return in the replacement asks *Replace All*; **Tab** / ⇧Tab go query → replacement → include → exclude → list. In the list (a focus line at its top while it has the keyboard): ↑ ↓, and `n` / `N` under Vim mode, move; Return opens; Space ticks the selected match while replacing; Escape goes back to the query. A **click** opens the match and leaves the keyboard in the panel, a double click gives it to the file.
+- **Empty states, text only.** *Type to search the project's files. ⌘⇧H replaces.*; *Open a project (⌘O) to search its files.*; *Searching needs a connected hutand with the file service.*
+
 ## Terminal blocks (M10-C)
 
 The daemon indexes OSC 133 marks into blocks (protocol 0.5); the desktop draws them **over the single grid** — the grid, its columns and the PTY size never change, and `terminal.blocks = false` makes the terminal look exactly as without blocks (hot-reloaded).
@@ -787,7 +800,8 @@ The **Zed** base follows Zed's published macOS keymap (`default-macos.json`) whe
 | Open a folder as a project (recent projects, Open Folder…) | ⌘O | ⌘O |
 | Settings | ⌘, | ⌘, |
 | New workspace | ⌘⇧N | — |
-| Search the session history | ⌘⇧F | palette |
+| Search the session history | ⌘Y (Safari's history key; ⌘⇧F was it before E-13b) | palette |
+| Find / replace in the project's files (the Search panel) | ⌘⇧F / ⌘⇧H (Zed's project search) | ⌘⇧F / ⌘⇧H |
 | New session (terminal) / new agent / new chat | ⌘T / ⌘⇧T / ⌘⌥T (Zed's ⌘⇧T reopens a closed tab, an action Hutan does not have) | same |
 | Open / focus Mawas Home (a center tab; needs `assistant.enabled`) | none by default (palette → Mawas: Open; bind it in `keymap.toml` or set `assistant.global_shortcut`) | same |
 | Previous / next tab (the focused dock's panels, else the active pane's tabs; wraps) | ⌘⇧[ / ⌘⇧] (also ⌃⇧Tab / ⌃Tab) | same |

@@ -634,6 +634,41 @@ impl Setting for ProblemsPanelSettings {
     const NAMESPACE: &'static str = "panels.problems";
 }
 
+/// The `panels.search` namespace: the Search panel (find and replace across the active
+/// project, E-13b). The header's toggles write the three switches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SearchPanelSettings {
+    /// Match upper and lower case exactly; off, a query with an upper-case letter still does
+    /// (smart case).
+    pub case_sensitive: bool,
+    /// Match whole words only.
+    pub whole_word: bool,
+    /// Read the query as a regular expression (Rust `regex` syntax; `$1` in the replacement
+    /// names a group).
+    pub regex: bool,
+    /// Most matching lines one search lists (1 to 1 000, the daemon's bound).
+    pub max_results: u32,
+    /// How long typing must pause before the search runs, in milliseconds.
+    pub debounce_ms: u64,
+}
+
+impl Default for SearchPanelSettings {
+    fn default() -> Self {
+        Self {
+            case_sensitive: false,
+            whole_word: false,
+            regex: false,
+            max_results: hutan_protocol::fs::SEARCH_MAX,
+            debounce_ms: 150,
+        }
+    }
+}
+
+impl Setting for SearchPanelSettings {
+    const NAMESPACE: &'static str = "panels.search";
+}
+
 /// How the sidebar orders workspaces, and the projects inside each level (pinned ones always
 /// come first).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
@@ -1415,6 +1450,7 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<InspectorPanelSettings>();
     store.register::<FilesPanelSettings>();
     store.register::<ProblemsPanelSettings>();
+    store.register::<SearchPanelSettings>();
     store.register::<WorkspacesSettings>();
     store.register::<SidebarSettings>();
     store.register::<HistorySettings>();
@@ -1849,6 +1885,7 @@ mod tests {
             "panels.inspector",
             "panels.files",
             "panels.problems",
+            "panels.search",
             "workspaces",
             "history",
             "chat",

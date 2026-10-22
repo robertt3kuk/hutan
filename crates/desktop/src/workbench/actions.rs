@@ -128,6 +128,11 @@ actions!(
         UndoLastRestore,
         /// Show the Problems panel (the language servers' diagnostics) with the keyboard in it.
         ShowProblems,
+        /// Show the Search panel (find in the active project's files) with the keyboard in its
+        /// query; the focused file tab's selection becomes the query.
+        ShowSearch,
+        /// [`ShowSearch`] with the replace field shown.
+        ShowSearchReplace,
     ]
 );
 
@@ -391,6 +396,8 @@ data_actions! {
     /// Open a file in the focused pane (or focus its tab) with the caret at a language server's
     /// position: the Problems panel's rows.
     OpenAtPosition(PositionTarget);
+    /// Replace the chosen matches of the Search panel, one undo step per file (E-13b).
+    ReplaceInFiles(super::search_replace::ReplaceRequest);
 }
 
 /// A file to open, and where in it.
@@ -655,6 +662,8 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("File: Go to File…", QuickOpen),
         command("Files: Show Files Panel", ShowFiles),
         command("Files: Reveal Active File", RevealActiveFile),
+        command("Search: Find in Files", ShowSearch),
+        command("Search: Replace in Files", ShowSearchReplace),
         command("Workspace: Go to Home", GoHome),
         command("File: Open File…", OpenFileDialog),
         command("File: Open in Split Right", OpenFileInSplitRight),
@@ -884,6 +893,8 @@ fn hutan_global_bindings() -> Vec<BindingSpec> {
         bind::<QuickOpen>("cmd-p", None),
         bind::<ShowFiles>("cmd-shift-e", None),
         bind::<ShowProblems>("cmd-shift-m", None),
+        bind::<ShowSearch>("cmd-shift-f", None),
+        bind::<ShowSearchReplace>("cmd-shift-h", None),
         bind::<OpenProject>("cmd-o", None),
         bind::<ToggleOverview>("cmd-shift-o", None),
         bind::<ToggleResources>("cmd-alt-r", None),
@@ -1089,8 +1100,9 @@ fn numbered_bindings() -> Vec<BindingSpec> {
 /// free:
 ///
 /// - ⌘⇧P palette (⌘K is Zed's chord prefix, so it is not bound alone here), ⌘P quick open
-///   (files, then the jump list's workspaces and sessions), ⌘⇧E the Files panel, ⌘O open, ⌘,
-///   settings, ⌘⇧N new workspace, ⌘⇧F search history.
+///   (files, then the jump list's workspaces and sessions), ⌘⇧E the Files panel, ⌘⇧F / ⌘⇧H
+///   find / replace in files (Zed's project search), ⌘O open, ⌘, settings, ⌘⇧N new workspace,
+///   ⌘Y search history (Safari's history key: ⌘⇧F is project search here, as in Zed).
 /// - ⌘B left sidebar; ⌘⌥B / ⌘R / ⌘L right sidebar (⌘L is Orca's key and the one the tooltips
 ///   show; Zed's ⌘L is "go to line", which Hutan has no use for); ⌘J / ⌃\` bottom dock; ⌘⌥Y
 ///   close all docks.
@@ -1105,12 +1117,14 @@ fn zed_global_bindings() -> Vec<BindingSpec> {
         bind::<QuickOpen>("cmd-p", None),
         bind::<ShowFiles>("cmd-shift-e", None),
         bind::<ShowProblems>("cmd-shift-m", None),
+        bind::<ShowSearch>("cmd-shift-f", None),
+        bind::<ShowSearchReplace>("cmd-shift-h", None),
         // Zed's hover chord; ⌘K alone is the palette in the Hutan base, so it has no chord.
         bind::<hutan_code_view::ShowHover>("cmd-k cmd-i", Some(hutan_code_view::KEY_CONTEXT)),
         bind::<OpenProject>("cmd-o", None),
         bind::<OpenSettings>("cmd-,", None),
         bind::<NewWorkspace>("cmd-shift-n", None),
-        bind::<SearchHistory>("cmd-shift-f", None),
+        bind::<SearchHistory>("cmd-y", None),
         bind::<NewTerminal>("cmd-t", None),
         bind::<NewAgent>("cmd-shift-t", None),
         bind::<NewChat>("cmd-alt-t", None),
@@ -1305,10 +1319,15 @@ mod tests {
         assert_eq!(last(NewAgent::name_for_type()), "shift-cmd-t");
         assert_eq!(last(JumpToNextAttention::name_for_type()), "shift-cmd-j");
         assert_eq!(last(ToggleResources::name_for_type()), "alt-cmd-r");
+        // Zed's project search (E-13b); the session history moved from ⌘⇧F to ⌘Y.
+        assert_eq!(last(ShowSearch::name_for_type()), "shift-cmd-f");
+        assert_eq!(last(ShowSearchReplace::name_for_type()), "shift-cmd-h");
+        assert_eq!(keys(SearchHistory::name_for_type()), ["cmd-y"]);
     }
 
     /// Today's table, kept for people who learned it: `keymap.base = "hutan"` only gains keys
-    /// that were free (⌘P quick open and ⌘⇧E Files, E-13a); none it had moves.
+    /// that were free (⌘P quick open and ⌘⇧E Files, E-13a; ⌘⇧F / ⌘⇧H search, E-13b); none it
+    /// had moves.
     #[test]
     fn hutan_base_is_the_original_table() {
         let mut expected: Vec<String> = [
@@ -1337,6 +1356,8 @@ mod tests {
             "cmd-p | workbench::QuickOpen | -",
             "shift-cmd-e | workbench::ShowFiles | -",
             "shift-cmd-m | workbench::ShowProblems | -",
+            "shift-cmd-f | workbench::ShowSearch | -",
+            "shift-cmd-h | workbench::ShowSearchReplace | -",
             "cmd-o | workbench::OpenProject | -",
             "shift-cmd-o | workbench::ToggleOverview | -",
             "alt-cmd-r | workbench::ToggleResources | -",

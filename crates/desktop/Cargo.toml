@@ -30,6 +30,8 @@ hutan-settings.workspace = true
 hutan-terminal-view.workspace = true
 hutan-vim.workspace = true
 libc.workspace = true
+# The Search panel's replace finds each match again as the daemon did (E-13b).
+regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

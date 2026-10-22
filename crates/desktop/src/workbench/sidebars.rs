@@ -164,13 +164,15 @@ impl Workbench {
                 selected: selected("tasks"),
             });
         }
-        // Whatever else the user keeps in the left dock stays reachable. Files (E-13a) has its
-        // keys and commands (⌘⇧E, ⌘P), so its row shows only while its page is the one shown.
+        // Whatever else the user keeps in the left dock stays reachable. Files (E-13a) and
+        // Search (E-13b) have their keys and commands (⌘⇧E, ⌘P; ⌘⇧F), so their rows show only
+        // while their page is the one shown.
         for panel in &dock.panels {
             let named = matches!(
                 panel.as_str(),
                 "sessions" | "tasks" | "assistant" | super::model::AGENTS_PAGE
-            ) || (panel.as_str() == "files" && !selected("files"));
+            ) || (matches!(panel.as_str(), "files" | "search")
+                && !selected(panel.as_str()));
             if named {
                 continue;
             }

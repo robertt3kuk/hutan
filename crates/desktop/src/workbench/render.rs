@@ -981,6 +981,17 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::ShowProblems, window, cx| {
             this.show_problems(window, cx);
         }))
+        .on_action(cx.listener(|this, _: &actions::ShowSearch, window, cx| {
+            this.show_search(false, window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::ShowSearchReplace, window, cx| {
+                this.show_search(true, window, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, a: &actions::ReplaceInFiles, _, cx| {
+            this.replace_in_files(a.0.clone(), cx);
+        }))
         .on_action(
             cx.listener(|this, a: &actions::OpenAtPosition, window, cx| {
                 let position = hutan_protocol::lsp::LspPosition {

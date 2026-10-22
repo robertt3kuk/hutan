@@ -18,6 +18,7 @@ mod problems;
 mod resources;
 mod resources_model;
 mod sessions;
+mod search;
 mod status;
 mod tasks;
 
@@ -81,6 +82,7 @@ pub use resources_model::{
 pub use sessions::{DraggedProject, DraggedWorkspace, RowKind, SessionsPanel, SidebarRow};
 pub use status::{Tone as StatusTone, builtin_status_items, connection_label};
 pub use tasks::{CascadeAsk, TICK as TASKS_TICK, TasksPanel};
+pub use search::{ReplaceCount, ResultFile, SearchField, SearchPanel, SearchRow, SearchStatus};
 
 /// A panel that renders its name and a short description.
 #[derive(Debug)]
@@ -128,10 +130,10 @@ impl Render for PlaceholderPanel {
 /// `sessions`, `files`, `history`, `changes`, `inspector` (titled Requests), `agents` (the
 /// compact projection of the Agents page), `agents-dashboard` (the Agents page), `resources`,
 /// `tasks`, `assistant` (Mawas Home), `problems` (the language servers' diagnostics),
-/// `notifications`. `sessions` (Projects), `files` and `tasks` open as pages of the left
-/// sidebar, `history`, `changes`, `inspector`, `agents` and `resources` as tabs of the right
-/// sidebar's strip, `assistant` and `agents-dashboard` as tabs of the center, `problems` in the
-/// bottom dock.
+/// `search` (find and replace in the project's files), `notifications`. `sessions`
+/// (Projects), `files`, `tasks` and `search` open as pages of the left sidebar, `history`,
+/// `changes`, `inspector`, `agents` and `resources` as tabs of the right sidebar's strip,
+/// `assistant` and `agents-dashboard` as tabs of the center, `problems` in the bottom dock.
 pub fn builtin_panels() -> PanelRegistry {
     let mut registry = PanelRegistry::new();
     registry.register(PanelSpec {
@@ -254,6 +256,16 @@ pub fn builtin_panels() -> PanelRegistry {
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
             AnyView::from(cx.new(|cx| ProblemsPanel::new(env, cx)))
+        }),
+    });
+    registry.register(PanelSpec {
+        id: "search".into(),
+        title: "Search".into(),
+        icon: crate::icons::Icon::ActionSearch,
+        default_dock: DockPosition::Left,
+        factory: Rc::new(|env, _window, cx| {
+            let env = env.clone();
+            AnyView::from(cx.new(|cx| SearchPanel::new(env, cx)))
         }),
     });
     registry.register(PanelSpec {

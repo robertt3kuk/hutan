@@ -387,6 +387,23 @@ impl Connection {
         client.fs_find(req).await
     }
 
+    /// `fs.search` (see [`Client::fs_search`]): the matching lines below a root; it answers
+    /// when the search ends, [`Notice::FsSearchProgress`] reports on it meanwhile.
+    pub async fn fs_search(
+        &self,
+        req: hutan_protocol::fs::FsSearch,
+    ) -> Result<hutan_protocol::fs::FsSearchResult, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_search(req).await
+    }
+
+    /// `fs.search.cancel` (see [`Client::fs_search_cancel`]): ends the search named
+    /// `search_id` with what it found.
+    pub async fn fs_search_cancel(&self, search_id: &str) -> Result<(), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.fs_search_cancel(search_id).await
+    }
+
     /// True while connected to a daemon that advertised capability `fs.watch`
     /// ([`Client::supports_fs_watch`]); false when disconnected.
     pub fn supports_fs_watch(&self) -> bool {

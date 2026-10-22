@@ -150,6 +150,7 @@ pub fn menus(presets: &[LayoutPreset], current: &str, daemon_menu: &DaemonMenu) 
             MenuItem::action("Toggle Right Dock", actions::ToggleRightDock),
             MenuItem::action("Toggle Bottom Dock", actions::ToggleBottomDock),
             MenuItem::action("Files", actions::ShowFiles),
+            MenuItem::action("Search", actions::ShowSearch),
             MenuItem::separator(),
             MenuItem::submenu(Menu::new("Layout Preset").items(preset_items)),
             MenuItem::action("Save Layout as Preset…", actions::SaveLayoutAsPreset),

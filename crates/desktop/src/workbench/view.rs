@@ -401,6 +401,13 @@ pub enum Region {
     ProblemsRow(usize),
     /// A control of the Problems panel's header (`severity`, `refresh`).
     Problems(&'static str),
+    /// Row `index` of the Search panel's list (file headers and matches, top to bottom).
+    SearchRow(usize),
+    /// The checkbox of row `index` of the Search panel's list (a file's or a match's).
+    SearchCheck(usize),
+    /// A control of the Search panel (`query`, `replace`, `include`, `exclude`, `case`,
+    /// `word`, `regex`, `toggle-replace`, `replace-all`, `confirm`, `cancel`).
+    Search(&'static str),
 }
 
 /// A pane tab or dock tab being dragged.
@@ -556,6 +563,9 @@ pub struct Workbench {
     pub(crate) quick_open: super::quick_open::QuickOpenTasks,
     /// The file of the focused tab the Files panel was last told about.
     pub(crate) revealed_file: Option<String>,
+    /// The Search panel's *Replace All* in progress (E-13b): files waiting for their buffer or
+    /// their save.
+    pub(crate) replace_job: Option<super::search_replace::ReplaceJob>,
     /// What tells the workbench a chat's composer changed, per chat model.
     pub(crate) chat_draft_watch: HashMap<SessionId, Subscription>,
     /// What tells the workbench a terminal's folds changed, per held session.
@@ -1079,6 +1089,7 @@ impl Workbench {
                 .unwrap_or_default(),
             quick_open: super::quick_open::QuickOpenTasks::default(),
             revealed_file: None,
+            replace_job: None,
             chat_drafts: options
                 .state_path
                 .as_deref()

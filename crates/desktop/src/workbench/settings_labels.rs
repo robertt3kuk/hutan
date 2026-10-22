@@ -61,6 +61,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("panels.inspector", "Requests"),
     ("panels.files", "Files"),
     ("panels.problems", "Problems"),
+    ("panels.search", "Search"),
     ("workspaces", "Workspaces"),
     ("history", "History"),
     ("chat", "Chat"),
@@ -403,6 +404,37 @@ const FIELDS: &[FieldText] = &[
             ("warning", "Errors and warnings"),
             ("error", "Errors only"),
         ],
+    ),
+    // ---- search ----
+    field(
+        "panels.search",
+        "case_sensitive",
+        "Match case",
+        "Finds only text with the same upper and lower case. Off, a query with an upper-case letter still matches case exactly. The Search panel's Aa button switches it too.",
+    ),
+    field(
+        "panels.search",
+        "whole_word",
+        "Whole words",
+        "Finds the query only as a whole word, not inside a longer one. The panel's ab button switches it too.",
+    ),
+    field(
+        "panels.search",
+        "regex",
+        "Regular expression",
+        "Reads the query as a regular expression; $1 in the replacement inserts the first group. The panel's .* button switches it too.",
+    ),
+    field(
+        "panels.search",
+        "max_results",
+        "Most results",
+        "How many matching lines one search lists, up to 1 000. The panel says when a search stopped there.",
+    ),
+    field(
+        "panels.search",
+        "debounce_ms",
+        "Wait after typing (ms)",
+        "How long typing must pause before the search runs; every change stops the search before it.",
     ),
     // ---- workspaces ----
     choice(

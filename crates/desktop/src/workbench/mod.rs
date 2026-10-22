@@ -48,6 +48,7 @@ mod resources;
 mod review;
 pub mod rewind;
 mod rewind_view;
+pub mod search_replace;
 pub(crate) mod send_key;
 mod settings_assistant;
 mod settings_daemon;

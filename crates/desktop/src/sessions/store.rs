@@ -858,6 +858,8 @@ impl SessionsStore {
             // (`workbench/file_sync.rs`, `panels/files.rs`), the ⌘P finder the generations.
             | Notice::FsChanged { .. }
             | Notice::FsGeneration { .. }
+            // The Search panel follows its own searches (`panels/search.rs`).
+            | Notice::FsSearchProgress { .. }
             // The file tabs' language servers (`workbench/lsp.rs`) and the Problems panel
             // follow these themselves.
             | Notice::LspState { .. }

@@ -264,6 +264,13 @@ impl Workbench {
             self.agent_ledger.ledger.disk_is(path, text);
         }
         let Some(stored) = self.buffers.buffers.get_mut(path) else {
+            self.replace_saved(
+                path,
+                Err(super::search_replace::SkipReason::SaveFailed(
+                    "its tab was closed".to_owned(),
+                )),
+                cx,
+            );
             return;
         };
         let buffer = stored.buffer.clone();
@@ -280,6 +287,7 @@ impl Workbench {
                 {
                     self.try_mutate(cx, |s| s.close_item(pane, index));
                 }
+                self.replace_saved(path, Ok(()), cx);
             }
             Err(error) => {
                 buffer.update(cx, |b, cx| b.set_saving(false, cx));
@@ -287,11 +295,23 @@ impl Workbench {
                     Some((current, missing)) => {
                         tracing::info!(path, "save refused: the file changed on disk");
                         self.conflicted(path, current, missing, cx);
+                        self.replace_saved(
+                            path,
+                            Err(super::search_replace::SkipReason::SaveConflict),
+                            cx,
+                        );
                     }
                     None => {
                         let name = buffer.read(cx).file_name();
                         self.set_notice(
                             format!("Cannot save {name}: {}", super::files::error_text(&error)),
+                            cx,
+                        );
+                        self.replace_saved(
+                            path,
+                            Err(super::search_replace::SkipReason::SaveFailed(
+                                super::files::error_text(&error),
+                            )),
                             cx,
                         );
                     }

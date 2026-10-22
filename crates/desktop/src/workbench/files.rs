@@ -295,7 +295,7 @@ impl Workbench {
     }
 
     /// The buffer of `path`, made (and its file read) when there is none.
-    fn ensure_buffer(
+    pub(crate) fn ensure_buffer(
         &mut self,
         path: &str,
         picked: bool,
@@ -389,10 +389,15 @@ impl Workbench {
                     None
                 }
             });
-            if let Some((version, text)) = loaded {
-                this.update(cx, |this, cx| this.loaded(&key, version, Some(&text), cx))
-                    .ok();
-            }
+            this.update(cx, |this, cx| {
+                if let Some((version, text)) = loaded {
+                    this.loaded(&key, version, Some(&text), cx);
+                }
+                // A Replace All may wait for this buffer (read or not).
+                this.replace_buffer_ready(&key, cx);
+                this.replace_maybe_done(cx);
+            })
+            .ok();
         }));
     }
 
@@ -529,6 +534,7 @@ impl Workbench {
                 (path.clone(), stored.watched, hunks_left)
             })
             .collect();
+        let mut dropped_paths = Vec::new();
         for (path, watched, hunks_left) in dropped {
             self.buffers.buffers.remove(&path);
             self.lsp.update(cx, |lsp, cx| lsp.close(&path, cx));
@@ -536,6 +542,10 @@ impl Workbench {
                 // The ledger keeps watching a file with an agent's changes.
                 self.ledger_tab_closed(&path, hunks_left, cx);
             }
+            dropped_paths.push(path);
+        }
+        if !dropped_paths.is_empty() {
+            self.replace_buffers_dropped(&dropped_paths, cx);
         }
         if self.buffers.buffers.is_empty() && self.agent_ledger.watched.is_empty() {
             self.buffers.listener = None;

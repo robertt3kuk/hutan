@@ -389,6 +389,7 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<InspectorPanelSettings>(),
         CatalogEntry::of::<FilesPanelSettings>(),
         CatalogEntry::of::<crate::settings::ProblemsPanelSettings>(),
+        CatalogEntry::of::<crate::settings::SearchPanelSettings>(),
         CatalogEntry::of::<WorkspacesSettings>(),
         CatalogEntry::of::<TasksSettings>(),
         CatalogEntry::custom("notifications"),
@@ -614,7 +615,8 @@ mod tests {
                 .map(|e| e.namespace)
                 .collect()
         };
-        assert_eq!(names("panels.").len(), 4);
+        // sessions, inspector, files, problems, search.
+        assert_eq!(names("panels.").len(), 5);
         let mut font = names("font");
         font.sort_unstable();
         assert_eq!(font, ["editor", "terminal"], "code and terminal fonts");
