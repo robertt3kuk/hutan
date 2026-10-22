@@ -8,8 +8,13 @@ use hutan_core::task::{PROMPT_MAX_BYTES, TITLE_MAX_CHARS, slug};
 use hutan_core::{AfterPolicy, TaskId, TaskPlacement, TaskPlacementKind, TaskRun, WorkspaceId};
 use hutan_protocol::task::TaskCreate;
 
-/// The longest title the sheet proposes from a prompt (the daemon allows [`TITLE_MAX_CHARS`]).
+/// The longest title the sheet proposes from a command line (the daemon allows
+/// [`TITLE_MAX_CHARS`]).
 const PROPOSED_TITLE_CHARS: usize = 72;
+
+/// The longest title proposed from a chat prompt: a name for a list row and a tab, not the
+/// request (the prompt in full is the row's tooltip).
+pub const PROMPT_TITLE_CHARS: usize = 40;
 
 /// What the sheet starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -101,9 +106,53 @@ pub struct LaunchValues {
     pub queue: bool,
 }
 
-/// The title the sheet proposes for `prompt`: its first non-empty line, shortened.
+/// The title the sheet proposes for `prompt`: its first clause (up to the first sentence end,
+/// `;`, `:` or dash), at most [`PROMPT_TITLE_CHARS`] characters, cut at a word with `…` when the
+/// clause is longer. Empty while the prompt is.
 pub fn title_from_prompt(prompt: &str) -> String {
     let line = prompt
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("");
+    let clause = first_clause(line);
+    if clause.chars().count() <= PROMPT_TITLE_CHARS {
+        return clause.to_owned();
+    }
+    // The longest run of whole words that leaves room for the ellipsis.
+    let room: String = clause.chars().take(PROMPT_TITLE_CHARS - 1).collect();
+    let whole = clause
+        .chars()
+        .nth(PROMPT_TITLE_CHARS - 1)
+        .is_some_and(char::is_whitespace);
+    let cut = match room.rfind(' ') {
+        Some(at) if !whole && at > 0 => at,
+        _ => room.len(),
+    };
+    format!(
+        "{}…",
+        room[..cut].trim_end_matches([' ', ',', ';', ':', '-', '–', '—'])
+    )
+}
+
+/// `line` up to its first clause break: `. `, `! `, `? `, `; `, `: `, ` - `, ` – `, ` — `, or
+/// the end. A dot inside a name (`src/lib.rs`, `v1.2`) is not a break: a break is followed by a
+/// space.
+fn first_clause(line: &str) -> &str {
+    const BREAKS: [&str; 8] = [". ", "! ", "? ", "; ", ": ", " - ", " – ", " — "];
+    let end = BREAKS
+        .iter()
+        .filter_map(|b| line.find(b))
+        .min()
+        .unwrap_or(line.len());
+    line[..end]
+        .trim_end_matches(['.', '!', '?', ';', ':'])
+        .trim()
+}
+
+/// The title proposed for a command line: its first line, at most [`PROPOSED_TITLE_CHARS`].
+pub fn title_from_command(command: &str) -> String {
+    let line = command
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
@@ -466,8 +515,33 @@ mod tests {
     #[test]
     fn the_title_and_the_branch_follow_the_prompt() {
         assert_eq!(title_from_prompt("\n  Add a retry\nmore"), "Add a retry");
+        // The first clause, not the request: the sentence end, then the 40-character cut at a word.
+        assert_eq!(
+            title_from_prompt("Add a retry. Change nothing else, keep the tests."),
+            "Add a retry"
+        );
+        assert_eq!(
+            title_from_prompt(
+                "Add a one-line doc comment above fn count in src/lib.rs. Change nothing else."
+            ),
+            "Add a one-line doc comment above fn…"
+        );
+        assert_eq!(
+            title_from_prompt("Bump v1.2 now"),
+            "Bump v1.2 now",
+            "a dot in a name stays"
+        );
+        assert_eq!(
+            title_from_prompt("Why does it fail?  Look at src/x.rs"),
+            "Why does it fail"
+        );
+        for prompt in ["a".repeat(100), "word ".repeat(30), "ünï ".repeat(40)] {
+            let title = title_from_prompt(&prompt);
+            assert!(title.chars().count() <= PROMPT_TITLE_CHARS, "{title}");
+            assert!(title.ends_with('…'), "{title}");
+        }
         let long = "a".repeat(100);
-        let title = title_from_prompt(&long);
+        let title = title_from_command(&long);
         assert_eq!(title.chars().count(), PROPOSED_TITLE_CHARS + 1);
         assert!(title.ends_with('…'));
         assert_eq!(branch_for_title("Add a retry!"), "hutan/add-a-retry");

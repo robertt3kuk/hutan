@@ -59,7 +59,8 @@ fn opens_with_default_layout_and_title(cx: &mut TestAppContext) {
     );
     assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
     assert_eq!(state.panes().len(), 1);
-    assert_eq!(cx.window_title().as_deref(), Some("Welcome — Hutan"));
+    // No project: the window is only named for the app (never the tab's "Welcome").
+    assert_eq!(cx.window_title().as_deref(), Some("Hutan"));
 }
 
 #[gpui::test]
@@ -84,7 +85,7 @@ fn split_actions_and_keys_change_the_pane_tree(cx: &mut TestAppContext) {
         s.pane(focused).unwrap().items,
         vec![ItemRef::placeholder("New pane")]
     );
-    assert_eq!(cx.window_title().as_deref(), Some("New pane — Hutan"));
+    assert_eq!(cx.window_title().as_deref(), Some("Hutan"));
 }
 
 #[gpui::test]

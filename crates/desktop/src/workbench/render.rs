@@ -126,8 +126,9 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::frames::begin();
         self.sync_appearance(window, cx);
-        let title = match self.state.active_center_item() {
-            Some(_) => format!("{} — Hutan", self.active_title(cx)),
+        // The tab says what is open; the window says where (the project), never the same twice.
+        let title = match self.window_label(cx) {
+            Some(label) => format!("{label} — Hutan"),
             None => "Hutan".to_owned(),
         };
         if title != self.last_title {
@@ -1192,8 +1193,10 @@ impl Workbench {
                     .justify_center()
                     .truncate()
                     .text_size(px(tokens.font_size))
-                    .text_color(theme.fg)
-                    .child(self.active_title(cx)),
+                    .text_color(theme.muted)
+                    .child(SharedString::from(
+                        self.window_label(cx).unwrap_or_default(),
+                    )),
             )
             .child(right_toggle)
             .child(probe(&self.regions, Region::Titlebar))

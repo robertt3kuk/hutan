@@ -1845,17 +1845,28 @@ impl SessionsPanel {
                                 .text_size(px(CARD_TITLE))
                                 .when(unread, |s| s.font_weight(gpui::FontWeight::MEDIUM))
                                 .child(SharedString::from(info.title.clone()));
-                            // The name says what the session is; where it is, in full, is one
-                            // hover away.
-                            match session_folder(info) {
-                                Some(path) => {
-                                    let tip: SharedString = path.display().to_string().into();
-                                    title
-                                        .tooltip(move |_, cx| {
-                                            cx.new(|_| TextTooltip(tip.clone())).into()
-                                        })
-                                        .into_any_element()
+                            // The name says what the session is; the prompt behind a short title
+                            // and where the session is, in full, are one hover away.
+                            let prompt = self
+                                .env
+                                .sessions
+                                .read(cx)
+                                .tasks()
+                                .prompt_of(info.id, &info.title);
+                            let tip = match (prompt, session_folder(info)) {
+                                (Some(prompt), Some(path)) => {
+                                    Some(format!("{prompt}\n{}", path.display()))
                                 }
+                                (Some(prompt), None) => Some(prompt),
+                                (None, Some(path)) => Some(path.display().to_string()),
+                                (None, None) => None,
+                            };
+                            match tip.map(SharedString::from) {
+                                Some(tip) => title
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| TextTooltip(tip.clone())).into()
+                                    })
+                                    .into_any_element(),
                                 None => title.into_any_element(),
                             }
                         }

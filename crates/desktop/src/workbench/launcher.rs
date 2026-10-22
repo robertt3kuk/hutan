@@ -34,8 +34,8 @@ use super::view::Workbench;
 use super::vim_ui::VimConfig;
 use super::workspaces::project_root_of;
 use crate::sessions::launch::{
-    LaunchKind, LaunchPlace, LaunchValues, branch_for_title, build_create, title_from_prompt,
-    user_shell,
+    LaunchKind, LaunchPlace, LaunchValues, branch_for_title, build_create, title_from_command,
+    title_from_prompt, user_shell,
 };
 use crate::sessions::tasks::{TaskFilters, tree_rows};
 use hutan_protocol::task::TaskCreate;
@@ -444,7 +444,7 @@ impl Launcher {
     /// A command has no prompt: its title follows the command line.
     fn follow_command(&mut self) {
         if !self.title_edited {
-            let title = title_from_prompt(self.command.text());
+            let title = title_from_command(self.command.text());
             self.title.set(&title);
         }
         self.follow();

@@ -27,6 +27,9 @@ pub struct TaskBook {
     touched: HashSet<TaskId>,
 }
 
+/// The longest prompt a tooltip shows.
+const PROMPT_TIP_CHARS: usize = 600;
+
 impl TaskBook {
     /// A `task.list` is about to be asked for.
     pub fn start_loading(&mut self) {
@@ -114,6 +117,25 @@ impl TaskBook {
             std::cmp::Reverse((awaited_at(task).unwrap_or(0), task.created_at_ms))
         });
         open
+    }
+
+    /// The prompt `session` was started with when it says more than `title`: the full request
+    /// behind a short proposed title, for a tooltip. At most [`PROMPT_TIP_CHARS`] characters.
+    pub fn prompt_of(&self, session: SessionId, title: &str) -> Option<String> {
+        let task = self
+            .tasks
+            .values()
+            .filter(|task| task.sessions.contains(&session))
+            .max_by_key(|task| task.created_at_ms)?;
+        let prompt = task.prompt.as_deref()?.trim();
+        if prompt.is_empty() || prompt == title.trim() {
+            return None;
+        }
+        let mut tip: String = prompt.chars().take(PROMPT_TIP_CHARS).collect();
+        if prompt.chars().count() > PROMPT_TIP_CHARS {
+            tip.push('…');
+        }
+        Some(tip)
     }
 
     /// Whether `session` ran a task (its delivery says what the session's turns changed).

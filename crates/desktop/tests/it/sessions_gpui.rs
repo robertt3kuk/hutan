@@ -103,9 +103,11 @@ fn a_session_item_shows_the_daemons_snapshot_and_takes_focus(cx: &mut TestAppCon
             session: info.id.to_string()
         }]
     );
-    assert_eq!(
-        cx.window_title().as_deref(),
-        Some(format!("{} — Hutan", info.title).as_str())
+    // The window never repeats the tab's title: it names the project and the app.
+    let window_title = cx.window_title().unwrap_or_default();
+    assert!(
+        window_title.ends_with("Hutan") && !window_title.contains(&info.title),
+        "{window_title}"
     );
     // The terminal has keyboard focus and the store knows which session is looked at.
     let focused = view.read_with(cx, |wb, cx| {

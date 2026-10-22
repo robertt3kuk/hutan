@@ -1422,6 +1422,22 @@ impl Workbench {
         }
     }
 
+    /// What the title bar and the window name besides the app: the project (else the named
+    /// workspace) the window shows, never the title of the active tab, which the tab strip
+    /// right under it already says. `None` when there is no such name or it is the tab's own.
+    pub fn window_label(&self, cx: &App) -> Option<String> {
+        let store = self.sessions.read(cx);
+        let info = store.active_project().or_else(|| {
+            store
+                .active_workspace_id()
+                .and_then(|id| store.workspace(id))
+                .filter(|w| w.kind != hutan_protocol::messages::WorkspaceKind::Home)
+        })?;
+        let name = info.name.trim();
+        (!name.is_empty() && !name.eq_ignore_ascii_case(self.active_title(cx).trim()))
+            .then(|| name.to_owned())
+    }
+
     pub fn item_icon_and_title(
         &self,
         item: &ItemRef,
@@ -1503,14 +1519,14 @@ impl Workbench {
         let store = self.sessions.read(cx);
         let info = store.session(id)?;
         let folder = crate::sessions::tree::session_folder(info).map(|path| path.display());
+        // A short proposed title is the first clause of the prompt: the prompt, in full, is here.
+        let prompt = store.tasks().prompt_of(id, &info.title);
+        let head = prompt.clone().unwrap_or_else(|| info.title.clone());
         match (crate::sessions::placement_badge(info), folder) {
-            (Some(badge), _) => Some(format!(
-                "{} · {}\n{}",
-                info.title, badge.text, badge.tooltip
-            )),
+            (Some(badge), _) => Some(format!("{head} · {}\n{}", badge.text, badge.tooltip)),
             // Without a checkout the tab still says where the session is, in full.
-            (None, Some(folder)) => Some(format!("{}\n{folder}", info.title)),
-            (None, None) => None,
+            (None, Some(folder)) => Some(format!("{head}\n{folder}")),
+            (None, None) => prompt,
         }
     }
 

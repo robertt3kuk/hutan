@@ -49,10 +49,10 @@ fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
 // ---- the window title -------------------------------------------------------------------------
 
 #[gpui::test]
-fn the_window_title_follows_the_center_item_never_a_sidebar_page(cx: &mut TestAppContext) {
+fn the_window_title_names_the_project_never_the_tab_nor_a_sidebar_page(cx: &mut TestAppContext) {
     let (view, cx) = open_offline(cx, true);
     common::draw(cx);
-    assert_eq!(cx.window_title().as_deref(), Some("Welcome — Hutan"));
+    assert_eq!(cx.window_title().as_deref(), Some("Hutan"));
 
     // Left pages: Tasks, then the Assistant.
     cx.dispatch_action(hutan_desktop::workbench::actions::OpenPanel("tasks".into()));
@@ -63,11 +63,11 @@ fn the_window_title_follows_the_center_item_never_a_sidebar_page(cx: &mut TestAp
         "the page has the keyboard"
     );
     assert_eq!(view.read_with(cx, |wb, cx| wb.active_title(cx)), "Welcome");
-    assert_eq!(cx.window_title().as_deref(), Some("Welcome — Hutan"));
+    assert_eq!(cx.window_title().as_deref(), Some("Hutan"));
     // Mawas Home is a center tab: it is the title while it shows.
     click(&view, cx, Region::Nav("assistant"));
     common::draw(cx);
-    assert_eq!(cx.window_title().as_deref(), Some("Mawas — Hutan"));
+    assert_eq!(cx.window_title().as_deref(), Some("Hutan"));
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| {
             s.close_panel(&hutan_desktop::workbench::model::PanelId::new("assistant"))
@@ -75,7 +75,7 @@ fn the_window_title_follows_the_center_item_never_a_sidebar_page(cx: &mut TestAp
         })
     });
     common::draw(cx);
-    assert_eq!(cx.window_title().as_deref(), Some("Welcome — Hutan"));
+    assert_eq!(cx.window_title().as_deref(), Some("Hutan"));
 
     // Every icon of the right rail: Changes, Agents, History.
     // (Changes is open already: its icon collapses the body, so it goes last.)
@@ -88,7 +88,7 @@ fn the_window_title_follows_the_center_item_never_a_sidebar_page(cx: &mut TestAp
         );
         assert_eq!(
             cx.window_title().as_deref(),
-            Some("Welcome — Hutan"),
+            Some("Hutan"),
             "right tab {index}"
         );
     }
@@ -198,7 +198,7 @@ fn the_agents_row_opens_one_retained_center_page_and_a_second_click_only_focuses
             .collect()
     });
     assert_eq!(selected, ["agents"], "the open page marks its row");
-    assert_eq!(cx.window_title().as_deref(), Some("Agents — Hutan"));
+    assert_eq!(cx.window_title().as_deref(), Some("Hutan"));
     // Again: it focuses the existing tab and closes nothing.
     click(&view, cx, Region::Nav("agents"));
     let tabs = view.read_with(cx, |wb, _| {
