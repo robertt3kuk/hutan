@@ -34,7 +34,6 @@ use hutan_protocol::worktree::{
 };
 
 use super::chat::{Look, counts_of, diff_row};
-use super::panels::chip;
 use super::registry::PanelEnv;
 use super::render::probe;
 use super::style::UiStyle;
@@ -129,7 +128,7 @@ struct Merged {
 }
 
 /// Which uncommitted changes the file list shows (`worktree.index`, protocol 0.34): the header's
-/// *Staged · Unstaged · All*. Read-only: Hutan never stages or unstages.
+/// *All · Staged · Unstaged*. Read-only: Hutan never stages or unstages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IndexFilter {
     #[default]
@@ -138,6 +137,16 @@ pub enum IndexFilter {
     Staged,
     /// Files whose working tree differs from the index, and untracked files.
     Unstaged,
+}
+
+/// What the toolbar's one segmented control picks: the committed changes alone, or the
+/// uncommitted ones too under an [`IndexFilter`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// Leaves the uncommitted changes out of the list.
+    Committed,
+    /// Lists them too, narrowed by the filter.
+    Index(IndexFilter),
 }
 
 impl IndexFilter {
@@ -336,6 +345,30 @@ impl ChangesView {
 
     pub fn index_filter(&self) -> IndexFilter {
         self.index_filter
+    }
+
+    /// The segment of the toolbar that is on: Committed while the uncommitted changes are left
+    /// out, else the index filter in force (All while the listing says nothing of the index).
+    pub fn scope(&self) -> Scope {
+        if !self.include_uncommitted {
+            Scope::Committed
+        } else if self.has_index_marks() {
+            Scope::Index(self.index_filter)
+        } else {
+            Scope::Index(IndexFilter::All)
+        }
+    }
+
+    /// Picks a segment of the toolbar: what the list holds and, for the uncommitted changes,
+    /// which of them.
+    pub fn set_scope(&mut self, scope: Scope, cx: &mut Context<Self>) {
+        match scope {
+            Scope::Committed => self.set_include_uncommitted(false, cx),
+            Scope::Index(filter) => {
+                self.set_index_filter(filter, cx);
+                self.set_include_uncommitted(true, cx);
+            }
+        }
     }
 
     /// Shows only the staged files, only the unstaged ones, or all (nothing is re-listed).
@@ -580,6 +613,15 @@ impl ChangesView {
             self.refreshed_ms?,
             self.refresh_error.is_some(),
         ))
+    }
+
+    /// The tooltip of the Refresh button: the action and how old the list is (`updated just
+    /// now`), which the toolbar no longer draws as a chip of its own.
+    fn refresh_tooltip(&self) -> SharedString {
+        match self.freshness_text(hutan_client::time::now_ms()) {
+            Some(age) => SharedString::from(format!("Refresh · {age}")),
+            None => SharedString::from("Refresh"),
+        }
     }
 
     /// Draws the age chip again in a second (a minute in, every 30 s) while the view is drawn.
@@ -883,40 +925,48 @@ impl Render for ChangesView {
 }
 
 impl ChangesView {
-    /// *Staged · Unstaged · All* (protocol 0.34): shown while the listing says what is staged.
-    /// It filters the list only; nothing is staged or unstaged.
-    fn render_index_filter(
+    /// The one segmented control of the toolbar: *Committed · All · Staged · Unstaged*.
+    /// Committed leaves the uncommitted changes out of the list; All lists them too; Staged and
+    /// Unstaged (protocol 0.34, shown while the listing says what is staged) narrow the
+    /// uncommitted ones. It filters the list only; nothing is staged or unstaged.
+    fn render_scope_strip(
         &self,
         theme: &Theme,
         tokens: &Tokens,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if !self.has_index_marks() {
-            return None;
-        }
-        let choice = |id: &'static str, label: &'static str, filter: IndexFilter| {
-            chip(id, label, self.index_filter == filter, theme, tokens)
-                .on_click(cx.listener(move |this, _, _, cx| this.set_index_filter(filter, cx)))
+    ) -> AnyElement {
+        let selected = self.scope();
+        let segment = |id: &'static str, label: &'static str, scope: Scope| {
+            ui::segment(id, label, selected == scope, theme, tokens)
+                .relative()
+                .on_click(cx.listener(move |this, _, _, cx| this.set_scope(scope, cx)))
                 .child(probe(&self.env.regions, Region::Changes(id)))
         };
-        Some(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(tokens.spacing))
-                .child(choice(
+        let mut strip = ui::segmented(theme, tokens)
+            .child(segment(
+                "changes-scope-committed",
+                "Committed",
+                Scope::Committed,
+            ))
+            .child(segment(
+                "changes-index-all",
+                "All",
+                Scope::Index(IndexFilter::All),
+            ));
+        if self.has_index_marks() {
+            strip = strip
+                .child(segment(
                     "changes-index-staged",
                     "Staged",
-                    IndexFilter::Staged,
+                    Scope::Index(IndexFilter::Staged),
                 ))
-                .child(choice(
+                .child(segment(
                     "changes-index-unstaged",
                     "Unstaged",
-                    IndexFilter::Unstaged,
-                ))
-                .child(choice("changes-index-all", "All", IndexFilter::All))
-                .into_any_element(),
-        )
+                    Scope::Index(IndexFilter::Unstaged),
+                ));
+        }
+        strip.into_any_element()
     }
 
     fn render_header(
@@ -1001,27 +1051,18 @@ impl ChangesView {
                     .justify_end()
                     .gap(px(tokens.spacing * 2.0))
                     .children(self.render_review_controls(theme, tokens, cx))
-                    .children(self.render_index_filter(theme, tokens, cx))
+                    .child(self.render_scope_strip(theme, tokens, cx))
+                    .children(self.render_freshness(theme, tokens))
                     .child(
-                        chip(
-                            "changes-uncommitted",
-                            "With uncommitted",
-                            self.include_uncommitted,
+                        ui::IconButton::new(
+                            "changes-refresh",
+                            crate::icons::Icon::ActionRefresh,
+                            self.refresh_tooltip(),
                             theme,
                             tokens,
                         )
-                        .on_click(cx.listener({
-                            let next = !self.include_uncommitted;
-                            move |this, _, _, cx| this.set_include_uncommitted(next, cx)
-                        }))
-                        .child(probe(&self.env.regions, Region::Changes("toggle"))),
-                    )
-                    .children(self.render_freshness(theme, tokens))
-                    .child(
-                        ui::Button::new("changes-refresh", "Refresh", theme, tokens)
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _, cx| this.reload(cx)))
-                            .child(probe(&self.env.regions, Region::Changes("refresh"))),
+                        .on_click(cx.listener(|this, _, _, cx| this.reload(cx)))
+                        .child(probe(&self.env.regions, Region::Changes("refresh"))),
                     )
                     .child(
                         // The Finish panel has its own Finish button: while it is open this one is
@@ -1038,27 +1079,24 @@ impl ChangesView {
             .into_any_element()
     }
 
-    /// The chip that says how current the list is; it turns to a warning when a refresh failed.
-    /// Its tooltip has the absolute time of the last read, and the reason of a failure.
+    /// What the toolbar says of the age of the list: nothing while it is current (the Refresh
+    /// button's tooltip has it), and a warning when a refresh failed. Its tooltip has the
+    /// absolute time of the last read and the reason.
     fn render_freshness(&self, theme: &Theme, tokens: &Tokens) -> Option<AnyElement> {
         let refreshed = self.refreshed_ms?;
+        let error = self.refresh_error.as_ref()?;
         let text = self.freshness_text(hutan_client::time::now_ms())?;
-        let failed = self.refresh_error.is_some();
-        let mut tip = format!(
-            "Last read {}",
+        let tip = SharedString::from(format!(
+            "{error}\nLast read {}",
             hutan_client::time::local_time_seconds_text(refreshed)
-        );
-        if let Some(error) = &self.refresh_error {
-            tip = format!("{error}\n{tip}");
-        }
-        let tip = SharedString::from(tip);
+        ));
         Some(
             div()
                 .id("changes-freshness")
                 .relative()
                 .flex_none()
                 .text_size(px(tokens.secondary_font_size))
-                .text_color(if failed { theme.warning } else { theme.muted })
+                .text_color(theme.warning)
                 .tooltip(move |_, cx| cx.new(|_| super::style::TextTooltip(tip.clone())).into())
                 .child(SharedString::from(text))
                 .child(probe(&self.env.regions, Region::Changes("freshness")))
@@ -1307,9 +1345,30 @@ impl ChangesView {
                 continue;
             }
             let (mark, color) = status_mark(file.status, theme);
-            // staged / unstaged / both: a neutral pill, never a warning colour (a state word is
-            // text, and "unstaged" is not an alarm).
-            let index_chip = index_mark(file).map(|text| ui::pill(text, theme, tokens));
+            // staged / unstaged / both: a 14 px glyph with the word in its tooltip (a state is
+            // not a pill that doubles the row's marks): a check for staged, a dot in the
+            // warning colour while something is left unstaged.
+            let index_glyph = index_mark(file).map(|word| {
+                let (icon, tone, tip) = match word {
+                    "staged" => (crate::icons::Icon::StateCompleted, theme.success, "Staged"),
+                    "unstaged" => (crate::icons::Icon::VcsDirty, theme.warning, "Unstaged"),
+                    _ => (
+                        crate::icons::Icon::VcsDirty,
+                        theme.warning,
+                        "Staged and unstaged changes",
+                    ),
+                };
+                div()
+                    .id(SharedString::from(format!("changes-index-glyph-{index}")))
+                    .flex_none()
+                    .w(px(14.0))
+                    .text_color(tone)
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| super::style::TextTooltip(SharedString::from(tip)))
+                            .into()
+                    })
+                    .child(crate::icons::glyph(icon))
+            });
             let selected = self.selected.as_deref() == Some(file.path.as_str());
             let path = file.path.clone();
             let name = match &file.old_path {
@@ -1321,19 +1380,30 @@ impl ChangesView {
                 Some(FilePatch::Ready { diff, .. }) => diff.first_changed_line(),
                 _ => None,
             };
+            // Shown on hover (and on the selected row), so a list of files is not a list of
+            // buttons.
+            let row_group = SharedString::from(format!("changes-row-{index}"));
             let open = (file.status != DiffStatus::Deleted).then(|| {
-                self.open_button(
+                let button = self.open_button(
                     SharedString::from(format!("changes-open-{index}")),
                     &file.path,
                     first_line,
                     Region::ChangesOpen(index),
                     theme,
                     tokens,
-                )
+                );
+                div()
+                    .flex_none()
+                    .when(!selected, |s| {
+                        s.opacity(0.0)
+                            .group_hover(row_group.clone(), |s| s.opacity(1.0))
+                    })
+                    .child(button)
             });
             list = list.child(
                 div()
                     .id(SharedString::from(format!("changes-file-{index}")))
+                    .group(SharedString::from(format!("changes-row-{index}")))
                     .relative()
                     .flex()
                     .items_center()
@@ -1354,7 +1424,7 @@ impl ChangesView {
                             .truncate()
                             .child(SharedString::from(name)),
                     )
-                    .children(index_chip)
+                    .children(index_glyph)
                     .child(if file.binary {
                         div()
                             .flex_none()

@@ -85,7 +85,8 @@ mod worktrees;
 pub use agents::{AgentPicker, CODEX, Models};
 pub use changes::{
     ChangesEvent, ChangesView, CleanupDefault, DeliveryForm, IndexFilter, Mark, ReviewComment,
-    Selection, SendTarget, SnippetLine, StepTone, finish_step_lines, hunk_ranges, index_mark,
+    Scope, Selection, SendTarget, SnippetLine, StepTone, finish_step_lines, hunk_ranges,
+    index_mark,
 };
 pub use daemon::{DaemonBusy, log_file as daemon_log_file};
 pub use docks::{COLLAPSE_DRAG, RESIZE_CONTEXT};

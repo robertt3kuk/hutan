@@ -368,10 +368,11 @@ fn the_changes_panel_lists_the_checkouts_again_when_the_window_comes_back(cx: &m
 }
 
 /// `UX-CHANGES-INDEX` (protocol 0.34, read-only): each uncommitted file says whether it is
-/// staged, unstaged or both, and *Staged · Unstaged · All* filters the list.
+/// staged, unstaged or both, and the toolbar's one segmented control (*Committed · All · Staged ·
+/// Unstaged*) filters the list.
 #[gpui::test]
 fn the_changes_list_marks_staged_and_unstaged_files_and_filters_them(cx: &mut TestAppContext) {
-    use hutan_desktop::workbench::{IndexFilter, index_mark};
+    use hutan_desktop::workbench::{IndexFilter, Scope, index_mark};
     let fx = Fx::new();
     fx.edit(&feature_with_zero());
     fs::write(fx.wt.join("b.txt"), "staged\n").unwrap();
@@ -404,6 +405,51 @@ fn the_changes_list_marks_staged_and_unstaged_files_and_filters_them(cx: &mut Te
     changes.update(cx, |c, cx| c.set_index_filter(IndexFilter::All, cx));
     assert_eq!(visible(cx), ["a.txt", "b.txt", "c.txt"]);
     draw(cx);
+    // The toolbar is one strip of four segments, an icon Refresh, and no age chip while the list
+    // is current; the old chips are gone.
+    let drawn = |cx: &VisualTestContext, id: &'static str| {
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Changes(id)).is_some())
+    };
+    for id in [
+        "changes-scope-committed",
+        "changes-index-all",
+        "changes-index-staged",
+        "changes-index-unstaged",
+        "refresh",
+    ] {
+        assert!(drawn(cx, id), "{id} is drawn");
+    }
+    assert!(!drawn(cx, "toggle"), "no With uncommitted chip");
+    assert!(
+        !drawn(cx, "freshness"),
+        "no `updated just now` while current"
+    );
+    // The segments drive the list.
+    let click = |cx: &mut VisualTestContext, id: &'static str| {
+        let at = view
+            .read_with(cx, |wb, _| wb.region_bounds(Region::Changes(id)))
+            .unwrap()
+            .center();
+        cx.simulate_click(at, gpui::Modifiers::none());
+    };
+    click(cx, "changes-index-staged");
+    assert_eq!(visible(cx), ["b.txt", "c.txt"]);
+    assert_eq!(
+        changes.read_with(cx, |c, _| c.scope()),
+        Scope::Index(IndexFilter::Staged)
+    );
+    click(cx, "changes-scope-committed");
+    wait_until(cx, "the committed-only list", |cx| {
+        changes.read_with(cx, |c, _| {
+            c.scope() == Scope::Committed && c.visible_files() == ["a.txt"]
+        })
+    });
+    click(cx, "changes-index-all");
+    wait_until(cx, "the full list", |cx| {
+        changes.read_with(cx, |c, _| {
+            c.scope() == Scope::Index(IndexFilter::All) && c.visible_files().len() == 3
+        })
+    });
     // Nothing was staged or unstaged by looking.
     let status = Command::new("git")
         .arg("-C")

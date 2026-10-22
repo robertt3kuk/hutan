@@ -854,10 +854,10 @@ fn the_changes_view_lists_files_and_renders_a_diff_with_folding_hunks(cx: &mut T
     );
 
     // Leaving out the uncommitted changes drops it from the list.
-    click(&view, cx, Region::Changes("toggle"));
+    click(&view, cx, Region::Changes("changes-scope-committed"));
     assert!(
         !changes.read_with(cx, |c, _| c.include_uncommitted()),
-        "the toggle was clicked"
+        "Committed was clicked"
     );
     wait_until(cx, "the committed-only list", |cx| {
         changes.read_with(cx, |c, _| !c.include_uncommitted() && c.files().len() == 2)
@@ -1422,7 +1422,14 @@ fn the_changes_toolbar_wraps_so_every_action_stays_inside_a_narrow_window(cx: &m
             c.delivery_state(cx) == Some(DeliveryState::AwaitingReview)
         })
     });
-    let names = ["accept", "request-changes", "toggle", "refresh", "finish"];
+    let names = [
+        "accept",
+        "request-changes",
+        "changes-scope-committed",
+        "changes-index-all",
+        "refresh",
+        "finish",
+    ];
     let inside = |view: &Entity<Workbench>, cx: &mut VisualTestContext, width: f32, what: &str| {
         draw(cx);
         for name in names {
@@ -1686,7 +1693,7 @@ fn the_scope_says_what_a_merge_takes_and_commit_all_brings_the_rest(cx: &mut Tes
     }
 
     // Leaving the uncommitted changes out of the list does not hide that they exist.
-    click(&view, cx, Region::Changes("toggle"));
+    click(&view, cx, Region::Changes("changes-scope-committed"));
     wait_until(cx, "the committed-only list", |cx| {
         changes.read_with(cx, |c, _| {
             c.uncommitted_files().is_empty() && c.files().len() == 2
@@ -1696,7 +1703,7 @@ fn the_scope_says_what_a_merge_takes_and_commit_all_brings_the_rest(cx: &mut Tes
     wait_until(cx, "the uncommitted section", |cx| {
         region(&view, cx, Region::Changes("scope-uncommitted")).is_some()
     });
-    click(&view, cx, Region::Changes("toggle"));
+    click(&view, cx, Region::Changes("changes-index-all"));
     wait_until(cx, "the full list", |cx| {
         changes.read_with(cx, |c, _| c.files().len() == 3)
     });
