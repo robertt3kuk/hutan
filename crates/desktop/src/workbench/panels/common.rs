@@ -13,6 +13,7 @@ use hutan_protocol::messages::SessionInfo;
 
 use crate::icons::{Icon, icon};
 use crate::sessions::{AgentBadge, AgentRecord, PlacementBadge, Presentation, Tone};
+use crate::sessions::{ScopeKind, ScopeLabel};
 use crate::theme::{Theme, Tokens};
 use crate::workbench::actions::{OpenSettingsFor, SessionMenuAt, ShowPlacementMenu};
 use crate::workbench::chat::TextInput;
@@ -481,4 +482,55 @@ pub fn panel_header_controls(title: &str, controls: Vec<AnyElement>, cx: &App) -
                 .children(controls),
         )
         .into_any_element()
+}
+
+/// What a scope chip says: the container's name, and a worktree's branch after it.
+pub fn scope_text(scope: &ScopeLabel) -> String {
+    match (&scope.kind, &scope.branch) {
+        (ScopeKind::Worktree, Some(branch)) => format!("{} · {branch}", scope.name),
+        _ => scope.name.clone(),
+    }
+}
+
+/// The small chip a scoped panel (Files, Changes, Search, Problems, the Agents rail) shows in
+/// its header: the glyph of the container's kind and its name, so a panel always says whose
+/// files, changes or problems it lists. `panel` names it for tests (`Region::Scope`).
+pub fn scope_chip(
+    scope: Option<&ScopeLabel>,
+    panel: &'static str,
+    regions: &crate::workbench::regions::Regions,
+    cx: &App,
+) -> Option<AnyElement> {
+    let scope = scope?;
+    let style = UiStyle::get(cx);
+    let (theme, tokens) = (style.theme, style.density.ui());
+    let glyph = match scope.kind {
+        ScopeKind::Home => Icon::NavHome,
+        ScopeKind::Workspace => Icon::NavWorkspace,
+        ScopeKind::Repository => Icon::NavProjectRepository,
+        ScopeKind::Folder => Icon::NavProjectFolder,
+        ScopeKind::Worktree => Icon::VcsWorktree,
+    };
+    let text = SharedString::from(scope_text(scope));
+    let tip = text.clone();
+    Some(
+        div()
+            .id(SharedString::from(format!("scope-chip-{panel}")))
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .min_w_0()
+            .max_w(px(168.0))
+            .h(px(20.0))
+            .px(px(6.0))
+            .rounded(px(tokens.radius))
+            .text_size(px(11.0))
+            .text_color(theme.muted)
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+            .child(icon(glyph, 12.0, theme.muted))
+            .child(div().min_w_0().truncate().child(text))
+            .child(probe(regions, Region::Scope(panel)))
+            .into_any_element(),
+    )
 }

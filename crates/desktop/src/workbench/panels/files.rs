@@ -39,7 +39,7 @@ use hutan_protocol::fs::{FsEntry, FsKind, FsList, FsListing};
 use hutan_protocol::worktree::WorktreeDiffRequest;
 use tokio::sync::broadcast::error::RecvError;
 
-use super::common::panel_header_with;
+use super::common::{panel_header_with, scope_chip};
 use super::files_git::GitStatus;
 use crate::icons::{Icon, icon};
 use crate::sessions::CheckoutActivity;
@@ -306,6 +306,9 @@ pub struct FilesPanel {
     env: PanelEnv,
     focus: FocusHandle,
     tree: Option<Tree>,
+    /// The tree of the root before the last switch of container: drawn (not interactive) until
+    /// the new root's first listing arrives, so a switch never flashes an empty panel.
+    stale: Option<Tree>,
     selected: Option<PathBuf>,
     /// The file of the focused tab, as last revealed.
     active_file: Option<PathBuf>,
@@ -360,6 +363,7 @@ impl FilesPanel {
             env,
             focus: cx.focus_handle(),
             tree: None,
+            stale: None,
             selected: None,
             active_file: None,
             pending_reveal: None,
@@ -388,9 +392,23 @@ impl FilesPanel {
         self.tree.as_ref().map(Tree::root)
     }
 
+    /// What the panel is about: the worktree picked in the sidebar, else the project the window
+    /// works in (the chip of its header).
+    pub fn scope(&self, cx: &gpui::App) -> Option<crate::sessions::ScopeLabel> {
+        self.env.sessions.read(cx).project_scope()
+    }
     /// The rows the tree shows now, top to bottom.
     pub fn rows(&self) -> &[Row] {
         self.tree.as_ref().map_or(&[], Tree::rows)
+    }
+
+    /// The rows to draw: the tree's, or while a switch of container waits for its first listing
+    /// the ones of the tree before it.
+    fn shown_rows(&self) -> &[Row] {
+        match (&self.stale, self.rows()) {
+            (Some(stale), []) => stale.rows(),
+            (_, rows) => rows,
+        }
     }
 
     pub fn selected(&self) -> Option<&Path> {
@@ -454,6 +472,8 @@ impl FilesPanel {
         self.selected = None;
         self.pending_reveal = None;
         let show_ignored = self.env.settings.get::<FilesPanelSettings>().show_ignored;
+        let old = self.tree.take();
+        self.stale = old.filter(|tree| !tree.rows().is_empty() && root.is_some());
         self.tree = root.map(|root| Tree::new(root, show_ignored));
         match self.tree.as_ref().map(|t| t.root().to_owned()) {
             Some(root) => {
@@ -510,6 +530,9 @@ impl FilesPanel {
         match answer {
             Ok(listing) => tree.set_listing(dir, listing),
             Err(error) => tree.set_failed(dir, crate::workbench::files::error_text(&error)),
+        }
+        if tree.root() == dir {
+            self.stale = None;
         }
         if let Some(file) = self.pending_reveal.clone() {
             self.reveal(&file, cx);
@@ -903,7 +926,7 @@ impl FilesPanel {
         let focused_row = self.selected.clone();
         let active = self.active_file.clone();
         let rows: Vec<(usize, Row)> = range
-            .filter_map(|i| self.rows().get(i).cloned().map(|row| (i, row)))
+            .filter_map(|i| self.shown_rows().get(i).cloned().map(|row| (i, row)))
             .collect();
         self.rows_rendered
             .set(self.rows_rendered.get() + rows.len());
@@ -1052,12 +1075,17 @@ impl Render for FilesPanel {
         .toggled(show_ignored)
         .on_click(cx.listener(|this, _, _, cx| this.toggle_ignored(cx)))
         .into_any_element();
-        let header = panel_header_with("Files", "panels.files", vec![eye], cx);
+        let scope = self.scope(cx);
+        let controls: Vec<AnyElement> = scope_chip(scope.as_ref(), "files", &self.env.regions, cx)
+            .into_iter()
+            .chain([eye])
+            .collect();
+        let header = panel_header_with("Files", "panels.files", controls, cx);
         let name: Option<SharedString> = self.root().and_then(|root| {
             root.file_name()
                 .map(|n| SharedString::from(n.to_string_lossy().into_owned()))
         });
-        let count = self.rows().len();
+        let count = self.shown_rows().len();
         let body: AnyElement = match (&self.tree, count) {
             (None, _) => empty_state(
                 "No project here",

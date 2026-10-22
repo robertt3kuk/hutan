@@ -194,6 +194,12 @@ impl AgentsPanel {
         self.ticks
     }
 
+    /// What the panel is about while its scope is the workspace: the container the window
+    /// shows (the chip beside the counts).
+    pub fn scope(&self, cx: &gpui::App) -> Option<crate::sessions::ScopeLabel> {
+        self.env.sessions.read(cx).container_scope()
+    }
+
     /// The records this panel lists: the settings' scope over the one presentation, in the page's
     /// order. `Session` follows the focused session, never the panel's own focus. Mawas is not
     /// an agent at work here: its own page and Today show it.
@@ -483,6 +489,18 @@ impl Render for AgentsPanel {
                     .gap(px(tokens.spacing))
                     .px(px(tokens.spacing * 3.0))
                     .pb(px(tokens.spacing))
+                    .children(
+                        (settings.scope == AgentsScope::ActiveWorkspace)
+                            .then(|| {
+                                super::common::scope_chip(
+                                    self.scope(cx).as_ref(),
+                                    "agents",
+                                    &self.env.regions,
+                                    cx,
+                                )
+                            })
+                            .flatten(),
+                    )
                     .child(
                         div()
                             .id("agents-counts")

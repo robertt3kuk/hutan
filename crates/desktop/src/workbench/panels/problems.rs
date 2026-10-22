@@ -33,7 +33,7 @@ use hutan_protocol::lsp::{
 };
 use tokio::sync::broadcast::error::RecvError;
 
-use super::common::panel_header_with;
+use super::common::{panel_header_with, scope_chip};
 use crate::icons::Icon;
 use crate::settings::{ProblemsPanelSettings, ProblemsSeverity};
 use crate::theme::DensityExt as _;
@@ -44,6 +44,7 @@ use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
 use crate::workbench::ui;
+use hutan_core::WorkspaceId;
 
 /// Height of every row (file headers and diagnostics alike: the list is uniform).
 const ROW_HEIGHT: f32 = 24.0;
@@ -260,8 +261,8 @@ pub struct ProblemsPanel {
     /// The keyboard came while the list was not read yet: its first row is selected once it is.
     select_first: bool,
     scroll: UniformListScrollHandle,
-    /// The connection state and filter the list was read for.
-    asked: Option<(ConnectionState, ProblemsSeverity)>,
+    /// The connection state, filter and container the list was read for.
+    asked: Option<(ConnectionState, ProblemsSeverity, Option<WorkspaceId>)>,
     loading: bool,
     reload_again: bool,
     generation: u64,
@@ -359,17 +360,26 @@ impl ProblemsPanel {
 
     // ---- reading --------------------------------------------------------------------------
 
+    /// What the panel is about: the container the window shows (the chip of its header).
+    pub fn scope(&self, cx: &gpui::App) -> Option<crate::sessions::ScopeLabel> {
+        self.env.sessions.read(cx).container_scope()
+    }
+
     fn filter(&self) -> ProblemsSeverity {
         self.env.settings.get::<ProblemsPanelSettings>().severity
     }
 
     /// Reads again when the connection or the filter is not the one listed.
     fn sync(&mut self, cx: &mut Context<Self>) {
-        let (state, supported) = {
+        let (state, supported, container) = {
             let store = self.env.sessions.read(cx);
-            (store.connection_state(), store.connection().supports_lsp())
+            (
+                store.connection_state(),
+                store.connection().supports_lsp(),
+                store.active_workspace_id(),
+            )
         };
-        let wanted = (state, self.filter());
+        let wanted = (state, self.filter(), container);
         if self.asked == Some(wanted) {
             return;
         }
@@ -418,6 +428,9 @@ impl ProblemsPanel {
         let connection = self.env.sessions.read(cx).connection().clone();
         let request = LspDiagnosticsRequest {
             min_severity: min_severity(self.filter()),
+            // The servers that serve the container the window shows; the list on screen stays
+            // until the answer for the new one arrives.
+            workspace_id: self.env.sessions.read(cx).active_workspace_id(),
             ..LspDiagnosticsRequest::default()
         };
         // The servers' reasons and languages come from `lsp.status`; without it the lines
@@ -897,7 +910,13 @@ impl Render for ProblemsPanel {
         .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
         .child(probe(&self.env.regions, Region::Problems("refresh")))
         .into_any_element();
-        let header = panel_header_with("Problems", "panels.problems", vec![severity, refresh], cx);
+        let scope = self.scope(cx);
+        let controls: Vec<AnyElement> =
+            scope_chip(scope.as_ref(), "problems", &self.env.regions, cx)
+                .into_iter()
+                .chain([severity, refresh])
+                .collect();
+        let header = panel_header_with("Problems", "panels.problems", controls, cx);
 
         let starting = self.still_starting();
         let (summary, note) = match &self.problems {

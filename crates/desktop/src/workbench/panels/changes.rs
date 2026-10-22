@@ -197,6 +197,11 @@ impl ChangesPanel {
         self.counts.get(checkout).copied()
     }
 
+    /// What the panel is about: the container the window shows (the chip of its header).
+    pub fn scope(&self, cx: &gpui::App) -> Option<crate::sessions::ScopeLabel> {
+        self.env.sessions.read(cx).container_scope()
+    }
+
     /// The listed checkouts, in the order the rows have.
     pub fn rows(&self) -> &[WorktreeInfo] {
         match &self.checkouts {
@@ -542,7 +547,20 @@ impl Render for ChangesPanel {
                             .text_color(theme.muted)
                             .child("Changes"),
                     )
-                    .child(refresh),
+                    .child(
+                        div()
+                            .flex()
+                            .min_w_0()
+                            .items_center()
+                            .gap(px(tokens.spacing))
+                            .children(super::common::scope_chip(
+                                self.scope(cx).as_ref(),
+                                "changes",
+                                &self.env.regions,
+                                cx,
+                            ))
+                            .child(refresh),
+                    ),
             )
             .children(stale)
             .child(body)

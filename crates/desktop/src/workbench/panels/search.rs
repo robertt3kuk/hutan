@@ -40,7 +40,7 @@ use hutan_client::{ConnectionState, Notice};
 use hutan_protocol::fs::{FileVersion, FsSearch, FsSearchResult, SearchHit};
 use tokio::sync::broadcast::error::RecvError;
 
-use super::common::panel_header_with;
+use super::common::{panel_header_with, scope_chip};
 use crate::icons::{Icon, icon};
 use crate::settings::SearchPanelSettings;
 use crate::theme::{DensityExt as _, Theme, Tokens};
@@ -502,6 +502,12 @@ impl SearchPanel {
     }
 
     // ---- searching ------------------------------------------------------------------------
+
+    /// What the panel is about: the worktree picked in the sidebar, else the project the window
+    /// works in (the chip of its header).
+    pub fn scope(&self, cx: &gpui::App) -> Option<crate::sessions::ScopeLabel> {
+        self.env.sessions.read(cx).project_scope()
+    }
 
     /// Follows the project the window works in: another project is searched afresh.
     fn follow_root(&mut self, cx: &mut Context<Self>) {
@@ -1816,7 +1822,12 @@ impl Render for SearchPanel {
             .on_click(cx.listener(move |this, _, _, cx| this.set_replace_shown(!show_replace, cx)))
             .child(probe(&self.env.regions, Region::Search("toggle-replace")))
             .into_any_element();
-        let header = panel_header_with("Search", "panels.search", vec![replace_toggle], cx);
+        let scope = self.scope(cx);
+        let controls: Vec<AnyElement> = scope_chip(scope.as_ref(), "search", &self.env.regions, cx)
+            .into_iter()
+            .chain([replace_toggle])
+            .collect();
+        let header = panel_header_with("Search", "panels.search", controls, cx);
 
         let toggles = vec![
             self.render_toggle(
