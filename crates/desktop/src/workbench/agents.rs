@@ -65,6 +65,8 @@ pub struct AgentPicker {
     /// The model the chat runs now, and for a direct chat its provider: the row marked current.
     pub current: Option<String>,
     pub current_provider: Option<String>,
+    /// The list's scroll: the cursor's row is kept in view (the model in use may be far down).
+    pub scroll: gpui::ScrollHandle,
 }
 
 impl AgentPicker {
@@ -97,6 +99,24 @@ impl AgentPicker {
             .position(|row| row.current)
             .or_else(|| rows.iter().position(|row| row.model.is_default))
             .unwrap_or(0)
+    }
+
+    /// Scrolls the list so the cursor's row shows. The list's children are the rows with a
+    /// header before each provider's group (as [`Workbench::render_agent_picker`] draws them).
+    pub(crate) fn reveal_selected(&self) {
+        let mut child = 0;
+        let mut group = None;
+        for (index, row) in self.rows().into_iter().enumerate() {
+            if row.group.is_some() && group.as_ref() != Some(&row.group) {
+                child += 1;
+            }
+            group = Some(row.group);
+            if index == self.selected {
+                self.scroll.scroll_to_item(child);
+                return;
+            }
+            child += 1;
+        }
     }
 
     /// The model a new chat would start with.
@@ -402,6 +422,7 @@ impl Workbench {
                 .map(|chat| chat.model.clone())
                 .filter(|m| !m.is_empty()),
             current_provider: running.and_then(|chat| chat.provider_id),
+            scroll: gpui::ScrollHandle::new(),
         });
         window.focus(&self.agent_focus, cx);
         self.edits.agent.reset();
@@ -491,6 +512,7 @@ impl Workbench {
         {
             picker.models = models;
             picker.selected = picker.initial_selection();
+            picker.reveal_selected();
         }
         cx.notify();
     }
@@ -510,6 +532,7 @@ impl Workbench {
             } else {
                 picker.selected.saturating_sub(1)
             };
+            picker.reveal_selected();
             cx.notify();
         }
     }
@@ -746,6 +769,7 @@ impl Workbench {
                             div()
                                 .id("agent-model-list")
                                 .max_h(px(260.0))
+                                .track_scroll(&picker.scroll)
                                 .overflow_y_scroll()
                                 .children(models),
                         )

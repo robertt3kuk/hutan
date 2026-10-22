@@ -735,6 +735,7 @@ impl Workbench {
                 }
                 picker.models = super::agents::Models::Ready(result.models);
                 picker.selected = picker.initial_selection();
+                picker.reveal_selected();
             },
             cx,
         );
