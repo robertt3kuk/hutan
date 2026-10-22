@@ -95,7 +95,7 @@ impl Tier {
 
     fn pid(self) -> f32 {
         match self {
-            Self::Narrow => 44.0,
+            Self::Narrow => 42.0,
             Self::Medium => 52.0,
             Self::Wide => 56.0,
         }
@@ -103,7 +103,7 @@ impl Tier {
 
     fn cpu(self) -> f32 {
         match self {
-            Self::Narrow => 52.0,
+            Self::Narrow => 48.0,
             Self::Medium => 72.0,
             Self::Wide => 92.0,
         }
@@ -111,7 +111,7 @@ impl Tier {
 
     fn memory(self) -> f32 {
         match self {
-            Self::Narrow => 60.0,
+            Self::Narrow => 54.0,
             Self::Medium => 68.0,
             Self::Wide => 72.0,
         }
@@ -1074,7 +1074,8 @@ impl ResourcesPanel {
                     .when(session.is_none(), |s| s.medium())
                     .child(SharedString::from(process.name.clone())),
             );
-        if session.is_none() {
+        // Narrow: the tooltip has the description, the name has the room.
+        if session.is_none() && tier != Tier::Narrow {
             name = name.child(
                 run(index, "name.1", 4.0, regions)
                     .max_w(px(120.0))
@@ -1245,7 +1246,9 @@ impl ResourcesPanel {
                     .medium()
                     .child(SharedString::from(line.title.clone())),
             );
-        if !line.folder.is_empty() {
+        // Narrow: the tooltip has the folder and the placement, the title has the room.
+        let roomy = tier != Tier::Narrow;
+        if roomy && !line.folder.is_empty() {
             name = name.child(
                 run(index, "name.1", 4.0, regions)
                     .max_w(px(140.0))
@@ -1254,7 +1257,7 @@ impl ResourcesPanel {
                     .child(SharedString::from(line.folder.clone())),
             );
         }
-        if let Some(badge) = &line.placement {
+        if let Some(badge) = line.placement.as_ref().filter(|_| roomy) {
             let (color, text) = if badge.shared {
                 (theme.warning, badge.text.clone())
             } else {

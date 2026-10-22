@@ -743,6 +743,8 @@ fn session_lines(
 pub fn format_cpu(cpu: Option<f64>) -> String {
     match cpu {
         None => "—".to_owned(),
+        // A sum of deltas can come out as -0.0, which would read "-0.0%".
+        Some(cpu) if cpu <= 0.0 => "0.0%".to_owned(),
         Some(cpu) if cpu >= 100.0 => format!("{cpu:.0}%"),
         Some(cpu) => format!("{cpu:.1}%"),
     }
@@ -1198,6 +1200,11 @@ mod tests {
     fn figures_are_formatted_for_the_columns() {
         assert_eq!(format_cpu(None), "—");
         assert_eq!(format_cpu(Some(0.04)), "0.0%");
+        assert_eq!(
+            format_cpu(Some(-0.0)),
+            "0.0%",
+            "a sum of deltas may be negative zero"
+        );
         assert_eq!(format_cpu(Some(12.34)), "12.3%");
         assert_eq!(format_cpu(Some(250.0)), "250%");
         assert_eq!(format_memory(0), "0 MB");
