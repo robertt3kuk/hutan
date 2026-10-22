@@ -43,9 +43,9 @@ use crate::workbench::actions::{
 use crate::workbench::chat::vim::Outcome;
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
-use crate::workbench::style::{TextTooltip, UiStyle};
+use crate::workbench::style::UiStyle;
 use crate::workbench::text_field::FieldRef;
-use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _, Mascot, StyledExt as _};
+use crate::workbench::ui::{self, FocusRingExt as _, Mascot, StyledExt as _};
 use crate::workbench::view::Region;
 use crate::workbench::vim_ui::{self, FieldEdit, VimConfig};
 
@@ -1038,19 +1038,12 @@ impl AgentsPage {
                     ))),
             )
             .child(
-                ui::button(
-                    "agents-start",
-                    "Start agent…",
-                    ButtonKind::Ghost,
-                    true,
-                    &theme,
-                    &tokens,
-                )
-                .relative()
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(OpenLauncher(LauncherOpen::default())), cx);
-                })
-                .child(probe(&self.env.regions, Region::AgentsPage("start"))),
+                ui::Button::new("agents-start", "Start agent…", &theme, &tokens)
+                    .ghost()
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(OpenLauncher(LauncherOpen::default())), cx);
+                    })
+                    .child(probe(&self.env.regions, Region::AgentsPage("start"))),
             )
             .into_any_element()
     }
@@ -1096,18 +1089,12 @@ impl AgentsPage {
                     .child(SharedString::from(since)),
             )
             .child(
-                ui::button(
-                    "agents-daemon",
-                    "Daemon controls",
-                    ButtonKind::Ghost,
-                    true,
-                    &theme,
-                    &tokens,
-                )
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(Box::new(daemon::Status), cx);
-                })
-                .child(probe(&self.env.regions, Region::AgentsPage("daemon"))),
+                ui::Button::new("agents-daemon", "Daemon controls", &theme, &tokens)
+                    .ghost()
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(daemon::Status), cx);
+                    })
+                    .child(probe(&self.env.regions, Region::AgentsPage("daemon"))),
             )
             .child(probe(&self.env.regions, Region::AgentsPage("offline")))
             .into_any_element()
@@ -1118,7 +1105,6 @@ impl AgentsPage {
     /// search stays beside it, so nothing clips and nothing wraps.
     fn filter_band(&self, look: Look, searching: bool, cx: &mut Context<Self>) -> AnyElement {
         let (theme, tokens) = (look.theme, look.tokens);
-        let hover = theme.surface_hover;
         let narrow = self.layout == Layout::Narrow;
         let search = div()
             .id("agents-search")
@@ -1160,23 +1146,10 @@ impl AgentsPage {
                 &tokens,
             ))
             .child(probe(&self.env.regions, Region::AgentsPage("search")));
-        let more = div()
-            .id("agents-more")
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(28.0))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        let more = ui::IconButton::new("agents-more", Icon::ActionMore, "More", &theme, &tokens)
             .on_click(|event, window, cx| {
                 window.dispatch_action(Box::new(ShowAgentsPageMenu(event.position())), cx);
             })
-            .tooltip(|_, cx| cx.new(|_| TextTooltip("More".into())).into())
-            .child(icon(Icon::ActionMore, 16.0, theme.muted))
             .child(probe(&self.env.regions, Region::AgentsPage("more")));
         div()
             .id("agents-band")
@@ -1190,43 +1163,24 @@ impl AgentsPage {
             .border_color(theme.border)
             .when(!narrow, |s| {
                 s.child(
-                    ui::button(
-                        "agents-scope",
-                        self.scope_label(cx),
-                        ButtonKind::Ghost,
-                        true,
-                        &theme,
-                        &tokens,
-                    )
-                    .relative()
-                    .h(px(28.0))
-                    .max_w(px(200.0))
-                    .truncate()
-                    .on_click(|event, window, cx| {
-                        window.dispatch_action(Box::new(ShowAgentsScopeMenu(event.position())), cx);
-                    })
-                    .child(glyph(Icon::ActionMenuDown))
-                    .child(probe(&self.env.regions, Region::AgentsPage("scope"))),
+                    ui::Button::new("agents-scope", self.scope_label(cx), &theme, &tokens)
+                        .ghost()
+                        .max_width(200.0)
+                        .on_click(|event, window, cx| {
+                            window.dispatch_action(
+                                Box::new(ShowAgentsScopeMenu(event.position())),
+                                cx,
+                            );
+                        })
+                        .child(glyph(Icon::ActionMenuDown))
+                        .child(probe(&self.env.regions, Region::AgentsPage("scope"))),
                 )
             })
             .child(search)
             .children(self.group.map(|group| {
-                div()
-                    .id("agents-group-filter")
-                    .relative()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(4.0))
-                    .h(px(28.0))
-                    .px(px(10.0))
-                    .rounded(px(tokens.radius))
-                    .bg(theme.accent_soft)
-                    .text_size(px(tokens.secondary_font_size))
-                    .text_color(theme.fg)
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(group.label())
+                ui::Button::new("agents-group-filter", group.label(), &theme, &tokens)
+                    .ghost()
+                    .selected(true)
                     .child(glyph(Icon::ActionClose))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.group = None;
@@ -1310,40 +1264,25 @@ impl AgentsPage {
                     .flex()
                     .gap(px(8.0))
                     .child(
-                        ui::button(
-                            "agents-empty-start",
-                            "Start agent…",
-                            ButtonKind::Primary,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenLauncher(LauncherOpen::default())),
-                                cx,
-                            );
-                        })
-                        .child(probe(&self.env.regions, Region::AgentsPage("start-empty"))),
+                        ui::Button::new("agents-empty-integrations", "Agent integrations…", &theme, &tokens)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(OpenSettingsFor("integrations".to_owned())),
+                                    cx,
+                                );
+                            })
+                            .child(probe(&self.env.regions, Region::AgentsPage("integrations"))),
                     )
                     .child(
-                        ui::button(
-                            "agents-empty-integrations",
-                            "Agent integrations…",
-                            ButtonKind::Secondary,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenSettingsFor("integrations".to_owned())),
-                                cx,
-                            );
-                        })
-                        .child(probe(&self.env.regions, Region::AgentsPage("integrations"))),
+                        ui::Button::new("agents-empty-start", "Start agent…", &theme, &tokens)
+                            .primary()
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(OpenLauncher(LauncherOpen::default())),
+                                    cx,
+                                );
+                            })
+                            .child(probe(&self.env.regions, Region::AgentsPage("start-empty"))),
                     ),
             )
             .into_any_element();
@@ -1382,33 +1321,22 @@ impl AgentsPage {
                     .flex()
                     .gap(px(8.0))
                     .child(
-                        ui::button(
-                            "agents-clear-filters",
-                            "Clear filters",
-                            ButtonKind::Secondary,
-                            true,
-                            &theme,
-                            &tokens,
-                        )
-                        .relative()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.query.clear();
-                            this.group = None;
-                            cx.notify();
-                        }))
-                        .child(probe(&self.env.regions, Region::AgentsPage("clear"))),
+                        ui::Button::new("agents-clear-filters", "Clear filters", &theme, &tokens)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.query.clear();
+                                this.group = None;
+                                cx.notify();
+                            }))
+                            .child(probe(&self.env.regions, Region::AgentsPage("clear"))),
                     )
                     .when(self.scope != Scope::All, |s| {
                         s.child(
-                            ui::button(
+                            ui::Button::new(
                                 "agents-show-all",
                                 "Show all workspaces",
-                                ButtonKind::Secondary,
-                                true,
                                 &theme,
                                 &tokens,
                             )
-                            .relative()
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.scope = Scope::All;
                                 cx.notify();

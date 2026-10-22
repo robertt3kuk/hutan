@@ -7,7 +7,6 @@ use gpui::{
     ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px,
 };
 use hutan_core::SessionId;
-use hutan_core::agent::PermissionOptionKind;
 
 use super::{AgentsPage, Layout, Look};
 use crate::icons::{Icon, glyph, icon};
@@ -22,7 +21,7 @@ use crate::workbench::panels::common::{
 };
 use crate::workbench::render::probe;
 use crate::workbench::style::TextTooltip;
-use crate::workbench::ui::{self, ButtonKind, FocusRingExt as _};
+use crate::workbench::ui::{self, FocusRingExt as _};
 use crate::workbench::view::Region;
 
 /// A fixed-width column of the wide layout.
@@ -321,19 +320,13 @@ impl AgentsPage {
         // ---- the actions: the main one, and More ----
         let show_primary = layout != Layout::Narrow || selected;
         let primary_button = show_primary.then(|| {
-            ui::button(
+            ui::Button::new(
                 SharedString::from(format!("agents-primary-{session}")),
                 primary.label(),
-                ButtonKind::Secondary,
-                true,
                 &theme,
                 &tokens,
             )
-            .relative()
-            .h(px(28.0))
-            .when(primary == Primary::ReviewRequest, |s| {
-                s.when(reviewing, |s| s.bg(theme.accent_soft))
-            })
+            .selected(primary == Primary::ReviewRequest && reviewing)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select_session_row(session);
                 match primary {
@@ -346,34 +339,27 @@ impl AgentsPage {
                 Region::AgentAction(session, "primary"),
             ))
         });
-        let more = div()
-            .id(SharedString::from(format!("agents-more-{session}")))
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(28.0))
-            .rounded(px(tokens.radius))
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                this.select_session_row(session);
-                window.dispatch_action(
-                    Box::new(ShowAgentMenu(SessionMenuAt {
-                        session: session.to_string(),
-                        position: event.position(),
-                    })),
-                    cx,
-                );
-            }))
-            .tooltip(|_, cx| cx.new(|_| TextTooltip("More".into())).into())
-            .child(icon(Icon::ActionMore, 16.0, theme.muted))
-            .child(probe(
-                &self.env.regions,
-                Region::AgentAction(session, "more"),
-            ));
+        let more = ui::IconButton::new(
+            SharedString::from(format!("agents-more-{session}")),
+            Icon::ActionMore,
+            "More",
+            &theme,
+            &tokens,
+        )
+        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+            this.select_session_row(session);
+            window.dispatch_action(
+                Box::new(ShowAgentMenu(SessionMenuAt {
+                    session: session.to_string(),
+                    position: event.position(),
+                })),
+                cx,
+            );
+        }))
+        .child(probe(
+            &self.env.regions,
+            Region::AgentAction(session, "more"),
+        ));
         let actions = div()
             .id(SharedString::from(format!("agents-actions-{session}")))
             .flex()
@@ -552,23 +538,13 @@ impl AgentsPage {
                     agents_text::Avail::No(why) => Some(SharedString::from(*why)),
                     agents_text::Avail::Yes => None,
                 };
-                ui::button(
-                    SharedString::from(id),
-                    label,
-                    ButtonKind::Secondary,
-                    enabled,
-                    &theme,
-                    &tokens,
-                )
-                .relative()
-                .h(px(28.0))
-                .when_some(why, |s, why| {
-                    s.tooltip(move |_, cx| cx.new(|_| TextTooltip(why.clone())).into())
-                })
-                .child(probe(
-                    &self.env.regions,
-                    Region::AgentAction(session, region),
-                ))
+                ui::Button::new(SharedString::from(id), label, &theme, &tokens)
+                    .disabled(!enabled)
+                    .when_some(why, |b, why| b.tooltip(why))
+                    .child(probe(
+                        &self.env.regions,
+                        Region::AgentAction(session, region),
+                    ))
             };
         let interrupt_button = command(
             format!("agents-interrupt-{session}"),
@@ -576,10 +552,8 @@ impl AgentsPage {
             &interrupt,
             "interrupt",
         )
-        .when(interrupt.is_yes(), |s| {
-            s.on_click(move |_, window, cx| {
-                window.dispatch_action(Box::new(InterruptSessionById(session.to_string())), cx);
-            })
+        .on_click(move |_, window, cx| {
+            window.dispatch_action(Box::new(InterruptSessionById(session.to_string())), cx);
         });
         let stop_button = command(
             format!("agents-stop-{session}"),
@@ -587,10 +561,9 @@ impl AgentsPage {
             &stop,
             "stop",
         )
-        .when(stop.is_yes(), |s| {
-            s.on_click(move |_, window, cx| {
-                window.dispatch_action(Box::new(StopSessionById(session.to_string())), cx);
-            })
+        .destructive()
+        .on_click(move |_, window, cx| {
+            window.dispatch_action(Box::new(StopSessionById(session.to_string())), cx);
         });
         div()
             .id(SharedString::from(format!("agents-details-{session}")))
@@ -629,28 +602,18 @@ impl AgentsPage {
                 let id = option.id.clone();
                 let ix = option_index;
                 option_index += 1;
-                let kind = match option.kind {
-                    PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways => {
-                        ButtonKind::Secondary
-                    }
-                    _ => ButtonKind::Ghost,
-                };
-                let button = ui::button(
+                let button = ui::Button::new(
                     SharedString::from(format!("agents-option-{session}-{ix}")),
                     SharedString::from(option.label.clone()),
-                    kind,
-                    online,
                     &theme,
                     &tokens,
                 )
-                .relative()
-                .h(px(28.0))
-                .child(probe(&self.env.regions, Region::AgentOption(session, ix)))
-                .when(online, |s| {
-                    s.on_click(cx.listener(move |this, _, _, cx| {
-                        this.answer(session, approval, id.clone(), cx);
-                    }))
-                });
+                .kind(ui::approval_button_kind(option.kind))
+                .disabled(!online)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.answer(session, approval, id.clone(), cx);
+                }))
+                .child(probe(&self.env.regions, Region::AgentOption(session, ix)));
                 buttons.push(button.into_any_element());
             }
             blocks.push(
@@ -686,15 +649,12 @@ impl AgentsPage {
                             .child(SharedString::from(format!("Question: {}", ask.title))),
                     )
                     .child(
-                        ui::button(
+                        ui::Button::new(
                             SharedString::from(format!("agents-answer-{session}")),
                             "Answer question",
-                            ButtonKind::Secondary,
-                            true,
                             &theme,
                             &tokens,
                         )
-                        .h(px(28.0))
                         .on_click(cx.listener(
                             move |this, _, window, cx| {
                                 this.open_session(session, window, cx);

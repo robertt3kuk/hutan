@@ -133,6 +133,7 @@ pub struct Button {
     block: bool,
     focus: Option<FocusHandle>,
     ring: bool,
+    max_width: Option<f32>,
     on_click: Option<ClickHandler>,
     children: Vec<AnyElement>,
     theme: Theme,
@@ -173,6 +174,7 @@ impl Button {
             block: false,
             focus: None,
             ring: false,
+            max_width: None,
             on_click: None,
             children: Vec::new(),
             theme: *theme,
@@ -264,6 +266,12 @@ impl Button {
         self
     }
 
+    /// The widest the button gets, in px; a longer label is cut with "…" (a workspace name).
+    pub fn max_width(mut self, width: f32) -> Self {
+        self.max_width = Some(width);
+        self
+    }
+
     pub fn on_click(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -296,6 +304,7 @@ impl RenderOnce for Button {
             focus,
             ring,
             on_click,
+            max_width,
             children,
             theme,
             tokens,
@@ -372,6 +381,9 @@ impl RenderOnce for Button {
         if block {
             button = button.w_full();
         }
+        if let Some(width) = max_width {
+            button = button.max_w(px(width)).min_w_0();
+        }
         if inert {
             button = button.cursor_default();
         }
@@ -405,6 +417,7 @@ impl RenderOnce for Button {
             })
             .child(
                 div()
+                    .when(max_width.is_some(), |s| s.min_w_0().truncate())
                     .when(loading && !leading_icon, |s| s.opacity(0.6))
                     .child(label),
             )
