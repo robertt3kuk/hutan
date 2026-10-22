@@ -28,6 +28,7 @@ use hutan_buffer::{Applied, Bias, Buffer, LineEnding, Selections, Text, Transact
 use hutan_syntax::{Language, Syntax, SyntaxStats, SyntaxView};
 
 use crate::agent::{self, AgentChanges, AgentHunk};
+use crate::diagnostics::{self, Diagnostic, DiagnosticCounts, DiagnosticInput};
 use crate::rules::IndentUnit;
 
 /// Typing that pauses longer than this starts a new undo step.
@@ -168,6 +169,10 @@ pub struct FileBuffer {
     agent_task: Option<Task<()>>,
     /// The span of the text the last reload changed (in the text after it).
     last_reload: Option<Range<usize>>,
+    /// E-12a: what the language servers found, where it is in the text now (sorted).
+    diagnostics: Arc<[Diagnostic]>,
+    /// Bumped every time a server publishes a new set.
+    diagnostics_epoch: u64,
     /// Wakes the views when the parser published a tree.
     published: Arc<Mutex<mpsc::Sender<()>>>,
     _repaint: Task<()>,
@@ -220,6 +225,8 @@ impl FileBuffer {
             agent_highlight: true,
             agent_task: None,
             last_reload: None,
+            diagnostics: Arc::from(Vec::new()),
+            diagnostics_epoch: 0,
             published: Arc::new(Mutex::new(sender)),
             _repaint: repaint,
         }
@@ -358,6 +365,11 @@ impl FileBuffer {
         self.syntax = None;
         self.sync_syntax();
         self.last_reload = None;
+        // Positions of another text mean nothing; the next publish brings them back.
+        if !self.diagnostics.is_empty() {
+            self.diagnostics = Arc::from(Vec::new());
+            self.diagnostics_epoch += 1;
+        }
         self.schedule_agent_diff(None, cx);
         cx.notify();
     }
@@ -564,6 +576,9 @@ impl FileBuffer {
     ) -> bool {
         self.version += 1;
         self.map_agent_hunks(&applied.transaction);
+        if !self.diagnostics.is_empty() {
+            self.diagnostics = Arc::from(diagnostics::map(&self.diagnostics, &applied.transaction));
+        }
         let mut fed = true;
         if let Some(syntax) = &self.syntax {
             match hutan_syntax::edits_of_transaction(before, &applied.transaction) {
@@ -810,6 +825,47 @@ impl FileBuffer {
         state.computed = version;
         state.heavy = heavy;
         cx.notify();
+    }
+
+    // ---- diagnostics (E-12a) ---------------------------------------------------------------
+
+    /// A server published the file's diagnostics: `inputs` replace the set (an empty list
+    /// clears it). Positions are placed in the current text; the views draw them at their next
+    /// frame.
+    pub fn set_diagnostics(&mut self, inputs: Vec<DiagnosticInput>, cx: &mut Context<Self>) {
+        if inputs.is_empty() && self.diagnostics.is_empty() {
+            return;
+        }
+        self.diagnostics = Arc::from(diagnostics::place(self.buffer.text(), inputs));
+        self.diagnostics_epoch += 1;
+        cx.notify();
+    }
+
+    /// The diagnostics in the current text, sorted by where they start. Between two publishes
+    /// they follow the edits.
+    pub fn diagnostics(&self) -> Arc<[Diagnostic]> {
+        self.diagnostics.clone()
+    }
+
+    /// Bumped at every publish (tests, the B16b budget).
+    pub fn diagnostics_epoch(&self) -> u64 {
+        self.diagnostics_epoch
+    }
+
+    pub fn diagnostic_counts(&self) -> DiagnosticCounts {
+        DiagnosticCounts::of(&self.diagnostics)
+    }
+
+    /// The diagnostics about byte `offset`, the most serious first.
+    pub fn diagnostics_at(&self, offset: usize) -> Vec<Diagnostic> {
+        let mut found: Vec<Diagnostic> = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.touches(offset))
+            .cloned()
+            .collect();
+        found.sort_by_key(|d| d.severity);
+        found
     }
 
     // ---- syntax ----------------------------------------------------------------------------

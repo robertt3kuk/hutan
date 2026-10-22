@@ -27,16 +27,23 @@
 //!   rebased over the user's own edits, then diffed against the text), drawn as a tint and a
 //!   gutter bar, rejected one at a time as an undoable edit, recomputed in the background after
 //!   edits (less often for large or minified files).
+//! - Language servers (E-12a): diagnostics on the buffer ([`Diagnostic`], anchored to the text
+//!   until the next publish) drawn with an underline style and a gutter glyph shape per
+//!   severity and the caret line's message after its end; the hover popover ([`HoverState`]);
+//!   `gd` / ⌘-click / F12, `]d` `[d` / F8, `K`, and `⌃O` back across files. The owner talks to
+//!   the daemon ([`CodeViewEvent::HoverRequested`], [`CodeViewEvent::GoToDefinition`]).
 //!
 //! GPUI is linked here (a UI crate, ADR 0010); the text model and the parser are GPUI-free.
 
 pub mod actions;
 pub mod agent;
 mod buffer;
+pub mod diagnostics;
 mod editing;
 mod element;
 pub mod ex;
 mod find;
+mod hover;
 mod input;
 mod layout;
 mod modal;
@@ -48,6 +55,12 @@ mod vim_host;
 
 pub use actions::*;
 pub use agent::{AgentChanges, AgentHunk, AgentLabel, HunkKind};
+pub use diagnostics::{
+    Diagnostic, DiagnosticCounts, DiagnosticInput, DrawnDiagnostic, GlyphShape, Severity,
+    UnderlineStyle,
+};
+pub use hover::{HOVER_DELAY, HoverBlock, HoverSource, HoverState, markdown_blocks};
+pub use hutan_buffer::Utf16Point;
 pub use buffer::{
     BufferEdited, Coalesce, Conflict, EditKind, FailReason, FileBuffer, LoadState,
     TYPING_GROUP_PAUSE, file_name, language_label,

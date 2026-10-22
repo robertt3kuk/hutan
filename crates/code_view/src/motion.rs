@@ -216,9 +216,10 @@ impl CodeView {
         self.after_selecting(cx);
     }
 
-    /// Escape: ends a composition first; else one caret (the primary) without a selection.
+    /// Escape: ends a composition first, then closes the hover popover; else one caret (the
+    /// primary) without a selection.
     pub(crate) fn cancel(&mut self, cx: &mut Context<Self>) {
-        if self.end_composition(cx) {
+        if self.end_composition(cx) || self.dismiss_hover(cx) {
             return;
         }
         let primary = self.selections.primary();

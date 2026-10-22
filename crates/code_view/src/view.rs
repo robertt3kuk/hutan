@@ -32,7 +32,8 @@ pub const OVERSCAN_LINES: usize = 0;
 /// Most lines one column selection (⌥⇧-drag) spans.
 pub const MAX_COLUMN_LINES: usize = 10_000;
 
-/// What happened to a view that its owner may show (the status bar's position).
+/// What happened to a view that its owner may show (the status bar's position) or answer (the
+/// language server's part of hover and go to definition).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodeViewEvent {
     /// The selections, the Vim state or the find state changed.
@@ -43,6 +44,22 @@ pub enum CodeViewEvent {
     /// `:` in Vim's Normal or Visual mode: the owner opens the command line (`visual`: with
     /// the range `'<,'>` of the selection that just ended).
     CommandLine { visual: bool },
+    /// The hover popover opened at byte `offset`: the owner asks the language server and
+    /// answers with [`CodeView::set_hover_text`].
+    HoverRequested { offset: usize },
+    /// Go to the definition of the symbol at byte `offset` (⌘-click, `gd`, F12).
+    GoToDefinition { offset: usize },
+    /// Go back to where the last jump into this file came from (`⌃O` at the start of the
+    /// view's own jumps, or without Vim).
+    GoBack,
+}
+
+/// Where a pending reveal puts the caret: a 1-based line and column in characters (`hutan
+/// open`, ⌘P), or an LSP position (zero-based line, UTF-16 column).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reveal {
+    Column { line: usize, column: Option<usize> },
+    Utf16 { line: usize, character: usize },
 }
 
 /// What a drag extends: characters, words (a double click), lines (a triple click) or a block of
@@ -89,6 +106,11 @@ pub struct ViewStats {
     pub last_shaped: usize,
     /// Lines the last frame drew.
     pub last_lines: Range<usize>,
+    /// The diagnostics the last frame drew (E-12a).
+    pub last_diagnostics: Vec<crate::diagnostics::DrawnDiagnostic>,
+    /// The buffer's diagnostics epoch the frames drew last, and the first frame that drew it
+    /// (the B16b budget: a publish reaches the screen in the next frame).
+    pub diagnostics_drawn: Option<(u64, u64)>,
 }
 
 /// When content first reached the screen (benchmarks B11a/c).
@@ -180,9 +202,8 @@ pub struct CodeView {
     drag: Option<Drag>,
     pub(crate) find: FindState,
     find_task: Option<Task<()>>,
-    /// A line to bring into view as soon as the text and the geometry are known (1-based line,
-    /// optional 1-based column).
-    reveal: Option<(usize, Option<usize>)>,
+    /// A line to bring into view as soon as the text and the geometry are known.
+    reveal: Option<Reveal>,
     /// Bring the primary caret into view at the next frame (it moved before a layout existed).
     pub(crate) autoscroll: bool,
     pub(crate) layout: Option<Layout>,
@@ -204,6 +225,15 @@ pub struct CodeView {
     /// The `:s` / `:g` that is searching, and its cancel flag.
     pub(crate) ex_task: Option<Task<()>>,
     pub(crate) ex_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// The hover popover while it shows (`hover.rs`).
+    pub(crate) hover: Option<crate::hover::HoverState>,
+    /// The rest of the pointer that opens the popover.
+    pub(crate) hover_task: Option<Task<()>>,
+    /// The byte the pointer rests on.
+    pub(crate) hover_pointer: Option<usize>,
+    /// The view was reached by a jump from another file (go to definition) when Vim had
+    /// pushed this many jumps: `⌃O` goes back there until Vim jumps on its own.
+    pub(crate) jump_arrival: Option<u64>,
     _observe: Subscription,
     _edits: Subscription,
     /// Focus-out and window-activation watchers, made at the first render (they need the
@@ -274,6 +304,10 @@ impl CodeView {
             show_numbers: true,
             ex_task: None,
             ex_cancel: None,
+            hover: None,
+            hover_task: None,
+            hover_pointer: None,
+            jump_arrival: None,
             _observe: observe,
             _edits: edits,
             focus_watch: Vec::new(),
@@ -395,6 +429,10 @@ impl CodeView {
         if !self.find.query.text.is_empty() && self.searched_version < event.version {
             self.search(SearchMode::Refresh, cx);
         }
+        // The text under the popover changed.
+        if self.hover.take().is_some() {
+            self.hover_task = None;
+        }
         cx.emit(CodeViewEvent::Changed);
         cx.notify();
     }
@@ -404,14 +442,26 @@ impl CodeView {
     /// Brings 1-based `line` (and `column`) into view, about a third from the top, once the text
     /// is in and the view has been laid out, and puts the caret there.
     pub fn reveal_line(&mut self, line: usize, column: Option<usize>, cx: &mut Context<Self>) {
-        self.reveal = Some((line.max(1), column));
+        self.reveal = Some(Reveal::Column {
+            line: line.max(1),
+            column,
+        });
         self.apply_reveal(cx);
+        cx.notify();
+    }
+
+    /// Like [`reveal_line`](Self::reveal_line) for an LSP position: zero-based `line` and
+    /// `character` in UTF-16 code units (go to definition, the Problems panel).
+    pub fn reveal_utf16(&mut self, line: usize, character: usize, cx: &mut Context<Self>) {
+        self.reveal = Some(Reveal::Utf16 { line, character });
+        self.apply_reveal(cx);
+        cx.emit(CodeViewEvent::Changed);
         cx.notify();
     }
 
     /// Applies a pending [`reveal_line`](Self::reveal_line) when it can be.
     pub(crate) fn apply_reveal(&mut self, cx: &App) {
-        let (Some((line, column)), Some(layout)) = (self.reveal, self.layout) else {
+        let (Some(reveal), Some(layout)) = (self.reveal, self.layout) else {
             return;
         };
         let buffer = self.buffer.read(cx);
@@ -419,13 +469,20 @@ impl CodeView {
             return;
         }
         let text = buffer.text();
-        let index = (line - 1).min(text.line_count().saturating_sub(1));
+        let last = text.line_count().saturating_sub(1);
+        let index = match reveal {
+            Reveal::Column { line, .. } => (line - 1).min(last),
+            Reveal::Utf16 { line, .. } => line.min(last),
+        };
         let line_h = f32::from(layout.line_height);
         let third = (layout.rows / 3) as f32 * line_h;
         self.scroll_y = (index as f32 * line_h - third).max(0.0);
         if let Ok(content) = text.line_content_range(index) {
-            let at = match column {
-                Some(column) => {
+            let at = match reveal {
+                Reveal::Column {
+                    column: Some(column),
+                    ..
+                } => {
                     let line_text = text.slice(content.clone()).unwrap_or_default();
                     let byte = line_text
                         .char_indices()
@@ -433,7 +490,13 @@ impl CodeView {
                         .map_or(line_text.len(), |(at, _)| at);
                     content.start + byte
                 }
-                None => content.start,
+                Reveal::Column { column: None, .. } => content.start,
+                Reveal::Utf16 { character, .. } => {
+                    text.utf16_point_to_byte_clamped(hutan_buffer::Utf16Point {
+                        line: index,
+                        character,
+                    })
+                }
             };
             self.selections = Selections::cursor(at);
             self.marked.clear();
@@ -658,10 +721,21 @@ impl CodeView {
             return;
         };
         let text = self.buffer.read(cx).text().clone();
+        self.dismiss_hover(cx);
         self.buffer.update(cx, |b, _| b.break_group());
         self.marked.clear();
         self.goal = None;
         let modifiers = event.modifiers;
+        if modifiers.platform && !modifiers.alt && !modifiers.shift && event.click_count == 1 {
+            // ⌘-click: the caret goes there and the owner looks up the definition.
+            let at = self.vim_click_target(&text, at);
+            self.selections = Selections::cursor(at);
+            self.drag = None;
+            cx.emit(CodeViewEvent::Changed);
+            cx.emit(CodeViewEvent::GoToDefinition { offset: at });
+            cx.notify();
+            return;
+        }
         if modifiers.alt && modifiers.shift {
             // A block of columns from here.
             if let Some((line, col)) = self.cell_at(event.position, &text) {
@@ -728,6 +802,9 @@ impl CodeView {
 
     pub(crate) fn mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
         let Some(drag) = self.drag.clone() else {
+            if event.pressed_button.is_none() {
+                self.hover_pointer_moved(event.position, cx);
+            }
             return;
         };
         if event.pressed_button != Some(MouseButton::Left) {
@@ -1192,11 +1269,30 @@ impl Render for CodeView {
             .track_focus(&self.focus)
             .size_full()
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                // Escape closes the hover popover first (Vim's Escape is no binding).
+                if event.keystroke.key == "escape"
+                    && this.marked.is_empty()
+                    && this.dismiss_hover(cx)
+                {
+                    cx.stop_propagation();
+                    return;
+                }
                 if this.vim_key_down(event, cx) {
                     cx.stop_propagation();
                 }
             }));
-        crate::actions::register(root, cx).child(CodeElement::new(cx.entity()))
+        // A popover `K` opened is about the caret's place: a caret that moved closes it.
+        if self.hover.as_ref().is_some_and(|h| {
+            h.source == crate::hover::HoverSource::Caret
+                && !h.word.contains(&self.selections.primary().head)
+                && h.offset != self.selections.primary().head
+        }) {
+            self.hover = None;
+        }
+        let hover = self.render_hover(cx);
+        crate::actions::register(root, cx)
+            .child(CodeElement::new(cx.entity()))
+            .children(hover)
     }
 }
 

@@ -375,15 +375,84 @@ impl CodeView {
                 return true;
             }
         }
-        let idle = self
+        let pending = self
             .vim
             .as_ref()
-            .is_some_and(|v| v.vim.pending_keys().is_empty());
+            .map(|v| v.vim.pending_keys())
+            .unwrap_or_default();
+        let idle = pending.is_empty();
         if mode != Mode::Insert && key == Key::Char(':') && idle {
             self.open_command_line(cx);
             return true;
         }
-        self.vim_key(key, cx) == Outcome::Handled
+        if mode == Mode::Normal && self.language_key(&pending, key, cx) {
+            return true;
+        }
+        if mode == Mode::Normal && idle && key == Key::Ctrl('o') && self.jump_back_first(cx) {
+            return true;
+        }
+        let head = self.selections.primary().head;
+        let handled = self.vim_key(key, cx) == Outcome::Handled;
+        if mode == Mode::Normal
+            && idle
+            && key == Key::Ctrl('o')
+            && self.jump_arrival.is_some()
+            && self.selections.primary().head == head
+        {
+            // Vim's own jumps in this file are used up: on to the file the jump came from.
+            cx.emit(CodeViewEvent::GoBack);
+        }
+        handled
+    }
+
+    /// The keys of the language server in Normal mode (E-12a): `K` shows the hover popover at
+    /// the caret, `gd` goes to the definition, `]d` / `[d` to the next / previous diagnostic
+    /// (a count before them is ignored). `pending` is what Vim holds of the command so far.
+    fn language_key(&mut self, pending: &str, key: Key, cx: &mut Context<Self>) -> bool {
+        let prefix = pending.trim_start_matches(|c: char| c.is_ascii_digit());
+        match (prefix, key) {
+            ("", Key::Char('K')) if pending.is_empty() => {
+                self.show_hover_at_caret(cx);
+                true
+            }
+            ("g", Key::Char('d')) => {
+                // Vim drops the `g` it holds.
+                self.vim_key(Key::Escape, cx);
+                let offset = self.selections.primary().head;
+                cx.emit(CodeViewEvent::GoToDefinition { offset });
+                true
+            }
+            ("]", Key::Char('d')) | ("[", Key::Char('d')) => {
+                self.vim_key(Key::Escape, cx);
+                self.step_diagnostic(prefix == "]", cx);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `⌃O` right after a jump from another file (Vim pushed no jump of its own since): back to
+    /// that file. Returns whether it went.
+    fn jump_back_first(&mut self, cx: &mut Context<Self>) -> bool {
+        let count = self.vim.as_ref().map(|v| v.vim.jump_count());
+        match (self.jump_arrival, count) {
+            (Some(arrival), Some(count)) if arrival == count => {
+                cx.emit(CodeViewEvent::GoBack);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// A jump in the file that Vim did not make (go to definition): where the caret is becomes
+    /// the newest entry of Vim's jumplist, so `⌃O` comes back to it. Nothing without Vim.
+    pub(crate) fn vim_push_jump(&mut self, cx: &mut Context<Self>) {
+        self.with_vim(cx, |state, host, _| state.vim.push_jump(host));
+    }
+
+    /// How many jumps Vim pushed so far (`None` without Vim).
+    pub(crate) fn vim_jump_count(&self) -> Option<u64> {
+        self.vim.as_ref().map(|v| v.vim.jump_count())
     }
 
     /// `:` in Normal or Visual: Visual ends (its lines become `'<` and `'>`) and the owner opens

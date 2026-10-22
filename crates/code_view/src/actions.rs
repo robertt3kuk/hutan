@@ -133,6 +133,16 @@ gpui::actions!(
         /// Scroll to the agent's newest change whenever it writes the file (the owner keeps the
         /// toggle).
         ToggleFollowAgent,
+        /// Go to the definition of the symbol at the caret (the owner asks the language server).
+        GoToDefinition,
+        /// Show the hover popover at the caret: its diagnostics and the language server's text.
+        ShowHover,
+        /// Go to the next diagnostic (wrapping around).
+        NextDiagnostic,
+        /// Go to the previous diagnostic (wrapping around).
+        PreviousDiagnostic,
+        /// Go back to where the last jump (go to definition) came from.
+        GoBack,
     ]
 );
 
@@ -207,5 +217,10 @@ pub(crate) fn register(root: Stateful<Div>, cx: &mut Context<CodeView>) -> State
     let root = run!(root, Redo, redo);
     // `RejectAgentHunk` is the owner's: it may save the file after it.
     let root = run!(root, NextAgentHunk, next_agent_hunk);
-    run!(root, PreviousAgentHunk, previous_agent_hunk)
+    let root = run!(root, PreviousAgentHunk, previous_agent_hunk);
+    let root = run!(root, GoToDefinition, go_to_definition_at_caret);
+    let root = run!(root, ShowHover, show_hover_at_caret);
+    let root = run!(root, NextDiagnostic, next_diagnostic);
+    let root = run!(root, PreviousDiagnostic, previous_diagnostic);
+    root.on_action(cx.listener(|_, _: &GoBack, _, cx| cx.emit(crate::CodeViewEvent::GoBack)))
 }

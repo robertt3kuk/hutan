@@ -2,7 +2,9 @@
 //! intersect the view (and only those: a frame never lays out the whole file), syntax colors,
 //! selections, carets, the input method's marked text, the matching bracket and find matches,
 //! an agent's changes (E-10: a tint over the lines and a bar in the gutter, a mark where lines
-//! were removed); the mouse; and the platform's text input while the view has the keyboard.
+//! were removed), diagnostics (E-12a: an underline whose style and a gutter glyph whose shape
+//! say the severity, and the caret line's message after its end); the mouse; and the
+//! platform's text input while the view has the keyboard.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -11,15 +13,16 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::{
-    App, Bounds, ContentMask, CursorStyle, DispatchPhase, Element, ElementId, ElementInputHandler,
-    Entity, Focusable as _, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
-    IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent,
-    ShapedLine, SharedString, Size, Style, TextAlign, TextRun, Window, fill, point, px, relative,
-    size,
+    App, BorderStyle, Bounds, ContentMask, CursorStyle, DispatchPhase, Element, ElementId,
+    ElementInputHandler, Entity, Focusable as _, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
+    InspectorElementId, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PathBuilder, Pixels, ScrollWheelEvent, ShapedLine, SharedString, Size, Style, TextAlign,
+    TextRun, Window, fill, outline, point, px, relative, size,
 };
 use hutan_syntax::{HighlightSpan, SyntaxView};
 
 use crate::agent::HunkKind;
+use crate::diagnostics::{Diagnostic, DrawnDiagnostic, GlyphShape, Severity, UnderlineStyle};
 use crate::layout::DisplayLine;
 use crate::style::{CodeStyle, rgba};
 use crate::view::{CodeView, Layout, OVERSCAN_LINES, line_window};
@@ -71,6 +74,12 @@ struct LinePaint {
     marked: Vec<Range<f32>>,
     /// An agent's change on or above the line.
     agent: AgentMarks,
+    /// Diagnostics on the line: the columns underlined and how serious each is.
+    underlines: Vec<(Range<f32>, Severity)>,
+    /// The gutter glyph: the most serious diagnostic that starts on the line.
+    glyph: Option<Severity>,
+    /// The caret line's message, shaped, and the column it starts at.
+    hint: Option<(Rc<ShapedLine>, f32)>,
 }
 
 pub(crate) struct Prepaint {
@@ -84,6 +93,8 @@ pub(crate) struct Prepaint {
     agent_tint: Hsla,
     caret_color: Hsla,
     marked_color: Hsla,
+    /// `editor.diagnostic.error|warning|info|hint`, in [`Severity`] order.
+    diagnostic_colors: [Hsla; 4],
     scroll_x: Pixels,
     lines: Vec<LinePaint>,
     /// Whether the platform's text input goes to the view (it has the keyboard and may edit).
@@ -204,7 +215,7 @@ fn prepare(
 ) -> Prepaint {
     let style = view.style.clone();
     let (cell, line_h) = metrics(&style, window);
-    let (text, ready, editable, syntax, hunks) = {
+    let (text, ready, editable, syntax, hunks, diagnostics, diagnostics_epoch) = {
         let buffer = view.buffer().read(cx);
         (
             buffer.text().clone(),
@@ -212,17 +223,20 @@ fn prepare(
             buffer.is_editable(),
             buffer.syntax_view(),
             buffer.agent_hunks(),
+            buffer.diagnostics(),
+            buffer.diagnostics_epoch(),
         )
     };
     let line_count = if ready { text.line_count() } else { 0 };
     let digits = line_count.max(1).to_string().len().max(3);
     let previous_top = view.layout.map(|l| l.bounds.top());
-    // `:set nonumber`: a narrow gutter without numbers.
+    // `:set nonumber`: a narrow gutter without numbers. Either way it keeps room on its left
+    // for an agent's bar and a diagnostic's glyph, so the text never moves when they come.
     let numbers = view.show_numbers;
     let gutter_w = if numbers {
-        cell * (digits as f32 + 2.5)
+        cell * (digits as f32 + 3.5)
     } else {
-        cell * 1.0
+        cell * 2.0
     };
     let text_left = bounds.left() + gutter_w + cell * 0.5;
     let rows = (f32::from(bounds.size.height) / f32::from(line_h)).ceil() as usize + 1;
@@ -270,10 +284,12 @@ fn prepare(
         agent_tint: rgba(theme.agent_changed),
         caret_color: rgba(theme.cursor),
         marked_color: rgba(theme.foreground),
+        diagnostic_colors: Severity::ALL.map(|s| style.diagnostic_color(s)),
         scroll_x: px(view.scroll_x),
         lines: Vec::new(),
         input: focused && editable,
     };
+    view.stats.last_diagnostics.clear();
     if line_count == 0 {
         view.stats.last_shaped = 0;
         view.stats.last_lines = 0..0;
@@ -286,6 +302,18 @@ fn prepare(
     let shown = (rows + 2 * OVERSCAN_LINES).min(line_count - first.min(line_count));
     let lines = first..first + shown;
     let agent_marks = agent_marks(&text, &hunks, lines.clone(), theme);
+    // The diagnostics that touch a line in view (they are sorted by where they start).
+    let shown_diagnostics: Vec<&Diagnostic> = {
+        let view_start = text.line_start(lines.start).unwrap_or(0);
+        let view_end = text
+            .line_range(lines.end.saturating_sub(1))
+            .map_or(text.len(), |r| r.end);
+        let past = diagnostics.partition_point(|d| d.bytes.start <= view_end);
+        diagnostics[..past]
+            .iter()
+            .filter(|d| d.bytes.end >= view_start)
+            .collect()
+    };
     let visible_w = f32::from(bounds.right() - text_left).max(0.0);
     let from_col = ((view.scroll_x / f32::from(cell)).floor() as usize).saturating_sub(MARGIN_COLS);
     let to_col = from_col + (visible_w / f32::from(cell)).ceil() as usize + 2 * MARGIN_COLS;
@@ -515,6 +543,80 @@ fn prepare(
             .map(|m| col(m.start.max(line_range.start))..col(m.end.min(line_range.end)))
             .collect();
 
+        // Diagnostics: the columns each covers on this line, the glyph of the most serious one
+        // that starts here, and on the caret's line the most serious one's message.
+        let mut underlines = Vec::new();
+        let mut glyph: Option<Severity> = None;
+        let mut on_line: Option<&Diagnostic> = None;
+        for d in &shown_diagnostics {
+            let touches = if d.bytes.is_empty() || line_range.is_empty() {
+                d.bytes.start <= line_range.end && d.bytes.end >= line_range.start
+            } else {
+                d.bytes.start <= line_range.end && d.bytes.end > line_range.start
+            };
+            if !touches {
+                continue;
+            }
+            let clipped = d.bytes.start.max(line_range.start)..d.bytes.end.min(line_range.end);
+            underlines.push((columns(clipped, false), d.severity));
+            if d.bytes.start >= line_range.start && glyph.is_none_or(|g| d.severity < g) {
+                glyph = Some(d.severity);
+            }
+            if on_line.is_none_or(|o| d.severity < o.severity) {
+                on_line = Some(d);
+            }
+        }
+        for (index, (_, severity)) in underlines.iter().enumerate() {
+            view.stats.last_diagnostics.push(DrawnDiagnostic {
+                line,
+                severity: *severity,
+                underline: severity.underline(),
+                glyph: (index == 0).then_some(glyph).flatten().map(Severity::glyph),
+            });
+        }
+        let hint = match on_line {
+            Some(d) if head_line == Some(line) => {
+                let message: String = d.first_line().chars().take(160).collect();
+                let symbol = d.severity.symbol();
+                let label = format!("{symbol}  {message}");
+                let key = hash_of(("hint", &label, d.severity, view.style_generation));
+                let shaped = match view.numbers.get(key) {
+                    Some(hit) => hit,
+                    None => {
+                        let runs = [
+                            TextRun {
+                                len: symbol.len(),
+                                font: style.font(None),
+                                color: style.diagnostic_color(d.severity),
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            },
+                            TextRun {
+                                len: label.len() - symbol.len(),
+                                font: style.font(None),
+                                color: rgba(theme.gutter_foreground),
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            },
+                        ];
+                        let shaped = Rc::new(text_system.shape_line(
+                            SharedString::from(label),
+                            px(style.font_size),
+                            &runs,
+                            None,
+                        ));
+                        view.numbers.insert(key, shaped.clone());
+                        shaped
+                    }
+                };
+                let end_col = crate::layout::line_columns(&window_text) as f32;
+                Some((shaped, end_col + 3.0))
+            }
+            _ => None,
+        };
+
         prepaint.lines.push(LinePaint {
             y: bounds.top() + px((line - first) as f32 * line_hf - offset),
             number,
@@ -524,6 +626,9 @@ fn prepare(
             carets: if block { Vec::new() } else { carets },
             marked,
             agent: agent_marks.get(line - first).copied().unwrap_or_default(),
+            underlines,
+            glyph,
+            hint,
         });
         if prepaint.current_line.is_some()
             && head_line == Some(line)
@@ -537,6 +642,13 @@ fn prepare(
     view.stats.last_shaped = shaped;
     view.stats.lines_shaped += shaped as u64;
     view.stats.last_lines = lines;
+    if view
+        .stats
+        .diagnostics_drawn
+        .is_none_or(|(epoch, _)| epoch != diagnostics_epoch)
+    {
+        view.stats.diagnostics_drawn = Some((diagnostics_epoch, view.stats.frames));
+    }
     let now = Instant::now();
     view.times.first_text.get_or_insert(now);
     if highlighted {
@@ -740,6 +852,24 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
                     state.caret_color,
                 ));
             }
+            // Diagnostics: the style of the line says the severity as well as its color.
+            for (cols, severity) in &line.underlines {
+                let color = state.diagnostic_colors[*severity as usize];
+                let left = x_of(cols.start);
+                let right = x_of(cols.end.max(cols.start + 1.0));
+                paint_underline(
+                    window,
+                    severity.underline(),
+                    left,
+                    right,
+                    line.y + line_h,
+                    color,
+                );
+            }
+            if let Some((hint, col)) = &line.hint {
+                let origin = point(x_of(*col), line.y);
+                let _ = hint.paint(origin, line_h, TextAlign::Left, None, window, cx);
+            }
         }
     });
 
@@ -765,6 +895,93 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
                 Bounds::new(point(bar_left, line.y - px(1.5)), size(cell, px(3.0))),
                 color,
             ));
+        }
+    }
+    // Diagnostic glyphs, right of the agent's bar: a shape per severity.
+    let glyph_size = (cell * 0.85).min(line_h * 0.6);
+    let glyph_left = state.gutter.left() + px(6.0);
+    for line in &state.lines {
+        if let Some(severity) = line.glyph {
+            let top = line.y + (line_h - glyph_size) / 2.0;
+            let bounds = Bounds::new(point(glyph_left, top), size(glyph_size, glyph_size));
+            paint_glyph(
+                window,
+                severity.glyph(),
+                bounds,
+                state.diagnostic_colors[severity as usize],
+            );
+        }
+    }
+}
+
+/// An underline from `left` to `right` just above `bottom`: a wave, a row of dots or a thin
+/// line.
+fn paint_underline(
+    window: &mut Window,
+    style: UnderlineStyle,
+    left: Pixels,
+    right: Pixels,
+    bottom: Pixels,
+    color: Hsla,
+) {
+    match style {
+        UnderlineStyle::Wavy => window.paint_underline(
+            point(left, bottom - px(3.5)),
+            right - left,
+            &gpui::UnderlineStyle {
+                thickness: px(1.0),
+                color: Some(color),
+                wavy: true,
+            },
+        ),
+        UnderlineStyle::Dotted => {
+            let dot = px(1.5);
+            let mut x = left;
+            while x + dot <= right {
+                window.paint_quad(
+                    fill(Bounds::new(point(x, bottom - px(2.5)), size(dot, dot)), color)
+                        .corner_radii(dot / 2.0),
+                );
+                x += dot * 2.5;
+            }
+        }
+        UnderlineStyle::Straight => window.paint_quad(fill(
+            Bounds::from_corners(point(left, bottom - px(2.0)), point(right, bottom - px(1.0))),
+            color,
+        )),
+    }
+}
+
+/// A diagnostic's gutter glyph in `bounds`: a disc, a triangle, a diamond or a ring.
+fn paint_glyph(window: &mut Window, shape: GlyphShape, bounds: Bounds<Pixels>, color: Hsla) {
+    let (l, t, r, b) = (bounds.left(), bounds.top(), bounds.right(), bounds.bottom());
+    let mid_x = l + (r - l) / 2.0;
+    let mid_y = t + (b - t) / 2.0;
+    match shape {
+        GlyphShape::Disc => {
+            window.paint_quad(fill(bounds, color).corner_radii(bounds.size.width / 2.0));
+        }
+        GlyphShape::Ring => window.paint_quad(
+            outline(bounds, color, BorderStyle::Solid)
+                .border_widths(px(1.5))
+                .corner_radii(bounds.size.width / 2.0),
+        ),
+        GlyphShape::Triangle | GlyphShape::Diamond => {
+            let mut path = PathBuilder::fill();
+            if shape == GlyphShape::Triangle {
+                path.move_to(point(mid_x, t));
+                path.line_to(point(r, b));
+                path.line_to(point(l, b));
+            } else {
+                path.move_to(point(mid_x, t));
+                path.line_to(point(r, mid_y));
+                path.line_to(point(mid_x, b));
+                path.line_to(point(l, mid_y));
+            }
+            path.close();
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
         }
     }
 }

@@ -29,6 +29,8 @@ pub(crate) struct Marks {
     jumps: Vec<Pos>,
     /// Where `⌃O` / `⌃I` are in `jumps` (`jumps.len()` after a jump).
     index: usize,
+    /// Entries pushed so far (every jump, the first `⌃O` after one included).
+    pushed: u64,
 }
 
 /// What a mark name reads (`'a`, `''`, `'.`, …).
@@ -76,6 +78,12 @@ impl Marks {
             self.jumps.remove(0);
         }
         self.index = self.jumps.len();
+        self.pushed += 1;
+    }
+
+    /// Entries pushed so far: it grows with every jump.
+    pub fn pushed(&self) -> u64 {
+        self.pushed
     }
 
     /// `⌃O` (`count` < 0) and `⌃I` (`count` > 0) from `at`: the entry to go to, or `None`

@@ -152,6 +152,20 @@ pub enum Notice {
         root: std::path::PathBuf,
         generation: u64,
     },
+    /// A language server changed state (`lsp.state`, protocol 0.39, capability `lsp`): the
+    /// whole entry as it is now. Sent to every connection.
+    LspState {
+        server: Box<hutan_protocol::lsp::LspServerInfo>,
+    },
+    /// A server replaced the diagnostics of `path` (`lsp.diagnostics`, protocol 0.39), a
+    /// document this connection has open; an empty list clears the file. Outside the event
+    /// sequence: a client that missed one asks `lsp.diagnostics`.
+    LspDiagnostics {
+        path: std::path::PathBuf,
+        version: Option<i32>,
+        diagnostics: Vec<hutan_protocol::lsp::LspDiagnostic>,
+        truncated: bool,
+    },
 }
 
 /// Side effects of folding events into the state, for the caller to act on after publishing.
@@ -477,9 +491,20 @@ impl StoreState {
             // it from `Client::events`.
             Event::FsSearchProgress { .. } => {}
             // Language servers (protocol 0.39): the servers' state and the diagnostics of the
-            // open documents are no state of the sessions list either; whoever shows them
-            // reads `Client::events` and asks `lsp.status` / `lsp.diagnostics`.
-            Event::LspState { .. } | Event::LspDiagnosticsChanged { .. } => {}
+            // open documents are no state of the sessions list; they reach whoever shows them
+            // (the editor, the Problems panel) as notices.
+            Event::LspState { server } => effects.notices.push(Notice::LspState { server }),
+            Event::LspDiagnosticsChanged {
+                path,
+                version,
+                diagnostics,
+                truncated,
+            } => effects.notices.push(Notice::LspDiagnostics {
+                path,
+                version,
+                diagnostics,
+                truncated,
+            }),
             Event::UiCommand {
                 request_id,
                 window_id,

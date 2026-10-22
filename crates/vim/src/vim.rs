@@ -407,6 +407,19 @@ impl<H: VimHost> Vim<H> {
         self.core.marks.get(name).map(|p| p.line)
     }
 
+    /// A jump the host made itself (go to definition in the same file): where the caret is
+    /// now becomes the newest jumplist entry and `''`, so `⌃O` comes back to it.
+    pub fn push_jump(&mut self, host: &H) {
+        let at = Core::pos(host, host.cursor());
+        self.core.marks.jump_from(at);
+    }
+
+    /// Jumplist entries pushed so far: it grows with every jump (a host that moves the caret
+    /// itself can tell whether Vim jumped since).
+    pub fn jump_count(&self) -> u64 {
+        self.core.marks.pushed()
+    }
+
     /// The selected bytes in a Visual mode, from the first selected character to the end of the
     /// last (a block's whole rectangle as one range: see [`selections`](Self::selections)).
     pub fn selection(&self, host: &H) -> Option<Range<usize>> {

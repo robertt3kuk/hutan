@@ -62,6 +62,18 @@ impl CodeStyle {
             None => rgba(self.theme.foreground),
         }
     }
+
+    /// The color of a diagnostic of `severity` (`editor.diagnostic.*`): its underline and its
+    /// glyph, which differ by shape too.
+    pub fn diagnostic_color(&self, severity: crate::diagnostics::Severity) -> Hsla {
+        use crate::diagnostics::Severity;
+        rgba(match severity {
+            Severity::Error => self.theme.diagnostic_error,
+            Severity::Warning => self.theme.diagnostic_warning,
+            Severity::Info => self.theme.diagnostic_info,
+            Severity::Hint => self.theme.diagnostic_hint,
+        })
+    }
 }
 
 /// A pack color as GPUI's.

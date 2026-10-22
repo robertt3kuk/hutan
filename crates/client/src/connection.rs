@@ -1208,6 +1208,106 @@ impl Connection {
     }
 }
 
+/// Language servers (protocol 0.39, capabilities `doc.sync` and `lsp`; `docs/protocol.md`
+/// § LSP). A document belongs to the connection it was opened on: the daemon closes it when
+/// that connection ends, so [`doc_open`](Connection::doc_open) answers the
+/// [`generation`](Connection::generation) it was opened on and a caller that finds another one
+/// opens it again. `lsp.state` and `lsp.diagnostics` arrive as [`Notice::LspState`] and
+/// [`Notice::LspDiagnostics`].
+impl Connection {
+    /// True while connected to a daemon that advertised capability `doc.sync`
+    /// ([`Client::supports_doc_sync`]); false when disconnected.
+    pub fn supports_doc_sync(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_doc_sync())
+    }
+
+    /// True while connected to a daemon that advertised capability `lsp`
+    /// ([`Client::supports_lsp`]); false when disconnected.
+    pub fn supports_lsp(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_lsp())
+    }
+
+    /// `doc.open` on the current connection, with the generation it was opened on.
+    pub async fn doc_open(
+        &self,
+        req: hutan_protocol::lsp::DocOpen,
+    ) -> Result<(u64, hutan_protocol::lsp::DocOpened), ClientError> {
+        let (generation, client) = self
+            .shared
+            .client_generation()
+            .ok_or(ClientError::Disconnected)?;
+        let opened = client.doc_open(req).await?;
+        Ok((generation, opened))
+    }
+
+    /// `doc.change`: the owner's edits of an open document.
+    pub async fn doc_change(&self, req: hutan_protocol::lsp::DocChange) -> Result<(), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.doc_change(req).await
+    }
+
+    /// `doc.save`.
+    pub async fn doc_save(&self, doc_id: &str) -> Result<(), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.doc_save(doc_id).await
+    }
+
+    /// `doc.close`.
+    pub async fn doc_close(&self, doc_id: &str) -> Result<(), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.doc_close(doc_id).await
+    }
+
+    /// `lsp.status`: the servers and the folder decisions.
+    pub async fn lsp_status(
+        &self,
+        req: hutan_protocol::lsp::LspStatusRequest,
+    ) -> Result<hutan_protocol::lsp::LspStatus, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.lsp_status(req).await
+    }
+
+    /// `lsp.diagnostics`: what the servers published.
+    pub async fn lsp_diagnostics(
+        &self,
+        req: hutan_protocol::lsp::LspDiagnosticsRequest,
+    ) -> Result<hutan_protocol::lsp::LspDiagnosticsResult, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.lsp_diagnostics(req).await
+    }
+
+    /// `lsp.hover` at a position of an open document.
+    pub async fn lsp_hover(
+        &self,
+        req: hutan_protocol::lsp::LspPositionRequest,
+    ) -> Result<hutan_protocol::lsp::LspHover, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.lsp_hover(req).await
+    }
+
+    /// `lsp.definition` of the symbol at a position of an open document.
+    pub async fn lsp_definition(
+        &self,
+        req: hutan_protocol::lsp::LspPositionRequest,
+    ) -> Result<hutan_protocol::lsp::LspLocations, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.lsp_definition(req).await
+    }
+
+    /// `lsp.trust`: the user's decision about a folder (user-only).
+    pub async fn lsp_trust(
+        &self,
+        req: hutan_protocol::lsp::LspTrustRequest,
+    ) -> Result<hutan_protocol::lsp::LspTrustResult, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.lsp_trust(req).await
+    }
+}
+
 /// Body of the `hutan-client` thread.
 fn run_thread(supervisor: Supervisor) {
     let runtime = tokio::runtime::Builder::new_current_thread()
