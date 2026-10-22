@@ -166,9 +166,9 @@ fn the_history_panel_searches_filters_resumes_and_manages_the_index(cx: &mut Tes
     });
     let home = view.read_with(cx, |wb, _| wb.active_workspace()).unwrap();
 
-    // ---- it is a tab of the right sidebar's strip (the third icon; Changes shows first) -----------
+    // ---- it is a tab of the right sidebar's strip (the fourth icon, after Files; Changes shows first) -----------
     let docks = view.read_with(cx, |wb, _| wb.state().docks.clone());
-    assert_eq!(docks.right.panels.get(2), Some(&PanelId::new("history")));
+    assert_eq!(docks.right.panels.get(3), Some(&PanelId::new("history")));
     assert_eq!(docks.right.active, Some(PanelId::new("changes")));
     assert_eq!(docks.left.active, Some(PanelId::new("sessions")));
     let palette = view.read_with(cx, |wb, _| {

@@ -107,6 +107,17 @@ impl Env {
         wait_until(cx, "the first synchronisation", |cx| {
             view.read_with(cx, |wb, cx| wb.sessions().read(cx).synced())
         });
+        // The window works in the project of the folder, as a user's does: the Problems panel
+        // lists the servers of the container the window shows (SB-ATTACH).
+        let root = self.root.clone();
+        view.update_in(cx, |wb, window, cx| {
+            wb.open_project_path(root.clone(), window, cx);
+        });
+        wait_until(cx, "the folder to be the project of the window", |cx| {
+            view.read_with(cx, |wb, cx| {
+                wb.sessions().read(cx).files_root().as_deref() == Some(root.as_path())
+            })
+        });
         (view, cx)
     }
 }

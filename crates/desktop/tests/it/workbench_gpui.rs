@@ -51,11 +51,7 @@ fn opens_with_default_layout_and_title(cx: &mut TestAppContext) {
     assert!(state.docks.left.visible && state.docks.right.visible && !state.docks.bottom.visible);
     assert_eq!(
         state.docks.left.panels,
-        vec![
-            PanelId::new("sessions"),
-            PanelId::new("tasks"),
-            PanelId::new("files")
-        ]
+        vec![PanelId::new("sessions"), PanelId::new("tasks")]
     );
     assert_eq!(state.docks.right.active, Some(PanelId::new("changes")));
     assert_eq!(state.panes().len(), 1);
@@ -337,7 +333,7 @@ fn state_is_saved_debounced_and_restored(cx: &mut TestAppContext) {
 
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 7);
+    assert_eq!(on_disk["version"], 8);
 
     // A second window (a "restart") restores exactly that layout.
     let (view2, cx2) = open(cx, Some(path.clone()));
@@ -751,16 +747,17 @@ fn dragging_a_tab_onto_a_pane_edge_splits_it(cx: &mut TestAppContext) {
 fn dragging_a_panel_tab_to_a_pane_and_to_another_dock(cx: &mut TestAppContext) {
     let (view, cx) = open(cx, None);
     // Dock tab → center pane (opens the panel as a tab). Requests is listed in the rail's ⋯
-    // until it shows, so it is opened first to have an icon (the fourth).
+    // until it shows, so it is opened first to have an icon (the fifth, after Files).
     let pane = state(&view, cx).first_pane_id();
     cx.dispatch_action(actions::OpenPanel("inspector".into()));
-    let tab = bounds(&view, cx, Region::DockTab(DockPosition::Right, 3));
+    let tab = bounds(&view, cx, Region::DockTab(DockPosition::Right, 4));
     let target = bounds(&view, cx, Region::Pane(pane));
     drag(cx, center_of(tab), center_of(target));
     let s = state(&view, cx);
     assert_eq!(
         s.docks.right.panels,
         vec![
+            PanelId::new("files"),
             PanelId::new("changes"),
             PanelId::new("agents"),
             PanelId::new("history"),
@@ -785,7 +782,6 @@ fn dragging_a_panel_tab_to_a_pane_and_to_another_dock(cx: &mut TestAppContext) {
         vec![
             PanelId::new("sessions"),
             PanelId::new("tasks"),
-            PanelId::new("files"),
             PanelId::new("inspector")
         ]
     );
@@ -863,6 +859,7 @@ fn right_click_menus_list_the_documented_entries(cx: &mut TestAppContext) {
     assert_eq!(
         state(&view, cx).docks.right.panels,
         vec![
+            PanelId::new("files"),
             PanelId::new("changes"),
             PanelId::new("agents"),
             PanelId::new("history"),

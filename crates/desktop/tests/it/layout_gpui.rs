@@ -112,11 +112,18 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     let (view, cx) = open(cx);
     let s = state(&view, cx);
     assert_eq!(s.preset, "default");
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "files"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(s.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(
         s.docks.right.panels,
-        ids(&["changes", "agents", "history", "inspector", "resources"])
+        ids(&[
+            "files",
+            "changes",
+            "agents",
+            "history",
+            "inspector",
+            "resources"
+        ])
     );
     assert_eq!(s.docks.right.more, ids(&["inspector", "resources"]));
     assert_eq!(s.docks.right.active, Some(PanelId::new("changes")));
@@ -158,18 +165,18 @@ fn the_default_layout_is_three_columns_between_a_36px_titlebar_row_and_a_24px_st
     );
     assert!(painted(&view, cx, Region::Toolbar("start")));
     assert!(painted(&view, cx, Region::Toolbar("settings")));
-    // The right rail: three icons and ⋯, 32 pt targets under the title bar row, outside the
+    // The right rail: four icons (Files first) and ⋯, 32 pt targets under the title bar row, outside the
     // body; Requests and Resources are in ⋯ (CL-CHROME).
     let rail = bounds(&view, cx, Region::Rail(DockPosition::Right));
     assert_size(rail.size.width, 40.0);
     assert!(rail.left() >= right.right());
-    for index in 0..3 {
+    for index in 0..4 {
         let icon = bounds(&view, cx, Region::DockTab(DockPosition::Right, index));
         assert!(rail.contains(&icon.center()), "icon {index}");
         assert!(icon.origin.y >= titlebar.bottom(), "icon {index}");
         assert_size(icon.size.height, 32.0);
     }
-    for index in 3..5 {
+    for index in 4..6 {
         assert!(!painted(
             &view,
             cx,
@@ -214,7 +221,7 @@ fn nav_items_switch_the_left_page_and_the_back_row_returns_to_projects(cx: &mut 
     // The panel list of the dock is untouched: pages are the dock's panels.
     assert_eq!(
         state(&view, cx).docks.left.panels,
-        ids(&["sessions", "tasks", "files"])
+        ids(&["sessions", "tasks"])
     );
 
     // Agents is no page of the sidebar: it opens the Agents page in the center and leaves the
@@ -266,9 +273,9 @@ fn a_panel_left_in_the_left_dock_gets_its_own_nav_row(cx: &mut TestAppContext) {
         ["resources"],
         "the move made it the page"
     );
-    // It is the dock's panel at index 3 (after Files, which only has a nav row while it is the
-    // page): the same probe the right strip uses.
-    assert!(painted(&view, cx, Region::DockTab(DockPosition::Left, 3)));
+    // It is the dock's panel at index 2 (after Projects and Tasks): the same probe the right
+    // strip uses.
+    assert!(painted(&view, cx, Region::DockTab(DockPosition::Left, 2)));
 }
 
 // ---- assistant ---------------------------------------------------------------------------------
@@ -445,7 +452,7 @@ fn the_right_strip_switches_tabs(cx: &mut TestAppContext) {
     let (view, cx) = open(cx);
     let active = |cx: &VisualTestContext| state(&view, cx).docks.right.active.unwrap();
     assert_eq!(active(cx).as_str(), "changes", "Changes is the default tab");
-    for (index, panel) in [(1, "agents"), (2, "history"), (0, "changes")] {
+    for (index, panel) in [(2, "agents"), (3, "history"), (0, "files"), (1, "changes")] {
         click(&view, cx, Region::DockTab(DockPosition::Right, index));
         assert_eq!(active(cx).as_str(), panel);
         assert_eq!(
@@ -463,6 +470,7 @@ fn icons_that_do_not_fit_move_into_the_more_menu(cx: &mut TestAppContext) {
     common::draw(cx);
     common::draw(cx);
     let more = bounds(&view, cx, Region::StripMore);
+    // Files and Changes fit.
     assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 0)));
     assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 1)));
     assert!(!painted(&view, cx, Region::DockTab(DockPosition::Right, 2)));
@@ -475,12 +483,12 @@ fn icons_that_do_not_fit_move_into_the_more_menu(cx: &mut TestAppContext) {
         .map(|(label, _)| label.to_string())
         .collect();
     // The icon that did not fit, then the panels the dock lists in ⋯.
-    assert_eq!(labels, ["History", "Requests", "Resources"]);
+    assert_eq!(labels, ["Agents", "History", "Requests", "Resources"]);
 
     // Choosing one makes it the active tab, and the active tab never hides.
     view.update_in(cx, |wb, window, cx| wb.run_menu_entry(0, window, cx));
     let s = state(&view, cx);
-    assert_eq!(s.docks.right.active, Some(PanelId::new("history")));
+    assert_eq!(s.docks.right.active, Some(PanelId::new("agents")));
     assert!(painted(&view, cx, Region::DockTab(DockPosition::Right, 2)));
 }
 
@@ -516,10 +524,17 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
     cx.dispatch_action(actions::ApplyPreset("focus".into()));
     let s = state(&view, cx);
     assert_eq!(visible(&view, cx), [false, false, false]);
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "files"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(
         s.docks.right.panels,
-        ids(&["changes", "agents", "history", "inspector", "resources"])
+        ids(&[
+            "files",
+            "changes",
+            "agents",
+            "history",
+            "inspector",
+            "resources"
+        ])
     );
     assert!(s.zoomed.is_some());
 
@@ -530,7 +545,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
     cx.dispatch_action(actions::ToggleOverview);
     let s = state(&view, cx);
     assert_eq!(s.preset, "overview");
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "files"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
     assert!(
         s.active_pane()
             .unwrap()
@@ -540,7 +555,7 @@ fn presets_arrange_the_sidebars(cx: &mut TestAppContext) {
     cx.dispatch_action(actions::ToggleOverview);
     let s = state(&view, cx);
     assert_eq!(s.preset, "default");
-    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks", "files"]));
+    assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
 }
 
 #[gpui::test]
@@ -647,7 +662,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
         ]
     );
 
-    // The next save is version 7, and loading that again changes nothing.
+    // The next save is version 8, and loading that again changes nothing.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| s.toggle_dock(DockPosition::Bottom))
     });
@@ -656,7 +671,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
     view.update(cx, |wb, _| wb.flush_save());
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 7);
+    assert_eq!(on_disk["version"], 8);
     let reloaded = load_state(&path);
     assert_eq!(reloaded.docks, state(&view, cx).docks);
     assert_eq!(reloaded.center, state(&view, cx).center);

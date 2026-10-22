@@ -77,9 +77,9 @@ fn the_window_title_names_the_project_never_the_tab_nor_a_sidebar_page(cx: &mut 
     common::draw(cx);
     assert_eq!(cx.window_title().as_deref(), Some("Hutan"));
 
-    // Every icon of the right rail: Changes, Agents, History.
+    // Every icon of the right rail: Files, Changes, Agents, History.
     // (Changes is open already: its icon collapses the body, so it goes last.)
-    for index in [1, 2, 0] {
+    for index in [0, 2, 3, 1] {
         click(&view, cx, Region::DockTab(DockPosition::Right, index));
         common::draw(cx);
         assert_eq!(

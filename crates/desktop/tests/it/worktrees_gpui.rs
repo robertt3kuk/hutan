@@ -76,6 +76,13 @@ fn open<'a>(
     cx: &'a mut TestAppContext,
     daemon: &TestDaemon,
 ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+    // Every container lists its sessions (these tests look at rows of a project that is not the
+    // one the window opens on).
+    std::fs::write(
+        daemon.home().join("settings.toml"),
+        "[sidebar]\nshow_all_sessions = true\n",
+    )
+    .unwrap();
     let (view, cx) = open_with(
         cx,
         SettingsStore::new(SettingsPaths::in_dir(daemon.home())),

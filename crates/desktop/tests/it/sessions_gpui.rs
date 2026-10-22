@@ -875,7 +875,7 @@ fn save_layout_as_preset_writes_settings_and_hot_reloads_presets(cx: &mut TestAp
     let preset = &parsed["layout"]["presets"]["My-Layout"];
     assert_eq!(preset["left"]["visible"].as_bool(), Some(true));
     assert_eq!(preset["right"]["visible"].as_bool(), Some(false));
-    assert_eq!(preset["left"]["panels"].as_array().unwrap().len(), 3);
+    assert_eq!(preset["left"]["panels"].as_array().unwrap().len(), 2);
     assert_eq!(state_of(&view, cx).preset, "My-Layout");
     assert_eq!(
         parsed["layout"]["preset"].as_str(),
