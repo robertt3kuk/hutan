@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- LaunchAgent of the bundled daemon, shipped in Contents/Library/LaunchAgents. Inert until the
-     desktop registers it with SMAppService, which it does only while "keep running"
-     (`app.keep_running`) is on (docs/packaging.md § Keep running).
+     desktop registers it with SMAppService, which it does only while "start at login"
+     (`app.start_at_login`) is on (docs/packaging.md § Start at login).
      - `BundleProgram` is relative to the app bundle: launchd starts Contents/MacOS/hutand with
        no arguments and an empty `HUTAN_*` environment, so the daemon uses the standard data
        folder, socket and `hutand.log` (the daemon writes its own log; stdout and stderr stay

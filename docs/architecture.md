@@ -23,7 +23,7 @@ flowchart LR
   LD[launchd agent<br/>optional] -.starts.-> H
 ```
 
-- `hutand` is started on demand by any client (spawn, wait for socket) or by launchd when "start at login" is enabled (M6). By default the daemon follows the desktop: the desktop starts it, and quitting stops it (silently when no session is live, after a confirmation otherwise); `app.keep_running` leaves it running after quit and `app.start_at_login` hands its lifetime to launchd (design.md § Daemon lifecycle). The CLI controls the same daemon at any time.
+- `hutand` is started on demand by any client (spawn, wait for socket) or by launchd when "start at login" is enabled (M6). By default the daemon follows the desktop: the desktop starts it, and quitting stops it (silently when no session is live, after a confirmation otherwise); `app.keep_running` leaves it running after quit and `app.start_at_login` hands its lifetime to launchd (design.md § Daemon lifecycle). The CLI controls the same daemon at any time. Which binary, a daemon of another build, and a stop asked for elsewhere: § Daemon lifecycle.
 - All clients are equal protocol peers; the desktop has no private channel.
 
 ## Crates
@@ -277,9 +277,53 @@ A daemon that cannot start has no protocol to say why in, so it says it outside 
 
 - **`hutand`** (`crates/daemon/src/main.rs`, `start_error.rs`) writes every startup error to stderr, to `hutand.log` (`error!` with the whole chain) and to `hutand-start-error.json` next to the socket, atomically: `{at_ms, pid, version, kind, message}` with `kind` = `schema_too_new` (+ `found`, `supported`, `db`), `already_running` (+ `holder_pid` from the lock file, `lock`) or `other`. A successful start removes it, and so does a normal stop (a record written meanwhile came from a start that found this daemon's lock). Errors after the start are logged, not recorded. Log lines go to stderr only while starting; once serving, a stderr that is not a terminal gets nothing, and never more than 64 KiB.
 - **Autostart** (`hutan-client`, `client.rs` `dial`) points the child's stderr at `hutand-start.log` (in the log directory: `~/Library/Logs/Hutan` for the standard socket, `logs/` next to any other; truncated per start) and keeps the child: exiting with a failure ends the wait at once; exit 0 or 2 (another daemon holds the lock) keeps waiting for the socket. A child that fails, or a wait that times out (15 s), returns `ClientError::DaemonStart(StartFailure)`: the record if this child wrote it (`at_ms` not before the spawn), else the stderr tail, and the outcome. `StartFailure` (`start_failure.rs`) is the one type every client uses; `sentence()` is the one sentence they show.
-- **`Connection`** publishes it as `StoreState::daemon_start`: an autostart's failure as is; on any other unreachable dial (held autostart, launchd's daemon, the autostart interval) the record on disk. Cleared on connect. `Connection::start_daemon_now` starts again without waiting for the interval.
+- **`Connection`** publishes it as `StoreState::daemon_start`: an autostart's failure as is; on any other unreachable dial (held autostart, launchd's daemon, the wait between autostarts) the record on disk. Cleared on connect. `Connection::start_daemon_now` starts again without waiting (§ Daemon lifecycle).
 - **Clients.** The desktop shows the sentence under the title bar, in the daemon popover and the *Daemon* menu, with the action of its kind (`workbench/start_failure.rs`); the CLI prints it from every autostart (exit 3), and `hutan daemon status` / `hutan daemon why` read the record.
 - **Start with empty data** (`move_data_aside`, user-only: the app's confirmed action or `hutan daemon reset-data --yes`): under the daemon's lock (so it refuses while a daemon runs and none can start halfway) the database the record names, with its `-wal`/`-shm`, moves to `backups/hutan-<ms>-v<found>-newer.db` (else `hutan-<ms>-reset.db`); nothing is deleted and migration-backup pruning ignores these names. Downgrade migrations do not exist.
+
+## Daemon lifecycle
+
+Which `hutand` runs, who starts and stops it, and what a client does when the one that answers is not its own (FX-DAEMON-LIFECYCLE, protocol 0.42; code: `crates/client/src/identity.rs`, `client.rs` autostart, `crates/desktop/src/workbench/lifecycle.rs`, `daemon.rs`, `mac.rs`).
+
+**Who starts it, which binary.**
+
+| Starter | Binary | When |
+|---|---|---|
+| Desktop | `hutand` beside its own executable (`Hutan.app/Contents/MacOS/hutand`), else `PATH` | on launch and whenever its connection finds no daemon, unless it was stopped on request (below) |
+| CLI | `hutand` beside `hutan` (symlinks resolved), else `PATH` | `hutan daemon start`/`restart` and the commands that need one |
+| launchd | `Contents/MacOS/hutand` of the bundle that registered the login item | at login and on registration, while *Start at login* is on (`docs/packaging.md` § Start at login); the desktop then dials for 4 s before starting one itself |
+
+Exactly one daemon runs per data folder (`hutand.lock`); a second one exits 2. Every client reuses whatever answers on the socket, so it checks who that is.
+
+**Identity.** `Welcome.daemon_build {version, git_sha, exe_path, started_at_ms}` (capability `daemon.identity`) names the build that answers. The git commit is compiled into the client and the daemon by the same build script (`crates/client/build.rs`, included by the daemon's), so the two halves of one build agree. `DaemonIdentity::own(path)` is the `hutand` a client would start; `identity::compare(own, running)` says how the running one differs:
+
+- the same executable and build → nothing;
+- another executable (`Foreign`): another install (a formula's, an older bundle elsewhere) or a development build — whatever its version;
+- the same executable, an older version or the same version from another commit (`Different`);
+- a newer version (`Newer`): the client is the one that is out of date.
+
+**Mismatch rules (desktop).** Compared once per daemon epoch, never while the app itself starts, stops or quits:
+
+| Running daemon | Live sessions | The app |
+|---|---|---|
+| `Different` | none | restarts it onto its own `hutand` at once (graceful `daemon.shutdown {restart}`, wait for the socket to go, start), notice *Updated the background service to x.y.z*; if that daemon still reports another build (the `hutand` beside the app is not the app's build, as in a checkout), it is kept for the rest of the run instead of being restarted again |
+| `Different` | some | line under the title bar: *The background service still runs Hutan a.b.c (from …). Restart it with x.y.z? Running terminals are restored; agent turns in progress are interrupted.* — *Restart Now* / *Later* (asked again at the next launch or the next daemon) |
+| `Newer` | any | *… newer than this app: update the app.* — *Copy Update Command* / *Later*; never restarted |
+| `Foreign` | any | *Connected to a Hutan service from <path>.* — *Use This App's Service* (restart as above) / *Keep* |
+
+The app never signals a process to switch daemons: every restart is the daemon's own shutdown. The CLI only reports: `hutan daemon status` prints build and binary, and how they differ from the `hutand` beside it (`--json`: `build`, `mismatch`); `hutan daemon restart` starts the one beside the CLI.
+
+**Bounded autostart.** A connection that finds no daemon starts one at most every second; after a failed start it waits 1 s, doubling up to 60 s, and after `AUTOSTART_GIVE_UP` (3) failures of the same kind in a row it stops starting (`StoreState::autostart_halted`) and keeps dialing quietly. The desktop's start-error line then offers *Retry* (`Connection::start_daemon_now`, which also clears the halt); a connect resets the count. An autostart that meets a daemon still on its way out (exit 2, the lock held) starts again once the lock is free (up to 5 times).
+
+**Stop semantics.** A stop someone asked for is announced by the daemon before it closes connections: `daemon.stopping {by, restart}` (capability `daemon.stopping`), with `by` = `desktop`, `cli` or `menu_bar` and `restart` set when `daemon.shutdown {restart: true}` asked for one (the CLI's and the app's *Restart*).
+
+- A stop (`restart: false`) — from the app, `hutan daemon stop`, or *Stop daemon…* of the daemon's menu bar item — turns every connected client's autostart off and records `StoreState::stopped_by`. The desktop shows "Stopped by you · Start" in the status item and the popover ("hutand stopped by you" in its own menu bar item), and starts nothing by itself, the launchd-grace fallback included, until the user presses *Start* (or another client starts a daemon, which the window follows).
+- A restart is not a stop: clients reconnect to the new daemon as after any restart.
+- The stopped state is not persisted: a relaunched app starts the daemon, because it needs one.
+- A daemon that just went away (crash, signal) is no stop: the connection brings one back.
+- Quitting the app stops an idle daemon it owns, asks with live sessions, and leaves it to launchd or `app.keep_running` otherwise (`docs/design.md` § Daemon lifecycle).
+
+**Login item path.** The login item belongs to the bundle that registered it; a registration records that bundle's path (`docs/packaging.md` § Start at login). A window that opens with start at login on and the agent registered from another path (the app was moved or reinstalled elsewhere) unregisters it and registers it again from the running bundle, once, and logs both paths.
 
 ## Extensibility path
 - External clients use the published JSON Schema (`protocol` → `xtask schema`).

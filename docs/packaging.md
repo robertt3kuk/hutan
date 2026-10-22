@@ -15,8 +15,8 @@ Hutan.app/Contents/
   MacOS/hutand                                the daemon (signed with the app's identifier dev.hutan.Hutan)
   MacOS/hutan                                 the CLI
   Library/LaunchAgents/dev.hutan.daemon.plist BundleProgram Contents/MacOS/hutand, RunAtLoad true,
-                                               KeepAlive {Crashed: true}; inert until "keep running"
-                                               registers it (M6-C)
+                                               KeepAlive {Crashed: true}; inert until "start at
+                                               login" registers it (D-2, § Start at login)
   Resources/Hutan.icns                         the app icon (CFBundleIconFile)
   Resources/shell-integration/…                the OSC 133 / OSC 7 scripts (zsh, bash, fish)
   Resources/CHANGELOG.md                       the changelog (the app's "What's new" after an update)
@@ -83,6 +83,8 @@ The agent plist, and why:
 - `AssociatedBundleIdentifiers` `dev.hutan.Hutan`: the Login Items entry is shown as Hutan.
 
 While start at login is active (registered and approved) the desktop starts with a connection that only dials, waits 4 s for a launchd-started daemon, and only then starts `hutand` itself; quitting the app never touches the daemon. The race that matters is a login-time one: the desktop and launchd both starting `hutand`. The daemon's lock makes the loser exit 2, so it cannot corrupt anything, but the desktop avoids the second start altogether.
+
+**A moved or reinstalled app.** `SMAppService` does not say which copy of `Hutan.app` a registered agent belongs to, so a registration records it: the app's user default `LoginItemBundle` (`defaults read dev.hutan.Hutan LoginItemBundle`) holds the bundle path it was registered from, and unregistering removes it. When a window opens with start at login on and the agent registered (approved or not) from another path than the running bundle — the app was moved, or reinstalled elsewhere — the app unregisters it and registers it again from itself, once, and logs both paths; a refusal is shown like any other. An agent registered before the record existed (Hutan 0.1) is left as it is until start at login is switched off and on.
 
 **Trying it by hand** (not part of any test; needs the user at the machine; never against the real data folder unless the user wants to): `just bundle`, copy `target/bundle/Hutan.app` to a folder under the home directory, start it, turn *Start daemon at login* on in Settings (`app`) or the Daemon menu, approve it in Login Items if asked, quit the app and check `launchctl print gui/$(id -u)/dev.hutan.daemon` and `hutan daemon status`; turn it off and check that the entry is gone and what happened to the running daemon.
 
@@ -202,6 +204,29 @@ For a **clean start** (the first screen again, as on a new Mac), remove the data
 `brew uninstall --cask --zap robertt3kuk/hutan/hutan`, then
 `brew install --cask robertt3kuk/hutan/hutan`. `--zap` removes the application support folder,
 logs and preferences listed above; export what you want to keep first.
+
+### Updates and the running daemon
+
+An update replaces the bundle while the old `hutand` may still run (started by the old app, by
+launchd, or by the CLI); the new app finds it on the socket and compares its build
+(`Welcome.daemon_build`, protocol 0.42; architecture.md § Daemon lifecycle) with the `hutand`
+beside itself:
+
+- **Idle old daemon** (no live session): the app restarts it onto its own `hutand` by itself —
+  a graceful `daemon.shutdown`, then a start — and says *Updated the background service to
+  x.y.z*.
+- **Old daemon with live sessions**: a line under the title bar asks first: *The background
+  service still runs Hutan 0.1.0 (from …). Restart it with 0.2.0? Running terminals are
+  restored; agent turns in progress are interrupted.* — **Restart Now** or **Later** (asked again
+  at the next launch).
+- **Newer daemon than the app** (an older app opened after an update): *update the app*, with
+  *Copy Update Command*; the daemon is left alone.
+- **A daemon from another executable** (a formula install, a development build): *Connected to
+  a Hutan service from <path>* — **Use This App's Service** (restart onto the app's `hutand`) or
+  **Keep**.
+
+From a terminal, `hutan daemon status` prints the running build and binary and how they differ
+from the `hutand` beside the CLI; `hutan daemon restart` starts that one.
 
 ### Publish after review (maintainer only)
 
