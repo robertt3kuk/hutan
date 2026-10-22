@@ -525,7 +525,7 @@ impl CodeView {
         let buffer = self.buffer().read(cx);
         let text = buffer.text();
         let mut lines = text.line_count();
-        if text.len() > 0 && text.char_before(text.len()) == Some('\n') {
+        if !text.is_empty() && text.char_before(text.len()) == Some('\n') {
             lines = lines.saturating_sub(1);
         }
         let line = line_of(text, self.selections.primary().head) + 1;

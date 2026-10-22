@@ -78,6 +78,39 @@ pub struct Message {
 pub(crate) struct CmdLine {
     pub kind: char,
     pub text: String,
+    /// `⌃R` waits for a register's name.
+    pub register: bool,
+    /// Where `⌃P` `⌃N` `↑` `↓` are in the history (`None`: the line being typed).
+    pub at: Option<usize>,
+    /// The line as typed, which `↑` / `↓` match the history against.
+    pub typed: String,
+}
+
+/// The most lines a history keeps.
+const HISTORY: usize = 100;
+
+/// `line` becomes the newest entry of `history` (an older copy goes).
+fn remember(history: &mut Vec<String>, line: &str) {
+    history.retain(|l| l != line);
+    history.push(line.to_owned());
+    if history.len() > HISTORY {
+        history.remove(0);
+    }
+}
+
+/// `c_CTRL-W`: the blanks before the end, then a run of word or of other characters.
+fn delete_word_back(text: &mut String) {
+    let mut end = text.trim_end_matches(char::is_whitespace).len();
+    if let Some(last) = text[..end].chars().next_back() {
+        let kind = crate::text::class(last, false);
+        while let Some(c) = text[..end].chars().next_back() {
+            if crate::text::class(c, false) != kind {
+                break;
+            }
+            end -= c.len_utf8();
+        }
+    }
+    text.truncate(end);
 }
 
 /// The last change, for `.`: the keys of its command and the text typed in the Insert mode it
@@ -212,6 +245,10 @@ pub(crate) struct Core {
     /// How many lines `⌃D` / `⌃U` scroll once a count set it (Vim's `'scroll'`); half the
     /// window until then.
     pub scroll_lines: Option<usize>,
+    /// The `/` and `?` lines searched for, oldest first (`⌃P` / `↑` on the search line).
+    pub search_history: Vec<String>,
+    /// The `:` lines run, oldest first.
+    pub ex_history: Vec<String>,
 }
 
 /// The modal state of one field. The text stays in the [`VimHost`] the keys are applied to.
@@ -1009,27 +1046,54 @@ impl Core {
         opts: Options,
         clip: &mut dyn Clipboard,
     ) -> Outcome {
-        let Some(line) = self.cmdline.as_mut() else {
+        let Some(kind) = self.cmdline.as_ref().map(|l| l.kind) else {
             return Outcome::Ignored;
         };
-        let search = line.kind != ':';
+        let search = kind != ':';
         if search && !self.replaying && !self.mode.is_visual() {
             self.rec.push(key);
         }
+        // `⌃R {reg}`: the register's text joins the line.
+        if self.cmdline.as_ref().is_some_and(|l| l.register) {
+            let text = match key {
+                Key::Char('+' | '*') => clip.read(),
+                Key::Char(name) => self.regs.get(name).map(|r| r.text),
+                _ => None,
+            };
+            if let Some(line) = self.cmdline.as_mut() {
+                line.register = false;
+                line.text.push_str(&text.unwrap_or_default());
+                line.typed = line.text.clone();
+            }
+            return Outcome::Handled;
+        }
+        if matches!(key, Key::Ctrl('p' | 'n') | Key::Up | Key::Down) {
+            self.cmdline_history(key);
+            return Outcome::Handled;
+        }
+        let Some(line) = self.cmdline.as_mut() else {
+            return Outcome::Ignored;
+        };
         match key {
             Key::Char(c) => line.text.push(c),
             Key::Tab => line.text.push('\t'),
-            Key::Backspace => {
+            Key::Backspace | Key::Ctrl('h') => {
                 if line.text.pop().is_none() {
                     self.cancel_line(host);
+                    return Outcome::Handled;
                 }
             }
             Key::Ctrl('u') => line.text.clear(),
+            Key::Ctrl('w') => delete_word_back(&mut line.text),
+            Key::Ctrl('r') => line.register = true,
             Key::Escape | Key::Ctrl('c') => self.cancel_line(host),
             Key::Enter => {
                 let Some(line) = self.cmdline.take() else {
                     return Outcome::Handled;
                 };
+                if line.kind != ':' && !line.text.is_empty() && self.depth == 0 {
+                    remember(&mut self.search_history, &line.text);
+                }
                 if line.kind == ':' {
                     self.pending.clear();
                     self.rec.clear();
@@ -1051,7 +1115,51 @@ impl Core {
             }
             _ => {}
         }
+        if let Some(line) = self.cmdline.as_mut()
+            && !matches!(key, Key::Ctrl('r'))
+        {
+            // What history `↑` / `↓` look for: the line as typed.
+            line.typed = line.text.clone();
+            line.at = None;
+        }
         Outcome::Handled
+    }
+
+    /// `⌃P` / `↑` (older) and `⌃N` / `↓` through the line's history; `↑` / `↓` only through
+    /// lines that start with what was typed. Past the newest the typed line comes back.
+    fn cmdline_history(&mut self, key: Key) {
+        let Some(line) = self.cmdline.as_mut() else {
+            return;
+        };
+        let history = if line.kind == ':' {
+            &self.ex_history
+        } else {
+            &self.search_history
+        };
+        let prefix = if matches!(key, Key::Up | Key::Down) {
+            line.typed.as_str()
+        } else {
+            ""
+        };
+        let older = matches!(key, Key::Ctrl('p') | Key::Up);
+        let found = if older {
+            let end = line.at.unwrap_or(history.len());
+            (0..end).rev().find(|&i| history[i].starts_with(prefix))
+        } else {
+            let start = line.at.map_or(history.len(), |at| at + 1);
+            (start..history.len()).find(|&i| history[i].starts_with(prefix))
+        };
+        match found {
+            Some(i) => {
+                line.at = Some(i);
+                line.text = history[i].clone();
+            }
+            None if !older => {
+                line.at = None;
+                line.text = line.typed.clone();
+            }
+            None => {}
+        }
     }
 
     fn cancel_line<H: VimHost>(&mut self, host: &mut H) {
@@ -1075,6 +1183,9 @@ impl Core {
         }
         if !line.trim().is_empty() {
             self.regs.last_ex = Some(line.to_owned());
+            if self.depth == 0 {
+                remember(&mut self.ex_history, line);
+            }
         }
         let result = match crate::ex::parse(line) {
             Ok(Some(command)) => self.run_ex(host, command, opts, clip),
@@ -1182,7 +1293,13 @@ impl Core {
                 if kind == ':' && visual {
                     self.leave_visual(host);
                 }
-                self.cmdline = Some(CmdLine { kind, text });
+                self.cmdline = Some(CmdLine {
+                    kind,
+                    typed: text.clone(),
+                    text,
+                    register: false,
+                    at: None,
+                });
             }
         }
         self.after_command(host);

@@ -46,6 +46,17 @@
     {"name": "i_CTRL-E", "lines": ["abc","xyz"], "cursor": [1,1], "keys": "i<C-e><C-e>X<Esc>", "expect": {"cursor":[1,3],"lines":["xyXabc","xyz"],"registers":{".":["xyX","v"]}}},
     {"name": "i_CTRL-Y", "lines": ["abc","xy"], "cursor": [2,1], "keys": "i<C-y><C-y><C-y><Esc>", "expect": {"cursor":[2,3],"lines":["abc","abcxy"],"registers":{".":["abc","v"]}}},
     {"name": "i_CTRL-E past the end of the line below", "lines": ["abcdef","x"], "cursor": [1,4], "keys": "i<C-e>X<Esc>", "expect": {"cursor":[1,4],"lines":["abcXdef","x"],"registers":{".":["X","v"]}}},
-    {"name": "i_CTRL-Y on the first line", "lines": ["abc"], "cursor": [1,1], "keys": "i<C-y>X<Esc>", "expect": {"cursor":[1,1],"lines":["Xabc"],"registers":{".":["X","v"]}}}
+    {"name": "i_CTRL-Y on the first line", "lines": ["abc"], "cursor": [1,1], "keys": "i<C-y>X<Esc>", "expect": {"cursor":[1,1],"lines":["Xabc"],"registers":{".":["X","v"]}}},
+    {"name": "c_CTRL-W on the search line", "lines": ["foo bar","bar baz","foo barbaz"], "cursor": [1,1], "keys": "/foo baz<C-w>barb<CR>", "expect": {"cursor":[3,1],"lines":["foo bar","bar baz","foo barbaz"],"registers":{"/":["foo barb","v"]}}},
+    {"name": "c_CTRL-W punctuation", "lines": ["a.b","x a.c"], "cursor": [1,1], "keys": "/a.c.d<C-w><C-w>c<CR>", "expect": {"cursor":[1,1],"lines":["a.b","x a.c"],"registers":{"/":["a.cc","v"]}}},
+    {"name": "c_CTRL-U", "lines": ["foo","bar baz"], "cursor": [1,1], "keys": "/xyz<C-u>baz<CR>", "expect": {"cursor":[2,5],"lines":["foo","bar baz"],"registers":{"/":["baz","v"]}}},
+    {"name": "c_CTRL-H", "lines": ["foo","baz"], "cursor": [1,1], "keys": "/bazz<C-h><CR>", "expect": {"cursor":[2,1],"lines":["foo","baz"],"registers":{"/":["baz","v"]}}},
+    {"name": "c_CTRL-H on an empty line ends it", "lines": ["foo","baz"], "cursor": [1,1], "keys": "/<C-h>", "expect": {"cursor":[1,1],"lines":["foo","baz"],"registers":{}}},
+    {"name": "c_CTRL-R a register", "lines": ["foo bar","x foo"], "cursor": [1,1], "keys": "yiw/<C-r>\"<CR>", "expect": {"cursor":[2,3],"lines":["foo bar","x foo"],"registers":{"\"":["foo","v"],"/":["foo","v"],"0":["foo","v"]}}},
+    {"name": "c_CTRL-P search history", "lines": ["baz","bar","foo baz bar"], "cursor": [1,1], "keys": "/baz<CR>gg/bar<CR>gg/<C-p><C-p><CR>", "expect": {"cursor":[3,5],"lines":["baz","bar","foo baz bar"],"registers":{"/":["baz","v"]}}},
+    {"name": "c_CTRL-N back down the history", "lines": ["baz","bar","foo baz bar"], "cursor": [1,1], "keys": "/baz<CR>gg/bar<CR>gg/<C-p><C-p><C-n><CR>", "expect": {"cursor":[2,1],"lines":["baz","bar","foo baz bar"],"registers":{"/":["bar","v"]}}},
+    {"name": "c_Up matches the typed start", "lines": ["foo","bar","x foo bar"], "cursor": [1,1], "keys": "/bar<CR>gg/foo<CR>gg/b<Up><CR>", "expect": {"cursor":[2,1],"lines":["foo","bar","x foo bar"],"registers":{"/":["bar","v"]}}},
+    {"name": "c_CTRL-P on the colon line", "lines": ["a a","a a"], "cursor": [1,1], "keys": ":s/a/b/<CR>j:<C-p><CR>", "expect": {"cursor":[2,1],"lines":["b a","b a"],"registers":{"/":["a","v"],":":["s/a/b/","v"]}}},
+    {"name": "c_CTRL-C on the colon line", "lines": ["a a"], "cursor": [1,1], "keys": ":s/a/b/<C-c>", "expect": {"cursor":[1,1],"lines":["a a"],"registers":{}}}
   ]
 }
