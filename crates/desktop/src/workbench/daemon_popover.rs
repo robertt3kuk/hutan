@@ -68,6 +68,14 @@ impl Workbench {
         let login_available = self.start_at_login_available();
         let login_status = self.start_at_login_status();
         let hover = theme.surface_hover;
+        let failure = self.daemon_start_failure(cx).map(|failure| {
+            self.render_start_failure_body(&failure, Region::Popover)
+                .px(px(tokens.spacing * 2.0))
+                .py(px(tokens.spacing))
+                .rounded(px(tokens.radius))
+                .border_1()
+                .border_color(theme.danger)
+        });
 
         let mut fields: Vec<(&'static str, String)> = Vec::new();
         if let Some(status) = self.daemon.status.as_ref().filter(|_| connected) {
@@ -246,6 +254,7 @@ impl Workbench {
                                     }),
                             )
                         })
+                        .children(failure)
                         .child(div().flex().flex_col().gap(px(2.0)).children(
                             fields.into_iter().map(|(name, value)| {
                                 div()

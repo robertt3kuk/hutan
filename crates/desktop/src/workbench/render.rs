@@ -151,6 +151,7 @@ impl Render for Workbench {
         let offer = self.render_notify_offer(cx);
         let layout_offer = self.render_layout_offer(cx);
         let reinstall_card = self.render_reinstall_card(cx);
+        let start_failure = self.render_start_failure_banner(cx);
         self.rescue_orphaned_focus(window, cx);
         self.sync_assistant_focus(window, cx);
         self.sync_agents_page(cx);
@@ -222,6 +223,7 @@ impl Render for Workbench {
                         .child(titlebar)
                         .children(offer)
                         .children(layout_offer)
+                        .children(start_failure)
                         .children(reinstall_card)
                         .child(
                             div()
@@ -903,6 +905,31 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::daemon::OpenLogs, _, cx| {
             this.open_daemon_logs(cx);
         }))
+        .on_action(cx.listener(
+            |this, _: &actions::daemon::StartWithEmptyData, window, cx| {
+                this.start_with_empty_data(window, cx);
+            },
+        ))
+        .on_action(
+            cx.listener(|this, _: &actions::daemon::ShowStuckDaemon, _, cx| {
+                this.show_stuck_daemon(cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::daemon::StopStuckDaemon, window, cx| {
+                this.stop_stuck_daemon(window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::daemon::CopyStartError, _, cx| {
+                this.copy_start_error(cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::daemon::CopyUpdateCommand, _, cx| {
+                this.copy_update_command(cx);
+            }),
+        )
         .on_action(
             cx.listener(|this, _: &actions::daemon::ToggleKeepRunning, _, cx| {
                 this.toggle_keep_running(cx);

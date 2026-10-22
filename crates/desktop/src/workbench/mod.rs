@@ -66,6 +66,7 @@ mod settings_theme_preview;
 mod settings_themes;
 mod setup;
 mod sidebars;
+mod start_failure;
 pub mod style;
 mod terminals;
 pub mod text_field;
@@ -104,6 +105,7 @@ pub use settings_sheet::{Edit, SettingsSheet};
 pub use settings_themes::{PackField, PackPreview, PickerRow};
 pub use setup::{NotificationUi, SetupFinish, SetupState, SetupStep};
 pub use sidebars::{NavEntry, NavTarget, rail_split, strip_split};
+pub use start_failure::StartFailureKind;
 pub use terminals::session_of_item;
 pub use view::{
     BadgeSite, DragPreview, DraggedItem, Region, SAVE_DEBOUNCE, Workbench, WorkbenchOptions,

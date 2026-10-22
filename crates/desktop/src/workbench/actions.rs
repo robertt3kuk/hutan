@@ -183,7 +183,13 @@ pub mod daemon {
             OpenLogs,
             ToggleKeepRunning,
             ToggleStartAtLogin,
-            OpenLoginItems
+            OpenLoginItems,
+            // When the daemon could not start (`daemon_start_failure`):
+            StartWithEmptyData,
+            ShowStuckDaemon,
+            StopStuckDaemon,
+            CopyStartError,
+            CopyUpdateCommand
         ]
     );
 }
@@ -653,6 +659,11 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
             daemon::ToggleStartAtLogin,
         ),
         command("Daemon: Open Login Items", daemon::OpenLoginItems),
+        command("Daemon: Start with Empty Data…", daemon::StartWithEmptyData),
+        command("Daemon: Show the Stuck Daemon", daemon::ShowStuckDaemon),
+        command("Daemon: Stop the Stuck Daemon…", daemon::StopStuckDaemon),
+        command("Daemon: Copy Start Error Details", daemon::CopyStartError),
+        command("Daemon: Copy Update Command", daemon::CopyUpdateCommand),
     ];
     out.extend([
         command("Workspace: New Workspace…", NewWorkspace),

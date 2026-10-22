@@ -69,7 +69,7 @@ pub(crate) struct DaemonControl {
     pub quitting: bool,
     /// What the menu bar was last built for: the daemon menu and the current layout preset.
     menu: Option<(DaemonMenu, String)>,
-    task: Option<Task<()>>,
+    pub(crate) task: Option<Task<()>>,
     fetch: Option<Task<()>>,
     /// `hutand.log`, as `Open Logs` reveals it and the popover shows it.
     pub log_path: Option<PathBuf>,
@@ -77,6 +77,8 @@ pub(crate) struct DaemonControl {
     pub reveal: RevealHandler,
     /// Opens a file or folder with the system (the Data & logs page's "Open").
     pub open: RevealHandler,
+    /// What *Show the Process* found about a stuck daemon (`start_failure`).
+    pub stuck_info: Option<String>,
 }
 
 impl DaemonControl {
@@ -94,6 +96,7 @@ impl DaemonControl {
             log_path: log_file(),
             reveal: Rc::new(|path, cx| cx.reveal_path(path)),
             open: Rc::new(|path, _| open_with_system(path)),
+            stuck_info: None,
         }
     }
 }
@@ -159,12 +162,20 @@ fn wait_socket_gone(socket: &Path, limit: Duration) -> bool {
 }
 
 /// Waits (without a timer: reconnect attempts publish a new state at least every 5 s) until
-/// the connection is up again; `false` after `limit`.
+/// the connection is up again; `false` after `limit`, or as soon as a start fails anew (a
+/// [`StoreState::daemon_start`] other than the one before).
 async fn wait_connected(state: &mut watch::Receiver<Arc<StoreState>>, limit: Duration) -> bool {
     let deadline = Instant::now() + limit;
+    let before = state.borrow().daemon_start.clone();
     loop {
-        if state.borrow_and_update().connection == ConnectionState::Connected {
-            return true;
+        {
+            let now = state.borrow_and_update();
+            if now.connection == ConnectionState::Connected {
+                return true;
+            }
+            if now.daemon_start.is_some() && now.daemon_start != before {
+                return false;
+            }
         }
         if Instant::now() >= deadline || state.changed().await.is_err() {
             return false;
@@ -235,6 +246,11 @@ impl Workbench {
         } else {
             self.sessions.read(cx).connection_state()
         };
+        if !self.daemon.stopped
+            && let Some(line) = self.start_failure_line(cx)
+        {
+            return line;
+        }
         connection_label(state)
     }
 
@@ -252,6 +268,7 @@ impl Workbench {
             start_at_login: self.start_at_login_enabled(),
             start_at_login_available: self.start_at_login_available(),
             start_at_login_status: self.start_at_login_status(),
+            start_failure: self.start_failure_kind(cx),
         }
     }
 
@@ -286,6 +303,8 @@ impl Workbench {
         }
         if !self.daemon_connected(cx) {
             self.daemon.status = None;
+        } else {
+            self.daemon.stuck_info = None;
         }
         self.maybe_auto_install(cx);
     }
@@ -507,9 +526,9 @@ impl Workbench {
         }
     }
 
-    /// Allows autostart again (which reconnects at once and starts `hutand`) and waits for the
+    /// Allows autostart again and dials at once (which starts `hutand`), then waits for the
     /// connection.
-    fn begin_start(&mut self, restarting: bool, cx: &mut Context<Self>) {
+    pub(crate) fn begin_start(&mut self, restarting: bool, cx: &mut Context<Self>) {
         let connection = self.connection(cx);
         self.daemon.busy = Some(if restarting {
             DaemonBusy::Restarting
@@ -518,7 +537,7 @@ impl Workbench {
         });
         self.set_daemon_stopped(false, cx);
         let mut state = connection.state();
-        connection.set_autostart(true);
+        connection.start_daemon_now();
         cx.notify();
         self.daemon.task = Some(cx.spawn(async move |this, cx| {
             let started = wait_connected(&mut state, START_WAIT).await;
@@ -526,7 +545,11 @@ impl Workbench {
                 this.daemon.busy = None;
                 this.sync_status_item(cx);
                 if !started {
-                    this.set_notice("The daemon did not start; see the daemon log", cx);
+                    let why = this
+                        .daemon_start_failure(cx)
+                        .map(|failure| failure.sentence())
+                        .unwrap_or_else(|| "see the daemon log".to_owned());
+                    this.set_notice(format!("The daemon did not start: {why}"), cx);
                 }
                 cx.notify();
             })

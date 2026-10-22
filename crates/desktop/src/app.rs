@@ -10,7 +10,7 @@ use crate::settings::{AppSettings, WorkspaceSort};
 use crate::workbench::actions::{self, ApplyPreset, daemon};
 use crate::workbench::model::LayoutPreset;
 use crate::workbench::persistence;
-use crate::workbench::{Workbench, WorkbenchOptions};
+use crate::workbench::{StartFailureKind, Workbench, WorkbenchOptions};
 use gpui::{
     App, AppContext as _, Bounds, Context, Menu, MenuItem, SystemMenuType, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions, point, px, size,
@@ -33,6 +33,8 @@ pub struct DaemonMenu {
     pub start_at_login: bool,
     pub start_at_login_available: bool,
     pub start_at_login_status: LoginItemStatus,
+    /// Why the daemon could not start, while it could not.
+    pub start_failure: Option<StartFailureKind>,
 }
 
 impl Default for DaemonMenu {
@@ -43,6 +45,7 @@ impl Default for DaemonMenu {
             start_at_login: false,
             start_at_login_available: false,
             start_at_login_status: LoginItemStatus::NotRegistered,
+            start_failure: None,
         }
     }
 }
@@ -167,33 +170,50 @@ pub fn menus(presets: &[LayoutPreset], current: &str, daemon_menu: &DaemonMenu) 
             MenuItem::separator(),
             MenuItem::action("Command Palette…", actions::TogglePalette),
         ]),
-        Menu::new("Daemon").items([
-            MenuItem::action("Status…", daemon::Status),
-            MenuItem::separator(),
-            MenuItem::action("Restart Daemon", daemon::Restart).disabled(!daemon_menu.running),
-            MenuItem::action("Stop Daemon", daemon::Stop).disabled(!daemon_menu.running),
-            MenuItem::action("Start Daemon", daemon::Start).disabled(daemon_menu.running),
-            MenuItem::action("Open Logs", daemon::OpenLogs),
-            MenuItem::separator(),
-            MenuItem::action(KEEP_RUNNING, daemon::ToggleKeepRunning)
-                .checked(daemon_menu.keep_running),
-            MenuItem::action(
-                start_at_login_title(
-                    daemon_menu.start_at_login_available,
-                    daemon_menu.start_at_login_status,
-                ),
-                daemon::ToggleStartAtLogin,
-            )
-            .checked(daemon_menu.start_at_login)
-            .disabled(!daemon_menu.start_at_login_available),
-            MenuItem::action("Open Login Items", daemon::OpenLoginItems)
-                .disabled(daemon_menu.start_at_login_status != LoginItemStatus::RequiresApproval),
-        ]),
+        Menu::new("Daemon").items(daemon_items(daemon_menu)),
         Menu::new("Window").items([
             MenuItem::action("Minimize", actions::MinimizeWindow),
             MenuItem::action("Zoom", actions::ZoomWindow),
         ]),
     ]
+}
+
+/// The `Daemon` menu. While the daemon could not start, its reason comes first (disabled) and
+/// the action that fits it is enabled.
+fn daemon_items(daemon_menu: &DaemonMenu) -> Vec<MenuItem> {
+    let failure = daemon_menu.start_failure;
+    let mut items = vec![MenuItem::action("Status…", daemon::Status)];
+    if let Some(kind) = failure {
+        items.push(MenuItem::action(kind.menu_text(), daemon::Status).disabled(true));
+    }
+    items.extend([
+        MenuItem::separator(),
+        MenuItem::action("Restart Daemon", daemon::Restart).disabled(!daemon_menu.running),
+        MenuItem::action("Stop Daemon", daemon::Stop).disabled(!daemon_menu.running),
+        MenuItem::action("Start Daemon", daemon::Start).disabled(daemon_menu.running),
+        MenuItem::action("Open Logs", daemon::OpenLogs),
+        MenuItem::separator(),
+        MenuItem::action("Start with Empty Data…", daemon::StartWithEmptyData)
+            .disabled(failure != Some(StartFailureKind::NewerData)),
+        MenuItem::action("Stop the Stuck Daemon…", daemon::StopStuckDaemon)
+            .disabled(failure != Some(StartFailureKind::Stuck)),
+        MenuItem::action("Copy Start Error Details", daemon::CopyStartError)
+            .disabled(failure.is_none()),
+        MenuItem::separator(),
+        MenuItem::action(KEEP_RUNNING, daemon::ToggleKeepRunning).checked(daemon_menu.keep_running),
+        MenuItem::action(
+            start_at_login_title(
+                daemon_menu.start_at_login_available,
+                daemon_menu.start_at_login_status,
+            ),
+            daemon::ToggleStartAtLogin,
+        )
+        .checked(daemon_menu.start_at_login)
+        .disabled(!daemon_menu.start_at_login_available),
+        MenuItem::action("Open Login Items", daemon::OpenLoginItems)
+            .disabled(daemon_menu.start_at_login_status != LoginItemStatus::RequiresApproval),
+    ]);
+    items
 }
 
 /// Window options for the workbench: transparent titlebar with inset traffic lights and a

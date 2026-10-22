@@ -2707,6 +2707,7 @@ dependencies = [
  "objc2-service-management",
  "objc2-user-notifications",
  "regex",
+ "rusqlite",
  "schemars",
  "serde",
  "serde_json",

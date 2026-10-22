@@ -528,6 +528,11 @@ fn the_palette_lists_every_daemon_command(cx: &mut TestAppContext) {
         "Daemon: Open Logs",
         "Daemon: Toggle Keep Daemon Running After Hutan Quits",
         "Daemon: Open Login Items",
+        "Daemon: Start with Empty Data…",
+        "Daemon: Show the Stuck Daemon",
+        "Daemon: Stop the Stuck Daemon…",
+        "Daemon: Copy Start Error Details",
+        "Daemon: Copy Update Command",
     ] {
         assert!(
             titles.iter().any(|t| t == expected),
@@ -913,6 +918,10 @@ fn the_daemon_menu_follows_the_connection(cx: &mut TestAppContext) {
             "Stop Daemon",
             "Start Daemon",
             "Open Logs",
+            // Only enabled while the daemon could not start (start_failure_gpui).
+            "Start with Empty Data…",
+            "Stop the Stuck Daemon…",
+            "Copy Start Error Details",
             "Keep Daemon Running After Hutan Quits",
             // Outside Hutan.app (no login item here): present but disabled.
             "Start Daemon at Login (available in Hutan.app)",
