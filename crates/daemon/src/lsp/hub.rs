@@ -56,6 +56,7 @@ use tracing::{debug, info, warn};
 use super::catalog::{Catalog, ServerSpec, language_of};
 use super::convert::{self, Texts};
 use super::roots;
+use super::rustup;
 use super::trust::{Standing, TrustBook};
 use crate::bus::EventBus;
 use crate::config::{LspSettings, LspTrustMode};
@@ -527,10 +528,15 @@ impl LspHub {
     }
 
     /// The server's program: a path as it is, a name found on the login `PATH`, the daemon's,
-    /// or in the folders installers use.
-    fn locate(spec: &ServerSpec, env: &BTreeMap<String, String>) -> Result<PathBuf, String> {
+    /// or in the folders installers use. A rustup proxy whose toolchain for `dir` lacks the tool
+    /// is no program ([`rustup::missing_component`]).
+    fn locate(
+        spec: &ServerSpec,
+        env: &BTreeMap<String, String>,
+        dir: &Path,
+    ) -> Result<PathBuf, String> {
         let (path, fallback) = program_dirs(env);
-        find_program(&spec.command, path.as_deref())
+        let program = find_program(&spec.command, path.as_deref())
             .or_else(|| find_in(&spec.command, &fallback))
             .ok_or_else(|| {
                 if spec.command.contains('/') {
@@ -541,7 +547,11 @@ impl LspHub {
                         spec.command
                     )
                 }
-            })
+            })?;
+        match rustup::missing_component(&program, env, dir) {
+            Some(reason) => Err(reason),
+            None => Ok(program),
+        }
     }
 
     // Planning ---------------------------------------------------------------------------------
@@ -588,14 +598,24 @@ impl LspHub {
         let Some(first) = candidates.first() else {
             return Plan::None(format!("no language server is configured for `{language}`"));
         };
+        // rustup reads the toolchain from the file's folder up.
+        let dir = path.parent().unwrap_or(path);
         let mut chosen = None;
+        let mut first_error = None;
         for spec in &candidates {
-            if let Ok(program) = Self::locate(spec, env) {
-                chosen = Some((*spec, Ok(program)));
-                break;
+            match Self::locate(spec, env, dir) {
+                Ok(program) => {
+                    chosen = Some((*spec, Ok(program)));
+                    break;
+                }
+                Err(reason) => {
+                    first_error.get_or_insert(reason);
+                }
             }
         }
-        let (spec, program) = chosen.unwrap_or_else(|| (*first, Self::locate(first, env)));
+        // None found: the first one is the one to install.
+        let (spec, program) =
+            chosen.unwrap_or_else(|| (*first, Err(first_error.unwrap_or_default())));
         let project_root = project.map(|p| p.root.as_path());
         let root = over
             .and_then(|o| o.roots.get(&spec.name))
@@ -957,7 +977,7 @@ impl LspHub {
     /// Starts the slot's server when the folder is trusted, the binary exists and there is room;
     /// the documents of the slot are sent to it. A no-op while one runs.
     async fn ensure_running(self: &Arc<Self>, slot_id: &str) {
-        let spec = {
+        let (spec, root) = {
             let mut state = self.state.lock();
             if state.stopping {
                 return;
@@ -975,12 +995,12 @@ impl LspHub {
                 return;
             }
             slot.starting = true;
-            slot.spec.clone()
+            (slot.spec.clone(), slot.root.clone())
         };
         let env = self.environment().await;
         let program = {
             let (spec, env) = (spec.clone(), env.clone());
-            tokio::task::spawn_blocking(move || Self::locate(&spec, &env))
+            tokio::task::spawn_blocking(move || Self::locate(&spec, &env, &root))
                 .await
                 .unwrap_or_else(|e| Err(format!("looking for the server failed: {e}")))
         };

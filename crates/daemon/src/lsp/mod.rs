@@ -5,6 +5,8 @@
 //! - [`roots`]: the topmost root marker above a file, within its project, with a per-project
 //!   override.
 //! - [`trust`]: what the user decided about folders; a server never starts in an untrusted one.
+//! - [`rustup`]: a `rust-analyzer` that is rustup's proxy without the component counts as not
+//!   installed (`rustup component add rust-analyzer`), never a crash loop.
 //! - [`convert`]: positions and diagnostics between a server's encoding and the wire.
 //! - [`hub`]: [`LspHub`], one server per (server, root) shared by every client, the mirrors of
 //!   the open documents, idle stop, `max_servers`, restart and the requests of the protocol.
@@ -13,6 +15,7 @@ mod catalog;
 mod convert;
 mod hub;
 mod roots;
+mod rustup;
 mod trust;
 
 pub use hub::{Inputs, LspHub, LspTuning};

@@ -836,6 +836,116 @@ async fn a_missing_server_is_not_installed_with_the_command_and_the_setting() {
     env.stop().await;
 }
 
+/// The `rust-analyzer` on the user's login `PATH` is rustup's proxy and the toolchain lacks the
+/// component (the second e2e pass, finding 2): the server is `not_installed` with rustup's
+/// command, and the proxy never runs as a server (no crash loop).
+#[tokio::test(flavor = "multi_thread")]
+async fn rustups_proxy_without_the_component_is_not_installed_with_the_command() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let work = tempfile::tempdir().unwrap();
+    let base = work.path().canonicalize().unwrap();
+    let bin = base.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let ran = base.join("proxy-ran");
+    // rustup, and its proxy linked to it, as rustup installs them: run as `rust-analyzer` it
+    // says what rustup says without the component, and so does `rustup which`.
+    let rustup = bin.join("rustup");
+    std::fs::write(
+        &rustup,
+        format!(
+            "#!/bin/sh\n\
+             name=$(basename \"$0\")\n\
+             if [ \"$name\" != rustup ]; then\n\
+             echo \"$name\" >> {ran:?}\n\
+             echo \"error: Unknown binary '$name' in official toolchain 'stable-aarch64-apple-darwin'.\" >&2\n\
+             exit 1\n\
+             fi\n\
+             if [ \"$1\" = which ]; then\n\
+             echo \"error: Unknown binary '$2' in official toolchain 'stable-aarch64-apple-darwin'.\" >&2\n\
+             exit 1\n\
+             fi\n\
+             exit 2\n",
+            ran = ran.display().to_string()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&rustup, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink(&rustup, bin.join("rust-analyzer")).unwrap();
+    // The user's login shell puts that folder first on `PATH`.
+    let shell = base.join("login-shell");
+    std::fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\nexport PATH=\"{}:$PATH\"\nexec /usr/bin/env -0\n",
+            bin.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let repo = base.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("Cargo.toml"), "").unwrap();
+
+    let t = TestDaemon::start_with("[lsp]\ntrust = \"always\"\n", |config| {
+        config.login_shell = Some(shell.clone());
+        config.lsp = fast();
+    })
+    .await;
+    // The daemon captures the login environment in the background; the language servers read
+    // it once, so the test waits until the capture is in.
+    let shell_name = shell.display().to_string();
+    let mut login_path = None;
+    for _ in 0..30 {
+        let name = shell_name.clone();
+        let env = tokio::task::spawn_blocking(move || {
+            hutan_terminal::env::login_env(&name, &hutan_terminal::env::system_facts())
+        })
+        .await
+        .unwrap();
+        login_path = env.and_then(|e| e.get("PATH").cloned());
+        if login_path.is_some() {
+            break;
+        }
+    }
+    let login_path = login_path.expect("the login environment was captured");
+    assert!(
+        login_path.starts_with(&bin.display().to_string()),
+        "{login_path}"
+    );
+
+    let (client, _events) = t.connect_subscribed().await;
+    let opened = client
+        .doc_open(DocOpen {
+            path: repo.join("main.rs"),
+            language: None,
+            version: 1,
+            text: "fn main() {}\n".to_owned(),
+        })
+        .await
+        .unwrap();
+    let server = &opened.servers[0];
+    assert_eq!(server.name, "rust-analyzer");
+    assert_eq!(server.state, LspServerState::NotInstalled);
+    assert_eq!(
+        server.install.as_deref(),
+        Some("rustup component add rust-analyzer")
+    );
+    let reason = server.reason.as_deref().unwrap();
+    assert!(reason.contains("rustup's proxy"), "{reason}");
+    assert!(reason.contains("Unknown binary 'rust-analyzer'"), "{reason}");
+    assert!(
+        reason.contains("rustup component add rust-analyzer"),
+        "{reason}"
+    );
+    let listed = status(&client).await;
+    assert_eq!(listed.servers.len(), 1);
+    assert_eq!(listed.servers[0].state, LspServerState::NotInstalled);
+    assert_eq!(listed.servers[0].pid, None);
+    assert_eq!(listed.servers[0].restarts, 0);
+    assert!(!ran.exists(), "the proxy never ran as a server");
+    t.stop().await;
+}
+
 #[tokio::test]
 async fn the_topmost_marker_is_the_root_and_a_project_can_override_it() {
     let extra = "[lsp]\ntrust = \"always\"\n";
