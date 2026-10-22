@@ -64,9 +64,12 @@ fn selected(code: &Entity<CodeView>, cx: &mut VisualTestContext) -> Option<Strin
     })
 }
 
-fn selection(code: &Entity<CodeView>, cx: &mut VisualTestContext) -> Vec<std::ops::Range<usize>> {
+fn selection(code: &Entity<CodeView>, cx: &mut VisualTestContext) -> Vec<(usize, usize)> {
     code.read_with(cx, |c, _| {
-        c.selections().iter().map(|s| s.range()).collect()
+        c.selections()
+            .iter()
+            .map(|s| (s.range().start, s.range().end))
+            .collect()
     })
 }
 
@@ -169,7 +172,7 @@ fn a_snippet_has_tab_stops_and_signature_help_follows_the_parameters(cx: &mut Te
     cx.simulate_keystrokes("tab");
     assert_eq!(text(&tab.buffer, cx), "v.push(value, n)");
     // The first stop's placeholder is selected; signature help shows its parameter.
-    assert_eq!(selection(&tab.code, cx), [7..12]);
+    assert_eq!(selection(&tab.code, cx), [(7, 12)]);
     assert!(tab.code.read_with(cx, |c, _| c.in_snippet()));
     wait_until(cx, "signature help on `value`", |cx| {
         tab.code.read_with(cx, |c, _| c.signature_shown())
@@ -177,7 +180,7 @@ fn a_snippet_has_tab_stops_and_signature_help_follows_the_parameters(cx: &mut Te
     });
     cx.simulate_input("item");
     cx.simulate_keystrokes("tab");
-    assert_eq!(selection(&tab.code, cx), [13..14]);
+    assert_eq!(selection(&tab.code, cx), [(13, 14)]);
     cx.simulate_input("3");
     assert_eq!(text(&tab.buffer, cx), "v.push(item, 3)");
     wait_until(cx, "signature help on `n`", |cx| {
@@ -186,7 +189,7 @@ fn a_snippet_has_tab_stops_and_signature_help_follows_the_parameters(cx: &mut Te
     });
     // The last Tab goes to the end (`$0`) and the snippet is over.
     cx.simulate_keystrokes("tab");
-    assert_eq!(selection(&tab.code, cx), [15..15]);
+    assert_eq!(selection(&tab.code, cx), [(15, 15)]);
     assert!(!tab.code.read_with(cx, |c, _| c.in_snippet()));
     cx.simulate_keystrokes("escape");
     assert_eq!(tab.code.read_with(cx, |c, _| c.signature_shown()), None);

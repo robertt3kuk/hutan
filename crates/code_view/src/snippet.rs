@@ -3,6 +3,10 @@
 //! Anything else — choices `${1|a,b|}`, variables `$TM_FILENAME`, nested placeholders,
 //! transformations — is inserted as plain text, exactly as the server wrote it.
 
+// A tab stop is a list of ranges (its occurrences); a list of one range is meant, not a
+// range to collect.
+#![allow(clippy::single_range_in_vec_init)]
+
 use std::ops::Range;
 
 /// A snippet made plain: the text to insert and its tab stops.
