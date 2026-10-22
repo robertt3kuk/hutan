@@ -1353,7 +1353,7 @@ impl SearchPanel {
                     .text_color(theme.fg)
                     .font_weight(gpui::FontWeight::BOLD)
                     .border_1()
-                    .border_color(theme.accent)
+                    .border_color(theme.border)
             })
             .when(!on, move |s| {
                 s.text_color(theme.muted).hover(move |s| s.bg(hover))
@@ -2011,7 +2011,7 @@ impl Render for SearchPanel {
                 .p(px(tokens.spacing * 1.5))
                 .rounded(px(tokens.radius))
                 .border_1()
-                .border_color(theme.accent)
+                .border_color(theme.border)
                 .bg(theme.accent_soft)
                 .flex()
                 .flex_col()
