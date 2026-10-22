@@ -533,14 +533,64 @@ impl Workbench {
         .detach();
     }
 
-    /// "Open Folder…": the system folder panel, then `workspace.open`.
+    /// "Open Folder…": the system folder panel, then `workspace.open`. Before the first project
+    /// the panel starts at `~` (the system's own remembers some other place, the Desktop say).
     pub fn open_folder_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.choose_folder(
-            "Open",
-            |this, path, window, cx| this.open_project_path(path, window, cx),
-            window,
-            cx,
-        );
+        let first_run = !self
+            .sessions
+            .read(cx)
+            .workspaces()
+            .iter()
+            .any(|w| w.kind == WorkspaceKind::Project);
+        let start = first_run
+            .then(|| {
+                std::env::home_dir().or_else(|| {
+                    self.sessions
+                        .read(cx)
+                        .home_workspace()
+                        .and_then(|home| home.roots.first().cloned())
+                })
+            })
+            .flatten();
+        let Some(start) = start else {
+            self.choose_folder(
+                "Open",
+                |this, path, window, cx| this.open_project_path(path, window, cx),
+                window,
+                cx,
+            );
+            return;
+        };
+        let panel = self.mac.open_panel.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            // AppKit is asked outside of any update of the window, as GPUI does with its own.
+            let path = match panel.choose_folder(&start) {
+                Some(chosen) => chosen.await.ok().flatten(),
+                None => {
+                    let Ok(chosen) = cx.update(|_, cx| {
+                        cx.prompt_for_paths(PathPromptOptions {
+                            files: false,
+                            directories: true,
+                            multiple: false,
+                            prompt: Some("Open".into()),
+                        })
+                    }) else {
+                        return;
+                    };
+                    match chosen.await {
+                        Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                        _ => None,
+                    }
+                }
+            };
+            if let Some(path) = path {
+                this.update_in(cx, |this, window, cx| {
+                    this.open_project_path(path, window, cx);
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     // ---- workspace verbs ---------------------------------------------------------------------

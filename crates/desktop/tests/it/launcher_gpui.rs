@@ -379,11 +379,11 @@ fn a_chat_in_a_new_worktree_creates_the_task_with_that_placement_and_starts_it(
     click(&view, cx, Region::ProjectStart(env.api_id));
     ready(&view, cx);
 
-    // The sheet opens on a plain terminal; pick the agent chat, then type its prompt: the
-    // title and the branch follow it.
+    // With OMP ready the sheet opens on the agent chat (FX-E2E2-C); picking it is a no-op.
+    // Type the prompt: the title and the branch follow it.
     assert_eq!(
         view.read_with(cx, |wb, _| wb.launcher().unwrap().kind()),
-        LaunchKind::Terminal
+        LaunchKind::Chat
     );
     click(&view, cx, Region::LauncherChoice("what", "chat"));
     click(&view, cx, Region::Launcher("prompt"));
@@ -1051,8 +1051,78 @@ fn confirm_shown(view: &Entity<Workbench>, cx: &VisualTestContext) -> bool {
     })
 }
 
+/// FX-E2E2-C: with no kind remembered, the sheet opens on an agent chat when a harness is ready.
 #[gpui::test]
-fn the_first_sheet_opens_on_a_plain_terminal_and_says_what_start_will_do(cx: &mut TestAppContext) {
+fn the_first_sheet_opens_on_an_agent_chat_when_a_harness_is_ready(cx: &mut TestAppContext) {
+    let env = Env::new();
+    let (view, cx) = open(cx, &env);
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            ..LauncherPreset::default()
+        },
+    );
+    chat_ready(&view, cx);
+    assert_eq!(kind_of(&view, cx), LaunchKind::Chat);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.launcher().unwrap().stop()),
+        LauncherStop::Prompt,
+        "the keyboard starts in the prompt of a chat"
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.launcher_start_label()),
+        "Start OMP chat ⌘↩"
+    );
+}
+
+/// FX-E2E2-C: with no harness ready, and nothing remembered, the sheet opens on a plain terminal;
+/// the kind the user picks stays picked when a harness turns up later.
+#[gpui::test]
+fn the_first_sheet_opens_on_a_plain_terminal_without_a_ready_harness(cx: &mut TestAppContext) {
+    let scripts = tempfile::tempdir().unwrap();
+    let folders = tempfile::tempdir().unwrap();
+    let missing = scripts.path().join("none");
+    let daemon = TestDaemon::start_with_config(&format!(
+        "[terminal]\nenv_inherit = \"daemon\"\n\n[codex]\nbin = {missing:?}\n\n[harness.omp]\nbin = {missing:?}\ncli = {missing:?}\n\n[harness.claude]\nbin = {missing:?}\ncli = {missing:?}\n",
+    ));
+    let api = repo(folders.path(), "api");
+    let api_id = daemon.create_workspace("api", &[&api]).id;
+    let web = repo(folders.path(), "web");
+    daemon.create_workspace("web", &[&web]);
+    let (view, cx) = open_with(
+        cx,
+        SettingsStore::new(SettingsPaths::in_dir(daemon.home())),
+        daemon.connection(),
+        None,
+    );
+    synced(&view, cx);
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(api_id),
+            ..LauncherPreset::default()
+        },
+    );
+    wait_until(cx, "the harnesses", |cx| {
+        view.read_with(cx, |wb, cx| {
+            matches!(
+                wb.harness_directory().read(cx).listing(),
+                hutan_desktop::workbench::Listing::Ready
+            )
+        })
+    });
+    assert_eq!(kind_of(&view, cx), LaunchKind::Terminal);
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.launcher().unwrap().stop()),
+        LauncherStop::What
+    );
+}
+
+#[gpui::test]
+fn the_first_sheet_says_what_start_will_do_on_a_plain_terminal(cx: &mut TestAppContext) {
     let env = Env::new();
     let (view, cx) = open(cx, &env);
     open_sheet(
@@ -1064,11 +1134,7 @@ fn the_first_sheet_opens_on_a_plain_terminal_and_says_what_start_will_do(cx: &mu
         },
     );
     ready(&view, cx);
-    assert_eq!(
-        kind_of(&view, cx),
-        LaunchKind::Terminal,
-        "no model by default"
-    );
+    view.update(cx, |wb, cx| wb.launcher_set_kind(LaunchKind::Terminal, cx));
     assert_eq!(
         view.read_with(cx, |wb, _| wb.launcher().unwrap().stop()),
         LauncherStop::What,
@@ -1166,7 +1232,8 @@ fn the_sheet_reopens_on_what_was_started_last_and_keeps_it_across_restarts(
         },
     );
     ready(&view, cx);
-    assert_eq!(kind_of(&view, cx), LaunchKind::Terminal);
+    // Nothing was started yet: the agent chat, as OMP is ready.
+    assert_eq!(kind_of(&view, cx), LaunchKind::Chat);
     view.update(cx, |wb, cx| {
         wb.launcher_set_kind(LaunchKind::Command, cx);
         wb.launcher_set_field(LauncherField::Command, "sleep 71", cx);
@@ -1523,6 +1590,8 @@ fn rows_change_value_only_when_opened_and_command_enter_waits_for_the_choice(
         },
     );
     ready(&view, cx);
+    // The sheet opens on the agent chat; this test is about the What row, on a plain terminal.
+    view.update(cx, |wb, cx| wb.launcher_set_kind(LaunchKind::Terminal, cx));
     let stop = |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.launcher().unwrap().stop());
     let open_row =
         |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.launcher().unwrap().open_row());

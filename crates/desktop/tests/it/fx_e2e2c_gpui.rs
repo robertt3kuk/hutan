@@ -7,12 +7,14 @@ use crate::common;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::rc::Rc;
 
-use common::{TestDaemon, draw, offline_connection, open_with, wait_until};
+use common::{TestDaemon, draw, offline_connection, open_options, open_with, wait_until};
 use gpui::{Entity, TestAppContext, VisualTestContext};
+use hutan_desktop::macos::{FakeOpenPanel, MacServices};
 use hutan_desktop::workbench::model::ItemRef;
 use hutan_desktop::workbench::panels::{FileGitMark, FilesPanel};
-use hutan_desktop::workbench::{Region, Workbench, actions};
+use hutan_desktop::workbench::{Region, Workbench, WorkbenchOptions, actions};
 use hutan_settings::{SettingsPaths, SettingsStore};
 
 fn open_offline(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) {
@@ -207,6 +209,39 @@ fn the_files_panel_marks_changed_files_and_their_folders_and_follows_fs_changes(
     wait_until(cx, "the mark of the edited file", |cx| {
         panel.read_with(cx, |p, _| {
             p.git().mark(&root.join("notes.txt")) == Some(FileGitMark::Modified)
+        })
+    });
+}
+
+// First-run Open a folder ---------------------------------------------------------------------------
+
+#[gpui::test]
+fn the_first_runs_open_folder_panel_starts_at_home_and_opens_the_choice(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let fake = FakeOpenPanel::new();
+    let mac = MacServices {
+        open_panel: Rc::new(fake.clone()),
+        ..MacServices::inert()
+    };
+    let options =
+        WorkbenchOptions::builtin(settings_of(&daemon), daemon.connection(), None).with_mac(mac);
+    let (view, cx) = open_options(cx, options);
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).synced())
+    });
+    // No project yet: the first run.
+    cx.dispatch_action(actions::OpenFolder);
+    wait_until(cx, "the Open panel", |_| !fake.asked_folders().is_empty());
+    let home = std::env::home_dir().expect("the test machine has a home folder");
+    assert_eq!(fake.asked_folders(), [home]);
+
+    // Choosing a folder opens it as a project.
+    let dir = tempfile::tempdir().unwrap();
+    let chosen = fs::canonicalize(dir.path()).unwrap();
+    assert!(fake.answer(Some(chosen.clone())));
+    wait_until(cx, "the project", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).files_root().as_deref() == Some(chosen.as_path())
         })
     });
 }

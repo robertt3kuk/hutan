@@ -185,6 +185,9 @@ pub struct Launcher {
     pub(crate) project_query: TextInput,
     pub(crate) project_sel: usize,
     pub(crate) kind: LaunchKind,
+    /// The kind is the sheet's own pick (nothing was remembered or preset), not the user's: an
+    /// agent harness found ready after the sheet opened turns it into an agent chat.
+    pub(crate) kind_defaulted: bool,
     pub(crate) agent: LaunchAgent,
     /// The user picked the agent: what the daemon finds installed no longer moves it.
     pub(crate) agent_chosen: bool,
@@ -583,6 +586,15 @@ impl Workbench {
             .launcher
             .as_ref()
             .is_none_or(|l| l.kind == LaunchKind::Chat);
+        self.harness_choices(chat, cx)
+    }
+
+    /// Whether some harness can start an agent chat now.
+    fn chat_harness_ready(&self, cx: &gpui::App) -> bool {
+        self.harness_choices(true, cx).iter().any(|h| h.enabled())
+    }
+
+    fn harness_choices(&self, chat: bool, cx: &gpui::App) -> Vec<HarnessChoice> {
         let directory = self.env.harnesses.read(cx);
         HARNESSES
             .iter()
@@ -969,17 +981,26 @@ impl Workbench {
         let project = preset.project.or(default_project);
         let memory = self.launcher_memory.clone();
         // A preset with a prompt, a queue or a direct chat is about an agent. Otherwise the sheet
-        // opens on what the last start was, and on a plain terminal before there was one.
+        // opens on what the last start was; before there was one, on an agent chat when a
+        // harness is ready, else on a plain terminal (a harness found ready a moment later
+        // turns the sheet into a chat too, until the user picks a kind).
         let agentic = preset.prompt.is_some() || preset.queue || preset.direct || preset.inline;
+        let remembered_kind = memory
+            .kind
+            .as_deref()
+            .and_then(|key| LaunchKind::ALL.into_iter().find(|k| k.key() == key));
+        let kind_defaulted = preset.kind.is_none() && !agentic && remembered_kind.is_none();
         let kind = preset.kind.unwrap_or_else(|| {
             if agentic {
                 return LaunchKind::Chat;
             }
-            memory
-                .kind
-                .as_deref()
-                .and_then(|key| LaunchKind::ALL.into_iter().find(|k| k.key() == key))
-                .unwrap_or(LaunchKind::Terminal)
+            remembered_kind.unwrap_or_else(|| {
+                if self.chat_harness_ready(cx) {
+                    LaunchKind::Chat
+                } else {
+                    LaunchKind::Terminal
+                }
+            })
         });
         let remembered_agent =
             memory
@@ -1012,6 +1033,7 @@ impl Workbench {
             project_query: TextInput::new(),
             project_sel: 0,
             kind,
+            kind_defaulted,
             agent,
             agent_chosen: preset.direct,
             agent_peek: None,
@@ -1186,6 +1208,7 @@ impl Workbench {
         let Some(launcher) = &mut self.launcher else {
             return;
         };
+        launcher.kind_defaulted = false;
         if launcher.starting || launcher.kind == kind {
             return;
         }
@@ -1445,8 +1468,20 @@ impl Workbench {
     /// What the harnesses and providers learned reaches the open sheet: the preselected agent
     /// follows what is installed until the user picks one, and the model list is the agent's.
     pub(crate) fn launcher_on_harnesses_changed(&mut self, cx: &mut Context<Self>) {
-        if self.launcher.is_none() {
+        let Some(launcher) = &self.launcher else {
             return;
+        };
+        // The sheet picked a plain terminal for lack of a ready harness, and one is ready now.
+        if launcher.kind_defaulted
+            && launcher.kind == LaunchKind::Terminal
+            && !launcher.starting
+            && self.chat_harness_ready(cx)
+        {
+            let at_what = launcher.stop == LauncherStop::What;
+            self.launcher_set_kind(LaunchKind::Chat, cx);
+            if at_what {
+                self.launcher_set_stop(LauncherStop::Prompt);
+            }
         }
         self.launcher_repick_agent(cx);
         self.launcher_validate_model(cx);
