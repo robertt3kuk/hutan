@@ -189,7 +189,10 @@ pub mod daemon {
             ShowStuckDaemon,
             StopStuckDaemon,
             CopyStartError,
-            CopyUpdateCommand
+            CopyUpdateCommand,
+            // When the daemon is not this app's build (`daemon_mismatch`):
+            UseOwnDaemon,
+            DismissMismatch
         ]
     );
 }
@@ -664,6 +667,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Daemon: Stop the Stuck Daemon…", daemon::StopStuckDaemon),
         command("Daemon: Copy Start Error Details", daemon::CopyStartError),
         command("Daemon: Copy Update Command", daemon::CopyUpdateCommand),
+        command("Daemon: Use This App's Service", daemon::UseOwnDaemon),
     ];
     out.extend([
         command("Workspace: New Workspace…", NewWorkspace),

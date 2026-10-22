@@ -152,6 +152,7 @@ impl Render for Workbench {
         let layout_offer = self.render_layout_offer(cx);
         let reinstall_card = self.render_reinstall_card(cx);
         let start_failure = self.render_start_failure_banner(cx);
+        let mismatch = self.render_daemon_mismatch_banner();
         self.rescue_orphaned_focus(window, cx);
         self.sync_assistant_focus(window, cx);
         self.sync_agents_page(cx);
@@ -224,6 +225,7 @@ impl Render for Workbench {
                         .children(offer)
                         .children(layout_offer)
                         .children(start_failure)
+                        .children(mismatch)
                         .children(reinstall_card)
                         .child(
                             div()
@@ -928,6 +930,16 @@ impl Workbench {
         .on_action(
             cx.listener(|this, _: &actions::daemon::CopyUpdateCommand, _, cx| {
                 this.copy_update_command(cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::daemon::UseOwnDaemon, _, cx| {
+                this.use_own_daemon(cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::daemon::DismissMismatch, _, cx| {
+                this.dismiss_daemon_mismatch(cx);
             }),
         )
         .on_action(

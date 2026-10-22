@@ -324,7 +324,7 @@ impl Workbench {
         let daemon = if let Some(busy) = self.daemon.busy {
             busy.label().to_owned()
         } else if self.daemon.stopped {
-            connection_words(ConnectionState::Stopped).to_owned()
+            "hutand stopped by you".to_owned()
         } else {
             connection_words(self.sessions.read(cx).connection_state()).to_owned()
         };

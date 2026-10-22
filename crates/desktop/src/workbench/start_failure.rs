@@ -261,11 +261,13 @@ impl Workbench {
         }
     }
 
-    /// The buttons a failure of `kind` offers, with the `region` each is probed as.
+    /// The buttons a failure of `kind` offers, with the `region` each is probed as; *Retry*
+    /// first when the connection gave up starting the daemon (`autostart_halted`).
     fn start_failure_buttons(
         &self,
         kind: StartFailureKind,
         region: fn(&'static str) -> Region,
+        halted: bool,
     ) -> Vec<AnyElement> {
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -280,7 +282,15 @@ impl Workbench {
                 .child(probe(&regions, region(id)))
                 .into_any_element()
         };
-        match kind {
+        let retry = halted.then(|| {
+            button(
+                "daemon-retry",
+                "Retry",
+                ButtonKind::Secondary,
+                Box::new(daemon::Start),
+            )
+        });
+        let offered = match kind {
             StartFailureKind::NewerData => vec![
                 button(
                     "daemon-copy-update",
@@ -323,7 +333,8 @@ impl Workbench {
                     Box::new(daemon::CopyStartError),
                 ),
             ],
-        }
+        };
+        retry.into_iter().chain(offered).collect()
     }
 
     /// The reason and its actions, for the line under the title bar and the popover.
@@ -331,6 +342,7 @@ impl Workbench {
         &self,
         failure: &StartFailure,
         region: fn(&'static str) -> Region,
+        halted: bool,
     ) -> gpui::Div {
         let theme = self.theme;
         let tokens = self.density.ui();
@@ -371,13 +383,14 @@ impl Workbench {
             )
             .child(text)
             .when(!busy, |s| {
-                s.children(self.start_failure_buttons(kind, region))
+                s.children(self.start_failure_buttons(kind, region, halted))
             })
     }
 
     /// The line under the title bar while the daemon could not start.
     pub(crate) fn render_start_failure_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let failure = self.daemon_start_failure(cx)?;
+        let halted = self.sessions.read(cx).state().autostart_halted;
         let theme = self.theme;
         let tokens = self.density.ui();
         Some(
@@ -391,7 +404,7 @@ impl Workbench {
                 .border_b_1()
                 .border_color(theme.danger)
                 .text_size(px(tokens.secondary_font_size))
-                .child(self.render_start_failure_body(&failure, Region::Offer))
+                .child(self.render_start_failure_body(&failure, Region::Offer, halted))
                 .child(probe(&self.regions, Region::Offer("daemon-start-failure")))
                 .into_any_element(),
         )

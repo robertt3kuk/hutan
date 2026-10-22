@@ -24,6 +24,7 @@ mod integrations;
 mod launcher;
 mod launcher_ui;
 mod layout_offer;
+mod lifecycle;
 pub mod lsp;
 mod lsp_bar;
 mod lsp_complete;

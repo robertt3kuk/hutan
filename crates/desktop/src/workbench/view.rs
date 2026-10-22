@@ -81,6 +81,10 @@ pub struct WorkbenchOptions {
     /// Hutan runs with its own data directory (`HUTAN_HOME`): the agents' hooks still go into
     /// their real configuration directories, which the setup says.
     pub custom_home: bool,
+    /// The `hutand` this app starts, and its build (`app::own_daemon`): a daemon of another
+    /// build or from elsewhere is restarted onto it or reported (`lifecycle.rs`). `None` checks
+    /// nothing.
+    pub own_daemon: Option<hutan_client::DaemonIdentity>,
 }
 
 impl WorkbenchOptions {
@@ -104,12 +108,19 @@ impl WorkbenchOptions {
             installer: None,
             package_runner: None,
             custom_home: std::env::var_os("HUTAN_HOME").is_some_and(|home| !home.is_empty()),
+            own_daemon: None,
         }
     }
 
     /// The same options with these macOS services.
     pub fn with_mac(mut self, mac: MacServices) -> Self {
         self.mac = mac;
+        self
+    }
+
+    /// The same options checking the daemon against `own`, the `hutand` this app starts.
+    pub fn with_own_daemon(mut self, own: hutan_client::DaemonIdentity) -> Self {
+        self.own_daemon = Some(own);
         self
     }
 
@@ -1157,7 +1168,7 @@ impl Workbench {
             modal_focus,
             sheet_focus,
             daemon_focus,
-            daemon: DaemonControl::new(),
+            daemon: DaemonControl::new(options.own_daemon),
             mac,
             setup: super::setup::SetupControl::new(cx.focus_handle(), options.cli_link),
             first_run: super::first_run::FirstRunControl::default(),

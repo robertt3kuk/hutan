@@ -28,6 +28,8 @@ const STOP_WAIT: Duration = Duration::from_secs(10);
 /// Longest wait for a started daemon to accept the connection.
 const START_WAIT: Duration = Duration::from_secs(20);
 const POLL: Duration = Duration::from_millis(25);
+/// The status item while the daemon is stopped on purpose: who stopped it and the way back.
+pub const STOPPED_BY_YOU: &str = "Stopped by you · Start";
 
 /// Shows a file in Finder.
 type RevealHandler = Rc<dyn Fn(&Path, &mut App)>;
@@ -59,7 +61,9 @@ pub(crate) struct FetchedStatus {
 
 /// State of the daemon controls and of the quit flow.
 pub(crate) struct DaemonControl {
-    /// The user stopped the daemon from the app: autostart is off until they start it.
+    /// The daemon is stopped on purpose — from the app, or announced by the daemon
+    /// (`daemon.stopping`: the CLI, its menu bar item): autostart is off until the user starts
+    /// it. Not kept across launches: a relaunched app starts the daemon it needs.
     pub stopped: bool,
     pub busy: Option<DaemonBusy>,
     pub popover: bool,
@@ -79,10 +83,15 @@ pub(crate) struct DaemonControl {
     pub open: RevealHandler,
     /// What *Show the Process* found about a stuck daemon (`start_failure`).
     pub stuck_info: Option<String>,
+    /// Which build of the daemon this app runs and how the running one differs
+    /// (`lifecycle.rs`).
+    pub(crate) identity: super::lifecycle::IdentityCheck,
+    /// Said once the next start connected (the update of an idle old daemon).
+    pub(crate) start_notice: Option<String>,
 }
 
 impl DaemonControl {
-    pub fn new() -> Self {
+    pub fn new(own: Option<hutan_client::DaemonIdentity>) -> Self {
         Self {
             stopped: false,
             busy: None,
@@ -97,6 +106,8 @@ impl DaemonControl {
             reveal: Rc::new(|path, cx| cx.reveal_path(path)),
             open: Rc::new(|path, _| open_with_system(path)),
             stuck_info: None,
+            identity: super::lifecycle::IdentityCheck::new(own),
+            start_notice: None,
         }
     }
 }
@@ -122,17 +133,19 @@ fn sessions_phrase(live: usize) -> String {
 
 /// Asks the daemon to shut down and waits until its socket is gone (it is removed just before
 /// the daemon releases its lock, so a successor can start). A daemon that is already gone
-/// counts as stopped.
+/// counts as stopped. `restart`: a daemon is started right after (protocol 0.42: other clients
+/// are told it is no stop to keep).
 async fn shutdown_and_wait(
     connection: &Connection,
     stop_sessions: bool,
+    restart: bool,
     background: &BackgroundExecutor,
 ) -> Result<(), ClientError> {
     match connection
         .call::<Value>(Request::DaemonShutdown(DaemonShutdown {
             stop_sessions,
             forget: false,
-            restart: false,
+            restart,
         }))
         .await
     {
@@ -242,17 +255,13 @@ impl Workbench {
         if let Some(busy) = self.daemon.busy {
             return (busy.label().to_owned(), StatusTone::Warn);
         }
-        let state = if self.daemon.stopped {
-            ConnectionState::Stopped
-        } else {
-            self.sessions.read(cx).connection_state()
-        };
-        if !self.daemon.stopped
-            && let Some(line) = self.start_failure_line(cx)
-        {
+        if self.daemon.stopped {
+            return (STOPPED_BY_YOU.to_owned(), StatusTone::Error);
+        }
+        if let Some(line) = self.start_failure_line(cx) {
             return line;
         }
-        connection_label(state)
+        connection_label(self.sessions.read(cx).connection_state())
     }
 
     /// The text of the connection status item ("hutand connected", "hutand stopped", …).
@@ -295,7 +304,9 @@ impl Workbench {
 
     /// The connection changed: keep the menu, the popover data and the terminals current.
     pub(crate) fn on_daemon_state_changed(&mut self, cx: &mut Context<Self>) {
+        self.follow_announced_stop(cx);
         self.follow_daemon_started(cx);
+        self.check_daemon_identity(cx);
         self.sync_menus(cx);
         self.sync_mac_surfaces(cx);
         self.daemon_settings_follow_run(cx);
@@ -370,7 +381,7 @@ impl Workbench {
         }
         let live = self.live_sessions(cx);
         if !self.daemon_connected(cx) || live == 0 {
-            self.begin_stop(false, window, cx);
+            self.begin_stop(false, cx);
             return;
         }
         self.open_confirm(
@@ -380,7 +391,7 @@ impl Workbench {
                 sessions_phrase(live)
             ),
             "Stop Sessions & Daemon",
-            |this, window, cx| this.begin_stop(false, window, cx),
+            |this, _, cx| this.begin_stop(false, cx),
             window,
             cx,
         );
@@ -398,7 +409,7 @@ impl Workbench {
             return;
         }
         if live == 0 {
-            self.begin_stop(true, window, cx);
+            self.begin_stop(true, cx);
             return;
         }
         let policy = self
@@ -409,7 +420,7 @@ impl Workbench {
             "Restart the daemon?",
             super::settings_labels::words::restart_message(&sessions_phrase(live), policy),
             "Stop Sessions & Restart",
-            |this, window, cx| this.begin_stop(true, window, cx),
+            |this, _, cx| this.begin_stop(true, cx),
             window,
             cx,
         );
@@ -480,8 +491,9 @@ impl Workbench {
     }
 
     /// Stops reconnecting, asks the daemon to shut down (stopping its sessions) and waits for
-    /// it to go. `restart` then starts a new one; otherwise the daemon stays stopped.
-    fn begin_stop(&mut self, restart: bool, window: &mut Window, cx: &mut Context<Self>) {
+    /// it to go. `restart` then starts a new one (the `hutand` this app starts); otherwise the
+    /// daemon stays stopped.
+    pub(crate) fn begin_stop(&mut self, restart: bool, cx: &mut Context<Self>) {
         let connection = self.connection(cx);
         // Off first: the connection must not bring the daemon back while it shuts down.
         connection.set_autostart(false);
@@ -495,8 +507,8 @@ impl Workbench {
         }
         cx.notify();
         let background = cx.background_executor().clone();
-        self.daemon.task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = shutdown_and_wait(&connection, true, &background).await;
+        self.daemon.task = Some(cx.spawn(async move |this, cx| {
+            let result = shutdown_and_wait(&connection, true, restart, &background).await;
             this.update(cx, |this, cx| this.stop_finished(restart, result, cx))
                 .ok();
         }));
@@ -545,7 +557,12 @@ impl Workbench {
             this.update(cx, |this, cx| {
                 this.daemon.busy = None;
                 this.sync_status_item(cx);
-                if !started {
+                if started {
+                    if let Some(notice) = this.daemon.start_notice.take() {
+                        this.set_notice(notice, cx);
+                    }
+                } else {
+                    this.daemon.start_notice = None;
                     let why = this
                         .daemon_start_failure(cx)
                         .map(|failure| failure.sentence())
@@ -558,7 +575,7 @@ impl Workbench {
         }));
     }
 
-    fn set_daemon_stopped(&mut self, stopped: bool, cx: &mut Context<Self>) {
+    pub(crate) fn set_daemon_stopped(&mut self, stopped: bool, cx: &mut Context<Self>) {
         self.daemon.stopped = stopped;
         self.sessions
             .update(cx, |store, cx| store.set_daemon_stopped(stopped, cx));
@@ -700,7 +717,7 @@ impl Workbench {
         let background = cx.background_executor().clone();
         self.set_notice("Stopping the daemon…", cx);
         self.daemon.task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = shutdown_and_wait(&connection, stop_sessions, &background).await;
+            let result = shutdown_and_wait(&connection, stop_sessions, false, &background).await;
             this.update_in(cx, |this, window, cx| match result {
                 Err(ClientError::Remote(body)) if body.code == ErrorCode::InvalidState => {
                     this.notice = None;

@@ -292,7 +292,7 @@ fn a_daemon_started_from_outside_ends_the_stopped_state_and_terminals_take_input
             wb.daemon_busy().is_none() && wb.daemon_stopped()
         })
     });
-    assert_eq!(status_line(&view, cx), "hutand stopped");
+    assert_eq!(status_line(&view, cx), "Stopped by you · Start");
 
     // Somebody else starts it (the CLI, autostart, another client): a request on a fresh
     // connection starts `hutand` the way `hutan daemon start` does.

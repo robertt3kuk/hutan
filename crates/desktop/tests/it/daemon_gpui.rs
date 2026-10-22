@@ -571,7 +571,7 @@ fn stop_from_the_palette_confirms_with_live_sessions_and_keeps_the_app_open(
     });
     assert!(!quitting(&view, cx), "the app stays open");
     assert!(view.read_with(cx, |wb, _| wb.daemon_stopped()));
-    assert_eq!(status_line(&view, cx), "hutand stopped");
+    assert_eq!(status_line(&view, cx), "Stopped by you · Start");
     assert!(
         !view.read_with(cx, |wb, cx| wb.sessions().read(cx).connection().autostart()),
         "autostart is off so the daemon is not brought back"
@@ -691,7 +691,7 @@ fn the_popover_controls_stop_restart_and_start_a_real_daemon(cx: &mut TestAppCon
             wb.daemon_busy().is_none() && wb.daemon_stopped()
         })
     });
-    assert_eq!(status_line(&view, cx), "hutand stopped");
+    assert_eq!(status_line(&view, cx), "Stopped by you · Start");
     // Autostart would bring a daemon back within a few hundred milliseconds.
     pump_for(cx, Duration::from_millis(1500));
     assert!(

@@ -15,7 +15,7 @@ use gpui::{
     App, AppContext as _, Bounds, Context, Menu, MenuItem, SystemMenuType, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions, point, px, size,
 };
-use hutan_client::{ConnectOptions, Connection};
+use hutan_client::{ConnectOptions, Connection, DaemonIdentity};
 use hutan_protocol::messages::{ClientInfo, ClientKind};
 use hutan_settings::{SettingsPaths, SettingsStore};
 use std::path::{Path, PathBuf};
@@ -286,6 +286,12 @@ pub fn connect_options() -> ConnectOptions {
     }
 }
 
+/// The daemon this app starts: `hutand` beside it ([`hutand_path`]) of this build. A daemon of
+/// another build, or one from elsewhere, is told apart from it on every connect.
+pub fn own_daemon() -> DaemonIdentity {
+    DaemonIdentity::own(Some(&hutand_path()))
+}
+
 /// Starts the connection. With starting at login on and approved, launchd starts the daemon, so
 /// the connection only dials ([`Connection::start_held`]) and the workbench lets it start
 /// `hutand` itself if none has answered after a grace period; otherwise it autostarts as
@@ -387,7 +393,8 @@ fn open_main(cx: &mut App) -> gpui::Result<WindowHandle<Workbench>> {
             .with_cli_link(CliLink::system())
             .with_install(crate::install::Install::current())
             .with_installer(Arc::new(CliInstaller::new(hutan_path())))
-            .with_package_runner(Arc::new(SystemRunner));
+            .with_package_runner(Arc::new(SystemRunner))
+            .with_own_daemon(own_daemon());
     open_workbench(cx, options)
 }
 

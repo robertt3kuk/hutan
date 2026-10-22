@@ -826,7 +826,7 @@ fn the_status_item_names_the_daemon_state(cx: &mut TestAppContext) {
         fakes
             .item
             .shown()
-            .is_some_and(|m| m.daemon == "hutand stopped")
+            .is_some_and(|m| m.daemon == "hutand stopped by you")
     });
 }
 

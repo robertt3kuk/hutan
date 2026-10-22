@@ -68,8 +68,9 @@ impl Workbench {
         let login_available = self.start_at_login_available();
         let login_status = self.start_at_login_status();
         let hover = theme.surface_hover;
+        let halted = self.sessions.read(cx).state().autostart_halted;
         let failure = self.daemon_start_failure(cx).map(|failure| {
-            self.render_start_failure_body(&failure, Region::Popover)
+            self.render_start_failure_body(&failure, Region::Popover, halted)
                 .px(px(tokens.spacing * 2.0))
                 .py(px(tokens.spacing))
                 .rounded(px(tokens.radius))
