@@ -17,8 +17,8 @@ mod memory;
 mod problems;
 mod resources;
 mod resources_model;
-mod sessions;
 mod search;
+mod sessions;
 mod status;
 mod tasks;
 
@@ -79,10 +79,10 @@ pub use resources_model::{
     Item as ResourceItem, Line as ResourceLine, ProcessLine as ResourceProcessLine,
     SessionLine as ResourceSessionLine, Target as ResourceTarget,
 };
+pub use search::{ReplaceCount, ResultFile, SearchField, SearchPanel, SearchRow, SearchStatus};
 pub use sessions::{DraggedProject, DraggedWorkspace, RowKind, SessionsPanel, SidebarRow};
 pub use status::{Tone as StatusTone, builtin_status_items, connection_label};
 pub use tasks::{CascadeAsk, TICK as TASKS_TICK, TasksPanel};
-pub use search::{ReplaceCount, ResultFile, SearchField, SearchPanel, SearchRow, SearchStatus};
 
 /// A panel that renders its name and a short description.
 #[derive(Debug)]

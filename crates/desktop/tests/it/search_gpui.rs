@@ -95,7 +95,10 @@ fn listed(panel: &Entity<SearchPanel>, cx: &VisualTestContext) -> Vec<(String, u
     })
 }
 
-fn focused_file(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<(String, (usize, usize))> {
+fn focused_file(
+    view: &Entity<Workbench>,
+    cx: &VisualTestContext,
+) -> Option<(String, (usize, usize))> {
     view.read_with(cx, |wb, cx| {
         wb.focused_file_view().map(|v| {
             let v = v.read(cx);
@@ -113,9 +116,21 @@ fn typing_searches_the_project_and_return_opens_the_match(cx: &mut TestAppContex
     let (view, cx) = open(cx, &daemon);
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
-    write(&root, "src/a.rs", "fn main() {\n    let needle = 1;\n    needle + needle\n}\n");
-    write(&root, "src/b.rs", "// Needle in a comment\nfn needle_2() {}\n");
-    write(&root, "docs/notes.md", "no match here\nneedle7 and needle8\n");
+    write(
+        &root,
+        "src/a.rs",
+        "fn main() {\n    let needle = 1;\n    needle + needle\n}\n",
+    );
+    write(
+        &root,
+        "src/b.rs",
+        "// Needle in a comment\nfn needle_2() {}\n",
+    );
+    write(
+        &root,
+        "docs/notes.md",
+        "no match here\nneedle7 and needle8\n",
+    );
     write(&root, "target/skip.rs", "needle in a build folder\n");
     project(&view, cx, &root);
 
@@ -129,7 +144,11 @@ fn typing_searches_the_project_and_return_opens_the_match(cx: &mut TestAppContex
         (SearchStatus::Waiting, 0)
     );
     answered(&panel, cx, 0);
-    assert_eq!(panel.read_with(cx, |p, _| p.searches()), 1, "one search for six keys");
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.searches()),
+        1,
+        "one search for six keys"
+    );
     // File by file, in path order; `target` is left out; smart case finds `Needle` too.
     assert_eq!(
         listed(&panel, cx),
@@ -164,7 +183,11 @@ fn typing_searches_the_project_and_return_opens_the_match(cx: &mut TestAppContex
     panel.update(cx, |p, cx| p.set_exclude("docs/**", cx));
     let before = panel.read_with(cx, |p, _| p.answers());
     answered(&panel, cx, before);
-    assert!(!listed(&panel, cx).iter().any(|(p, _)| p.starts_with("docs")));
+    assert!(
+        !listed(&panel, cx)
+            .iter()
+            .any(|(p, _)| p.starts_with("docs"))
+    );
     panel.update(cx, |p, cx| {
         p.set_exclude("", cx);
         p.set_include("*.md", cx);
@@ -203,9 +226,7 @@ fn typing_searches_the_project_and_return_opens_the_match(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-fn replace_all_is_one_undo_step_per_file_and_skips_a_file_changed_since(
-    cx: &mut TestAppContext,
-) {
+fn replace_all_is_one_undo_step_per_file_and_skips_a_file_changed_since(cx: &mut TestAppContext) {
     let daemon = TestDaemon::start();
     let (view, cx) = open(cx, &daemon);
     let dir = tempfile::tempdir().unwrap();
@@ -310,7 +331,10 @@ fn replace_all_is_one_undo_step_per_file_and_skips_a_file_changed_since(
         ]
     );
     assert_eq!((outcome.matches, outcome.files), (2, 1));
-    assert_eq!(std::fs::read_to_string(&changed).unwrap(), "a needle, and more\n");
+    assert_eq!(
+        std::fs::read_to_string(&changed).unwrap(),
+        "a needle, and more\n"
+    );
     assert_eq!(std::fs::read_to_string(&dirty).unwrap(), "needle here\n");
     let changed_row = panel.read_with(cx, |p, _| {
         p.files()
@@ -380,7 +404,9 @@ fn replace_all_is_one_undo_step_per_file_and_skips_a_file_changed_since(
     panel.update(cx, |p, cx| p.ask_replace_all(cx));
     panel.update_in(cx, |p, window, cx| p.confirm_replace(window, cx));
     wait_until(cx, "the second replace", |cx| {
-        panel.read_with(cx, |p, _| !p.replacing() && p.last_replace().is_some_and(|o| o.files == 1))
+        panel.read_with(cx, |p, _| {
+            !p.replacing() && p.last_replace().is_some_and(|o| o.files == 1)
+        })
     });
     assert_eq!(
         panel.read_with(cx, |p, _| p.last_replace().unwrap().in_buffer),
@@ -454,11 +480,16 @@ fn typing_while_a_search_streams_over_a_hundred_thousand_files_stays_within_a_fr
     }
 
     // While it streams the panel is drawn for its progress reports, not for every frame.
-    wait_long(cx, "the search of `qzxy` to stream", Duration::from_secs(120), |cx| {
-        panel.read_with(cx, |p, _| {
+    wait_long(
+        cx,
+        "the search of `qzxy` to stream",
+        Duration::from_secs(120),
+        |cx| {
+            panel.read_with(cx, |p, _| {
             matches!(p.status(), SearchStatus::Running { files_searched, .. } if *files_searched > 0)
         })
-    });
+        },
+    );
     let (renders, reports) = panel.read_with(cx, |p, _| (p.renders(), p.progress_reports()));
     let mut frames = 0;
     for _ in 0..40 {
@@ -477,11 +508,17 @@ fn typing_while_a_search_streams_over_a_hundred_thousand_files_stays_within_a_fr
         "E-13b search, 100 000 files: key → frame {times:?}; {frames} frames drew the panel {drawn} times for {reported} progress reports"
     );
     // One drawing per report, plus the answer's.
-    assert!(drawn <= reported + 2, "{drawn} drawings for {reported} reports");
+    assert!(
+        drawn <= reported + 2,
+        "{drawn} drawings for {reported} reports"
+    );
     // The search is cancelled with the query cleared; it ends.
     panel.update(cx, |p, cx| p.set_query("", cx));
     draw(cx);
-    assert_eq!(panel.read_with(cx, |p, _| p.status().clone()), SearchStatus::Idle);
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.status().clone()),
+        SearchStatus::Idle
+    );
 
     let worst = times.iter().max().copied().unwrap_or_default();
     let budget = if cfg!(debug_assertions) {

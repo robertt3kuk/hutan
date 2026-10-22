@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
+use crate::workbench::chat::vim::Outcome;
 use gpui::{
     AnyElement, ClickEvent, Context, FocusHandle, Focusable, HighlightStyle, InteractiveElement,
     IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Render, ScrollStrategy,
@@ -37,7 +38,6 @@ use gpui::{
 };
 use hutan_client::{ConnectionState, Notice};
 use hutan_protocol::fs::{FileVersion, FsSearch, FsSearchResult, SearchHit};
-use crate::workbench::chat::vim::Outcome;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::common::panel_header_with;
@@ -86,7 +86,10 @@ pub enum SearchStatus {
     /// Waiting for the typing to pause.
     Waiting,
     /// The daemon searches.
-    Running { files_searched: u64, hits: u32 },
+    Running {
+        files_searched: u64,
+        hits: u32,
+    },
     /// The answer is listed.
     Done {
         files_searched: u64,
@@ -461,10 +464,11 @@ impl SearchPanel {
             "whole_word" => s.whole_word,
             _ => s.regex,
         };
-        if let Err(error) = self.env.settings.write_user(
-            &format!("panels.search.{key}"),
-            toml::Value::Boolean(!now),
-        ) {
+        if let Err(error) = self
+            .env
+            .settings
+            .write_user(&format!("panels.search.{key}"), toml::Value::Boolean(!now))
+        {
             tracing::warn!("cannot save panels.search.{key}: {error}");
         }
         self.follow_options(cx);
@@ -846,7 +850,13 @@ impl SearchPanel {
 
     /// Opens row `row` at its match: in the focused pane with the keyboard (`focus`), or
     /// leaving the keyboard here.
-    pub fn open_row(&mut self, row: usize, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_row(
+        &mut self,
+        row: usize,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some((path, line, column)) = self.target_of(row) else {
             return;
         };
@@ -1124,11 +1134,20 @@ impl SearchPanel {
         ring.push(None);
         let at = ring.iter().position(|f| *f == from).unwrap_or(0);
         let len = ring.len();
-        let next = if back { (at + len - 1) % len } else { (at + 1) % len };
+        let next = if back {
+            (at + len - 1) % len
+        } else {
+            (at + 1) % len
+        };
         ring[next]
     }
 
-    fn focus_field(&mut self, field: Option<SearchField>, window: &mut Window, cx: &mut Context<Self>) {
+    fn focus_field(
+        &mut self,
+        field: Option<SearchField>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match field {
             Some(field) => {
                 let focus = self.focus_of(field).clone();
@@ -1301,6 +1320,7 @@ impl SearchPanel {
     }
 
     /// A toggle of the query field: filled and semibold while on (not colour alone).
+    #[allow(clippy::too_many_arguments)] // the toggle's words and state, one call per toggle
     fn render_toggle(
         &self,
         key: &'static str,
@@ -1335,7 +1355,9 @@ impl SearchPanel {
                     .border_1()
                     .border_color(theme.accent)
             })
-            .when(!on, move |s| s.text_color(theme.muted).hover(move |s| s.bg(hover)))
+            .when(!on, move |s| {
+                s.text_color(theme.muted).hover(move |s| s.bg(hover))
+            })
             .tooltip(move |_, cx| {
                 let text = format!("{tip}: {}", if on { "on" } else { "off" });
                 cx.new(|_| TextTooltip(text.into())).into()
@@ -1392,7 +1414,12 @@ impl SearchPanel {
         }
     }
 
-    fn render_rows(&mut self, range: Range<usize>, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn render_rows(
+        &mut self,
+        range: Range<usize>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let hover = theme.sidebar_hover;
@@ -1407,7 +1434,8 @@ impl SearchPanel {
         let rows: Vec<(usize, SearchRow)> = range
             .filter_map(|i| self.rows.get(i).copied().map(|r| (i, r)))
             .collect();
-        self.rows_rendered.set(self.rows_rendered.get() + rows.len());
+        self.rows_rendered
+            .set(self.rows_rendered.get() + rows.len());
         rows.into_iter()
             .map(|(index, row)| {
                 let selected = self.selected == Some(index);
@@ -1449,9 +1477,10 @@ impl SearchPanel {
                         let Some(file) = self.files.get(file) else {
                             return div().h(px(ROW_HEIGHT)).into_any_element();
                         };
-                        let name = Path::new(&file.path)
-                            .file_name()
-                            .map_or_else(|| file.path.clone(), |n| n.to_string_lossy().into_owned());
+                        let name = Path::new(&file.path).file_name().map_or_else(
+                            || file.path.clone(),
+                            |n| n.to_string_lossy().into_owned(),
+                        );
                         let dir = Path::new(&file.path)
                             .parent()
                             .map(|p| p.display().to_string())
@@ -1530,7 +1559,14 @@ impl SearchPanel {
                                     .text_color(theme.faint)
                                     .child(SharedString::from(hit.line.to_string())),
                             )
-                            .child(div().flex_1().min_w_0().truncate().text_color(theme.fg).child(text))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(theme.fg)
+                                    .child(text),
+                            )
                             .into_any_element()
                     }
                 };
@@ -1571,7 +1607,12 @@ impl SearchPanel {
             .collect()
     }
 
-    fn render_outcome(&self, theme: &Theme, tokens: &Tokens, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_outcome(
+        &self,
+        theme: &Theme,
+        tokens: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let outcome = self.last_replace.as_ref()?;
         let root = self.searched.as_ref().map(|s| s.root.clone());
         let mut lines: Vec<AnyElement> = vec![
@@ -1581,9 +1622,10 @@ impl SearchPanel {
                 .into_any_element(),
         ];
         for (n, skipped) in outcome.skipped.iter().take(SKIPPED_SHOWN).enumerate() {
-            let path = root
-                .as_ref()
-                .map_or_else(|| skipped.path.clone(), |r| r.join(&skipped.relative).display().to_string());
+            let path = root.as_ref().map_or_else(
+                || skipped.path.clone(),
+                |r| r.join(&skipped.relative).display().to_string(),
+            );
             let hover = theme.surface_hover;
             lines.push(
                 div()
@@ -1606,17 +1648,16 @@ impl SearchPanel {
                             cx,
                         );
                     }))
-                    .child(div().text_color(theme.warning).child(crate::icons::glyph(Icon::StateWarning)))
                     .child(
                         div()
-                            .min_w_0()
-                            .truncate()
-                            .child(SharedString::from(format!(
-                                "{} — {}",
-                                skipped.relative,
-                                skipped.reason.text()
-                            ))),
+                            .text_color(theme.warning)
+                            .child(crate::icons::glyph(Icon::StateWarning)),
                     )
+                    .child(div().min_w_0().truncate().child(SharedString::from(format!(
+                        "{} — {}",
+                        skipped.relative,
+                        skipped.reason.text()
+                    ))))
                     .into_any_element(),
             );
         }
@@ -1808,12 +1849,45 @@ impl Render for SearchPanel {
         let header = panel_header_with("Search", "panels.search", vec![replace_toggle], cx);
 
         let toggles = vec![
-            self.render_toggle("case_sensitive", "Aa", "Match case", settings.case_sensitive, &theme, &tokens, cx),
-            self.render_toggle("whole_word", "ab", "Whole word", settings.whole_word, &theme, &tokens, cx),
-            self.render_toggle("regex", ".*", "Regular expression", settings.regex, &theme, &tokens, cx),
+            self.render_toggle(
+                "case_sensitive",
+                "Aa",
+                "Match case",
+                settings.case_sensitive,
+                &theme,
+                &tokens,
+                cx,
+            ),
+            self.render_toggle(
+                "whole_word",
+                "ab",
+                "Whole word",
+                settings.whole_word,
+                &theme,
+                &tokens,
+                cx,
+            ),
+            self.render_toggle(
+                "regex",
+                ".*",
+                "Regular expression",
+                settings.regex,
+                &theme,
+                &tokens,
+                cx,
+            ),
         ];
         let mut query_parts = vec![icon(Icon::ActionSearch, 14.0, theme.muted).into_any_element()];
-        let query_field = self.render_field(SearchField::Query, "search-query", "Search", toggles, window, &theme, &tokens, cx);
+        let query_field = self.render_field(
+            SearchField::Query,
+            "search-query",
+            "Search",
+            toggles,
+            window,
+            &theme,
+            &tokens,
+            cx,
+        );
         query_parts.push(query_field);
         let row = |children: Vec<AnyElement>| {
             div()
@@ -1849,17 +1923,50 @@ impl Render for SearchPanel {
             let button = button
                 .child(probe(&self.env.regions, Region::Search("replace-all")))
                 .into_any_element();
-            let field = self.render_field(SearchField::Replace, "search-replace", "Replace", Vec::new(), window, &theme, &tokens, cx);
+            let field = self.render_field(
+                SearchField::Replace,
+                "search-replace",
+                "Replace",
+                Vec::new(),
+                window,
+                &theme,
+                &tokens,
+                cx,
+            );
             fields.push(row(vec![
                 div().flex_none().w(px(14.0)).into_any_element(),
                 field,
                 button,
             ]));
         }
-        let include = self.render_field(SearchField::Include, "search-include", "Files to include (src/**/*.rs, *.md)", Vec::new(), window, &theme, &tokens, cx);
-        let exclude = self.render_field(SearchField::Exclude, "search-exclude", "Files to exclude", Vec::new(), window, &theme, &tokens, cx);
-        fields.push(row(vec![div().flex_none().w(px(14.0)).into_any_element(), include]));
-        fields.push(row(vec![div().flex_none().w(px(14.0)).into_any_element(), exclude]));
+        let include = self.render_field(
+            SearchField::Include,
+            "search-include",
+            "Files to include (src/**/*.rs, *.md)",
+            Vec::new(),
+            window,
+            &theme,
+            &tokens,
+            cx,
+        );
+        let exclude = self.render_field(
+            SearchField::Exclude,
+            "search-exclude",
+            "Files to exclude",
+            Vec::new(),
+            window,
+            &theme,
+            &tokens,
+            cx,
+        );
+        fields.push(row(vec![
+            div().flex_none().w(px(14.0)).into_any_element(),
+            include,
+        ]));
+        fields.push(row(vec![
+            div().flex_none().w(px(14.0)).into_any_element(),
+            exclude,
+        ]));
 
         let status = self.status_line().map(|text| {
             let failed = matches!(self.status, SearchStatus::Failed(_));
@@ -1939,7 +2046,9 @@ impl Render for SearchPanel {
             uniform_list(
                 "search-results",
                 count,
-                cx.processor(|this, range: Range<usize>, window, cx| this.render_rows(range, window, cx)),
+                cx.processor(|this, range: Range<usize>, window, cx| {
+                    this.render_rows(range, window, cx)
+                }),
             )
             .track_scroll(&self.scroll)
             .flex_1()
@@ -2017,7 +2126,11 @@ mod tests {
         ]);
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].match_count(), 3);
-        assert_eq!(files[1].match_count(), 1, "a line with its match past the cut counts once");
+        assert_eq!(
+            files[1].match_count(),
+            1,
+            "a line with its match past the cut counts once"
+        );
     }
 
     #[test]
@@ -2039,9 +2152,15 @@ mod tests {
 
     #[test]
     fn the_question_counts_matches_and_files() {
-        let count = ReplaceCount { matches: 42, files: 7 };
+        let count = ReplaceCount {
+            matches: 42,
+            files: 7,
+        };
         assert_eq!(count.question(), "Replace 42 matches in 7 files?");
-        let one = ReplaceCount { matches: 1, files: 1 };
+        let one = ReplaceCount {
+            matches: 1,
+            files: 1,
+        };
         assert_eq!(one.question(), "Replace 1 match in 1 file?");
     }
 }
