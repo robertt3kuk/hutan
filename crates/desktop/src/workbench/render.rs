@@ -2144,10 +2144,12 @@ impl Workbench {
             }))
             .children(attention.filter(|_| !called).map(|p| {
                 div()
+                    .relative()
                     .flex_none()
                     .size(px(7.0))
                     .rounded_full()
                     .bg(super::panels::tone_color(&theme, p.tone))
+                    .child(probe(&self.regions, Region::TabAttention(pane_id, index)))
             }))
             // A file with unsaved changes: a dot in the text color (not a status hue).
             .children(

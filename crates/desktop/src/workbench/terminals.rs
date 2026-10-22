@@ -955,6 +955,21 @@ impl Workbench {
             .window_active
             .then(|| self.focused_changes_path())
             .flatten();
+        // The other splits of a tab of splits are on screen too: seen as well.
+        let visible: Vec<SessionId> = match (self.window_active, self.state.focus) {
+            (true, FocusTarget::Pane(_)) => self
+                .state
+                .active_pane()
+                .and_then(|p| p.active_item())
+                .map(|item| {
+                    item.visible_sessions()
+                        .into_iter()
+                        .filter_map(|s| s.parse().ok())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
         self.note_focused_chat(cx);
         self.sessions.update(cx, |store, cx| {
             if !self.window_active {
@@ -964,6 +979,11 @@ impl Workbench {
             store.set_focused(focused, cx);
             if let Some(session) = focused {
                 store.mark_looked_at(session, cx);
+            }
+            for session in visible {
+                if Some(session) != focused {
+                    store.mark_looked_at(session, cx);
+                }
             }
             if let Some(root) = &changes {
                 store.mark_checkout_looked_at(root, cx);

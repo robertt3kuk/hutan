@@ -529,6 +529,17 @@ impl ItemRef {
         }
     }
 
+    /// The sessions the tab shows on screen right now: all of them, but a zoomed tab of
+    /// splits shows only the focused split.
+    pub fn visible_sessions(&self) -> Vec<&str> {
+        match self {
+            ItemRef::TerminalSplit { split } if split.zoomed => {
+                split.focused_session().into_iter().collect()
+            }
+            _ => self.sessions(),
+        }
+    }
+
     /// Whether the tab shows `session` (as its terminal, chat or one of its splits).
     pub fn shows_session(&self, session: &str) -> bool {
         match self {

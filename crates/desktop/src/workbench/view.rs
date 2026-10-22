@@ -442,6 +442,8 @@ pub enum Region {
     TermDivider(usize),
     /// The tab-count badge (`⊞ 3`) of the tab at `index` of a pane.
     TabSplits(PaneId, usize),
+    /// The attention dot (not a request called for the user) of the tab at `index` of a pane.
+    TabAttention(PaneId, usize),
     /// A control of a file tab's language-server bar (`trust`, `not-now`, `copy`, `dismiss`).
     FileLsp(&'static str),
     /// Diagnostic row `index` of the Problems panel (the listed diagnostics, top to bottom,

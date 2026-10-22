@@ -16,7 +16,6 @@ use hutan_protocol::notify::{IntentKind, NotificationIntent};
 
 use super::model::LayoutPreset;
 use super::render::{key_hint, probe};
-use super::terminals::session_of_item;
 use super::ui::motion::{self, PresentExt as _};
 use super::ui::{Button, IconButton, StyledExt as _};
 use super::view::{Region, Workbench};
@@ -68,7 +67,10 @@ impl Workbench {
                 .panes()
                 .into_iter()
                 .filter_map(|pane| pane.active_item())
-                .any(|item| session_of_item(item) == Some(session))
+                .any(|item| {
+                    item.visible_sessions()
+                        .contains(&session.to_string().as_str())
+                })
     }
 
     /// A request called for a session this window is not looking at.

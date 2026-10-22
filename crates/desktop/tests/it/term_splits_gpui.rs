@@ -9,16 +9,17 @@ use crate::common;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use common::agents::{Node, Reporter};
 use common::{TestDaemon, draw, open_with, wait_until};
 use gpui::{
     Entity, Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext, point, px,
 };
 use hutan_core::SessionId;
 use hutan_desktop::workbench::model::{
-    Axis, DockPosition, FocusTarget, ItemRef, PaneId, PaneTree, TermSplit,
+    Axis, DockPosition, Edge, FocusTarget, ItemRef, PaneId, PaneTree, TermSplit,
 };
 use hutan_desktop::workbench::persistence::STATE_FILE;
-use hutan_desktop::workbench::{FileOpen, Region, SAVE_DEBOUNCE, Workbench, actions};
+use hutan_desktop::workbench::{BadgeSite, FileOpen, Region, SAVE_DEBOUNCE, Workbench, actions};
 use hutan_protocol::messages::{Request, SessionCreate, SessionResult, SessionSpec, TerminalSpec};
 use hutan_settings::{SettingsPaths, SettingsStore};
 
@@ -196,6 +197,12 @@ fn cmd_d_and_cmd_shift_d_split_inside_the_tab_in_the_cwd_the_terminal_reported(
     );
     assert!(left.right() <= right.left() + px(2.0), "{left:?} {right:?}");
     assert!((left.top() - right.top()).abs() < px(1.0));
+
+    // Each split is a session of the sidebar, in the container the tab's terminal lives in.
+    wait_until(cx, "both sessions in the sidebar", |cx| {
+        draw(cx);
+        drawn(&view, cx, Region::SessionRow(a)) && drawn(&view, cx, Region::SessionRow(b))
+    });
 
     // ⌘⇧D splits the focused one downwards.
     cx.simulate_keystrokes("cmd-shift-d");
@@ -580,4 +587,103 @@ fn a_terminal_tab_dropped_on_another_terminals_edge_becomes_a_split(cx: &mut Tes
     let split = splits(&view, cx).expect("the dropped tab is a split");
     assert_eq!(sessions_of(&split), [a.to_string(), b.to_string()]);
     assert_eq!(tabs(&view, cx).len(), 1);
+}
+
+fn blocked(daemon: &TestDaemon, session: SessionId) {
+    Reporter::new(session, "omp-extension", "omp").report(daemon, Node::main("m").blocked());
+}
+
+/// A request in any split shows on the tab: a dot while the split is on screen, the toast and
+/// the accent dot while its tab is not, and looking at the tab clears them.
+#[gpui::test]
+fn the_attention_of_any_split_shows_on_the_tab(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let dir = tempfile::tempdir().unwrap();
+    let a = terminal(&daemon, dir.path(), None);
+    let c = terminal(&daemon, dir.path(), None);
+    let (view, cx) = open(cx, &daemon, None);
+    show(&view, cx, a);
+    cx.simulate_keystrokes("cmd-d");
+    let split = wait_splits(&view, cx, 2);
+    let b: SessionId = split.sessions()[1].parse().unwrap();
+    wait_until(cx, "the second terminal", |cx| {
+        view.read_with(cx, |wb, _| wb.terminal_view_of(b).is_some())
+    });
+    // The keyboard goes back to a: b is on screen, not focused.
+    cx.simulate_keystrokes("cmd-alt-left");
+    settle(cx);
+    assert_eq!(focused(&view, cx), Some(a));
+    let pane = split_pane(&view, cx);
+
+    blocked(&daemon, b);
+    wait_until(cx, "the tab's attention dot", |cx| {
+        draw(cx);
+        drawn(&view, cx, Region::TabAttention(pane, 0))
+    });
+    assert!(
+        view.read_with(cx, |wb, _| wb.attention_toasts().is_empty()),
+        "b is on screen: no toast"
+    );
+
+    // Another tab in front: the split's tab is out of sight.
+    show(&view, cx, c);
+    assert_eq!(tabs(&view, cx).len(), 2);
+    let split_tab = view.read_with(cx, |wb, _| wb.state().find_session_tab(&a.to_string()));
+    let (pane, index) = split_tab.expect("the tab of splits");
+    blocked(&daemon, a);
+    wait_until(cx, "the toast for the split that is out of sight", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.attention_toasts().iter().any(|t| t.session == a)
+        })
+    });
+    wait_until(cx, "the accent dot on the tab", |cx| {
+        draw(cx);
+        drawn(&view, cx, Region::TabCall(pane, index))
+    });
+    // Bringing the tab forward is seeing it: the dot goes.
+    view.update_in(cx, |wb, window, cx| wb.open_session(b, window, cx));
+    wait_until(cx, "the dot to clear", |cx| {
+        draw(cx);
+        !drawn(&view, cx, Region::TabCall(pane, index))
+    });
+}
+
+/// The recovery card after a daemon restart is per split: each respawned terminal of a tab
+/// says so, with its own chip.
+#[gpui::test]
+fn after_a_daemon_restart_every_split_has_its_own_recovery_chip(cx: &mut TestAppContext) {
+    let mut daemon = TestDaemon::start();
+    let a = daemon.create_session(&["cat"], None).id;
+    let b = daemon.create_session(&["cat"], None).id;
+    let (view, cx) = open(cx, &daemon, None);
+    show(&view, cx, a);
+    view.update(cx, |wb, cx| {
+        wb.edit_layout(cx, |s| {
+            let pane = s.active_pane_id();
+            let index = s.pane(pane).unwrap().active;
+            s.split_terminal(pane, index, None, Edge::Right, &b.to_string())
+                .unwrap();
+        });
+    });
+    wait_splits(&view, cx, 2);
+    let old = view
+        .read_with(cx, |wb, cx| wb.sessions().read(cx).state().epoch)
+        .expect("a synchronised epoch");
+    daemon.stop();
+    daemon.restart();
+    wait_until(cx, "the workbench to follow the new daemon", |cx| {
+        view.read_with(cx, |wb, cx| {
+            let store = wb.sessions().read(cx);
+            store.connection_state() == hutan_client::ConnectionState::Connected
+                && store.state().epoch.is_some_and(|epoch| epoch != old)
+        })
+    });
+    wait_until(cx, "a recovery chip on each split", |cx| {
+        draw(cx);
+        drawn(&view, cx, Region::RecoveryChip(BadgeSite::Tab, a))
+            && drawn(&view, cx, Region::RecoveryChip(BadgeSite::Tab, b))
+    });
+    // Both are still the tab's splits, reattached.
+    let split = splits(&view, cx).expect("the splits survive the restart");
+    assert_eq!(sessions_of(&split), [a.to_string(), b.to_string()]);
 }
