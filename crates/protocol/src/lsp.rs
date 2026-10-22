@@ -136,7 +136,8 @@ pub struct LspServerInfo {
     pub pid: Option<u32>,
     /// Starts after a crash so far.
     pub restarts: u32,
-    /// Resident memory of the server and its children, in bytes, while a process runs.
+    /// Resident memory of the server and its children, in bytes, while a process runs; filled
+    /// by `lsp.status` (the `lsp.state` events leave it out).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rss_bytes: Option<u64>,
     /// Documents open in it.

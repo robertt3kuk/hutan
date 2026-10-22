@@ -225,7 +225,9 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "finish",
             "chat.queue",
             "checkpoint",
-            "checkpoint.restore"
+            "checkpoint.restore",
+            "doc.sync",
+            "lsp"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);
