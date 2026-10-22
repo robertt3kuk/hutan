@@ -1845,6 +1845,23 @@ impl Workbench {
             self.tab_revealed.insert(pane_id, reveal);
             tab_scroll.scroll_to_item(pane.active);
         }
+        // A tab that just got an attention mark comes into view whole: at the edge of a
+        // scrolled strip its dot or warning was cut off.
+        let marked: Vec<usize> = pane
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| self.tab_has_mark(item, cx))
+            .map(|(index, _)| index)
+            .collect();
+        let before = self.tab_marked.insert(pane_id, marked.clone());
+        if let Some(newest) = marked
+            .iter()
+            .rev()
+            .find(|index| before.as_ref().is_some_and(|b| !b.contains(index)))
+        {
+            tab_scroll.scroll_to_item(*newest);
+        }
         let mut tabs: Vec<AnyElement> = pane
             .items
             .iter()
@@ -2059,6 +2076,21 @@ impl Workbench {
                     .children(zones),
             )
             .into_any_element()
+    }
+
+    /// Whether the tab of `item` wears an attention mark: a request called for one of its
+    /// sessions, or one of them needs attention (the dot, or the agent badge's warning).
+    fn tab_has_mark(&self, item: &ItemRef, cx: &Context<Self>) -> bool {
+        let store = self.sessions.read(cx);
+        item.sessions()
+            .into_iter()
+            .filter_map(|s| s.parse::<hutan_core::SessionId>().ok())
+            .any(|id| {
+                store.is_called(id)
+                    || store
+                        .session(id)
+                        .is_some_and(|info| store.presentation(info).attention.is_some())
+            })
     }
 
     fn render_tab(

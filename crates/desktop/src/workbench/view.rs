@@ -316,6 +316,8 @@ pub enum Region {
     SessionRow(hutan_core::SessionId),
     /// The muted marker of a session's row (its notifications are muted, `notify.mute`).
     SessionMuted(hutan_core::SessionId),
+    /// The unread dot of a session's row (6 px of amber inside its ring).
+    SessionUnread(hutan_core::SessionId),
     /// The warning glyph of a session's row: another live agent works in the same checkout.
     SharedCheckout(hutan_core::SessionId),
     /// The *Changes to review* link of a session's row (its seen work waits for review).
@@ -708,6 +710,9 @@ pub struct Workbench {
     /// (`(active index, tabs)`): a changed active tab or tab count scrolls it into view once.
     pub(crate) tab_scrolls: std::collections::HashMap<PaneId, gpui::ScrollHandle>,
     pub(crate) tab_revealed: std::collections::HashMap<PaneId, (usize, usize)>,
+    /// The tabs of each pane that wore an attention mark (a call dot, a warning) in the last
+    /// frame: a tab that gets one is scrolled into view, so the mark is never cut off.
+    pub(crate) tab_marked: std::collections::HashMap<PaneId, Vec<usize>>,
     /// What the window itself does to the side docks: the transient auto-collapse
     /// (`layout.auto_collapse`), never saved.
     pub(crate) responsive: Responsive,
@@ -1286,6 +1291,7 @@ impl Workbench {
             resizing: None,
             tab_scrolls: std::collections::HashMap::new(),
             tab_revealed: std::collections::HashMap::new(),
+            tab_marked: std::collections::HashMap::new(),
             responsive: Responsive::default(),
             dock_modes_seen,
             dock_focus,

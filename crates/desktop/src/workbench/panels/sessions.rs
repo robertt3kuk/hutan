@@ -61,6 +61,8 @@ const INDENT: f32 = 12.0;
 /// A session row's leading state lane is 16 px wide (the alignment spine of the tree), titles
 /// are 13 px.
 const STATUS_LANE: f32 = 16.0;
+/// The unread dot, ring included: 6 px of amber inside a 1 px ring.
+const UNREAD_DOT: f32 = 8.0;
 const CARD_TITLE: f32 = 13.0;
 
 /// Hover fill of a card: the foreground at 4 % in light, the left sidebar's accent at 40 % in
@@ -2090,7 +2092,9 @@ impl SessionsPanel {
                     line.child(
                         // The 16 px state lane: the state's glyph in its tone, nothing for an
                         // idle session (the room stays: it is the spine titles align to), and
-                        // for an unread session an amber dot ringed in the sidebar color.
+                        // for an unread session an amber dot ringed in the sidebar color: in
+                        // the middle of the lane (the middle of the text line) when nothing
+                        // else is there, on the glyph's corner otherwise.
                         div()
                             .id(SharedString::from(format!("row-state-{id}")))
                             .relative()
@@ -2098,23 +2102,27 @@ impl SessionsPanel {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .w(px(STATUS_LANE))
+                            .size(px(STATUS_LANE))
                             .when(lane.is_some(), |s| {
                                 s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
                                     .child(state_dot(&theme, &presentation))
                             })
                             .when(unread, |s| {
                                 let dot = div()
-                                    .absolute()
-                                    .size(px(6.0))
+                                    .size(px(UNREAD_DOT))
+                                    .flex_none()
                                     .rounded_full()
                                     .bg(theme.warning)
-                                    .border_2()
-                                    .border_color(theme.sidebar);
+                                    .border_1()
+                                    .border_color(theme.sidebar)
+                                    .child(probe(
+                                        &self.env.regions,
+                                        Region::SessionUnread(info.id),
+                                    ));
                                 s.child(if lane.is_some() {
-                                    dot.top(px(-2.0)).right(px(-1.0))
+                                    dot.absolute().top(px(-2.0)).right(px(-2.0))
                                 } else {
-                                    dot.top(px(5.0)).left(px(5.0))
+                                    dot
                                 })
                             }),
                     )

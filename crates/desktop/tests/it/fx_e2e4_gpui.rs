@@ -3,10 +3,12 @@
 
 use crate::common;
 
+use common::agents::{Node, Reporter};
 use common::{ProcessDaemon, TestDaemon, draw, offline_connection, open_with, settle, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point, px};
 use hutan_client::{Connection, ConnectionState};
 use hutan_core::SessionId;
+use hutan_desktop::theme::DensityExt as _;
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::model::{DockPosition, PanelDest, PanelId, TermSplit};
 use hutan_desktop::workbench::{Region, Workbench};
@@ -353,4 +355,93 @@ fn a_toast_keeps_its_text_when_the_same_session_calls_again(cx: &mut TestAppCont
     let second = text(cx);
     assert_eq!(second.len(), 1);
     assert_eq!(second[0].text, first[0].text, "the words never change");
+}
+
+// ---- 5. F7, F8: dots ---------------------------------------------------------------------------
+
+/// A tab that gets an attention dot while it is scrolled out of the strip is scrolled into view,
+/// whole, so its dot is never cut off at the strip's edge.
+#[gpui::test]
+fn a_tab_that_gets_a_dot_is_scrolled_into_view(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let ids: Vec<SessionId> = (0..14)
+        .map(|n| {
+            daemon
+                .sh_titled(&format!("a session with a longish title {n}"), "sleep 300")
+                .id
+        })
+        .collect();
+    let (view, cx) = open(cx, &daemon);
+    wait_until(cx, "the sessions", |cx| {
+        view.read_with(cx, |wb, cx| {
+            let store = wb.sessions().read(cx);
+            store.synced() && ids.iter().all(|id| store.session(*id).is_some())
+        })
+    });
+    for id in &ids {
+        view.update_in(cx, |wb, window, cx| wb.open_session(*id, window, cx));
+        draw(cx);
+    }
+    settle(cx);
+    let pane = view.read_with(cx, |wb, _| wb.state().first_pane_id());
+    let region =
+        |cx: &VisualTestContext, region| view.read_with(cx, |wb, _| wb.region_bounds(region));
+    let strip = region(cx, Region::Pane(pane)).expect("the pane");
+    let first = region(cx, Region::Tab(pane, 0)).expect("the first tab");
+    assert!(
+        first.origin.x < strip.origin.x,
+        "the first tab is scrolled out: {first:?}"
+    );
+
+    Reporter::new(ids[0], "omp-extension", "omp").report(&daemon, Node::main("m").blocked());
+    wait_until(cx, "the first tab's dot", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::TabCall(pane, 0)).is_some()
+        })
+    });
+    settle(cx);
+    let tab = region(cx, Region::Tab(pane, 0)).unwrap();
+    assert!(
+        tab.origin.x >= strip.origin.x - px(1.0) && tab.right() <= strip.right() + px(1.0),
+        "the tab with a dot is inside the strip: {tab:?} in {strip:?}"
+    );
+}
+
+/// The unread dot of a session row is at least 6 px and centred on the row's text line.
+#[gpui::test]
+fn the_unread_dot_is_six_pixels_and_centred_on_the_row(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let id = daemon.sh_titled("quiet", "sleep 300").id;
+    let (view, cx) = open(cx, &daemon);
+    wait_until(cx, "the session", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).session(id).is_some())
+    });
+    view.update(cx, |wb, cx| {
+        wb.sessions()
+            .update(cx, |store, cx| assert!(store.mark_unread(id, cx)));
+    });
+    wait_until(cx, "the dot", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::SessionUnread(id)).is_some()
+        })
+    });
+    settle(cx);
+    let (dot, row) = view.read_with(cx, |wb, _| {
+        (
+            wb.region_bounds(Region::SessionUnread(id)).unwrap(),
+            wb.region_bounds(Region::SessionRow(id)).unwrap(),
+        )
+    });
+    assert!(
+        dot.size.width >= px(6.0) && dot.size.height >= px(6.0),
+        "{dot:?}"
+    );
+    // On the row's first (text) line, not below it: the line's middle is the row's middle for a
+    // one-line row.
+    let first_line = view.read_with(cx, |wb, _| wb.density().ui().sidebar_row);
+    let off = (dot.center().y - (row.origin.y + px(first_line) / 2.0)).abs();
+    assert!(
+        off <= px(1.0),
+        "the dot is {off:?} off the line's middle: {dot:?} in {row:?}"
+    );
 }
