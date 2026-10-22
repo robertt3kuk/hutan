@@ -11,6 +11,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - One button system everywhere: primary / secondary / ghost / destructive / link and icon buttons in two sizes with hover and press fades, keyboard-only focus ring, disabled and loading states; one primary per surface, Cancel before the primary, Return confirms and Esc cancels — destructive confirms are never the default; sentence-case, verb-first labels.
 - The status bar says something again: the background service's state always (`● hutand`, `○ Stopped · Start`, `▲ Can't start · Details` — click for the daemon popover), the project and branch you work in, `◌ N working` while agents run, and the requests that wait.
 - Visual polish: one selection fill per list, light-mode cards with a hairline, short chat titles (≤ 40 characters, the prompt in the tooltip), the title bar names the project instead of repeating the tab, toasts bottom-right of the center with a link-style Undo, inset selection bars, neutral pills, one primary per surface, send ↑ / stop ■.
+- Mawas Memory lives in the left sidebar (a **Memory** row under Mawas, ⌘K *Mawas: Memory*, Today's *Memory ›*): proposals first, entries in one column, edit inline, full keyboard; a saved Memory tab moves there once.
 
 ### Fixed
 - One session, one tab: opening a Mawas session from anywhere focuses Mawas Home instead of a second tab; the same title and icon everywhere; saved layouts with duplicate tabs are merged.
