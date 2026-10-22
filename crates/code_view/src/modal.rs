@@ -260,8 +260,21 @@ impl CodeView {
                     indent_from_file: true,
                     window_prefix: false,
                 });
-                // A new state is in Insert: Escape takes it to Normal like any other.
+                // A new state is in Insert: Escape takes it to Normal like any other. Nothing
+                // was typed, so the caret stays where it was when it is on a character (Escape
+                // steps back only off the end of a line).
+                let primary = self.selections.primary();
                 self.vim_key(Key::Escape, cx);
+                if primary.is_empty() {
+                    self.with_vim(cx, |_, host, _| {
+                        let text = host.text();
+                        if primary.head < text.len()
+                            && text.char_at(primary.head).is_some_and(|c| c != '\n')
+                        {
+                            host.set_cursor(primary.head);
+                        }
+                    });
+                }
             }
             (None, true) => {
                 if let Some(state) = self.vim.take()

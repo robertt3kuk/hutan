@@ -7,7 +7,7 @@ use crate::common;
 
 use common::chat::ChatEnv;
 use common::{TestDaemon, draw, offline_connection, open_with, wait_until};
-use gpui::{Entity, Keystroke, Modifiers, TestAppContext, VisualTestContext};
+use gpui::{Entity, Focusable as _, Keystroke, Modifiers, TestAppContext, VisualTestContext};
 use hutan_code_view::{CodeView, FileBuffer, LoadState, VimMode};
 use hutan_core::SessionId;
 use hutan_desktop::workbench::chat::vim::Mode;
@@ -300,6 +300,57 @@ fn the_ex_line_takes_its_own_row_and_the_caret_stays_in_view(cx: &mut TestAppCon
         after > before,
         "the code scrolled up by the line's row ({before} → {after}), the caret is not under it"
     );
+}
+
+#[gpui::test]
+fn toggling_vim_in_settings_keeps_the_caret_and_closing_gives_the_code_the_keyboard(
+    cx: &mut TestAppContext,
+) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, "");
+    let dir = tempfile::tempdir().unwrap();
+    let tab = open_text(&view, cx, dir.path(), "a.txt", "one two\nthree\n");
+    let head =
+        |cx: &mut VisualTestContext| tab.code.read_with(cx, |c, _| c.selections().primary().head);
+    let focused = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| tab.code.read(cx).focus_handle(cx).is_focused(window))
+    };
+    cx.simulate_keystrokes("right right");
+    assert_eq!(head(cx), 2);
+    assert!(focused(cx));
+
+    // Vim on from the sheet: Normal mode, the caret where it was (Col 3).
+    cx.dispatch_action(hutan_desktop::workbench::actions::OpenSettingsFor(
+        "editor".into(),
+    ));
+    draw(cx);
+    view.update(cx, |wb, cx| wb.sheet_toggle("vim_mode", cx));
+    draw(cx);
+    assert_eq!(file_mode(&tab, cx), Some(VimMode::Normal));
+    assert_eq!(head(cx), 2, "toggling Vim moved the caret");
+    // Escape closes the sheet; the code has the keyboard (its caret is drawn) and takes keys.
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(view.read_with(cx, |wb, _| wb.settings_sheet().is_none()));
+    assert!(focused(cx), "the code has the keyboard back");
+    cx.simulate_input("x");
+    assert_eq!(text(&tab.buffer, cx), "on two\nthree\n");
+
+    // And off again, opened the way the sidebar's Settings button does it (its click moved the
+    // keyboard to the sidebar): the caret stays, and the code gets the keyboard back.
+    view.update_in(cx, |wb, window, cx| window.focus(&wb.focus_handle(cx), cx));
+    assert!(!focused(cx));
+    cx.dispatch_action(hutan_desktop::workbench::actions::OpenSettingsFor(
+        "editor".into(),
+    ));
+    draw(cx);
+    view.update(cx, |wb, cx| wb.sheet_toggle("vim_mode", cx));
+    draw(cx);
+    assert_eq!(file_mode(&tab, cx), None);
+    assert_eq!(head(cx), 2);
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(focused(cx));
 }
 
 #[gpui::test]

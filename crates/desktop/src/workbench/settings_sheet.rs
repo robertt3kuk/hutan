@@ -86,6 +86,8 @@ pub struct SettingsSheet {
     pub(super) advanced_open: bool,
     /// The `⋯` menu of the open theme picker, for this picker.
     pub(super) pack_menu: Option<super::settings_themes::PackField>,
+    /// What had the keyboard when the sheet opened; it gets it back when the sheet closes.
+    pub(super) return_focus: Option<gpui::WeakFocusHandle>,
 }
 
 impl SettingsSheet {
@@ -191,6 +193,14 @@ impl Workbench {
             .map_or("appearance", |e| e.page);
         self.palette = None;
         self.context_menu = None;
+        // Opening another page keeps what the sheet gives the keyboard back to.
+        let return_focus = match &mut self.sheet {
+            Some(sheet) => sheet.return_focus.take(),
+            None => window
+                .focused(cx)
+                .filter(|f| *f != self.sheet_focus)
+                .map(|f| f.downgrade()),
+        };
         self.sheet = Some(SettingsSheet {
             namespace: selected,
             query: String::new(),
@@ -210,6 +220,7 @@ impl Workbench {
             problems_open: false,
             advanced_open: false,
             pack_menu: None,
+            return_focus,
         });
         window.focus(&self.sheet_focus, cx);
         self.edits.sheet_query.reset();
@@ -238,11 +249,25 @@ impl Workbench {
         self.sheet.as_ref()
     }
 
+    /// Closes the sheet; the keyboard goes back to what had it before (the code of a file tab
+    /// with its caret, a terminal, a panel). A click on the sidebar's Settings button moved it
+    /// to the sidebar itself (or the window): then the focused pane's content takes it.
     pub fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sheet.take().is_some() {
-            self.focus_root(window, cx);
-            cx.notify();
+        let Some(sheet) = self.sheet.take() else {
+            return;
+        };
+        let back = sheet
+            .return_focus
+            .and_then(|f| f.upgrade())
+            .filter(|f| *f != self.focus_handle && !self.dock_focus.contains(f));
+        match back {
+            Some(handle) => window.focus(&handle, cx),
+            None => {
+                let pane = self.state.active_pane_id();
+                self.focus_pane(pane, window, cx);
+            }
         }
+        cx.notify();
     }
 
     /// Escape: closes what is open over the page, innermost first (the `⋯` menu of a picker, a
