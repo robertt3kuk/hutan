@@ -542,13 +542,6 @@ impl Render for ChangesPanel {
                     .px(px(tokens.spacing * 3.0))
                     .child(
                         div()
-                            .text_size(px(12.0))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(theme.muted)
-                            .child("Changes"),
-                    )
-                    .child(
-                        div()
                             .flex()
                             .min_w_0()
                             .items_center()

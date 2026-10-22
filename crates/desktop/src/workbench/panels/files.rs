@@ -39,7 +39,7 @@ use hutan_protocol::fs::{FsEntry, FsKind, FsList, FsListing};
 use hutan_protocol::worktree::WorktreeDiffRequest;
 use tokio::sync::broadcast::error::RecvError;
 
-use super::common::{panel_header_with, scope_chip};
+use super::common::{panel_toolbar, scope_chip};
 use super::files_git::GitStatus;
 use crate::icons::{Icon, icon};
 use crate::sessions::CheckoutActivity;
@@ -1076,11 +1076,11 @@ impl Render for FilesPanel {
         .on_click(cx.listener(|this, _, _, cx| this.toggle_ignored(cx)))
         .into_any_element();
         let scope = self.scope(cx);
-        let controls: Vec<AnyElement> = scope_chip(scope.as_ref(), "files", &self.env.regions, cx)
+        let lead: Vec<AnyElement> = scope_chip(scope.as_ref(), "files", &self.env.regions, cx)
             .into_iter()
-            .chain([eye])
             .collect();
-        let header = panel_header_with("Files", "panels.files", controls, cx);
+        // The dock tab says Files: the header keeps the scope chip and the controls.
+        let header = panel_toolbar("panels.files", lead, vec![eye], cx);
         let name: Option<SharedString> = self.root().and_then(|root| {
             root.file_name()
                 .map(|n| SharedString::from(n.to_string_lossy().into_owned()))

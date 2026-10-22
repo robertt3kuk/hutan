@@ -90,7 +90,6 @@ impl Render for HistoryPanel {
         self.render_ms = super::history::now_ms();
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
-        let narrow = self.is_narrow();
         let enabled = matches!(&self.index, Index::Known(info) if info.enabled);
         let body = match &self.index {
             Index::Unsupported => self.render_note(
@@ -127,7 +126,7 @@ impl Render for HistoryPanel {
             .flex_col()
             .text_size(px(tokens.font_size))
             .text_color(theme.fg)
-            .child(self.render_header(narrow, enabled, &theme, &tokens, cx))
+            .child(self.render_header(enabled, &theme, &tokens, cx))
             .child(body)
             .child(probe(&self.env.regions, Region::History("panel")))
             .children(menu)
@@ -139,18 +138,12 @@ impl HistoryPanel {
 
     fn render_header(
         &self,
-        narrow: bool,
         enabled: bool,
         theme: &Theme,
         tokens: &Tokens,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let catalog = enabled && self.catalog_supported(cx);
-        let title = if narrow {
-            "History"
-        } else {
-            "Agent Session History"
-        };
         let subtitle = if enabled {
             "Indexed history"
         } else {
@@ -229,13 +222,7 @@ impl HistoryPanel {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(tokens.font_size))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(title),
-                    )
+                    // The dock tab says History: one muted line, not a second title.
                     .child(
                         div()
                             .truncate()

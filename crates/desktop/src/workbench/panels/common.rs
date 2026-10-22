@@ -417,12 +417,6 @@ pub fn time_tooltip(ms: u64) -> impl Fn(&mut gpui::Window, &mut App) -> gpui::An
     move |_, cx| cx.new(|_| TextTooltip(text.clone())).into()
 }
 
-/// Panel header (Orca's section header: 32 px, 12 px semibold, muted): the label on the left, the ⚙ that opens the panel's settings on the
-/// right.
-pub fn panel_header(title: &str, namespace: &'static str, cx: &App) -> AnyElement {
-    panel_header_with(title, namespace, Vec::new(), cx)
-}
-
 /// The ⚙ of a panel's header: opens Settings at the panel's namespace.
 pub fn settings_gear(namespace: &'static str, cx: &App) -> AnyElement {
     let style = UiStyle::get(cx);
@@ -441,7 +435,7 @@ pub fn settings_gear(namespace: &'static str, cx: &App) -> AnyElement {
     .into_any_element()
 }
 
-/// [`panel_header`] with `extra` controls between the title and the ⚙.
+/// A titled panel header with `extra` controls between the title and the ⚙.
 pub fn panel_header_with(
     title: &str,
     namespace: &'static str,
@@ -480,6 +474,47 @@ pub fn panel_header_controls(title: &str, controls: Vec<AnyElement>, cx: &App) -
                 .items_center()
                 .gap(px(tokens.spacing))
                 .children(controls),
+        )
+        .into_any_element()
+}
+
+/// The toolbar of a panel whose dock tab (or page) already names it (CL-POLISH-4): no title,
+/// the `lead` controls on the left (the scope chip), the `trail` ones and the ⚙ of `namespace`
+/// on the right. 32 px like a titled header.
+pub fn panel_toolbar(
+    namespace: &'static str,
+    lead: Vec<AnyElement>,
+    trail: Vec<AnyElement>,
+    cx: &App,
+) -> AnyElement {
+    let style = UiStyle::get(cx);
+    let tokens = style.density.ui();
+    let gear = settings_gear(namespace, cx);
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_between()
+        .gap(px(tokens.spacing))
+        .h(px(32.0))
+        .px(px(tokens.spacing * 3.0))
+        .child(
+            div()
+                .flex()
+                .flex_1()
+                .min_w_0()
+                .items_center()
+                .gap(px(tokens.spacing))
+                .children(lead),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(tokens.spacing))
+                .children(trail)
+                .child(gear),
         )
         .into_any_element()
 }

@@ -33,7 +33,7 @@ use hutan_protocol::lsp::{
 };
 use tokio::sync::broadcast::error::RecvError;
 
-use super::common::{panel_header_with, scope_chip};
+use super::common::{panel_toolbar, scope_chip};
 use crate::icons::Icon;
 use crate::settings::{ProblemsPanelSettings, ProblemsSeverity};
 use crate::theme::DensityExt as _;
@@ -911,12 +911,11 @@ impl Render for ProblemsPanel {
         .child(probe(&self.env.regions, Region::Problems("refresh")))
         .into_any_element();
         let scope = self.scope(cx);
-        let controls: Vec<AnyElement> =
-            scope_chip(scope.as_ref(), "problems", &self.env.regions, cx)
-                .into_iter()
-                .chain([severity, refresh])
-                .collect();
-        let header = panel_header_with("Problems", "panels.problems", controls, cx);
+        let lead: Vec<AnyElement> = scope_chip(scope.as_ref(), "problems", &self.env.regions, cx)
+            .into_iter()
+            .collect();
+        // The dock tab says Problems: the header keeps the scope chip and the controls.
+        let header = panel_toolbar("panels.problems", lead, vec![severity, refresh], cx);
 
         let starting = self.still_starting();
         let (summary, note) = match &self.problems {

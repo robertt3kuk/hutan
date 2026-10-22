@@ -5,7 +5,6 @@
 
 use crate::common;
 
-
 use common::{TestDaemon, offline_connection, open_with, wait_until};
 use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
 use hutan_desktop::settings::KeymapBase;

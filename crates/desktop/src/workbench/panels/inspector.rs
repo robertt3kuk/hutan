@@ -11,7 +11,7 @@ use hutan_protocol::blocks::BlockState;
 use hutan_protocol::messages::SessionInfo;
 use hutan_terminal_view::blocks::{self as block_ui, Tone};
 
-use super::common::{panel_header, state_dot, tone_color};
+use super::common::{panel_toolbar, state_dot, tone_color};
 use crate::settings::InspectorPanelSettings;
 use crate::workbench::actions::{BlockRef, JumpToBlock};
 use crate::workbench::chat::{self, Look};
@@ -590,7 +590,12 @@ impl Render for InspectorPanel {
             .flex_col()
             .text_size(px(tokens.font_size))
             .text_color(theme.fg)
-            .child(panel_header("Requests", "panels.inspector", cx))
+            .child(panel_toolbar(
+                "panels.inspector",
+                Vec::new(),
+                Vec::new(),
+                cx,
+            ))
             .child(
                 div()
                     .flex()
