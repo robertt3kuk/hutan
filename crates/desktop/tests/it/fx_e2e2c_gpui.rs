@@ -205,8 +205,14 @@ fn the_files_panel_marks_changed_files_and_their_folders_and_follows_fs_changes(
     });
 
     // An edit of a clean file arrives as an fs.changed: the file gets its mark without a click.
-    fs::write(root.join("notes.txt"), "one\nedited\n").unwrap();
+    // The daemon's watcher (FSEvents) may not be live yet when the first edit happens, so the
+    // edit is made again until the mark shows (the stimulus is retried, nothing is slept).
+    let mut edits = 0;
     wait_until(cx, "the mark of the edited file", |cx| {
+        if edits % 25 == 0 {
+            fs::write(root.join("notes.txt"), format!("one\nedited {edits}\n")).unwrap();
+        }
+        edits += 1;
         panel.read_with(cx, |p, _| {
             p.git().mark(&root.join("notes.txt")) == Some(FileGitMark::Modified)
         })

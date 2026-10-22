@@ -706,7 +706,9 @@ fn open_folder_uses_the_system_panel_and_opens_the_workspace(cx: &mut TestAppCon
     });
     // Row 0 is "Open Folder…".
     view.update_in(cx, |wb, window, cx| wb.picker_confirm(Some(0), window, cx));
-    assert!(cx.did_prompt_for_paths());
+    // The first run asks its panel outside of the update (it starts at `~`), so it comes a
+    // moment later.
+    wait_until(cx, "the folder panel", |cx| cx.did_prompt_for_paths());
     let chosen = root.clone();
     cx.simulate_path_prompt_response(move |options| {
         assert!(options.directories && !options.files && !options.multiple);

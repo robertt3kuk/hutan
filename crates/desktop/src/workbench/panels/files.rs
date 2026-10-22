@@ -326,6 +326,9 @@ pub struct FilesPanel {
     /// A `worktree.diff` is in flight; a trigger meanwhile asks for one more afterwards.
     git_task: Option<Task<()>>,
     git_again: bool,
+    /// The root and connection state the git status was last asked for: it is asked again when
+    /// either changes (a window that connects after the root was set has no marks yet).
+    git_asked: Option<(PathBuf, hutan_client::ConnectionState)>,
     /// Reads of the git status answered so far (tests wait on it).
     git_reads: usize,
     _subscriptions: Vec<gpui::Subscription>,
@@ -343,7 +346,10 @@ impl std::fmt::Debug for FilesPanel {
 impl FilesPanel {
     pub fn new(env: PanelEnv, cx: &mut Context<Self>) -> Self {
         let subscriptions = vec![
-            cx.observe(&env.sessions, |this, _, cx| this.follow_root(cx)),
+            cx.observe(&env.sessions, |this, _, cx| {
+                this.follow_root(cx);
+                this.sync_git(cx);
+            }),
             // A command or an agent's turn ended in a checkout: its files may have changed.
             cx.subscribe(&env.sessions, |this, _, _: &CheckoutActivity, cx| {
                 this.refresh_git(cx);
@@ -365,10 +371,12 @@ impl FilesPanel {
             git: GitStatus::default(),
             git_task: None,
             git_again: false,
+            git_asked: None,
             git_reads: 0,
             _subscriptions: subscriptions,
         };
         panel.follow_root(cx);
+        panel.sync_git(cx);
         panel
     }
 
@@ -441,6 +449,7 @@ impl FilesPanel {
         self.git = GitStatus::default();
         self.git_task = None;
         self.git_again = false;
+        self.git_asked = None;
         self.selected = None;
         self.pending_reveal = None;
         let show_ignored = self.env.settings.get::<FilesPanelSettings>().show_ignored;
@@ -450,7 +459,6 @@ impl FilesPanel {
                 self.listen(cx);
                 self.list(&root, cx);
                 self.watch(&root, cx);
-                self.refresh_git(cx);
                 if let Some(file) = self.active_file.clone() {
                     self.reveal(&file, cx);
                 }
@@ -507,6 +515,23 @@ impl FilesPanel {
         }
         self.keep_selection();
         cx.notify();
+    }
+
+    /// Asks for the git status when the root or the connection is not what it was asked for.
+    fn sync_git(&mut self, cx: &mut Context<Self>) {
+        let wanted = self.root().map(|root| {
+            (
+                root.to_owned(),
+                self.env.sessions.read(cx).connection_state(),
+            )
+        });
+        if wanted == self.git_asked {
+            return;
+        }
+        self.git_asked = wanted.clone();
+        if matches!(wanted, Some((_, hutan_client::ConnectionState::Connected))) {
+            self.refresh_git(cx);
+        }
     }
 
     /// Reads which files of the root are changed (`worktree.diff` without patches), one read at a
