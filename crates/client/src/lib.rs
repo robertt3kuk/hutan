@@ -24,7 +24,7 @@ mod terminal;
 pub mod time;
 
 pub use blocks::BlockList;
-pub use chat::ChatUpdate;
+pub use chat::{ChatUpdate, CheckpointUpdate};
 pub use client::{Client, ConnectOptions, Resumed};
 pub use connection::Connection;
 pub use error::ClientError;

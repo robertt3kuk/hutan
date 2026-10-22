@@ -1086,6 +1086,59 @@ impl Connection {
         client.chat_history(session, before_seq, limit).await
     }
 
+    /// Whether the daemon has checkpoints of agent turns (capability `checkpoint`,
+    /// [`Client::supports_checkpoints`]); false when disconnected.
+    pub fn supports_checkpoints(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_checkpoints())
+    }
+
+    /// Whether the daemon restores files to before a checkpoint's turn (capability
+    /// `checkpoint.restore`, [`Client::supports_checkpoint_restore`]); false when disconnected.
+    pub fn supports_checkpoint_restore(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_checkpoint_restore())
+    }
+
+    /// `checkpoint.list` ([`Client::checkpoint_list`]).
+    pub async fn checkpoint_list(
+        &self,
+        request: hutan_protocol::checkpoint::CheckpointListRequest,
+    ) -> Result<hutan_protocol::checkpoint::CheckpointList, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.checkpoint_list(request).await
+    }
+
+    /// `checkpoint.diff` ([`Client::checkpoint_diff`]).
+    pub async fn checkpoint_diff(
+        &self,
+        request: hutan_protocol::checkpoint::CheckpointDiffRequest,
+    ) -> Result<hutan_protocol::checkpoint::CheckpointDiff, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.checkpoint_diff(request).await
+    }
+
+    /// `checkpoint.preview` ([`Client::checkpoint_preview`]).
+    pub async fn checkpoint_preview(
+        &self,
+        request: hutan_protocol::checkpoint::CheckpointPreviewRequest,
+    ) -> Result<hutan_protocol::checkpoint::CheckpointPreview, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.checkpoint_preview(request).await
+    }
+
+    /// `checkpoint.restore` ([`Client::checkpoint_restore`]): a stale preview answers
+    /// `conflict` with the new preview as the error's `data`.
+    pub async fn checkpoint_restore(
+        &self,
+        request: hutan_protocol::checkpoint::CheckpointRestore,
+    ) -> Result<hutan_protocol::checkpoint::CheckpointRestored, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.checkpoint_restore(request).await
+    }
+
     /// `chat.models`: the models an agent offers.
     pub async fn chat_models(&self, agent: &str) -> Result<ChatModels, ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;

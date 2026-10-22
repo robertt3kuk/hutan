@@ -6,6 +6,7 @@ pub mod agents;
 pub mod agents_list;
 pub mod agents_text;
 pub mod attention;
+pub mod checkpoints;
 pub mod launch;
 mod placement;
 pub mod presentation;

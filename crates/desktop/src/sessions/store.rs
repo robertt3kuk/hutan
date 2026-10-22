@@ -426,6 +426,8 @@ pub struct SessionsStore {
     /// them want each: the connection keeps one wish per path, so the last one to let go
     /// unwatches it.
     dir_watches: HashMap<PathBuf, usize>,
+    /// The checkpoints of agent chats (`checkpoints.rs`): turn footers, the Checkpoints list.
+    checkpoints: Entity<super::checkpoints::CheckpointStore>,
     _tasks: Vec<Task<()>>,
 }
 
@@ -483,6 +485,8 @@ impl SessionsStore {
                 }
             }
         });
+        let checkpoints =
+            cx.new(|cx| super::checkpoints::CheckpointStore::new(connection.clone(), cx));
         Self {
             connection,
             state: Arc::new(StoreState {
@@ -528,6 +532,7 @@ impl SessionsStore {
             presentation_builds: Cell::new(0),
             last_confirmed_ms: None,
             dir_watches: HashMap::new(),
+            checkpoints,
             _tasks: vec![state_task, notice_task],
         }
     }
@@ -896,6 +901,11 @@ impl SessionsStore {
 
     pub fn connection(&self) -> &Connection {
         &self.connection
+    }
+
+    /// The checkpoints of agent chats as this window knows them.
+    pub fn checkpoints(&self) -> &Entity<super::checkpoints::CheckpointStore> {
+        &self.checkpoints
     }
 
     pub fn state(&self) -> &StoreState {

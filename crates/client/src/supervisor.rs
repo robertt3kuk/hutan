@@ -639,6 +639,13 @@ impl Supervisor {
             // No receivers is fine.
             let _ = self.shared.chat.send(ChatUpdate::Queue(Arc::new(queue)));
         }
+        for update in effects.checkpoints {
+            // No receivers is fine.
+            let _ = self
+                .shared
+                .chat
+                .send(ChatUpdate::Checkpoint(Arc::new(update)));
+        }
         self.terminals.bind(&self.state.sessions);
         for (session, terminal) in effects.session_terminals {
             self.terminals.observe(session, terminal);

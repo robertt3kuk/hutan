@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use hutan_core::{AgentEvent, Epoch};
+use hutan_core::{AgentEvent, CheckpointId, CheckpointInfo, Epoch};
 use hutan_protocol::chat::ChatQueue;
 
 /// One step of the chat event stream of a [`Connection`](crate::Connection).
@@ -23,9 +23,23 @@ use hutan_protocol::chat::ChatQueue;
 ///
 /// [`Queue`](Self::Queue) (protocol 0.36) is a chat's whole queue after it changed: a consumer
 /// keeps the newest one, and reads it again (`chat.queue.list`) after a resync.
+///
+/// [`Checkpoint`](Self::Checkpoint) (protocol 0.37) is a checkpoint recorded or removed: a
+/// consumer that shows a chat's checkpoints folds it into what it read with `checkpoint.list`,
+/// and lists again after a resync.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatUpdate {
     Event(Arc<AgentEvent>),
     Resync { epoch: Epoch },
     Queue(Arc<ChatQueue>),
+    Checkpoint(Arc<CheckpointUpdate>),
+}
+
+/// A change to the checkpoints of chats (`checkpoint.created`, `checkpoint.removed`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckpointUpdate {
+    /// A turn's or a restore's checkpoint was recorded (or recorded again with its end).
+    Created(CheckpointInfo),
+    /// Checkpoints went (`checkpoint.remove`, retention).
+    Removed(Vec<CheckpointId>),
 }

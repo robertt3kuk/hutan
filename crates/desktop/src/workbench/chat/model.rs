@@ -198,6 +198,8 @@ impl ChatModel {
                         known = Some(epoch);
                         load = true;
                     }
+                    // Checkpoints are the `CheckpointStore`'s.
+                    Ok(ChatUpdate::Checkpoint(_)) => {}
                     Err(RecvError::Lagged(_)) => load = true,
                     Err(RecvError::Closed) => return,
                 }
