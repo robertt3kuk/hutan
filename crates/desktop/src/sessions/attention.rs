@@ -35,10 +35,6 @@ pub enum Tone {
     Error,
 }
 
-/// The quiet state word of a session whose work waits for review and that the user has seen
-/// (FX-REVIEW): not *Needs you* any more, and never counted.
-pub const READY_FOR_REVIEW: &str = "ready for review";
-
 /// How a session shows up in lists, tabs and the status bar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Presentation {
@@ -66,7 +62,7 @@ impl Presentation {
             "stopped" => Icon::StateStopped,
             "interrupted" => Icon::StateInterrupted,
             "disconnected" => Icon::StateDisconnected,
-            "review" | READY_FOR_REVIEW => Icon::StateReview,
+            "review" => Icon::StateReview,
             "idle" => Icon::StateIdle,
             _ => Icon::StateUnknown,
         }

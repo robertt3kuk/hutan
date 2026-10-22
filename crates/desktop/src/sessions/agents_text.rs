@@ -139,13 +139,11 @@ pub fn reason_detail(record: &AgentRecord) -> Option<String> {
 
 /// The state word of a row, one per record: attention wins over the working state the agent
 /// is in (reducer precedence, chrome v3 § 2.2), so a session that waits for a decision says
-/// `Needs you · approval` and never also `Working`; work waiting for review the user has seen
-/// says `Ready for review`; every other record says its state.
+/// `Needs you · approval` and never also `Working`; every other record says its state. Work
+/// waiting for review that the user has seen is no state: the row says `Idle` and shows
+/// [`CHANGES_TO_REVIEW`] as a link beside it.
 pub fn state_word(record: &AgentRecord) -> String {
     if !record.needs_you() {
-        if record.ready_for_review {
-            return "Ready for review".to_owned();
-        }
         return record.state.label().to_owned();
     }
     let kind = match record.headline().map(|reason| reason.kind) {
@@ -159,6 +157,16 @@ pub fn state_word(record: &AgentRecord) -> String {
         None => return "Needs you".to_owned(),
     };
     format!("Needs you · {kind}")
+}
+
+/// The link a row shows beside its state word while its work waits for review and the user has
+/// seen it ([`AgentRecord::changes_to_review`]): it opens the checkout's changes. Not a state.
+pub const CHANGES_TO_REVIEW: &str = "Changes to review";
+
+/// Whether `record`'s row shows the [`CHANGES_TO_REVIEW`] link: its seen work waits for review
+/// in a checkout there is a diff of.
+pub fn changes_link(record: &AgentRecord) -> bool {
+    record.changes_to_review && record.checkout.is_some()
 }
 
 /// The leading glyph of a row and the tone of the state word: attention first (a triangle for a
@@ -454,7 +462,7 @@ mod tests {
             live: true,
             managed: false,
             turn_active: false,
-            ready_for_review: false,
+            changes_to_review: false,
             report_source: None,
         }
     }
@@ -574,6 +582,39 @@ mod tests {
         assert_eq!(state_word(&r), "Needs you · failed");
         assert_eq!(reason_detail(&r), reason_text(&r));
         assert_eq!(lead(&r).1, crate::sessions::Tone::Error);
+    }
+
+    #[test]
+    fn seen_work_waiting_for_review_says_idle_with_a_link_unseen_says_needs_you() {
+        use crate::sessions::presentation::ReasonKind;
+        let mut r = record();
+        r.state = State::Idle;
+        r.group = Group::NeedsYou;
+        r.checkout = Some(Checkout {
+            label: "Main checkout: main".into(),
+            root: "/code".into(),
+            branch: Some("main".into()),
+            worktree: false,
+            shared: false,
+        });
+        r.reasons = vec![Reason {
+            kind: ReasonKind::Review,
+            text: "Review changes".into(),
+            since_ms: None,
+        }];
+        assert_eq!(state_word(&r), "Needs you · review");
+        assert!(!changes_link(&r));
+        // Seen: one state word, and the link beside it (never "Ready for review · Idle").
+        r.group = Group::Idle;
+        r.reasons.clear();
+        r.changes_to_review = true;
+        assert_eq!(state_word(&r), "Idle");
+        assert_eq!(status_line(&r), "Idle · waiting for your next message");
+        assert!(changes_link(&r));
+        assert_eq!(primary(&r), Primary::OpenSession);
+        // Without a checkout there is no diff to link to.
+        r.checkout = None;
+        assert!(!changes_link(&r));
     }
 
     #[test]

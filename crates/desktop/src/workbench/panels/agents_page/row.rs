@@ -127,7 +127,35 @@ impl AgentsPage {
                         s.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
                     })
                     .child(SharedString::from(format!("· {status}")))
-            }));
+            }))
+            // Seen work waiting for review: not a state, a link to the checkout's changes.
+            .when(agents_text::changes_link(record), |line| {
+                line.child(
+                    div()
+                        .id(SharedString::from(format!("agents-changes-{session}")))
+                        .relative()
+                        .flex_none()
+                        .cursor_pointer()
+                        .text_color(theme.accent)
+                        .hover(|s| s.underline())
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.select_session_row(session);
+                            window.dispatch_action(
+                                primary_action(session, Primary::ReviewChanges),
+                                cx,
+                            );
+                        }))
+                        .child(SharedString::from(format!(
+                            "· {}",
+                            agents_text::CHANGES_TO_REVIEW
+                        )))
+                        .child(probe(
+                            &self.env.regions,
+                            Region::AgentAction(session, "changes-to-review"),
+                        )),
+                )
+            });
         if let Some(tail) = tail.as_ref().filter(|_| !look.comfortable) {
             status_line = status_line.child(
                 div()

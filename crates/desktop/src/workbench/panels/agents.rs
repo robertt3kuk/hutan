@@ -273,7 +273,10 @@ impl AgentsPanel {
                     workspace: record.project.clone(),
                     title: record.title.clone(),
                     word: agents_text::state_word(record),
-                    detail: agents_text::reason_detail(record),
+                    detail: agents_text::reason_detail(record).or_else(|| {
+                        agents_text::changes_link(record)
+                            .then(|| agents_text::CHANGES_TO_REVIEW.to_owned())
+                    }),
                     glyph,
                     tone,
                     finished: record.state.is_finished() && !record.needs_you(),

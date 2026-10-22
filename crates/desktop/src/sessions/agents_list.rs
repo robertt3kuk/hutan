@@ -326,7 +326,7 @@ mod tests {
             live: true,
             managed: false,
             turn_active: false,
-            ready_for_review: false,
+            changes_to_review: false,
             report_source: None,
         }
     }

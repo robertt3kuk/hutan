@@ -44,8 +44,8 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::agents::{self, AgentAttentionChanged, AgentBadge};
 use super::attention::{
-    AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, READY_FOR_REVIEW, Tone,
-    Unread, classify, present,
+    AttentionEntry, AttentionKind, AttentionTracker, Marks, Presentation, Tone, Unread, classify,
+    present,
 };
 use super::presentation::{self, AgentPresentation, Facts};
 use super::tasks::TaskBook;
@@ -389,7 +389,7 @@ pub struct SessionsStore {
     hold_unread: Option<SessionId>,
     /// The wait for review the user has seen, by session ([`TaskBook::review_key`]): the
     /// chat or its Changes view was looked at after the work became `awaiting_review`. A seen
-    /// wait is *Ready for review*, no longer *Needs you*.
+    /// wait no longer needs the user: the session says its state with a *Changes to review* link.
     reviews_seen: HashMap<SessionId, u64>,
     /// The notification intents raised for each session (`notify.intent`) since it was last
     /// read: *Mark as read* acknowledges them, so their banners leave the notification centre.
@@ -1086,8 +1086,10 @@ impl SessionsStore {
     /// How `info` shows up: its own state, except that a live session in which an agent of the
     /// observation tree is blocked always needs the user, whatever the session summary says, and
     /// that the session of a task waiting for review is a soft *Needs you* item (accent, never
-    /// a badge: [`classify`] leaves accent alone) until the user has seen it, then a quiet
-    /// `ready for review`. A turn that runs (or is stopping) is *working*, whatever waits.
+    /// a badge: [`classify`] leaves accent alone) until the user has seen it. Seen, it is its
+    /// own state again (*idle*), with [`changes_to_review`](Self::changes_to_review) as a link
+    /// beside it, never a state of its own. A turn that runs (or is stopping) is *working*,
+    /// whatever waits.
     pub fn presentation(&self, info: &SessionInfo) -> Presentation {
         let presentation = self.raw_presentation(info);
         if presentation.needs_you && self.attention.snoozed_key(info.id).is_some() {
@@ -1118,31 +1120,32 @@ impl SessionsStore {
                 return agents::blocked_presentation(&blocked);
             }
         }
-        let working = presentation.label == "working"
-            || info.chat.as_ref().is_some_and(|chat| chat.turn_active);
-        if !presentation.needs_you
-            && !working
-            && let Some(seen) = self.review_seen(info.id)
-        {
-            return if seen {
-                Presentation {
-                    label: READY_FOR_REVIEW.into(),
-                    detail: String::new(),
-                    tone: Tone::Muted,
-                    filled: false,
-                    needs_you: false,
-                }
-            } else {
-                Presentation {
-                    label: "review".into(),
-                    detail: "awaiting review".into(),
-                    tone: Tone::Accent,
-                    filled: true,
-                    needs_you: true,
-                }
+        let working = Self::working(info, &presentation);
+        if !presentation.needs_you && !working && self.review_seen(info.id) == Some(false) {
+            return Presentation {
+                label: "review".into(),
+                detail: "awaiting review".into(),
+                tone: Tone::Accent,
+                filled: true,
+                needs_you: true,
             };
         }
         presentation
+    }
+
+    /// A turn runs (or is stopping) in `info`, as its own `presentation` says: review waits.
+    fn working(info: &SessionInfo, presentation: &Presentation) -> bool {
+        presentation.label == "working" || info.chat.as_ref().is_some_and(|chat| chat.turn_active)
+    }
+
+    /// Whether `session`'s work waits for review and the user has seen it, while no turn runs:
+    /// the rows say its state (*Idle*) with a small *Changes to review* link beside it, until a
+    /// Finish, an accept or a new turn.
+    pub fn changes_to_review(&self, session: SessionId) -> bool {
+        self.review_seen(session) == Some(true)
+            && self.session(session).is_some_and(|info| {
+                !Self::working(info, &present(info, self.attention.unread(info.id)))
+            })
     }
 
     /// Whether the user has seen the work of `session` that waits for review; `None` while
@@ -1153,8 +1156,8 @@ impl SessionsStore {
     }
 
     /// The user has seen the work of `session` that waits for review (its chat or its Changes
-    /// view is on screen): it stays *Ready for review* without needing them. Whether that
-    /// changed anything.
+    /// view is on screen): it no longer needs them, and says *Changes to review* beside its
+    /// state. Whether that changed anything.
     fn see_review(&mut self, session: SessionId) -> bool {
         let Some(key) = self.tasks.review_key(session) else {
             return false;
@@ -1225,14 +1228,14 @@ impl SessionsStore {
         }
         let unread = self.attention.unread_map();
         let mut reviews: HashSet<SessionId> = HashSet::new();
-        let mut ready: HashSet<SessionId> = HashSet::new();
+        let mut seen: HashSet<SessionId> = HashSet::new();
         for session in &self.state.sessions {
             match self.review_seen(session.id) {
                 Some(false) => {
                     reviews.insert(session.id);
                 }
                 Some(true) => {
-                    ready.insert(session.id);
+                    seen.insert(session.id);
                 }
                 None => {}
             }
@@ -1242,7 +1245,7 @@ impl SessionsStore {
             state: &self.state,
             unread,
             reviews: &reviews,
-            ready_for_review: &ready,
+            changes_to_review: &seen,
             snoozed: &snoozed,
             answered_approvals: &self.answered,
             answered_questions: &self.answered_questions,

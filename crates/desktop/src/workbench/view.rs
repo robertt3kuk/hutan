@@ -279,6 +279,8 @@ pub enum Region {
     SessionRow(hutan_core::SessionId),
     /// The muted marker of a session's row (its notifications are muted, `notify.mute`).
     SessionMuted(hutan_core::SessionId),
+    /// The *Changes to review* link of a session's row (its seen work waits for review).
+    SessionReview(hutan_core::SessionId),
     /// A control of the "Closed … · Undo" toast (`undo`).
     CloseToast(&'static str),
     /// The ▷ Start shortcut of project row `workspace` in the sidebar (shown on hover).

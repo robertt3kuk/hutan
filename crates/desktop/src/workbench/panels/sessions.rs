@@ -37,8 +37,8 @@ use crate::settings::{
 };
 use crate::workbench::actions::{
     CloseSessionById, DropProjectOnto, MoveWorkspaceOnto, OpenFolder, OpenSession, OpenWorkspace,
-    ProjectDrop, ProjectMenuAt, RenameSessionTo, RenameTo, RenameWorkspaceTo, SessionMenuAt,
-    SessionRenameTo, ShowPlusMenu, ShowProjectMenu, ShowSessionMenu, ShowSortMenu,
+    ProjectDrop, ProjectMenuAt, RenameSessionTo, RenameTo, RenameWorkspaceTo, ReviewChangesAt,
+    SessionMenuAt, SessionRenameTo, ShowPlusMenu, ShowProjectMenu, ShowSessionMenu, ShowSortMenu,
     ShowWorkspaceMenu, WorkspaceDrop, WorkspaceMenuAt,
 };
 use crate::workbench::actions::{LauncherOpen, OpenLauncher};
@@ -1680,6 +1680,38 @@ impl SessionsPanel {
                 .child(icon(Icon::StateMuted, 12.0, theme.muted))
                 .child(probe(&self.env.regions, Region::SessionMuted(info.id)))
         });
+        // Seen work waiting for review: the row keeps its state (idle draws nothing in the
+        // lane) and wears a small link to the checkout's changes, never a state word.
+        let mut review = self
+            .env
+            .sessions
+            .read(cx)
+            .changes_to_review(info.id)
+            .then(|| {
+                info.placement
+                    .as_ref()
+                    .map(|p| p.root.display().to_string())
+            })
+            .flatten()
+            .map(|root| {
+                div()
+                    .id(SharedString::from(format!("session-review-{id}")))
+                    .relative()
+                    .flex_none()
+                    .cursor_pointer()
+                    .tooltip(|_, cx| {
+                        cx.new(|_| {
+                            TextTooltip(crate::sessions::agents_text::CHANGES_TO_REVIEW.into())
+                        })
+                        .into()
+                    })
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(ReviewChangesAt(root.clone())), cx);
+                    })
+                    .child(icon(Icon::StateReview, 12.0, theme.accent))
+                    .child(probe(&self.env.regions, Region::SessionReview(info.id)))
+            });
         let renaming = self
             .renaming
             .as_ref()
@@ -1770,6 +1802,7 @@ impl SessionsPanel {
                     })
                     .children(badge.take())
                     .children(recovery.take())
+                    .children(review.take())
                     .children(muted.take()),
                 "age" => line.child(
                     div()

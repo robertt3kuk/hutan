@@ -10,7 +10,8 @@
 //! 1. Pending approvals and questions (the real objects), blocked agents, an unread failure, a
 //!    task awaiting review the user has not seen (unless a turn runs: working beats review), an
 //!    unread completion are *reasons*; the session is in **Needs you**. Review work the user
-//!    has seen is the quiet *Ready for review*, in the group of its state.
+//!    has seen is no reason and no state: the session is in the group of its state (*Idle*),
+//!    with [`AgentRecord::changes_to_review`] for the small *Changes to review* link.
 //! 2. A session that ended, or a main agent whose node has an outcome, is **Finished**: an
 //!    obsolete "working" report never revives it.
 //! 3. A daemon-managed chat turn in progress is **Working**; otherwise the report or the root
@@ -328,8 +329,9 @@ pub struct AgentRecord {
     /// The daemon runs the agent (a chat), so it can interrupt a turn.
     pub managed: bool,
     pub turn_active: bool,
-    /// Its work waits for review and the user has seen it: the quiet *Ready for review*.
-    pub ready_for_review: bool,
+    /// Its work waits for review and the user has seen it, while no turn runs: not a state, the
+    /// row keeps its state word and adds a small *Changes to review* link.
+    pub changes_to_review: bool,
     /// Who reported the agent's state (`claude-hooks`), when something did.
     pub report_source: Option<String>,
 }
@@ -529,9 +531,9 @@ pub struct Facts<'a> {
     pub unread: &'a BTreeMap<SessionId, Unread>,
     /// Sessions whose finished task waits for a reviewer and that the user has not seen yet.
     pub reviews: &'a HashSet<SessionId>,
-    /// Sessions whose finished task waits for a reviewer and that the user has seen: *Ready for
-    /// review*, not *Needs you*.
-    pub ready_for_review: &'a HashSet<SessionId>,
+    /// Sessions whose finished task waits for a reviewer and that the user has seen: no reason,
+    /// a *Changes to review* link beside their state.
+    pub changes_to_review: &'a HashSet<SessionId>,
     /// Sessions the user snoozed whose attention is still the one they were snoozed at (the
     /// store decides: a snooze lapses when it changes).
     pub snoozed: &'a HashSet<SessionId>,
@@ -808,7 +810,7 @@ impl Ctx<'_> {
                 since_ms: None,
             });
         }
-        let ready_for_review = self.facts.ready_for_review.contains(&info.id) && !working;
+        let changes_to_review = self.facts.changes_to_review.contains(&info.id) && !working;
         if unread == Some(Unread::Done) {
             reasons.push(Reason {
                 kind: ReasonKind::CompletedUnread,
@@ -943,7 +945,7 @@ impl Ctx<'_> {
             live,
             managed: chat.is_some(),
             turn_active,
-            ready_for_review,
+            changes_to_review,
             report_source: info.agent.as_ref().map(|r| r.source.clone()),
         })
     }
@@ -1293,7 +1295,7 @@ mod tests {
         state: StoreState,
         unread: BTreeMap<SessionId, Unread>,
         reviews: HashSet<SessionId>,
-        ready: HashSet<SessionId>,
+        seen: HashSet<SessionId>,
         snoozed: HashSet<SessionId>,
         answered: HashMap<ApprovalId, String>,
     }
@@ -1312,7 +1314,7 @@ mod tests {
                 },
                 unread: BTreeMap::new(),
                 reviews: HashSet::new(),
-                ready: HashSet::new(),
+                seen: HashSet::new(),
                 snoozed: HashSet::new(),
                 answered: HashMap::new(),
             }
@@ -1329,7 +1331,7 @@ mod tests {
                 state: &self.state,
                 unread: &self.unread,
                 reviews: &self.reviews,
-                ready_for_review: &self.ready,
+                changes_to_review: &self.seen,
                 snoozed: &self.snoozed,
                 answered_approvals: &self.answered,
                 answered_questions: &HashSet::new(),
@@ -1579,7 +1581,7 @@ mod tests {
     }
 
     #[test]
-    fn a_running_turn_is_working_not_review_and_seen_work_is_ready_for_review() {
+    fn a_running_turn_is_working_not_review_and_seen_work_is_idle_with_changes_to_review() {
         let home = home();
         let mut world = World::new(vec![home.clone()]);
         let mut info = session(home.id, "turn 2");
@@ -1594,15 +1596,21 @@ mod tests {
         idle.title = "looked at".into();
         idle.chat = Some(chat("omp", false, true));
         let seen = world.add(idle);
-        world.ready.insert(seen);
+        world.seen.insert(seen);
         let presentation = world.build();
         let by = |id| presentation.get(id).unwrap();
         assert_eq!(by(running).state, State::Working);
         assert_eq!(by(running).group, Group::Working, "working beats review");
         assert!(by(running).reasons.is_empty());
-        assert!(!by(running).ready_for_review);
+        assert!(!by(running).changes_to_review);
         assert_eq!(by(seen).group, Group::Idle, "seen work needs nobody");
-        assert!(by(seen).ready_for_review);
+        assert_eq!(
+            by(seen).state,
+            State::Idle,
+            "seen review is no state of its own"
+        );
+        assert!(by(seen).reasons.is_empty());
+        assert!(by(seen).changes_to_review);
         assert_eq!(presentation.counts(Scope::All).needs_you, 0);
     }
 

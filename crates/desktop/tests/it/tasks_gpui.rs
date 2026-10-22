@@ -1323,16 +1323,14 @@ fn a_finished_task_shows_its_delivery_pill_and_needs_you_without_a_badge(cx: &mu
         assert_eq!(s.needs_you(), [session]);
         assert!(s.attention_entries().is_empty(), "a soft item has no badge");
     });
-    // Looking is not accepting, but it is seeing: read, it leaves Needs you and says it is
-    // ready for review, quietly; the pill stays.
+    // Looking is not accepting, but it is seeing: read, it leaves Needs you and says its own
+    // state again, with the *Changes to review* link beside it; the pill stays.
     sessions.update(cx, |s, cx| s.mark_read(session, cx));
     sessions.read_with(cx, |s, _| {
         let presentation = s.presentation(s.session(session).unwrap());
-        assert_eq!(
-            (presentation.label.as_str(), presentation.needs_you),
-            ("ready for review", false)
-        );
-        assert_eq!(presentation.tone, Tone::Muted);
+        assert_ne!(presentation.label, "review", "seen review is no state");
+        assert!(!presentation.needs_you);
+        assert!(s.changes_to_review(session));
         assert!(s.needs_you().is_empty());
     });
     assert_eq!(
@@ -2012,17 +2010,36 @@ fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAp
     wait_until(cx, "the second change to await review", |cx| {
         label(cx) == "review"
     });
+    sessions.read_with(cx, |s, _| {
+        let record = s.agent_presentation().get(session).cloned().unwrap();
+        assert_eq!(agents_text::state_word(&record), "Needs you · review");
+        assert!(
+            !agents_text::changes_link(&record),
+            "unseen: no link, a reason"
+        );
+    });
 
     // The user looks at the chat: it leaves Needs you, the status bar's count drops, the row
-    // says it is ready for review.
+    // says Idle — one word — with the *Changes to review* link beside it.
     cx.dispatch_action(actions::OpenSession(session.to_string()));
     wait_until(cx, "the chat to be seen", |cx| {
-        label(cx) == "ready for review"
+        sessions.read_with(cx, |s, _| s.changes_to_review(session))
     });
+    assert_eq!(label(cx), "idle");
     sessions.read_with(cx, |s, _| {
         assert!(s.needs_you().is_empty(), "the status bar counts nothing");
         let record = s.agent_presentation().get(session).cloned().unwrap();
-        assert_eq!(agents_text::state_word(&record), "Ready for review");
+        assert_eq!(agents_text::state_word(&record), "Idle");
+        assert_eq!(record.group, Group::Idle);
+        assert!(agents_text::changes_link(&record));
+    });
+    // The Agents page draws the link beside the state word, and it opens the changes.
+    cx.dispatch_action(actions::ShowAgentsPage);
+    click(&view, cx, Region::AgentAction(session, "changes-to-review"));
+    wait_until(cx, "the Changes view of the checkout", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.changes(&env.root.display().to_string()).is_some()
+        })
     });
 
     // Finish: the message is the chat that edited files; the work is merged and nothing waits.
@@ -2044,7 +2061,9 @@ fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAp
         env.task(edit.id)
             .is_some_and(|t| t.delivery == DeliveryState::Merged)
     });
-    wait_until(cx, "the review to go", |cx| label(cx) != "ready for review");
+    wait_until(cx, "the review to go", |cx| {
+        sessions.read_with(cx, |s, _| !s.changes_to_review(session))
+    });
     assert!(sessions.read_with(cx, |s, _| s.needs_you().is_empty()));
     assert_eq!(env.task(look.id).unwrap().delivery, DeliveryState::None);
 }
