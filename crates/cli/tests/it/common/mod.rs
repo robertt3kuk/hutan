@@ -139,8 +139,28 @@ pub fn command(binary: &Path, socket: Option<&Path>, args: &[&str]) -> Command {
     command
 }
 
+/// Held while a child is spawned. On macOS std creates a child's stdio pipes with `pipe()` and
+/// sets `FD_CLOEXEC` afterwards, so a child spawned at that moment by another task inherits
+/// both ends of the other child's pipe. A long-lived child (a CLI waiting for its approval) then
+/// keeps a short one's output open and `wait_with_output` never sees its end. One spawn at a
+/// time in the test process closes that window.
+static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Spawns `command`, never at the same time as another child of these tests.
+pub fn spawn_child(command: &mut Command) -> tokio::process::Child {
+    let _one_at_a_time = SPAWN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    command.spawn().unwrap()
+}
+
 pub async fn finish(mut command: Command) -> Out {
-    let output = timeout(WAIT, command.output()).await.unwrap().unwrap();
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = spawn_child(&mut command);
+    let output = timeout(WAIT, child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
     Out {
         code: output.status.code().expect("killed by a signal"),
         stdout: String::from_utf8(output.stdout).unwrap(),
