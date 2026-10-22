@@ -18,8 +18,9 @@ use hutan_daemon::lsp::LspTuning;
 use hutan_lsp_client::{RestartPolicy, Timeouts};
 use hutan_protocol::ErrorCode;
 use hutan_protocol::lsp::{
-    DocChange, DocEdit, DocOpen, DocOpened, LspDiagnosticsRequest, LspPosition, LspPositionRequest,
-    LspServerInfo, LspServerState, LspStatusRequest, LspTrust, LspTrustRequest,
+    DocChange, DocEdit, DocOpen, DocOpened, LspCompletionKind, LspCompletionRequest,
+    LspCompletionResolve, LspDiagnosticsRequest, LspPosition, LspPositionRequest, LspServerInfo,
+    LspServerState, LspSignatureHelpRequest, LspStatusRequest, LspTrust, LspTrustRequest,
 };
 use hutan_protocol::messages::{
     AgentApplied, AgentReportRequest, AgentState, Event, Origin, Request, WorkspaceOpen,
@@ -1032,4 +1033,213 @@ async fn connect_from(t: &TestDaemon, session: SessionId) -> Client {
         session_id: session,
     });
     Client::connect(options).await.unwrap()
+}
+
+// ---- completion and signature help (protocol 0.41, E-12b) -----------------------------------
+
+/// A server with completion (trigger `.`, resolve) and signature help (`(`, `,`) in UTF-8.
+fn completion_script(journal: Option<&Path>) -> Value {
+    json!({
+        "capabilities": {
+            "positionEncoding": "utf-8",
+            "textDocumentSync": 2,
+            "completionProvider": {"triggerCharacters": ["."], "resolveProvider": true},
+            "signatureHelpProvider": {"triggerCharacters": ["("], "retriggerCharacters": [","]},
+        },
+        "completion": {"items": [
+            {"label": "push", "kind": 2, "sortText": "1", "insertTextFormat": 2,
+             "insertText": "push(${1:value})$0"},
+            {"label": "HashMap", "kind": 22, "sortText": "2",
+             "additionalTextEdits": [{"range": {"start": {"line": 0, "character": 0},
+                 "end": {"line": 0, "character": 0}}, "newText": "use std::collections::HashMap;\n"}]},
+            // A replacement after the `é` (two bytes, one UTF-16 unit).
+            {"label": "émoji", "kind": 6, "textEdit": {"range": {"start": {"line": 0, "character": 3},
+                 "end": {"line": 0, "character": 4}}, "newText": "émoji"}},
+        ]},
+        "resolve": {"push": {"documentation": {"kind": "markdown", "value": "Appends **value**."},
+                             "detail": "fn push(&mut self, value: T)"}},
+        "signature_help": {"label": "push(value: T, n: usize)", "parameters": ["value: T", "n: usize"],
+                           "documentation": "Pushes."},
+        "hang_once": if journal.is_some() { json!(["textDocument/completion"]) } else { json!([]) },
+        "journal": journal,
+    })
+}
+
+fn completion_at(path: &Path, at: LspPosition, trigger: Option<&str>) -> LspCompletionRequest {
+    LspCompletionRequest {
+        path: path.to_owned(),
+        position: at,
+        trigger: trigger.map(str::to_owned),
+        incomplete: false,
+    }
+}
+
+#[tokio::test]
+async fn completion_resolve_and_signature_help_run_through_the_daemon() {
+    let env = Env::new(completion_script(None)).await;
+    assert!(env.client.supports_lsp_completion());
+    let path = env.file("a.fake");
+    open(&env.client, &path, "é.x\nv.push(a, \n").await;
+    let ready = wait_status(&env.client, LspServerState::Ready).await;
+    assert_eq!(ready.completion_triggers, ["."]);
+    assert_eq!(ready.signature_triggers, ["(", ","]);
+    assert!(ready.capabilities.contains(&"signature_help".to_owned()));
+
+    let list = env
+        .client
+        .lsp_completion(completion_at(&path, position(0, 2), Some(".")))
+        .await
+        .unwrap();
+    assert!(!list.incomplete && !list.truncated);
+    let summary: Vec<_> = list
+        .items
+        .iter()
+        .map(|i| (i.label.as_str(), i.kind, i.snippet, i.resolvable))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("push", Some(LspCompletionKind::Method), true, true),
+            ("HashMap", Some(LspCompletionKind::Struct), false, true),
+            ("émoji", Some(LspCompletionKind::Variable), false, true),
+        ]
+    );
+    assert_eq!(list.items[0].insert_text.as_deref(), Some("push(${1:value})$0"));
+    assert_eq!(list.items[1].additional_edits[0].range.start, position(0, 0));
+    // The server's UTF-8 columns 3..4 are UTF-16 columns 2..3 on the wire.
+    let edit = list.items[2].edit.clone().unwrap();
+    assert_eq!((edit.range.start, edit.range.end), (position(0, 2), position(0, 3)));
+
+    let resolved = env
+        .client
+        .lsp_completion_resolve(LspCompletionResolve {
+            completion_id: list.completion_id,
+            index: 0,
+        })
+        .await
+        .unwrap();
+    assert_eq!(resolved.documentation.as_deref(), Some("Appends **value**."));
+    assert_eq!(resolved.detail.as_deref(), Some("fn push(&mut self, value: T)"));
+    assert_eq!(
+        error_code(
+            env.client
+                .lsp_completion_resolve(LspCompletionResolve {
+                    completion_id: list.completion_id + 100,
+                    index: 0,
+                })
+                .await
+        ),
+        ErrorCode::NotFound
+    );
+
+    // After `v.push(a, ` the second parameter is the one being typed.
+    let help = env
+        .client
+        .lsp_signature_help(LspSignatureHelpRequest {
+            path: path.clone(),
+            position: position(1, 10),
+            trigger: Some(",".into()),
+            retrigger: true,
+        })
+        .await
+        .unwrap();
+    let signature = &help.signatures[help.active_signature as usize];
+    assert_eq!(signature.active_parameter, Some(1));
+    let n = &signature.parameters[1];
+    assert_eq!(&signature.label[n.start as usize..n.end as usize], "n: usize");
+    assert_eq!(signature.documentation.as_deref(), Some("Pushes."));
+    // Outside a call there is none.
+    let none = env
+        .client
+        .lsp_signature_help(LspSignatureHelpRequest {
+            path: path.clone(),
+            position: position(0, 1),
+            trigger: None,
+            retrigger: false,
+        })
+        .await
+        .unwrap();
+    assert!(none.signatures.is_empty());
+
+    // B16's share of the daemon: socket, hub, the fake server's answer and back. The fake
+    // server answers at once, so this bounds protocol + daemon overhead from above.
+    let mut times = Vec::new();
+    for _ in 0..40 {
+        let started = std::time::Instant::now();
+        env.client
+            .lsp_completion(completion_at(&path, position(0, 2), Some(".")))
+            .await
+            .unwrap();
+        times.push(started.elapsed());
+    }
+    times.sort();
+    let (median, p95) = (times[times.len() / 2], times[times.len() * 95 / 100]);
+    eprintln!("B16 lsp.completion round trip with hutan-fake-lsp: median {median:?}, p95 {p95:?}");
+    // The budget is 5 ms in a release build; a loaded debug build gets ten times that.
+    assert!(median < Duration::from_millis(50), "median {median:?}");
+    env.stop().await;
+}
+
+/// The journal's lines (see `hutan-fake-lsp`'s `journal`).
+fn journal_lines(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+async fn wait_journal(path: &Path, what: &str, found: impl Fn(&str) -> bool) -> String {
+    timeout(WAIT, async {
+        loop {
+            if let Some(line) = journal_lines(path).into_iter().find(|l| found(l)) {
+                return line;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the fake server's journal never showed {what}"))
+}
+
+#[tokio::test]
+async fn a_newer_completion_supersedes_the_older_and_the_server_is_told() {
+    let work = tempfile::tempdir().unwrap();
+    let journal = work.path().join("journal");
+    let env = Env::new(completion_script(Some(&journal))).await;
+    let path = env.file("a.fake");
+    open(&env.client, &path, "v.\n").await;
+    wait_status(&env.client, LspServerState::Ready).await;
+
+    // The first one is never answered by the server…
+    let first = tokio::spawn({
+        let client = env.client.clone();
+        let request = completion_at(&path, position(0, 2), Some("."));
+        async move { client.lsp_completion(request).await }
+    });
+    let asked = wait_journal(&journal, "the first completion", |l| {
+        l.starts_with("textDocument/completion ")
+    })
+    .await;
+    let first_id = asked.trim_start_matches("textDocument/completion ").to_owned();
+    // …and the next one of the connection replaces it while it waits.
+    let second = env
+        .client
+        .lsp_completion(completion_at(&path, position(0, 2), None))
+        .await
+        .unwrap();
+    assert_eq!(second.items.len(), 3);
+    let superseded = first.await.unwrap();
+    match superseded {
+        Err(hutan_client::ClientError::Remote(error)) => {
+            assert_eq!(error.code, ErrorCode::Conflict);
+            assert_eq!(error.data.unwrap()["reason"], "superseded");
+        }
+        other => panic!("expected the first one superseded, got {other:?}"),
+    }
+    wait_journal(&journal, "the cancellation", |l| {
+        l == format!("cancelled {first_id}")
+    })
+    .await;
+    env.stop().await;
 }

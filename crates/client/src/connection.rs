@@ -1248,6 +1248,14 @@ impl Connection {
             .is_some_and(|client| client.supports_lsp())
     }
 
+    /// True while connected to a daemon that advertised capability `lsp.completion`
+    /// ([`Client::supports_lsp_completion`]).
+    pub fn supports_lsp_completion(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_lsp_completion())
+    }
+
     /// `doc.open` on the current connection, with the generation it was opened on.
     pub async fn doc_open(
         &self,

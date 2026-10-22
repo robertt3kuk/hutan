@@ -14,6 +14,9 @@ use hutan_protocol::messages::{Empty, Request};
 use crate::client::{Client, DOC_SYNC_CAPABILITY, LSP_CAPABILITY};
 use crate::error::ClientError;
 
+/// Capability of protocol 0.41: completion and signature help.
+pub const LSP_COMPLETION_CAPABILITY: &str = "lsp.completion";
+
 impl Client {
     /// True when the daemon advertised capability `doc.sync` (protocol 0.39):
     /// `doc.open|change|save|close`.
@@ -25,6 +28,12 @@ impl Client {
     /// `lsp.state` and `lsp.diagnostics` events and the language servers in Resources.
     pub fn supports_lsp(&self) -> bool {
         self.has_capability(LSP_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `lsp.completion` (protocol 0.41):
+    /// `lsp.completion|completion_resolve|signature_help` and the servers' trigger characters.
+    pub fn supports_lsp_completion(&self) -> bool {
+        self.has_capability(LSP_COMPLETION_CAPABILITY)
     }
 
     /// `doc.open`: this connection has the document open with this text; a server starts for it
