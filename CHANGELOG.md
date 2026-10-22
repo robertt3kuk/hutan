@@ -18,6 +18,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - Mawas Memory lives in the left sidebar (a **Memory** row under Mawas, ⌘K *Mawas: Memory*, Today's *Memory ›*): proposals first, entries in one column, edit inline, full keyboard; a saved Memory tab moves there once.
 
 ### Fixed
+- Popover buttons over a dock edge take the click again; `○ Stopped · Start` starts the daemon in one click and the stopped state is said once; Undo after closing a split puts it back in its split; toasts keep their text and height; the unread dot is visible and centred; a zoomed split says so (`⊞ 3 · zoomed`); rail tooltips follow reordering; the status-bar branch follows the visible tab; one-line session rows aged by last activity; one UI typeface everywhere except code.
 - One session, one tab: opening a Mawas session from anywhere focuses Mawas Home instead of a second tab; the same title and icon everywhere; saved layouts with duplicate tabs are merged.
 - Resources panel: fixed columns with ellipsis and tooltips, no overlapping text at any width, session titles instead of raw ids, one header.
 
