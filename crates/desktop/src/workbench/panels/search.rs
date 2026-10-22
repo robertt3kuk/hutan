@@ -1580,9 +1580,11 @@ impl SearchPanel {
                     .children(checkbox)
                     .child(body)
                     .child(probe(&self.env.regions, Region::SearchRow(index)));
+                // The selected fill spans the query field's own width (the panel's padding), not
+                // the sidebar's edge.
                 div()
                     .w_full()
-                    .px(px(tokens.spacing))
+                    .px(px(tokens.spacing * 3.0))
                     .child(line)
                     .into_any_element()
             })

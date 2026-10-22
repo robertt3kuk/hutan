@@ -385,7 +385,11 @@ impl AgentsPage {
             .items_center()
             .gap(px(12.0))
             .h(px(look.row()))
-            .px(px(16.0))
+            // The selection bar is inset to the page's 16 px padding, 6 px radius; the content
+            // keeps 12 px inside it.
+            .mx(px(16.0))
+            .px(px(12.0))
+            .rounded(px(6.0))
             .cursor_pointer()
             .when(selected, |s| s.bg(theme.accent_soft))
             .when(!selected, move |s| s.hover(move |s| s.bg(hover)))

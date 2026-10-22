@@ -126,6 +126,34 @@ fn the_nav_and_the_agents_overview_show_the_same_page_with_the_same_selection(
 }
 
 #[gpui::test]
+fn a_row_is_a_bar_inset_to_the_pages_16_px_padding(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let id = agent(&daemon, "work", true);
+    let (view, cx) = open(cx, &daemon);
+    click(&view, cx, Region::Nav("agents"));
+    let page = page(&view, cx);
+    let p = page.clone();
+    wait_until(cx, "the agent to be listed", move |cx| {
+        listed(&p, cx).contains(&id)
+    });
+    page.update(cx, |p, cx| p.select(id, cx));
+    draw(cx);
+    let (row, list) = (
+        region(&view, cx, Region::AgentRow(id)).expect("the row"),
+        region(&view, cx, Region::AgentsPage("list")).expect("the list"),
+    );
+    // Probes measure the content box: the bar is 16 px from either edge of the list (±1).
+    let (left, right) = (
+        f32::from(row.left() - list.left()),
+        f32::from(list.right() - row.right()),
+    );
+    assert!(
+        (left - 16.0).abs() <= 1.5 && (right - 16.0).abs() <= 1.5,
+        "the selected bar is inset 16 px, not edge to edge: {left} / {right}"
+    );
+}
+
+#[gpui::test]
 fn an_agent_with_an_unknown_state_is_one_session_everywhere_and_never_working(
     cx: &mut TestAppContext,
 ) {
