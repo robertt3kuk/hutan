@@ -192,8 +192,8 @@ fn two_agents_in_one_checkout_turn_the_badge_into_a_warning(cx: &mut TestAppCont
     omp.report(&daemon, Node::main("root").working().name("omp"));
     claude.report(&daemon, Node::main("root").working().name("claude"));
     wait_until(cx, "the warning on both", |cx| {
-        badge_text(&view, cx, first) == Some(("main".into(), true))
-            && badge_text(&view, cx, second) == Some(("main".into(), true))
+        badge_text(&view, cx, first) == Some(("shared checkout".into(), true))
+            && badge_text(&view, cx, second) == Some(("shared checkout".into(), true))
     });
     let tip = view.read_with(cx, |wb, cx| {
         wb.sessions()
@@ -204,7 +204,7 @@ fn two_agents_in_one_checkout_turn_the_badge_into_a_warning(cx: &mut TestAppCont
             .tooltip
     });
     assert!(
-        tip.ends_with("⚠ Another live agent works in this checkout"),
+        tip.contains("⚠ Another live agent works in this checkout"),
         "{tip}"
     );
     wait_until(cx, "the warning on the rows", |cx| {

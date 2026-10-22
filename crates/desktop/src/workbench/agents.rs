@@ -233,6 +233,8 @@ impl Workbench {
         let settings = self.settings.clone();
         let regions = self.regions.clone();
         let view = cx.new(|cx| ChatView::new(session, model, sessions, settings, regions, cx));
+        let harnesses = self.env.harnesses.clone();
+        view.update(cx, |view, cx| view.use_harnesses(harnesses, cx));
         self.chats.insert((pane, session), view.clone());
         view
     }

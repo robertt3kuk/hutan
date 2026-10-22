@@ -8,7 +8,8 @@ use hutan_protocol::worktree::PlacementKind;
 /// What a session's row and tab say about where it works.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlacementBadge {
-    /// `main`, `wt <branch>`, or `wt (detached)`.
+    /// `main`, `wt <branch>`, or `wt (detached)`; while another live agent works in the same
+    /// checkout the words say that instead: `shared checkout` (`wt <branch> · shared`).
     pub text: String,
     /// Another live agent works in the same checkout: the badge is drawn as a warning.
     pub shared: bool,
@@ -37,10 +38,17 @@ pub fn placement_badge(session: &SessionInfo) -> Option<PlacementBadge> {
     let others = placement.shared_with.len();
     if others > 0 {
         lines.push(match others {
-            1 => "⚠ Another live agent works in this checkout".to_owned(),
-            n => format!("⚠ {n} other live agents work in this checkout"),
+            1 => "⚠ Another live agent works in this checkout: your edits and its can overwrite each other".to_owned(),
+            n => format!(
+                "⚠ {n} other live agents work in this checkout: your edits and theirs can overwrite each other"
+            ),
         });
     }
+    let text = match (others > 0, placement.kind) {
+        (false, _) => text,
+        (true, PlacementKind::Main) => "shared checkout".to_owned(),
+        (true, PlacementKind::Worktree) => format!("{text} · shared"),
+    };
     Some(PlacementBadge {
         text,
         shared: others > 0,
@@ -131,8 +139,12 @@ mod tests {
         );
         assert_eq!(
             badge(placement(PlacementKind::Main, Some("master"), 1)),
-            Some(("main".to_owned(), true)),
-            "a shared main checkout keeps its warning"
+            Some(("shared checkout".to_owned(), true)),
+            "a shared main checkout says so in words"
+        );
+        assert_eq!(
+            badge(placement(PlacementKind::Worktree, Some("x"), 1)),
+            Some(("wt x · shared".to_owned(), true))
         );
         assert_eq!(row_placement_badge(&session(None)), None);
     }
@@ -157,12 +169,14 @@ mod tests {
         assert!(one.shared);
         assert!(
             one.tooltip
-                .ends_with("⚠ Another live agent works in this checkout")
+                .contains("⚠ Another live agent works in this checkout")
         );
+        assert_eq!(one.text, "wt x · shared");
         let two = placement_badge(&session(Some(placement(PlacementKind::Main, None, 2)))).unwrap();
         assert!(
             two.tooltip
-                .ends_with("⚠ 2 other live agents work in this checkout")
+                .contains("⚠ 2 other live agents work in this checkout")
         );
+        assert_eq!(two.text, "shared checkout");
     }
 }

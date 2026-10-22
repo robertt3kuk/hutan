@@ -25,7 +25,8 @@ use super::widgets::{ButtonKind, button, context_text, context_tooltip, round_bu
 use crate::sessions::SessionsStore;
 use crate::settings::{ChatSettings, SendKey};
 use crate::workbench::actions::{self, RestartSessionById};
-use crate::workbench::harnesses::harness_name;
+use crate::workbench::agents::Models;
+use crate::workbench::harnesses::{HarnessDirectory, harness_name};
 use crate::workbench::panels::{recovery_chip, tone_color};
 use crate::workbench::render::probe;
 use crate::workbench::send_key::{send_key_control, stop_asking, write_send_key};
@@ -82,6 +83,9 @@ pub struct ChatView {
     /// The composer has had the keyboard: from then on it may show the first-run question
     /// about the send key.
     send_key_armed: bool,
+    /// The harnesses' model catalogs (display names for the header), when the workbench gave
+    /// them.
+    harnesses: Option<Entity<HarnessDirectory>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -96,6 +100,18 @@ impl std::fmt::Debug for ChatView {
 impl Focusable for ChatView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+/// A model as the chat header says it: the catalog's display name when there is one, else the
+/// last segment of its id (`gitlab-duo/duo-chat-opus-4-6` reads `duo-chat-opus-4-6`).
+pub(super) fn model_label(id: &str, display_name: Option<&str>) -> String {
+    if let Some(name) = display_name.map(str::trim).filter(|name| !name.is_empty()) {
+        return name.to_owned();
+    }
+    match id.rsplit('/').next() {
+        Some(last) if !last.is_empty() => last.to_owned(),
+        _ => id.to_owned(),
     }
 }
 
@@ -175,8 +191,17 @@ impl ChatView {
             question_focus: None,
             attach: None,
             send_key_armed: false,
+            harnesses: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Gives the view the harnesses' model catalogs, so the header can show a model by its
+    /// display name.
+    pub fn use_harnesses(&mut self, harnesses: Entity<HarnessDirectory>, cx: &mut Context<Self>) {
+        self._subscriptions
+            .push(cx.observe(&harnesses, |_, _, cx| cx.notify()));
+        self.harnesses = Some(harnesses);
     }
 
     /// Transcript cards built so far.
@@ -414,6 +439,19 @@ impl ChatView {
             .transcript()
             .context_use()
             .map(|context| context_text(&context))
+    }
+
+    /// The display name the harness's model catalog gives `model`, when the catalog has been
+    /// asked for (the Start… sheet and Switch model do) and lists it.
+    fn known_model_name(&self, agent: &str, model: &str, cx: &App) -> Option<String> {
+        let directory = self.harnesses.as_ref()?.read(cx);
+        match directory.models(agent)? {
+            Models::Ready(list) => list
+                .iter()
+                .find(|m| m.id == model)
+                .map(|m| m.display_name.clone()),
+            _ => None,
+        }
     }
 
     // ---- commands --------------------------------------------------------------------------
@@ -730,20 +768,30 @@ impl ChatView {
         }
         let presentation = self.sessions.read(cx).presentation(info);
         let chat = info.chat.as_ref();
-        let detail = chat.map(|chat| {
+        // The model as a person reads it: the harness's display name when the catalog has been
+        // asked, else the last segment of the id; the whole id is in the tooltip.
+        let model_name = chat.map(|chat| {
+            let known = self.known_model_name(&chat.agent, &chat.model, cx);
+            model_label(&chat.model, known.as_deref())
+        });
+        let full_model = chat
+            .zip(model_name.as_deref())
+            .filter(|(chat, name)| chat.model != *name)
+            .map(|(chat, _)| chat.model.clone());
+        let detail = chat.zip(model_name.as_deref()).map(|(chat, model)| {
             if is_gateway_chat(&chat.agent) {
                 format!(
                     "{} · {}",
                     chat.provider_id.as_deref().unwrap_or("provider"),
-                    chat.model
+                    model
                 )
             } else if is_harness_chat(&chat.agent) {
                 // The harness decides what asks and what is sandboxed: no Hutan policy to show.
-                format!("{} · {}", harness_name(&chat.agent), chat.model)
+                format!("{} · {}", harness_name(&chat.agent), model)
             } else {
                 format!(
                     "{} · {} · approvals {} · sandbox {}",
-                    chat.agent, chat.model, chat.approval_policy, chat.sandbox
+                    chat.agent, model, chat.approval_policy, chat.sandbox
                 )
             }
         });
@@ -782,10 +830,12 @@ impl ChatView {
             let words = div().min_w_0().truncate().child(SharedString::from(text));
             if !switchable {
                 return div()
+                    .id("chat-model")
                     .min_w(px(WHO_MIN_WIDTH))
                     .text_color(theme.muted)
                     .text_size(px(tokens.secondary_font_size))
                     .child(words)
+                    .when_some(full_model.clone(), |s, id| s.tooltip(tooltip(id.into())))
                     .into_any_element();
             }
             let (hover, fg) = (theme.surface_hover, theme.fg);
@@ -819,10 +869,22 @@ impl ChatView {
                             cx,
                         );
                     })
-                    .tooltip(tooltip("Switch model…".into()))
+                    .tooltip(tooltip(
+                        match &full_model {
+                            Some(id) => format!("Switch model… (now {id})"),
+                            None => "Switch model…".to_owned(),
+                        }
+                        .into(),
+                    ))
                 })
                 .when(!between_turns, |s| {
-                    s.tooltip(tooltip("The model can be switched between turns".into()))
+                    s.tooltip(tooltip(
+                        match &full_model {
+                            Some(id) => format!("{id}. The model can be switched between turns"),
+                            None => "The model can be switched between turns".to_owned(),
+                        }
+                        .into(),
+                    ))
                 })
                 .child(probe(&self.regions, Region::Chat("switch-model")))
                 .into_any_element()
@@ -1866,5 +1928,25 @@ mod mode_chip_tests {
         let unknown = mode_chip(&chat(None));
         assert_eq!(unknown.text, "Mode unknown");
         assert!(unknown.tooltip.contains("does not report"));
+    }
+}
+
+#[cfg(test)]
+mod model_label_tests {
+    use super::model_label;
+
+    #[test]
+    fn a_raw_id_reads_as_its_last_segment_and_a_catalog_name_wins() {
+        assert_eq!(
+            model_label("gitlab-duo/duo-chat-opus-4-6", None),
+            "duo-chat-opus-4-6"
+        );
+        assert_eq!(
+            model_label("gitlab-duo/duo-chat-opus-4-6", Some("Duo Chat Opus 4.6")),
+            "Duo Chat Opus 4.6"
+        );
+        assert_eq!(model_label("sonnet", None), "sonnet");
+        assert_eq!(model_label("sonnet", Some("  ")), "sonnet");
+        assert_eq!(model_label("anthropic/", None), "anthropic/");
     }
 }
