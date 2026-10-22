@@ -1084,6 +1084,11 @@ impl Workbench {
                 this.switch_workspace(id, window, cx);
             }
         }))
+        .on_action(cx.listener(|this, a: &actions::OpenCheckout, window, cx| {
+            if let Ok(project) = a.0.project.parse() {
+                this.open_checkout(project, std::path::PathBuf::from(&a.0.path), window, cx);
+            }
+        }))
         .on_action(
             cx.listener(|this, a: &actions::ShowWorkspaceMenu, window, cx| {
                 if let Ok(id) = a.0.workspace.parse() {

@@ -356,6 +356,9 @@ data_actions! {
     JumpToBlock(BlockRef);
     /// Show the workspace with this id (switching the center to its layout).
     OpenWorkspace(String);
+    /// Show a worktree of a project (its row in the sidebar): the project becomes the active
+    /// one and Files and Search follow the worktree.
+    OpenCheckout(CheckoutOpen);
     /// Open the Start… sheet in a project (the ▶ buttons, the empty states, the Tasks panel).
     OpenLauncher(LauncherOpen);
     /// Show the context menu of a workspace row.
@@ -495,6 +498,13 @@ pub struct WorkspaceDrop {
 pub struct ProjectDrop {
     pub dragged: String,
     pub target: Option<String>,
+}
+
+/// A project (an id) and one of its worktrees (a folder).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CheckoutOpen {
+    pub project: String,
+    pub path: String,
 }
 
 /// A workspace or project (`workspace` is its id) and the name the user typed for it.

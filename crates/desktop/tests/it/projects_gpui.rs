@@ -173,7 +173,22 @@ fn session_at(daemon: &TestDaemon, title: &str, dir: &Path) -> SessionInfo {
 
 // ---- the desktop ----------------------------------------------------------------------------
 
+/// A desktop that lists every container's sessions (`sidebar.show_all_sessions`), as the tree
+/// was before SB-ATTACH, unless the test chose its own settings file.
 fn open<'a>(
+    cx: &'a mut TestAppContext,
+    daemon: &TestDaemon,
+    state_path: Option<PathBuf>,
+) -> (Entity<Workbench>, &'a mut VisualTestContext) {
+    let settings = daemon.home().join("settings.toml");
+    if !settings.exists() {
+        fs::write(&settings, "[sidebar]\nshow_all_sessions = true\n").unwrap();
+    }
+    open_attached(cx, daemon, state_path)
+}
+
+/// A desktop with the default sidebar: only the container you work in is expanded.
+fn open_attached<'a>(
     cx: &'a mut TestAppContext,
     daemon: &TestDaemon,
     state_path: Option<PathBuf>,
@@ -230,6 +245,7 @@ fn outline(panel: &Entity<SessionsPanel>, cx: &mut VisualTestContext) -> Vec<Str
                 RowKind::Home => "H",
                 RowKind::NoWorkspace => "-",
                 RowKind::Session => "S",
+                RowKind::Worktree => "T",
             };
             format!("{}{tag} {}", "  ".repeat(row.depth), row.title)
         })
@@ -423,7 +439,8 @@ fn both_organize_modes_render_the_right_tree(cx: &mut TestAppContext) {
             "W shop",
             "  P api",
             "    S s-main",
-            "    S s-wt",
+            "    T topic",
+            "      S s-wt",
             "  P web",
             "    S s-web",
             "W lab",
@@ -455,7 +472,8 @@ fn both_organize_modes_render_the_right_tree(cx: &mut TestAppContext) {
         [
             "P api",
             "  S s-main",
-            "  S s-wt",
+            "  T topic",
+            "    S s-wt",
             "P web",
             "  S s-web",
             "P notes",
@@ -713,7 +731,7 @@ fn the_filter_matches_workspaces_projects_folders_and_sessions(cx: &mut TestAppC
     panel.update(cx, |p, cx| p.set_query("topic", cx));
     assert_eq!(
         outline(&panel, cx),
-        ["W shop", "  P api", "    S s-wt"],
+        ["W shop", "  P api", "    T topic", "      S s-wt"],
         "the worktree's folder"
     );
     // A project lists its sessions.
@@ -730,7 +748,8 @@ fn the_filter_matches_workspaces_projects_folders_and_sessions(cx: &mut TestAppC
             "W shop",
             "  P api",
             "    S s-main",
-            "    S s-wt",
+            "    T topic",
+            "      S s-wt",
             "  P web",
             "    S s-web"
         ]
@@ -769,7 +788,8 @@ fn dragging_a_project_into_a_workspace_and_out_again(cx: &mut TestAppContext) {
             "W shop",
             "  P api",
             "    S s-main",
-            "    S s-wt",
+            "    T topic",
+            "      S s-wt",
             "  P web",
             "    S s-web",
             "W lab",

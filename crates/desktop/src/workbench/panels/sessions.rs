@@ -10,6 +10,7 @@
 use crate::theme::DensityExt as _;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,6 +36,7 @@ use crate::sessions::{Attention, StoreChanged};
 use crate::settings::{
     GroupBy, SessionsPanelSettings, SidebarSettings, WorkspaceSort, WorkspacesSettings,
 };
+use crate::workbench::actions::{CheckoutOpen, OpenCheckout};
 use crate::workbench::actions::{
     CloseSessionById, DropProjectOnto, MoveWorkspaceOnto, OpenFolder, OpenSession, OpenWorkspace,
     ProjectDrop, ProjectMenuAt, RenameSessionTo, RenameTo, RenameWorkspaceTo, ReviewChangesAt,
@@ -92,6 +94,8 @@ pub enum RowKind {
     Section,
     Workspace,
     Project,
+    /// A linked worktree of the project above it: `⎇ branch`, a checkout of its own.
+    Worktree,
     Home,
     /// The "No workspace" label above the projects that belong to none.
     NoWorkspace,
@@ -134,6 +138,11 @@ pub struct SidebarRow {
     pub state: Option<String>,
     /// The session's notifications are muted (it wears the muted marker).
     pub muted: bool,
+    /// Live sessions of a container or worktree row (and under it) that run a turn.
+    pub working: usize,
+    /// A repository row's main-checkout branch, a worktree row's branch; `None` for a folder
+    /// outside git (never an empty label) and for a detached HEAD.
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -149,6 +158,26 @@ struct ContainerRow {
     info: WorkspaceInfo,
     depth: usize,
     needs: usize,
+    /// Live sessions of the row (and under it) running a turn.
+    working: usize,
+    /// The branch of a repository's main checkout (`None` outside git).
+    branch: Option<String>,
+    /// Its sessions are listed under it: the container the window shows, or whatever the user
+    /// opened with the chevron; every container with `sidebar.show_all_sessions`.
+    expanded: bool,
+}
+
+/// A linked worktree listed under its project.
+#[derive(Debug, Clone, PartialEq)]
+struct WorktreeRow {
+    project: WorkspaceId,
+    path: PathBuf,
+    branch: Option<String>,
+    depth: usize,
+    needs: usize,
+    working: usize,
+    /// The worktree the user picked: Files and Search follow it.
+    active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,6 +195,7 @@ enum Entry {
         title: String,
     },
     Container(ContainerRow),
+    Worktree(WorktreeRow),
     NoWorkspace,
     Session(Box<SessionRow>),
     /// "No projects yet": under Home when nothing else is listed.
@@ -189,7 +219,9 @@ struct LayoutKey {
     /// Bumped whenever the sessions store notifies.
     store: u64,
     query: String,
-    collapsed: HashSet<WorkspaceId>,
+    toggled: HashSet<WorkspaceId>,
+    /// The container and project the window shows, and the worktree picked in it.
+    active: (Option<WorkspaceId>, Option<WorkspaceId>, Option<PathBuf>),
     settings: (
         Arc<SessionsPanelSettings>,
         Arc<WorkspacesSettings>,
@@ -201,7 +233,8 @@ impl LayoutKey {
     fn same_as(&self, other: &Self) -> bool {
         self.store == other.store
             && self.query == other.query
-            && self.collapsed == other.collapsed
+            && self.toggled == other.toggled
+            && self.active == other.active
             && Arc::ptr_eq(&self.settings.0, &other.settings.0)
             && Arc::ptr_eq(&self.settings.1, &other.settings.1)
             && Arc::ptr_eq(&self.settings.2, &other.settings.2)
@@ -230,7 +263,9 @@ pub struct SessionsPanel {
     rename_edit: FieldEdit,
     search_focus: FocusHandle,
     rename_focus: FocusHandle,
-    collapsed: HashSet<WorkspaceId>,
+    /// Containers whose fold the user flipped from its default (a container is expanded by
+    /// default while it is the active one, or while every session is listed).
+    toggled: HashSet<WorkspaceId>,
     /// Projects selected with ⌘-click / ⇧-click.
     selection: Vec<WorkspaceId>,
     anchor: Option<WorkspaceId>,
@@ -255,6 +290,32 @@ pub struct SessionsPanel {
     rows: RowContext,
     rows_rendered: Cell<usize>,
     _ages: Task<()>,
+}
+
+impl SidebarRow {
+    /// A row of `kind` with nothing else to say.
+    fn blank(kind: RowKind, depth: usize, title: String) -> Self {
+        Self {
+            kind,
+            depth,
+            title,
+            folder: None,
+            badge: None,
+            shared: false,
+            pinned: false,
+            count: None,
+            needs: 0,
+            active: false,
+            selected: false,
+            filled: false,
+            collapsed: false,
+            subtitle: None,
+            state: None,
+            muted: false,
+            working: 0,
+            branch: None,
+        }
+    }
 }
 
 impl std::fmt::Debug for SessionsPanel {
@@ -300,7 +361,7 @@ impl SessionsPanel {
             rename_edit: FieldEdit::new(),
             search_focus: cx.focus_handle(),
             rename_focus: cx.focus_handle(),
-            collapsed: HashSet::new(),
+            toggled: HashSet::new(),
             selection: Vec::new(),
             anchor: None,
             renaming: None,
@@ -382,85 +443,71 @@ impl SessionsPanel {
         let (active, project) = (store.active_workspace_id(), store.active_project_id());
         let entries = self.entries(cx);
         let focused = store.focused();
+        let focus_listed = focused.is_some_and(|f| {
+            entries
+                .iter()
+                .any(|e| matches!(e, Entry::Session(s) if s.info.id == f))
+        });
         entries
             .iter()
             .enumerate()
             .filter_map(|(ix, entry)| {
                 Some(match entry {
                     Entry::EmptyHint => return None,
-                    Entry::Section { title, .. } => SidebarRow {
-                        kind: RowKind::Section,
-                        depth: 0,
-                        title: title.clone(),
-                        folder: None,
-                        badge: None,
-                        shared: false,
-                        pinned: false,
-                        count: None,
-                        needs: 0,
-                        active: false,
-                        selected: false,
-                        filled: false,
-                        collapsed: false,
-                        subtitle: None,
-                        state: None,
-                        muted: false,
-                    },
-                    Entry::NoWorkspace => SidebarRow {
-                        kind: RowKind::NoWorkspace,
-                        depth: 0,
-                        title: "No workspace".to_owned(),
-                        folder: None,
-                        badge: None,
-                        shared: false,
-                        pinned: false,
-                        count: None,
-                        needs: 0,
-                        active: false,
-                        selected: false,
-                        filled: false,
-                        collapsed: false,
-                        subtitle: None,
-                        state: None,
-                        muted: false,
-                    },
+                    Entry::Section { title, .. } => {
+                        SidebarRow::blank(RowKind::Section, 0, title.clone())
+                    }
+                    Entry::NoWorkspace => {
+                        SidebarRow::blank(RowKind::NoWorkspace, 0, "No workspace".to_owned())
+                    }
                     Entry::Container(row) => {
                         let current = self.is_active(&row.info, active, project);
                         let selected = self.selection.contains(&row.info.id);
                         let child_selected =
-                            current && selected_session_below(&entries, ix, row, focused);
+                            current && selected_session_below(&entries, ix, row.depth, focused);
                         SidebarRow {
-                            kind: match row.info.kind {
-                                WorkspaceKind::Workspace => RowKind::Workspace,
-                                WorkspaceKind::Project => RowKind::Project,
-                                WorkspaceKind::Home => RowKind::Home,
-                            },
-                            depth: row.depth,
-                            title: row.info.name.clone(),
                             folder: (row.info.kind == WorkspaceKind::Project)
                                 .then(|| crate::workbench::workspaces::project_root_of(&row.info))
                                 .flatten()
                                 .map(|root| folder_label(&root)),
-                            badge: None,
-                            shared: false,
                             pinned: row.info.pinned,
                             count: count_text(&row.info),
                             needs: row.needs,
+                            working: row.working,
+                            branch: row.branch.clone(),
                             active: current,
                             selected,
                             filled: selected || (current && !child_selected),
-                            collapsed: self.collapsed.contains(&row.info.id),
-                            subtitle: None,
-                            state: None,
-                            muted: false,
+                            collapsed: !row.expanded,
+                            ..SidebarRow::blank(
+                                match row.info.kind {
+                                    WorkspaceKind::Workspace => RowKind::Workspace,
+                                    WorkspaceKind::Project => RowKind::Project,
+                                    WorkspaceKind::Home => RowKind::Home,
+                                },
+                                row.depth,
+                                row.info.name.clone(),
+                            )
                         }
                     }
+                    Entry::Worktree(row) => SidebarRow {
+                        folder: Some(folder_label(&row.path)),
+                        needs: row.needs,
+                        working: row.working,
+                        branch: row.branch.clone(),
+                        active: row.active,
+                        filled: row.active && !focus_listed,
+                        ..SidebarRow::blank(
+                            RowKind::Worktree,
+                            row.depth,
+                            row.branch
+                                .clone()
+                                .unwrap_or_else(|| folder_label(&row.path)),
+                        )
+                    },
                     Entry::Session(row) => {
                         let badge = row.subtitle.as_ref().and_then(|s| s.badge.as_ref());
                         SidebarRow {
-                            kind: RowKind::Session,
-                            depth: row.depth,
-                            title: row.info.title.clone(),
                             folder: row.subtitle.as_ref().and_then(|s| s.folder.clone()),
                             shared: row
                                 .info
@@ -468,16 +515,12 @@ impl SessionsPanel {
                                 .as_ref()
                                 .is_some_and(|p| !p.shared_with.is_empty()),
                             badge: badge.map(|b| b.text.clone()),
-                            pinned: false,
-                            count: None,
-                            needs: 0,
-                            active: false,
                             selected: focused == Some(row.info.id),
                             filled: focused == Some(row.info.id),
-                            collapsed: false,
                             subtitle: row.subtitle.clone(),
                             state: lane_word(&store.presentation(&row.info)),
                             muted: row.info.muted,
+                            ..SidebarRow::blank(RowKind::Session, row.depth, row.info.title.clone())
                         }
                     }
                 })
@@ -736,7 +779,15 @@ impl SessionsPanel {
         let key = LayoutKey {
             store: self.store_rev,
             query: self.query.clone(),
-            collapsed: self.collapsed.clone(),
+            toggled: self.toggled.clone(),
+            active: {
+                let store = self.env.sessions.read(cx);
+                (
+                    store.active_workspace_id(),
+                    store.active_project_id(),
+                    store.active_checkout(),
+                )
+            },
             settings: (
                 self.env.settings.get::<SessionsPanelSettings>(),
                 self.env.settings.get::<WorkspacesSettings>(),
@@ -906,7 +957,7 @@ impl SessionsPanel {
                     needs: &attention,
                     session_matches: &by_itself,
                 });
-                self.flatten(&built.nodes, &subtitle_of, &mut entries);
+                self.flatten(&built.nodes, &subtitle_of, &mut entries, cx);
             }
         }
         let only_home = store.sessions().is_empty()
@@ -952,45 +1003,134 @@ impl SessionsPanel {
         }
     }
 
-    /// The rows of the tree, honouring what the user folded.
+    /// The rows of the tree. A container lists its sessions while it is expanded: by default
+    /// the one the window shows (the workspace, the project in it, a project of no workspace,
+    /// Home) and, with `sidebar.show_all_sessions` or a search, every one; the chevron flips
+    /// that for one container. A repository's expanded project lists its linked worktrees under
+    /// its own sessions, each with the sessions that work in it.
     fn flatten(
         &self,
         nodes: &[Node],
         subtitle_of: &dyn Fn(&SessionInfo, bool) -> Option<Subtitle>,
         entries: &mut Vec<Entry>,
+        cx: &gpui::App,
     ) {
-        let session = |entries: &mut Vec<Entry>, list: &[SessionInfo], depth: usize| {
+        let store = self.env.sessions.read(cx);
+        let (active, active_project) = (store.active_workspace_id(), store.active_project_id());
+        let active_checkout = store.active_checkout();
+        let everything = self.env.settings.get::<SidebarSettings>().show_all_sessions
+            || !self.query.trim().is_empty();
+        let working = store.working_by_workspace();
+        let expanded = |id: WorkspaceId, by_default: bool| {
+            (everything || by_default) != self.toggled.contains(&id)
+        };
+        // A workspace's count includes its projects'.
+        let rolled = |info: &WorkspaceInfo| {
+            let own = working.get(&info.id).copied().unwrap_or(0);
+            let members: usize = store
+                .workspaces()
+                .iter()
+                .filter(|w| w.parent_id == Some(info.id))
+                .map(|w| working.get(&w.id).copied().unwrap_or(0))
+                .sum();
+            own + members
+        };
+        let session = |entries: &mut Vec<Entry>, list: &[&SessionInfo], depth: usize| {
             entries.extend(list.iter().map(|info| {
                 Entry::Session(Box::new(SessionRow {
                     subtitle: subtitle_of(info, false),
-                    info: info.clone(),
+                    info: (*info).clone(),
                     depth,
                 }))
             }));
         };
         let project = |entries: &mut Vec<Entry>, node: &ProjectNode, depth: usize| {
+            let info = &node.info;
+            let is_expanded = expanded(
+                info.id,
+                active_project == Some(info.id) || active == Some(info.id),
+            );
+            let is_project = info.kind == WorkspaceKind::Project;
             entries.push(Entry::Container(ContainerRow {
-                info: node.info.clone(),
+                info: info.clone(),
                 depth,
                 needs: node.needs,
+                working: rolled(info),
+                branch: is_project.then(|| store.main_branch(info)).flatten(),
+                expanded: is_expanded,
             }));
-            if !self.collapsed.contains(&node.info.id) {
-                session(entries, &node.sessions, depth + 1);
+            if !is_expanded {
+                return;
+            }
+            let checkouts: Vec<crate::sessions::Checkout> = if is_project {
+                store
+                    .checkouts_of(info)
+                    .into_iter()
+                    .filter(|c| !c.main)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let in_checkout = |s: &SessionInfo, path: &PathBuf| {
+                s.placement.as_ref().is_some_and(|p| p.root == *path)
+            };
+            let own: Vec<&SessionInfo> = node
+                .sessions
+                .iter()
+                .filter(|s| !checkouts.iter().any(|c| in_checkout(s, &c.path)))
+                .collect();
+            session(entries, &own, depth + 1);
+            for checkout in &checkouts {
+                let listed: Vec<&SessionInfo> = node
+                    .sessions
+                    .iter()
+                    .filter(|s| in_checkout(s, &checkout.path))
+                    .collect();
+                // A search lists only the worktrees whose sessions it finds.
+                if !self.query.trim().is_empty() && listed.is_empty() {
+                    continue;
+                }
+                let (needs, busy) = store
+                    .sessions()
+                    .iter()
+                    .filter(|s| s.workspace_id == info.id && in_checkout(s, &checkout.path))
+                    .fold((0, 0), |(needs, busy), s| {
+                        (
+                            needs + usize::from(store.presentation(s).is_request()),
+                            busy + usize::from(store.is_working(s)),
+                        )
+                    });
+                entries.push(Entry::Worktree(WorktreeRow {
+                    project: info.id,
+                    path: checkout.path.clone(),
+                    branch: checkout.branch.clone(),
+                    depth: depth + 1,
+                    needs,
+                    working: busy,
+                    active: active_checkout.as_ref() == Some(&checkout.path),
+                }));
+                session(entries, &listed, depth + 2);
             }
         };
         for node in nodes {
             match node {
                 Node::Workspace(workspace) => {
+                    let is_expanded =
+                        expanded(workspace.info.id, active == Some(workspace.info.id));
                     entries.push(Entry::Container(ContainerRow {
                         info: workspace.info.clone(),
                         depth: 0,
                         needs: workspace.needs,
+                        working: rolled(&workspace.info),
+                        branch: None,
+                        expanded: is_expanded,
                     }));
-                    if !self.collapsed.contains(&workspace.info.id) {
+                    if is_expanded {
                         for node in &workspace.projects {
                             project(entries, node, 1);
                         }
-                        session(entries, &workspace.sessions, 1);
+                        let direct: Vec<&SessionInfo> = workspace.sessions.iter().collect();
+                        session(entries, &direct, 1);
                     }
                 }
                 Node::Project(node) | Node::Home(node) => project(entries, node, 0),
@@ -1068,29 +1208,32 @@ impl SessionsPanel {
     }
 }
 
-/// The word of a session's state when its lane draws a glyph; an idle session draws nothing
-/// (the hollow circle every idle row used to start with said nothing).
-/// Whether the session the window shows is listed under the container at `ix`: the entries after
-/// it, up to the next container or section.
+/// Whether what the window shows is listed under the row at `ix` (of depth `depth`): the
+/// focused session, or the worktree the user picked, among the entries after it up to the next
+/// row that is not below it.
 fn selected_session_below(
     entries: &[Entry],
     ix: usize,
-    row: &ContainerRow,
+    depth: usize,
     focused: Option<SessionId>,
 ) -> bool {
-    let Some(focused) = focused else {
-        return false;
-    };
     entries[ix + 1..]
         .iter()
         .take_while(|entry| match entry {
             Entry::Session(_) => true,
-            Entry::Container(next) => next.depth > row.depth,
+            Entry::Container(next) => next.depth > depth,
+            Entry::Worktree(next) => next.depth > depth,
             _ => false,
         })
-        .any(|entry| matches!(entry, Entry::Session(session) if session.info.id == focused))
+        .any(|entry| match entry {
+            Entry::Session(session) => Some(session.info.id) == focused,
+            Entry::Worktree(worktree) => worktree.active,
+            _ => false,
+        })
 }
 
+/// The word of a session's state when its lane draws a glyph; an idle session draws nothing
+/// (the hollow circle every idle row used to start with said nothing).
 fn lane_word(presentation: &crate::sessions::Presentation) -> Option<String> {
     (presentation.label != "idle").then(|| {
         presentation
@@ -1330,7 +1473,7 @@ impl SessionsPanel {
                 // One selection fill per list: while a session under the row is the selected
                 // one, the row only keeps its text weight and colour.
                 let child_selected =
-                    current && selected_session_below(&rows.entries, ix, row, rows.focused);
+                    current && selected_session_below(&rows.entries, ix, row.depth, rows.focused);
                 let renaming = self
                     .renaming
                     .as_ref()
@@ -1338,7 +1481,7 @@ impl SessionsPanel {
                     .map(|r| r.text.clone());
                 self.render_container(
                     row,
-                    self.collapsed.contains(&row.info.id),
+                    !row.expanded,
                     current,
                     !child_selected,
                     rows.multi && self.selection.contains(&row.info.id),
@@ -1346,6 +1489,14 @@ impl SessionsPanel {
                     renaming,
                     cx,
                 )
+            }
+            Entry::Worktree(row) => {
+                let focus_listed = rows.focused.is_some_and(|f| {
+                    rows.entries
+                        .iter()
+                        .any(|e| matches!(e, Entry::Session(s) if s.info.id == f))
+                });
+                self.render_worktree(row, row.active && !focus_listed, cx)
             }
             Entry::Session(row) => {
                 self.render_row(row, &rows.settings, rows.focused == Some(row.info.id), cx)
@@ -1512,6 +1663,12 @@ impl SessionsPanel {
                     this.anchor = Some(id);
                     cx.notify();
                 }
+                if is_project {
+                    // The project row is the project's own folder, not one of its worktrees.
+                    this.env.sessions.update(cx, |store, cx| {
+                        store.set_active_checkout(id, None, cx);
+                    });
+                }
                 window.dispatch_action(Box::new(OpenWorkspace(open_id.clone())), cx);
             }))
             .on_mouse_down(
@@ -1609,8 +1766,8 @@ impl SessionsPanel {
                     .w(px(12.0))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if !this.collapsed.remove(&id) {
-                            this.collapsed.insert(id);
+                        if !this.toggled.remove(&id) {
+                            this.toggled.insert(id);
                         }
                         cx.notify();
                     }))
@@ -1630,10 +1787,25 @@ impl SessionsPanel {
                 )
             })
             .child(name)
-            // The Requests group above already says which sessions wait: the project row only
-            // repeats it while that group is off.
+            .children(row.branch.clone().map(|branch| {
+                div()
+                    .flex_none()
+                    .max_w(px(96.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(2.0))
+                    .text_size(px(11.0))
+                    .font_weight(gpui::FontWeight::NORMAL)
+                    .text_color(theme.muted)
+                    .child(crate::icons::icon(Icon::VcsBranch, 11.0, theme.muted))
+                    .child(div().min_w_0().truncate().child(SharedString::from(branch)))
+            }))
+            // The Requests group above already says which sessions wait: an expanded row only
+            // repeats it while that group is off; a collapsed container always says what waits
+            // and what works inside it.
             .when(
-                row.needs > 0 && !self.env.settings.get::<SessionsPanelSettings>().needs_you,
+                row.needs > 0
+                    && (collapsed || !self.env.settings.get::<SessionsPanelSettings>().needs_you),
                 |s| {
                     s.child(
                         div()
@@ -1647,6 +1819,18 @@ impl SessionsPanel {
                     )
                 },
             )
+            .when(collapsed && row.working > 0, |s| {
+                s.child(
+                    div()
+                        .flex_none()
+                        .text_color(theme.accent)
+                        .flex()
+                        .items_center()
+                        .gap(px(2.0))
+                        .child(crate::icons::glyph(Icon::StateWorking))
+                        .child(row.working.to_string()),
+                )
+            })
             .children(count_text(info).map(|count| ui::counter(count, &theme, &tokens)))
             .when(
                 matches!(kind, WorkspaceKind::Project | WorkspaceKind::Home),
@@ -1682,6 +1866,96 @@ impl SessionsPanel {
                 },
             )
             .child(probe(&self.env.regions, Region::WorkspaceRow(id)))
+            .into_any_element()
+    }
+
+    /// `⧉ feature/x  ······  ⚠ 1  ● 2`: a linked worktree of the project above it, one step in
+    /// from it. Click picks it (Files and Search follow it); its sessions are the rows below.
+    fn render_worktree(
+        &self,
+        row: &WorktreeRow,
+        filled: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let style = UiStyle::get(cx);
+        let (theme, tokens) = (style.theme, style.density.ui());
+        let hover = card_hover(&theme);
+        let (project, path) = (row.project.to_string(), row.path.display().to_string());
+        let label = row
+            .branch
+            .clone()
+            .unwrap_or_else(|| folder_label(&row.path));
+        div()
+            .id(SharedString::from(format!(
+                "worktree-{}",
+                row.path.display()
+            )))
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(tokens.spacing))
+            .h(px(tokens.sidebar_row))
+            .mx(px(tokens.spacing * 1.5))
+            .pl(px(tokens.spacing * 1.5
+                + row.depth as f32 * INDENT
+                + 12.0
+                + tokens.spacing))
+            .pr(px(tokens.spacing * 1.5))
+            .rounded(px(tokens.radius + 4.0))
+            .text_size(px(CARD_TITLE))
+            .medium()
+            .text_color(if row.active { theme.fg } else { theme.muted })
+            .cursor_pointer()
+            .when(filled, |s| s.bg(theme.sidebar_accent))
+            .when(!row.active, move |s| s.hover(move |s| s.bg(hover)))
+            .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
+                window.dispatch_action(
+                    Box::new(OpenCheckout(CheckoutOpen {
+                        project: project.clone(),
+                        path: path.clone(),
+                    })),
+                    cx,
+                );
+            }))
+            .child(crate::icons::glyph(Icon::VcsWorktree))
+            .child({
+                let tip = SharedString::from(row.path.display().to_string());
+                div()
+                    .id(SharedString::from(format!(
+                        "worktree-label-{}",
+                        row.path.display()
+                    )))
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                    .child(SharedString::from(label))
+            })
+            .when(row.needs > 0, |s| {
+                s.child(
+                    div()
+                        .flex_none()
+                        .text_color(theme.warning)
+                        .flex()
+                        .items_center()
+                        .gap(px(2.0))
+                        .child(crate::icons::glyph(Icon::StatusAttention))
+                        .child(row.needs.to_string()),
+                )
+            })
+            .when(row.working > 0, |s| {
+                s.child(
+                    div()
+                        .flex_none()
+                        .text_color(theme.accent)
+                        .flex()
+                        .items_center()
+                        .gap(px(2.0))
+                        .child(crate::icons::glyph(Icon::StateWorking))
+                        .child(row.working.to_string()),
+                )
+            })
+            .child(probe(&self.env.regions, Region::worktree(&row.path)))
             .into_any_element()
     }
 

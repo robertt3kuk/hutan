@@ -35,9 +35,10 @@ use hutan_protocol::task::{
     TaskReview, TaskReviewed, TaskStarted, TaskUpdate,
 };
 use hutan_protocol::worktree::{
-    WorktreeCommit, WorktreeCommitted, WorktreeCreate, WorktreeDiff, WorktreeDiffRequest,
-    WorktreeFileDiff, WorktreeFileDiffRequest, WorktreeFinish, WorktreeFinished, WorktreeInfo,
-    WorktreeList, WorktreeListRequest, WorktreeRemove, WorktreeRemoved,
+    PlacementKind, WorktreeCommit, WorktreeCommitted, WorktreeCreate, WorktreeDiff,
+    WorktreeDiffRequest, WorktreeFileDiff, WorktreeFileDiffRequest, WorktreeFinish,
+    WorktreeFinished, WorktreeInfo, WorktreeList, WorktreeListRequest, WorktreeRemove,
+    WorktreeRemoved,
 };
 use hutan_terminal_view::DefaultColors;
 use tokio::sync::broadcast::error::RecvError;
@@ -69,6 +70,38 @@ pub const UI_OPEN_MAX_AGE_MS: u64 = 15_000;
 /// daemon keeps at most this many pending).
 const MAX_SURFACED: usize = 100;
 
+/// One checkout of a repository: its main checkout or a linked worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checkout {
+    pub path: PathBuf,
+    /// `None` for a detached HEAD.
+    pub branch: Option<String>,
+    pub main: bool,
+    pub dirty: bool,
+}
+
+/// What kind of thing a scope is: the glyph of its chip and the sidebar's look.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeKind {
+    Home,
+    Workspace,
+    /// A project that is a git repository (its main checkout).
+    Repository,
+    /// A project outside git: a folder, never with a branch.
+    Folder,
+    /// One linked worktree of a repository.
+    Worktree,
+}
+
+/// The container a scoped panel is about (`docs/design.md` § The active container): its name,
+/// kind and, for a repository or one of its worktrees, the branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeLabel {
+    pub name: String,
+    pub kind: ScopeKind,
+    pub branch: Option<String>,
+}
+
 /// What changed in the [`SessionsStore`], emitted with every notification so that a subscriber
 /// can ignore the ones that are not its business (a sidebar that lists sessions does not care
 /// that the focus moved to another tab).
@@ -98,6 +131,8 @@ impl StoreChanged {
     pub const OTHER: Self = Self(1 << 9);
     /// Which terminals run an agent that never reported.
     pub const UNTRACKED: Self = Self(1 << 10);
+    /// The checkouts (main checkout and worktrees) of the repositories, as `worktree.list` says.
+    pub const CHECKOUTS: Self = Self(1 << 11);
     /// Everything a list of the sessions and workspaces is made of.
     pub const LISTED: Self = Self(
         Self::CONNECTION.0
@@ -107,7 +142,8 @@ impl StoreChanged {
             | Self::AGENTS.0
             | Self::ATTENTION.0
             | Self::TASKS.0
-            | Self::ACTIVE.0,
+            | Self::ACTIVE.0
+            | Self::CHECKOUTS.0,
     );
     /// Everything the agent presentation is made of (the focus and the active workspace are
     /// not): a surface that shows agents rebuilds on these and on nothing else.
@@ -364,6 +400,17 @@ pub struct SessionsStore {
     /// The project within it the user is working in (the one of the focused session, or the one
     /// they chose): its settings layer applies and new sessions start in it.
     active_project: Option<WorkspaceId>,
+    /// The checkouts of every repository (`worktree.list` of all workspaces): the sidebar's
+    /// branch labels and worktree rows. Empty while unknown or on a daemon without worktrees.
+    checkouts: Vec<WorktreeInfo>,
+    checkouts_loaded: bool,
+    checkouts_in_flight: bool,
+    /// Worktree roots a session worked in that a listing was asked for (never asked again for
+    /// the same root: a root the listing does not know must not loop).
+    checkouts_tried: HashSet<PathBuf>,
+    /// The worktree the user picked inside a project (the sidebar's worktree row): Files and
+    /// Search follow it. Kept per project for when the project comes back.
+    chosen_checkout: HashMap<WorkspaceId, PathBuf>,
     terminals: HashMap<SessionId, WeakEntity<TerminalSession>>,
     /// Sessions this desktop created or changed whose events have not reached `state` yet.
     recent: HashMap<SessionId, SessionInfo>,
@@ -530,6 +577,11 @@ impl SessionsStore {
             last_focused: None,
             active_workspace: None,
             active_project: None,
+            checkouts: Vec::new(),
+            checkouts_loaded: false,
+            checkouts_in_flight: false,
+            checkouts_tried: HashSet::new(),
+            chosen_checkout: HashMap::new(),
             terminals: HashMap::new(),
             recent: HashMap::new(),
             colors: None,
@@ -685,6 +737,14 @@ impl SessionsStore {
         }
         cx.emit(what);
         cx.notify();
+        if what.intersects(
+            StoreChanged::CONNECTION
+                | StoreChanged::SESSIONS
+                | StoreChanged::SESSION_INFO
+                | StoreChanged::WORKSPACES,
+        ) {
+            self.follow_checkouts(cx);
+        }
     }
 
     /// Emits [`RecoverySummaryDue`] once per restart that left something unacknowledged.
@@ -885,11 +945,11 @@ impl SessionsStore {
             // intents (M6-B notifiers and `hutan notify watch` show them) so that reading the
             // session acknowledges them.
             Notice::NotifyIntent { intent } => self.note_intent(intent, cx),
+            // A worktree was made or removed: the sidebar's rows list again.
+            Notice::WorktreesChanged { .. } => self.refresh_checkouts(cx),
             Notice::SessionExited { .. }
             | Notice::Bell { .. }
             | Notice::DaemonRestarted { .. }
-            // The desktop lists worktrees when a command asks for them.
-            | Notice::WorktreesChanged { .. }
             // `workbench/remote.rs` follows `Connection::notices` itself.
             | Notice::UiCommand { .. }
             // The buffer store and the Files panel follow the file changes themselves
@@ -1038,6 +1098,9 @@ impl SessionsStore {
     /// workspace's own first folder). `None` at Home (its folder is the home folder, no
     /// project) and before the daemon says what is active.
     pub fn files_root(&self) -> Option<PathBuf> {
+        if let Some(checkout) = self.active_checkout() {
+            return Some(checkout);
+        }
         let container = self.active_workspace()?;
         let project = match container.kind {
             WorkspaceKind::Home => return None,
@@ -1053,6 +1116,184 @@ impl SessionsStore {
             .as_ref()
             .map(|p| p.root.clone())
             .or_else(|| project.roots.first().cloned())
+    }
+
+    /// The worktree the user picked inside the project they work in (the sidebar's worktree
+    /// row), while it is still one of the project's checkouts; `None` is the project's own
+    /// folder.
+    pub fn active_checkout(&self) -> Option<PathBuf> {
+        let project = self.active_project()?;
+        let path = self.chosen_checkout.get(&project.id)?;
+        self.checkouts_of(project)
+            .into_iter()
+            .any(|checkout| !checkout.main && checkout.path == *path)
+            .then(|| path.clone())
+    }
+
+    /// Picks (or, with `None`, leaves) the worktree of `project` the sidebar's scope names.
+    pub fn set_active_checkout(
+        &mut self,
+        project: WorkspaceId,
+        path: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = match path {
+            Some(path) => self.chosen_checkout.insert(project, path.clone()) != Some(path),
+            None => self.chosen_checkout.remove(&project).is_some(),
+        };
+        if changed && self.active_project == Some(project) {
+            self.changed(StoreChanged::ACTIVE, cx);
+        }
+    }
+
+    /// Every checkout of `project`'s repository, main checkout first (what `worktree.list`
+    /// said, plus the worktrees its sessions work in that the listing does not know yet, so a
+    /// daemon without `worktree.list` still shows the ones in use). Empty for a folder outside
+    /// git.
+    pub fn checkouts_of(&self, project: &WorkspaceInfo) -> Vec<Checkout> {
+        let Some(info) = project.project.as_ref().filter(|p| p.common_dir.is_some()) else {
+            return Vec::new();
+        };
+        let mut out: Vec<Checkout> = self
+            .checkouts
+            .iter()
+            .filter(|c| c.repo_root == info.root && !c.prunable)
+            .map(|c| Checkout {
+                path: c.path.clone(),
+                branch: c.branch.clone(),
+                main: c.main,
+                dirty: c.dirty,
+            })
+            .collect();
+        for session in self
+            .state
+            .sessions
+            .iter()
+            .filter(|s| s.workspace_id == project.id)
+        {
+            let Some(placement) = session.placement.as_ref() else {
+                continue;
+            };
+            if out.iter().any(|c| c.path == placement.root) {
+                continue;
+            }
+            out.push(Checkout {
+                path: placement.root.clone(),
+                branch: placement.branch.clone(),
+                main: placement.kind != PlacementKind::Worktree,
+                dirty: false,
+            });
+        }
+        out.sort_by_key(|c| !c.main);
+        out
+    }
+
+    /// The branch checked out in `project`'s main checkout, when known.
+    pub fn main_branch(&self, project: &WorkspaceInfo) -> Option<String> {
+        self.checkouts_of(project)
+            .into_iter()
+            .find(|c| c.main)
+            .and_then(|c| c.branch)
+    }
+
+    /// What the panels scoped to the container (Changes, Problems, the Agents rail) are about:
+    /// the container the window shows (a workspace, a project, Home).
+    pub fn container_scope(&self) -> Option<ScopeLabel> {
+        self.active_workspace().map(|w| self.scope_of(w, None))
+    }
+
+    /// What the panels scoped to a folder (Files, Search) are about: the worktree the user
+    /// picked, else the project they work in, else the container.
+    pub fn project_scope(&self) -> Option<ScopeLabel> {
+        match self.active_project() {
+            Some(project) => Some(self.scope_of(project, self.active_checkout())),
+            None => self.container_scope(),
+        }
+    }
+
+    fn scope_of(&self, info: &WorkspaceInfo, checkout: Option<PathBuf>) -> ScopeLabel {
+        let repository = info
+            .project
+            .as_ref()
+            .is_some_and(|p| p.common_dir.is_some());
+        let (kind, branch) = match (info.kind, checkout) {
+            (WorkspaceKind::Home, _) => (ScopeKind::Home, None),
+            (WorkspaceKind::Workspace, _) => (ScopeKind::Workspace, None),
+            (WorkspaceKind::Project, Some(path)) => (
+                ScopeKind::Worktree,
+                self.checkouts_of(info)
+                    .into_iter()
+                    .find(|c| c.path == path)
+                    .and_then(|c| c.branch),
+            ),
+            (WorkspaceKind::Project, None) if repository => {
+                (ScopeKind::Repository, self.main_branch(info))
+            }
+            (WorkspaceKind::Project, None) => (ScopeKind::Folder, None),
+        };
+        ScopeLabel {
+            name: info.name.clone(),
+            kind,
+            branch,
+        }
+    }
+
+    /// Asks the daemon for the checkouts of every repository when none were asked for yet, or
+    /// a session works in a worktree no listing has covered (a worktree made by a command).
+    fn follow_checkouts(&mut self, cx: &mut Context<Self>) {
+        if self.checkouts_in_flight
+            || self.state.connection != ConnectionState::Connected
+            || self.state.epoch.is_none()
+            || !self.connection.supports_worktrees()
+        {
+            return;
+        }
+        let unseen = self
+            .state
+            .sessions
+            .iter()
+            .filter_map(|s| s.placement.as_ref())
+            .filter(|p| p.kind == PlacementKind::Worktree)
+            .any(|p| {
+                !self.checkouts_tried.contains(&p.root)
+                    && !self.checkouts.iter().any(|c| c.path == p.root)
+            });
+        if self.checkouts_loaded && !unseen {
+            return;
+        }
+        self.refresh_checkouts(cx);
+    }
+
+    /// Lists the checkouts again (`worktree.list`, all workspaces); a change reaches the
+    /// sidebar as [`StoreChanged::CHECKOUTS`].
+    pub fn refresh_checkouts(&mut self, cx: &mut Context<Self>) {
+        if self.checkouts_in_flight {
+            return;
+        }
+        self.checkouts_in_flight = true;
+        for session in &self.state.sessions {
+            if let Some(placement) = &session.placement {
+                self.checkouts_tried.insert(placement.root.clone());
+            }
+        }
+        let listing = self.list_all_worktrees(cx);
+        cx.spawn(async move |this, cx| {
+            let result = listing.await;
+            this.update(cx, |store, cx| {
+                store.checkouts_in_flight = false;
+                store.checkouts_loaded = true;
+                match result {
+                    Ok(list) if list != store.checkouts => {
+                        store.checkouts = list;
+                        store.changed(StoreChanged::CHECKOUTS, cx);
+                    }
+                    Ok(_) => {}
+                    Err(error) => tracing::debug!("worktree.list for the sidebar failed: {error}"),
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Watches the entries of folder `dir` (`fs.watch`, not recursive) for one more wisher;
@@ -1093,6 +1334,20 @@ impl SessionsStore {
     /// The folders watched for the Files panel and the finder (tests).
     pub fn watched_dirs(&self) -> usize {
         self.dir_watches.len()
+    }
+
+    /// How many live sessions of each workspace run a turn (or a working agent).
+    pub fn working_by_workspace(&self) -> HashMap<WorkspaceId, usize> {
+        let mut counts = HashMap::new();
+        for session in self.state.sessions.iter().filter(|s| self.is_working(s)) {
+            *counts.entry(session.workspace_id).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    /// A live session runs a turn (or its agent works).
+    pub fn is_working(&self, info: &SessionInfo) -> bool {
+        info.state.is_live() && Self::working(info, &self.raw_presentation(info))
     }
 
     /// How many sessions of each workspace have a request waiting.

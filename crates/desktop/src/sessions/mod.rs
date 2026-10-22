@@ -29,9 +29,9 @@ pub use presentation::{
     AgentPresentation, AgentRecord, Counts, Group, Link, Reason, ReasonKind, Role, Scope, State,
 };
 pub use store::{
-    AccountsChanged, ActivityCause, CheckoutActivity, CloseFailure, MemoryChanged, REPLAY_WINDOW,
-    RecoverySummaryDue, RequestCalled, SessionClosed, SessionsStore, StoreChanged,
-    UI_OPEN_MAX_AGE_MS, UiOpenRequested,
+    AccountsChanged, ActivityCause, Checkout, CheckoutActivity, CloseFailure, MemoryChanged,
+    REPLAY_WINDOW, RecoverySummaryDue, RequestCalled, ScopeKind, ScopeLabel, SessionClosed,
+    SessionsStore, StoreChanged, UI_OPEN_MAX_AGE_MS, UiOpenRequested,
 };
 pub use terminal::TerminalSession;
 pub use untracked::Untracked;

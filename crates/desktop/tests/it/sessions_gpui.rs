@@ -156,6 +156,12 @@ fn the_sessions_panel_lists_groups_and_filters(cx: &mut TestAppContext) {
     let alpha = make("alpha shell", None);
     let beta = make("beta build", Some(ws.id));
     let gamma = make("gamma tests", Some(ws.id));
+    // The old tree: every container expanded.
+    std::fs::write(
+        daemon.home().join("settings.toml"),
+        "[sidebar]\nshow_all_sessions = true\n",
+    )
+    .unwrap();
     let (view, cx) = open(cx, &daemon);
     wait_synced(&view, cx, 3);
     draw(cx);

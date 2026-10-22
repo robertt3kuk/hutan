@@ -259,6 +259,21 @@ impl Workbench {
         self.focus_root(window, cx);
     }
 
+    /// Shows `project` and picks its worktree at `path`: Files and Search follow it, and the
+    /// sidebar marks its row. The center keeps the layout of the project.
+    pub fn open_checkout(
+        &mut self,
+        project: WorkspaceId,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.switch_workspace(project, window, cx);
+        self.sessions.update(cx, |store, cx| {
+            store.set_active_checkout(project, Some(path), cx);
+        });
+    }
+
     /// The model part of [`Self::switch_workspace`]. The layout belongs to the container the
     /// user switches to: the workspace when `workspace` is a project inside one, else the
     /// project, else Home. A no-op for the container already shown (the project chosen inside
@@ -654,6 +669,14 @@ impl Workbench {
         cx.notify();
     }
 
+    /// Lists every container's sessions (the old tree) or only the active container's
+    /// (`sidebar.show_all_sessions`).
+    pub fn toggle_show_all_sessions(&mut self, cx: &mut Context<Self>) {
+        let all = self.settings.get::<SidebarSettings>().show_all_sessions;
+        self.write_workspace_setting("sidebar.show_all_sessions", toml::Value::Boolean(!all));
+        cx.notify();
+    }
+
     fn write_workspace_setting(&mut self, key: &str, value: toml::Value) {
         if let Err(err) = self.settings.write_user(key, value) {
             tracing::warn!("cannot save `{key}`: {err}");
@@ -706,6 +729,11 @@ impl Workbench {
             entry.checked = organize == mode;
             entries.push(entry);
         }
+        let mut all = Self::entry("Show All Sessions", |this, _, cx| {
+            this.toggle_show_all_sessions(cx);
+        });
+        all.checked = self.settings.get::<SidebarSettings>().show_all_sessions;
+        entries.push(all);
         // The Projects header has no ⚙ of its own any more: its settings are here.
         entries.push(Self::entry(
             "Projects Sidebar Settings…",

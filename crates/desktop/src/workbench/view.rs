@@ -216,11 +216,16 @@ pub enum Region {
     CollapsePreview(DockPosition),
     /// A container row (workspace, project or Home) of the sessions panel.
     WorkspaceRow(hutan_core::WorkspaceId),
+    /// A worktree row of the sessions panel, by [`Region::worktree`].
+    WorktreeRow(u64),
     /// The "No workspace" label of the sessions panel: where a project is dropped to leave its
     /// workspace.
     NoWorkspace,
     /// A control of the sessions panel's header, by name (`plus`, `sort`).
     SidebarControl(&'static str),
+    /// The scope chip of a scoped panel's header, by panel (`files`, `changes`, `search`,
+    /// `problems`, `agents`).
+    Scope(&'static str),
     /// A control of the history panel, by name (`search`, `enable`, `disable`, `clear`,
     /// `rebuild`, `confirm`).
     History(&'static str),
@@ -460,6 +465,16 @@ pub enum Region {
     /// A control of the Search panel (`query`, `replace`, `include`, `exclude`, `case`,
     /// `word`, `regex`, `toggle-replace`, `replace-all`, `confirm`, `cancel`).
     Search(&'static str),
+}
+
+impl Region {
+    /// The region of the sidebar's worktree row of the worktree at `path`.
+    pub fn worktree(path: &std::path::Path) -> Self {
+        use std::hash::{Hash as _, Hasher as _};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        path.hash(&mut hasher);
+        Self::WorktreeRow(hasher.finish())
+    }
 }
 
 /// A pane tab or dock tab being dragged.

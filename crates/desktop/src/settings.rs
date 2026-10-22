@@ -561,6 +561,9 @@ pub struct SidebarSettings {
     /// `workspaces` (user workspaces → their projects → sessions) or `projects` (a flat list of
     /// projects → sessions).
     pub organize: SidebarOrganize,
+    /// List every container's sessions at once (the old tree). Off, only the container you work
+    /// in is expanded: its sessions sit directly under it and the others show their counts.
+    pub show_all_sessions: bool,
 }
 
 impl Setting for SidebarSettings {

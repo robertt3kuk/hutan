@@ -375,6 +375,12 @@ const FIELDS: &[FieldText] = &[
             ("projects", "Projects only"),
         ],
     ),
+    field(
+        "sidebar",
+        "show_all_sessions",
+        "Show every container's sessions",
+        "Off, the sidebar lists the container you work in with its sessions under it, and the others collapsed with their counts. On, every project and workspace is expanded.",
+    ),
     // ---- inspector ----
     choice(
         "panels.inspector",
