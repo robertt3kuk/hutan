@@ -4,6 +4,8 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+## 0.2.0 — 2026-10-22
+
 ### Editor
 - Embedded code editor in file tabs: tree-sitter highlighting, editing with undo, splits, large-file safeguards; files are read and written through the daemon.
 - Vim mode (off by default, asked on first run): motions, operators, text objects, Visual/Line/Block, registers, marks, macros, `.`, search with a visible `/` prompt, `:` commands (`:w :q :sp :vs :s :g …`), live mode and position in the status bar, Normal-mode keys work on non-Latin keyboard layouts; behaviour checked against 508 cases recorded from real Vim.
@@ -21,7 +23,8 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - Attention that clears: an agent that is working is never shown as needing you; only turns that changed files ask for review; looking at the result quiets it; Finish closes it.
 - Finish = commit and push from the Changes view (no PR), with staged/unstaged markers and a message pre-filled from the changed files (`Update app.py and store.rs`) plus one line per agent that made them.
 - A session whose finished work you have seen goes back to its own state with a small *Changes to review* link, instead of staying in *Needs you*.
-- Clearer approvals (one primary *Allow once*), chat retry, mute per session, the agent's real mode shown.
+- Clearer approvals (one primary *Allow once*), chat retry (a rate-limited turn counts down to *Retry now*), mute per session, the agent's real mode shown; drafts survive, a context meter in the chat header, mark unread and snooze.
+- Mawas keeps a curated memory: entries you approve, with revisions; `hutan memory`.
 - Models: display names everywhere (also after a restart, kept offline); pickers mark the current model, order by family and newest first, and tell apart same-named variants.
 - Language servers: the Problems panel shows each server's state with Restart for a failed one; the trust bar names every server the folder would start and one answer covers the folder; a rustup `rust-analyzer` without the component is reported as not installed with the install command.
 
@@ -30,7 +33,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 - Two-step first run; Start sheet with pinned primary button; empty states; theme and icon pickers with live preview and `hutan theme` commands.
 - **Setup** you can run any time (Hutan menu, Settings → General, palette, `hutan setup`): one flow with your current answers filled in — agents, Vim and the send key, history, background service, appearance; skipping a step keeps its value.
 - After a reinstall Hutan offers to run the setup again (optional; projects, sessions and settings stay); after an update it shows *What's new* from this changelog.
-- Terminal: link hints, drop and paste of files, resize fixes, command toolbar off the command line.
+- Terminal: distinct names with inline rename, link hints, drop and paste of files, resize fixes, jump to latest, command toolbar off the command line.
 
 ### Reliability
 - The app manages its background service: it knows which build answers, restarts an idle older or foreign service onto its own binary (asks first when sessions are live, never replaces a newer one), retries a failing start with backoff and stops after three identical failures with a *Retry*, and a stop from any place (app, menu bar item, `hutan daemon stop`) stays stopped until you start it. Start-at-login is re-registered when the app moved.

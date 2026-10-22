@@ -141,8 +141,8 @@ This uses the same release bundle builder as `bundle --release`, with
 `ditto -c -k --keepParent`, creates a source archive of **HEAD** with `git archive`,
 and writes these files under `target/release-artifacts/` (or `$CARGO_TARGET_DIR`):
 
-- `Hutan-0.1.0-arm64.zip`
-- `Hutan-0.1.0-source.tar.gz`
+- `Hutan-<version>-arm64.zip` (e.g. `Hutan-0.2.0-arm64.zip`)
+- `Hutan-<version>-source.tar.gz`
 - `Hutan.app` (the bundle used to make the zip)
 
 The version comes from the workspace package version, not a separately maintained
@@ -234,34 +234,35 @@ from the `hutand` beside the CLI; `hutan daemon restart` starts that one.
 
 Merge the source changes before preparing the final release, review both tap
 definitions, and run the local tap checks documented in its README. The source
-archive must represent the commit to tag. From the Hutan checkout:
+archive must represent the commit to tag. The release notes are the version's
+`CHANGELOG.md` section plus install/upgrade commands and the Gatekeeper note, written
+to `target/release-artifacts/NOTES.md`. From the Hutan checkout (0.2.0 as the example):
 
 ```sh
 cargo run -p xtask -- release --tap /path/to/homebrew-hutan
-git tag -a v0.1.0 -m "Hutan 0.1.0"
 git push origin master
-git push origin v0.1.0
-gh release create v0.1.0 \
-  target/release-artifacts/Hutan-0.1.0-arm64.zip \
-  target/release-artifacts/Hutan-0.1.0-source.tar.gz \
-  --repo robertt3kuk/hutan --verify-tag --title "Hutan 0.1.0" --generate-notes
+git tag -a v0.2.0 -m "Hutan 0.2.0"
+git push origin v0.2.0
+gh release create v0.2.0 \
+  target/release-artifacts/Hutan-0.2.0-arm64.zip \
+  target/release-artifacts/Hutan-0.2.0-source.tar.gz \
+  --repo robertt3kuk/hutan --verify-tag --prerelease --title "Hutan 0.2.0" \
+  --notes-file target/release-artifacts/NOTES.md
 ```
 
 Then, from the tap checkout, commit the generated definitions and publish:
 
 ```sh
-git add Casks/hutan.rb Formula/hutan.rb README.md .github/workflows/check.yml
-git commit -m "feat: package Hutan 0.1.0"
-gh repo create robertt3kuk/homebrew-hutan --public --source . --remote origin
-git push -u origin main
+git add Casks/hutan.rb Formula/hutan.rb README.md
+git commit -m "hutan 0.2.0"
+git push origin main
 ```
 
-If the tap commit already exists, omit the `git add`/`git commit` pair.
 These are manual publishing commands, not actions performed by `xtask release`.
-Before public redistribution, resolve the project license (there is no LICENSE;
-the formula intentionally does not invent an SPDX identifier) and review
-dependency redistribution obligations. Developer ID signing and notarization
-remain open distribution decisions (ADR 0007/0008).
+Hutan is MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`; the formula says
+`license any_of: ["MIT", "Apache-2.0"]`), its dependencies' licenses are checked by
+cargo-deny. Developer ID signing and notarization remain open distribution decisions
+(ADR 0007/0008).
 
 ## When the daemon does not start (troubleshooting)
 
