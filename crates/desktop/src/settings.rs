@@ -555,7 +555,7 @@ impl SidebarOrganize {
 }
 
 /// The `sidebar` namespace: how the Projects panel organizes what the daemon knows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SidebarSettings {
     /// `workspaces` (user workspaces → their projects → sessions) or `projects` (a flat list of
@@ -564,6 +564,27 @@ pub struct SidebarSettings {
     /// List every container's sessions at once (the old tree). Off, only the container you work
     /// in is expanded: its sessions sit directly under it and the others show their counts.
     pub show_all_sessions: bool,
+    /// The rows of the sidebar's nav, in order: `agents`, `assistant` (Mawas), `memory`,
+    /// `tasks`. A row left out is hidden; the row of the page you are on shows anyway.
+    pub nav_rows: Vec<String>,
+    /// Show the list of projects and sessions under the nav.
+    pub show_projects: bool,
+}
+
+impl SidebarSettings {
+    /// The rows the nav can show, in the order it shows them by default.
+    pub const NAV_ROWS: [&'static str; 4] = ["agents", "assistant", "memory", "tasks"];
+}
+
+impl Default for SidebarSettings {
+    fn default() -> Self {
+        Self {
+            organize: SidebarOrganize::default(),
+            show_all_sessions: false,
+            nav_rows: Self::NAV_ROWS.map(str::to_owned).to_vec(),
+            show_projects: true,
+        }
+    }
 }
 
 impl Setting for SidebarSettings {

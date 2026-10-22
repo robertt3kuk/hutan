@@ -355,6 +355,7 @@ fn the_sort_menu_lists_modes_and_filters_with_their_state(cx: &mut TestAppContex
             "Projects Sidebar Settings…",
             "Move to",
             "Hide",
+            "Sidebar sections",
         ]
     );
     let checked: Vec<&str> = menu

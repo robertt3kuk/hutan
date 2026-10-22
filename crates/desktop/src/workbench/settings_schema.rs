@@ -225,6 +225,9 @@ pub fn refine_kind(namespace: &str, key: &str, kind: &FieldKind) -> FieldKind {
         ("panels.inspector", "tabs", FieldKind::StringList) => {
             FieldKind::ChoiceList(own(&INSPECTOR_TABS))
         }
+        ("sidebar", "nav_rows", FieldKind::StringList) => {
+            FieldKind::ChoiceList(own(&crate::settings::SidebarSettings::NAV_ROWS))
+        }
         // Mappings are keys written as in Vim (`<C-w>`, `<Esc>`): settings.toml holds them, the
         // Keyboard page lists them.
         ("editor", "vim_mappings.insert" | "vim_mappings.normal" | "vim_mappings.visual", _) => {

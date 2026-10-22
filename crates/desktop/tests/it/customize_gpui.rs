@@ -781,3 +781,61 @@ fn an_items_own_menu_has_its_options_and_its_place(cx: &mut TestAppContext) {
         wb.status_item_options("palette_hint").is_empty()
     }));
 }
+
+// ---- the left sidebar's sections ----------------------------------------------------------------
+
+#[gpui::test]
+fn the_left_sidebars_sections_hide_move_and_reset_with_an_undo(cx: &mut TestAppContext) {
+    use hutan_desktop::settings::SidebarSettings;
+    let (view, settings, cx) = open(cx);
+    let keys = |cx: &VisualTestContext| -> Vec<String> {
+        view.read_with(cx, |wb, cx| {
+            wb.nav_entries(cx).into_iter().map(|e| e.key).collect()
+        })
+    };
+    assert_eq!(keys(cx), ["agents", "assistant", "mawas-memory"]);
+
+    // Right click in the nav: the pages' checklist, then the sections.
+    let nav = bounds(&view, cx, Region::Nav("agents"));
+    right_click(
+        &view,
+        cx,
+        gpui::point(nav.left() - gpui::px(4.0), nav.center().y),
+    );
+    let entries = menu(&view, cx);
+    let at = entries
+        .iter()
+        .position(|(l, _)| l == "Sidebar sections")
+        .unwrap();
+    assert!(entries[at + 1..].iter().any(|(l, on)| l == "Mawas" && *on));
+    assert!(entries.last().unwrap().0.starts_with("Reset layout to"));
+
+    // Hide Memory: the row goes, the list stays open, the key is in the user's file.
+    run_entry(&view, cx, "Memory");
+    assert_eq!(keys(cx), ["agents", "assistant"]);
+    assert_eq!(
+        settings.get::<SidebarSettings>().nav_rows,
+        ["agents", "assistant", "tasks"]
+    );
+    // Move Mawas up: it goes before Agents.
+    run_entry(&view, cx, "Move Mawas up");
+    assert_eq!(keys(cx), ["assistant", "agents"]);
+    // Undo (⌘Z, after the list closes) puts Mawas back below Agents.
+    cx.simulate_keystrokes("escape");
+    cx.simulate_keystrokes("cmd-z");
+    assert_eq!(keys(cx), ["agents", "assistant"]);
+    // Hide the projects list: a hint stands in its place; show it again.
+    view.update(cx, |wb, cx| wb.toggle_projects_list(cx));
+    assert!(!settings.get::<SidebarSettings>().show_projects);
+    common::draw(cx);
+    view.update(cx, |wb, cx| wb.toggle_projects_list(cx));
+    assert!(settings.get::<SidebarSettings>().show_projects);
+
+    // Reset layout to preset brings every section back.
+    view.update(cx, |wb, cx| wb.reset_to_preset(cx));
+    assert_eq!(keys(cx), ["agents", "assistant", "mawas-memory"]);
+    assert_eq!(
+        settings.get::<SidebarSettings>(),
+        SidebarSettings::default().into()
+    );
+}

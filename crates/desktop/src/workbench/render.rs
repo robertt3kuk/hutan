@@ -1397,12 +1397,28 @@ impl Workbench {
             .collect();
 
         let append_index = dock.panels.len();
+        let projects_hidden = pos == DockPosition::Left
+            && dock
+                .active
+                .as_ref()
+                .is_some_and(|a| a.as_str() == "sessions")
+            && !self
+                .settings
+                .get::<crate::settings::SidebarSettings>()
+                .show_projects;
         let body: AnyElement = match dock
             .active
             .as_ref()
+            .filter(|_| !projects_hidden)
             .and_then(|a| self.panel_view(a, window, cx))
         {
             Some(view) => cached_view(&self.regions, view),
+            None if projects_hidden => div()
+                .size_full()
+                .p(px(tokens.spacing * 3.0))
+                .text_color(theme.muted)
+                .child("The projects list is hidden. Right click the rows above to show it.")
+                .into_any_element(),
             None => div()
                 .size_full()
                 .p(px(tokens.spacing * 3.0))

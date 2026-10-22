@@ -382,6 +382,24 @@ const FIELDS: &[FieldText] = &[
         "Show every container's sessions",
         "Off, the sidebar lists the container you work in with its sessions under it, and the others collapsed with their counts. On, every project and workspace is expanded.",
     ),
+    choice(
+        "sidebar",
+        "nav_rows",
+        "Navigation rows",
+        "The rows over the sidebar's list, in order: Agents, Mawas, Memory and Tasks. A row left out is hidden (the row of the page you are on shows anyway). The sidebar's right-click menu hides and moves them too.",
+        &[
+            ("agents", "Agents"),
+            ("assistant", "Mawas"),
+            ("memory", "Memory"),
+            ("tasks", "Tasks"),
+        ],
+    ),
+    field(
+        "sidebar",
+        "show_projects",
+        "Show the projects list",
+        "Shows the list of projects, workspaces and sessions under the navigation rows. Off, the sidebar keeps the rows and the bottom buttons; the right-click menu brings the list back.",
+    ),
     // ---- inspector ----
     choice(
         "panels.inspector",

@@ -313,6 +313,12 @@ impl Workbench {
     pub fn reset_to_preset(&mut self, cx: &mut Context<Self>) {
         let name = self.state.preset.clone();
         self.apply_preset_named(&name, cx);
+        // The sidebar's sections go back to theirs too.
+        for key in ["nav_rows", "show_projects"] {
+            if let Err(error) = self.settings.remove(SettingsLayer::User, "sidebar", key) {
+                tracing::warn!("cannot reset sidebar.{key}: {error}");
+            }
+        }
         self.set_notice(format!("Layout reset to {}", preset_label(&name)), cx);
     }
 

@@ -11,6 +11,7 @@ pub mod chat;
 mod closing;
 mod customize;
 mod customize_bar;
+mod customize_sidebar;
 mod daemon;
 mod daemon_popover;
 mod docks;

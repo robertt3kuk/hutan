@@ -819,6 +819,13 @@ impl Workbench {
                 .into_iter()
                 .filter(|entry| entry.label != "Panel settings…"),
         );
+        entries.push(Self::submenu_entry(
+            "Sidebar sections",
+            move |this, window, cx| {
+                let entries = this.left_checklist(position);
+                this.open_menu(position, entries, window, cx);
+            },
+        ));
         self.open_menu(position, entries, window, cx);
     }
 

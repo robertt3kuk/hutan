@@ -218,7 +218,7 @@ impl Workbench {
                 }
             }
         }
-        entries
+        self.arrange_nav(entries)
     }
 
     /// Shows `panel` as the left sidebar's page, or goes back to Projects when it is showing
@@ -347,7 +347,7 @@ impl Workbench {
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                        let entries = this.dock_checklist(DockPosition::Left, event.position);
+                        let entries = this.left_checklist(event.position);
                         this.open_menu(event.position, entries, window, cx);
                     }),
                 )
@@ -597,7 +597,7 @@ impl Workbench {
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                            let entries = this.dock_checklist(DockPosition::Left, event.position);
+                            let entries = this.left_checklist(event.position);
                             this.open_menu(event.position, entries, window, cx);
                         }),
                     ),
