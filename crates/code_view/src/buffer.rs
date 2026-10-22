@@ -154,6 +154,8 @@ pub struct FileBuffer {
     indent: IndentUnit,
     /// Large-file mode: no syntax, read-only until the user says otherwise.
     large: bool,
+    /// Never editable (see [`FileBuffer::is_read_only`]).
+    read_only: bool,
     size: u64,
     syntax_active: bool,
     syntax: Option<Syntax>,
@@ -215,6 +217,7 @@ impl FileBuffer {
             version: 0,
             indent: IndentUnit::default(),
             large: false,
+            read_only: false,
             size: 0,
             syntax_active: false,
             syntax: None,
@@ -249,9 +252,23 @@ impl FileBuffer {
         self.state == LoadState::Ready
     }
 
-    /// Whether the text may be changed: it is in, and the file is not in large-file mode.
+    /// Whether the text may be changed: it is in, the file is not in large-file mode and the
+    /// buffer was not made read-only.
     pub fn is_editable(&self) -> bool {
-        self.is_ready() && !self.large
+        self.is_ready() && !self.large && !self.read_only
+    }
+
+    /// The buffer shows a file that must not be changed from here (a file inside the running app
+    /// bundle): no edits, and it is not offered to language servers.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
+        if self.read_only != read_only {
+            self.read_only = read_only;
+            cx.notify();
+        }
     }
 
     /// The text (line endings normalized to `\n`, no byte-order mark: what is drawn).

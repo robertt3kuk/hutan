@@ -92,6 +92,16 @@ impl InstallControl {
         }
         was
     }
+
+    /// `path` is a file of the running app bundle: it is shown read-only and never offered to a
+    /// language server (the changelog of *What's new*).
+    pub(crate) fn holds(&self, path: &std::path::Path) -> bool {
+        self.install.as_ref().is_some_and(|install| {
+            path.starts_with(&install.bundle)
+                || std::fs::canonicalize(&install.bundle)
+                    .is_ok_and(|bundle| path.starts_with(bundle))
+        })
+    }
 }
 
 impl Workbench {

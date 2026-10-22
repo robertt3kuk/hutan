@@ -310,6 +310,9 @@ impl Workbench {
         let buffer = cx.new(|cx| FileBuffer::new(PathBuf::from(path), cx));
         let highlight = self.settings.get::<EditorSettings>().agent_highlight;
         buffer.update(cx, |b, cx| b.set_agent_highlight(highlight, cx));
+        if self.install.holds(Path::new(path)) {
+            buffer.update(cx, |b, cx| b.set_read_only(true, cx));
+        }
         let subscriptions = self.watch_buffer(path, &buffer, cx);
         self.buffers.last_number += 1;
         self.buffers.buffers.insert(

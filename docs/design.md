@@ -686,7 +686,7 @@ A first run that ends at the first value, in two steps and without a modal: **se
 | Same install id | nothing |
 | Another install id, same or lower version, `app.setup_done` set | **The reinstall card**: a quiet, one-time card at the top of the centre (not a modal): *Hutan was reinstalled. Run setup again? Your projects, sessions and settings stay.* **Run setup** opens the setup flow (§ Run Setup Again…) with every answer at today's value, nothing reset; **Not now** dismisses it. Either answer settles this install id; until one is given the card comes back at the next launch. |
 | Another install id, `app.setup_done` unset | nothing: the first screen is the offer |
-| Higher version | no setup offer; **Updated to 0.2.0 · What's new** in the status bar for the session; clicking opens the bundled `CHANGELOG.md` (`Contents/Resources/CHANGELOG.md`, copied by `xtask bundle`) in a file tab at that version's `## ` heading (else `## Unreleased`), and the notice goes away |
+| Higher version | no setup offer; **Updated to 0.2.0 · What's new** in the status bar for the session; clicking opens the bundled `CHANGELOG.md` (`Contents/Resources/CHANGELOG.md`, copied by `xtask bundle`) in a file tab at that version's `## ` heading (else `## Unreleased`), and the notice goes away. A file inside the running bundle opens **read-only** (`FileBuffer::set_read_only`: no edits) and is never sent to a language server (no `doc.open`, no trust bar) |
 
 The first screen also has a ghost **Set up Hutan…** button that opens the same flow.
 

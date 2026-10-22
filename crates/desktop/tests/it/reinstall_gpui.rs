@@ -13,7 +13,7 @@ use common::{TestDaemon, draw, open_options, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_desktop::install::Install;
 use hutan_desktop::workbench::persistence;
-use hutan_desktop::workbench::{Region, Workbench, WorkbenchOptions};
+use hutan_desktop::workbench::{FileOpen, Region, Workbench, WorkbenchOptions};
 use hutan_settings::{AppearanceMode, Density, SettingsPaths, SettingsStore};
 
 // ---- fixtures ----------------------------------------------------------------------------------
@@ -44,6 +44,7 @@ fn install(dir: &Path, version: &str, id: &str) -> Install {
     let bundle = dir.join("Hutan.app");
     let resources = bundle.join("Contents/Resources");
     std::fs::create_dir_all(&resources).unwrap();
+    std::fs::write(bundle.join("Contents/Info.plist"), "plist").unwrap();
     std::fs::write(
         resources.join("CHANGELOG.md"),
         "# Changelog\n\n## Unreleased\n\n- next\n\n## 0.2.0 — 2026-10-23\n\n- one\n\n## 0.1.0 — 2026-10-19\n\n- old\n",
@@ -395,4 +396,86 @@ fn a_development_build_records_nothing_and_never_offers(cx: &mut TestAppContext)
         assert_eq!(notice(view, cx), None);
     });
     assert_eq!(recorded(&daemon).unwrap().install_id, "a");
+}
+
+// ---- the changelog tab -------------------------------------------------------------------------
+
+fn fake_lsp_bin() -> PathBuf {
+    let exe = std::env::current_exe().unwrap();
+    let bin = exe
+        .parent()
+        .and_then(Path::parent)
+        .unwrap()
+        .join("hutan-fake-lsp");
+    assert!(
+        bin.is_file(),
+        "hutan-fake-lsp not built: run `cargo build -p hutan-lsp-client --bins` (or `just test`)"
+    );
+    bin
+}
+
+#[gpui::test]
+fn whats_new_is_read_only_and_never_reaches_a_language_server(cx: &mut TestAppContext) {
+    // A server for Markdown that waits for trust, with a root marker the bundle has too: an
+    // ordinary Markdown file gets a document and the trust bar; the bundled changelog must not.
+    let work = tempfile::tempdir().unwrap();
+    let base = work.path().canonicalize().unwrap();
+    let repo = base.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("fake.toml"), "").unwrap();
+    std::fs::write(repo.join("notes.md"), "# notes\n").unwrap();
+    let script = base.join("script.json");
+    std::fs::write(&script, "{}").unwrap();
+    let daemon = TestDaemon::start_with_config(&format!(
+        "[lsp]\ntrust = \"ask\"\n\n[lsp.servers.fake]\ncommand = {:?}\nargs = [\"--script\", {:?}]\n\
+         languages = [\"markdown\"]\nroot_markers = [\"fake.toml\", \"Info.plist\"]\n",
+        fake_lsp_bin().display().to_string(),
+        script.display().to_string(),
+    ));
+    setup_done(&daemon, "");
+    let app = base.join("app");
+    std::fs::create_dir_all(&app).unwrap();
+    launch(cx, &daemon, Some(install(&app, "0.1.0", "a")), |_, _| {});
+
+    launch(
+        cx,
+        &daemon,
+        Some(install(&app, "0.2.0", "b")),
+        |view, cx| {
+            let opens = |cx: &VisualTestContext| {
+                view.read_with(cx, |wb, cx| wb.lsp().read(cx).opens_sent())
+            };
+            // The control: an ordinary Markdown file is a document and shows the trust bar.
+            let notes = repo.join("notes.md");
+            view.update_in(cx, |wb, window, cx| {
+                wb.open_file(FileOpen::picked(&notes), window, cx);
+            });
+            wait_until(cx, "the trust bar of an ordinary file", |cx| {
+                drawn(view, cx, Region::FileLsp("trust"))
+            });
+            assert_eq!(opens(cx), 1);
+
+            // What's new: the changelog opens in a tab, read-only, and nothing reaches a server.
+            click(view, cx, Region::Offer("whats-new"));
+            wait_until(cx, "the changelog's tab", |cx| {
+                view.read_with(cx, |wb, cx| {
+                    wb.focused_file_view().is_some_and(|v| {
+                        let buffer = v.read(cx).buffer().read(cx);
+                        buffer.path().ends_with("Contents/Resources/CHANGELOG.md")
+                            && buffer.is_ready()
+                    })
+                })
+            });
+            for _ in 0..5 {
+                draw(cx);
+            }
+            assert_eq!(opens(cx), 1, "no doc.open for a file of the app bundle");
+            assert!(!drawn(view, cx, Region::FileLsp("trust")), "no trust bar");
+            view.read_with(cx, |wb, cx| {
+                let view = wb.focused_file_view().unwrap();
+                let buffer = view.read(cx).buffer().read(cx);
+                assert!(buffer.is_read_only() && !buffer.is_editable());
+            });
+        },
+    );
 }

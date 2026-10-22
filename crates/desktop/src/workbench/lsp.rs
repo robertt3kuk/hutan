@@ -174,6 +174,8 @@ pub struct LspStore {
     status: Option<Task<()>>,
     /// `doc.change` calls sent (tests: debouncing).
     changes_sent: u64,
+    /// `doc.open` calls sent (tests).
+    opens_sent: u64,
     /// Completion and signature help requests asked so far: one that waited for the edits
     /// goes only if no newer one was asked meanwhile.
     completion_asked: Arc<AtomicU64>,
@@ -391,6 +393,7 @@ impl LspStore {
             listener: None,
             status: None,
             changes_sent: 0,
+            opens_sent: 0,
             completion_asked: Arc::new(AtomicU64::new(0)),
             signature_asked: Arc::new(AtomicU64::new(0)),
             diagnostics_seen: 0,
@@ -400,14 +403,15 @@ impl LspStore {
     // ---- documents ---------------------------------------------------------------------------
 
     /// The buffer of `path` is in: open it as a daemon document (once) when the daemon syncs
-    /// documents and its language may have a server.
+    /// documents and its language may have a server. A read-only buffer (a file of the running
+    /// app bundle) is never sent: no server runs code for it and no trust bar shows.
     pub fn open(&mut self, path: &str, buffer: &Entity<FileBuffer>, cx: &mut Context<Self>) {
         if self.docs.contains_key(path) || !self.connection.supports_doc_sync() {
             return;
         }
         let text = {
             let b = buffer.read(cx);
-            if !b.is_ready() || b.is_large() {
+            if !b.is_ready() || b.is_large() || b.is_read_only() {
                 return;
             }
             b.text().clone()
@@ -459,6 +463,7 @@ impl LspStore {
             version: 1,
             text: text.to_string(),
         };
+        self.opens_sent += 1;
         let call = cx.background_spawn(async move { connection.doc_open(request).await });
         let key = path.to_owned();
         doc.opening = Some(cx.spawn(async move |this, cx| {
@@ -855,6 +860,11 @@ impl LspStore {
     /// Whether `path` has a document, open or on its way.
     pub fn has_doc(&self, path: &str) -> bool {
         self.docs.contains_key(path)
+    }
+
+    /// `doc.open` calls sent so far (tests: a file of the app bundle sends none).
+    pub fn opens_sent(&self) -> u64 {
+        self.opens_sent
     }
 
     /// `doc.change` calls sent so far (tests).
