@@ -115,6 +115,37 @@ pub struct DockState {
     pub has_panels: bool,
 }
 
+/// How much room the window leaves the status bar (FX-STATUSBAR): the `workspace` item shows
+/// only its branch below 900 px, and below 700 px only the `connection` dot and `attention`
+/// stay on the built-in bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BarWidth {
+    /// 900 px and wider: everything.
+    Wide,
+    /// 700 to 900 px: `workspace` is its branch.
+    Medium,
+    /// Under 700 px.
+    Narrow,
+}
+
+impl BarWidth {
+    /// Below this the `workspace` item shows only the branch.
+    pub const MEDIUM_BELOW: f32 = 900.0;
+    /// Below this only `connection` and `attention` stay.
+    pub const NARROW_BELOW: f32 = 700.0;
+
+    /// The tier of a window `width` px wide.
+    pub fn of(width: f32) -> Self {
+        if width < Self::NARROW_BELOW {
+            Self::Narrow
+        } else if width < Self::MEDIUM_BELOW {
+            Self::Medium
+        } else {
+            Self::Wide
+        }
+    }
+}
+
 /// Everything a status item needs to draw itself.
 #[derive(Debug)]
 pub struct StatusContext<'a> {
@@ -127,6 +158,8 @@ pub struct StatusContext<'a> {
     /// Key hint of each dock's toggle action, from the live keymap (empty when unbound).
     pub dock_hints: PerDock<SharedString>,
     pub data: &'a StatusData,
+    /// The tier of the window's width.
+    pub width: BarWidth,
     /// The views of `editor.position` and `editor.mode`, which follow the focused code view.
     pub editor_items: &'a super::editor_status::EditorItems,
     /// Height of the status bar.

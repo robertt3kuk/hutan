@@ -24,7 +24,7 @@ use crate::workbench::actions::{
 };
 use crate::workbench::model::DockPosition;
 use crate::workbench::registry::{
-    DockState, StatusContext, StatusItemRegistry, StatusItemSpec, StatusSide,
+    BarWidth, DockState, StatusContext, StatusItemRegistry, StatusItemSpec, StatusSide,
 };
 use crate::workbench::style::TextTooltip;
 
@@ -186,6 +186,20 @@ fn tooltip(text: String) -> impl Fn(&mut gpui::Window, &mut gpui::App) -> AnyVie
     }
 }
 
+/// An item that gives way when the window is narrow: below 700 px the built-in bar keeps
+/// `connection` and `attention` and nothing else.
+fn gives_way(
+    render: impl Fn(&StatusContext<'_>) -> AnyElement + 'static,
+) -> crate::workbench::registry::StatusRender {
+    Rc::new(move |ctx| {
+        if ctx.width == BarWidth::Narrow {
+            div().into_any_element()
+        } else {
+            render(ctx)
+        }
+    })
+}
+
 /// The built-in status items.
 pub fn builtin_status_items() -> StatusItemRegistry {
     let mut registry = StatusItemRegistry::new();
@@ -207,25 +221,30 @@ pub fn builtin_status_items() -> StatusItemRegistry {
             } else {
                 color
             };
-            clickable("status-connection", ctx)
+            // Below 700 px a daemon that is up is its dot alone; a daemon that is not keeps
+            // its word, which is the state.
+            let dot_only = ctx.width == BarWidth::Narrow && chip.kind == ChipKind::Up;
+            let mut item = clickable("status-connection", ctx)
                 .flex()
                 .items_center()
                 .gap(px(6.0))
                 .tooltip(tooltip(chip.tooltip.clone()))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(daemon::Status), cx))
-                .child(chip_mark(chip.kind, color))
-                .child(
+                .child(chip_mark(chip.kind, color));
+            if !dot_only {
+                item = item.child(
                     div()
                         .text_color(word_color)
                         .child(SharedString::from(chip.word.clone())),
-                )
-                .into_any_element()
+                );
+            }
+            item.into_any_element()
         }),
     });
     registry.register(StatusItemSpec {
         id: "workspace",
         default_side: StatusSide::Left,
-        render: Rc::new(|ctx: &StatusContext<'_>| {
+        render: gives_way(|ctx: &StatusContext<'_>| {
             let Some(name) = ctx.data.workspace.clone() else {
                 return div().id("status-workspace").into_any_element();
             };
@@ -234,22 +253,29 @@ pub fn builtin_status_items() -> StatusItemRegistry {
                 Some(branch) => format!("{name} · branch {branch} · click to jump"),
                 None => format!("{name} · click to jump"),
             };
+            // Below 900 px only the branch (the name when the project has none).
+            let only_branch = ctx.width != BarWidth::Wide && branch.is_some();
             let mut item = clickable("status-workspace", ctx)
                 .text_color(ctx.theme.muted)
                 .tooltip(tooltip(tip))
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenJump), cx))
                 .flex()
                 .items_center()
-                .gap(px(4.0))
-                .child(
+                .gap(px(4.0));
+            if !only_branch {
+                item = item.child(
                     div()
                         .min_w_0()
                         .max_w(px(200.0))
                         .truncate()
                         .child(SharedString::from(name)),
                 );
+            }
             if let Some(branch) = branch {
-                item = item.child("·").child(glyph(Icon::VcsBranch)).child(
+                if !only_branch {
+                    item = item.child("·");
+                }
+                item = item.child(glyph(Icon::VcsBranch)).child(
                     div()
                         .min_w_0()
                         .max_w(px(160.0))
@@ -263,7 +289,7 @@ pub fn builtin_status_items() -> StatusItemRegistry {
     registry.register(StatusItemSpec {
         id: "working",
         default_side: StatusSide::Right,
-        render: Rc::new(|ctx: &StatusContext<'_>| {
+        render: gives_way(|ctx: &StatusContext<'_>| {
             let n = ctx.data.working;
             if n == 0 {
                 return div().id("status-working").into_any_element();
@@ -352,7 +378,7 @@ pub fn builtin_status_items() -> StatusItemRegistry {
     registry.register(StatusItemSpec {
         id: "editor.mode",
         default_side: StatusSide::Right,
-        render: Rc::new(|ctx: &StatusContext<'_>| -> AnyElement {
+        render: gives_way(|ctx: &StatusContext<'_>| -> AnyElement {
             match &ctx.data.editor {
                 Some(editor) if editor.vim => div()
                     .id("status-editor-mode")
@@ -369,7 +395,7 @@ pub fn builtin_status_items() -> StatusItemRegistry {
     registry.register(StatusItemSpec {
         id: "editor.position",
         default_side: StatusSide::Right,
-        render: Rc::new(|ctx: &StatusContext<'_>| -> AnyElement {
+        render: gives_way(|ctx: &StatusContext<'_>| -> AnyElement {
             match &ctx.data.editor {
                 Some(_) => div()
                     .id("status-editor-position")
@@ -385,7 +411,7 @@ pub fn builtin_status_items() -> StatusItemRegistry {
     registry.register(StatusItemSpec {
         id: "editor.language",
         default_side: StatusSide::Right,
-        render: Rc::new(|ctx: &StatusContext<'_>| -> AnyElement {
+        render: gives_way(|ctx: &StatusContext<'_>| -> AnyElement {
             match &ctx.data.editor {
                 Some(editor) => div()
                     .id("status-editor-language")
@@ -399,7 +425,7 @@ pub fn builtin_status_items() -> StatusItemRegistry {
     registry.register(StatusItemSpec {
         id: "editor.diagnostics",
         default_side: StatusSide::Right,
-        render: Rc::new(|ctx: &StatusContext<'_>| -> AnyElement {
+        render: gives_way(|ctx: &StatusContext<'_>| -> AnyElement {
             match ctx.data.editor.as_ref().and_then(diagnostics_item) {
                 Some(item) => render_diagnostics_item(item, ctx),
                 None => div().id("status-editor-diagnostics").into_any_element(),
@@ -439,7 +465,7 @@ pub fn builtin_status_items() -> StatusItemRegistry {
     registry.register(StatusItemSpec {
         id: "palette_hint",
         default_side: StatusSide::Right,
-        render: Rc::new(|ctx: &StatusContext<'_>| -> AnyElement {
+        render: gives_way(|ctx: &StatusContext<'_>| -> AnyElement {
             clickable("status-palette-hint", ctx)
                 .text_color(ctx.theme.muted)
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(TogglePalette), cx))

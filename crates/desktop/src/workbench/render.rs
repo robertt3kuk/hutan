@@ -6,7 +6,7 @@ use super::model::{
     Pane, PaneId, PaneTree, PanelDest,
 };
 use super::panels::AgentsRequest;
-use super::registry::{DockState, PerDock, StatusContext, StatusData};
+use super::registry::{BarWidth, DockState, PerDock, StatusContext, StatusData};
 use super::terminals::session_of_item;
 use super::ui::motion::{self, PresentExt as _};
 use super::ui::{self, Mascot, StyledExt as _};
@@ -2261,6 +2261,7 @@ impl Workbench {
                 bottom: hint(&actions::ToggleBottomDock),
             },
             data: &data,
+            width: BarWidth::of(f32::from(window.viewport_size().width)),
             editor_items: &editor_items,
             height: tokens.status_bar,
         };

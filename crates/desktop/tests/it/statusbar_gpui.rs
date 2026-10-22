@@ -455,3 +455,97 @@ status_bar = { left = ["attention", "connection"], right = ["editor.diagnostics"
     assert!(drawn(&view, cx, "sessions"));
     assert!(!drawn(&view, cx, "workspace"));
 }
+
+// ---- narrow windows --------------------------------------------------------------------------
+
+fn width_of(view: &Entity<Workbench>, cx: &mut VisualTestContext, id: &'static str) -> Option<f32> {
+    draw(cx);
+    view.read_with(cx, |wb, _| {
+        wb.region_bounds(Region::StatusItem(id))
+            .map(|b| f32::from(b.size.width))
+            .filter(|w| *w > 8.0)
+    })
+}
+
+fn resize(cx: &mut VisualTestContext, width: f32) {
+    cx.simulate_resize(gpui::size(gpui::px(width), gpui::px(800.0)));
+    draw(cx);
+}
+
+#[gpui::test]
+fn the_bar_gives_way_below_900_and_700_pixels(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let repos = repos();
+    open_project(&daemon, &repos.api);
+    let in_api = session_at(&daemon, "in-api", &repos.api);
+    let working = session_at(&daemon, "working", &repos.api);
+    let blocked = session_at(&daemon, "blocked", &repos.api);
+    let (view, cx) = open_daemon(cx, &daemon, daemon.connection());
+    view.update_in(cx, |wb, window, cx| wb.open_session(in_api, window, cx));
+    wait_until(cx, "api · main", |cx| {
+        workspace_item(&view, cx) == (Some("api".to_owned()), Some("main".to_owned()))
+    });
+    Reporter::new(working, "omp-extension", "omp")
+        .report(&daemon, Node::main("root").working().name("omp"));
+    Reporter::new(blocked, "claude-hooks", "claude")
+        .report(&daemon, Node::main("root").blocked().name("claude"));
+    wait_until(cx, "one agent working and one request", |cx| {
+        view.read_with(cx, |wb, cx| {
+            let data = wb.status_data(cx);
+            data.working == 1 && data.requests == 1
+        })
+    });
+
+    // 1280 px: everything, the workspace item with the project's name and the branch.
+    resize(cx, 1280.0);
+    let wide_workspace = width_of(&view, cx, "workspace").expect("workspace at 1280");
+    let wide_connection = width_of(&view, cx, "connection").expect("connection at 1280");
+    for id in ["attention", "working", "palette_hint"] {
+        assert!(width_of(&view, cx, id).is_some(), "{id} at 1280");
+    }
+
+    // 800 px: the workspace item is its branch; the rest is as it was.
+    resize(cx, 800.0);
+    let medium_workspace = width_of(&view, cx, "workspace").expect("workspace at 800");
+    assert!(
+        medium_workspace < wide_workspace - 20.0,
+        "only the branch at 800: {medium_workspace} against {wide_workspace}"
+    );
+    assert_eq!(width_of(&view, cx, "connection"), Some(wide_connection));
+    for id in ["attention", "working", "palette_hint"] {
+        assert!(width_of(&view, cx, id).is_some(), "{id} at 800");
+    }
+
+    // 600 px: the connection dot and the requests; nothing else.
+    resize(cx, 600.0);
+    for id in ["workspace", "working", "palette_hint"] {
+        assert!(width_of(&view, cx, id).is_none(), "{id} gives way at 600");
+    }
+    assert!(
+        width_of(&view, cx, "attention").is_some(),
+        "attention stays"
+    );
+    let dot = width_of(&view, cx, "connection").expect("the connection dot stays");
+    assert!(
+        dot < wide_connection - 20.0,
+        "the dot alone: {dot} against {wide_connection}"
+    );
+
+    // A daemon that is not up keeps its word: it is the state.
+    cx.dispatch_action(daemon_actions::Stop);
+    cx.run_until_parked();
+    wait_until(cx, "the Stop confirmation", |cx| {
+        view.read_with(cx, |wb, _| wb.modal_open())
+    });
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
+    wait_until(cx, "the daemon to stop", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.daemon_stopped() && wb.daemon_busy().is_none()
+        })
+    });
+    let stopped = width_of(&view, cx, "connection").expect("connection at 600, stopped");
+    assert!(
+        stopped > dot + 40.0,
+        "the word stays: {stopped} against {dot}"
+    );
+}
