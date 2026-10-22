@@ -106,6 +106,9 @@ fn tool_status(tool: &Tool, look: &Look) -> AnyElement {
     }
 }
 
+/// Space above the first card of a transcript, under the header (CL-POLISH-4).
+pub(crate) const TRANSCRIPT_TOP_INSET: f32 = 24.0;
+
 impl ChatView {
     fn blocks_of(&mut self, entry: &Entry, text: &str) -> Rc<Vec<MdBlock>> {
         if let Some((rev, parsed)) = self.parsed.get(&entry.id)
@@ -196,7 +199,14 @@ impl ChatView {
             .relative()
             .w_full()
             .px(px(tokens.spacing * 3.0))
-            .py(px(tokens.spacing * 1.25))
+            .pb(px(tokens.spacing * 1.25))
+            // The first card has the column's top inset, so it does not start at the header's
+            // hairline.
+            .pt(px(if index == 0 {
+                TRANSCRIPT_TOP_INSET
+            } else {
+                tokens.spacing * 1.25
+            }))
             .flex()
             .justify_center()
             .child(
@@ -1279,9 +1289,7 @@ fn usage_text(usage: &TurnUsage) -> String {
     if !detail.is_empty() {
         parts.push(detail.join(" · "));
     }
-    if let (Some(used), Some(window)) = (usage.conversation_tokens, usage.context_window) {
-        parts.push(format!("context {} / {}", tokens(used), tokens(window)));
-    }
+    // The context fill is the header's to say, once; it is not repeated under every answer.
     parts.join(" · ")
 }
 
@@ -1388,6 +1396,24 @@ mod tests {
         // Usage without a figure to show is no usage.
         assert_eq!(
             footer_line(&footer(TurnOutcome::Completed, Some(TurnUsage::default()))),
+            None
+        );
+        // The context fill is the header's, once: a turn's footer never repeats it.
+        let with_context = TurnUsage {
+            total_tokens: Some(1_234),
+            conversation_tokens: Some(17_900),
+            context_window: Some(100_000),
+            ..TurnUsage::default()
+        };
+        let line = footer_line(&footer(TurnOutcome::Completed, Some(with_context)));
+        assert_eq!(line.as_deref(), Some("done · 2 m 53 s · 1.2k tokens"));
+        let only_context = TurnUsage {
+            conversation_tokens: Some(17_900),
+            context_window: Some(100_000),
+            ..TurnUsage::default()
+        };
+        assert_eq!(
+            footer_line(&footer(TurnOutcome::Completed, Some(only_context))),
             None
         );
         let failed = TurnOutcome::Failed {

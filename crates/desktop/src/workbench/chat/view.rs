@@ -917,7 +917,12 @@ impl ChatView {
                         )
                         .child(div().text_color(theme.warning).child(text))
                 } else {
-                    ui::counter(text, theme, tokens).whitespace_nowrap()
+                    // Plain `muted` words, not a pill that looks like a button.
+                    div()
+                        .text_color(theme.muted)
+                        .text_size(px(tokens.secondary_font_size))
+                        .whitespace_nowrap()
+                        .child(text)
                 };
                 div()
                     .id("chat-mode")
@@ -933,8 +938,14 @@ impl ChatView {
                     .id("chat-context")
                     .relative()
                     .flex_none()
-                    // A neutral counter, whole: the percentage and the figures read together.
-                    .child(ui::counter(context_text(&context), theme, tokens).whitespace_nowrap())
+                    // Plain `muted` words, whole: the percentage and the figures read together.
+                    .child(
+                        div()
+                            .text_color(theme.muted)
+                            .text_size(px(tokens.secondary_font_size))
+                            .whitespace_nowrap()
+                            .child(context_text(&context)),
+                    )
                     .tooltip(tooltip(tip))
                     .child(probe(&self.regions, Region::Chat("context")))
             }))
