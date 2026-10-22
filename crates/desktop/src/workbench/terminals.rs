@@ -891,6 +891,10 @@ impl Workbench {
             entries.insert(entries.len() - 1, review);
         }
         entries.insert(entries.len() - 1, Self::open_file_entry());
+        // A chat's checkpoints (or, once, why it has none), before Copy Session ID.
+        if let Some(checkpoints) = self.checkpoints_menu_entry(session, cx) {
+            entries.insert(entries.len() - 1, checkpoints);
+        }
         // After the openers, before Rename…: what the user can do to the queue.
         for (at, entry) in self.attention_entries(session, cx).into_iter().enumerate() {
             entries.insert(3 + at, entry);

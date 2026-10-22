@@ -164,9 +164,12 @@ impl ChatView {
                 cx.defer(move |cx| earlier.update(cx, |model, cx| model.load_earlier(cx)));
             }
         });
+        let checkpoints = sessions.read(cx).checkpoints().clone();
         let subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.observe(&sessions, |_, _, cx| cx.notify()),
+            // A turn's checkpoint arrived, went or was restored: its footer says so.
+            cx.observe(&checkpoints, |this, _, cx| this.remeasure_footers(cx)),
         ];
         Self {
             session,
@@ -325,6 +328,25 @@ impl ChatView {
         }
         self.synced_len = len;
         self.synced_rev = transcript.rev();
+    }
+
+    /// Measures the turn footers again: what they say of the turn's files changed.
+    fn remeasure_footers(&mut self, cx: &mut Context<Self>) {
+        let footers: Vec<usize> = self
+            .model
+            .read(cx)
+            .transcript()
+            .entries()
+            .iter()
+            .enumerate()
+            .take(self.synced_len)
+            .filter(|(_, entry)| matches!(entry.body, hutan_chat_view::Body::Footer(_)))
+            .map(|(at, _)| at)
+            .collect();
+        for at in footers {
+            self.list.splice(at..at + 1, 1);
+        }
+        cx.notify();
     }
 
     /// Flips a part of an entry (a diff, an output, reasoning) against its default.

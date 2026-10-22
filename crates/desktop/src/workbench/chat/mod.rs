@@ -18,6 +18,7 @@ mod question;
 mod question_card;
 mod queue_view;
 mod retry;
+mod rewind;
 mod rich;
 mod rich_view;
 mod view;
@@ -25,6 +26,7 @@ pub mod vim;
 mod widgets;
 
 pub(crate) use cards::{counts_of, diff_row};
+pub use rewind::changed_text;
 pub use chip::{Chip, cut_to};
 pub use context::{
     ContextChip, DEFAULT_HITS, DEFAULT_LINES, DEFAULT_TURNS, Mention, MentionKind, Thumb,

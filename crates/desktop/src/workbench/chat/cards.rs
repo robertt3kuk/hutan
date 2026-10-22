@@ -150,30 +150,36 @@ impl ChatView {
                 &mut ids,
                 cx,
             ),
-            Body::Footer(footer) => match footer_card(footer, &look) {
-                // A turn that simply completed says so on its cards and in the status line; its
-                // footer is drawn only for what nothing else says (usage, a failure). Without a
-                // line the entry is its padding alone, the gap between two turns (a list item
-                // with no height would hide the top of the list from its scroll handler).
-                None => div().into_any_element(),
-                Some(card) => {
-                    let (recovery, failed) = match &footer.outcome {
-                        TurnOutcome::Failed { message, .. } => (
-                            self.provider_error_action(message, &look, cx),
-                            Some((message.clone(), entry.ts_ms)),
-                        ),
-                        _ => (None, None),
-                    };
-                    let retry = failed.and_then(|(message, at)| {
-                        self.footer_retry(index, &message, at, &look, cx)
-                    });
-                    div()
-                        .child(card)
+            Body::Footer(footer) => {
+                let card = footer_card(footer, &look);
+                let (recovery, failed) = match &footer.outcome {
+                    TurnOutcome::Failed { message, .. } => (
+                        self.provider_error_action(message, &look, cx),
+                        Some((message.clone(), entry.ts_ms)),
+                    ),
+                    _ => (None, None),
+                };
+                let turn = entry.turn;
+                let retry = failed.and_then(|(message, at)| {
+                    self.footer_retry(index, &message, at, &look, cx)
+                });
+                // The files the turn changed, with Rewind… (CK-5).
+                let files = self.checkpoint_footer(index, turn, &look, cx);
+                match (card, files) {
+                    // A turn that simply completed says so on its cards and in the status line;
+                    // its footer is drawn only for what nothing else says (usage, a failure,
+                    // the files it changed). Without a line the entry is its padding alone, the
+                    // gap between two turns (a list item with no height would hide the top of
+                    // the list from its scroll handler).
+                    (None, None) => div().into_any_element(),
+                    (card, files) => div()
+                        .children(card)
                         .children(recovery)
                         .children(retry)
-                        .into_any_element()
+                        .children(files)
+                        .into_any_element(),
                 }
-            },
+            }
             Body::Notice { level, message } => notice_card(*level, message, &look),
         };
         div()

@@ -140,6 +140,9 @@ impl Workbench {
                 this.open_transcript_of(session, cx);
             }),
         ));
+        // Agents page → session ⋯ → Checkpoints… (CK-5): each turn that changed files, with
+        // its Rewind….
+        entries.extend(self.checkpoints_menu_entry(session, cx));
         entries.push(Self::entry("Copy session ID", move |this, _, cx| {
             this.copy_session_id(session, cx);
         }));

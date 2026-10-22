@@ -375,6 +375,22 @@ pub enum Region {
     ChatOpen(usize, u32),
     /// A control of a file tab's agent bar (`reject`, `accept`, `follow`, `previous`, `next`).
     FileAgent(&'static str),
+    /// The *Rewind…* (or the `Restored — Undo` *Undo*) of the footer of chat entry `index`.
+    ChatRewind(usize),
+    /// The checkpoint line (`3 files changed · +41 −7`) of the footer of chat entry `index`.
+    ChatCheckpoint(usize),
+    /// A control of the Rewind preview sheet (`sheet`, `cancel`, `restore`, `restore-all`,
+    /// `interrupt`, `note`, `diff`, `notice`, `busy`).
+    Rewind(&'static str),
+    /// The checkbox of file `index` of the Rewind preview sheet, top to bottom.
+    RewindFile(usize),
+    /// Row `index` of the Checkpoints list (newest first); `CheckpointRewind` its *Rewind…*.
+    CheckpointRow(usize),
+    CheckpointRewind(usize),
+    /// A control of the Checkpoints list (`sheet`, `close`).
+    Checkpoints(&'static str),
+    /// A control of the "Restored N files · Undo" toast (`toast`, `undo`).
+    RestoreToast(&'static str),
 }
 
 /// A pane tab or dock tab being dragged.
@@ -612,6 +628,9 @@ pub struct Workbench {
     /// "Closed … · Undo" (`closing.rs`).
     pub(crate) close_toast: Option<super::closing::CloseToast>,
     pub(crate) toast_rev: u64,
+    /// The Rewind preview sheet, the Checkpoints list and the "Restored … · Undo" toast
+    /// (`rewind.rs`).
+    pub(crate) rewind: super::rewind::RewindState,
     /// The restart summary is on screen (`recovery_summary.rs`).
     pub(crate) recovery_open: bool,
     /// A large sidebar's one-row summary was opened into the full list ("Review").
@@ -888,6 +907,7 @@ impl Workbench {
                 });
             })
         };
+        let checkpoint_store = sessions.read(cx).checkpoints().clone();
         let subscriptions = vec![
             modal_guard,
             focus_modality,
@@ -959,6 +979,13 @@ impl Workbench {
                 window,
                 |this, _, event: &crate::sessions::SessionClosed, window, cx| {
                     this.on_session_closed(event.session_id, window, cx);
+                },
+            ),
+            // A turn ended: a preview that the running turn held up can go now.
+            cx.subscribe(
+                &checkpoint_store,
+                |this, _, event: &crate::sessions::checkpoints::TurnEnded, cx| {
+                    this.on_turn_ended(event.0, cx);
                 },
             ),
         ];
@@ -1098,6 +1125,7 @@ impl Workbench {
             notice: None,
             close_toast: None,
             toast_rev: 0,
+            rewind: super::rewind::RewindState::new(cx),
             recovery_open: false,
             recovery_review: false,
             last_title: String::new(),

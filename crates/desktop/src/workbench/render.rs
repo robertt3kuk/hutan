@@ -162,6 +162,9 @@ impl Render for Workbench {
         let menu = self.render_context_menu(cx);
         let modal = self.render_modal(cx);
         let close_toast = self.render_close_toast(cx);
+        let restore_toast = self.render_restore_toast(cx);
+        let checkpoints_list = self.render_checkpoints_list(cx);
+        let rewind_sheet = self.render_rewind_sheet(cx);
         let daemon_popover = self.render_daemon_popover(cx);
         let recovery = self.render_recovery_summary(cx);
         let sheet = self.render_settings_sheet(cx);
@@ -196,6 +199,7 @@ impl Render for Workbench {
                 cx.listener(|this, _, _, cx| this.finish_resize(cx)),
             );
         let root = self.bind_actions(root, cx);
+        let root = self.bind_rewind_actions(root, cx);
 
         root.child(
             div()
@@ -240,10 +244,13 @@ impl Render for Workbench {
         .children(agent_picker)
         .children(launcher)
         .children(close_toast)
+        .children(restore_toast)
         .children(menu)
         .children(sheet)
         .children(setup)
         .children(modal)
+        .children(checkpoints_list)
+        .children(rewind_sheet)
         // Last: its paint ends the frame the benchmarks time (`frames`).
         .children(crate::frames::enabled().then(crate::frames::probe))
     }

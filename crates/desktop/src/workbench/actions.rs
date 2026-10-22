@@ -124,6 +124,8 @@ actions!(
         QuickOpen,
         ShowFiles,
         RevealActiveFile,
+        RewindFocusedChat,
+        UndoLastRestore,
     ]
 );
 
@@ -222,6 +224,13 @@ pub struct SessionMenuAt {
     pub position: gpui::Point<gpui::Pixels>,
 }
 
+/// A checkpoint of a chat session (ADR 0019): the turn to rewind, or the restore to undo.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CheckpointAt {
+    pub session: hutan_core::SessionId,
+    pub checkpoint: hutan_core::CheckpointId,
+}
+
 /// What a "▶ Start" button opens the Start… sheet with.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct LauncherOpen {
@@ -283,6 +292,13 @@ data_actions! {
     OpenTranscriptOf(String);
     /// Open the Changes view of this session's checkout.
     ShowAgentChanges(String);
+    /// Preview restoring the files of a chat turn's checkpoint (the turn footer's *Rewind…*,
+    /// the Checkpoints list).
+    RewindCheckpoint(CheckpointAt);
+    /// Restore a restore's checkpoint: Undo of `Restored — Undo` and of the toast.
+    UndoRestore(CheckpointAt);
+    /// The Checkpoints list of a chat session (Agents page → ⋯ → Checkpoints…).
+    ShowCheckpoints(hutan_core::SessionId);
     StopSessionById(String);
     /// Close the session (asks first when something runs in it); History's Reopen is
     /// `ReopenSessionById`.
@@ -680,6 +696,11 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Accounts…", ManageAccounts),
         command("Chat: Switch Model…", SwitchChatModel),
         command("Chat: Toggle Send Key", ToggleSendKey),
+        command(
+            "Chat: Rewind Files to Before This Turn…",
+            RewindFocusedChat,
+        ),
+        command("Chat: Undo Last Restore", UndoLastRestore),
     ]);
     if assistant {
         out.push(command("Mawas: Open", OpenAssistant));
