@@ -61,9 +61,14 @@ pub enum Key {
 
 impl Key {
     /// Whether Insert mode answers the key itself, also in a field that types for itself
-    /// ([`Options::insert_passthrough`]): Escape and Vim's ⌃ keys of Insert mode.
+    /// ([`Options::insert_passthrough`]): Escape and Vim's ⌃ keys of Insert mode (`⌃N` / `⌃P`
+    /// are the owner's completion).
     pub fn is_insert_command(self) -> bool {
-        matches!(self, Key::Escape | Key::Ctrl('c'))
+        match self {
+            Key::Escape => true,
+            Key::Ctrl(c) => "cwuhjmtdoraey".contains(c),
+            _ => false,
+        }
     }
 }
 

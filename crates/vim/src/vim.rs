@@ -205,6 +205,10 @@ pub(crate) struct Core {
     /// The lines `:g` and `:normal` still have to visit (innermost last), moved with every
     /// edit; a removed line becomes `None`.
     pub line_lists: Vec<Vec<Option<usize>>>,
+    /// `⌃R` in Insert mode waits for the register's name.
+    pub insert_register: bool,
+    /// `⌃O` in Insert mode: the Normal command after which Insert comes back.
+    pub insert_once: Option<crate::insert::InsertOnce>,
 }
 
 /// The modal state of one field. The text stays in the [`VimHost`] the keys are applied to.
@@ -318,6 +322,8 @@ impl<H: VimHost> Vim<H> {
         c.insert = None;
         c.depth = 0;
         c.failed = false;
+        c.insert_register = false;
+        c.insert_once = None;
     }
 
     /// The keys typed so far of a command in progress (`2d`), or the `:` / `/` / `?` line
@@ -362,6 +368,13 @@ impl<H: VimHost> Vim<H> {
             search: None,
         };
         matches!(command::parse(&keys, cx), Parse::Done(_))
+    }
+
+    /// Whether `key` is the modal layer's in Insert mode in a field that types for itself
+    /// ([`Options::insert_passthrough`]): Escape, Vim's Insert ⌃ keys, and the register name
+    /// after `⌃R`. `false` outside Insert mode.
+    pub fn takes_insert_key(&self, key: Key) -> bool {
+        self.core.mode == Mode::Insert && self.core.takes_insert_key(key)
     }
 
     /// The register being recorded into (`q{reg}`).
@@ -623,7 +636,7 @@ impl Core {
             return self.cmdline_key(host, key, opts, clip);
         }
         match self.mode {
-            Mode::Insert => self.insert_key(host, key, opts),
+            Mode::Insert => self.insert_key(host, key, opts, clip),
             _ => self.command_key(host, key, opts, clip),
         }
     }
@@ -759,11 +772,29 @@ impl Core {
 
     // ---- Insert ------------------------------------------------------------------------------
 
-    fn insert_key<H: VimHost>(&mut self, host: &mut H, key: Key, opts: Options) -> Outcome {
+    fn insert_key<H: VimHost>(
+        &mut self,
+        host: &mut H,
+        key: Key,
+        opts: Options,
+        clip: &mut dyn Clipboard,
+    ) -> Outcome {
         // `i_CTRL-C` ends Insert as Escape does (a real Vim repeats a count's text for a typed
         // `⌃C` too, unless the key interrupted it).
-        if matches!(key, Key::Escape | Key::Ctrl('c')) {
+        if !self.insert_register && matches!(key, Key::Escape | Key::Ctrl('c')) {
             self.leave_insert(host, opts);
+            return Outcome::Handled;
+        }
+        if let Some(record) = self.insert_control(host, key, opts, clip) {
+            if let Some(session) = self.insert.as_mut() {
+                // A field that types for itself typed keys the layer never saw: `".` is then
+                // the text the session left.
+                match (record, &mut session.typed) {
+                    (_, typed) if opts.insert_passthrough => *typed = None,
+                    (Some(text), Some(typed)) => typed.push_str(&text),
+                    _ => {}
+                }
+            }
             return Outcome::Handled;
         }
         if opts.insert_passthrough {
@@ -810,6 +841,8 @@ impl Core {
         host.begin_group();
         self.changed = true;
         self.mode = Mode::Insert;
+        // A command after `⌃O` that starts Insert itself (`a`, `o`): no second return.
+        self.insert_once = None;
         let cursor = host.cursor();
         self.insert = Some(InsertSession {
             origin: cursor,
@@ -823,6 +856,17 @@ impl Core {
     }
 
     pub fn leave_insert<H: VimHost>(&mut self, host: &mut H, opts: Options) {
+        self.finish_insert(host, opts, true);
+    }
+
+    /// Ends Insert mode; the caret steps back onto the last character typed unless `step_back`
+    /// is off (`⌃O`).
+    pub(crate) fn finish_insert<H: VimHost>(
+        &mut self,
+        host: &mut H,
+        opts: Options,
+        step_back: bool,
+    ) {
         let session = self.insert.take();
         let inserted = session.as_ref().and_then(|s| {
             let cursor = host.cursor();
@@ -881,6 +925,9 @@ impl Core {
         self.want_col = None;
         // Like Vim, the caret steps back onto the last character typed (a block `I` / `A`
         // rests on the block's corner).
+        if !step_back {
+            return;
+        }
         let buf = Text::new(&*host);
         let at = host.cursor();
         if let Some(corner) = session
@@ -1061,9 +1108,15 @@ impl Core {
                 _ => false,
             };
             if ignored {
+                // After `⌃O` any key is the command, Insert comes back.
+                let once = self.insert_once.is_some();
                 self.rec.clear();
                 self.after_command(host);
-                return Outcome::Ignored;
+                return if once {
+                    Outcome::Handled
+                } else {
+                    Outcome::Ignored
+                };
             }
             self.message = None;
         }
@@ -1159,6 +1212,7 @@ impl Core {
             self.changed = false;
             self.close_group(host);
             self.clamp_normal(host);
+            self.insert_once_end(host);
         } else if self.mode.is_visual() {
             self.rec.clear();
             self.changed = false;

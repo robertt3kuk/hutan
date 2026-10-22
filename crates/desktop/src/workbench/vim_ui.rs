@@ -63,9 +63,9 @@ impl Clipboard for AppClipboard<'_> {
 }
 
 /// Feeds `event` to the modal layer over `input`. Typed characters in Insert mode are not keys
-/// to it: they reach the field through the platform's text input (`text_field`), like every
-/// other text. Keys are read as in a file tab ([`vim_key_of`]: a Cyrillic layout's keys are
-/// commands by their place on the keyboard).
+/// to it (but the register name after `⌃R`): they reach the field through the platform's text
+/// input (`text_field`), like every other text. Keys are read as in a file tab ([`vim_key_of`]:
+/// a Cyrillic layout's keys are commands by their place on the keyboard).
 pub fn apply(
     vim: &mut Vim,
     input: &mut TextInput,
@@ -74,7 +74,9 @@ pub fn apply(
     cx: &mut App,
 ) -> Outcome {
     match vim_key_of(event, |c| vim.takes_text(c)) {
-        Some(Key::Char(_)) if vim.mode() == Mode::Insert => Outcome::Ignored,
+        Some(key @ Key::Char(_)) if vim.mode() == Mode::Insert && !vim.takes_insert_key(key) => {
+            Outcome::Ignored
+        }
         Some(key) => vim.key(input, key, options, &mut AppClipboard(cx)),
         None => Outcome::Ignored,
     }

@@ -289,3 +289,84 @@ fn with_vim_off_ctrl_bracket_is_no_escape(cx: &mut TestAppContext) {
         Some("split".to_owned())
     );
 }
+
+// ---- Insert mode -------------------------------------------------------------------------------
+
+#[gpui::test]
+fn insert_mode_control_keys_edit_a_file_tab(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (view, cx, _settings) = open(cx, &daemon, "[editor]\nvim_mode = true\n");
+    let dir = tempfile::tempdir().unwrap();
+    let tab = open_text(&view, cx, dir.path(), "i.txt", "foo bar\nxyz\n");
+
+    // ⌃W stops once where the insert started, ⌃U deletes the line before the caret.
+    cx.simulate_input("A baz");
+    cx.simulate_keystrokes("ctrl-w");
+    assert_eq!(text(&tab.buffer, cx), "foo bar \nxyz\n");
+    cx.simulate_keystrokes("ctrl-w");
+    assert_eq!(
+        text(&tab.buffer, cx),
+        "foo bar\nxyz\n",
+        "stopped where `A` began"
+    );
+    cx.simulate_keystrokes("ctrl-w");
+    assert_eq!(text(&tab.buffer, cx), "foo \nxyz\n");
+    cx.simulate_keystrokes("ctrl-u");
+    assert_eq!(text(&tab.buffer, cx), "\nxyz\n");
+    // ⌃Y copies the character above, ⌃E the one below: back on line 2.
+    cx.simulate_input("abc");
+    cx.simulate_keystrokes("escape");
+    cx.simulate_input("jI");
+    cx.simulate_keystrokes("ctrl-y ctrl-y");
+    assert_eq!(text(&tab.buffer, cx), "abc\nabxyz\n");
+    // ⌃H is Backspace, ⌃J breaks the line.
+    cx.simulate_keystrokes("ctrl-h ctrl-j");
+    assert_eq!(text(&tab.buffer, cx), "abc\na\nxyz\n");
+    // ⌃T / ⌃D indent and dedent the line (the file's indent: here a tab).
+    cx.simulate_keystrokes("ctrl-t");
+    assert!(
+        text(&tab.buffer, cx).contains("\n\txyz\n")
+            || text(&tab.buffer, cx).contains("\n    xyz\n"),
+        "{:?}",
+        text(&tab.buffer, cx)
+    );
+    cx.simulate_keystrokes("ctrl-d");
+    assert_eq!(text(&tab.buffer, cx), "abc\na\nxyz\n");
+    // ⌃O runs one Normal command and comes back to Insert: `$`, then typing at the end.
+    cx.simulate_keystrokes("ctrl-o");
+    assert_eq!(file_mode(&tab, cx), Some(VimMode::Normal));
+    cx.simulate_input("$");
+    assert_eq!(file_mode(&tab, cx), Some(VimMode::Insert));
+    cx.simulate_input("!");
+    assert_eq!(text(&tab.buffer, cx), "abc\na\nxyz!\n");
+    // ⌃R {reg} inserts a register, ⌃A the last inserted text.
+    cx.simulate_keystrokes("escape");
+    cx.simulate_input("ggyiwGA ");
+    cx.simulate_keystrokes("ctrl-r");
+    cx.simulate_input("\"");
+    assert_eq!(text(&tab.buffer, cx), "abc\na\nxyz! abc\n");
+    cx.simulate_keystrokes("escape");
+    cx.simulate_input("ggA");
+    cx.simulate_keystrokes("ctrl-a");
+    assert_eq!(text(&tab.buffer, cx), "abc abc\na\nxyz! abc\n");
+}
+
+#[gpui::test]
+fn insert_mode_control_keys_edit_the_composer(cx: &mut TestAppContext) {
+    let env = ChatEnv::new();
+    let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
+    let info = daemon.create_chat(&env.cwd());
+    let (_view, chat, model, cx) = open_chat(cx, &daemon, "[editor]\nvim_mode = true\n", info.id);
+
+    cx.simulate_input("hello big world");
+    cx.simulate_keystrokes("ctrl-w");
+    assert_eq!(draft(&model, cx), "hello big ");
+    cx.simulate_keystrokes("ctrl-h ctrl-u");
+    assert_eq!(draft(&model, cx), "");
+    cx.simulate_input("one two");
+    cx.simulate_keystrokes("ctrl-o");
+    cx.simulate_input("0");
+    assert_eq!(chat_mode(&chat, cx), Some(Mode::Insert));
+    cx.simulate_input(">");
+    assert_eq!(draft(&model, cx), ">one two");
+}

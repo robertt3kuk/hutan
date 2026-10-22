@@ -396,7 +396,11 @@ impl CodeView {
             return false;
         };
         if mode == Mode::Insert {
-            if !key.is_insert_command() {
+            let takes = self
+                .vim
+                .as_ref()
+                .is_some_and(|v| v.vim.takes_insert_key(key));
+            if !takes {
                 return false;
             }
             // An input method's composition ends first; the next Escape leaves Insert.

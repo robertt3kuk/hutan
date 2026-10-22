@@ -26,6 +26,7 @@ mod command;
 pub mod ex;
 mod exec;
 mod host;
+mod insert;
 mod key;
 mod marks;
 mod normal;

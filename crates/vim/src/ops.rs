@@ -881,7 +881,7 @@ impl Core {
     // ---- shift and indent --------------------------------------------------------------------------
 
     /// The width of a line's indent (tabs to `'tabstop'`) and its length in bytes.
-    fn indent_of(&self, text: &str) -> (usize, usize) {
+    pub(crate) fn indent_of(&self, text: &str) -> (usize, usize) {
         let ts = self.settings.tab_stop.max(1);
         let mut width = 0;
         let mut bytes = 0;
@@ -897,7 +897,7 @@ impl Core {
     }
 
     /// An indent `width` wide: tabs and spaces, or spaces with `'expandtab'`.
-    fn indent_text(&self, width: usize) -> String {
+    pub(crate) fn indent_text(&self, width: usize) -> String {
         if self.settings.expand_tab {
             return " ".repeat(width);
         }
