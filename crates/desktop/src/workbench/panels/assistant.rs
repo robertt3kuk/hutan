@@ -1053,7 +1053,7 @@ impl AssistantPanel {
                 .and_then(|session| store.session(session))
                 .map(|info| store.presentation(info))
         };
-        let scope = Button::new("assistant-scope", scope_label, &theme, &tokens)
+        let scope = Button::new("assistant-scope", scope_label, theme, tokens)
             .compact()
             .ghost()
             .max_width(112.0)
@@ -1073,7 +1073,7 @@ impl AssistantPanel {
                 .into_any_element()
         });
         let folded = self.folded;
-        let more = ui::IconButton::new("assistant-more", Icon::ActionMore, "More", &theme, &tokens)
+        let more = ui::IconButton::new("assistant-more", Icon::ActionMore, "More", theme, tokens)
             .compact()
             .on_click(cx.listener(|_, e: &gpui::ClickEvent, window, cx| {
                 window.dispatch_action(Box::new(ShowAssistantMoreMenu(e.position())), cx);
