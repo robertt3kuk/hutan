@@ -528,22 +528,18 @@ impl Render for InstructionsPanel {
                 for (title, scope) in [("", Scope::Project), ("Your user files", Scope::User)] {
                     let group: Vec<&InstructionFile> =
                         files.iter().filter(|f| f.scope == scope).collect();
-                    if scope == Scope::User {
-                        if self
-                            .env
-                            .settings
-                            .get::<InstructionsPanelSettings>()
-                            .show_user_files
-                        {
-                            body.push(section(title));
-                            if group.is_empty() {
-                                body.push(note(
-                                    "None found in ~/.codex, ~/.claude or ~/.omp/agent.",
-                                ));
-                            } else {
-                                body.push(note("Read-only here. Edit them in Finder."));
-                            }
-                        }
+                    let show_user = self
+                        .env
+                        .settings
+                        .get::<InstructionsPanelSettings>()
+                        .show_user_files;
+                    if scope == Scope::User && show_user {
+                        body.push(section(title));
+                        body.push(note(if group.is_empty() {
+                            "None found in ~/.codex, ~/.claude or ~/.omp/agent."
+                        } else {
+                            "Read-only here. Edit them in Finder."
+                        }));
                     }
                     for file in group {
                         body.push(self.render_row(index, file, focused, &theme, &tokens, cx));

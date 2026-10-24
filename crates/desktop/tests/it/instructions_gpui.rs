@@ -820,7 +820,7 @@ fn a_click_opens_a_project_file_in_a_tab_and_never_a_user_file(cx: &mut TestAppC
             .to_owned()
     });
     assert_eq!(
-        PathBuf::from(opened).canonicalize().unwrap(),
+        opened.canonicalize().unwrap(),
         agents.canonicalize().unwrap()
     );
 }

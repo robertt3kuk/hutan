@@ -625,8 +625,8 @@ mod tests {
                 .map(|e| e.namespace)
                 .collect()
         };
-        // sessions, inspector, files, problems, search.
-        assert_eq!(names("panels.").len(), 5);
+        // sessions, inspector, files, problems, instructions, search.
+        assert_eq!(names("panels.").len(), 6);
         let mut font = names("font");
         font.sort_unstable();
         assert_eq!(font, ["editor", "terminal"], "code and terminal fonts");
