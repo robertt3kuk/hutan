@@ -19,14 +19,16 @@ use std::time::Duration;
 
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::git::{
-    BlameCommit, BlameHunk, GIT_BLAME_MAX_HUNKS, GIT_FILE_MAX_BYTES, GIT_LOG_MAX_LIMIT,
-    GIT_MESSAGE_MAX_BYTES, GIT_SHOW_MAX_FILES, GIT_SHOW_PATCH_CAP, GIT_SUBJECT_MAX_CHARS,
-    GIT_UNCOMMITTED, GitBlame, GitBlameResult, GitCommit, GitFile, GitFileResult, GitLog,
-    GitLogResult, GitShow, GitShowResult,
+    BlameCommit, BlameHunk, GIT_BLAME_MAX_CONTENTS, GIT_BLAME_MAX_HUNKS, GIT_FILE_MAX_BYTES,
+    GIT_LOG_MAX_LIMIT, GIT_MESSAGE_MAX_BYTES, GIT_SHOW_MAX_FILES, GIT_SHOW_PATCH_CAP,
+    GIT_SUBJECT_MAX_CHARS, GIT_UNCOMMITTED, GitBlame, GitBlameResult, GitCommit, GitFile,
+    GitFileResult, GitLog, GitLogResult, GitShow, GitShowResult,
 };
 use hutan_protocol::worktree::DiffFile;
 
-use super::review::{git, parse_name_status, parse_numstat, run_git_capped};
+use super::review::{
+    git, parse_name_status, parse_numstat, run_git_capped, run_git_capped_with_input,
+};
 use super::{
     READ_TIMEOUT, RawWorktree, WorktreeService, bad_request, git_failed, invalid_state, run_git,
 };
@@ -155,12 +157,32 @@ impl WorktreeService {
             Some(rev) => Some(resolve_commit(&root, rev).await?),
             None => None,
         };
+        if req
+            .contents
+            .as_ref()
+            .is_some_and(|text| text.len() > GIT_BLAME_MAX_CONTENTS)
+        {
+            return Err(bad_request(format!(
+                "`contents` is over {} MiB",
+                GIT_BLAME_MAX_CONTENTS / (1024 * 1024)
+            )));
+        }
         let mut args = history_prefix();
         args.extend(strings(&["blame", "--porcelain", "--no-textconv"]));
+        if req.contents.is_some() {
+            args.extend(strings(&["--contents", "-"]));
+        }
         args.extend(rev.iter().map(OsString::from));
         args.push(OsString::from("--"));
         args.push(OsString::from(&rel));
-        let run = run_git_capped(&root, &os_refs(&args), HISTORY_TIMEOUT, BLAME_CAP).await?;
+        let run = run_git_capped_with_input(
+            &root,
+            &os_refs(&args),
+            HISTORY_TIMEOUT,
+            BLAME_CAP,
+            req.contents.map(String::into_bytes),
+        )
+        .await?;
         if run.code != Some(0) && !run.truncated {
             let message = run.stderr.trim();
             return Err(

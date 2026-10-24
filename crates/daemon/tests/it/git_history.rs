@@ -124,6 +124,7 @@ impl Env {
             .git_blame(GitBlame {
                 path: path.to_owned(),
                 rev: rev.map(str::to_owned),
+                contents: None,
             })
             .await
             .unwrap()
@@ -308,6 +309,36 @@ async fn blame_maps_every_line_to_its_commit_and_marks_what_is_not_committed() {
         .unwrap();
     assert_eq!(pending.subject, "");
     assert_eq!(dirty.hunks.iter().map(|h| h.count).sum::<u32>(), 5);
+
+    // The editor's unsaved text is blamed as it stands: its own lines belong to no commit,
+    // however the disk differs.
+    let buffer = "one\nTWO\nmine\nthree\nfour\nmore\n";
+    let from_buffer = env
+        .client
+        .git_blame(GitBlame {
+            path: file.clone(),
+            rev: None,
+            contents: Some(buffer.to_owned()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(from_buffer.lines, 6);
+    let by_line: Vec<(u32, bool)> = from_buffer
+        .hunks
+        .iter()
+        .flat_map(|h| (h.line..h.line + h.count).map(move |l| (l, h.commit == GIT_UNCOMMITTED)))
+        .collect();
+    assert_eq!(
+        by_line,
+        [
+            (1, false),
+            (2, false),
+            (3, true),
+            (4, false),
+            (5, false),
+            (6, true)
+        ]
+    );
 
     // A revision blames what was committed there.
     let at_first = env.blame(&file, Some(&first)).await;
@@ -574,7 +605,8 @@ async fn queries_are_bounded_and_refuse_bad_requests() {
             env.client
                 .git_blame(GitBlame {
                     path: env.root.clone(),
-                    rev: None
+                    rev: None,
+                    contents: None
                 })
                 .await
         ),
@@ -586,7 +618,8 @@ async fn queries_are_bounded_and_refuse_bad_requests() {
             env.client
                 .git_blame(GitBlame {
                     path: env.root.join("untracked.txt"),
-                    rev: None
+                    rev: None,
+                    contents: None
                 })
                 .await
         ),
@@ -597,7 +630,8 @@ async fn queries_are_bounded_and_refuse_bad_requests() {
             env.client
                 .git_blame(GitBlame {
                     path: env.root.join("missing.txt"),
-                    rev: None
+                    rev: None,
+                    contents: None
                 })
                 .await
         ),

@@ -3222,6 +3222,7 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::GitBlame(GitBlame {
                 path: "/Users/me/proj/hutan/src/lib.rs".into(),
                 rev: None,
+                contents: None,
             }),
         ),
         (
@@ -3229,6 +3230,7 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::GitBlame(GitBlame {
                 path: "/Users/me/proj/hutan/src/lib.rs".into(),
                 rev: Some("v0.2.0".into()),
+                contents: Some("pub fn hi() {}\n".into()),
             }),
         ),
         (

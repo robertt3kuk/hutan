@@ -18,6 +18,8 @@ pub const GIT_SUBJECT_MAX_CHARS: usize = 200;
 pub const GIT_MESSAGE_MAX_BYTES: usize = 64 * 1024;
 /// Most hunks one `git.blame` answers.
 pub const GIT_BLAME_MAX_HUNKS: usize = 20_000;
+/// Longest `contents` of a `git.blame`, in bytes.
+pub const GIT_BLAME_MAX_CONTENTS: usize = 2 * 1024 * 1024;
 /// A `git.show` patch (and so a file's part of it) is cut here, on a line boundary.
 pub const GIT_SHOW_PATCH_CAP: usize = 2 * 1024 * 1024;
 /// A `git.show` lists at most this many files.
@@ -88,8 +90,8 @@ pub struct GitLogResult {
     pub next_before: Option<String>,
 }
 
-/// `git.blame`: which commit last changed each line of the file at `path`. Without `rev` the
-/// file is the one in the working tree (lines not in `HEAD` belong to no commit: the hunk's
+/// `git.blame`: which commit last changed each line of the file at `path`. Without `rev` or
+/// `contents` the file is the one in the working tree (lines not in `HEAD` belong to no commit: the hunk's
 /// `commit` is [`GIT_UNCOMMITTED`]); with `rev`, that revision's. Whitespace changes count (no
 /// `-w`), copies are not followed (`-M` is not used: a line moved inside the file is the commit
 /// that moved it). Read-only, bounded, under a timeout, killed when the connection closes.
@@ -103,6 +105,12 @@ pub struct GitBlame {
     pub path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
+    /// Blame this text instead of the file in the working tree (`git blame --contents -`): an
+    /// editor's unsaved buffer. Lines that are not in the history (the buffer's own edits)
+    /// belong to [`GIT_UNCOMMITTED`]. At most [`GIT_BLAME_MAX_CONTENTS`] bytes
+    /// (`bad_request` beyond).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contents: Option<String>,
 }
 
 /// The `commit` of a blame hunk (and the `id` of its [`GitBlameResult::commits`] entry) for lines

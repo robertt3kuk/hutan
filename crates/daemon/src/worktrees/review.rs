@@ -85,8 +85,29 @@ pub(super) async fn run_git_capped(
     limit: Duration,
     cap: usize,
 ) -> Result<Capped, ErrorBody> {
+    run_git_capped_with_input(cwd, args, limit, cap, None).await
+}
+
+/// [`run_git_capped`] with `input` on git's standard input (closed after it).
+pub(super) async fn run_git_capped_with_input(
+    cwd: &Path,
+    args: &[&OsStr],
+    limit: Duration,
+    cap: usize,
+    input: Option<Vec<u8>>,
+) -> Result<Capped, ErrorBody> {
     let mut command = git_command(cwd, args);
+    if input.is_some() {
+        command.stdin(std::process::Stdio::piped());
+    }
     let mut child = command.spawn().map_err(|e| git_unavailable(&e))?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        // Written on a task of its own: git may print before it has read everything. A git that
+        // stops reading (it failed) closes the pipe, which ends the write.
+        tokio::spawn(async move {
+            let _ = tokio::io::AsyncWriteExt::write_all(&mut stdin, &input).await;
+        });
+    }
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         return Err(ErrorBody::new(
             ErrorCode::Internal,
