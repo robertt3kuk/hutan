@@ -1912,8 +1912,12 @@ fn finishing_the_main_checkout_commits_and_pushes_to_its_upstream(cx: &mut TestA
 
 #[gpui::test]
 fn a_finish_whose_push_fails_says_why_and_keeps_the_commit(cx: &mut TestAppContext) {
-    // `main` has no upstream: the commit is made, the push says so.
+    // `main` has a remote but no upstream: the commit is made, the push says so.
     let env = Env::with_config(DAEMON_ENV);
+    git(
+        &env.root,
+        &["remote", "add", "origin", "/nonexistent/origin.git"],
+    );
     fs::write(env.root.join("a.txt"), "local\n").unwrap();
     let (view, cx) = open(cx, &env);
     let changes = open_changes(&view, cx, &env.root);
@@ -1938,6 +1942,30 @@ fn a_finish_whose_push_fails_says_why_and_keeps_the_commit(cx: &mut TestAppConte
     assert!(
         view.read_with(cx, |wb, _| wb.notice().map(|n| n.to_string()))
             .is_some_and(|n| n.starts_with("Not pushed — no upstream")),
+    );
+}
+
+/// A repository with no remote at all (the Home folder after *Track changes*) is a commit-only
+/// Finish: the commit lands, the push step says there was nothing to push to, and nothing fails.
+#[gpui::test]
+fn a_finish_without_a_remote_is_commit_only(cx: &mut TestAppContext) {
+    let env = Env::with_config(DAEMON_ENV);
+    fs::write(env.root.join("a.txt"), "local\n").unwrap();
+    let (view, cx) = open(cx, &env);
+    let changes = open_changes(&view, cx, &env.root);
+    click(&view, cx, Region::Changes("finish"));
+    changes.update(cx, |c, cx| c.set_finish_message("Local work", cx));
+    click(&view, cx, Region::Changes("finish-confirm"));
+    wait_until(cx, "the steps", |cx| {
+        changes.read_with(cx, |c, _| c.finished().is_some())
+    });
+    let done = changes.read_with(cx, |c, _| c.finished().cloned().unwrap());
+    let lines = hutan_desktop::workbench::finish_step_lines(&done);
+    assert_eq!(lines[1].0, hutan_desktop::workbench::StepTone::Skipped);
+    assert!(lines[1].1.starts_with("Commit only:"), "{lines:?}");
+    assert_eq!(
+        git_out(&env.root, &["log", "-1", "--format=%s"]).trim(),
+        "Local work"
     );
 }
 
