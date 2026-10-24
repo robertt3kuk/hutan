@@ -11,6 +11,7 @@ pub mod harness_install;
 pub mod icons;
 pub mod install;
 pub mod instance;
+pub mod instructions;
 pub mod integrations;
 pub mod macos;
 pub mod sessions;

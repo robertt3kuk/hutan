@@ -34,6 +34,7 @@ mod history_catalog_gpui;
 mod history_gpui;
 mod history_panel_gpui;
 mod icons_gpui;
+mod instructions_gpui;
 mod keymap_gpui;
 mod launcher_gpui;
 mod layout_gpui;
