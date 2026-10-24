@@ -456,7 +456,8 @@ pub enum StepReason {
     EarlierStepFailed,
     /// Failed merge: the branches conflict; the merge was aborted ([`FinishMerge::conflicts`]).
     Conflict,
-    /// Failed push: the branch has no upstream (or tracks a local branch).
+    /// Failed push: the branch has no upstream (or tracks a local branch). Skipped push: the
+    /// repository has no remote at all, so the Finish is commit-only (protocol 0.43).
     NoUpstream,
     /// Failed push: not a fast-forward — the upstream has commits the branch lacks (seen by the
     /// fetch before pushing, [`FinishPush::behind`]), or the remote refused the update (a hook,

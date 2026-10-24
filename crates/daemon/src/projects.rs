@@ -104,8 +104,13 @@ impl HomeRules {
         }
     }
 
+    /// A repository rooted here is never a project: `/`, the home directory (a dotfiles
+    /// repository) and the Home folder itself (after *Track changes*, `project.git_init`):
+    /// each would swallow every folder below it.
     fn is_catch_all(&self, root: &Path) -> bool {
-        root == Path::new("/") || self.user_home.as_deref() == Some(root)
+        root == Path::new("/")
+            || self.user_home.as_deref() == Some(root)
+            || root == self.home_folder
     }
 
     /// The assignment of `dir` (canonical): the deepest enclosing git repository's project;
@@ -496,5 +501,23 @@ mod tests {
             Assignment::Home
         );
         assert_eq!(rules.assign_path(Some(&docs)), project(&docs));
+    }
+
+    #[test]
+    fn a_home_folder_under_version_control_stays_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = canonical(&dir);
+        let user_home = base.join("me");
+        let home_folder = user_home.join("Hutan");
+        fs::create_dir_all(home_folder.join("scratch")).unwrap();
+        let rules = HomeRules::new(Some(user_home), home_folder.clone());
+        git(&home_folder, &["init", "-q", "-b", "main"]);
+
+        // Tracked by git, the Home folder and what is below it are still Home …
+        assert_eq!(rules.assign(&home_folder), Assignment::Home);
+        assert_eq!(rules.assign(&home_folder.join("scratch")), Assignment::Home);
+        // … while a repository of its own inside it is still a project.
+        let app = repo(&home_folder, "app");
+        assert!(matches!(rules.assign(&app), Assignment::Project(i) if i.root == app));
     }
 }

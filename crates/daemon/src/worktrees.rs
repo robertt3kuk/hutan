@@ -30,6 +30,7 @@ use tokio::sync::Mutex;
 use tracing::{error, warn};
 
 use crate::bus::EventBus;
+use crate::checkpoints::turns::TurnCheckpoints;
 use crate::config::FinishSettings;
 use crate::harness::Harnesses;
 use crate::placement;
@@ -37,6 +38,7 @@ use crate::projects;
 use crate::registry::{RegistryHandle, log_write, now_ms};
 
 mod finish;
+mod init;
 mod review;
 
 /// Reads (list, status, rev-parse) finish well within this, even in a large repository.
@@ -71,6 +73,10 @@ pub struct WorktreeService {
     harnesses: Arc<Harnesses>,
     /// `[finish] push`: whether a Finish that does not say pushes.
     finish_push: AtomicBool,
+    /// The user's home directory: `project.git_init` refuses it.
+    user_home: Option<PathBuf>,
+    /// `[checkpoints]` as it is now: the file limit of `project.git_init`.
+    checkpoints: Arc<TurnCheckpoints>,
 }
 
 impl WorktreeService {
@@ -80,6 +86,8 @@ impl WorktreeService {
         bus: Arc<EventBus>,
         harnesses: Arc<Harnesses>,
         finish: FinishSettings,
+        user_home: Option<PathBuf>,
+        checkpoints: Arc<TurnCheckpoints>,
     ) -> Arc<Self> {
         Arc::new(Self {
             registry,
@@ -88,6 +96,8 @@ impl WorktreeService {
             writes: Mutex::new(()),
             harnesses,
             finish_push: AtomicBool::new(finish.push),
+            user_home,
+            checkpoints,
         })
     }
 

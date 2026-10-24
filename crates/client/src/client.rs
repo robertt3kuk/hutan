@@ -48,7 +48,9 @@ use hutan_protocol::messages::{
 use hutan_protocol::notify::{
     ClientFocus, NotificationIntent, NotifyAck, NotifyAct, NotifyActed, NotifyList, NotifyMute,
 };
-use hutan_protocol::project::{WorkspaceAssign, WorkspaceDelete};
+use hutan_protocol::project::{
+    ProjectGitInit, ProjectGitInitialized, WorkspaceAssign, WorkspaceDelete,
+};
 use hutan_protocol::provider::{
     ChatSetModel, DiscoveredProvider, ProviderAdd, ProviderDiscovery, ProviderInfo, ProviderList,
     ProviderModels, ProviderRef, ProviderResult, ProviderSetCredential, ProviderUpdate,
@@ -193,6 +195,8 @@ pub(crate) const IDENTITY_CAPABILITY: &str = "daemon.identity";
 pub(crate) const STOPPING_CAPABILITY: &str = "daemon.stopping";
 /// Capability for `terminal.search` (protocol 0.43).
 pub(crate) const TERMINAL_SEARCH_CAPABILITY: &str = "terminal.search";
+/// Capability for `project.git_init` (protocol 0.44).
+pub(crate) const PROJECT_GIT_INIT_CAPABILITY: &str = "project.git_init";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -240,6 +244,7 @@ const CAPABILITIES: &[&str] = &[
     IDENTITY_CAPABILITY,
     STOPPING_CAPABILITY,
     TERMINAL_SEARCH_CAPABILITY,
+    PROJECT_GIT_INIT_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -624,6 +629,16 @@ impl Client {
             .any(|capability| capability == CHECKPOINT_RESTORE_CAPABILITY)
     }
 
+    /// True when the daemon advertised capability `project.git_init` (protocol 0.44): a
+    /// folder that is not a repository can be put under version control
+    /// ([`Client::project_git_init`]).
+    pub fn supports_project_git_init(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == PROJECT_GIT_INIT_CAPABILITY)
+    }
+
     /// True when the daemon advertised capability `worktree.index` (protocol 0.34): the files
     /// of `worktree.diff` say whether they are staged, unstaged or both.
     pub fn supports_worktree_index(&self) -> bool {
@@ -874,6 +889,18 @@ impl Client {
             workspace_id,
         }))
         .await
+    }
+
+    /// `project.git_init` (protocol 0.44): `git init` and a first commit in a project's folder,
+    /// or in the Home folder (the Home workspace's id). User-only; a refusal (the home
+    /// directory, a repository already, a folder inside another repository, too many files)
+    /// is `invalid_state` with the reason.
+    pub async fn project_git_init(
+        &self,
+        project_id: WorkspaceId,
+    ) -> Result<ProjectGitInitialized, ClientError> {
+        self.call(Request::ProjectGitInit(ProjectGitInit { project_id }))
+            .await
     }
 
     /// Removes a workspace; its projects stay (`workspace.delete`).

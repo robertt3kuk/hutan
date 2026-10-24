@@ -3449,7 +3449,7 @@ impl SessionRegistry {
         let mailbox = self.mailbox.clone();
         tokio::spawn(async move {
             let outcome = if wake {
-                chats.start_waking(id, cwd, &spec).await
+                chats.start_waking(id, cwd, &spec, scope).await
             } else {
                 chats.start(id, cwd, &spec, scope).await
             };

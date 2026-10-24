@@ -49,3 +49,38 @@ pub struct WorkspaceAssign {
 pub struct WorkspaceDelete {
     pub workspace_id: WorkspaceId,
 }
+
+/// `project.git_init` (protocol 0.44, capability `project.git_init`; user-only, never an
+/// agent's): turns a project's folder, or the Home folder (`project_id` names the Home
+/// workspace), into a git repository so Changes, checkpoints and Finish work there. The daemon
+/// writes a `.gitignore` with Hutan's own scratch entries (appended to an existing one), runs
+/// `git init`, and commits what is there now with the user's own git identity. Nothing leaves
+/// the machine.
+///
+/// Refused: `invalid_state` when the folder is the user's home directory or `/`, is a
+/// repository already, lies inside another repository, has more files than checkpoints can
+/// seed (`[checkpoints] max_untracked_files`), or when git has no identity to commit with
+/// (the message says how to set one); `forbidden` for an agent-originated connection;
+/// `not_found` for an unknown id; `invalid_state` for a workspace (it has no folder of its
+/// own); `bad_request` when the folder is gone. A refusal leaves the folder as it was.
+/// Answered with [`ProjectGitInitialized`]; `worktree.changed` follows for the workspaces
+/// holding the folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectGitInit {
+    pub project_id: WorkspaceId,
+}
+
+/// Result of `project.git_init`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectGitInitialized {
+    /// The folder that is a repository now (canonical).
+    pub root: PathBuf,
+    /// The branch the initial commit is on.
+    pub branch: String,
+    /// The initial commit (full hash).
+    pub commit: String,
+    /// Files the initial commit holds.
+    pub files: u32,
+    /// Whether Hutan wrote `.gitignore` (created it, or added its entries to the existing one).
+    pub gitignore_written: bool,
+}

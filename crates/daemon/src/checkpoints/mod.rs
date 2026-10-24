@@ -468,6 +468,11 @@ impl Checkpoints {
             .map_err(|error| CheckpointError::Internal(error.to_string()))?
     }
 
+    /// The extra environment of the engine's git calls ([`Config::git_env`]).
+    pub fn git_env(&self) -> &BTreeMap<String, String> {
+        &self.inner.config.git_env
+    }
+
     /// The checkout containing `path`: its top level and the repository's common git
     /// directory.
     pub async fn repository(&self, path: &Path) -> Result<(PathBuf, PathBuf), CheckpointError> {

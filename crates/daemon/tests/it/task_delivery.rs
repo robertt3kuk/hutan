@@ -311,7 +311,9 @@ async fn a_finish_delivers_only_the_open_work_of_its_checkout() {
         .await;
     t.turn_recorded(reads_session, 1).await;
 
-    // A Finish that fails changes nothing: there is no upstream to push to.
+    // A Finish that fails changes nothing: the remote has no upstream branch to push to (a
+    // repository without any remote is a commit-only Finish, which lands).
+    git(&t.root, &["remote", "add", "origin", "/nonexistent/origin.git"]);
     let failed = t
         .user
         .worktree_finish(WorktreeFinish {

@@ -3156,6 +3156,10 @@ fn requests() -> Vec<(&'static str, Request)> {
                 text: true,
             }),
         ),
+        (
+            "project_git_init",
+            Request::ProjectGitInit(ProjectGitInit { project_id: ws() }),
+        ),
     ]
 }
 
@@ -6733,6 +6737,20 @@ fn responses_match_fixtures() {
                         exe_path: "/Applications/Hutan.app/Contents/MacOS/hutand".into(),
                         started_at_ms: 1_791_894_170_000,
                     }),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "project_git_initialized",
+            ControlMessage::ok(
+                34,
+                &ProjectGitInitialized {
+                    root: "/Users/me/Hutan".into(),
+                    branch: "main".into(),
+                    commit: "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d".into(),
+                    files: 12,
+                    gitignore_written: true,
                 },
             )
             .unwrap(),

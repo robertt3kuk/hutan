@@ -381,6 +381,26 @@ async fn a_branch_without_upstream_is_reported_and_the_commit_kept() {
     env.stop().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_repository_without_a_remote_finishes_commit_only() {
+    let env = Env::start(DAEMON_ENV).await;
+    git(&env.remote.root, &["remote", "remove", "origin"]);
+    fs::write(env.remote.root.join("a.txt"), "local\n").unwrap();
+
+    let done = env
+        .finish(&env.remote.root, "Local work", Some(true))
+        .await
+        .unwrap();
+    assert_eq!(done.commit.status, StepStatus::Ok);
+    assert!(!done.failed(), "no remote is no failure");
+    let push = done.push.unwrap();
+    assert_eq!(push.status, StepStatus::Skipped, "{push:?}");
+    assert_eq!(push.reason, Some(StepReason::NoUpstream));
+    assert!(push.message.unwrap().contains("commit only"));
+    assert_eq!(subject(&env.remote.root, "main"), "Local work");
+    env.stop().await;
+}
+
 // Worktree --------------------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]

@@ -80,6 +80,7 @@ pub const CAPABILITIES: &[&str] = &[
     "daemon.identity",
     "daemon.stopping",
     "terminal.search",
+    "project.git_init",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit

@@ -898,6 +898,22 @@ impl ChatManager {
         id: SessionId,
         cwd: PathBuf,
         spec: &ChatSpec,
+        scope: Scope,
+    ) -> Result<Started, ErrorBody> {
+        // The assistant's turns have checkpoints from its first one on (see `start`).
+        self.checkpoints.open(id, cwd.clone(), scope);
+        let started = self.wake_agent(id, cwd, spec).await;
+        if started.is_err() {
+            self.checkpoints.close(id);
+        }
+        started
+    }
+
+    async fn wake_agent(
+        self: &Arc<Self>,
+        id: SessionId,
+        cwd: PathBuf,
+        spec: &ChatSpec,
     ) -> Result<Started, ErrorBody> {
         // An assistant that was opened but never started has neither a conversation nor a
         // model yet: its model is picked now, the way `assistant.open` used to do it up front.
@@ -970,8 +986,10 @@ impl ChatManager {
     }
 
     /// Starts (or resumes, when `spec.thread_id` is set) the agent of a session and begins
-    /// journaling its events. An agent chat's turns get checkpoints (`scope` names its project
-    /// for the per-project settings); an assistant's and a direct chat's do not.
+    /// journaling its events. An agent chat's turns get checkpoints, a harness assistant's
+    /// (Mawas's) included — they work where the assistant works, and say why when that is not
+    /// a git repository (`scope` names its project for the per-project settings); a direct
+    /// chat's and the provider-backed assistant's do not.
     pub async fn start(
         self: &Arc<Self>,
         id: SessionId,
@@ -982,13 +1000,10 @@ impl ChatManager {
         if is_gateway_agent(&spec.agent) {
             return self.start_direct(id, spec).await;
         }
-        let checkpoints = !spec.assistant;
-        if checkpoints {
-            // Before the agent runs: its first turn may follow at once.
-            self.checkpoints.open(id, cwd.clone(), scope);
-        }
+        // Before the agent runs: its first turn may follow at once.
+        self.checkpoints.open(id, cwd.clone(), scope);
         let started = self.start_agent(id, cwd, spec).await;
-        if checkpoints && started.is_err() {
+        if started.is_err() {
             self.checkpoints.close(id);
         }
         started.map_err(|failure| failure.error)

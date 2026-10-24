@@ -306,6 +306,22 @@ impl WorktreeService {
             step
         };
 
+        // A repository without any remote (the Home folder after "Track changes", a scratch
+        // repository) has nowhere to push: that is a commit-only Finish, not a failure.
+        match git(dir, &["remote"], READ_TIMEOUT).await {
+            Ok(out) if out.success && out.stdout.iter().all(u8::is_ascii_whitespace) => {
+                step.status = StepStatus::Skipped;
+                step.reason = Some(StepReason::NoUpstream);
+                step.message = Some(
+                    "this repository has no remote, so there is nothing to push; the commit \
+                     stays on this machine (commit only)"
+                        .to_owned(),
+                );
+                return step;
+            }
+            _ => {}
+        }
+
         // The upstream: `branch.<name>.remote` and `.merge`.
         let config = |key: String| async move {
             git(dir, &["config", "--get", &key], READ_TIMEOUT)

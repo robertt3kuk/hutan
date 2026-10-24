@@ -46,7 +46,7 @@ use crate::memory::{
     MemoryScope, MemoryTransition, MemoryUpdate, MemoryWrite,
 };
 use crate::notify::{ClientFocus, NotificationIntent, NotifyAck, NotifyAct, NotifyMute};
-use crate::project::{ProjectInfo, WorkspaceAssign, WorkspaceDelete};
+use crate::project::{ProjectGitInit, ProjectInfo, WorkspaceAssign, WorkspaceDelete};
 use crate::provider::{
     ChatSetModel, ProviderAdd, ProviderRef, ProviderSetCredential, ProviderUpdate,
 };
@@ -119,6 +119,10 @@ pub enum Request {
     /// `Empty`.
     #[serde(rename = "workspace.delete")]
     WorkspaceDelete(WorkspaceDelete),
+    /// Capability `project.git_init` (protocol 0.44): `git init` and an initial commit in a
+    /// project's folder or the Home folder; user-only; answered with `ProjectGitInitialized`.
+    #[serde(rename = "project.git_init")]
+    ProjectGitInit(ProjectGitInit),
     #[serde(rename = "session.create")]
     SessionCreate(SessionCreate),
     #[serde(rename = "session.list")]

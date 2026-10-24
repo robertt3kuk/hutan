@@ -1518,3 +1518,128 @@ mod wire {
         t.daemon.stop().await;
     }
 }
+
+// Mawas at Home (MAWAS-FILES) -------------------------------------------------------------------
+
+async fn turn_ended(events: &mut broadcast::Receiver<(Seq, Event)>) {
+    wait_event(events, "the turn's end", |event| match event {
+        Event::ChatEvent { event, .. } if event.kind.ends_turn() => Some(()),
+        _ => None,
+    })
+    .await;
+}
+
+/// Mawas's turns have checkpoints like any agent chat's, once the folder she works in is a
+/// repository: a turn in the plain Home folder says why it has none, `project.git_init` (the
+/// user's *Track changes*) turns them on, and the next turn that edits a file gets its ref.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mawas_turn_at_home_gets_a_checkpoint_once_the_user_tracks_changes() {
+    use hutan_protocol::assistant::{AssistantOpen, AssistantScope};
+
+    let work = tempfile::tempdir().unwrap();
+    let base = fs::canonicalize(work.path()).unwrap();
+    let home_folder = base.join("Hutan");
+    fs::create_dir(&home_folder).unwrap();
+    fs::write(home_folder.join("a.txt"), "alpha\n").unwrap();
+    let gates = [base.join("gate-0"), base.join("gate-1")];
+    let transcript = held_turns(&base, &gates);
+    let config = codex(&transcript, &base.join("received.jsonl"));
+    // The user's identity for the first commit: a configuration file, not the account's.
+    let identity = base.join("gitconfig");
+    fs::write(
+        &identity,
+        "[user]\n\tname = Test\n\temail = test@example.com\n[commit]\n\tgpgsign = false\n",
+    )
+    .unwrap();
+    let mut env = git_env();
+    env.insert(
+        "GIT_CONFIG_GLOBAL".to_owned(),
+        identity.display().to_string(),
+    );
+    let daemon = TestDaemon::start_with("[assistant]\nbackend = \"codex\"\n", |c| {
+        c.codex = Some(config);
+        c.checkpoints.git_env = env;
+        c.paths.default_home_folder.clone_from(&home_folder);
+    })
+    .await;
+    let (client, mut events) = daemon.connect_subscribed().await;
+    let home = client
+        .call::<hutan_protocol::messages::WorkspaceList>(Request::WorkspaceList(
+            hutan_protocol::messages::Empty {},
+        ))
+        .await
+        .unwrap()
+        .workspaces
+        .into_iter()
+        .find(|w| w.kind == hutan_protocol::messages::WorkspaceKind::Home)
+        .unwrap()
+        .id;
+    let session = client
+        .call::<SessionResult>(Request::AssistantOpen(AssistantOpen {
+            scope: AssistantScope::Global,
+            workspace_id: None,
+            new: false,
+        }))
+        .await
+        .unwrap()
+        .session
+        .id;
+
+    // Turn 1, in the folder as it is: edits a file, and has no checkpoint — the row says why.
+    client.chat_send(session, "turn 0").await.unwrap();
+    fs::write(home_folder.join("a.txt"), "edited by Mawas\n").unwrap();
+    fs::write(&gates[0], "").unwrap();
+    turn_ended(&mut events).await;
+    let rows = timeout(WAIT, async {
+        loop {
+            let rows = rows_in(&daemon.paths.database, session);
+            if settled(&rows, 1) {
+                return rows;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("a row for the first turn");
+    assert_eq!(rows[0].state, "unsupported", "{rows:?}");
+    assert!(
+        rows[0]
+            .reason
+            .as_deref()
+            .is_some_and(|r| r.contains("not in a git repository")),
+        "{rows:?}"
+    );
+
+    // The user tracks changes in the folder; the next turn is checkpointed.
+    let done = client.project_git_init(home).await.unwrap();
+    assert_eq!(done.root, home_folder);
+    client.chat_send(session, "turn 1").await.unwrap();
+    fs::write(home_folder.join("b.txt"), "written by Mawas\n").unwrap();
+    fs::write(&gates[1], "").unwrap();
+    turn_ended(&mut events).await;
+    let rows = timeout(WAIT, async {
+        loop {
+            let rows = rows_in(&daemon.paths.database, session);
+            if settled(&rows, 2) {
+                return rows;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("a row for the second turn");
+    assert_eq!(rows[1].state, "ok", "{rows:?}");
+    assert_eq!(rows[1].files, 1);
+    let reference = rows[1].reference.clone().unwrap();
+    assert_eq!(
+        git(&home_folder, &["show", &format!("{reference}:b.txt")]),
+        "written by Mawas\n"
+    );
+    // The initial commit is the user's history; the checkpoint is a hidden ref.
+    assert_eq!(
+        git(&home_folder, &["rev-list", "--count", "--branches"]).trim(),
+        "1"
+    );
+    drop(client);
+    daemon.stop().await;
+}

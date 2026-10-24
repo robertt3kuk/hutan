@@ -51,12 +51,12 @@ const STDERR_CAP: usize = 64 * 1024;
 
 /// What a git process printed, stdout cut at a bound.
 #[derive(Debug)]
-struct Capped {
-    stdout: Vec<u8>,
+pub(super) struct Capped {
+    pub(super) stdout: Vec<u8>,
     /// More output was available than `cap`; git was killed.
-    truncated: bool,
-    code: Option<i32>,
-    stderr: String,
+    pub(super) truncated: bool,
+    pub(super) code: Option<i32>,
+    pub(super) stderr: String,
 }
 
 /// Reads up to `cap` bytes; the flag says more was coming.
@@ -79,7 +79,7 @@ async fn read_capped<R: AsyncRead + Unpin>(mut reader: R, cap: usize) -> (Vec<u8
 }
 
 /// Like [`run_git`], but stdout is read only up to `cap` bytes: git is killed when it has more.
-async fn run_git_capped(
+pub(super) async fn run_git_capped(
     cwd: &Path,
     args: &[&OsStr],
     limit: Duration,

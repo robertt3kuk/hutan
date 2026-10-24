@@ -216,6 +216,9 @@ fn push_line(step: Option<&FinishPush>) -> String {
         (StepStatus::Skipped, Some(StepReason::UpToDate)) => {
             format!("Nothing to push: {upstream} is up to date.")
         }
+        (StepStatus::Skipped, Some(StepReason::NoUpstream)) => {
+            "Commit only: this repository has no remote, so nothing was pushed.".to_owned()
+        }
         (StepStatus::Skipped, _) => "Not pushed: an earlier step failed.".to_owned(),
         (StepStatus::Failed, Some(StepReason::NoUpstream)) => {
             format!("Not pushed — no upstream: {why}")

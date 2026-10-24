@@ -232,7 +232,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "lsp.completion",
             "daemon.identity",
             "daemon.stopping",
-            "terminal.search"
+            "terminal.search",
+            "project.git_init"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);

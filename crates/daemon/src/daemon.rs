@@ -376,6 +376,8 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         bus.clone(),
         harnesses.clone(),
         settings.finish,
+        paths.user_home.clone(),
+        checkpoints.clone(),
     );
     // After the registry restored its sessions and the notifier listens: a task whose session
     // did not survive the last daemon ends here, and says so.

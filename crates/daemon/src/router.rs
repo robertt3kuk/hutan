@@ -515,6 +515,12 @@ impl Router {
                 ok(&merged)
             }
             Request::WorktreeCommit(req) => ok(&self.worktrees.commit(req).await?),
+            Request::ProjectGitInit(req) => {
+                let target = req.project_id.to_string();
+                let initialised = self.worktrees.git_init(req).await;
+                audit(Actor::of(conn), "project.git_init", &target, &initialised);
+                ok(&initialised?)
+            }
             Request::WorktreeFinish(req) => {
                 let finished = self.worktrees.finish(req).await?;
                 let by = self.actor(conn).await;
@@ -890,6 +896,10 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::WorkspaceRecent(_) => ("workspace.recent", Read),
         Request::WorkspaceAssign(_) => ("workspace.assign", Mutate),
         Request::WorkspaceDelete(_) => ("workspace.delete", Mutate),
+        // Putting a folder under version control (protocol 0.43) is the user's decision alone
+        // (it writes `.git` and `.gitignore` in the user's folder): an agent never does it,
+        // whatever `[control]` says.
+        Request::ProjectGitInit(_) => ("project.git_init", UserOnly),
         Request::WorkspaceMove(_) => ("workspace.move", Mutate),
         Request::WorkspacePin(_) => ("workspace.pin", Mutate),
         Request::SessionCreate(_) => ("session.create", Mutate),

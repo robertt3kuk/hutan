@@ -1146,6 +1146,23 @@ impl Connection {
             .is_some_and(|client| client.supports_checkpoint_restore())
     }
 
+    /// Whether the daemon puts folders under version control (capability `project.git_init`,
+    /// [`Client::supports_project_git_init`]); false when disconnected.
+    pub fn supports_project_git_init(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_project_git_init())
+    }
+
+    /// `project.git_init` ([`Client::project_git_init`]).
+    pub async fn project_git_init(
+        &self,
+        project_id: hutan_core::WorkspaceId,
+    ) -> Result<hutan_protocol::project::ProjectGitInitialized, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.project_git_init(project_id).await
+    }
+
     /// `checkpoint.list` ([`Client::checkpoint_list`]).
     pub async fn checkpoint_list(
         &self,
