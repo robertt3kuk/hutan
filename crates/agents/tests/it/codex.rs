@@ -126,7 +126,10 @@ fn kinds(messages: &[AdapterMessage]) -> Vec<&AgentEventKind> {
         .iter()
         .filter_map(|m| match m {
             AdapterMessage::Event(draft) => Some(&draft.kind),
-            AdapterMessage::Exited(_) | AdapterMessage::Node(_) | AdapterMessage::Mode(_) => None,
+            AdapterMessage::Exited(_)
+            | AdapterMessage::Node(_)
+            | AdapterMessage::Mode(_)
+            | AdapterMessage::Limits(_) => None,
         })
         .collect()
 }
@@ -156,7 +159,10 @@ fn requested(messages: &[AdapterMessage]) -> (ApprovalId, &AgentEventDraft) {
                 }
                 _ => None,
             },
-            AdapterMessage::Exited(_) | AdapterMessage::Node(_) | AdapterMessage::Mode(_) => None,
+            AdapterMessage::Exited(_)
+            | AdapterMessage::Node(_)
+            | AdapterMessage::Mode(_)
+            | AdapterMessage::Limits(_) => None,
         })
         .expect("a permission request")
 }
@@ -703,7 +709,10 @@ async fn unknown_messages_become_opaque_events_and_never_crash_the_adapter() {
                 AgentEventKind::Opaque { method } => Some((method.as_str(), d)),
                 _ => None,
             },
-            AdapterMessage::Exited(_) | AdapterMessage::Node(_) | AdapterMessage::Mode(_) => None,
+            AdapterMessage::Exited(_)
+            | AdapterMessage::Node(_)
+            | AdapterMessage::Mode(_)
+            | AdapterMessage::Limits(_) => None,
         })
         .collect();
     let methods: Vec<_> = opaque.iter().map(|(m, _)| *m).collect();
@@ -785,7 +794,10 @@ fn asked(messages: &[AdapterMessage]) -> (QuestionId, &AgentEventDraft) {
                 }
                 _ => None,
             },
-            AdapterMessage::Exited(_) | AdapterMessage::Node(_) | AdapterMessage::Mode(_) => None,
+            AdapterMessage::Exited(_)
+            | AdapterMessage::Node(_)
+            | AdapterMessage::Mode(_)
+            | AdapterMessage::Limits(_) => None,
         })
         .expect("a question")
 }
@@ -1172,4 +1184,56 @@ async fn developer_instructions_ride_on_thread_start_and_resume_and_base_instruc
         .unwrap()
         .1["params"];
     assert!(start.get("developerInstructions").is_none(), "{start}");
+}
+
+fn limits_of(messages: &[AdapterMessage]) -> Vec<&hutan_agents::RateLimits> {
+    messages
+        .iter()
+        .filter_map(|m| match m {
+            AdapterMessage::Limits(limits) => Some(&**limits),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn rate_limit_notifications_become_limit_windows_and_never_journal_events() {
+    // `account/rateLimits/updated` (built by hand from the documented schema, between the
+    // messages of a recorded turn): a full report, then a sparse one with only the 5-hour
+    // window.
+    let h = Harness::new();
+    let CodexSession {
+        adapter,
+        mut events,
+        ..
+    } = h.start("rate-limits").await;
+    adapter
+        .send_message("Reply with the single word pong and nothing else.".into())
+        .await
+        .unwrap();
+    let seen = collect_until(&mut events, ends_turn).await;
+    let limits = limits_of(&seen);
+    assert_eq!(limits.len(), 2, "{limits:?}");
+    let full = limits[0];
+    assert_eq!(full.provider, "openai");
+    // The scrubber nulls plan names out of recordings.
+    assert_eq!(full.plan, None);
+    let windows: Vec<_> = full
+        .windows
+        .iter()
+        .map(|w| (w.id.as_str(), w.used_percent, w.resets_at_ms))
+        .collect();
+    assert_eq!(
+        windows,
+        [
+            ("5h", 72.0, Some(1_792_024_800_000)),
+            ("7d", 31.0, Some(1_792_454_400_000))
+        ]
+    );
+    assert_eq!(limits[1].windows.len(), 1, "a sparse report carries one window");
+    assert_eq!(limits[1].windows[0].used_percent, 81.0);
+    // The conversation is what it was: no opaque event for the chatter.
+    let names = names(&seen);
+    assert!(!names.contains(&"opaque"), "{names:?}");
+    assert_eq!(names.last(), Some(&"turn_completed"));
 }

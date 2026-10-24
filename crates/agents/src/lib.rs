@@ -18,6 +18,7 @@ pub mod elicit;
 pub mod error;
 pub mod fixture;
 pub mod jsonrpc;
+pub mod usage;
 
 pub use acp::{AcpAdapter, AcpConfig, AcpSession};
 pub use adapter::{
@@ -26,3 +27,4 @@ pub use adapter::{
 };
 pub use codex::{CodexAccount, CodexAppServerAdapter, CodexConfig, CodexSession};
 pub use error::AgentError;
+pub use usage::{RateLimits, RateWindow};

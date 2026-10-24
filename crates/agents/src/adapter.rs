@@ -70,6 +70,10 @@ pub enum AdapterMessage {
     /// The agent reports that its session mode changed (ACP `current_mode_update`, a `mode`
     /// config option update). Whoever changed it, the agent or its user: Hutan never does.
     Mode(SessionMode),
+    /// The harness reported the limit windows of its account (Codex `account/rateLimits/updated`,
+    /// Claude Code's `_claude/rateLimit` in a `usage_update`): not part of any conversation, so
+    /// not an event of the journal (`docs/agents.md` § Usage).
+    Limits(Box<crate::usage::RateLimits>),
     /// The process ended; nothing follows.
     Exited(ExitInfo),
 }

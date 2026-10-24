@@ -140,7 +140,10 @@ fn kinds(messages: &[AdapterMessage]) -> Vec<&AgentEventKind> {
         .iter()
         .filter_map(|m| match m {
             AdapterMessage::Event(draft) => Some(&draft.kind),
-            AdapterMessage::Exited(_) | AdapterMessage::Node(_) | AdapterMessage::Mode(_) => None,
+            AdapterMessage::Exited(_)
+            | AdapterMessage::Node(_)
+            | AdapterMessage::Mode(_)
+            | AdapterMessage::Limits(_) => None,
         })
         .collect()
 }
@@ -1546,4 +1549,42 @@ fn committed_fixtures_are_already_scrubbed() {
         seen += 1;
     }
     assert!(seen >= 25, "{seen} fixtures");
+}
+
+#[tokio::test]
+async fn claude_rate_limits_in_a_usage_update_become_limit_windows() {
+    // Claude Code's ACP adapter forwards the SDK's `rate_limit_event` in
+    // `usage_update._meta["_claude/rateLimit"]` (payload as quoted in
+    // anthropics/claude-code#91857); the usage event of the turn is unchanged.
+    let h = Harness::new();
+    let AcpSession {
+        adapter,
+        mut events,
+        ..
+    } = h.start("claude-rate-limit").await;
+    initial(&mut events).await;
+    adapter.send_message("Say hello.".into()).await.unwrap();
+    let seen = collect_until(&mut events, ends_turn).await;
+    let limits: Vec<_> = seen
+        .iter()
+        .filter_map(|m| match m {
+            AdapterMessage::Limits(limits) => Some(limits),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(limits.len(), 1, "{seen:?}");
+    assert_eq!(limits[0].provider, "anthropic");
+    let windows: Vec<_> = limits[0]
+        .windows
+        .iter()
+        .map(|w| (w.id.as_str(), w.used_percent.round(), w.resets_at_ms))
+        .collect();
+    assert_eq!(
+        windows,
+        [
+            ("5h", 24.0, Some(1_788_465_600_000)),
+            ("7d", 13.0, Some(1_789_005_600_000))
+        ]
+    );
+    assert!(names(&seen).contains(&"usage"));
 }

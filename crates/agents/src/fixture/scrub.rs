@@ -11,7 +11,10 @@ use regex::Regex;
 use serde_json::{Map, Value, json};
 
 /// Notifications that only carry account state; dropped from fixtures.
-const DROPPED_METHODS: &[&str] = &["account/rateLimits/updated"];
+const DROPPED_METHODS: &[&str] = &[];
+/// The rate-limit notification: kept for what the usage records read (the windows' percentages,
+/// lengths and reset times, `docs/agents.md` § Usage) and nothing else of it (credits, names).
+const RATE_LIMITS_METHOD: &str = "account/rateLimits/updated";
 /// Keys removed wherever they appear: account-specific catalog entries.
 const DROPPED_KEYS: &[&str] = &["availableAccessPrograms"];
 
@@ -223,6 +226,9 @@ pub fn scrub(raw: &str) -> Result<String, ScrubError> {
             if method.is_some_and(|m| DROPPED_METHODS.contains(&m)) {
                 continue;
             }
+            if method == Some(RATE_LIMITS_METHOD) && !keep_rate_windows(object) {
+                continue;
+            }
         }
         // The installation id is a stable machine identifier even as a UUID.
         let scrubbed = renamer.value(line);
@@ -231,6 +237,36 @@ pub fn scrub(raw: &str) -> Result<String, ScrubError> {
         out.push('\n');
     }
     Ok(out)
+}
+
+/// Reduces a rate-limit notification to its windows; false when it has none.
+fn keep_rate_windows(line: &mut Map<String, Value>) -> bool {
+    let Some(params) = line.get_mut("msg").and_then(|m| m.get_mut("params")) else {
+        return false;
+    };
+    let mut kept = Map::new();
+    kept.insert("limitId".to_owned(), json!("codex"));
+    if let Some(limits) = params.get("rateLimits").and_then(Value::as_object) {
+        for key in ["primary", "secondary"] {
+            let Some(window) = limits.get(key).and_then(Value::as_object) else {
+                continue;
+            };
+            let mut keep = Map::new();
+            for field in ["usedPercent", "windowDurationMins", "resetsAt"] {
+                if let Some(value) = window.get(field).filter(|v| v.is_number()) {
+                    keep.insert(field.to_owned(), value.clone());
+                }
+            }
+            if keep.contains_key("usedPercent") {
+                kept.insert(key.to_owned(), Value::Object(keep));
+            }
+        }
+    }
+    if kept.len() == 1 {
+        return false;
+    }
+    *params = json!({ "rateLimits": kept });
+    true
 }
 
 fn check_leaks(value: &Value, line: usize) -> Result<(), ScrubError> {
@@ -263,6 +299,7 @@ mod tests {
 {"dir":"in","t":1.5,"msg":{"id":1,"result":{"userAgent":"hutan/0.162.1 (Mac OS 26.6.2; arm64) Orca/1.4 (hutan; 0.1.0)","codexHome":"/private/tmp/m4a/codex-home","platformOs":"macos"}}}
 {"dir":"in","t":1.6,"msg":{"method":"remoteControl/status/changed","params":{"serverName":"workies-MacBook-Air.local","installationId":"5bdf5e69-6440-473e-9530-369290aacf28"}}}
 {"dir":"in","t":1.7,"msg":{"method":"account/rateLimits/updated","params":{"rateLimits":{}}}}
+{"dir":"in","t":1.75,"msg":{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","limitName":"Codex of me@example.org","primary":{"usedPercent":7,"windowDurationMins":300,"resetsAt":1792024800},"credits":{"hasCredits":true,"unlimited":false,"balance":"12.50"},"planType":"plus"}}}}
 {"dir":"in","t":1.8,"msg":{"method":"account/updated","params":{"authMode":"chatgpt","planType":"plus"}}}
 {"dir":"in","t":1.9,"msg":{"method":"item/started","params":{"threadId":"01a13bfd-6208-7f30-ab9c-2a84706d72d8","item":{"id":"msg_0f75b2f5d2998cd5016acfde949f9c8191","cwd":"/var/folders/f8/abc/T/hutan-rec-s2gy8xlb","text":"mail me@example.org"},"path":"/Users/x/.codex/sessions/2026/10/15/rollout-2026-10-15T00-57-03-01a13bfd-6208-7f30-ab9c-2a84706d72d8.jsonl"}}}
 "#;
@@ -270,7 +307,10 @@ mod tests {
     #[test]
     fn scrubbing_removes_account_machine_and_path_details() {
         let out = scrub(RAW).unwrap();
-        assert!(!out.contains("rateLimits"), "dropped notification: {out}");
+        // The rate limits keep their windows and nothing else; one without windows is dropped.
+        assert_eq!(out.matches("\"rateLimits\":{").count(), 1, "{out}");
+        assert!(out.contains(r#""usedPercent":7"#), "{out}");
+        assert!(!out.contains("12.50") && !out.contains("Codex of me"), "{out}");
         assert!(!out.contains("workies"), "{out}");
         assert!(!out.contains("5bdf5e69"), "{out}");
         assert!(!out.contains("plus"), "{out}");

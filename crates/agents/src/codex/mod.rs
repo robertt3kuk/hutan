@@ -428,6 +428,18 @@ async fn pump(
     while let Some(message) = incoming.recv().await {
         match message {
             Incoming::Notification { method, params } => {
+                // The account's limit windows are not part of the conversation: they go to
+                // the daemon's usage records, and the mapper drops the notification.
+                if method == "account/rateLimits/updated"
+                    && let Some(limits) = crate::usage::codex_rate_limits(&params)
+                    && events
+                        .send(AdapterMessage::Limits(Box::new(limits)))
+                        .await
+                        .is_err()
+                {
+                    shared.transport.shutdown().await;
+                    return;
+                }
                 track_turn(&shared, &method, &params);
                 let updates = lock(&shared.nodes).notification(&method, &params);
                 for update in updates {

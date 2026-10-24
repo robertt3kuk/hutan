@@ -764,6 +764,22 @@ async fn pump(
     while let Some(message) = incoming.recv().await {
         let alive = match message {
             Incoming::Notification { method, params } => {
+                let limits = (method == "session/update")
+                    .then(|| params.get("update"))
+                    .flatten()
+                    .filter(|update| {
+                        update.get("sessionUpdate").and_then(Value::as_str) == Some("usage_update")
+                    })
+                    .and_then(crate::usage::claude_rate_limits);
+                if let Some(limits) = limits
+                    && shared
+                        .events
+                        .send(AdapterMessage::Limits(Box::new(limits)))
+                        .await
+                        .is_err()
+                {
+                    break;
+                }
                 let updates = if method == "session/update" {
                     lock(&shared.nodes).update(&params)
                 } else {
