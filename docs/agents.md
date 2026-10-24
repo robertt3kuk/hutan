@@ -39,7 +39,7 @@ Then a pump task turns every message of the process into events. `send_message` 
 | `turn/plan/updated`, `plan` item | `plan` (steps, or prose) |
 | `thread/tokenUsage/updated` | `usage` (fields the server did not send stay absent) |
 | `error`, `warning` | `notice` |
-| anything else | `opaque { method }` with the raw `payload` (account, rate-limit and startup chatter is dropped) |
+| anything else | `opaque { method }` with the raw `payload` (account and startup chatter is dropped; `account/rateLimits/updated` is not journaled but kept as limit windows, § Usage) |
 
 Messages of other threads (sub-agents) are ignored. A notification that does not fit its schema also becomes `opaque`: the adapter never fails on what it does not understand. Server requests Hutan cannot serve (`item/tool/requestUserInput`, MCP elicitation, token refresh, …) are answered with JSON-RPC "method not found" and noted as a `notice`, so the agent never waits for them.
 
@@ -143,6 +143,7 @@ hutan chat interrupt <session>
 hutan chat models [--agent codex|omp|claude]
 hutan chat model <session> <model>             # switch the model of a direct or harness chat (next turn)
 hutan account ls | login <omp|claude|codex> [provider] [--attach] | logout <harness>   # § ACP harnesses and accounts
+hutan usage [--json] [--cached]   # limit windows per harness, tokens and cost today / this week; asks the harnesses unless --cached (§ Usage)
 hutan approvals                               # pending requests (--json)
 hutan approve <approval-id|prefix> <option>
 ```
@@ -415,6 +416,20 @@ What no source gives: a spend in money for subscription logins that is not an es
 - ACP `usage_update` and cumulative `cost`: [Session Context Size and Cost](https://agentclientprotocol.com/rfds/session-usage) (stable since 2026-06-05).
 - OMP: `omp usage --help` and `omp usage --json --redact` run on 2026-10-25 against OMP 18.12.3 (nothing else of the user's OMP home was read).
 - `codex` and `claude` were not installed on the machine that wrote this note: their rows come from the documents above, not from a run. The Codex fixture of this slice is built by hand from the documented schema; the Claude one from the issue's recorded payload.
+
+### What Hutan does
+
+- **Turns.** When a chat turn ends — however it ends — the daemon folds the `usage` events of the turn into its tokens (`TurnUsage`, `crates/daemon/src/usage.rs`): the growth of the cumulative `total` over the turn for Codex and the gateway (the first turn after a resume starts from `total − last`), the prompt's own counts for an ACP harness (whose `usage_update` `used` is the context size and is never counted as spend), and the growth of the session's cumulative ACP `cost` (a resumed session's first cost has no known start, so that turn claims none). One row per turn goes to SQLite (`usage_turns`, schema v19: harness, provider, model, token counts, cost, time; no session text, no account data), kept 35 days. A turn that reported nothing records nothing. The provider of an OMP turn is the part of its model id before `/`; Claude Code is `anthropic`, Codex `openai`, a direct chat its provider id.
+- **Limits.** The newest report of each window is kept (`usage_limits`): Codex's `account/rateLimits/updated` (a sparse update moves only the windows it carries), Claude Code's `_claude/rateLimit` in a `usage_update`, and — only when a client asks to **refresh** — `omp usage --json` and, for a Codex that has run through Hutan, a short-lived `codex app-server` asked `account/rateLimits/read`. Of several accounts of one provider the tightest window is kept. A window whose reset time has passed is not reported. Refreshes run the harnesses' own commands with their own logins; only `hutand` does so (`DaemonConfig.usage_probes`), the test daemons never.
+- **Redaction.** Every string kept passes `hutan_agents::usage::identifier` (letters, digits, `.`, `_`, `-`, 40 at most): e-mail addresses, ids and token-like text in a payload are dropped, not stored. Tests feed a report full of them and search the tables and the database files.
+- **`usage.summary` / `usage.changed`** (`docs/protocol.md` § Usage): per harness its running windows and today / this week (local midnight, Monday), per provider the same; the event carries the whole summary, coalesced to one every 250 ms.
+- **Desktop.** The `usage` status item (`Codex 72% · resets 3h`, the tightest window; amber from 80 %, red from 95 %; not in the built-in bar — `agents.usage_in_status_bar`, Settings → Agents, or a preset that names it shows it; nothing reported, nothing drawn). The **Usage** section of the Agents page (`agents.page_usage`): per harness its windows as bars with reset times, `Today` and `This week` with tokens and a cost labelled `(estimate)`, a Refresh button; the page asks the harnesses to report when it is shown (at most every 30 s). A **toast** when a window passes 80 % and again at 95 %, once per window (a window is a harness, provider, window id and reset time); what was already high when the window opened is not announced; `notifications.usage_warnings` turns it off.
+- **CLI and MCP.** `hutan usage [--json] [--cached]` prints the same (a bar per window; `--cached` does not ask the harnesses). MCP `usage_summary {refresh?}` (read-only).
+- **Not done / limits.** Codex's limits arrive with its messages, or on refresh once Codex has run through Hutan: a Codex that was never used here is never started to ask. Claude Code's windows depend on the undocumented `_claude/rateLimit` meta. Spend outside Hutan is in a provider's percentage but not in Hutan's token totals.
+
+### Tests
+
+Daemon: recorded Codex notifications and a `rate-limits` transcript (`crates/daemon/tests/it/chat.rs`), the redaction test, an OMP turn with tokens, cost and provider and OMP's `usage --json` fixture (`harness.rs`, `tests/fixtures/omp-usage.json`), day and week sums over a prepared database (`usage.rs`); agents: `rate-limits`, `rate-limits-read` and `claude-rate-limit` transcripts; desktop: `crates/desktop/tests/it/usage_gpui.rs` (status item, Agents page section, toast); CLI: `harness.rs`.
 
 ## Limits
 

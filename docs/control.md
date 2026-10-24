@@ -159,6 +159,7 @@ A stdio MCP server (hand-rolled JSON-RPC, one message per line; protocol version
 | `chat_create` | `chat.create` | yes | start a chat with an agent (Codex) or a model directly |
 | `chat_send` | `chat.send` | yes | send a message to a chat |
 | `chat_log` | `chat.history` | no | the journal of a chat |
+| `usage_summary` | `usage.summary` | no | limit windows the harnesses report and tokens / cost of Hutan's turns, today and this week (`refresh` asks the harnesses first) |
 | `approval_list` | `approval.list` | no | what waits for the user (agents cannot answer: there is no respond tool; Mawas's grants are not a tool either) |
 | `task_add` | `task.create` | yes | add a task with dependencies |
 | `task_list` | `task.list` | no | tasks and their state |
