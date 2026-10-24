@@ -228,7 +228,7 @@ Chips are removable (×) before the send and become structured attachments of `c
 
 **Send to agent.** "Send to agent" of a finished terminal block (button, ⌘K, key) attaches it to the chat the user looked at last — Mawas counts once the user opened or focused Home after the last chat tab — or to the only running chat, or to the one picked from the menu. When that chat is Mawas the block becomes a `shell_block` attachment (a block reference the daemon reads when the message is sent; Home is shown and the chip waits in its composer); other chats keep the quoted-text chip. When several chats run and none is Mawas the menu adds **Send to Mawas**: the Mawas of the terminal's workspace, opened on demand. With no chat running the notice points at ⌘K → Mawas.
 
-## Where Mawas works: browsing and versions (MAWAS-FILES, protocol 0.43)
+## Where Mawas works: browsing and versions (MAWAS-FILES, protocol 0.44)
 
 **Her folder.** The Global Mawas works in the **Home folder** (`~/Hutan`); a workspace's Mawas works in that workspace's active project (a workspace holding two projects shows the active one, else the first). Both are plain folders she reads and writes through her tools, so the user must be able to see them.
 

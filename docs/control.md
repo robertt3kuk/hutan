@@ -131,7 +131,7 @@ A write by an agent through the service is attributed in `fs.changed` events of 
 
 ## Putting a folder under version control
 
-Protocol 0.43, capability `project.git_init`, slice MAWAS-FILES. `project.git_init` (`git init`, `.gitignore`, an initial commit in a project's folder or the Home folder) is **UserOnly**: an agent-originated connection — Mawas or any agent session — gets `forbidden` with `decision: user_only` under every `[control] agents` policy, and there is no MCP tool for it. Starting to track a folder changes what checkpoints and Changes do for the user's files; only the user, from the confirm sheet or `hutan project git-init`, may start it.
+Protocol 0.44, capability `project.git_init`, slice MAWAS-FILES. `project.git_init` (`git init`, `.gitignore`, an initial commit in a project's folder or the Home folder) is **UserOnly**: an agent-originated connection — Mawas or any agent session — gets `forbidden` with `decision: user_only` under every `[control] agents` policy, and there is no MCP tool for it. Starting to track a folder changes what checkpoints and Changes do for the user's files; only the user, from the confirm sheet or `hutan project git-init`, may start it.
 
 ## Language servers
 
