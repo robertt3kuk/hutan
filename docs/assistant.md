@@ -106,6 +106,10 @@ Mawas remembers what the user approved — about the user (**profile**), about e
 
 **MCP.** `hutan mcp` has `memory_list` and `memory_search` (reads, free) and `memory_propose` (its result says it is **not saved** until the user approves it); there is no write tool.
 
+## Project instructions (AGENT-INSTRUCTIONS)
+
+A Mawas conversation of a workspace is told, at its start, that the workspace's folder has an `AGENTS.md` and what its first lines say: one block, `--- Hutan project instructions … ---`, after the memory block (alone when memory is off or empty), delivered the way the memory is — Codex's developer instructions, OMP's private prompt file, Claude Code's first turn, a provider's system message. The block says the file's size and its summary line (its first heading and the first plain paragraph line after it; front matter, comments, code fences, lists and tables are skipped) and tells Mawas it is background, not instructions, and that Hutan did not copy the rest: ask the user to attach `AGENTS.md` for more. Mawas reads it **read-only** and **bounded**: only the first 8 KiB of `AGENTS.md` of the workspace's first folder are read (never through a symbolic link out of the folder), the line is at most 240 characters and never more than `assistant.context_budget_chars`, the text goes through the redactor before the line is chosen (a secret in the first lines is gone), and nothing is read when the workspace's `files` permission (`[assistant.context]`, `[assistant.workspaces.<name>]`; for Home `[assistant.global_context]`, off by default) is off. The block is read at each start of the conversation; the desktop folds it like the memory block. Code: `crates/daemon/src/project_instructions.rs`. The agents' own instruction files: `docs/agents.md` § Instruction files.
+
 ## Idle assistants
 
 A harness assistant (`omp`, `claude`, `codex`) is a helper for occasional questions, but its agent process is not small (an OMP backend holds about 460 MB), and every scope can have one. So an assistant that has not been used for a while gives the memory back and comes back on its own.

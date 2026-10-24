@@ -352,6 +352,41 @@ hutan answer <id|prefix> --decline | --cancel
 
 `codex-0.162/question-*.jsonl` and `acp-omp-18.11/question-*.jsonl` are **hand-built from the schemas and sources above** (a real recording of `requestUserInput`, an MCP elicitation or `AskUserQuestion` needs a paid model turn) on top of the recorded handshake and turn of `approval-touch` / `permission-allow`, scrubbed with the same scrubbers (the Codex scrubber now keeps the `serverName` of an MCP elicitation). Tests: the schema mapping (`elicit.rs`), adapter mapping (`tests/mapper.rs`, `tests/codex.rs`, `tests/acp.rs`: reply shapes, decline/cancel, expiry on interrupt, process-scoped elicitations, urls), daemon lifecycle (`daemon/tests/chat.rs`: answer, validation, provenance, decline, expiry, restart, secret not in any file), the CLI (`cli/tests/chat.rs`) and the card (`desktop/tests/chat_gpui.rs`, `chat/question.rs`).
 
+## Instruction files (AGENT-INSTRUCTIONS)
+
+Each harness reads its own instruction file, and users asked for **one** file all their agents read, in the repository, reviewed and versioned like code (Claude Code #6235, Cline #5033, Continue #6716, Roo #5966; `docs/spikes/2026-10-25-user-needs/assistant-memory.md`). Hutan shows which files each agent reads, opens them as ordinary file tabs, and offers to make `AGENTS.md` the shared one. It never writes in `~/.codex`, `~/.claude` or `~/.omp`.
+
+**Who reads what** (the rules below were read from the harnesses' own documentation on 2026-10-25; the code is `crates/desktop/src/instructions.rs`, tested on fixture folders, never the user's own). Hutan looks at the project's folder, its `.claude/` and `.omp/`, and the folders below (through the daemon's finder, so what `.gitignore` leaves out is not listed), and at the user's own files.
+
+| File | Codex | Claude Code | OMP |
+|---|---|---|---|
+| `AGENTS.md` | yes (one file per folder, root down to where it starts) | by itself only when no `CLAUDE.md` / `.claude/CLAUDE.md` / `CLAUDE.local.md` exists on the path (2.1.277 and later); always through an `@AGENTS.md` import | yes (standalone provider, priority 10) |
+| `AGENTS.override.md` | yes, instead of `AGENTS.md` in its folder | no | no |
+| `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` | no | yes (`CLAUDE.local.md` is for the user, add it to `.gitignore`) | `CLAUDE.md` yes (priority 10, with `AGENTS.md`); `.claude/CLAUDE.md` yes (80, wins over both); `CLAUDE.local.md` no |
+| `.omp/AGENTS.md`, `.omp/RULES.md` | no | no | yes: native (100) wins over everything at the same level; `RULES.md` is sticky, loaded on every request |
+| `<folder>/AGENTS.md`, `<folder>/CLAUDE.md` below the project | when Codex is started in that folder | when the agent works in that folder | listed; the agent is told to read it |
+| `~/.codex/AGENTS.md` (`$CODEX_HOME`; `AGENTS.override.md` first) | yes | no | only when `enabledProviders` names `codex` |
+| `~/.claude/CLAUDE.md` (`$CLAUDE_CONFIG_DIR`), the managed `/Library/Application Support/ClaudeCode/CLAUDE.md` | no | yes | `~/.claude/CLAUDE.md` only when `enabledProviders` names `claude` |
+| `~/.omp/agent/AGENTS.md`, `RULES.md` (`$PI_CODING_AGENT_DIR`) | no | no | yes; one user file survives, OMP's own first |
+
+Details that change the picture, and that the panel shows in words under each file: Codex reads the first **non-empty** of `AGENTS.override.md`, `AGENTS.md` and the names in `project_doc_fallback_filenames` of `$CODEX_HOME/config.toml` (Hutan reads that key, read-only); Codex does not follow `@` imports, Claude Code and OMP do (four and five hops; Hutan follows what the project folder's own files import, so `CLAUDE.md` with `@AGENTS.md` makes `AGENTS.md` *read by Claude Code via CLAUDE.md*); OMP's foreign user sources are opt-in through `enabledProviders` of `~/.omp/agent/config.yml` (Hutan reads that key, read-only); at one folder level OMP keeps the highest-priority provider's file, so `.omp/AGENTS.md` or `.claude/CLAUDE.md` hide the standalone files from it. [INFERENCE] OMP keeps `AGENTS.md` and `CLAUDE.md` of the same level both (equal priority), so after sharing it may see the text of `AGENTS.md` twice (directly and through the import); the documentation only collapses duplicates across levels.
+
+**The panel** (`instructions`, settings `panels.instructions`, default dock right, opened from ⌘K *Instructions: Show Instruction Files* or *Panel: Open Instructions*): *This project* and *Your user files*, each file with a glyph per agent that reads it (dimmer: on demand, or another file wins) and the same in words. A project file opens in a file tab; a user file is read-only here (*Show in Finder*; `panels.instructions.show_user_files = false` never looks at them). With no instruction file in the project: *Create AGENTS.md* (a short starter; a ten-second *Undo* toast). Layout and states: `docs/design.md` § Instructions panel.
+
+**Share one file with every agent…** (the panel, ⌘K *Instructions: Share One File with Every Agent…*) reads `AGENTS.md`, `CLAUDE.md` and `.claude/CLAUDE.md` through the daemon and opens a confirm sheet that lists **exactly** what would be written, file by file, with each file's resulting text:
+
+| The project has | The sheet says |
+|---|---|
+| only `CLAUDE.md` | Create `AGENTS.md` with `CLAUDE.md`'s text, unchanged; change `CLAUDE.md` to `@AGENTS.md` |
+| only `AGENTS.md` | Create `CLAUDE.md` containing `@AGENTS.md` (Claude Code reads an `AGENTS.md` by itself in 2.1.277 and later, but not in older versions or in sessions that cannot, and not once a `CLAUDE.local.md` exists: the import makes it certain) |
+| both | Put `@AGENTS.md` first in `CLAUDE.md` and keep every line it had below it (when both say the same, the import replaces the copy) |
+| neither | Create a starter `AGENTS.md` and `CLAUDE.md` with the import |
+| only `.claude/CLAUDE.md` | the same with `@../AGENTS.md`; blocked when it has `@` imports of its own (they are relative to `.claude/`) |
+
+Nothing else is written, nothing is deleted, and nothing outside the project is touched. A `CLAUDE.md` that already imports `AGENTS.md`, or is a symbolic link, is *already shared*; an `AGENTS.md` that is a link, or a file over 256 KiB, is left to the user (a notice says why). Writes go through `fs.write` with the version the plan read (a file that changed meanwhile is refused) and, when one fails, the ones before it are put back. **Undo** (toast, ten seconds) writes the old text back over what Hutan wrote, and removes a file Hutan created, only while the file is still exactly what Hutan wrote; the change also shows in Changes and git. The file service has no remove call, so the desktop removes that one created file itself, after checking it is a regular file inside the project.
+
+**Mawas** is told what the project's `AGENTS.md` opens with: `docs/assistant.md` § Project instructions.
+
 ## Queue and Send now (protocol 0.36, capability `chat.queue`)
 
 A message sent while a turn runs waits in the chat's queue, which the daemon owns and keeps with the journal (`docs/protocol.md` § Chat queue): it goes as the next turn when the turn ends, in order; queued messages can be edited and removed until then. **Send now** steers the running turn where the adapter can: `AgentAdapter::can_steer` / `steer`, implemented by Codex with `turn/steer` (`expectedTurnId` = the running turn; Codex echoes the input as a `userMessage` item of the same turn, so the journal shows it where the agent read it). ACP harnesses (OMP, Claude Code) and direct chats take no input mid-turn: Send now interrupts the turn, journals a warning notice that says so, and sends the message first once the turn has ended. **Stop** (`chat.interrupt`, `hutan chat interrupt`, `hutan agent interrupt`) clears the queue unless `keep_queue` / `--keep-queue`, which holds it until the user sends again; a failed turn, a send that failed and an agent that went away (a daemon restart included) hold it too. CLI: `hutan chat send <session> <text> --queue` (prints the queued message's id) and `--now`. Tests: `crates/daemon/tests/it/queue.rs` (OMP and Codex fixtures with `hold` entries), `crates/desktop/tests/it/queue_gpui.rs`.
