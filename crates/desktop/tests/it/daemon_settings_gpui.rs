@@ -158,6 +158,7 @@ fn the_notifications_page_lists_the_daemons_values_and_a_live_change_needs_no_re
         rows,
         [
             "f:dock_badge",
+            "f:usage_warnings",
             "d:notify.enabled",
             "d:notify.native",
             "d:notify.sound",
@@ -623,7 +624,7 @@ fn an_older_daemon_gets_the_update_note_and_the_file_path(cx: &mut TestAppContex
     // No daemon rows to change (the Dock badge is the desktop's own); the way to the file instead.
     assert_eq!(
         view.read_with(cx, |wb, cx| wb.sheet_focus_rows(cx)),
-        ["f:dock_badge"]
+        ["f:dock_badge", "f:usage_warnings"]
     );
     assert!(drawn(&view, cx, Region::Settings("open-daemon-toml")));
     assert_eq!(
