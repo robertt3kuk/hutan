@@ -36,6 +36,7 @@ use hutan_protocol::chat::*;
 use hutan_protocol::checkpoint::*;
 use hutan_protocol::control::ControlMessage;
 use hutan_protocol::fs::*;
+use hutan_protocol::git::*;
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
 use hutan_protocol::history::*;
 use hutan_protocol::lsp::*;
@@ -3196,6 +3197,63 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::MemoryFilesStatus(MemoryFilesStatusRequest {
                 scope: MemoryScope::Workspace,
                 workspace_id: Some(ws()),
+            }),
+        ),
+        (
+            "git_log",
+            Request::GitLog(GitLog {
+                path: "/Users/me/proj/hutan".into(),
+                rev: None,
+                limit: 50,
+                before: None,
+            }),
+        ),
+        (
+            "git_log_file_page",
+            Request::GitLog(GitLog {
+                path: "/Users/me/proj/hutan/src/lib.rs".into(),
+                rev: Some("main".into()),
+                limit: 200,
+                before: Some("9d8c7b6a5f4e3d2c1b0a99887766554433221100".into()),
+            }),
+        ),
+        (
+            "git_blame",
+            Request::GitBlame(GitBlame {
+                path: "/Users/me/proj/hutan/src/lib.rs".into(),
+                rev: None,
+            }),
+        ),
+        (
+            "git_blame_rev",
+            Request::GitBlame(GitBlame {
+                path: "/Users/me/proj/hutan/src/lib.rs".into(),
+                rev: Some("v0.2.0".into()),
+            }),
+        ),
+        (
+            "git_show",
+            Request::GitShow(GitShow {
+                path: "/Users/me/proj/hutan".into(),
+                rev: "9d8c7b6a5f4e3d2c1b0a99887766554433221100".into(),
+                old_path: None,
+                patch: true,
+            }),
+        ),
+        (
+            "git_show_file_renamed",
+            Request::GitShow(GitShow {
+                path: "/Users/me/proj/hutan/src/new.rs".into(),
+                rev: "HEAD~3".into(),
+                old_path: Some("/Users/me/proj/hutan/src/old.rs".into()),
+                patch: false,
+            }),
+        ),
+        (
+            "git_file",
+            Request::GitFile(GitFile {
+                path: "/Users/me/proj/hutan/src/lib.rs".into(),
+                rev: "9d8c7b6a5f4e3d2c1b0a99887766554433221100".into(),
             }),
         ),
     ]
@@ -6935,6 +6993,40 @@ fn responses_match_fixtures() {
             .unwrap(),
         ),
         (
+            "git_log",
+            ControlMessage::ok(
+                35,
+                &GitLogResult {
+                    root: "/Users/me/proj/hutan".into(),
+                    commits: vec![
+                        GitCommit {
+                            id: "9d8c7b6a5f4e3d2c1b0a99887766554433221100".into(),
+                            author: "Ada Lovelace".into(),
+                            email: "ada@example.com".into(),
+                            time: 1_791_894_170,
+                            subject: "feat: add the engine".into(),
+                            merge: false,
+                            path: None,
+                            old_path: None,
+                        },
+                        GitCommit {
+                            id: "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d".into(),
+                            author: "Grace Hopper".into(),
+                            email: "grace@example.com".into(),
+                            time: 1_791_800_000,
+                            subject: "Merge branch 'feature'".into(),
+                            merge: true,
+                            path: None,
+                            old_path: None,
+                        },
+                    ],
+                    more: true,
+                    next_before: Some("5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d".into()),
+                },
+            )
+            .unwrap(),
+        ),
+        (
             "memory_files_status_off",
             ControlMessage::ok(
                 37,
@@ -6949,6 +7041,88 @@ fn responses_match_fixtures() {
                     tracked: false,
                     pending: 0,
                     problems: vec![],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "git_log_file_renamed",
+            ControlMessage::ok(
+                36,
+                &GitLogResult {
+                    root: "/Users/me/proj/hutan".into(),
+                    commits: vec![GitCommit {
+                        id: "9d8c7b6a5f4e3d2c1b0a99887766554433221100".into(),
+                        author: "Ada Lovelace".into(),
+                        email: "ada@example.com".into(),
+                        time: 1_791_894_170,
+                        subject: "refactor: rename old to new".into(),
+                        merge: false,
+                        path: Some("src/new.rs".into()),
+                        old_path: Some("src/old.rs".into()),
+                    }],
+                    more: false,
+                    next_before: None,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "git_blame",
+            ControlMessage::ok(
+                37,
+                &GitBlameResult {
+                    root: "/Users/me/proj/hutan".into(),
+                    path: "src/lib.rs".into(),
+                    rev: None,
+                    lines: 6,
+                    hunks: vec![
+                        BlameHunk {
+                            line: 1,
+                            count: 3,
+                            commit: "9d8c7b6a5f4e3d2c1b0a99887766554433221100".into(),
+                        },
+                        BlameHunk {
+                            line: 4,
+                            count: 1,
+                            commit: GIT_UNCOMMITTED.into(),
+                        },
+                        BlameHunk {
+                            line: 5,
+                            count: 2,
+                            commit: "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d".into(),
+                        },
+                    ],
+                    commits: vec![
+                        BlameCommit {
+                            id: "9d8c7b6a5f4e3d2c1b0a99887766554433221100".into(),
+                            author: "Ada Lovelace".into(),
+                            email: "ada@example.com".into(),
+                            time: 1_791_894_170,
+                            subject: "feat: add the engine".into(),
+                            path: "src/old.rs".into(),
+                            boundary: false,
+                        },
+                        BlameCommit {
+                            id: GIT_UNCOMMITTED.into(),
+                            author: "Not Committed Yet".into(),
+                            email: "not.committed.yet".into(),
+                            time: 1_791_900_000,
+                            subject: String::new(),
+                            path: "src/lib.rs".into(),
+                            boundary: false,
+                        },
+                        BlameCommit {
+                            id: "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d".into(),
+                            author: "Grace Hopper".into(),
+                            email: "grace@example.com".into(),
+                            time: 1_791_800_000,
+                            subject: "Initial commit".into(),
+                            path: "src/lib.rs".into(),
+                            boundary: true,
+                        },
+                    ],
+                    truncated: true,
                 },
             )
             .unwrap(),
@@ -6969,6 +7143,58 @@ fn responses_match_fixtures() {
                         },
                         ..memory_proposal()
                     }],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "git_show",
+            ControlMessage::ok(
+                38,
+                &GitShowResult {
+                    root: "/Users/me/proj/hutan".into(),
+                    commit: GitCommit {
+                        id: "9d8c7b6a5f4e3d2c1b0a99887766554433221100".into(),
+                        author: "Ada Lovelace".into(),
+                        email: "ada@example.com".into(),
+                        time: 1_791_894_170,
+                        subject: "fix: the greeting".into(),
+                        merge: false,
+                        path: None,
+                        old_path: None,
+                    },
+                    message: "fix: the greeting\n\nIt said old.\n".into(),
+                    parent: Some("5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d".into()),
+                    files: vec![DiffFile {
+                        path: "README.md".into(),
+                        old_path: None,
+                        status: DiffStatus::Modified,
+                        additions: 1,
+                        deletions: 1,
+                        binary: false,
+                        committed: true,
+                        uncommitted: false,
+                        staged: false,
+                        unstaged: false,
+                    }],
+                    patch: "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n".into(),
+                    truncated: false,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "git_file",
+            ControlMessage::ok(
+                39,
+                &GitFileResult {
+                    root: "/Users/me/proj/hutan".into(),
+                    path: "src/lib.rs".into(),
+                    rev: "9d8c7b6a5f4e3d2c1b0a99887766554433221100".into(),
+                    size: 14,
+                    content: "pub fn hi() {}".into(),
+                    binary: false,
+                    too_large: false,
                 },
             )
             .unwrap(),

@@ -34,6 +34,7 @@ use crate::fs::{
     FsChange, FsFind, FsList, FsRead, FsSearch, FsSearchCancel, FsStat, FsUnwatch, FsWatch,
     FsWriteAbort, FsWriteBegin, FsWriteChunk, FsWriteCommit,
 };
+use crate::git::{GitBlame, GitFile, GitLog, GitShow};
 use crate::grants::{ControlGrantRevoke, ControlGrantsList};
 use crate::history::{HistorySearch, HistorySetEnabled};
 use crate::lsp::{
@@ -410,6 +411,22 @@ pub enum Request {
     /// `WorktreeFileDiff`. Read-only.
     #[serde(rename = "worktree.file_diff")]
     WorktreeFileDiff(WorktreeFileDiffRequest),
+    /// Capability `git.history` (protocol 0.46): the commits of a checkout, or of a file or
+    /// folder in it, newest first; answered with `GitLogResult`. Read-only, bounded.
+    #[serde(rename = "git.log")]
+    GitLog(GitLog),
+    /// Capability `git.history`: which commit last changed each line of a file; answered with
+    /// `GitBlameResult`. Read-only, bounded.
+    #[serde(rename = "git.blame")]
+    GitBlame(GitBlame),
+    /// Capability `git.history`: one commit, its message and its diff; answered with
+    /// `GitShowResult`. Read-only, bounded like `worktree.diff`.
+    #[serde(rename = "git.show")]
+    GitShow(GitShow),
+    /// Capability `git.history`: a file as it was at a revision; answered with
+    /// `GitFileResult`. Read-only, bounded.
+    #[serde(rename = "git.file")]
+    GitFile(GitFile),
     /// Capability `worktree.review`: merge a worktree's branch into the main checkout's branch;
     /// answered with `WorktreeMerged`.
     #[serde(rename = "worktree.merge")]
