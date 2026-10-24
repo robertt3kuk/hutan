@@ -1,0 +1,1 @@
+{"id":35,"result":{"created":2,"proposals":["01K7F3B5N2Q9W8E4R6T1Y0V3AP"],"skipped":[{"at_ms":1791894300000,"file":"import","reason":"Memory is not a secret store: the text looks like a credential","section":"line 14"}],"unchanged":3,"updated":1}}

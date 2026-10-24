@@ -42,8 +42,9 @@ use crate::lsp::{
     LspSignatureHelpRequest, LspStatusRequest, LspTrustRequest,
 };
 use crate::memory::{
-    MemoryHistoryRequest, MemoryList, MemoryProposalResolve, MemoryProposalsList, MemoryPropose,
-    MemoryScope, MemoryTransition, MemoryUpdate, MemoryWrite,
+    MemoryFilesStatusRequest, MemoryHistoryRequest, MemoryImport, MemoryList,
+    MemoryProposalResolve, MemoryProposalsList, MemoryPropose, MemoryScope, MemoryTransition,
+    MemoryUpdate, MemoryWrite,
 };
 use crate::notify::{ClientFocus, NotificationIntent, NotifyAck, NotifyAct, NotifyMute};
 use crate::project::{ProjectGitInit, ProjectInfo, WorkspaceAssign, WorkspaceDelete};
@@ -359,6 +360,18 @@ pub enum Request {
     /// `MemoryProposalResolved`. Never allowed to an agent-originated connection.
     #[serde(rename = "memory.proposals.resolve")]
     MemoryProposalsResolve(MemoryProposalResolve),
+    /// Capability `memory.files` (protocol 0.46): the user imports a file or text of entries
+    /// (Markdown as the memory files are written, or JSON as `hutan memory export` writes it)
+    /// as pending proposals; answered with `MemoryImported`. Nothing is applied. Never allowed
+    /// to an agent-originated connection.
+    #[serde(rename = "memory.import")]
+    MemoryImport(MemoryImport),
+    /// Capability `memory.files`: where a scope's memory files are, when they were last
+    /// written and which edits of them were refused; answered with `MemoryFilesStatus`. The
+    /// daemon reads the files again before it answers. Never allowed to an agent-originated
+    /// connection.
+    #[serde(rename = "memory.files.status")]
+    MemoryFilesStatus(MemoryFilesStatusRequest),
     /// Capability `notify.intents` (protocol 0.13): the pending notification intents; answered
     /// with `NotifyList`.
     #[serde(rename = "notify.list")]

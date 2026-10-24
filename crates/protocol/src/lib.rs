@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`memory_files`]: Mawas's memory as Markdown files — the format of the mirror, the export
+//!   and the import — and `memory.import` / `memory.files.status` (protocol 0.46, capability
+//!   `memory.files`); [`memory`]'s provenance names the origin of an edit made in a file.
 //! - [`terminal_search`]: find in terminal output — `terminal.search` (protocol 0.43, capability
 //!   `terminal.search`).
 //! - [`messages`] also carries which daemon answers — `Welcome.daemon_build` (protocol 0.42,
@@ -86,6 +89,7 @@ pub mod grants;
 pub mod history;
 pub mod lsp;
 pub mod memory;
+pub mod memory_files;
 pub mod messages;
 pub mod notify;
 pub mod project;
@@ -110,7 +114,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 45,
+    minor: 46,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

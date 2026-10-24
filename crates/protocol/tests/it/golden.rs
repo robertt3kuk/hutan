@@ -1170,6 +1170,7 @@ fn memory_user_provenance() -> MemoryProvenance {
         session_id: None,
         turn_id: None,
         at_ms: 1_791_894_100_000,
+        origin: None,
     }
 }
 
@@ -1180,6 +1181,7 @@ fn memory_agent_provenance() -> MemoryProvenance {
         session_id: Some(sid()),
         turn_id: Some(turn()),
         at_ms: 1_791_894_180_000,
+        origin: None,
     }
 }
 
@@ -3168,6 +3170,33 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "usage_summary_refresh",
             Request::UsageSummary(UsageSummaryRequest { refresh: true }),
+        ),
+        (
+            "memory_import_path",
+            Request::MemoryImport(MemoryImport {
+                scope: MemoryScope::Global,
+                workspace_id: None,
+                path: Some("/Users/me/notes/memory.md".into()),
+                text: None,
+                category: None,
+            }),
+        ),
+        (
+            "memory_import_text",
+            Request::MemoryImport(MemoryImport {
+                scope: MemoryScope::Workspace,
+                workspace_id: Some(ws()),
+                path: None,
+                text: Some("# Facts\n\n<!-- mawas:new -->\nStaging is stage.example.com.\n".into()),
+                category: Some(MemoryCategory::Fact),
+            }),
+        ),
+        (
+            "memory_files_status",
+            Request::MemoryFilesStatus(MemoryFilesStatusRequest {
+                scope: MemoryScope::Workspace,
+                workspace_id: Some(ws()),
+            }),
         ),
     ]
 }
@@ -6849,6 +6878,97 @@ fn responses_match_fixtures() {
                     commit: "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d".into(),
                     files: 12,
                     gitignore_written: true,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "memory_imported",
+            ControlMessage::ok(
+                35,
+                &MemoryImported {
+                    created: 2,
+                    updated: 1,
+                    unchanged: 3,
+                    proposals: vec![approval()],
+                    skipped: vec![MemoryFileProblem {
+                        file: "import".into(),
+                        section: Some("line 14".into()),
+                        reason: "Memory is not a secret store: the text looks like a credential".into(),
+                        at_ms: 1_791_894_300_000,
+                    }],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "memory_files_status",
+            ControlMessage::ok(
+                36,
+                &MemoryFilesStatus {
+                    scope: MemoryScope::Global,
+                    workspace_id: None,
+                    enabled: true,
+                    folder: Some("/Users/me/Hutan/.mawas/memory".into()),
+                    note: None,
+                    files: vec![
+                        MemoryFileInfo {
+                            name: "facts.md".into(),
+                            bytes: 412,
+                        },
+                        MemoryFileInfo {
+                            name: "profile.md".into(),
+                            bytes: 230,
+                        },
+                    ],
+                    last_write_ms: Some(1_791_894_290_000),
+                    tracked: true,
+                    pending: 1,
+                    problems: vec![MemoryFileProblem {
+                        file: "notes.md".into(),
+                        section: Some("01K7F3B5N2Q9W8E4R6T1Y0V3KP".into()),
+                        reason: "the text is longer than 2 KiB".into(),
+                        at_ms: 1_791_894_295_000,
+                    }],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "memory_files_status_off",
+            ControlMessage::ok(
+                37,
+                &MemoryFilesStatus {
+                    scope: MemoryScope::Workspace,
+                    workspace_id: Some(ws()),
+                    enabled: false,
+                    folder: None,
+                    note: Some("Turn on `assistant.memory_files_in_project` to keep this workspace's memory in its project.".into()),
+                    files: vec![],
+                    last_write_ms: None,
+                    tracked: false,
+                    pending: 0,
+                    problems: vec![],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "memory_proposal_from_file",
+            ControlMessage::ok(
+                38,
+                &MemoryProposals {
+                    proposals: vec![MemoryProposal {
+                        provenance: MemoryProvenance {
+                            author: MemoryAuthor::User,
+                            client: None,
+                            session_id: None,
+                            turn_id: None,
+                            at_ms: 1_791_894_200_000,
+                            origin: Some(ORIGIN_FILE.into()),
+                        },
+                        ..memory_proposal()
+                    }],
                 },
             )
             .unwrap(),
