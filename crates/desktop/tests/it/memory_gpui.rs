@@ -1427,8 +1427,7 @@ fn memory_menu(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<(Str
             return true;
         }
         draw(cx);
-        if let Some(bounds) = view.read_with(cx, |wb, _| wb.region_bounds(Region::Memory("more")))
-        {
+        if let Some(bounds) = view.read_with(cx, |wb, _| wb.region_bounds(Region::Memory("more"))) {
             cx.simulate_click(bounds.center(), Modifiers::none());
         }
         false
@@ -1463,8 +1462,15 @@ fn the_memory_menu_exports_imports_and_shows_the_files(cx: &mut TestAppContext) 
     // The ⋯ menu: where the files are (greyed out), then the three actions.
     let menu = memory_menu(&view, cx);
     let labels: Vec<&str> = menu.iter().map(|(l, _)| l.as_str()).collect();
-    assert!(labels[0].starts_with("Memory files: ") && labels[0].ends_with(".mawas/memory"), "{labels:?}");
-    assert_eq!(labels[1..], ["Export…", "Import…", "Show files"], "{labels:?}");
+    assert!(
+        labels[0].starts_with("Memory files: ") && labels[0].ends_with(".mawas/memory"),
+        "{labels:?}"
+    );
+    assert_eq!(
+        labels[1..],
+        ["Export…", "Import…", "Show files"],
+        "{labels:?}"
+    );
     assert!(menu[0].1, "the folder line is greyed out");
     assert!(menu[1..].iter().all(|(_, off)| !off), "{menu:?}");
 
@@ -1491,17 +1497,27 @@ fn the_memory_menu_exports_imports_and_shows_the_files(cx: &mut TestAppContext) 
     panel.update(cx, |p, cx| p.export_to(exported.clone(), cx));
     wait_until(cx, "the export to finish", |cx| {
         draw(cx);
-        panel.read_with(cx, |p, _| p.notice().is_some_and(|n| n.starts_with("Exported 1 entry")))
+        panel.read_with(cx, |p, _| {
+            p.notice()
+                .is_some_and(|n| n.starts_with("Exported 1 entry"))
+        })
     });
     let text = std::fs::read_to_string(&exported).unwrap();
-    assert!(text.contains("# Facts") && text.contains("Uses jj."), "{text}");
+    assert!(
+        text.contains("# Facts") && text.contains("Uses jj."),
+        "{text}"
+    );
     let json = out.path().join("memory.json");
     panel.update(cx, |p, cx| p.export_to(json.clone(), cx));
     wait_until(cx, "the JSON export", |cx| {
         draw(cx);
         json.is_file() && panel.read_with(cx, |p, _| p.notice().is_some())
     });
-    assert!(std::fs::read_to_string(&json).unwrap().contains("hutan-memory"));
+    assert!(
+        std::fs::read_to_string(&json)
+            .unwrap()
+            .contains("hutan-memory")
+    );
 
     // Import makes proposals and saves nothing.
     let incoming = out.path().join("incoming.md");
@@ -1512,15 +1528,30 @@ fn the_memory_menu_exports_imports_and_shows_the_files(cx: &mut TestAppContext) 
     .unwrap();
     panel.update(cx, |p, cx| p.import_from(incoming, cx));
     wait_proposals(&panel, cx, 2);
-    let notice = panel.read_with(cx, |p, _| p.notice().map(str::to_owned)).unwrap();
-    assert!(notice.starts_with("Imported 2 proposals") && notice.contains("1 skipped"), "{notice}");
-    assert_eq!(stored(&env, false).len(), 1, "nothing was saved by the import");
-    assert!(proposals_of(&env)
-        .iter()
-        .all(|p| p.provenance.origin.as_deref() == Some("import")));
+    let notice = panel
+        .read_with(cx, |p, _| p.notice().map(str::to_owned))
+        .unwrap();
+    assert!(
+        notice.starts_with("Imported 2 proposals") && notice.contains("1 skipped"),
+        "{notice}"
+    );
+    assert_eq!(
+        stored(&env, false).len(),
+        1,
+        "nothing was saved by the import"
+    );
+    assert!(
+        proposals_of(&env)
+            .iter()
+            .all(|p| p.provenance.origin.as_deref() == Some("import"))
+    );
     // The card says where the proposal came from.
     draw(cx);
-    assert!(view.read_with(cx, |wb, _| wb.region_bounds(Region::MemoryItem("proposal", 0))).is_some());
+    assert!(
+        view.read_with(cx, |wb, _| wb
+            .region_bounds(Region::MemoryItem("proposal", 0)))
+            .is_some()
+    );
 }
 
 #[gpui::test]
@@ -1548,14 +1579,22 @@ fn an_edit_of_a_memory_file_is_a_proposal_on_the_page_and_a_refused_one_is_a_pro
     let proposal = panel.read_with(cx, |p, _| p.proposals()[0].clone());
     assert_eq!(proposal.body, "Prefers terse answers.");
     assert_eq!(proposal.provenance.origin.as_deref(), Some("file"));
-    assert_eq!(stored(&env, false)[0].body, "Prefers short answers.", "never applied silently");
+    assert_eq!(
+        stored(&env, false)[0].body,
+        "Prefers short answers.",
+        "never applied silently"
+    );
     draw(cx);
 
     // Approving it on the page applies it.
     click(&view, cx, Region::MemoryItem("approve", 0));
     wait_until(cx, "the approved edit", |cx| {
         draw(cx);
-        panel.read_with(cx, |p, _| p.entries().first().is_some_and(|e| e.body == "Prefers terse answers."))
+        panel.read_with(cx, |p, _| {
+            p.entries()
+                .first()
+                .is_some_and(|e| e.body == "Prefers terse answers.")
+        })
     });
     assert!(stored(&env, false)[0].body == "Prefers terse answers.");
 
@@ -1570,7 +1609,9 @@ fn an_edit_of_a_memory_file_is_a_proposal_on_the_page_and_a_refused_one_is_a_pro
     assert!(reason.contains("not a secret store"), "{reason}");
     draw(cx);
     assert!(
-        view.read_with(cx, |wb, _| wb.region_bounds(Region::MemoryItem("problem", 0))).is_some(),
+        view.read_with(cx, |wb, _| wb
+            .region_bounds(Region::MemoryItem("problem", 0)))
+            .is_some(),
         "the Problems card is drawn"
     );
     assert_eq!(std::fs::read_to_string(&file).unwrap(), secret);

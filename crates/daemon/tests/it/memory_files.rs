@@ -464,22 +464,26 @@ async fn an_edit_that_cannot_be_used_is_a_problem_not_a_proposal_and_the_file_st
     // stored anywhere.
     assert_eq!(f.entries().await.len(), 2);
 
-    // Too long, an unknown marker and a stale revision are named too.
+    // Too long and an unreadable marker are named too.
     let long = "x".repeat(2 * 1024 + 1);
     fs::write(
         folder.join("facts.md"),
         format!(
-            "# Facts\n\n<!-- mawas:id={} rev=1 -->\n{long}\n\n<!-- mawas:id={} rev=7 -->\nEdited from the past.\n\n<!-- mawas:bogus -->\nlost\n",
+            "# Facts\n\n<!-- mawas:id={} rev=1 -->\n{long}\n\n<!-- mawas:id={} rev=1 -->\nA section that is fine.\n\n<!-- mawas:bogus -->\nlost\n",
             fact.id, other.id
         ),
     )
     .unwrap();
     let problems = f.status().await.problems;
-    assert_eq!(problems.len(), 3, "{problems:?}");
+    assert_eq!(problems.len(), 2, "{problems:?}");
     assert!(problems.iter().any(|p| p.reason.contains("2 KiB")));
-    assert!(problems.iter().any(|p| p.reason.contains("revision 7")));
     assert!(problems.iter().any(|p| p.reason.contains("bogus")));
-    assert!(f.pending().await.is_empty());
+    // The sections that read cleanly are proposed all the same; the broken ones are not, and
+    // nothing is archived because of a file that has a problem.
+    let pending = f.pending().await;
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(pending[0].body, "A section that is fine.");
+    assert_eq!(pending[0].entry_id.as_deref(), Some(other.id.as_str()));
 
     // Fixing the file clears the problems; the file is the mirror again.
     fs::write(folder.join("facts.md"), &facts).unwrap();
@@ -868,4 +872,123 @@ async fn the_setting_is_on_in_daemon_toml_too() {
     )
     .await;
     assert!(root.join(format::PROJECT_DIR).join("notes.md").is_file());
+}
+
+// Versions --------------------------------------------------------------------------------------
+
+/// Runs git in `dir` with the daemon test's identity; returns stdout.
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[tokio::test]
+async fn in_a_tracked_home_folder_the_mirror_is_a_change_git_commits_and_diffs() {
+    let config = tempfile::tempdir().unwrap();
+    let gitconfig = config.path().join("gitconfig");
+    fs::write(
+        &gitconfig,
+        "[user]\n\tname = Test\n\temail = test@example.com\n[commit]\n\tgpgsign = false\n",
+    )
+    .unwrap();
+    let daemon = TestDaemon::start_with("", |c| {
+        c.checkpoints.git_env.extend([
+            (
+                "GIT_CONFIG_GLOBAL".to_owned(),
+                gitconfig.display().to_string(),
+            ),
+            ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
+        ]);
+    })
+    .await;
+    let user = daemon.connect().await;
+    let home = user
+        .call::<hutan_protocol::messages::WorkspaceList>(Request::WorkspaceList(
+            hutan_protocol::messages::Empty {},
+        ))
+        .await
+        .unwrap()
+        .workspaces
+        .into_iter()
+        .find(|w| w.kind == hutan_protocol::messages::WorkspaceKind::Home)
+        .unwrap();
+    let folder = home.roots[0].clone();
+    user.project_git_init(home.id).await.unwrap();
+    assert_eq!(git(&folder, &["status", "--porcelain"]), "");
+
+    let write = |body: &str| {
+        user.memory_write(MemoryWrite {
+            operation_id: ulid::Ulid::generate().to_string(),
+            scope: MemoryScope::Global,
+            workspace_id: None,
+            category: MemoryCategory::Fact,
+            body: body.to_owned(),
+        })
+    };
+    let first = write("Uses jj.").await.unwrap();
+    // The mirror is new files of the repository: Changes lists them, git commits them.
+    let status = git(&folder, &["status", "--porcelain", "--untracked-files=all"]);
+    assert!(status.contains(".mawas/memory/facts.md"), "{status}");
+    let listed = user.worktree_list(Some(home.id)).await.unwrap();
+    assert!(listed[0].dirty, "Changes sees the mirror");
+    git(&folder, &["add", "-A"]);
+    git(&folder, &["commit", "-q", "-m", "memory"]);
+    assert_eq!(git(&folder, &["status", "--porcelain"]), "");
+
+    // A change of an entry is a diff of one line, in the file git tracks.
+    user.memory_update(MemoryUpdate {
+        operation_id: ulid::Ulid::generate().to_string(),
+        entry_id: first.entry_id.clone(),
+        expected_revision: 1,
+        body: "Uses jj, never git.".into(),
+    })
+    .await
+    .unwrap();
+    let diff = git(&folder, &["diff", "--", ".mawas/memory/facts.md"]);
+    assert!(
+        diff.contains("-Uses jj.") && diff.contains("+Uses jj, never git."),
+        "{diff}"
+    );
+    assert!(diff.contains("rev=1") && diff.contains("rev=2"), "{diff}");
+    // Restoring the committed text with git is an edit: a proposal, never silently the memory.
+    git(&folder, &["checkout", "--", ".mawas/memory/facts.md"]);
+    let status = user
+        .memory_files_status(MemoryFilesStatusRequest {
+            scope: MemoryScope::Global,
+            workspace_id: None,
+        })
+        .await
+        .unwrap();
+    assert!(status.tracked);
+    let pending = user.memory_proposals(false).await.unwrap();
+    assert_eq!(
+        pending.len(),
+        1,
+        "the checked-out older text is an edit to review"
+    );
+    assert_eq!(pending[0].body, "Uses jj.");
+    assert_eq!(
+        user.memory_history(&first.entry_id)
+            .await
+            .unwrap()
+            .entry
+            .body,
+        "Uses jj, never git.",
+        "the memory did not move"
+    );
+    daemon.stop().await;
 }

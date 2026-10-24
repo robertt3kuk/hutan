@@ -107,7 +107,11 @@ impl Workbench {
         };
         let (folder, note, supported) = {
             let page = panel.read(cx);
-            (page.files_folder(), page.files_note(), page.supports_files(cx))
+            (
+                page.files_folder(),
+                page.files_note(),
+                page.supports_files(cx),
+            )
         };
         let mut entries = Vec::new();
         entries.push(match (&folder, &note) {

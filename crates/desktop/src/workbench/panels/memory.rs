@@ -267,7 +267,9 @@ impl MemoryPanel {
         let name = self
             .files_shown()
             .and_then(|f| f.files.first())
-            .map_or(memory_files::file_name(MemoryCategory::Fact), |f| f.name.as_str());
+            .map_or(memory_files::file_name(MemoryCategory::Fact), |f| {
+                f.name.as_str()
+            });
         folder.join(name)
     }
 
@@ -2050,7 +2052,10 @@ impl MemoryPanel {
         }
         let problems = self.problems();
         if !problems.is_empty() {
-            sections.push(label(format!("Problems with edited files ({})", problems.len())));
+            sections.push(label(format!(
+                "Problems with edited files ({})",
+                problems.len()
+            )));
             for (index, problem) in problems.iter().enumerate() {
                 let place = match &problem.section {
                     Some(section) => format!("{} · {section}", problem.file),
@@ -2084,7 +2089,7 @@ impl MemoryPanel {
                 );
             }
             sections.push(message(
-                "Hutan leaves a file with a problem as you wrote it until you fix it or put it back; nothing from it was proposed.",
+                "Hutan leaves a file with a problem as you wrote it until you fix it or put it back; only the sections that read cleanly were proposed, and nothing is archived because of it.",
             ));
         }
         if !self.connected(cx) {

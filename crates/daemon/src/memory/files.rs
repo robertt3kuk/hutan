@@ -16,8 +16,8 @@
 //! the files show the user's text (the mirror is rendered from the memory plus the pending
 //! proposals of files), afterwards the files show what the memory became.
 //!
-//! What cannot be used — a section that looks like a credential, a body over 2 KiB, a stale
-//! revision, a marker that cannot be read — is a *problem*: listed by `memory.files.status`
+//! What cannot be used — a section that looks like a credential, a body over 2 KiB, a marker
+//! that cannot be read — is a *problem*: listed by `memory.files.status`
 //! (file, section, reason; never the text), and the file is left as the user wrote it until it
 //! parses cleanly. Nothing is archived on the strength of a file that has a problem.
 //!
@@ -416,17 +416,6 @@ fn read_files(entries: &Entries, observed: &[(MemoryCategory, Observed)]) -> Rea
             match section.id.as_deref().and_then(|id| by_id.get(id)) {
                 Some(view) => {
                     if norm(&view.current.body) == norm(&body) {
-                        continue;
-                    }
-                    if section
-                        .revision
-                        .is_some_and(|rev| rev != view.entry.current_revision)
-                    {
-                        refuse(format!(
-                            "edited from revision {} but the entry is at revision {} now: copy your change onto the current text",
-                            section.revision.unwrap_or_default(),
-                            view.entry.current_revision
-                        ));
                         continue;
                     }
                     wants.push(Want {
