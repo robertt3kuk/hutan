@@ -16,6 +16,7 @@ mod rows;
 mod sql;
 #[cfg(test)]
 mod tests;
+mod usage;
 
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -45,6 +46,7 @@ pub use rows::{
     QuestionRow, QueuedRow, RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
 };
 pub use sql::{EPOCH_HISTORY_KEPT, RECENT_PROJECTS_KEPT, Write};
+pub use usage::{USAGE_KEPT_DAYS, Usage, UsageLimitRow, UsageSum, UsageTurnRow};
 
 /// Commands waiting for the writer before submitters wait their turn.
 const QUEUE_CAPACITY: usize = 1024;
@@ -201,6 +203,10 @@ impl Storage {
 
     pub fn checkpoints(&self) -> Checkpoints<'_> {
         Checkpoints(self)
+    }
+
+    pub fn usage(&self) -> Usage<'_> {
+        Usage(self)
     }
 
     /// Queues one write. Returns once it is queued, not once it is durable.
