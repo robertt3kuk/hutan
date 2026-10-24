@@ -378,6 +378,12 @@ fn build_specs() -> Vec<Spec> {
             Group::Assistant,
             |c| int_value(u64::from(c.assistant.memory_max_entries)),
         ),
+        live(
+            "assistant.memory_files_in_project",
+            Kind::Bool,
+            Group::Assistant,
+            |c| json!(c.assistant.memory_files_in_project),
+        ),
     ]);
     permission_specs!(specs, context);
     permission_specs!(specs, global_context);
@@ -1622,6 +1628,7 @@ mod tests {
             max_actions_per_turn: _,
             memory: _,
             memory_max_entries: _,
+            memory_files_in_project: _,
             context:
                 ContextPermissions {
                     shell: _,
@@ -1704,6 +1711,7 @@ mod tests {
             "assistant.max_actions_per_turn",
             "assistant.memory",
             "assistant.memory_max_entries",
+            "assistant.memory_files_in_project",
             "notify.enabled",
             "notify.min_turn_secs",
             "notify.kinds",

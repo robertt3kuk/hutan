@@ -49,6 +49,7 @@
 //! max_actions_per_turn = 10      # Mawas: changes it may make in one turn before every further one asks
 //! memory = true                  # Mawas: give a conversation the memory you approved (false: nothing is injected)
 //! memory_max_entries = 200       # Mawas: most active memory entries
+//! memory_files_in_project = false # Mawas: also keep a workspace's memory as Markdown in its project (`.hutan/memory/`)
 //!
 //! [assistant.context]            # what assistants of project workspaces may read
 //! shell = true
@@ -448,6 +449,10 @@ pub struct AssistantSettings {
     pub memory: bool,
     /// Most active memory entries; a write past it is refused until one is archived.
     pub memory_max_entries: u32,
+    /// Whether a workspace's memory is also written as Markdown files in its project
+    /// (`<project>/.hutan/memory/`, protocol 0.47). Off by default: they are files of the
+    /// user's repository. The global memory's files (in the Home folder) are always written.
+    pub memory_files_in_project: bool,
     /// What assistants of project workspaces may read.
     pub context: ContextPermissions,
     /// What the global assistant (Home) may read.
@@ -468,6 +473,7 @@ impl Default for AssistantSettings {
             max_actions_per_turn: DEFAULT_ASSISTANT_MAX_ACTIONS,
             memory: true,
             memory_max_entries: DEFAULT_ASSISTANT_MEMORY_MAX_ENTRIES,
+            memory_files_in_project: false,
             context: ContextPermissions::default(),
             global_context: ContextPermissions::global_default(),
             workspaces: std::collections::BTreeMap::new(),

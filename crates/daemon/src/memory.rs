@@ -60,6 +60,8 @@ use crate::chat::ApprovalSource;
 use crate::config::AssistantSettings;
 use crate::registry::{self, RegistryHandle};
 
+mod files;
+
 /// Largest snapshot or delta block handed to a conversation, in bytes.
 pub const SNAPSHOT_MAX_BYTES: usize = 8 * 1024;
 /// Largest delta before the complete current view is sent instead.
@@ -557,6 +559,7 @@ fn provenance_of(json: &str, author: st::Author, at_ms: u64) -> MemoryProvenance
         session_id: None,
         turn_id: None,
         at_ms,
+        origin: None,
     })
 }
 
@@ -651,6 +654,7 @@ fn user_provenance(client: Option<ClientKind>) -> MemoryProvenance {
         session_id: None,
         turn_id: None,
         at_ms: registry::now_ms(),
+        origin: None,
     }
 }
 
@@ -763,6 +767,8 @@ pub struct MemoryService {
     gate: tokio::sync::Mutex<()>,
     /// The approvals of the pending proposals (derived from `memory_proposals`).
     approvals: Mutex<HashMap<ApprovalId, ApprovalInfo>>,
+    /// The memory as Markdown files (protocol 0.47).
+    files: files::Mirror,
     me: Weak<MemoryService>,
 }
 
@@ -784,6 +790,7 @@ impl MemoryService {
             prompts: prompts.clone(),
             gate: tokio::sync::Mutex::new(()),
             approvals: Mutex::new(HashMap::new()),
+            files: files::Mirror::default(),
             me: me.clone(),
         });
         match storage.memory().proposals(0) {
@@ -806,6 +813,7 @@ impl MemoryService {
             Arc::downgrade(&(service.clone() as Arc<dyn MemoryContext>));
         registry.chats().set_memory_context(context);
         tokio::task::spawn_blocking(move || prune_prompt_files(&prompts));
+        files::start(&service);
         service
     }
 
@@ -816,7 +824,15 @@ impl MemoryService {
     /// Uses `settings` from now on (`daemon.settings.set` changed `[assistant]`).
     pub fn apply_settings(&self, settings: &AssistantSettings) {
         *self.settings.write() = settings.into();
-        *self.assistant.write() = settings.clone();
+        let files_changed = {
+            let mut assistant = self.assistant.write();
+            let changed = assistant.memory_files_in_project != settings.memory_files_in_project;
+            *assistant = settings.clone();
+            changed
+        };
+        if files_changed {
+            files::restart(self);
+        }
     }
 
     async fn db<T: Send + 'static>(
@@ -954,6 +970,7 @@ impl MemoryService {
                 revision = receipt.revision, "memory entry changed by the user"
             );
             self.publish_changed(receipt.scope, receipt.scope_revision);
+            self.mirror_changed(receipt.scope).await;
         }
         Ok(receipt_of(&receipt))
     }
@@ -1055,6 +1072,7 @@ impl MemoryService {
             session_id: Some(session),
             turn_id: turn,
             at_ms: registry::now_ms(),
+            origin: None,
         };
         let row = self
             .build_proposal(&req, session, origin_workspace, &provenance)
@@ -1275,6 +1293,10 @@ impl MemoryService {
                         provenance.author = MemoryAuthor::User;
                         (clean_body(text)?, st::Author::User)
                     }
+                    // The user wrote the text of a proposal from a file or an import.
+                    None if provenance.author == MemoryAuthor::User => {
+                        (row.body.clone(), st::Author::User)
+                    }
                     None => (row.body.clone(), st::Author::Agent),
                 };
                 let entry_id = row.entry_id.clone().unwrap_or_default();
@@ -1317,6 +1339,7 @@ impl MemoryService {
             .db(move |s| s.memory().resolve_proposal(&answered, resolution, now))
             .await?;
         self.finish_approval(&resolved.proposal, option, client);
+        self.mirror_changed(resolved.proposal.scope).await;
         if let Some(receipt) = &resolved.receipt {
             self.publish_changed(receipt.scope, receipt.scope_revision);
         } else {

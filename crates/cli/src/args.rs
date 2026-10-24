@@ -1180,6 +1180,75 @@ pub enum MemoryCommand {
     History(MemoryIdArgs),
     /// The proposals agents made, waiting for you; --approve or --reject answers one
     Proposals(MemoryProposalsArgs),
+    /// Write the memory of a scope to a file (Markdown as the memory files are written, or JSON)
+    Export(MemoryExportArgs),
+    /// Read a file of entries (Markdown or JSON, as `export` writes them) as proposals you
+    /// approve; nothing is saved by the import itself
+    Import(MemoryImportArgs),
+    /// Where the memory files are, whether they are in a git repository, what waits and which
+    /// edits of them could not be used
+    Files(MemoryFilesArgs),
+}
+
+/// A memory scope: Global, or one workspace (`--ws`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum MemoryScopeArg {
+    /// Everything that is not about one workspace (the default)
+    Global,
+    /// One workspace's memory: needs --ws
+    Workspace,
+}
+
+/// The text format of an export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum MemoryFormatArg {
+    /// Markdown, as the memory files are written
+    Md,
+    /// JSON (`{"format": "hutan-memory", "entries": [...]}`)
+    Json,
+}
+
+#[derive(Debug, Args)]
+pub struct MemoryExportArgs {
+    /// Where to write it; `-` is standard output
+    pub path: PathBuf,
+    /// The scope (default: global; `workspace` needs --ws)
+    #[arg(long, value_enum)]
+    pub scope: Option<MemoryScopeArg>,
+    /// The workspace (id, unique id prefix, or exact name); implies `--scope workspace`
+    #[arg(long = "ws", visible_alias = "workspace", value_name = "ID|NAME")]
+    pub workspace: Option<String>,
+    /// The text format (default: by the file's extension, else md)
+    #[arg(long, value_enum)]
+    pub format: Option<MemoryFormatArg>,
+    /// Replace the file when it exists
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct MemoryImportArgs {
+    /// The file to read (Markdown or JSON); `-` reads standard input
+    pub path: PathBuf,
+    /// The scope the entries go to (default: global; `workspace` needs --ws)
+    #[arg(long, value_enum)]
+    pub scope: Option<MemoryScopeArg>,
+    /// The workspace (id, unique id prefix, or exact name); implies `--scope workspace`
+    #[arg(long = "ws", visible_alias = "workspace", value_name = "ID|NAME")]
+    pub workspace: Option<String>,
+    /// The category of entries no `# Profile` / `# Facts` / `# Notes` heading precedes
+    #[arg(long, value_enum)]
+    pub category: Option<MemoryCategoryArg>,
+}
+
+#[derive(Debug, Args)]
+pub struct MemoryFilesArgs {
+    /// The scope (default: global; `workspace` needs --ws)
+    #[arg(long, value_enum)]
+    pub scope: Option<MemoryScopeArg>,
+    /// The workspace (id, unique id prefix, or exact name); implies `--scope workspace`
+    #[arg(long = "ws", visible_alias = "workspace", value_name = "ID|NAME")]
+    pub workspace: Option<String>,
 }
 
 #[derive(Debug, Args)]

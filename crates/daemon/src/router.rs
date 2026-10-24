@@ -483,6 +483,8 @@ impl Router {
             Request::MemoryProposalsResolve(req) => {
                 ok(&self.memory.resolve(req, conn.client_kind()).await?)
             }
+            Request::MemoryImport(req) => ok(&self.memory.import(req, conn.client_kind()).await?),
+            Request::MemoryFilesStatus(req) => ok(&self.memory.files_status(req).await?),
             Request::NotifyList(_) => ok(&NotifyList {
                 intents: self.notify.list(),
             }),
@@ -996,6 +998,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::MemoryPropose(_) => ("memory.propose", Read),
         Request::MemoryProposalsList(_) => ("memory.proposals.list", UserOnly),
         Request::MemoryProposalsResolve(_) => ("memory.proposals.resolve", UserOnly),
+        Request::MemoryImport(_) => ("memory.import", UserOnly),
+        Request::MemoryFilesStatus(_) => ("memory.files.status", UserOnly),
         Request::AssistantList(_) => ("assistant.list", Read),
         Request::NotifyList(_) => ("notify.list", Read),
         Request::NotifyAck(_) => ("notify.ack", Mutate),

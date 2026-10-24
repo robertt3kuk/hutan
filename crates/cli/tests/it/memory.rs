@@ -398,6 +398,8 @@ async fn a_cli_typed_inside_an_agents_session_cannot_change_memory() {
         &["memory", "archive", id.as_str()][..],
         &["memory", "restore", id.as_str()][..],
         &["memory", "proposals"][..],
+        &["memory", "import", "whatever.md"][..],
+        &["memory", "files"][..],
     ] {
         let mut agent = command(Path::new(HUTAN), Some(&t.paths.socket), args);
         agent.env("HUTAN_SESSION_ID", session.to_string());
@@ -422,5 +424,148 @@ async fn a_cli_typed_inside_an_agents_session_cannot_change_memory() {
         1,
         "nothing changed"
     );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn export_writes_markdown_or_json_and_import_makes_proposals_from_either() {
+    let source = TestDaemon::start().await;
+    source
+        .hutan(&["memory", "add", "Prefers short answers."])
+        .await
+        .ok();
+    source
+        .hutan(&[
+            "memory",
+            "add",
+            "Uses jj.\n\nSecond paragraph.",
+            "--category",
+            "fact",
+        ])
+        .await
+        .ok();
+    let dir = tempfile::tempdir().unwrap();
+    let md = dir.path().join("memory.md");
+    let json = dir.path().join("memory.json");
+    let done = source
+        .hutan(&["memory", "export", md.to_str().unwrap(), "--json"])
+        .await
+        .ok()
+        .json();
+    assert_eq!(
+        (
+            done["format"].as_str(),
+            done["entries"].as_u64(),
+            done["scope"].as_str()
+        ),
+        (Some("md"), Some(2), Some("global"))
+    );
+    let text = std::fs::read_to_string(&md).unwrap();
+    assert!(text.starts_with("<!-- Written by Hutan"), "{text}");
+    assert!(
+        text.contains("# Profile")
+            && text.contains("# Facts")
+            && text.contains("Second paragraph.")
+    );
+    // The format follows the extension; an existing file is not replaced without --force.
+    let human = source
+        .hutan(&["memory", "export", json.to_str().unwrap()])
+        .await
+        .ok()
+        .stdout;
+    assert!(
+        human.starts_with("Exported 2 entries (global, json) to "),
+        "{human}"
+    );
+    let parsed: Value = serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    assert_eq!(parsed["format"], "hutan-memory");
+    assert_eq!(parsed["entries"].as_array().unwrap().len(), 2);
+    let refused = source
+        .hutan(&["memory", "export", md.to_str().unwrap()])
+        .await;
+    assert_eq!(refused.code, 1, "{refused:?}");
+    assert!(refused.stderr.contains("--force"), "{refused:?}");
+    source
+        .hutan(&["memory", "export", md.to_str().unwrap(), "--force"])
+        .await
+        .ok();
+    source.stop().await;
+
+    for file in [&md, &json] {
+        let target = TestDaemon::start().await;
+        let imported = target
+            .hutan(&["memory", "import", file.to_str().unwrap(), "--json"])
+            .await
+            .ok()
+            .json();
+        assert_eq!(imported["created"], 2, "{imported}");
+        assert_eq!(
+            entries(&target, &[]).await.len(),
+            0,
+            "nothing saved by the import"
+        );
+        let pending = target
+            .hutan(&["memory", "proposals", "--json"])
+            .await
+            .ok()
+            .json();
+        let proposals = pending["proposals"].as_array().unwrap();
+        assert_eq!(proposals.len(), 2);
+        assert!(
+            proposals
+                .iter()
+                .all(|p| p["provenance"]["origin"] == "import")
+        );
+        let human = target
+            .hutan(&["memory", "import", file.to_str().unwrap()])
+            .await
+            .ok()
+            .stdout;
+        assert!(
+            human.contains("0 new, 0 changes, 2 already there"),
+            "a second import adds nothing: {human}"
+        );
+        // Approving one of them saves it.
+        let prefix = proposals[0]["id"].as_str().unwrap()[..16].to_owned();
+        target
+            .hutan(&["memory", "proposals", "--approve", &prefix])
+            .await
+            .ok();
+        assert_eq!(entries(&target, &[]).await.len(), 1);
+        target.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn memory_files_says_where_the_files_are_and_what_was_refused() {
+    let t = TestDaemon::start().await;
+    let none = t.hutan(&["memory", "files"]).await.ok().stdout;
+    assert!(none.contains("Folder: "), "{none}");
+    t.hutan(&["memory", "add", "Prefers short answers."])
+        .await
+        .ok();
+    let status = t.hutan(&["memory", "files", "--json"]).await.ok().json();
+    assert_eq!(status["enabled"], true);
+    assert_eq!(status["files"].as_array().unwrap().len(), 3);
+    let folder = std::path::PathBuf::from(status["folder"].as_str().unwrap());
+    assert!(folder.ends_with(".mawas/memory"), "{folder:?}");
+    // An edit with a secret is a problem the command reports.
+    let file = folder.join("profile.md");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(
+        &file,
+        text.replace("short", "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
+    )
+    .unwrap();
+    let human = t.hutan(&["memory", "files"]).await.ok().stdout;
+    assert!(human.contains("Problem in profile.md"), "{human}");
+    assert!(human.contains("not a secret store"), "{human}");
+    assert!(
+        !human.contains("sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
+        "{human}"
+    );
+    // A workspace's files are off until the user turns them on.
+    let ws = t.hutan(&["memory", "files", "--scope", "workspace"]).await;
+    assert_eq!(ws.code, 2, "{ws:?}");
     t.stop().await;
 }

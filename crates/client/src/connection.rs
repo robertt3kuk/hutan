@@ -937,6 +937,32 @@ impl Connection {
         client.memory_write(req).await
     }
 
+    /// Whether the daemon keeps the memory in files (capability `memory.files`,
+    /// [`Client::supports_memory_files`]); false when disconnected.
+    pub fn supports_memory_files(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_memory_files())
+    }
+
+    /// `memory.import` ([`Client::memory_import`]).
+    pub async fn memory_import(
+        &self,
+        req: hutan_protocol::memory::MemoryImport,
+    ) -> Result<hutan_protocol::memory::MemoryImported, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.memory_import(req).await
+    }
+
+    /// `memory.files.status` ([`Client::memory_files_status`]).
+    pub async fn memory_files_status(
+        &self,
+        req: hutan_protocol::memory::MemoryFilesStatusRequest,
+    ) -> Result<hutan_protocol::memory::MemoryFilesStatus, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.memory_files_status(req).await
+    }
+
     /// `memory.update` ([`Client::memory_update`]).
     pub async fn memory_update(
         &self,

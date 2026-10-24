@@ -82,6 +82,7 @@ pub const CAPABILITIES: &[&str] = &[
     "terminal.search",
     "project.git_init",
     "usage",
+    "memory.files",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit

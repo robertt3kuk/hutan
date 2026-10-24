@@ -443,6 +443,22 @@ impl Memory<'_> {
         })
     }
 
+    /// Withdraws a pending proposal that a newer one replaced (an edited file edited again,
+    /// or put back): it becomes `cancelled`. `false` when it is not pending (any more).
+    pub fn cancel_proposal(&self, id: &str, now_ms: u64) -> Result<bool> {
+        let id = id.to_owned();
+        self.0.read(move |conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE memory_proposals SET state = 'cancelled', resolved_ms = ?2 \
+                     WHERE id = ?1 AND state = 'pending'",
+                    params![id, ms(now_ms)],
+                )
+                .map_err(StorageError::sqlite("cancelling a memory proposal"))?;
+            Ok(changed > 0)
+        })
+    }
+
     /// Stores what a backend was given.
     pub fn insert_snapshot(&self, row: SnapshotRow) -> Result<()> {
         self.0.read(move |conn| insert_snapshot(conn, &row))

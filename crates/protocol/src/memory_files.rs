@@ -167,6 +167,27 @@ pub fn render_document(
     out
 }
 
+/// The active `entries` as one Markdown document, grouped by category in the order given: what
+/// `hutan memory export` writes.
+pub fn render_entries(scope: MemoryScope, entries: &[MemoryEntry]) -> String {
+    let by_category: Vec<(MemoryCategory, Vec<Item<'_>>)> = MemoryCategory::ALL
+        .into_iter()
+        .map(|category| {
+            let items = entries
+                .iter()
+                .filter(|e| e.category == category && e.state == MemoryState::Active)
+                .map(|e| Item {
+                    id: Some(&e.id),
+                    revision: e.revision,
+                    body: &e.body,
+                })
+                .collect();
+            (category, items)
+        })
+        .collect();
+    render_document(scope, &by_category)
+}
+
 /// One section of a file, or one entry of an export.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {

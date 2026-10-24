@@ -3,18 +3,25 @@
 //! an agent's session is refused by the daemon. Nothing is reported as saved without the
 //! daemon's receipt.
 
+use std::io::Read as _;
+use std::path::Path;
+
 use hutan_client::Client;
 use hutan_core::{ApprovalId, WorkspaceId};
 use hutan_protocol::memory::{
-    MemoryCategory, MemoryEntries, MemoryEntry, MemoryHistory, MemoryList, MemoryProposal,
-    MemoryProposalResolve, MemoryProposals, MemoryReceipt, MemoryScope, MemoryState,
-    MemoryTransition, MemoryUpdate, MemoryWrite, ProposalDecision, ProposalState,
+    MemoryCategory, MemoryEntries, MemoryEntry, MemoryFilesStatus, MemoryFilesStatusRequest,
+    MemoryHistory, MemoryImport, MemoryImported, MemoryList, MemoryProposal, MemoryProposalResolve,
+    MemoryProposals, MemoryReceipt, MemoryScope, MemoryState, MemoryTransition, MemoryUpdate,
+    MemoryWrite, ProposalDecision, ProposalState,
 };
+use hutan_protocol::memory_files;
+use serde::Serialize;
 
 use super::Ctx;
 use crate::args::{
-    MemoryAddArgs, MemoryCategoryArg, MemoryCommand, MemoryEditArgs, MemoryIdArgs, MemoryLsArgs,
-    MemoryProposalsArgs,
+    MemoryAddArgs, MemoryCategoryArg, MemoryCommand, MemoryEditArgs, MemoryExportArgs,
+    MemoryFilesArgs, MemoryFormatArg, MemoryIdArgs, MemoryImportArgs, MemoryLsArgs,
+    MemoryProposalsArgs, MemoryScopeArg,
 };
 use crate::error::CliError;
 
@@ -41,7 +48,147 @@ impl Ctx {
             MemoryCommand::Restore(args) => self.memory_transition(&client, args, false).await,
             MemoryCommand::History(args) => self.memory_history(&client, args).await,
             MemoryCommand::Proposals(args) => self.memory_proposals(&client, args).await,
+            MemoryCommand::Export(args) => self.memory_export(&client, args).await,
+            MemoryCommand::Import(args) => self.memory_import(&client, args).await,
+            MemoryCommand::Files(args) => self.memory_files(&client, args).await,
         }
+    }
+
+    /// The scope `--scope` and `--ws` name: global, or one workspace.
+    async fn memory_scope(
+        &self,
+        client: &Client,
+        scope: Option<MemoryScopeArg>,
+        workspace: Option<String>,
+    ) -> Result<(MemoryScope, Option<WorkspaceId>), CliError> {
+        match (scope, workspace) {
+            (Some(MemoryScopeArg::Global), Some(_)) => Err(CliError::Usage(
+                "--ws names a workspace: drop `--scope global`".to_owned(),
+            )),
+            (Some(MemoryScopeArg::Workspace), None) => Err(CliError::Usage(
+                "`--scope workspace` needs --ws ID|NAME".to_owned(),
+            )),
+            (_, Some(target)) => Ok((
+                MemoryScope::Workspace,
+                Some(self.resolve_workspace_id(client, &target).await?),
+            )),
+            (_, None) => Ok((MemoryScope::Global, None)),
+        }
+    }
+
+    fn require_files(&self, client: &Client) -> Result<(), CliError> {
+        if client.supports_memory_files() {
+            return Ok(());
+        }
+        Err(CliError::Failed(
+            "this hutand does not keep the memory in files (it is older than protocol 0.47); \
+             restart it with `hutan daemon restart`"
+                .to_owned(),
+        ))
+    }
+
+    async fn memory_export(&self, client: &Client, args: MemoryExportArgs) -> Result<(), CliError> {
+        let (scope, workspace_id) = self
+            .memory_scope(client, args.scope, args.workspace)
+            .await?;
+        let format =
+            args.format
+                .unwrap_or_else(|| match args.path.extension().and_then(|e| e.to_str()) {
+                    Some(ext) if ext.eq_ignore_ascii_case("json") => MemoryFormatArg::Json,
+                    _ => MemoryFormatArg::Md,
+                });
+        let entries = client
+            .memory_list(MemoryList {
+                scope: Some(scope),
+                workspace_id,
+                category: None,
+                include_archived: false,
+                query: None,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        let text = match format {
+            MemoryFormatArg::Md => memory_files::render_entries(scope, &entries),
+            MemoryFormatArg::Json => memory_files::render_json(scope, &entries),
+        };
+        let to_stdout = args.path == Path::new("-");
+        if to_stdout {
+            print!("{text}");
+            return Ok(());
+        }
+        if args.path.exists() && !args.force {
+            return Err(CliError::Failed(format!(
+                "{} exists: choose another path or add --force to replace it",
+                args.path.display()
+            )));
+        }
+        std::fs::write(&args.path, &text).map_err(|e| {
+            CliError::Failed(format!("could not write {}: {e}", args.path.display()))
+        })?;
+        let done = Exported {
+            path: args.path.display().to_string(),
+            format: match format {
+                MemoryFormatArg::Md => "md",
+                MemoryFormatArg::Json => "json",
+            },
+            scope: scope_label(scope, workspace_id),
+            entries: entries.len(),
+        };
+        self.print(&done, || {
+            format!(
+                "Exported {} entr{} ({}, {}) to {}",
+                done.entries,
+                if done.entries == 1 { "y" } else { "ies" },
+                done.scope,
+                done.format,
+                done.path
+            )
+        })
+    }
+
+    async fn memory_import(&self, client: &Client, args: MemoryImportArgs) -> Result<(), CliError> {
+        self.require_files(client)?;
+        let (scope, workspace_id) = self
+            .memory_scope(client, args.scope, args.workspace)
+            .await?;
+        let (path, text) = if args.path == Path::new("-") {
+            let mut text = String::new();
+            std::io::stdin()
+                .read_to_string(&mut text)
+                .map_err(|e| CliError::Failed(format!("could not read standard input: {e}")))?;
+            (None, Some(text))
+        } else {
+            // The daemon reads the file, so it gets a path it can resolve from anywhere.
+            let path = std::path::absolute(&args.path)
+                .map_err(|e| CliError::Failed(format!("{}: {e}", args.path.display())))?;
+            (Some(path), None)
+        };
+        let imported = client
+            .memory_import(MemoryImport {
+                scope,
+                workspace_id,
+                path,
+                text,
+                category: args.category.map(category),
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&imported, || imported_text(&imported))
+    }
+
+    async fn memory_files(&self, client: &Client, args: MemoryFilesArgs) -> Result<(), CliError> {
+        self.require_files(client)?;
+        let (scope, workspace_id) = self
+            .memory_scope(client, args.scope, args.workspace)
+            .await?;
+        let status = client
+            .memory_files_status(MemoryFilesStatusRequest {
+                scope,
+                workspace_id,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&status, || status_text(&status))
     }
 
     async fn memory_workspace(
@@ -226,6 +373,79 @@ impl Ctx {
         }
         Ok(())
     }
+}
+
+/// What `hutan memory export --json` prints.
+#[derive(Debug, Serialize)]
+struct Exported {
+    path: String,
+    format: &'static str,
+    scope: String,
+    entries: usize,
+}
+
+fn imported_text(imported: &MemoryImported) -> String {
+    let mut out = format!(
+        "Imported as proposals (nothing is saved until you approve them): {} new, {} changes, {} already there",
+        imported.created, imported.updated, imported.unchanged
+    );
+    if imported.created + imported.updated > 0 {
+        out.push_str("\nReview them with `hutan memory proposals`, or in the Memory page.");
+    }
+    for skipped in &imported.skipped {
+        out.push_str(&format!(
+            "\nSkipped {}{}: {}",
+            skipped.file,
+            skipped
+                .section
+                .as_ref()
+                .map_or_else(String::new, |s| format!(" ({s})")),
+            skipped.reason
+        ));
+    }
+    out
+}
+
+fn status_text(status: &MemoryFilesStatus) -> String {
+    let mut out = String::new();
+    match (&status.folder, &status.note) {
+        (Some(folder), _) => out.push_str(&format!("Folder: {}\n", folder.display())),
+        (None, Some(note)) => {
+            out.push_str(&format!("No files: {note}"));
+            return out;
+        }
+        (None, None) => out.push_str("No files.\n"),
+    }
+    if let Some(note) = &status.note {
+        out.push_str(&format!("{note}\n"));
+    }
+    for file in &status.files {
+        out.push_str(&format!("  {}  {} bytes\n", file.name, file.bytes));
+    }
+    out.push_str(&format!(
+        "In a git repository: {}\n",
+        if status.tracked {
+            "yes (changes show in Changes and can be committed)"
+        } else {
+            "no"
+        }
+    ));
+    out.push_str(&format!(
+        "Proposals from edited files waiting: {}",
+        status.pending
+    ));
+    for problem in &status.problems {
+        out.push_str(&format!(
+            "\nProblem in {}{}: {}",
+            problem.file,
+            problem
+                .section
+                .as_ref()
+                .map_or_else(String::new, |s| format!(" ({s})")),
+            problem.reason
+        ));
+    }
+    out
 }
 
 fn operation_id() -> String {

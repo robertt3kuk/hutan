@@ -36,7 +36,8 @@ use hutan_protocol::checkpoint::{
 use hutan_protocol::daemon_settings::{DaemonSettingSet, DaemonSettings};
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
 use hutan_protocol::memory::{
-    MemoryEntries, MemoryEntry, MemoryHistory, MemoryHistoryRequest, MemoryList, MemoryProposal,
+    MemoryEntries, MemoryEntry, MemoryFilesStatus, MemoryFilesStatusRequest, MemoryHistory,
+    MemoryHistoryRequest, MemoryImport, MemoryImported, MemoryList, MemoryProposal,
     MemoryProposalResolve, MemoryProposalResolved, MemoryProposals, MemoryProposalsList,
     MemoryPropose, MemoryProposed, MemoryReceipt, MemoryTransition, MemoryUpdate, MemoryWrite,
 };
@@ -160,6 +161,8 @@ pub(crate) const SESSION_CLOSE_CAPABILITY: &str = "session.close";
 pub(crate) const CONTROL_GRANTS_CAPABILITY: &str = "control.grants";
 /// Capability for `memory.*` and the `memory.changed` event (protocol 0.32).
 pub(crate) const MEMORY_CAPABILITY: &str = "memory";
+/// Capability for `memory.import` and `memory.files.status` (protocol 0.47).
+pub(crate) const MEMORY_FILES_CAPABILITY: &str = "memory.files";
 /// Capability for the `fs.*` requests and the `fs.search.progress` event (protocol 0.33).
 pub(crate) const FS_CAPABILITY: &str = "fs";
 /// Capability for `fs.watch` / `fs.unwatch` and the `fs.changed` and `fs.generation` events
@@ -249,6 +252,7 @@ const CAPABILITIES: &[&str] = &[
     TERMINAL_SEARCH_CAPABILITY,
     PROJECT_GIT_INIT_CAPABILITY,
     USAGE_CAPABILITY,
+    MEMORY_FILES_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -1073,6 +1077,25 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == MEMORY_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `memory.files` (protocol 0.47): Mawas's
+    /// memory as Markdown files, `memory.import` and `memory.files.status`.
+    pub fn supports_memory_files(&self) -> bool {
+        self.has_capability(MEMORY_FILES_CAPABILITY)
+    }
+
+    /// `memory.import`: entries of a file or text become pending proposals.
+    pub async fn memory_import(&self, req: MemoryImport) -> Result<MemoryImported, ClientError> {
+        self.call(Request::MemoryImport(req)).await
+    }
+
+    /// `memory.files.status`: where a scope's memory files are and what went wrong with them.
+    pub async fn memory_files_status(
+        &self,
+        req: MemoryFilesStatusRequest,
+    ) -> Result<MemoryFilesStatus, ClientError> {
+        self.call(Request::MemoryFilesStatus(req)).await
     }
 
     /// `memory.list`: entries of Mawas's memory.

@@ -23,6 +23,7 @@ mod login_env;
 mod lsp;
 mod mawas;
 mod memory;
+mod memory_files;
 mod menu_bar;
 mod notify;
 mod projects;
