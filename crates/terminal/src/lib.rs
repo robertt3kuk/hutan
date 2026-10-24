@@ -21,13 +21,18 @@ pub mod procs;
 mod queries;
 mod render;
 mod scrollback;
+#[cfg(test)]
+mod search_tests;
 pub mod shell_integration;
 mod sniffer;
 mod sys;
 mod terminal;
 
 pub use blocks::{BlockText, BlockTextError};
-pub use emulator::{DefaultColors, Emulator, LineScope, LogicalLine, LogicalLines};
+pub use emulator::{
+    DefaultColors, Emulator, LineScope, LogicalLine, LogicalLines, ScanFlow, ScanProgress,
+    SearchLine,
+};
 pub use env::EnvInherit;
 pub use error::TerminalError;
 pub use render::RenderTracker;

@@ -22,6 +22,7 @@ use hutan_protocol::render::{
     Cursor, CursorShape, Link, Modes, MouseMode, Palette, Row, TerminalFrame, TerminalSnapshot,
 };
 use parking_lot::Mutex;
+use unicode_width::UnicodeWidthChar;
 
 use crate::blocks::{BlockIndex, BlockText, BlockTextError, MAX_COMMAND_BYTES, now_ms};
 use crate::error::TerminalError;
@@ -1361,10 +1362,10 @@ impl LogicalLines<'_> {
     }
 }
 
-impl Iterator for LogicalLines<'_> {
-    type Item = LogicalLine;
-
-    fn next(&mut self) -> Option<LogicalLine> {
+impl LogicalLines<'_> {
+    /// The next line; `row_ends` (when given) receives, for each row of the line, the byte
+    /// offset in the text where the row's text ends.
+    fn advance(&mut self, mut row_ends: Option<&mut Vec<usize>>) -> Option<LogicalLine> {
         if self.next >= self.total {
             return None;
         }
@@ -1372,6 +1373,9 @@ impl Iterator for LogicalLines<'_> {
         let mut text = String::new();
         loop {
             let wrapped = self.push_row(self.next, &mut text);
+            if let Some(ends) = row_ends.as_deref_mut() {
+                ends.push(text.len());
+            }
             self.next += 1;
             if !wrapped || self.next >= self.total {
                 break;
@@ -1382,6 +1386,197 @@ impl Iterator for LogicalLines<'_> {
             start: u32::try_from(start).unwrap_or(u32::MAX),
             rows: u32::try_from(self.next - start).unwrap_or(u32::MAX),
             text,
+        })
+    }
+}
+
+impl Iterator for LogicalLines<'_> {
+    type Item = LogicalLine;
+
+    fn next(&mut self) -> Option<LogicalLine> {
+        self.advance(None)
+    }
+}
+
+/// What a [`Emulator::scan_lines`] visitor decides after one line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanFlow {
+    /// Go on with the next line.
+    Continue,
+    /// Stop; the scan resumes at this line.
+    StopBefore,
+    /// Stop; the scan resumes after this line.
+    StopAfter,
+}
+
+/// Where a [`Emulator::scan_lines`] call stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScanProgress {
+    /// Absolute row to continue from. At or beyond `end` when the scope is done.
+    pub next: u64,
+    /// Absolute row after the last row of the scope (the scope's end when the scan began).
+    pub end: u64,
+    /// The oldest absolute row the terminal still holds.
+    pub first_row: u64,
+    /// Absolute row of the viewport's first row.
+    pub viewport_top: u64,
+}
+
+impl ScanProgress {
+    /// Nothing is left to scan.
+    pub fn done(&self) -> bool {
+        self.next >= self.end
+    }
+}
+
+/// One logical line shown to a [`Emulator::scan_lines`] visitor: the rows of a soft-wrapped
+/// line joined, trailing blanks removed.
+#[derive(Debug)]
+pub struct SearchLine<'a> {
+    /// Absolute row of the line's first row.
+    pub row: u64,
+    /// Rows the line occupies.
+    pub rows: u32,
+    pub text: &'a str,
+    row_ends: &'a [usize],
+    spans: &'a [(u64, Option<u64>, u64)],
+}
+
+impl SearchLine<'_> {
+    /// The block whose rows hold the start of the line (prompt, command or output).
+    pub fn block_id(&self) -> Option<u64> {
+        let after = self.spans.partition_point(|span| span.0 <= self.row);
+        let (_, end_line, id) = *self.spans.get(after.checked_sub(1)?)?;
+        end_line.is_none_or(|end| self.row < end).then_some(id)
+    }
+
+    /// Index (within the line) of the row holding byte offset `at` of the text.
+    fn row_of(&self, at: usize) -> usize {
+        let index = self.row_ends.partition_point(|&end| end <= at);
+        index.min(self.row_ends.len().saturating_sub(1))
+    }
+
+    /// Cell column of the character starting at byte `at` in its row.
+    fn column_of(&self, row: usize, at: usize) -> u16 {
+        let start = match row.checked_sub(1) {
+            Some(before) => self.row_ends[before],
+            None => 0,
+        };
+        let cells: usize = self.text[start..at]
+            .chars()
+            .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
+            .sum();
+        u16::try_from(cells).unwrap_or(u16::MAX)
+    }
+
+    /// Absolute row and cell column of the character starting at byte `at` (a character
+    /// boundary of the text).
+    pub fn position(&self, at: usize) -> (u64, u16) {
+        let row = self.row_of(at);
+        (self.row + row as u64, self.column_of(row, at))
+    }
+
+    /// Absolute row and cell column just after the last character of a match that ends at byte
+    /// `end` (exclusive, a character boundary, after the match's start).
+    pub fn end_position(&self, end: usize) -> (u64, u16) {
+        let Some((last, c)) = self.text[..end].char_indices().next_back() else {
+            return self.position(0);
+        };
+        let row = self.row_of(last);
+        let width = UnicodeWidthChar::width(c).unwrap_or(1);
+        (
+            self.row + row as u64,
+            self.column_of(row, last)
+                .saturating_add(u16::try_from(width).unwrap_or(0)),
+        )
+    }
+}
+
+impl Emulator {
+    /// Shows the logical lines of the terminal's text — scrollback, then screen (just the
+    /// screen on the alternate screen) — to `visit`, oldest first, starting at absolute row
+    /// `from` (a line that began above it is shown from there on), at most about `max_rows`
+    /// rows: the line that reaches the budget is shown whole. `block` restricts the scan to
+    /// that block's output rows.
+    pub fn scan_lines(
+        &mut self,
+        from: u64,
+        max_rows: usize,
+        block: Option<u64>,
+        mut visit: impl FnMut(&SearchLine<'_>) -> ScanFlow,
+    ) -> Result<ScanProgress, BlockTextError> {
+        let on_alt = self.on_alt_screen();
+        let hot = self.term.history_size();
+        let cold_len = if on_alt { 0 } else { self.cold.len() };
+        let retained = (hot + cold_len) as u64;
+        let first_row = self.abs_top.saturating_sub(retained);
+        let all_end = first_row + retained + self.term.screen_lines() as u64;
+        let (mut start, mut end) = (first_row, all_end);
+        if let Some(id) = block {
+            let block = self.blocks.get(id).ok_or(BlockTextError::NotFound)?.clone();
+            if on_alt {
+                return Err(BlockTextError::Unavailable);
+            }
+            match block.output_start {
+                Some(output) => {
+                    start = output;
+                    end = block
+                        .end_line
+                        .unwrap_or_else(|| self.cursor_abs().0 + 1)
+                        .min(all_end);
+                }
+                None => end = start,
+            }
+        }
+        let start = start.max(from).max(first_row);
+        let viewport_top = self.abs_top;
+        if start >= end {
+            return Ok(ScanProgress {
+                next: end,
+                end,
+                first_row,
+                viewport_top,
+            });
+        }
+        let spans = self.blocks.spans();
+        let first = usize::try_from(start - first_row).unwrap_or(usize::MAX);
+        let last = usize::try_from(end - first_row).unwrap_or(usize::MAX);
+        let mut lines = self.logical_lines(LineScope::HistoryAndViewport);
+        lines.next = first.min(lines.total);
+        lines.total = last.min(lines.total);
+        let mut row_ends = Vec::new();
+        let mut next = start;
+        let mut budget = max_rows;
+        while budget > 0 {
+            row_ends.clear();
+            let Some(line) = lines.advance(Some(&mut row_ends)) else {
+                next = end;
+                break;
+            };
+            let row = first_row + u64::from(line.start);
+            next = row + u64::from(line.rows);
+            let shown = SearchLine {
+                row,
+                rows: line.rows,
+                text: &line.text,
+                row_ends: &row_ends,
+                spans: &spans,
+            };
+            match visit(&shown) {
+                ScanFlow::Continue => {}
+                ScanFlow::StopBefore => {
+                    next = row;
+                    break;
+                }
+                ScanFlow::StopAfter => break,
+            }
+            budget = budget.saturating_sub(line.rows as usize);
+        }
+        Ok(ScanProgress {
+            next,
+            end,
+            first_row,
+            viewport_top,
         })
     }
 }

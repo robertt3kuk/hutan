@@ -27,6 +27,7 @@ use hutan_protocol::messages::{
     TerminalSetColors,
 };
 use hutan_protocol::render::TerminalRender;
+use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchResult};
 use hutan_protocol::{Frame, MAX_PAYLOAD};
 use hutan_terminal::{BlockTextError, DefaultColors, RenderTracker, Terminal, TerminalError};
 use tokio::sync::{mpsc, watch};
@@ -35,6 +36,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use crate::conn::{ConnHandle, ConnId, Outbound};
+use crate::terminal_search::{self, Searches};
 
 /// An attachment renders at most once per this interval (ADR 0004).
 const COALESCE: Duration = Duration::from_millis(8);
@@ -123,6 +125,8 @@ impl Attachment {
 struct Inner {
     terminals: HashMap<TerminalId, Arc<TerminalEntry>>,
     attachments: HashMap<(ConnId, TerminalId), Attachment>,
+    /// Running `terminal.search` calls.
+    searches: Searches,
 }
 
 #[derive(Debug)]
@@ -190,6 +194,7 @@ impl TerminalHub {
     pub fn remove(&self, id: TerminalId) {
         let mut inner = lock(&self.inner);
         inner.terminals.remove(&id);
+        inner.searches.cancel_terminal(id);
         inner.attachments.retain(|(_, terminal), attachment| {
             let keep = *terminal != id;
             if !keep {
@@ -216,7 +221,9 @@ impl TerminalHub {
 
     /// Stops every attachment of a closed connection.
     pub fn connection_closed(&self, conn: ConnId) {
-        lock(&self.inner).attachments.retain(|(c, _), attachment| {
+        let mut inner = lock(&self.inner);
+        inner.searches.cancel_connection(conn);
+        inner.attachments.retain(|(c, _), attachment| {
             let keep = *c != conn;
             if !keep {
                 attachment.stop();
@@ -404,6 +411,42 @@ impl TerminalHub {
             )),
             Err(error @ BlockTextError::Unavailable) => {
                 Err(ErrorBody::new(ErrorCode::InvalidState, error.to_string()))
+            }
+        }
+    }
+
+    /// `terminal.search`: the matches of a query in the scrollback and screen, oldest first (see
+    /// [`terminal_search`]). A newer search of the same connection for the same terminal
+    /// cancels this one (`conflict`, `data.reason = "superseded"`). Runs on the blocking pool,
+    /// in slices that lock the terminal's engine one at a time.
+    pub async fn search(
+        &self,
+        conn: ConnId,
+        req: TerminalSearch,
+    ) -> Result<TerminalSearchResult, ErrorBody> {
+        let id = req.terminal_id;
+        let entry = self.get(id)?;
+        let params = terminal_search::Params::new(&req)?;
+        let (handle, cancel) = lock(&self.inner).searches.begin(conn, id);
+        let terminal = entry.terminal.clone();
+        let worker = cancel.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            terminal_search::run(
+                &terminal,
+                &params,
+                &terminal_search::Bounds::default(),
+                &worker,
+                || {},
+            )
+        })
+        .await;
+        lock(&self.inner).searches.end(conn, id, handle);
+        match outcome {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(error)) => Err(error.into_body(id)),
+            Err(error) => {
+                warn!(terminal = %id, %error, "terminal search task failed");
+                Err(ErrorBody::new(ErrorCode::Internal, "the search failed"))
             }
         }
     }

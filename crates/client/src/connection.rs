@@ -29,6 +29,7 @@ use hutan_protocol::messages::{
     AgentReleaseRequest, AgentReportRequest, Empty, Request, SessionInfo, TerminalSize,
 };
 use hutan_protocol::resources::{DEFAULT_INTERVAL_MS, ResourcesSubscribed};
+use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchResult};
 use serde::de::DeserializeOwned;
 use tokio::sync::{Notify, broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -335,6 +336,22 @@ impl Connection {
             max_bytes,
         }))
         .await
+    }
+
+    /// `terminal.search` (see [`Client::terminal_search`]).
+    pub async fn terminal_search(
+        &self,
+        req: TerminalSearch,
+    ) -> Result<TerminalSearchResult, ClientError> {
+        self.call(Request::TerminalSearch(req)).await
+    }
+
+    /// True while connected to a daemon that advertised capability `terminal.search`
+    /// ([`Client::supports_terminal_search`]); false when disconnected.
+    pub fn supports_terminal_search(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_terminal_search())
     }
 
     /// True while connected to a daemon that advertised capability `fs` ([`Client::supports_fs`],

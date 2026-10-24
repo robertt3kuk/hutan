@@ -300,6 +300,7 @@ impl Router {
             Request::TerminalHistory(req) => ok(&self.hub.history(req)?),
             Request::TerminalBlocks(req) => ok(&self.hub.blocks(req)?),
             Request::TerminalBlockText(req) => ok(&self.hub.block_text(req)?),
+            Request::TerminalSearch(req) => ok(&self.hub.search(conn.id(), req).await?),
             Request::TerminalSetColors(req) => {
                 self.hub.set_colors(req)?;
                 ok(&Empty {})
@@ -914,6 +915,7 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::AgentTree(_) => ("agent.tree", Read),
         Request::TerminalBlocks(_) => ("terminal.blocks", Read),
         Request::TerminalBlockText(_) => ("terminal.block_text", Read),
+        Request::TerminalSearch(_) => ("terminal.search", Read),
         Request::HistorySearch(_) => ("history.search", Read),
         Request::HistoryStatus(_) => ("history.status", Read),
         Request::HistorySessions(_) => ("history.sessions", Read),

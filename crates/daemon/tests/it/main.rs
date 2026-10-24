@@ -35,6 +35,7 @@ mod sessions;
 mod start_error;
 mod task_delivery;
 mod tasks;
+mod terminal_search;
 mod workspaces;
 mod worktree_review;
 mod worktrees;

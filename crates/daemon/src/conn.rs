@@ -79,6 +79,7 @@ pub const CAPABILITIES: &[&str] = &[
     "lsp.completion",
     "daemon.identity",
     "daemon.stopping",
+    "terminal.search",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit
@@ -436,9 +437,11 @@ async fn handle_frame(frame: Frame, handle: &ConnHandle, ctx: &Arc<ConnContext>)
                 // A search runs for as long as it takes: on a task of its own, so that the
                 // connection goes on reading (its `fs.search.cancel` arrives meanwhile). So do
                 // completion and signature help: the next keystroke's `doc.change` must not
-                // wait behind them, and a newer one of them supersedes (cancels) the older.
+                // wait behind them, and a newer one of them supersedes (cancels) the older. A
+                // terminal search too: the next keystroke of the find bar's query supersedes it.
                 Ok(
                     request @ (Request::FsSearch(_)
+                    | Request::TerminalSearch(_)
                     | Request::LspCompletion(_)
                     | Request::LspCompletionResolve(_)
                     | Request::LspSignatureHelp(_)),

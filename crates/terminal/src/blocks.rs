@@ -404,6 +404,14 @@ impl BlockIndex {
             .collect()
     }
 
+    /// Where each block lives, oldest first: `(prompt_line, end_line, id)`.
+    pub(crate) fn spans(&self) -> Vec<(u64, Option<u64>, u64)> {
+        self.blocks
+            .iter()
+            .map(|block| (block.prompt_line, block.end_line, block.id))
+            .collect()
+    }
+
     /// Changes since the last call, oldest first.
     pub(crate) fn take_events(&mut self) -> Vec<Block> {
         std::mem::take(&mut self.events)

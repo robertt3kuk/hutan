@@ -63,6 +63,7 @@ use hutan_protocol::task::{
     TaskCreate, TaskDelete, TaskDeleted, TaskList, TaskListRequest, TaskRef, TaskResult,
     TaskReview, TaskReviewed, TaskStarted, TaskUpdate,
 };
+use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchResult};
 use hutan_protocol::tree::{AgentTree, AgentTreeRequest};
 use hutan_protocol::ui::{
     SessionSendText, SessionTextSent, UiActionList, UiCommandResult, UiLayoutResult, UiPublish,
@@ -190,6 +191,8 @@ pub(crate) const LSP_CAPABILITY: &str = "lsp";
 pub(crate) const IDENTITY_CAPABILITY: &str = "daemon.identity";
 /// Capability for the `daemon.stopping` event and `daemon.shutdown`'s `restart` (protocol 0.42).
 pub(crate) const STOPPING_CAPABILITY: &str = "daemon.stopping";
+/// Capability for `terminal.search` (protocol 0.44).
+pub(crate) const TERMINAL_SEARCH_CAPABILITY: &str = "terminal.search";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -236,6 +239,7 @@ const CAPABILITIES: &[&str] = &[
     LSP_CAPABILITY,
     IDENTITY_CAPABILITY,
     STOPPING_CAPABILITY,
+    TERMINAL_SEARCH_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -422,6 +426,15 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == BLOCKS_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `terminal.search` (`terminal.search`; protocol
+    /// 0.44).
+    pub fn supports_terminal_search(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == TERMINAL_SEARCH_CAPABILITY)
     }
 
     /// True when the daemon advertised capability `history.search` (the `history.*` requests,
@@ -1657,6 +1670,17 @@ impl Client {
             max_bytes,
         }))
         .await
+    }
+
+    /// `terminal.search`: where `req.query` matches in the terminal's scrollback and screen, oldest
+    /// first; page with the answer's `next_from`. A newer search for the same terminal on this
+    /// connection cancels an unfinished one, which fails with a `conflict` remote error
+    /// (`data.reason = "superseded"`).
+    pub async fn terminal_search(
+        &self,
+        req: TerminalSearch,
+    ) -> Result<TerminalSearchResult, ClientError> {
+        self.call(Request::TerminalSearch(req)).await
     }
 
     /// Daemon events, each with its seq. A receiver sees events delivered after it was created

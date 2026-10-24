@@ -28,7 +28,7 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use tokio::sync::{broadcast, watch};
 
 use crate::blocks::{BlockText, BlockTextError};
-use crate::emulator::{DefaultColors, Emulator};
+use crate::emulator::{DefaultColors, Emulator, ScanFlow, ScanProgress, SearchLine};
 use crate::env::{self, EnvInherit, SystemFacts};
 use crate::error::TerminalError;
 use crate::render::RenderTracker;
@@ -529,6 +529,22 @@ impl Terminal {
         max_bytes: usize,
     ) -> Result<BlockText, BlockTextError> {
         self.core.engine.lock().block_text(id, part, max_bytes)
+    }
+
+    /// Shows logical lines of the text to `visit`, oldest first (see [`Emulator::scan_lines`]).
+    /// `visit` runs with the engine locked: keep it cheap, and never call back into this
+    /// terminal from it.
+    pub fn scan_lines(
+        &self,
+        from: u64,
+        max_rows: usize,
+        block: Option<u64>,
+        visit: impl FnMut(&SearchLine<'_>) -> ScanFlow,
+    ) -> Result<ScanProgress, BlockTextError> {
+        self.core
+            .engine
+            .lock()
+            .scan_lines(from, max_rows, block, visit)
     }
 
     /// Generation counter bumped whenever visible state changed; coalescing (watch semantics).
