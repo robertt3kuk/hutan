@@ -479,3 +479,46 @@ async fn a_task_runs_as_an_omp_chat() {
     .expect("the task finishes with its turn");
     e.t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn usage_shows_what_a_turn_used_and_what_the_harnesses_report() {
+    let e = Env::start("plain-turn").await;
+    // Nothing has run, and the fake OMP reports no limit windows.
+    let none = e.t.hutan(&["usage"]).await.ok().stdout;
+    assert!(none.starts_with("no usage yet"), "{none}");
+    let created =
+        e.t.hutan(&["chat", "new", "--agent", "omp", "--cwd", &e.cwd()])
+            .await
+            .ok();
+    let id = created.stdout.split_whitespace().nth(1).unwrap().to_owned();
+    e.t.hutan(&["chat", "send", &id, "Say hello.", "--wait"])
+        .await
+        .ok();
+    // The turn is recorded as it ends: wait for the summary to show it.
+    let summary = timeout(WAIT, async {
+        loop {
+            let json = e.t.hutan(&["--json", "usage", "--cached"]).await.ok();
+            let value: Value = serde_json::from_str(json.stdout.trim()).unwrap();
+            if value["harnesses"][0]["week"]["turns"] == 1 {
+                return value;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the turn's usage");
+    let omp = &summary["harnesses"][0];
+    assert_eq!(omp["harness"], "omp");
+    assert_eq!(omp["today"]["total_tokens"], 1234);
+    assert_eq!(omp["today"]["cost_is_estimate"], true);
+    let text = e.t.hutan(&["usage", "--cached"]).await.ok().stdout;
+    assert!(
+        text.contains("OMP") && text.contains("1234 tokens"),
+        "{text}"
+    );
+    assert!(
+        text.contains("(estimate)") && text.contains("no limit reported"),
+        "{text}"
+    );
+    assert!(text.contains("gitlab-duo"), "{text}");
+}

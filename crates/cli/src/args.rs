@@ -100,6 +100,9 @@ pub enum Command {
     /// through each harness's own flow (Hutan never handles a token)
     #[command(subcommand)]
     Account(AccountCommand),
+    /// How much each harness reports used and left of its limits (5-hour, weekly), and the
+    /// tokens and cost of the turns Hutan ran today and this week
+    Usage(UsageArgs),
     /// Model providers for direct chat: OpenAI, Anthropic, Ollama, OpenAI-compatible servers
     #[command(subcommand)]
     Provider(ProviderCommand),
@@ -694,6 +697,14 @@ pub struct ChatModelsArgs {
     /// Whose models: codex (default), omp or claude
     #[arg(long, default_value = "codex", value_parser = ["codex", "omp", "claude"])]
     pub agent: String,
+}
+
+#[derive(Debug, Args)]
+pub struct UsageArgs {
+    /// Answer from what the daemon already knows; do not ask the harnesses (OMP's own report,
+    /// Codex's) what is left, which takes a few seconds and goes over the network
+    #[arg(long)]
+    pub cached: bool,
 }
 
 /// The logins of the agent harnesses.

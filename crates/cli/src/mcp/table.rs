@@ -402,6 +402,24 @@ static TOOLS: &[Tool] = &[
         call: request("approval.list"),
         schema: || object(json!({"session_id": session_id()}), &[]),
     },
+    // ---- usage ------------------------------------------------------------------------------
+    Tool {
+        name: "usage_summary",
+        description: "How much of their limits the agent harnesses (OMP, Claude Code, Codex) report \
+                      used (the 5-hour and weekly windows: percent used and when they reset), and \
+                      the tokens and cost of the turns Hutan ran today and this week, per harness \
+                      and per model provider. A cost is the harness's own estimate. Use it before \
+                      starting expensive work. `refresh` asks the harnesses first (a few \
+                      seconds); without it the answer is what the daemon already knows.",
+        read_only: true,
+        call: request("usage.summary"),
+        schema: || {
+            object(
+                json!({"refresh": {"type": "boolean", "description": "Ask the harnesses what is left first (slower)."}}),
+                &[],
+            )
+        },
+    },
     // ---- tasks ------------------------------------------------------------------------------
     Tool {
         name: "task_add",
@@ -1384,6 +1402,7 @@ mod tests {
             "chat_send",
             "chat_log",
             "approval_list",
+            "usage_summary",
             "task_add",
             "task_list",
             "task_start",
