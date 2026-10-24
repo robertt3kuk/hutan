@@ -1804,3 +1804,69 @@ async fn a_proposal_and_its_answer_tell_clients_to_refresh_without_polling() {
     assert_eq!(resolved, proposed.proposal_id);
     w.daemon.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_assistant_is_told_what_the_projects_agents_md_opens_with_and_never_its_secrets() {
+    let mut w = W::start(
+        "backend = \"codex\"\nmodel = \"gpt-6.1-sol\"",
+        Scripts {
+            codex: &["plain-turn"],
+            ..Scripts::default()
+        },
+    )
+    .await;
+    let ws = w.workspace("alpha").await;
+    std::fs::write(
+        ws.roots[0].join("AGENTS.md"),
+        format!(
+            "# Alpha guide\n\nA tiny service. Staging key {SECRET}\n\n{}\n",
+            "padding ".repeat(2_000)
+        ),
+    )
+    .unwrap();
+    let mawas = w.mawas(ws.id, false).await;
+    w.send(mawas.id, "hello").await;
+    let start = &w.received_of("codex", "thread/start")[0]["params"];
+    let instructions = start["developerInstructions"]
+        .as_str()
+        .expect("developerInstructions");
+    assert!(
+        instructions.starts_with("--- Hutan project instructions"),
+        "memory is empty, so the line stands alone: {instructions}"
+    );
+    assert!(
+        instructions.contains("KiB) opens with: \"Alpha guide — A tiny service."),
+        "{instructions}"
+    );
+    assert!(!instructions.contains(SECRET), "{instructions}");
+    assert!(!instructions.contains("padding padding"), "{instructions}");
+    w.daemon.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_the_files_permission_the_assistant_is_not_told_about_agents_md() {
+    let mut w = W::start(
+        "backend = \"codex\"\nmodel = \"gpt-6.1-sol\"\n\n[assistant.context]\nfiles = false",
+        Scripts {
+            codex: &["plain-turn"],
+            ..Scripts::default()
+        },
+    )
+    .await;
+    let ws = w.workspace("alpha").await;
+    std::fs::write(
+        ws.roots[0].join("AGENTS.md"),
+        "# Alpha guide\n\nA tiny service.\n",
+    )
+    .unwrap();
+    let mawas = w.mawas(ws.id, false).await;
+    w.send(mawas.id, "hello").await;
+    let start = &w.received_of("codex", "thread/start")[0]["params"];
+    assert!(
+        start
+            .get("developerInstructions")
+            .is_none_or(|v| v.is_null() || !v.to_string().contains("AGENTS.md")),
+        "{start}"
+    );
+    w.daemon.stop().await;
+}

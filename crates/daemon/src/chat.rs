@@ -1149,16 +1149,21 @@ impl ChatManager {
         lock(&self.asleep).remove(&live.id);
     }
 
-    /// The memory a Mawas conversation starts with (`None`: memory is off, or there is nothing
-    /// to give).
+    /// The memory a Mawas conversation starts with, and the line about the project's
+    /// `AGENTS.md` (`None`: memory is off and the project has none, or there is nothing to give).
     async fn start_memory(
         &self,
         id: SessionId,
         backend: &'static str,
         spec: &ChatSpec,
     ) -> Option<StartContext> {
-        let memory = self.memory_context()?;
-        memory.open(id, backend, spec.thread_id.is_some()).await
+        let context = self.memory_context()?;
+        let resumed = spec.thread_id.is_some();
+        let memory = context.open(id, backend, resumed).await;
+        // The project's AGENTS.md rides with it (`crate::project_instructions`), also when
+        // memory is off.
+        let project = context.project_instructions(id).await;
+        crate::project_instructions::combine(memory, project, id, resumed)
     }
 
     /// The prompt file of an OMP assistant: its Mawas prompt for `mode` and the memory, private

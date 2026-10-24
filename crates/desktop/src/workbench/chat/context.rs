@@ -30,6 +30,10 @@ const APPENDIX_MARKER: &str = "--- attached context (read-only";
 /// What the daemon opens a block of Mawas's memory with (`crate::memory::BLOCK_MARKER`).
 const MEMORY_MARKER: &str = "--- Hutan memory";
 
+/// What the daemon opens the line about the project's AGENTS.md with
+/// (`crate::project_instructions::BLOCK_MARKER`).
+const PROJECT_MARKER: &str = "--- Hutan project instructions";
+
 /// Whether `agent` (`chat.agent`) is a gateway chat — a provider's chat API, no tools, no
 /// approvals: a direct chat or an assistant. Both switch models and report provider errors.
 pub fn is_gateway_chat(agent: &str) -> bool {
@@ -425,7 +429,7 @@ pub fn clamp_hits(hits: u32) -> u32 {
 /// additions to a Mawas turn (the memory the user approved, `--- Hutan memory …`), which the
 /// user did not type.
 pub fn split_context(message: &str) -> (&str, Option<&str>) {
-    let at = [APPENDIX_MARKER, MEMORY_MARKER]
+    let at = [APPENDIX_MARKER, MEMORY_MARKER, PROJECT_MARKER]
         .iter()
         .filter_map(|marker| message.find(&format!("\n\n{marker}")))
         .min();
@@ -450,6 +454,15 @@ mod tests {
             "why?\n\n--- Hutan memory ---\nm\n\n--- attached context (read-only, redacted) ---\nc";
         assert_eq!(split_context(both).0, "why?");
         assert_eq!(split_context("just words"), ("just words", None));
+        // The line about the project's AGENTS.md is Hutan's too, with or without memory before it.
+        let project = "why?\n\n--- Hutan project instructions (this workspace's AGENTS.md) ---\nl\n--- end of Hutan project instructions ---";
+        assert_eq!(split_context(project).0, "why?");
+        assert!(
+            split_context(project)
+                .1
+                .unwrap()
+                .starts_with("--- Hutan project instructions")
+        );
     }
 
     #[test]

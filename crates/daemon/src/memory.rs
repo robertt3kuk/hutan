@@ -153,6 +153,10 @@ pub trait MemoryContext: Send + Sync + std::fmt::Debug {
     /// A private (0600) file under the data directory holding `content`, named by the snapshot:
     /// what an OMP assistant's `--append-system-prompt` is given instead of the memory in argv.
     fn prompt_file(&self, snapshot_id: &str, content: &str) -> std::io::Result<PathBuf>;
+    /// The block about the workspace's `AGENTS.md` a Mawas conversation starts with
+    /// (`crate::project_instructions`); `None` without such a file, or when the workspace does
+    /// not allow Mawas to read files.
+    fn project_instructions(&self, chat: SessionId) -> BoxFuture<'_, Option<String>>;
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -750,6 +754,8 @@ pub struct MemoryService {
     bus: Arc<EventBus>,
     registry: RegistryHandle,
     settings: RwLock<MemorySettings>,
+    /// `[assistant]` as the daemon runs it: what Mawas may read, for the project line.
+    assistant: RwLock<AssistantSettings>,
     /// `<data dir>/memory`: the private prompt files of OMP assistants.
     prompts: PathBuf,
     /// One change at a time: a read-compare-write of an entry, a snapshot (its scope revisions
@@ -774,6 +780,7 @@ impl MemoryService {
             bus,
             registry: registry.clone(),
             settings: RwLock::new(settings.into()),
+            assistant: RwLock::new(settings.clone()),
             prompts: prompts.clone(),
             gate: tokio::sync::Mutex::new(()),
             approvals: Mutex::new(HashMap::new()),
@@ -809,6 +816,7 @@ impl MemoryService {
     /// Uses `settings` from now on (`daemon.settings.set` changed `[assistant]`).
     pub fn apply_settings(&self, settings: &AssistantSettings) {
         *self.settings.write() = settings.into();
+        *self.assistant.write() = settings.clone();
     }
 
     async fn db<T: Send + 'static>(
@@ -1697,6 +1705,13 @@ impl MemoryContext for MemoryService {
             if let Err(error) = self.db(move |s| Ok(s.memory().insert_snapshot(row)?)).await {
                 warn!(message = %error.message, "could not record a memory delta");
             }
+        })
+    }
+
+    fn project_instructions(&self, chat: SessionId) -> BoxFuture<'_, Option<String>> {
+        Box::pin(async move {
+            let settings = self.assistant.read().clone();
+            crate::project_instructions::for_chat(&self.registry, &settings, chat).await
         })
     }
 
