@@ -1,5 +1,7 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`terminal_search`]: find in terminal output — `terminal.search` (protocol 0.44, capability
+//!   `terminal.search`).
 //! - [`messages`] also carries which daemon answers — `Welcome.daemon_build` (protocol 0.42,
 //!   capability `daemon.identity`) — and a stop someone asked for — the `daemon.stopping` event
 //!   and `daemon.shutdown`'s `restart` (protocol 0.42, capability `daemon.stopping`).
@@ -90,6 +92,7 @@ pub mod recovery;
 pub mod render;
 pub mod resources;
 pub mod task;
+pub mod terminal_search;
 pub mod tree;
 pub mod ui;
 pub mod worktree;
@@ -104,7 +107,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 42,
+    minor: 44,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

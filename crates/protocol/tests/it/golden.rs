@@ -51,6 +51,7 @@ use hutan_protocol::recovery::*;
 use hutan_protocol::render::*;
 use hutan_protocol::resources::*;
 use hutan_protocol::task::*;
+use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchMatch, TerminalSearchResult};
 use hutan_protocol::tree::*;
 use hutan_protocol::worktree::*;
 use hutan_protocol::{ErrorBody, ErrorCode, Frame, PROTOCOL_VERSION};
@@ -3129,6 +3130,32 @@ fn requests() -> Vec<(&'static str, Request)> {
                 restart: true,
             }),
         ),
+        (
+            "terminal_search",
+            Request::TerminalSearch(TerminalSearch {
+                terminal_id: TID,
+                query: "error".into(),
+                case: false,
+                regex: false,
+                limit: 200,
+                from: None,
+                block_id: None,
+                text: false,
+            }),
+        ),
+        (
+            "terminal_search_regex_block",
+            Request::TerminalSearch(TerminalSearch {
+                terminal_id: TID,
+                query: r"FAIL(ED)?\b".into(),
+                case: true,
+                regex: true,
+                limit: 1000,
+                from: Some(1480),
+                block_id: Some(12),
+                text: true,
+            }),
+        ),
     ]
 }
 
@@ -4590,6 +4617,53 @@ fn responses_match_fixtures() {
                 &TerminalBlockTextResult {
                     text: "running 3 tests\ntest result: FAILED".into(),
                     truncated: false,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "terminal_search",
+            ControlMessage::ok(
+                9,
+                &TerminalSearchResult {
+                    matches: vec![
+                        TerminalSearchMatch {
+                            row: 1481,
+                            col: 12,
+                            end_row: 1482,
+                            end_col: 3,
+                            block_id: Some(12),
+                            line: Some("test result: FAILED. 2 passed; 1 failed".into()),
+                        },
+                        TerminalSearchMatch {
+                            row: 1490,
+                            col: 0,
+                            end_row: 1490,
+                            end_col: 5,
+                            block_id: None,
+                            line: None,
+                        },
+                    ],
+                    truncated: true,
+                    next_from: Some(1491),
+                    timed_out: false,
+                    viewport_top: 1480,
+                    first_row: 0,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "terminal_search_empty",
+            ControlMessage::ok(
+                9,
+                &TerminalSearchResult {
+                    matches: vec![],
+                    truncated: false,
+                    next_from: None,
+                    timed_out: false,
+                    viewport_top: 24,
+                    first_row: 0,
                 },
             )
             .unwrap(),

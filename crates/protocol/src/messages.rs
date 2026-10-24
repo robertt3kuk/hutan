@@ -56,6 +56,7 @@ use crate::resources::{
     AgentInterrupt, ProcessSignal, ResourceSample, ResourcesListRequest, ResourcesSubscribe,
 };
 use crate::task::{TaskCreate, TaskDelete, TaskListRequest, TaskRef, TaskReview, TaskUpdate};
+use crate::terminal_search::TerminalSearch;
 use crate::tree::{AgentTreeRequest, NodeReport};
 use crate::ui::{SessionSendText, UiCommandResult, UiPublish, UiRun, UiSetSetting, UiTarget};
 use crate::worktree::{
@@ -173,6 +174,12 @@ pub enum Request {
     /// Capability `terminal.blocks` (protocol 0.5).
     #[serde(rename = "terminal.block_text")]
     TerminalBlockText(TerminalBlockText),
+    /// Capability `terminal.search` (protocol 0.44): the matches of a query in a terminal's
+    /// scrollback and screen; answered with `TerminalSearchResult`. Read-only. A newer one of
+    /// the same connection for the same terminal cancels it (`conflict`,
+    /// `data.reason = "superseded"`).
+    #[serde(rename = "terminal.search")]
+    TerminalSearch(TerminalSearch),
     /// Capability `history.search` (protocol 0.8): search the session history index.
     #[serde(rename = "history.search")]
     HistorySearch(HistorySearch),

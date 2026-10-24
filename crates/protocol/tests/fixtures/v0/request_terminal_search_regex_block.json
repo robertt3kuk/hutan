@@ -1,0 +1,1 @@
+{"id":235,"method":"terminal.search","params":{"block_id":12,"case":true,"from":1480,"limit":1000,"query":"FAIL(ED)?\\b","regex":true,"terminal_id":7,"text":true}}
