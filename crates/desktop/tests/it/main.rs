@@ -42,6 +42,7 @@ mod lifecycle_gpui;
 mod links_gpui;
 mod lsp_gpui;
 mod mac_gpui;
+mod mawas_files_gpui;
 mod mawas_gpui;
 mod mcp_gpui;
 mod memory_gpui;

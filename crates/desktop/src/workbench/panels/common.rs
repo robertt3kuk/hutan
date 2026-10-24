@@ -545,6 +545,7 @@ pub fn scope_chip(
         ScopeKind::Repository => Icon::NavProjectRepository,
         ScopeKind::Folder => Icon::NavProjectFolder,
         ScopeKind::Worktree => Icon::VcsWorktree,
+        ScopeKind::Mawas => Icon::NavMawas,
     };
     let text = SharedString::from(scope_text(scope));
     let tip = text.clone();

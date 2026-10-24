@@ -91,6 +91,19 @@ pub enum ScopeKind {
     Folder,
     /// One linked worktree of a repository.
     Worktree,
+    /// Mawas's scope while Mawas Home is the focused center tab (`Mawas · Global`,
+    /// `Mawas · <workspace>`).
+    Mawas,
+}
+
+/// Which scope of Mawas Home the focused center tab shows: Files, Search and Problems follow
+/// it (`docs/design.md` § Files at Home). Desktop state only; the daemon is not told.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MawasFocus {
+    /// The Home workspace's Mawas: she works in the Home folder.
+    Global,
+    /// The Mawas of a workspace or project: she works in its (active) project.
+    Workspace(WorkspaceId),
 }
 
 /// The container a scoped panel is about (`docs/design.md` § The active container): its name,
@@ -441,6 +454,9 @@ pub struct SessionsStore {
     focus_task: Option<(u64, Task<()>)>,
     /// The session of the Assistant panel while the panel has the focus.
     assistant_focused: Option<SessionId>,
+    /// Mawas Home is the focused center tab, showing this scope: Files, Search and Problems
+    /// follow it instead of the active container.
+    mawas_focus: Option<MawasFocus>,
     /// The session marked unread while it was on screen: reading it is held off until the focus
     /// has been elsewhere.
     hold_unread: Option<SessionId>,
@@ -598,6 +614,7 @@ impl SessionsStore {
             focus_sent: None,
             focus_task: None,
             assistant_focused: None,
+            mawas_focus: None,
             hold_unread: None,
             reviews_seen: HashMap::new(),
             surfaced: HashMap::new(),
@@ -1107,17 +1124,79 @@ impl SessionsStore {
         }
     }
 
-    /// The folder the Files panel and ⌘P's files show: the root of the project the user works
-    /// in (the active project, else the first project of the active workspace, else the
-    /// workspace's own first folder). `None` at Home (its folder is the home folder, no
-    /// project) and before the daemon says what is active.
+    /// Mawas Home is the focused center tab with this scope, or no longer is (`None`).
+    pub fn set_mawas_focus(&mut self, focus: Option<MawasFocus>, cx: &mut Context<Self>) {
+        if self.mawas_focus != focus {
+            self.mawas_focus = focus;
+            // Not `ACTIVE`: the window's layout does not follow it, only the panels do.
+            self.changed(StoreChanged::OTHER, cx);
+        }
+    }
+
+    pub fn mawas_focus(&self) -> Option<MawasFocus> {
+        self.mawas_focus
+    }
+
+    /// The container Mawas's scope names while Mawas Home is the focused center tab: the Home
+    /// workspace for Global, else the workspace or project of the scope.
+    pub fn mawas_container(&self) -> Option<&WorkspaceInfo> {
+        match self.mawas_focus? {
+            MawasFocus::Global => self.home_workspace(),
+            MawasFocus::Workspace(id) => self.workspace(id),
+        }
+    }
+
+    /// The container Files, Search and Problems are about: Mawas's scope while Mawas Home is
+    /// the focused center tab, else the container the window shows.
+    pub fn scope_container(&self) -> Option<&WorkspaceInfo> {
+        if self.mawas_focus.is_some() {
+            return self.mawas_container();
+        }
+        self.active_workspace()
+    }
+
+    /// The id of [`scope_container`](Self::scope_container), known or not.
+    pub fn scope_container_id(&self) -> Option<WorkspaceId> {
+        match self.mawas_focus {
+            Some(MawasFocus::Global) => self.home_workspace().map(|w| w.id),
+            Some(MawasFocus::Workspace(id)) => Some(id),
+            None => self.active_workspace,
+        }
+    }
+
+    /// The folder the Files panel and ⌘P's files show: Mawas's folder while Mawas Home is the
+    /// focused center tab (Global: the Home folder; a workspace: its active project), else the
+    /// root of the project the user works in (the active project, else the first project of the
+    /// active workspace, else the workspace's own first folder); at Home, the Home folder.
+    /// `None` before the daemon says what is active.
     pub fn files_root(&self) -> Option<PathBuf> {
+        if self.mawas_focus.is_some() {
+            return self
+                .mawas_container()
+                .and_then(|container| self.root_in(container));
+        }
         if let Some(checkout) = self.active_checkout() {
             return Some(checkout);
         }
+        self.root_in(self.active_workspace()?)
+    }
+
+    /// The folder ⌘P searches: the root of the project the user works in, whatever Mawas Home
+    /// shows; `None` at Home (the jump list alone).
+    pub fn project_files_root(&self) -> Option<PathBuf> {
         let container = self.active_workspace()?;
+        if container.kind == WorkspaceKind::Home {
+            return None;
+        }
+        self.active_checkout().or_else(|| self.root_in(container))
+    }
+
+    /// The folder `container` shows: Home's folder, a project's root, a workspace's active (else
+    /// first) project's root. The picked worktree counts only for the container the window
+    /// shows.
+    fn root_in(&self, container: &WorkspaceInfo) -> Option<PathBuf> {
         let project = match container.kind {
-            WorkspaceKind::Home => return None,
+            WorkspaceKind::Home => return container.roots.first().cloned(),
             WorkspaceKind::Project => container,
             WorkspaceKind::Workspace => self
                 .active_project()
@@ -1125,6 +1204,11 @@ impl SessionsStore {
                 .or_else(|| self.state.projects_in(container.id).next())
                 .unwrap_or(container),
         };
+        if self.active_workspace == Some(container.id)
+            && let Some(checkout) = self.active_checkout()
+        {
+            return Some(checkout);
+        }
         project
             .project
             .as_ref()
@@ -1219,10 +1303,37 @@ impl SessionsStore {
     /// What the panels scoped to a folder (Files, Search) are about: the worktree the user
     /// picked, else the project they work in, else the container.
     pub fn project_scope(&self) -> Option<ScopeLabel> {
+        if self.mawas_focus.is_some() {
+            return self.mawas_scope();
+        }
         match self.active_project() {
             Some(project) => Some(self.scope_of(project, self.active_checkout())),
             None => self.container_scope(),
         }
+    }
+
+    /// What Problems is about: Mawas's scope while Mawas Home is the focused center tab, else
+    /// the container the window shows.
+    pub fn problems_scope(&self) -> Option<ScopeLabel> {
+        if self.mawas_focus.is_some() {
+            return self.mawas_scope();
+        }
+        self.container_scope()
+    }
+
+    /// `Mawas · Global` or `Mawas · <workspace>`; `None` when the scope's container is not
+    /// known (yet).
+    fn mawas_scope(&self) -> Option<ScopeLabel> {
+        let container = self.mawas_container()?;
+        let name = match self.mawas_focus? {
+            MawasFocus::Global => "Mawas · Global".to_owned(),
+            MawasFocus::Workspace(_) => format!("Mawas · {}", container.name),
+        };
+        Some(ScopeLabel {
+            name,
+            kind: ScopeKind::Mawas,
+            branch: None,
+        })
     }
 
     fn scope_of(&self, info: &WorkspaceInfo, checkout: Option<PathBuf>) -> ScopeLabel {

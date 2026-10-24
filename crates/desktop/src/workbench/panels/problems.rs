@@ -362,7 +362,7 @@ impl ProblemsPanel {
 
     /// What the panel is about: the container the window shows (the chip of its header).
     pub fn scope(&self, cx: &gpui::App) -> Option<crate::sessions::ScopeLabel> {
-        self.env.sessions.read(cx).container_scope()
+        self.env.sessions.read(cx).problems_scope()
     }
 
     fn filter(&self) -> ProblemsSeverity {
@@ -376,7 +376,7 @@ impl ProblemsPanel {
             (
                 store.connection_state(),
                 store.connection().supports_lsp(),
-                store.active_workspace_id(),
+                store.scope_container_id(),
             )
         };
         let wanted = (state, self.filter(), container);
@@ -430,7 +430,7 @@ impl ProblemsPanel {
             min_severity: min_severity(self.filter()),
             // The servers that serve the container the window shows; the list on screen stays
             // until the answer for the new one arrives.
-            workspace_id: self.env.sessions.read(cx).active_workspace_id(),
+            workspace_id: self.env.sessions.read(cx).scope_container_id(),
             ..LspDiagnosticsRequest::default()
         };
         // The servers' reasons and languages come from `lsp.status`; without it the lines

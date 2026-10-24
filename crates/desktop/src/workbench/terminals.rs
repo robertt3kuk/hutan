@@ -1074,6 +1074,7 @@ impl Workbench {
             }
         });
         self.sync_workspace(cx);
+        self.sync_mawas_focus(cx);
     }
 
     pub(crate) fn on_sessions_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {

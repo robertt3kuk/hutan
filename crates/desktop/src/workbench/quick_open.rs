@@ -218,7 +218,7 @@ impl Workbench {
     /// ⌘P: the files of the active project, then the jump list.
     pub fn open_quick_open(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
         let entries = self.jump_entries(cx);
-        let root = self.sessions.read(cx).files_root();
+        let root = self.sessions.read(cx).project_files_root();
         let mut state = PickerState::new(PickerKind::QuickOpen, entries);
         state.files.root = root.clone();
         self.show_picker(state, window, cx);

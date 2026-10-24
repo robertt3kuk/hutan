@@ -3,10 +3,10 @@
 
 use gpui::{Context, Window};
 
-use super::model::{DockMode, DockPosition, LayoutPreset, PanelId};
-use super::panels::AssistantPanel;
+use super::model::{DockMode, DockPosition, ItemRef, LayoutPreset, PanelId};
+use super::panels::{AssistantPanel, ScopeKey};
 use super::view::Workbench;
-use crate::sessions::UiOpenRequested;
+use crate::sessions::{MawasFocus, UiOpenRequested};
 
 impl Workbench {
     /// Whether Mawas Home is on screen.
@@ -66,6 +66,40 @@ impl Workbench {
             });
         self.sessions
             .update(cx, |store, cx| store.set_assistant_focused(session, cx));
+        // Home's own changes (its scope) reach `sync_mawas_focus` from here on: never from
+        // inside a frame, where GPUI drops the notification the store would send.
+        if let Some(panel) = self.panel::<AssistantPanel>("assistant")
+            && self.mawas_watch.as_ref().map(|(id, _)| *id) != Some(panel.entity_id())
+        {
+            let watch = cx.observe(&panel, |this, _, cx| this.sync_mawas_focus(cx));
+            self.mawas_watch = Some((panel.entity_id(), watch));
+        }
+    }
+
+    /// Files, Search and Problems follow Mawas's scope while Mawas Home is the focused center
+    /// tab (the active tab of the active pane, wherever the keyboard is): Global is the Home
+    /// folder, a workspace's Mawas is that workspace's active project. Any other tab, or Mawas
+    /// off, and they follow the active container again. Runs after every layout change, every
+    /// session or workspace change and every change of Home itself — never during a frame
+    /// (GPUI does not deliver a notification made while drawing).
+    pub(crate) fn sync_mawas_focus(&mut self, cx: &mut Context<Self>) {
+        let shown = self.assistant_enabled()
+            && self.state.active_center_item() == Some(ItemRef::panel("assistant"));
+        let focus = shown.then(|| match self.panel::<AssistantPanel>("assistant") {
+            Some(panel) => match panel.read(cx).key(cx) {
+                ScopeKey::Global => MawasFocus::Global,
+                ScopeKey::Workspace(id) => MawasFocus::Workspace(id),
+            },
+            // Home is shown before its page is first drawn: it opens on the active scope.
+            None => match self.sessions.read(cx).active_workspace() {
+                Some(w) if w.kind != hutan_protocol::messages::WorkspaceKind::Home => {
+                    MawasFocus::Workspace(w.id)
+                }
+                _ => MawasFocus::Global,
+            },
+        });
+        self.sessions
+            .update(cx, |store, cx| store.set_mawas_focus(focus, cx));
     }
 
     /// Brings the window forward and focuses the session's tab (its workspace first), with the

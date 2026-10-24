@@ -616,6 +616,9 @@ pub struct Workbench {
     /// The user opened or focused the Assistant panel after the last chat tab they looked at:
     /// "Send to agent" goes to the assistant the panel shows.
     pub(crate) assistant_last: bool,
+    /// The observation of Mawas Home's page that keeps Files, Search and Problems on its scope
+    /// (`sync_mawas_focus`), with the entity it watches.
+    pub(crate) mawas_watch: Option<(gpui::EntityId, gpui::Subscription)>,
     /// Permission requests this window has already seen (a new one may reveal the inspector).
     pub(crate) known_approvals: std::collections::HashSet<ApprovalId>,
     /// The Switch model dialog of a running chat.
@@ -1225,6 +1228,7 @@ impl Workbench {
             pruned_chats: Vec::new(),
             last_chat: None,
             assistant_last: false,
+            mawas_watch: None,
             known_approvals: std::collections::HashSet::new(),
             agent_picker: None,
             launcher: None,
