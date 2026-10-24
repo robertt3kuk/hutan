@@ -4,10 +4,10 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
-### Changed
 ### Added
 - Find in a terminal: ⌘F in a terminal searches its whole scrollback in the daemon (wrapped lines joined, case and regex options, optionally only the selected block's output), ⌘G / ⌘⇧G step, matches highlighted; `hutan terminal search`.
 
+### Changed
 - Terminal splits like Ghostty and iTerm: ⌘D / ⌘⇧D split the terminal inside its tab (new terminal in the same folder), ⌘⌥ arrows move focus, ⌃⌘ arrows resize, ⌘⇧↩ zooms, ⌘W closes a split, ⌘⇧W the tab; drag dividers, double-click to even out, right-click menu, drop a terminal tab on another's edge to merge; unfocused splits dim slightly.
 - The sidebar follows where you work, like Orca: only the active project is expanded with its sessions and worktrees (others collapsed with request/working counts), switching projects swaps the center tabs, Files/Changes/Search/Problems/Agents show which project they show, ⌃⌥↑/↓ cycles projects, folders and repos look different; `sidebar.show_all_sessions` brings the full tree back. **Files** is now in the right sidebar.
 - ⌘K opens the command palette (outside terminals) and the palette ranks names that start with what you type, then commands with keys, first; the Zed base's ⌘K chords are gone (focus ⌘⌥ arrows, hover ⌘⌥I). Start sheet model list is a popover scrolled to the model in use; the Changes view has one segmented filter; the chat header, question card, Requests buttons and Settings rows are calmer; panels no longer repeat their title.
