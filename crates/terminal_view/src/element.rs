@@ -407,10 +407,12 @@ fn prepare(
             .and_then(|(color, (row, (from, to)))| {
                 selection_text(row, from, to, color, &view.theme, &font, text_system)
             });
-        let found = match (&view.find, model.abs_of(line)) {
-            (Some(find), Some(abs)) => find.cells_on(abs, model_cols),
-            _ => Vec::new(),
-        };
+        // Nothing is looked up unless a find is open.
+        let found = view
+            .find
+            .as_ref()
+            .and_then(|find| Some(find.cells_on(model.abs_of(line)?, model_cols)))
+            .unwrap_or_default();
         rows.push(RowPaint {
             shaped,
             selected,
@@ -419,16 +421,16 @@ fn prepare(
             found,
         });
     }
-    view.painted_find = rows
-        .iter()
-        .enumerate()
-        .flat_map(|(r, row)| {
-            let r = u16::try_from(r).unwrap_or(u16::MAX);
-            row.found
-                .iter()
-                .map(move |cells| (r, cells.from, cells.to, cells.current))
-        })
-        .collect();
+    view.painted_find.clear();
+    if view.find.is_some() {
+        view.painted_find
+            .extend(rows.iter().enumerate().flat_map(|(r, row)| {
+                let r = u16::try_from(r).unwrap_or(u16::MAX);
+                row.found
+                    .iter()
+                    .map(move |cells| (r, cells.from, cells.to, cells.current))
+            }));
+    }
     let (overlay, report) = prepare_overlay(view, &display, grid_rows, &font, text_system);
     view.painted_overlay = report;
 
