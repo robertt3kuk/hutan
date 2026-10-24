@@ -46,6 +46,7 @@ mod recovery;
 mod resources;
 mod sessions;
 mod tasks;
+mod terminal;
 mod theme;
 mod ui;
 mod workspaces;
@@ -116,6 +117,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Grants(command) => ctx?.grants(command).await,
         Command::Memory(command) => ctx?.memory(command).await,
         Command::Fs(command) => ctx?.fs(command).await,
+        Command::Terminal(command) => ctx?.terminal(command).await,
         Command::Lsp(args) => ctx?.lsp(args).await,
         Command::Diagnostics(args) => ctx?.diagnostics(args).await,
         Command::Open(args) => ctx?.open(args).await,

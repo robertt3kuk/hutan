@@ -12,6 +12,8 @@ $HUTAN_SESSION_ID names your session) or, when your host started it, the `hutan`
 LOOK (always allowed)
   hutan ls                     sessions: id, title, state, agent, checkout
   hutan history <session>      last output of a terminal session (--lines N)
+  hutan terminal search <session> <text>   find text anywhere in a terminal's output, scrollback
+                               included: `row: line` per match (--regex, --case, --limit N)
   hutan chat log <session>     journal of an agent chat
   hutan task ls                tasks with dependencies and state
   hutan wt ls                  git worktrees

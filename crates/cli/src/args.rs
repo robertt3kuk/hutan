@@ -125,6 +125,10 @@ pub enum Command {
     /// (atomically, with a version check), find and search (`hutan fs ls|cat|stat|write|find|search`)
     #[command(subcommand)]
     Fs(FsCommand),
+    /// A session's terminal output: search the scrollback and the screen
+    /// (`hutan terminal search SESSION QUERY`)
+    #[command(subcommand)]
+    Terminal(TerminalCommand),
     /// Language servers the daemon runs for the editor and for agents: list them, restart or stop
     /// one, trust a folder (`hutan lsp ls|status|restart|stop|trust`)
     Lsp(LspArgs),
@@ -990,6 +994,36 @@ pub enum FsCommand {
     Find(FsFindArgs),
     /// Search file contents: `path:line:text` per hit, honouring `.gitignore`
     Search(FsSearchArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TerminalCommand {
+    /// Find text in a session's terminal output, scrollback included: `row: line` per match,
+    /// oldest first (rows count from the first line the terminal ever scrolled away)
+    Search(TerminalSearchArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct TerminalSearchArgs {
+    #[arg(help = TARGET_HELP)]
+    pub target: String,
+    /// The text to find (literal; case-insensitive unless --case)
+    pub query: String,
+    /// QUERY is a regular expression (matched per logical line: soft-wrapped rows are joined)
+    #[arg(long)]
+    pub regex: bool,
+    /// Match case exactly
+    #[arg(long)]
+    pub case: bool,
+    /// At most this many matches (1 to 1000)
+    #[arg(long, default_value_t = 200, value_parser = clap::value_parser!(u32).range(1..=1000))]
+    pub limit: u32,
+    /// Start at this row (the number an earlier answer asked to continue from)
+    #[arg(long, value_name = "ROW")]
+    pub from: Option<u64>,
+    /// Only the output of this block (`hutan api terminal.blocks` lists them)
+    #[arg(long, value_name = "ID")]
+    pub block: Option<u64>,
 }
 
 #[derive(Debug, Args)]

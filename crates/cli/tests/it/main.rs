@@ -27,6 +27,7 @@ mod render;
 mod resources;
 mod sessions;
 mod tasks;
+mod terminal_search;
 mod theme;
 mod workspaces;
 mod worktree_review;
