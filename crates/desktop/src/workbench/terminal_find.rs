@@ -1,5 +1,5 @@
 //! Find in a terminal (TERM-FIND): ⌘F in a terminal opens this bar over its top right; the
-//! daemon, which holds the whole scrollback, searches (`terminal.search`, protocol 0.44), and the
+//! daemon, which holds the whole scrollback, searches (`terminal.search`, protocol 0.43), and the
 //! view draws the matches and scrolls to the current one, loading that part of the scrollback.
 //! The bar looks like the file find bar (`Aa`, `.*`, `n of m`, ↑ ↓, ×). Return and ⌘G go to the
 //! next match (towards newer output), ⇧Return and ⌘⇧G to the previous one, both wrap; Escape

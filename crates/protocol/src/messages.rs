@@ -174,7 +174,7 @@ pub enum Request {
     /// Capability `terminal.blocks` (protocol 0.5).
     #[serde(rename = "terminal.block_text")]
     TerminalBlockText(TerminalBlockText),
-    /// Capability `terminal.search` (protocol 0.44): the matches of a query in a terminal's
+    /// Capability `terminal.search` (protocol 0.43): the matches of a query in a terminal's
     /// scrollback and screen; answered with `TerminalSearchResult`. Read-only. A newer one of
     /// the same connection for the same terminal cancels it (`conflict`,
     /// `data.reason = "superseded"`).

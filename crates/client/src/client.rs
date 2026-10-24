@@ -191,7 +191,7 @@ pub(crate) const LSP_CAPABILITY: &str = "lsp";
 pub(crate) const IDENTITY_CAPABILITY: &str = "daemon.identity";
 /// Capability for the `daemon.stopping` event and `daemon.shutdown`'s `restart` (protocol 0.42).
 pub(crate) const STOPPING_CAPABILITY: &str = "daemon.stopping";
-/// Capability for `terminal.search` (protocol 0.44).
+/// Capability for `terminal.search` (protocol 0.43).
 pub(crate) const TERMINAL_SEARCH_CAPABILITY: &str = "terminal.search";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
@@ -429,7 +429,7 @@ impl Client {
     }
 
     /// True when the daemon advertised capability `terminal.search` (`terminal.search`; protocol
-    /// 0.44).
+    /// 0.43).
     pub fn supports_terminal_search(&self) -> bool {
         self.welcome
             .capabilities

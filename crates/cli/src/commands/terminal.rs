@@ -1,5 +1,5 @@
 //! `hutan terminal search`: find text in a session's terminal output, scrollback included
-//! (protocol 0.44, `docs/protocol.md` § Terminal search).
+//! (protocol 0.43, `docs/protocol.md` § Terminal search).
 
 use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchMatch};
 
@@ -18,7 +18,7 @@ impl Ctx {
         let client = self.connect().await?;
         if !client.supports_terminal_search() {
             return Err(CliError::Failed(
-                "this hutand cannot search a terminal (it is older than protocol 0.44); restart \
+                "this hutand cannot search a terminal (it is older than protocol 0.43); restart \
                  it with `hutan daemon restart`"
                     .to_owned(),
             ));

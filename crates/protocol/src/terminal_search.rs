@@ -1,4 +1,4 @@
-//! Find in terminal output (protocol 0.44, capability `terminal.search`): the daemon searches the
+//! Find in terminal output (protocol 0.43, capability `terminal.search`): the daemon searches the
 //! text of a terminal's scrollback and screen and answers with positions in absolute rows
 //! (`docs/protocol.md` § Terminal search).
 

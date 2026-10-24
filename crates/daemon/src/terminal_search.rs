@@ -1,4 +1,4 @@
-//! `terminal.search` (protocol 0.44, `docs/protocol.md` § Terminal search): the scan itself and
+//! `terminal.search` (protocol 0.43, `docs/protocol.md` § Terminal search): the scan itself and
 //! the registry of running searches. [`TerminalHub`](crate::terminals::TerminalHub) wires them
 //! to requests.
 //!

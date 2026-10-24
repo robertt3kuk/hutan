@@ -1,4 +1,4 @@
-//! Find in terminal output: what the view draws of a search (`terminal.search`, protocol 0.44).
+//! Find in terminal output: what the view draws of a search (`terminal.search`, protocol 0.43).
 //!
 //! The owner of the view runs the search (the daemon holds the whole scrollback) and hands the
 //! view the matches as [`FindSpan`]s; the view paints the cells of the ones on screen and scrolls

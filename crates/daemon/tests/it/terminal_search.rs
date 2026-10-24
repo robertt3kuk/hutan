@@ -1,4 +1,4 @@
-//! `terminal.search` (protocol 0.44): matches over wrapped rows, beyond the screen, regex, case,
+//! `terminal.search` (protocol 0.43): matches over wrapped rows, beyond the screen, regex, case,
 //! blocks, bounds and cancellation, against real terminals — over the daemon's socket, and
 //! straight at the scan where a test needs an exact point (a slice boundary, the clock).
 
