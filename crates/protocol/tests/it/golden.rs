@@ -3161,7 +3161,14 @@ fn requests() -> Vec<(&'static str, Request)> {
             "project_git_init",
             Request::ProjectGitInit(ProjectGitInit { project_id: ws() }),
         ),
-        ("usage_summary", Request::UsageSummary(Empty {})),
+        (
+            "usage_summary",
+            Request::UsageSummary(UsageSummaryRequest::default()),
+        ),
+        (
+            "usage_summary_refresh",
+            Request::UsageSummary(UsageSummaryRequest { refresh: true }),
+        ),
     ]
 }
 

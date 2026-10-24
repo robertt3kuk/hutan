@@ -12,6 +12,17 @@ use serde::{Deserialize, Serialize};
 /// configured in Hutan.
 pub const HARNESS_DIRECT: &str = "direct";
 
+/// `usage.summary`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct UsageSummaryRequest {
+    /// Ask the harnesses what is left before answering (`omp usage`, and Codex's own
+    /// `account/rateLimits/read` for a Codex that has been used through Hutan): they answer
+    /// over the network and take a few seconds. Absent or false answers from what the daemon
+    /// already knows.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub refresh: bool,
+}
+
 /// How much has been used and what is left.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UsageSummary {

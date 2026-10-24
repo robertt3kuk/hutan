@@ -59,7 +59,7 @@ use crate::task::{TaskCreate, TaskDelete, TaskListRequest, TaskRef, TaskReview, 
 use crate::terminal_search::TerminalSearch;
 use crate::tree::{AgentTreeRequest, NodeReport};
 use crate::ui::{SessionSendText, UiCommandResult, UiPublish, UiRun, UiSetSetting, UiTarget};
-use crate::usage::UsageSummary;
+use crate::usage::{UsageSummary, UsageSummaryRequest};
 use crate::worktree::{
     Placement, WorktreeCommit, WorktreeCreate, WorktreeDiffRequest, WorktreeFileDiffRequest,
     WorktreeFinish, WorktreeListRequest, WorktreeMerge, WorktreeRemove,
@@ -602,9 +602,9 @@ pub enum Request {
     LspTrust(LspTrustRequest),
     /// Capability `usage` (protocol 0.45): the limit windows the harnesses report and the
     /// tokens and cost of the turns Hutan ran, today and this week; answered with
-    /// `UsageSummary`. Read-only.
+    /// `UsageSummary`. `refresh` asks the harnesses first. Read-only.
     #[serde(rename = "usage.summary")]
-    UsageSummary(Empty),
+    UsageSummary(UsageSummaryRequest),
 }
 
 impl Request {
