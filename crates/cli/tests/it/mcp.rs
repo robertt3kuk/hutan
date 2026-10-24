@@ -604,3 +604,99 @@ async fn memory_tools_read_freely_and_only_propose_nothing_is_saved_until_the_us
     );
     t.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn git_history_tools_read_without_asking_and_never_write() {
+    let t = TestDaemon::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap().join("repo");
+    std::fs::create_dir(&root).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Ada")
+            .env("GIT_AUTHOR_EMAIL", "ada@example.com")
+            .env("GIT_COMMITTER_NAME", "Ada")
+            .env("GIT_COMMITTER_EMAIL", "ada@example.com")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(root.join("f.txt"), "one\ntwo\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "first"]);
+    std::fs::write(root.join("f.txt"), "one\ntwo\nthree\n").unwrap();
+    git(&["commit", "-q", "-am", "second"]);
+    t.hutan(&["project", "open", root.to_str().unwrap()])
+        .await
+        .ok();
+
+    let mut mcp = Mcp::start(&t.paths.socket, None).await;
+    let list = mcp.initialize().await;
+    let _ = list;
+    let tools = mcp.call("tools/list", json!({})).await;
+    for name in ["git_log", "git_blame"] {
+        let tool = tools["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is not listed"));
+        assert_eq!(tool["annotations"]["readOnlyHint"], true, "{name}");
+    }
+
+    let call = mcp
+        .tool_request(
+            "git_log",
+            json!({"path": root.display().to_string(), "limit": 1}),
+        )
+        .await;
+    let log = mcp.answer(call).await;
+    assert!(!is_error(&log), "{log}");
+    let commits = &log["result"]["structuredContent"]["commits"];
+    assert_eq!(commits[0]["subject"], "second", "{log}");
+    assert_eq!(log["result"]["structuredContent"]["more"], true);
+
+    // `limit` is optional for an agent.
+    let call = mcp
+        .tool_request(
+            "git_log",
+            json!({"path": root.join("f.txt").display().to_string()}),
+        )
+        .await;
+    let file_log = mcp.answer(call).await;
+    assert_eq!(
+        file_log["result"]["structuredContent"]["commits"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2,
+        "{file_log}"
+    );
+
+    let call = mcp
+        .tool_request(
+            "git_blame",
+            json!({"path": root.join("f.txt").display().to_string()}),
+        )
+        .await;
+    let blame = mcp.answer(call).await;
+    assert!(!is_error(&blame), "{blame}");
+    let hunks = blame["result"]["structuredContent"]["hunks"]
+        .as_array()
+        .unwrap();
+    assert_eq!(hunks.len(), 2, "{blame}");
+    assert_eq!(
+        blame["result"]["structuredContent"]["commits"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    t.stop().await;
+}

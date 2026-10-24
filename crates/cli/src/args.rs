@@ -132,6 +132,11 @@ pub enum Command {
     /// (`hutan terminal search SESSION QUERY`)
     #[command(subcommand)]
     Terminal(TerminalCommand),
+    /// Read-only git history through the daemon: the commits of a repository, a folder or a file
+    /// (renames followed), who last changed each line, one commit with its diff
+    /// (`hutan git log|blame|show`)
+    #[command(subcommand)]
+    Git(GitCommand),
     /// Language servers the daemon runs for the editor and for agents: list them, restart or stop
     /// one, trust a folder (`hutan lsp ls|status|restart|stop|trust`)
     Lsp(LspArgs),
@@ -1005,6 +1010,53 @@ pub enum FsCommand {
     Find(FsFindArgs),
     /// Search file contents: `path:line:text` per hit, honouring `.gitignore`
     Search(FsSearchArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GitCommand {
+    /// The commits that reach a revision, newest first: `short-hash date author subject`; for a
+    /// file, renames are followed and the old name is shown
+    Log(GitLogArgs),
+    /// Who last changed each line of a file: `short-hash author date line) text`; lines edited
+    /// since the last commit are `Not Committed Yet`
+    Blame(GitBlameArgs),
+    /// One commit: its message, the files it changed and the diff against its first parent
+    Show(GitShowArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct GitLogArgs {
+    /// The repository, a folder or a file in it (default: the current directory)
+    pub path: Option<PathBuf>,
+    /// Start at this branch, tag or commit (default: HEAD)
+    #[arg(long, value_name = "REV")]
+    pub rev: Option<String>,
+    /// At most this many commits (1 to 200)
+    #[arg(short = 'n', long, default_value_t = 30, value_parser = clap::value_parser!(u32).range(1..=200))]
+    pub limit: u32,
+    /// The page after this commit (the hash an earlier answer asked to continue from)
+    #[arg(long, value_name = "COMMIT")]
+    pub before: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct GitBlameArgs {
+    /// The file
+    pub path: PathBuf,
+    /// Blame the file as it was at this branch, tag or commit (default: the working tree)
+    #[arg(long, value_name = "REV")]
+    pub rev: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct GitShowArgs {
+    /// The commit (a hash, a branch, a tag, `HEAD~2`)
+    pub rev: String,
+    /// Only this file or folder (default: the whole commit, found from the current directory)
+    pub path: Option<PathBuf>,
+    /// The files with their added and removed lines, without the diff
+    #[arg(long)]
+    pub stat: bool,
 }
 
 #[derive(Debug, Subcommand)]

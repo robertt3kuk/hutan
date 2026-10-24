@@ -10,6 +10,7 @@ mod control;
 mod daemon_start;
 mod detach;
 mod files;
+mod git;
 mod grants;
 mod harness;
 mod history;

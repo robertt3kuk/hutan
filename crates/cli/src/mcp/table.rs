@@ -86,6 +86,14 @@ fn path(description: &str) -> Value {
     json!({"type": "string", "description": description, "examples": ["/Users/me/project"]})
 }
 
+/// `git.log` takes its `limit` on the wire: 30 when the agent gives none.
+fn with_default_limit(mut params: Value) -> Result<Value, String> {
+    if let Some(map) = params.as_object_mut() {
+        map.entry("limit").or_insert(json!(30));
+    }
+    Ok(params)
+}
+
 /// Every tool, in the order `tools/list` shows them.
 pub fn tools() -> &'static [Tool] {
     TOOLS
@@ -606,6 +614,47 @@ static TOOLS: &[Tool] = &[
                     "include_uncommitted": {"type": "boolean", "default": true},
                 }),
                 &["path", "file"],
+            )
+        },
+    },
+    Tool {
+        name: "git_log",
+        description: "The commits of a git checkout, or of one file or folder in it, newest \
+                      first: hash, author, time, subject. For a file, renames are followed and \
+                      each commit says the file's name then. Read-only and bounded: at most 200 \
+                      commits a call; when `more` is true, pass `next_before` as `before` for \
+                      the next page. `path` is the checkout's directory, or a file or folder \
+                      inside it (absolute).",
+        read_only: true,
+        call: shaped("git.log", with_default_limit),
+        schema: || {
+            object(
+                json!({
+                    "path": path("The checkout's directory, or a file or folder in it (absolute)."),
+                    "rev": text("A branch, tag or commit to start from (default: HEAD)."),
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 30},
+                    "before": text("The page after this commit: the `next_before` of an earlier answer."),
+                }),
+                &["path"],
+            )
+        },
+    },
+    Tool {
+        name: "git_blame",
+        description: "Which commit last changed each line of a file: runs of consecutive lines \
+                      (`line`, `count`, `commit`) and the commits they name (author, time, \
+                      subject, the file's name then). Without `rev` the file is the one on disk: \
+                      lines not committed yet are `0000000000000000000000000000000000000000`. \
+                      Read-only and bounded.",
+        read_only: true,
+        call: request("git.blame"),
+        schema: || {
+            object(
+                json!({
+                    "path": path("The file (absolute), inside a git checkout."),
+                    "rev": text("Blame the file as it was at this branch, tag or commit (default: the working tree)."),
+                }),
+                &["path"],
             )
         },
     },
@@ -1415,6 +1464,8 @@ mod tests {
             "worktree_list",
             "worktree_diff",
             "worktree_file_diff",
+            "git_log",
+            "git_blame",
             "worktree_merge",
             "worktree_rm",
             "workspace_list",

@@ -14,6 +14,9 @@ LOOK (always allowed)
   hutan history <session>      last output of a terminal session (--lines N)
   hutan terminal search <session> <text>   find text anywhere in a terminal's output, scrollback
                                included: `row: line` per match (--regex, --case, --limit N)
+  hutan git log|blame|show     read-only git history: commits of a repo, folder or file (renames
+                               followed), who last changed each line, one commit with its diff
+                               (MCP `git_log`, `git_blame`)
   hutan chat log <session>     journal of an agent chat
   hutan task ls                tasks with dependencies and state
   hutan wt ls                  git worktrees
