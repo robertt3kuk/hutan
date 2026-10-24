@@ -1096,10 +1096,8 @@ impl AgentsPage {
                     .id(("usage-row", index))
                     .relative()
                     .flex()
-                    .flex_wrap()
-                    .items_center()
+                    .items_start()
                     .gap_x(px(16.0))
-                    .gap_y(px(2.0))
                     .child(
                         div()
                             .flex_none()
@@ -1107,20 +1105,36 @@ impl AgentsPage {
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .child(SharedString::from(row.name.clone())),
                     )
-                    .children(bars)
-                    .children(row.note.clone().map(|note| {
-                        div()
-                            .text_color(theme.muted)
-                            .child(SharedString::from(note))
-                    }))
                     .child(
                         div()
                             .flex()
-                            .flex_none()
-                            .gap(px(12.0))
-                            .text_color(theme.muted)
-                            .child(SharedString::from(row.today.clone()))
-                            .child(SharedString::from(row.week.clone())),
+                            .flex_1()
+                            .min_w_0()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .gap_x(px(16.0))
+                                    .gap_y(px(2.0))
+                                    .children(bars)
+                                    .children(row.note.clone().map(|note| {
+                                        div()
+                                            .text_color(theme.muted)
+                                            .child(SharedString::from(note))
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_x(px(12.0))
+                                    .text_color(theme.muted)
+                                    .child(SharedString::from(row.today.clone()))
+                                    .child(SharedString::from(row.week.clone())),
+                            ),
                     )
                     .child(probe(regions, Region::UsageRow(index)))
                     .into_any_element()
