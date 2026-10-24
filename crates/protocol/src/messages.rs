@@ -59,6 +59,7 @@ use crate::task::{TaskCreate, TaskDelete, TaskListRequest, TaskRef, TaskReview, 
 use crate::terminal_search::TerminalSearch;
 use crate::tree::{AgentTreeRequest, NodeReport};
 use crate::ui::{SessionSendText, UiCommandResult, UiPublish, UiRun, UiSetSetting, UiTarget};
+use crate::usage::UsageSummary;
 use crate::worktree::{
     Placement, WorktreeCommit, WorktreeCreate, WorktreeDiffRequest, WorktreeFileDiffRequest,
     WorktreeFinish, WorktreeListRequest, WorktreeMerge, WorktreeRemove,
@@ -599,6 +600,11 @@ pub enum Request {
     /// User-only: an agent-originated connection gets `forbidden`.
     #[serde(rename = "lsp.trust")]
     LspTrust(LspTrustRequest),
+    /// Capability `usage` (protocol 0.45): the limit windows the harnesses report and the
+    /// tokens and cost of the turns Hutan ran, today and this week; answered with
+    /// `UsageSummary`. Read-only.
+    #[serde(rename = "usage.summary")]
+    UsageSummary(Empty),
 }
 
 impl Request {
@@ -1446,6 +1452,10 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         restart: bool,
     },
+    /// Capability `usage` (protocol 0.45): a turn ended or a harness reported a limit, so the
+    /// numbers moved; the whole summary, not a diff (bursts are coalesced).
+    #[serde(rename = "usage.changed")]
+    UsageChanged { summary: Box<UsageSummary> },
 }
 
 impl Event {
@@ -1513,6 +1523,7 @@ impl Event {
         "lsp.state",
         "lsp.diagnostics",
         "daemon.stopping",
+        "usage.changed",
     ];
 }
 

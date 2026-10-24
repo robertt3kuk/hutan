@@ -53,6 +53,7 @@ use hutan_protocol::resources::*;
 use hutan_protocol::task::*;
 use hutan_protocol::terminal_search::{TerminalSearch, TerminalSearchMatch, TerminalSearchResult};
 use hutan_protocol::tree::*;
+use hutan_protocol::usage::*;
 use hutan_protocol::worktree::*;
 use hutan_protocol::{ErrorBody, ErrorCode, Frame, PROTOCOL_VERSION};
 fn daemon_setting_entries() -> Vec<hutan_protocol::daemon_settings::DaemonSetting> {
@@ -3160,6 +3161,7 @@ fn requests() -> Vec<(&'static str, Request)> {
             "project_git_init",
             Request::ProjectGitInit(ProjectGitInit { project_id: ws() }),
         ),
+        ("usage_summary", Request::UsageSummary(Empty {})),
     ]
 }
 
@@ -4334,7 +4336,78 @@ fn events() -> Vec<(&'static str, Event)> {
                 restart: true,
             },
         ),
+        (
+            "usage_changed",
+            Event::UsageChanged {
+                summary: Box::new(usage_summary_fixture()),
+            },
+        ),
     ]
+}
+
+fn usage_summary_fixture() -> UsageSummary {
+    let turns = |n: u64, input: u64, output: u64| UsageTotals {
+        turns: n,
+        input_tokens: input,
+        cached_input_tokens: input / 2,
+        output_tokens: output,
+        reasoning_output_tokens: output / 4,
+        total_tokens: input + output,
+        ..UsageTotals::default()
+    };
+    UsageSummary {
+        generated_at_ms: 1_791_894_200_000,
+        day_start_ms: 1_791_849_600_000,
+        week_start_ms: 1_791_590_400_000,
+        harnesses: vec![
+            HarnessUsage {
+                harness: "codex".into(),
+                limits: vec![
+                    UsageLimit {
+                        provider: "openai".into(),
+                        id: "5h".into(),
+                        label: "5-hour".into(),
+                        used_percent: 72.0,
+                        window_minutes: Some(300),
+                        resets_at_ms: Some(1_791_904_800_000),
+                        plan: Some("plus".into()),
+                        observed_at_ms: 1_791_894_100_000,
+                    },
+                    UsageLimit {
+                        provider: "openai".into(),
+                        id: "7d".into(),
+                        label: "weekly".into(),
+                        used_percent: 31.0,
+                        window_minutes: Some(10_080),
+                        resets_at_ms: None,
+                        plan: None,
+                        observed_at_ms: 1_791_894_100_000,
+                    },
+                ],
+                today: turns(4, 120_000, 8_000),
+                week: turns(19, 900_000, 60_000),
+            },
+            HarnessUsage {
+                harness: "omp".into(),
+                limits: vec![],
+                today: UsageTotals {
+                    cost_usd: Some(0.42),
+                    cost_is_estimate: true,
+                    ..turns(2, 50_000, 3_000)
+                },
+                week: UsageTotals {
+                    cost_usd: Some(3.1),
+                    cost_is_estimate: true,
+                    ..turns(9, 400_000, 30_000)
+                },
+            },
+        ],
+        providers: vec![ProviderUsage {
+            provider: "anthropic".into(),
+            today: turns(2, 50_000, 3_000),
+            week: turns(9, 400_000, 30_000),
+        }],
+    }
 }
 
 fn approval_intent() -> NotificationIntent {
@@ -6720,6 +6793,24 @@ fn responses_match_fixtures() {
                     data: Some(serde_json::json!({"reason": "superseded"})),
                 },
             ),
+        ),
+        (
+            "usage_summary",
+            ControlMessage::ok(7, &usage_summary_fixture()).unwrap(),
+        ),
+        (
+            "usage_summary_empty",
+            ControlMessage::ok(
+                8,
+                &UsageSummary {
+                    generated_at_ms: 1_791_894_200_000,
+                    day_start_ms: 1_791_849_600_000,
+                    week_start_ms: 1_791_590_400_000,
+                    harnesses: vec![],
+                    providers: vec![],
+                },
+            )
+            .unwrap(),
         ),
         (
             "welcome_identity",

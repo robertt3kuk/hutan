@@ -26,6 +26,8 @@
 //!   intent and focusing one withdraws its intents (protocol 0.34, capability `notify.mute`).
 //! - [`chat`] also carries `chat.retry`: the last user message again, journaled once
 //!   (protocol 0.34, capability `chat.retry`).
+//! - [`usage`]: `usage.summary` and the `usage.changed` event: the limit windows harnesses report
+//!   and the tokens and cost of the turns Hutan ran (protocol 0.45, capability `usage`).
 //! - [`fs`]: the daemon's file service: `fs.read`, chunked atomic `fs.write.*`, `fs.stat`,
 //!   `fs.list`, `fs.find`, `fs.search`, `fs.watch` and the `fs.changed` event (protocol 0.33,
 //!   capabilities `fs`, `fs.watch`).
@@ -95,6 +97,7 @@ pub mod task;
 pub mod terminal_search;
 pub mod tree;
 pub mod ui;
+pub mod usage;
 pub mod worktree;
 
 pub use control::{ControlMessage, ErrorBody, ErrorCode};
@@ -107,7 +110,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 44,
+    minor: 45,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
