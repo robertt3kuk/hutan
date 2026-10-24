@@ -63,6 +63,8 @@ pub enum Reads {
     Always,
     /// Through an `@` import in another file the harness reads (`via`, project-relative).
     Import { via: String },
+    /// Through a symbolic link: the file the harness reads (`via`) is a link to this one.
+    Linked { via: String },
     /// Only when the agent works in the file's folder (Claude Code, OMP) or is started in it
     /// (Codex).
     OnDemand,
@@ -73,7 +75,10 @@ pub enum Reads {
 impl Reads {
     /// Whether the file's text reaches the agent without extra conditions.
     pub fn is_read(&self) -> bool {
-        matches!(self, Reads::Always | Reads::Import { .. })
+        matches!(
+            self,
+            Reads::Always | Reads::Import { .. } | Reads::Linked { .. }
+        )
     }
 }
 
@@ -91,6 +96,7 @@ impl Reader {
         match &self.reads {
             Reads::Always => format!("{name} reads this file"),
             Reads::Import { via } => format!("{name} reads this file through the @import in {via}"),
+            Reads::Linked { via } => format!("{name} reads this file through the link {via}"),
             Reads::OnDemand => match self.harness {
                 Harness::Codex => {
                     format!("{name} reads this file when it is started in this folder")
@@ -129,6 +135,40 @@ pub struct InstructionFile {
 impl InstructionFile {
     pub fn reader(&self, harness: Harness) -> Option<&Reader> {
         self.readers.iter().find(|r| r.harness == harness)
+    }
+
+    /// The row's second line: who reads the file and who reads another file instead.
+    pub fn summary(&self) -> String {
+        let mut direct = Vec::new();
+        let mut on_demand = Vec::new();
+        let mut instead = Vec::new();
+        for r in &self.readers {
+            match &r.reads {
+                Reads::Always => direct.push(r.harness.name().to_owned()),
+                Reads::Import { via } | Reads::Linked { via } => {
+                    direct.push(format!("{} (via {via})", r.harness.name()));
+                }
+                Reads::OnDemand => on_demand.push(r.harness.name()),
+                Reads::Shadowed { by } => {
+                    instead.push(format!("{} reads {by} instead", r.harness.name()));
+                }
+            }
+        }
+        let mut parts = Vec::new();
+        if !direct.is_empty() {
+            parts.push(format!("Read by {}", direct.join(", ")));
+        }
+        if !on_demand.is_empty() {
+            parts.push(format!(
+                "{} when working in this folder",
+                on_demand.join(", ")
+            ));
+        }
+        parts.extend(instead);
+        if parts.is_empty() {
+            return "Not read by Codex, Claude Code or OMP".to_owned();
+        }
+        parts.join(" · ")
     }
 
     /// The harnesses that read the file (not shadowed, not only on demand).
@@ -370,8 +410,10 @@ impl Discovery {
         self.project.iter().any(|f| f.label == rel)
     }
 
-    /// What *Share one file with every agent…* would find: `AGENTS.md` is read, by `CLAUDE.md`'s
-    /// import or directly, by the harnesses the user runs.
+    /// `AGENTS.md` is the one file: Codex and OMP read it, and Claude Code reaches it through
+    /// an `@AGENTS.md` import (or a link) in its own `CLAUDE.md`, which works in every Claude
+    /// Code version and session. An `AGENTS.md` alone is read by all three too (Claude Code
+    /// 2.1.277 and later), but *Share one file with every agent…* still offers the import.
     pub fn shared(&self) -> bool {
         self.project
             .iter()
@@ -380,6 +422,9 @@ impl Discovery {
                 Harness::ALL
                     .iter()
                     .all(|h| agents.reader(*h).is_some_and(|r| r.reads.is_read()))
+                    && agents.reader(Harness::Claude).is_some_and(|r| {
+                        matches!(r.reads, Reads::Import { .. } | Reads::Linked { .. })
+                    })
             })
     }
 }
@@ -415,9 +460,10 @@ pub fn discover(facts: &Facts) -> Discovery {
         .chain(fallbacks.iter().cloned())
         .collect::<Vec<_>>();
     let codex_winner = codex_choice(&codex_root, "", &facts.project);
+    // The file that makes Claude Code skip AGENTS.md: a CLAUDE.md of the project folder.
     let claude_own = ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"]
         .into_iter()
-        .any(|rel| by_rel(rel).is_some());
+        .find(|rel| by_rel(rel).is_some());
     let omp_winner = omp_root_winner(&facts.project);
 
     // Every file the daemon found, in the order the panel shows them: the project folder's own
@@ -450,9 +496,19 @@ pub fn discover(facts: &Facts) -> Discovery {
                 Kind::Claude | Kind::DotClaude | Kind::ClaudeLocal => {
                     readers.push(reader(Harness::Claude, Reads::Always));
                 }
-                Kind::Agents | Kind::DotClaudeAgents if !claude_own => {
-                    readers.push(reader(Harness::Claude, Reads::Always));
-                }
+                Kind::Agents | Kind::DotClaudeAgents => match claude_own {
+                    None => readers.push(reader(Harness::Claude, Reads::Always)),
+                    Some(own) if by_rel(own).is_some_and(|f| f.symlink) => readers.push(reader(
+                        Harness::Claude,
+                        Reads::Linked {
+                            via: own.to_owned(),
+                        },
+                    )),
+                    Some(own) => readers.push(reader(
+                        Harness::Claude,
+                        Reads::Shadowed { by: own.to_owned() },
+                    )),
+                },
                 _ => {}
             }
             // OMP.
@@ -504,7 +560,7 @@ pub fn discover(facts: &Facts) -> Discovery {
                 Kind::Claude | Kind::ClaudeLocal => {
                     readers.push(reader(Harness::Claude, Reads::OnDemand));
                 }
-                Kind::Agents if !claude_own && !has_claude_files(&facts.project, dir) => {
+                Kind::Agents if claude_own.is_none() && !has_claude_files(&facts.project, dir) => {
                     readers.push(reader(Harness::Claude, Reads::OnDemand));
                 }
                 _ => {}
@@ -557,11 +613,16 @@ fn add_imports(files: &mut [InstructionFile], found: &[ProjectFile]) {
                     if !seen.insert(target.clone()) {
                         continue;
                     }
-                    if let Some(file) = files.iter_mut().find(|f| f.label == *target)
-                        && file.reader(harness).is_none()
-                    {
-                        file.readers
-                            .push(reader(harness, Reads::Import { via: via.clone() }));
+                    if let Some(file) = files.iter_mut().find(|f| f.label == *target) {
+                        let import = reader(harness, Reads::Import { via: via.clone() });
+                        match file.readers.iter_mut().find(|r| r.harness == harness) {
+                            None => file.readers.push(import),
+                            // The file is skipped on its own, but a file that is read pulls it in.
+                            Some(existing) if matches!(existing.reads, Reads::Shadowed { .. }) => {
+                                *existing = import;
+                            }
+                            Some(_) => {}
+                        }
                     }
                     next.push((target.clone(), via.clone()));
                 }

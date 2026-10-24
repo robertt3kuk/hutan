@@ -643,6 +643,11 @@
           "type": "string",
           "description": "Pack-root-relative monochrome SVG path",
           "maxLength": 1024
+        },
+        "panel.instructions": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
         }
       },
       "additionalProperties": true

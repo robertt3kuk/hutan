@@ -24,6 +24,7 @@ mod first_run;
 mod harness_install;
 pub(crate) mod harnesses;
 mod history;
+mod instructions;
 mod integrations;
 mod launcher;
 mod launcher_ui;
@@ -99,6 +100,7 @@ pub use docks::{COLLAPSE_DRAG, RESIZE_CONTEXT};
 pub use files::{BufferStore, FileOpen};
 pub use first_run::NotifyOffer;
 pub use harnesses::{Detection, HARNESSES, Harness, HarnessDirectory, Listing};
+pub use instructions::{InstructionsToast, TOAST_TIME as INSTRUCTIONS_TOAST_TIME};
 pub use launcher::{
     HarnessChoice, LaunchAgent, LaunchWhere, Launcher, LauncherField, LauncherPreset, LauncherStop,
     ProjectChoice, Readiness, StartConfirm, WorktreeList,

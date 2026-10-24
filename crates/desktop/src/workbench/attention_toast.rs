@@ -232,8 +232,9 @@ impl Workbench {
         attention: Option<AnyElement>,
         restore: Option<AnyElement>,
         layout: Option<AnyElement>,
+        instructions: Option<AnyElement>,
     ) -> Option<AnyElement> {
-        let toasts: Vec<AnyElement> = [attention, close, restore, layout]
+        let toasts: Vec<AnyElement> = [attention, close, restore, layout, instructions]
             .into_iter()
             .flatten()
             .collect();

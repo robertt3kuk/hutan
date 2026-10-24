@@ -61,6 +61,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("panels.inspector", "Requests"),
     ("panels.files", "Files"),
     ("panels.problems", "Problems"),
+    ("panels.instructions", "Instructions"),
     ("panels.search", "Search"),
     ("status", "Status bar"),
     ("workspaces", "Workspaces"),
@@ -442,6 +443,13 @@ const FIELDS: &[FieldText] = &[
             ("warning", "Errors and warnings"),
             ("error", "Errors only"),
         ],
+    ),
+    // ---- instructions ----
+    field(
+        "panels.instructions",
+        "show_user_files",
+        "List my own instruction files",
+        "Lists ~/.codex/AGENTS.md, ~/.claude/CLAUDE.md and ~/.omp/agent/AGENTS.md under the project's files, read-only. Off, the panel never looks at them.",
     ),
     // ---- status bar ----
     field(

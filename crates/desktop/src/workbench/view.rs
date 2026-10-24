@@ -462,6 +462,12 @@ pub enum Region {
     /// Diagnostic row `index` of the Problems panel (the listed diagnostics, top to bottom,
     /// file headers not counted).
     ProblemsRow(usize),
+    /// A control of the Instructions panel (`refresh`, `share`, `create`).
+    Instructions(&'static str),
+    /// Row `index` of the Instructions panel's list (project files, then the user's).
+    InstructionRow(usize),
+    /// A control of the "Shared one file with every agent · Undo" toast (`toast`, `undo`).
+    InstructionsToast(&'static str),
     /// A control of the Problems panel's header (`severity`, `refresh`).
     Problems(&'static str),
     /// The Restart button of the Problems panel's server line `index` (top to bottom).
@@ -748,6 +754,12 @@ pub struct Workbench {
     /// "Closed … · Undo" (`closing.rs`).
     pub(crate) close_toast: Option<super::closing::CloseToast>,
     pub(crate) toast_rev: u64,
+    /// "Shared one file with every agent · Undo" (`instructions.rs`) and the folders of the
+    /// harnesses the Instructions panel lists user-level files of.
+    pub(crate) instructions: super::instructions::InstructionsState,
+    pub(crate) instructions_toast_exit:
+        super::ui::motion::Ghost<super::instructions::InstructionsToast>,
+    pub(crate) instruction_homes: Rc<std::cell::RefCell<Option<crate::instructions::HarnessHomes>>>,
     /// "Moved Files to the left · Undo" and what undoes it (`customize.rs`).
     pub(crate) layout_toast: Option<super::customize::LayoutToast>,
     pub(crate) layout_undo: Option<super::customize::LayoutUndo>,
@@ -916,11 +928,15 @@ impl Workbench {
         let regions = super::regions::Regions::default();
         let lsp = cx.new(|cx| super::lsp::LspStore::new(sessions.read(cx).connection().clone()));
         let harnesses = cx.new(|cx| super::harnesses::HarnessDirectory::new(sessions.clone(), cx));
+        let instruction_homes = Rc::new(std::cell::RefCell::new(
+            crate::instructions::HarnessHomes::from_env(),
+        ));
         let env = PanelEnv {
             sessions: sessions.clone(),
             settings: settings.clone(),
             harnesses: harnesses.clone(),
             regions: regions.clone(),
+            instruction_homes: instruction_homes.clone(),
         };
 
         let commands = Rc::new(actions::commands(
@@ -1316,6 +1332,9 @@ impl Workbench {
             notice: None,
             close_toast: None,
             toast_rev: 0,
+            instructions: super::instructions::InstructionsState::default(),
+            instructions_toast_exit: super::ui::motion::Ghost::default(),
+            instruction_homes,
             layout_toast: None,
             layout_undo: None,
             layout_toast_exit: super::ui::motion::Ghost::default(),

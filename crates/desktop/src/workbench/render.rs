@@ -174,7 +174,14 @@ impl Render for Workbench {
         let attention_toasts = self.render_attention_toasts(window, cx);
         let restore_toast = self.render_restore_toast(cx);
         let layout_toast = self.render_layout_toast(cx);
-        let toasts = self.toast_stack(close_toast, attention_toasts, restore_toast, layout_toast);
+        let instructions_toast = self.render_instructions_toast(cx);
+        let toasts = self.toast_stack(
+            close_toast,
+            attention_toasts,
+            restore_toast,
+            layout_toast,
+            instructions_toast,
+        );
         let checkpoints_list = self.render_checkpoints_list(cx);
         let rewind_sheet = self.render_rewind_sheet(cx);
         let daemon_popover = self.render_daemon_popover(cx);
@@ -793,6 +800,24 @@ impl Workbench {
         .on_action(cx.listener(|this, a: &actions::RevealHistoryFile, _, cx| {
             this.reveal_history_file(&a.0, cx);
         }))
+        .on_action(
+            cx.listener(|this, a: &actions::RevealInstructionFile, _, cx| {
+                this.reveal_instruction_file(&a.0, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::ShowInstructions, _, cx| {
+            this.show_instructions(cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::ShareInstructions, window, cx| {
+                this.share_instructions(window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::CreateAgentsMd, window, cx| {
+                this.create_agents_md(window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, a: &actions::OpenHistoryFile, _, cx| {
             this.open_history_file(&a.0, cx);
         }))

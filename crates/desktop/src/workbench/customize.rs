@@ -51,6 +51,7 @@ pub(crate) fn panel_settings_page(panel: &str) -> Option<&'static str> {
         "files" => "panels.files",
         "problems" => "panels.problems",
         "search" => "panels.search",
+        "instructions" => "panels.instructions",
         "tasks" => "tasks",
         "history" => "history",
         "resources" => "resources",

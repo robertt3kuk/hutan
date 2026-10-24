@@ -30,6 +30,7 @@ impl IconId {
             "mawas-memory" => Self::PanelMawasMemory,
             "notifications" => Self::PanelNotifications,
             "files" => Self::PanelFiles,
+            "instructions" => Self::PanelInstructions,
             _ => Self::StateInfo,
         }
     }
@@ -150,6 +151,7 @@ catalog! {
     ItemFolder => ("item.folder", "folder.svg"),
     ItemFolderOpen => ("item.folder-open", "folder-open.svg"),
     PanelFiles => ("panel.files", "file-code.svg"),
+    PanelInstructions => ("panel.instructions", "file-code.svg"),
 }
 
 pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {

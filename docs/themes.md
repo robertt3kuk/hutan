@@ -594,4 +594,5 @@ Generated from `IconId::ALL`; a drift test enforces this list. Offline schema: `
 - `item.folder`
 - `item.folder-open`
 - `panel.files`
+- `panel.instructions`
 <!-- icons:end -->

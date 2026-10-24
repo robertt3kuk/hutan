@@ -14,6 +14,7 @@ mod history_catalog;
 mod history_model;
 mod history_view;
 mod inspector;
+mod instructions;
 mod memory;
 mod problems;
 mod resources;
@@ -68,6 +69,7 @@ pub use history_model::{
     transcript_path,
 };
 pub use inspector::{BlockRow, InspectorPanel};
+pub use instructions::{Instructions, InstructionsPanel};
 pub use memory::{
     Cursor as MemoryCursor, EditorTarget as MemoryEditorTarget, MemoryPanel,
     ScopeChoice as MemoryScopeChoice,
@@ -139,7 +141,8 @@ impl Render for PlaceholderPanel {
 /// `sessions`, `files`, `history`, `changes`, `inspector` (titled Requests), `agents` (the
 /// compact projection of the Agents page), `agents-dashboard` (the Agents page), `resources`,
 /// `tasks`, `assistant` (Mawas Home), `problems` (the language servers' diagnostics),
-/// `search` (find and replace in the project's files), `notifications`. `sessions`
+/// `search` (find and replace in the project's files), `instructions` (the files the agents read),
+/// `notifications`. `sessions`
 /// (Projects), `files`, `tasks` and `search` open as pages of the left sidebar, `history`,
 /// `changes`, `inspector`, `agents` and `resources` as tabs of the right sidebar's strip,
 /// `assistant` and `agents-dashboard` as tabs of the center, `problems` in the bottom dock.
@@ -265,6 +268,16 @@ pub fn builtin_panels() -> PanelRegistry {
         factory: Rc::new(|env, _window, cx| {
             let env = env.clone();
             AnyView::from(cx.new(|cx| ProblemsPanel::new(env, cx)))
+        }),
+    });
+    registry.register(PanelSpec {
+        id: "instructions".into(),
+        title: "Instructions".into(),
+        icon: crate::icons::Icon::PanelInstructions,
+        default_dock: DockPosition::Right,
+        factory: Rc::new(|env, _window, cx| {
+            let env = env.clone();
+            AnyView::from(cx.new(|cx| InstructionsPanel::new(env, cx)))
         }),
     });
     registry.register(PanelSpec {

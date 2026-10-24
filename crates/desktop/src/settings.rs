@@ -666,6 +666,27 @@ impl Setting for ProblemsPanelSettings {
     const NAMESPACE: &'static str = "panels.problems";
 }
 
+/// The `panels.instructions` namespace: the Instructions panel (the files the agents read).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct InstructionsPanelSettings {
+    /// List the user's own instruction files (`~/.codex`, `~/.claude`, `~/.omp/agent`) under
+    /// the project's. Off, the panel never looks at them.
+    pub show_user_files: bool,
+}
+
+impl Default for InstructionsPanelSettings {
+    fn default() -> Self {
+        Self {
+            show_user_files: true,
+        }
+    }
+}
+
+impl Setting for InstructionsPanelSettings {
+    const NAMESPACE: &'static str = "panels.instructions";
+}
+
 /// The `panels.search` namespace: the Search panel (find and replace across the active
 /// project, E-13b). The header's toggles write the three switches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1668,6 +1689,7 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<InspectorPanelSettings>();
     store.register::<FilesPanelSettings>();
     store.register::<ProblemsPanelSettings>();
+    store.register::<InstructionsPanelSettings>();
     store.register::<SearchPanelSettings>();
     store.register::<StatusSettings>();
     store.register::<WorkspacesSettings>();
@@ -2207,6 +2229,7 @@ mod tests {
             "panels.inspector",
             "panels.files",
             "panels.problems",
+            "panels.instructions",
             "panels.search",
             "workspaces",
             "history",

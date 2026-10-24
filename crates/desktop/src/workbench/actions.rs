@@ -157,6 +157,12 @@ actions!(
         ShowSearch,
         /// [`ShowSearch`] with the replace field shown.
         ShowSearchReplace,
+        /// Show the Instructions panel: the files Codex, Claude Code and OMP read.
+        ShowInstructions,
+        /// Make AGENTS.md the one file every agent reads (a sheet shows what is written).
+        ShareInstructions,
+        /// Create AGENTS.md in the active project.
+        CreateAgentsMd,
     ]
 );
 
@@ -397,6 +403,8 @@ data_actions! {
     OpenHistoryHit(HutanTarget);
     /// Reveal the transcript file of a history hit of another tool in Finder.
     RevealHistoryFile(String);
+    /// Show a user-level instruction file (`~/.claude/CLAUDE.md`, …) in Finder.
+    RevealInstructionFile(String);
     /// Open the transcript file of a history session with the system (its default app).
     OpenHistoryFile(String);
     /// Show the workspace that holds a history session's working directory (found or created).
@@ -734,6 +742,12 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Files: Reveal Active File", RevealActiveFile),
         command("Search: Find in Files", ShowSearch),
         command("Search: Replace in Files", ShowSearchReplace),
+        command("Instructions: Show Instruction Files", ShowInstructions),
+        command(
+            "Instructions: Share One File with Every Agent…",
+            ShareInstructions,
+        ),
+        command("Instructions: Create AGENTS.md", CreateAgentsMd),
         command("Workspace: Go to Home", GoHome),
         command("Workspace: Next Container", NextContainer),
         command("Workspace: Previous Container", PreviousContainer),

@@ -15,6 +15,9 @@ pub struct PanelEnv {
     pub settings: SettingsStore,
     pub harnesses: Entity<super::harnesses::HarnessDirectory>,
     pub regions: super::regions::Regions,
+    /// The folders of Codex, Claude Code and OMP whose instruction files the `instructions`
+    /// panel lists; `None` lists none (the workbench sets them, tests replace them).
+    pub instruction_homes: Rc<std::cell::RefCell<Option<crate::instructions::HarnessHomes>>>,
 }
 
 impl std::fmt::Debug for PanelEnv {
