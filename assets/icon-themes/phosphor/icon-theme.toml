@@ -122,4 +122,4 @@ root = true
 "item.folder" = "folder.svg"
 "item.folder-open" = "folder-open.svg"
 "panel.files" = "file-code.svg"
-"panel.instructions" = "file-code.svg"
+"panel.instructions" = "file-text.svg"

@@ -151,7 +151,7 @@ catalog! {
     ItemFolder => ("item.folder", "folder.svg"),
     ItemFolderOpen => ("item.folder-open", "folder-open.svg"),
     PanelFiles => ("panel.files", "file-code.svg"),
-    PanelInstructions => ("panel.instructions", "file-code.svg"),
+    PanelInstructions => ("panel.instructions", "file-text.svg"),
 }
 
 pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
@@ -224,6 +224,9 @@ pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
         )),
         "file-code.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/file-code.svg"
+        )),
+        "file-text.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-text.svg"
         )),
         "folder-open.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/folder-open.svg"

@@ -838,6 +838,15 @@ fn an_empty_project_offers_to_create_agents_md(cx: &mut TestAppContext) {
     project(&view, cx, &root, &home);
     let panel = panel(&view, cx, 1);
     assert!(listed(&panel, cx).is_empty());
+    // Create AGENTS.md is the one offer of an empty project.
+    wait_until(cx, "the create button", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Instructions("create")).is_some()
+        })
+    });
+    assert!(view.read_with(cx, |wb, _| {
+        wb.region_bounds(Region::Instructions("share")).is_none()
+    }));
 
     click(&view, cx, Region::Instructions("create"));
     wait_until(cx, "AGENTS.md to be created", |_| {

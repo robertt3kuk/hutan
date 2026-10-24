@@ -40,7 +40,7 @@ use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
 use crate::workbench::ui;
 
-/// Height of a file's row.
+/// Least height of a file's row (the words under its name wrap).
 const ROW_HEIGHT: f32 = 40.0;
 
 /// What the panel has read.
@@ -404,7 +404,7 @@ impl Render for InstructionsPanel {
         let header = panel_toolbar("panels.instructions", Vec::new(), vec![refresh], cx);
 
         let shared = self.discovery().is_some_and(Discovery::shared);
-        let share_row = (self.root.is_some() && self.discovery().is_some() && !shared).then(|| {
+        let share_row = (self.root.is_some() && projects > 0 && !shared).then(|| {
             div()
                 .flex_none()
                 .px(px(tokens.spacing * 3.0))
@@ -624,7 +624,8 @@ impl InstructionsPanel {
             .id(SharedString::from(format!("instructions-row-{index}")))
             .relative()
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .min_h(px(ROW_HEIGHT))
+            .py(px(tokens.spacing))
             .flex()
             .items_center()
             .gap(px(tokens.spacing * 2.0))
@@ -650,7 +651,7 @@ impl InstructionsPanel {
                     )
                     .child(
                         div()
-                            .truncate()
+                            .whitespace_normal()
                             .text_size(px(tokens.secondary_font_size))
                             .text_color(theme.muted)
                             .child(SharedString::from(format!("{} · {size}", file.summary()))),
