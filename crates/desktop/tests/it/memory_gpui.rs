@@ -1404,3 +1404,208 @@ fn settings_mawas_turns_memory_off_and_sets_the_limit(cx: &mut TestAppContext) {
             && value("assistant.memory_max_entries") == serde_json::json!(5)
     });
 }
+
+// ---- memory files (MEMORY-FILES, protocol 0.47) --------------------------------------------------
+
+fn memory_folder(env: &AssistantEnv) -> std::path::PathBuf {
+    env.daemon
+        .paths
+        .default_home_folder
+        .join(hutan_protocol::memory_files::GLOBAL_DIR)
+}
+
+fn wait_files(panel: &Entity<MemoryPanel>, cx: &mut VisualTestContext) {
+    wait_until(cx, "the page to know where the memory files are", |cx| {
+        draw(cx);
+        panel.read_with(cx, |p, _| p.files_folder().is_some())
+    });
+}
+
+fn memory_menu(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<(String, bool)> {
+    wait_until(cx, "the Memory ⋯ menu to open", |cx| {
+        if view.read_with(cx, |wb, _| wb.context_menu_entries().is_some()) {
+            return true;
+        }
+        draw(cx);
+        if let Some(bounds) = view.read_with(cx, |wb, _| wb.region_bounds(Region::Memory("more")))
+        {
+            cx.simulate_click(bounds.center(), Modifiers::none());
+        }
+        false
+    });
+    let disabled = view.read_with(cx, |wb, _| wb.context_menu_disabled());
+    view.read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("the ⋯ menu")
+        .into_iter()
+        .map(|(label, _)| {
+            let label = label.to_string();
+            let off = disabled.iter().any(|d| *d == label);
+            (label, off)
+        })
+        .collect()
+}
+
+#[gpui::test]
+fn the_memory_menu_exports_imports_and_shows_the_files(cx: &mut TestAppContext) {
+    let env = started();
+    let (view, cx) = open(cx, &env.daemon);
+    remember(
+        &env,
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Fact,
+        "Uses jj.",
+    );
+    let panel = open_memory(&view, cx);
+    wait_entries(&panel, cx, 1);
+    wait_files(&panel, cx);
+
+    // The ⋯ menu: where the files are (greyed out), then the three actions.
+    let menu = memory_menu(&view, cx);
+    let labels: Vec<&str> = menu.iter().map(|(l, _)| l.as_str()).collect();
+    assert!(labels[0].starts_with("Memory files: ") && labels[0].ends_with(".mawas/memory"), "{labels:?}");
+    assert_eq!(labels[1..], ["Export…", "Import…", "Show files"], "{labels:?}");
+    assert!(menu[0].1, "the folder line is greyed out");
+    assert!(menu[1..].iter().all(|(_, off)| !off), "{menu:?}");
+
+    // Show files: the Files panel, on the memory folder.
+    let labels_full = view
+        .read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("open");
+    let index = labels_full
+        .iter()
+        .position(|(l, _)| l.as_ref() == "Show files")
+        .unwrap();
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(index, window, cx));
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb
+            .panel::<hutan_desktop::workbench::panels::FilesPanel>("files")
+            .is_some()),
+        "the Files panel came up"
+    );
+
+    // Export writes what the memory says, as the memory files are written.
+    let out = tempfile::tempdir().unwrap();
+    let exported = out.path().join("memory.md");
+    panel.update(cx, |p, cx| p.export_to(exported.clone(), cx));
+    wait_until(cx, "the export to finish", |cx| {
+        draw(cx);
+        panel.read_with(cx, |p, _| p.notice().is_some_and(|n| n.starts_with("Exported 1 entry")))
+    });
+    let text = std::fs::read_to_string(&exported).unwrap();
+    assert!(text.contains("# Facts") && text.contains("Uses jj."), "{text}");
+    let json = out.path().join("memory.json");
+    panel.update(cx, |p, cx| p.export_to(json.clone(), cx));
+    wait_until(cx, "the JSON export", |cx| {
+        draw(cx);
+        json.is_file() && panel.read_with(cx, |p, _| p.notice().is_some())
+    });
+    assert!(std::fs::read_to_string(&json).unwrap().contains("hutan-memory"));
+
+    // Import makes proposals and saves nothing.
+    let incoming = out.path().join("incoming.md");
+    std::fs::write(
+        &incoming,
+        "# Facts\n\n<!-- mawas:new -->\nThe build is `just check`.\n\n<!-- mawas:new -->\nThe key is sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD\n\n# Notes\n\n<!-- mawas:new -->\nDecision: monorepo.\n",
+    )
+    .unwrap();
+    panel.update(cx, |p, cx| p.import_from(incoming, cx));
+    wait_proposals(&panel, cx, 2);
+    let notice = panel.read_with(cx, |p, _| p.notice().map(str::to_owned)).unwrap();
+    assert!(notice.starts_with("Imported 2 proposals") && notice.contains("1 skipped"), "{notice}");
+    assert_eq!(stored(&env, false).len(), 1, "nothing was saved by the import");
+    assert!(proposals_of(&env)
+        .iter()
+        .all(|p| p.provenance.origin.as_deref() == Some("import")));
+    // The card says where the proposal came from.
+    draw(cx);
+    assert!(view.read_with(cx, |wb, _| wb.region_bounds(Region::MemoryItem("proposal", 0))).is_some());
+}
+
+#[gpui::test]
+fn an_edit_of_a_memory_file_is_a_proposal_on_the_page_and_a_refused_one_is_a_problem(
+    cx: &mut TestAppContext,
+) {
+    let env = started();
+    let (view, cx) = open(cx, &env.daemon);
+    remember(
+        &env,
+        MemoryScope::Global,
+        None,
+        MemoryCategory::Profile,
+        "Prefers short answers.",
+    );
+    let panel = open_memory(&view, cx);
+    wait_entries(&panel, cx, 1);
+    wait_files(&panel, cx);
+
+    // The user edits the file; the daemon's watcher makes a proposal, the page lists it.
+    let file = memory_folder(&env).join("profile.md");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, text.replace("short", "terse")).unwrap();
+    wait_proposals(&panel, cx, 1);
+    let proposal = panel.read_with(cx, |p, _| p.proposals()[0].clone());
+    assert_eq!(proposal.body, "Prefers terse answers.");
+    assert_eq!(proposal.provenance.origin.as_deref(), Some("file"));
+    assert_eq!(stored(&env, false)[0].body, "Prefers short answers.", "never applied silently");
+    draw(cx);
+
+    // Approving it on the page applies it.
+    click(&view, cx, Region::MemoryItem("approve", 0));
+    wait_until(cx, "the approved edit", |cx| {
+        draw(cx);
+        panel.read_with(cx, |p, _| p.entries().first().is_some_and(|e| e.body == "Prefers terse answers."))
+    });
+    assert!(stored(&env, false)[0].body == "Prefers terse answers.");
+
+    // A refused edit is a problem on the page, and the file stays as written.
+    let secret = text.replace("short", "sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD");
+    std::fs::write(&file, &secret).unwrap();
+    wait_until(cx, "the problem to show", |cx| {
+        draw(cx);
+        panel.read_with(cx, |p, _| p.problems().len() == 1)
+    });
+    let reason = panel.read_with(cx, |p, _| p.problems()[0].reason.clone());
+    assert!(reason.contains("not a secret store"), "{reason}");
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::MemoryItem("problem", 0))).is_some(),
+        "the Problems card is drawn"
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), secret);
+    assert!(panel.read_with(cx, |p, _| p.proposals().is_empty()));
+}
+
+#[gpui::test]
+fn settings_has_keep_memory_in_the_project(cx: &mut TestAppContext) {
+    let env = started();
+    let (view, cx) = open(cx, &env.daemon);
+    cx.dispatch_action(actions::OpenSettingsFor("assistant".into()));
+    draw(cx);
+    wait_until(cx, "the daemon's settings", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.daemon_settings()
+                .entry("assistant.memory_files_in_project")
+                .is_some()
+        })
+    });
+    view.update(cx, |wb, cx| {
+        wb.daemon_setting_set(
+            "assistant.memory_files_in_project",
+            Some(serde_json::json!(true)),
+            cx,
+        );
+    });
+    wait_until(cx, "the daemon to take it", |_| {
+        let settings: hutan_protocol::daemon_settings::DaemonSettings = env.daemon.call(
+            Request::DaemonSettingsGet(hutan_protocol::messages::Empty {}),
+        );
+        settings
+            .entries
+            .iter()
+            .find(|e| e.key == "assistant.memory_files_in_project")
+            .is_some_and(|e| e.value == serde_json::json!(true))
+    });
+}

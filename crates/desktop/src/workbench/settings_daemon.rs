@@ -222,7 +222,11 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
             Section {
                 title: words::SEC_ASSISTANT_MEMORY,
                 help: words::SEC_ASSISTANT_MEMORY_HELP,
-                keys: &["assistant.memory", "assistant.memory_max_entries"],
+                keys: &[
+                    "assistant.memory",
+                    "assistant.memory_max_entries",
+                    "assistant.memory_files_in_project",
+                ],
             },
         ],
         _ => &[],

@@ -92,6 +92,55 @@ impl Workbench {
         });
     }
 
+    /// The Memory page's ⋯ menu at `position`: **Export…** and **Import…** (a file chosen in the
+    /// system's dialog; the daemon reads and writes the memory, the page only names the file),
+    /// and **Show files**, the mirror of the shown scope in Files. A greyed-out first line says
+    /// where the files are, or why there are none.
+    pub fn show_memory_menu(
+        &mut self,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(panel) = self.panel::<MemoryPanel>(super::model::MEMORY_PAGE) else {
+            return;
+        };
+        let (folder, note, supported) = {
+            let page = panel.read(cx);
+            (page.files_folder(), page.files_note(), page.supports_files(cx))
+        };
+        let mut entries = Vec::new();
+        entries.push(match (&folder, &note) {
+            (Some(folder), _) => Self::disabled_entry(format!(
+                "Memory files: {}",
+                super::workspaces::tilde(folder)
+            )),
+            (None, Some(note)) => Self::disabled_entry(format!("Memory files: {note}")),
+            (None, None) => Self::disabled_entry("Memory files: not known yet"),
+        });
+        let (export, import) = (panel.clone(), panel.clone());
+        entries.push(Self::entry("Export…", move |_, _, cx| {
+            export.update(cx, |panel, cx| panel.ask_export(cx));
+        }));
+        entries.push(if supported {
+            Self::entry("Import…", move |_, _, cx| {
+                import.update(cx, |panel, cx| panel.ask_import(cx));
+            })
+        } else {
+            Self::disabled_entry("Import…")
+        });
+        entries.push(match folder {
+            Some(folder) => {
+                let first = panel.read(cx).files_first(&folder);
+                Self::entry("Show files", move |this, window, cx| {
+                    this.show_files_at(Some(first.to_string_lossy().into_owned()), window, cx);
+                })
+            }
+            None => Self::disabled_entry("Show files"),
+        });
+        self.open_menu(position, entries, window, cx);
+    }
+
     /// The *Memory* nav row: shows the page, or goes back to Projects while it is showing.
     pub(crate) fn toggle_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let panel = PanelId::new(super::model::MEMORY_PAGE);

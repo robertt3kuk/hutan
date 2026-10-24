@@ -952,6 +952,12 @@ const DAEMON_FIELDS: &[FieldText] = &[
     ),
     field(
         "daemon",
+        "assistant.memory_files_in_project",
+        "Keep memory in the project",
+        "Also write a workspace's memory as Markdown files in its project (.hutan/memory/), where git can see them, so you can read, edit, review and commit them. They are files of your repository: off by default. Mawas's global memory is always written under ~/Hutan/.mawas/memory/. An edit of a file is only ever a proposal you approve in the Memory page.",
+    ),
+    field(
+        "daemon",
         "assistant.context.shell",
         "Projects: terminal output",
         "Lets the assistant of a project read the commands and output of terminals you attach to a message.",

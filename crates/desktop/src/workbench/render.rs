@@ -1213,6 +1213,11 @@ impl Workbench {
             }),
         )
         .on_action(
+            cx.listener(|this, a: &actions::ShowMemoryMenu, window, cx| {
+                this.show_memory_menu(a.0, window, cx);
+            }),
+        )
+        .on_action(
             cx.listener(|this, a: &actions::ShowSendKeyMenu, window, cx| {
                 this.show_send_key_menu(a.0, window, cx);
             }),

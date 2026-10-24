@@ -15,23 +15,29 @@
 //! changed (`memory.changed`), so a hidden page does no work: it hears of changes only when it
 //! is shown.
 
+use std::path::{Path, PathBuf};
+
 use gpui::{
     AnyElement, App, ClickEvent, Context, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Window, div, prelude::*, px,
+    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Render,
+    ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
+    prelude::*, px,
 };
 use hutan_client::ConnectionState;
 use hutan_core::{ApprovalId, WorkspaceId};
 use hutan_protocol::memory::{
-    BODY_MAX_BYTES, MemoryCategory, MemoryEntry, MemoryList, MemoryOp, MemoryProposal,
+    BODY_MAX_BYTES, MemoryCategory, MemoryEntry, MemoryFileProblem, MemoryFilesStatus,
+    MemoryFilesStatusRequest, MemoryImport, MemoryList, MemoryOp, MemoryProposal,
     MemoryProposalResolve, MemoryRevision, MemoryScope, MemoryState, MemoryTransition,
     MemoryUpdate, MemoryWrite, ProposalDecision,
 };
+use hutan_protocol::memory_files;
 use hutan_protocol::messages::WorkspaceKind;
 
 use super::common::{edit_text, field_box, panel_header_controls};
 use crate::icons::Icon;
 use crate::sessions::MemoryChanged;
+use crate::workbench::actions::ShowMemoryMenu;
 use crate::workbench::chat::vim::Vim;
 use crate::workbench::chat::{Look, TextInput};
 use crate::workbench::registry::PanelEnv;
@@ -114,6 +120,11 @@ pub struct MemoryPanel {
     /// The entry whose archiving waits for the user's answer.
     confirm_archive: Option<String>,
     history: Option<Shown>,
+    /// The memory files of the scopes the page shows (protocol 0.47): where they are, and which
+    /// edits of them could not be used.
+    files: Vec<MemoryFilesStatus>,
+    /// What the last export or import did, in words.
+    notice: Option<String>,
     /// The failure of the last control, in the daemon's words.
     error: Option<String>,
     /// The page is on screen: a hidden page does no work.
@@ -180,6 +191,8 @@ impl MemoryPanel {
             cursor: None,
             confirm_archive: None,
             history: None,
+            files: Vec::new(),
+            notice: None,
             error: None,
             visible: false,
             stale: true,
@@ -204,6 +217,67 @@ impl MemoryPanel {
     /// The proposals waiting for the user, oldest first.
     pub fn proposals(&self) -> &[MemoryProposal] {
         &self.proposals
+    }
+
+    /// The memory files the page knows of, one status per scope shown.
+    pub fn files(&self) -> &[MemoryFilesStatus] {
+        &self.files
+    }
+
+    /// The edits of the memory files the daemon could not use (what the Problems card lists).
+    pub fn problems(&self) -> Vec<&MemoryFileProblem> {
+        self.files.iter().flat_map(|f| &f.problems).collect()
+    }
+
+    /// What the last export or import did.
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+
+    /// The scope the ⋯ menu acts on: the workspace's while the page shows only that, else
+    /// Global.
+    fn files_scope(&self, cx: &App) -> (MemoryScope, Option<WorkspaceId>) {
+        match (self.filter, self.workspace(cx)) {
+            (ScopeChoice::Workspace, Some((id, _))) => (MemoryScope::Workspace, Some(id)),
+            _ => (MemoryScope::Global, None),
+        }
+    }
+
+    fn files_shown(&self) -> Option<&MemoryFilesStatus> {
+        let wanted = match self.filter {
+            ScopeChoice::Workspace => MemoryScope::Workspace,
+            _ => MemoryScope::Global,
+        };
+        self.files.iter().find(|f| f.scope == wanted)
+    }
+
+    /// The folder of the shown scope's files, when the daemon keeps any.
+    pub fn files_folder(&self) -> Option<PathBuf> {
+        self.files_shown()?.folder.clone()
+    }
+
+    /// Why the shown scope has no files, in the daemon's words.
+    pub fn files_note(&self) -> Option<String> {
+        let shown = self.files_shown()?;
+        shown.folder.is_none().then(|| shown.note.clone()).flatten()
+    }
+
+    /// The file *Show files* selects: the first one that exists, else `facts.md`.
+    pub fn files_first(&self, folder: &Path) -> PathBuf {
+        let name = self
+            .files_shown()
+            .and_then(|f| f.files.first())
+            .map_or(memory_files::file_name(MemoryCategory::Fact), |f| f.name.as_str());
+        folder.join(name)
+    }
+
+    /// Whether the daemon has `memory.import` and `memory.files.status`.
+    pub fn supports_files(&self, cx: &App) -> bool {
+        self.env
+            .sessions
+            .read(cx)
+            .connection()
+            .supports_memory_files()
     }
 
     pub fn is_loaded(&self) -> bool {
@@ -359,18 +433,40 @@ impl MemoryPanel {
         self.refreshing = true;
         self.stale = false;
         let request = self.request(cx);
+        let mut scopes = Vec::new();
+        if connection.supports_memory_files() {
+            scopes.push(MemoryFilesStatusRequest {
+                scope: MemoryScope::Global,
+                workspace_id: None,
+            });
+            if let Some((id, _)) = self.workspace(cx) {
+                scopes.push(MemoryFilesStatusRequest {
+                    scope: MemoryScope::Workspace,
+                    workspace_id: Some(id),
+                });
+            }
+        }
         cx.spawn(async move |this, cx| {
             let entries = match request {
                 Some(request) => connection.memory_list(request).await,
                 None => Ok(Vec::new()),
             };
             let proposals = connection.memory_proposals(false).await;
+            // The files are the secondary view: a daemon that cannot say leaves the rest as it is.
+            let mut files = Vec::new();
+            for scope in scopes {
+                match connection.memory_files_status(scope).await {
+                    Ok(status) => files.push(status),
+                    Err(error) => tracing::debug!(%error, "memory files status"),
+                }
+            }
             this.update(cx, |this, cx| {
                 this.refreshing = false;
                 match (entries, proposals) {
                     (Ok(entries), Ok(proposals)) => {
                         this.entries = entries;
                         this.proposals = proposals;
+                        this.files = files;
                         this.loaded = true;
                         this.unsupported = false;
                         this.settle_cursor();
@@ -787,6 +883,138 @@ impl MemoryPanel {
         cx.notify();
     }
 
+    // ---- export and import -------------------------------------------------------------------
+
+    /// ⋯ → *Export…*: the system's save dialog, then [`Self::export_to`].
+    pub fn ask_export(&mut self, cx: &mut Context<Self>) {
+        let start = std::env::home_dir().unwrap_or_default();
+        let chosen = cx.prompt_for_new_path(&start, Some("mawas-memory.md"));
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(path))) = chosen.await else {
+                return;
+            };
+            this.update(cx, |this, cx| this.export_to(path, cx)).ok();
+        })
+        .detach();
+    }
+
+    /// ⋯ → *Import…*: the system's open dialog, then [`Self::import_from`].
+    pub fn ask_import(&mut self, cx: &mut Context<Self>) {
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Import".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = chosen.await else {
+                return;
+            };
+            if let Some(path) = paths.into_iter().next() {
+                this.update(cx, |this, cx| this.import_from(path, cx)).ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Writes the shown scope's active entries to `path`: JSON for `.json`, else Markdown as the
+    /// memory files are written.
+    pub fn export_to(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let (scope, workspace_id) = self.files_scope(cx);
+        let connection = self.env.sessions.read(cx).connection().clone();
+        self.error = None;
+        self.notice = None;
+        cx.spawn(async move |this, cx| {
+            let listed = connection
+                .memory_list(MemoryList {
+                    scope: Some(scope),
+                    workspace_id,
+                    ..MemoryList::default()
+                })
+                .await;
+            let done = match listed {
+                Ok(entries) => {
+                    let json = path
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+                    let text = if json {
+                        memory_files::render_json(scope, &entries)
+                    } else {
+                        memory_files::render_entries(scope, &entries)
+                    };
+                    let count = entries.len();
+                    let target = path.clone();
+                    cx.background_executor()
+                        .spawn(async move { std::fs::write(&target, text) })
+                        .await
+                        .map(|()| count)
+                        .map_err(|e| format!("Could not write {}: {e}", path.display()))
+                }
+                Err(error) => Err(describe(&error)),
+            };
+            this.update(cx, |this, cx| {
+                match done {
+                    Ok(count) => {
+                        this.notice = Some(format!(
+                            "Exported {count} entr{} to {}",
+                            if count == 1 { "y" } else { "ies" },
+                            path.display()
+                        ));
+                    }
+                    Err(message) => this.error = Some(message),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Reads `path` (Markdown or JSON) into the shown scope as proposals: they wait under
+    /// *Waiting for you*; nothing is saved by the import itself.
+    pub fn import_from(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let (scope, workspace_id) = self.files_scope(cx);
+        let connection = self.env.sessions.read(cx).connection().clone();
+        self.error = None;
+        self.notice = None;
+        cx.spawn(async move |this, cx| {
+            let done = connection
+                .memory_import(MemoryImport {
+                    scope,
+                    workspace_id,
+                    path: Some(path),
+                    text: None,
+                    category: None,
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match done {
+                    Ok(imported) => {
+                        let made = imported.created + imported.updated;
+                        let mut text = format!(
+                            "Imported {made} proposal{} for you to review ({} already there)",
+                            if made == 1 { "" } else { "s" },
+                            imported.unchanged
+                        );
+                        if !imported.skipped.is_empty() {
+                            text.push_str(&format!(
+                                "; {} skipped: {}",
+                                imported.skipped.len(),
+                                imported.skipped[0].reason
+                            ));
+                        }
+                        this.notice = Some(text);
+                    }
+                    Err(error) => this.error = Some(describe(&error)),
+                }
+                this.refresh(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     // ---- proposals -------------------------------------------------------------------------
 
     /// Approves a proposal as it is listed.
@@ -1169,12 +1397,19 @@ impl MemoryPanel {
             .on_click(cx.listener(|this, _, _, cx| this.start_add(cx)))
             .child(probe(&self.env.regions, Region::Memory("add")))
             .into_any_element();
+        let more = ui::IconButton::new("memory-more", Icon::ActionMore, "More", &theme, &tokens)
+            .compact()
+            .on_click(cx.listener(|_, e: &ClickEvent, window, cx| {
+                window.dispatch_action(Box::new(ShowMemoryMenu(e.position())), cx);
+            }))
+            .child(probe(&self.env.regions, Region::Memory("more")))
+            .into_any_element();
         div()
             .relative()
             .flex()
             .flex_col()
             .flex_none()
-            .child(panel_header_controls("Memory", vec![add], cx))
+            .child(panel_header_controls("Memory", vec![add, more], cx))
             .child(
                 div()
                     .relative()
@@ -1254,6 +1489,14 @@ impl MemoryPanel {
                     .when(!selected, |s| s.clamp_lines(3))
                     .child(SharedString::from(proposal.body.clone())),
             );
+        if proposal.provenance.origin.is_some() {
+            text = text.child(
+                div()
+                    .text_color(theme.muted)
+                    .text_size(px(tokens.secondary_font_size))
+                    .child(SharedString::from(proposal.provenance.summary())),
+            );
+        }
         if let Some(current) = &proposal.current_body {
             text = text.child(
                 div()
@@ -1792,6 +2035,57 @@ impl MemoryPanel {
                     .child(probe(&self.env.regions, Region::Memory("error")))
                     .into_any_element(),
             );
+        }
+        if let Some(notice) = &self.notice {
+            sections.push(
+                div()
+                    .relative()
+                    .px(px(tokens.spacing))
+                    .text_color(theme.muted)
+                    .text_size(px(tokens.secondary_font_size))
+                    .child(SharedString::from(notice.clone()))
+                    .child(probe(&self.env.regions, Region::Memory("notice")))
+                    .into_any_element(),
+            );
+        }
+        let problems = self.problems();
+        if !problems.is_empty() {
+            sections.push(label(format!("Problems with edited files ({})", problems.len())));
+            for (index, problem) in problems.iter().enumerate() {
+                let place = match &problem.section {
+                    Some(section) => format!("{} · {section}", problem.file),
+                    None => problem.file.clone(),
+                };
+                sections.push(
+                    div()
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .gap(px(tokens.spacing / 2.0))
+                        .p(px(tokens.spacing * 2.0))
+                        .rounded(px(tokens.radius))
+                        .bg(theme.surface)
+                        .child(
+                            div()
+                                .text_color(theme.muted)
+                                .text_size(px(tokens.secondary_font_size))
+                                .child(SharedString::from(place)),
+                        )
+                        .child(
+                            div()
+                                .text_color(theme.danger)
+                                .child(SharedString::from(problem.reason.clone())),
+                        )
+                        .child(probe(
+                            &self.env.regions,
+                            Region::MemoryItem("problem", index),
+                        ))
+                        .into_any_element(),
+                );
+            }
+            sections.push(message(
+                "Hutan leaves a file with a problem as you wrote it until you fix it or put it back; nothing from it was proposed.",
+            ));
         }
         if !self.connected(cx) {
             sections.push(message("Not connected to the Hutan daemon."));

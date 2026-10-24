@@ -434,6 +434,8 @@ data_actions! {
     /// Show Mawas Home's ⋯ menu at this position: New chat, Stop, Today and the backend; below
     /// 640 pt it holds what the header folded.
     ShowAssistantMoreMenu(gpui::Point<gpui::Pixels>);
+    /// Show the Memory page's ⋯ menu (Export…, Import…, Show files) at this position.
+    ShowMemoryMenu(gpui::Point<gpui::Pixels>);
     /// Show the menu behind a composer's send-key control (⌘Return or Return sends) at this
     /// position.
     ShowSendKeyMenu(gpui::Point<gpui::Pixels>);
