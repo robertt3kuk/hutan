@@ -1230,7 +1230,11 @@ async fn rate_limit_notifications_become_limit_windows_and_never_journal_events(
             ("7d", 31.0, Some(4_102_531_200_000))
         ]
     );
-    assert_eq!(limits[1].windows.len(), 1, "a sparse report carries one window");
+    assert_eq!(
+        limits[1].windows.len(),
+        1,
+        "a sparse report carries one window"
+    );
     assert_eq!(limits[1].windows[0].used_percent, 81.0);
     // The conversation is what it was: no opaque event for the chatter.
     let names = names(&seen);

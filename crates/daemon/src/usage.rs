@@ -645,7 +645,7 @@ impl UsageService {
         let storage = self.storage.clone();
         let now = now_ms();
         tokio::task::spawn_blocking(move || {
-            let (day, week) = period_starts(now, |at| local_offset_secs(at));
+            let (day, week) = period_starts(now, local_offset_secs);
             let usage = storage.usage();
             let limits = usage.limits()?;
             let week_sums = usage.sums_since(week)?;

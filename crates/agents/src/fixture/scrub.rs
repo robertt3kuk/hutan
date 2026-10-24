@@ -310,7 +310,10 @@ mod tests {
         // The rate limits keep their windows and nothing else; one without windows is dropped.
         assert_eq!(out.matches("\"rateLimits\":{").count(), 1, "{out}");
         assert!(out.contains(r#""usedPercent":7"#), "{out}");
-        assert!(!out.contains("12.50") && !out.contains("Codex of me"), "{out}");
+        assert!(
+            !out.contains("12.50") && !out.contains("Codex of me"),
+            "{out}"
+        );
         assert!(!out.contains("workies"), "{out}");
         assert!(!out.contains("5bdf5e69"), "{out}");
         assert!(!out.contains("plus"), "{out}");

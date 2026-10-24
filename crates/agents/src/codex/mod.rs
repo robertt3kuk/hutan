@@ -267,12 +267,8 @@ pub async fn read_account(config: &CodexConfig) -> Result<CodexAccount, AgentErr
     let (transport, _incoming, _exit) = Transport::spawn(&config.launch(None))?;
     let outcome = async {
         handshake(&transport).await?;
-        let result: Value = call(
-            &transport,
-            "account/read",
-            &json!({"refreshToken": false}),
-        )
-        .await?;
+        let result: Value =
+            call(&transport, "account/read", &json!({"refreshToken": false})).await?;
         let account = result.get("account").filter(|a| !a.is_null());
         Ok(CodexAccount {
             kind: account

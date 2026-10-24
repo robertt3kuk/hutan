@@ -89,7 +89,7 @@ pub fn identifier(value: &str) -> Option<String> {
 
 fn seconds_to_ms(seconds: &Value) -> Option<u64> {
     let seconds = seconds.as_f64()?;
-    (seconds.is_finite() && seconds >= 0.0).then(|| (seconds * 1000.0) as u64)
+    (seconds.is_finite() && seconds >= 0.0).then_some((seconds * 1000.0) as u64)
 }
 
 /// The rate limits in an `account/rateLimits/updated` notification or an
@@ -221,7 +221,9 @@ mod tests {
         .unwrap();
         assert!((limits.windows[0].used_percent - 9.0).abs() < f64::EPSILON);
         assert!(codex_rate_limits(&json!({"rateLimits": {}})).is_none());
-        assert!(codex_rate_limits(&json!({"rateLimits": {"primary": {"usedPercent": "x"}}})).is_none());
+        assert!(
+            codex_rate_limits(&json!({"rateLimits": {"primary": {"usedPercent": "x"}}})).is_none()
+        );
         assert!(codex_rate_limits(&json!({})).is_none());
     }
 

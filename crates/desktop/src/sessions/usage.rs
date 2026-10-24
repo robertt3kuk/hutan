@@ -228,7 +228,7 @@ pub fn section(summary: &UsageSummary, now_ms: u64) -> Vec<HarnessView> {
                     severity: severity(l.used_percent),
                 })
                 .collect();
-            let note = limits.is_empty().then(|| match harness.harness.as_str() {
+            let note = limits.is_empty().then_some(match harness.harness.as_str() {
                 HARNESS_DIRECT => None,
                 "codex" => Some("no limit reported yet: Codex reports it with its replies"),
                 "claude" => {
