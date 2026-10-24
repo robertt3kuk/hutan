@@ -11,6 +11,7 @@
 mod comments;
 mod delivery;
 mod finish;
+mod history;
 mod tray;
 
 pub use comments::{Mark, ReviewComment, SnippetLine};
@@ -147,6 +148,8 @@ pub enum Scope {
     Committed,
     /// Lists them too, narrowed by the filter.
     Index(IndexFilter),
+    /// The recent commits of the checkout, each with its diff (GIT-HISTORY).
+    History,
 }
 
 impl IndexFilter {
@@ -205,6 +208,8 @@ pub struct ChangesView {
     /// Line selection, review comments and the Review tray (RC-1).
     review: tray::Review,
     delivery: delivery::Delivery,
+    /// The History segment (`changes/history.rs`).
+    history: history::HistoryState,
     /// The file strip of a narrow view is unfolded into the list of files.
     files_open: bool,
     /// Horizontal scroll of the diff, for lines wider than the pane.
@@ -263,6 +268,7 @@ impl ChangesView {
             canonical,
             review: tray::Review::new(comments, cx),
             delivery: delivery::Delivery::new(cx),
+            history: history::HistoryState::default(),
             files_open: true,
             diff_x: ScrollHandle::new(),
             width: std::rc::Rc::default(),
@@ -350,7 +356,9 @@ impl ChangesView {
     /// The segment of the toolbar that is on: Committed while the uncommitted changes are left
     /// out, else the index filter in force (All while the listing says nothing of the index).
     pub fn scope(&self) -> Scope {
-        if !self.include_uncommitted {
+        if self.history.on {
+            Scope::History
+        } else if !self.include_uncommitted {
             Scope::Committed
         } else if self.has_index_marks() {
             Scope::Index(self.index_filter)
@@ -362,12 +370,18 @@ impl ChangesView {
     /// Picks a segment of the toolbar: what the list holds and, for the uncommitted changes,
     /// which of them.
     pub fn set_scope(&mut self, scope: Scope, cx: &mut Context<Self>) {
+        if scope == Scope::History {
+            self.show_history(cx);
+            return;
+        }
+        self.hide_history(cx);
         match scope {
             Scope::Committed => self.set_include_uncommitted(false, cx),
             Scope::Index(filter) => {
                 self.set_index_filter(filter, cx);
                 self.set_include_uncommitted(true, cx);
             }
+            Scope::History => {}
         }
     }
 
@@ -451,6 +465,9 @@ impl ChangesView {
     /// and says so in the freshness chip.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         self.load(false, cx);
+        if self.history.on {
+            self.reload_history(cx);
+        }
     }
 
     /// [`reload`](Self::reload) for a trigger nobody asked for: it waits for a reload in flight
@@ -871,6 +888,11 @@ impl Render for ChangesView {
         if self.finish.is_some() {
             root = root.child(self.render_finish_form(&theme, &tokens, window, cx));
         }
+        if self.history.on {
+            return root
+                .child(self.render_history(&look, narrow, cx))
+                .into_any_element();
+        }
         root.child(match &self.listing {
             Listing::Loading => div()
                 .flex_1()
@@ -921,6 +943,7 @@ impl Render for ChangesView {
                 .child(self.render_patch(&look, window, cx))
                 .into_any_element(),
         })
+        .into_any_element()
     }
 }
 
@@ -966,6 +989,7 @@ impl ChangesView {
                     Scope::Index(IndexFilter::Unstaged),
                 ));
         }
+        strip = strip.child(segment("changes-scope-history", "History", Scope::History));
         strip.into_any_element()
     }
 

@@ -428,3 +428,90 @@ fn the_places_that_offer_blame_and_history(cx: &mut TestAppContext) {
     assert!(commands.iter().any(|t| t == "Editor: Toggle Blame"));
     assert!(commands.iter().any(|t| t == "Git: Show File History"));
 }
+
+#[gpui::test]
+fn the_changes_view_has_a_history_segment_with_the_commits_and_their_diffs(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::workbench::{ChangesView, Scope};
+
+    let fx = Fx::new();
+    let (view, cx) = open(cx, &fx);
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_changes(fx.root.clone(), window, cx);
+    });
+    draw(cx);
+    let changes: Entity<ChangesView> = view
+        .read_with(cx, |wb, _| wb.changes(&fx.root.display().to_string()))
+        .expect("the Changes view was opened");
+    wait_until(cx, "the first listing", |cx| {
+        changes.read_with(cx, |c, _| c.refreshed_ms().is_some())
+    });
+    assert!(!changes.read_with(cx, |c, _| c.history_shown()));
+
+    // The segment beside Committed and All.
+    let segment = view
+        .read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Changes("changes-scope-history"))
+        })
+        .expect("the History segment is drawn");
+    cx.simulate_click(segment.center(), Modifiers::none());
+    assert_eq!(changes.read_with(cx, |c, _| c.scope()), Scope::History);
+    wait_until(
+        cx,
+        "the commits, the newest one's files and its diff",
+        |cx| {
+            changes.read_with(cx, |c, _| {
+                c.history_commits().len() == 3 && c.history_diff().is_some()
+            })
+        },
+    );
+    changes.read_with(cx, |c, _| {
+        let subjects: Vec<&str> = c
+            .history_commits()
+            .iter()
+            .map(|commit| commit.subject.as_str())
+            .collect();
+        assert_eq!(subjects, ["add delta", "shout beta", "create a"]);
+        assert_eq!(c.history_selected().unwrap().subject, "add delta");
+        let files: Vec<&str> = c.history_files().iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(files, ["a.txt"]);
+        assert_eq!(c.history_file(), Some("a.txt"));
+        assert!(
+            c.history_diff()
+                .unwrap()
+                .lines
+                .iter()
+                .any(|l| l.text == "delta")
+        );
+        assert_eq!(c.history_message(), Some("add delta\n"));
+        assert!(!c.history_more());
+    });
+    draw(cx);
+    assert!(view.read_with(cx, |wb, _| {
+        wb.region_bounds(Region::ChangesCommit(2)).is_some()
+    }));
+    assert!(view.read_with(cx, |wb, _| {
+        wb.region_bounds(Region::ChangesHistoryFile(0)).is_some()
+    }));
+
+    // Another commit: its files and the diff of its first file.
+    let second = changes.read_with(cx, |c, _| c.history_commits()[1].id.clone());
+    changes.update(cx, |c, cx| c.select_commit(&second, cx));
+    wait_until(cx, "the second commit's diff", |cx| {
+        changes.read_with(cx, |c, _| {
+            c.history_diff()
+                .is_some_and(|d| d.lines.iter().any(|l| l.text == "BETA"))
+        })
+    });
+
+    // The other segments bring the changes back; the uncommitted ones are not mixed in.
+    let committed = view
+        .read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Changes("changes-scope-committed"))
+        })
+        .expect("the Committed segment is drawn");
+    cx.simulate_click(committed.center(), Modifiers::none());
+    assert_eq!(changes.read_with(cx, |c, _| c.scope()), Scope::Committed);
+    assert!(!changes.read_with(cx, |c, _| c.history_shown()));
+}
