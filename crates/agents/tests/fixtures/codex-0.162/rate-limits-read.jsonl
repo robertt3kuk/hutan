@@ -1,0 +1,5 @@
+{"dir":"out","msg":{"method":"initialize","id":1,"params":{"clientInfo":{"name":"hutan","title":"Hutan","version":"0.1.0"},"capabilities":{"experimentalApi":false}}}}
+{"dir":"in","msg":{"id":1,"result":{"userAgent":"hutan/0.162.1 (Mac OS; arm64)","codexHome":"/tmp/codex-home","platformFamily":"unix","platformOs":"macos"}}}
+{"dir":"out","msg":{"method":"initialized"}}
+{"dir":"out","msg":{"method":"account/rateLimits/read","id":2,"params":{}}}
+{"dir":"in","msg":{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":72,"windowDurationMins":300,"resetsAt":1792024800},"secondary":{"usedPercent":31,"windowDurationMins":10080,"resetsAt":1792454400}},"rateLimitsByLimitId":{"codex":{"limitId":"codex","primary":{"usedPercent":72,"windowDurationMins":300,"resetsAt":1792024800},"secondary":{"usedPercent":31,"windowDurationMins":10080,"resetsAt":1792454400}}}}}}

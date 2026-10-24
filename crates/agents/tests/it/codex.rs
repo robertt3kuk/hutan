@@ -1237,3 +1237,23 @@ async fn rate_limit_notifications_become_limit_windows_and_never_journal_events(
     assert!(!names.contains(&"opaque"), "{names:?}");
     assert_eq!(names.last(), Some(&"turn_completed"));
 }
+
+#[tokio::test]
+async fn rate_limits_can_be_read_from_a_short_lived_app_server() {
+    let h = Harness::new();
+    let limits = timeout(
+        WAIT,
+        hutan_agents::codex::read_rate_limits(&h.config(&fixture("rate-limits-read"))),
+    )
+    .await
+    .expect("read timed out")
+    .expect("read failed")
+    .expect("windows");
+    let ids: Vec<_> = limits.windows.iter().map(|w| w.id.as_str()).collect();
+    assert_eq!(ids, ["5h", "7d"]);
+    let methods: Vec<_> = h.received().into_iter().map(|(m, _)| m).collect();
+    assert_eq!(
+        methods,
+        ["initialize", "initialized", "account/rateLimits/read"]
+    );
+}

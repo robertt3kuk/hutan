@@ -19,7 +19,7 @@ use futures::future::BoxFuture;
 use hutan_core::{ApprovalId, ModelInfo, QuestionId, QuestionResponse, TurnId};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 use tracing::{debug, warn};
@@ -270,7 +270,7 @@ pub async fn read_account(config: &CodexConfig) -> Result<CodexAccount, AgentErr
         let result: Value = call(
             &transport,
             "account/read",
-            &serde_json::json!({"refreshToken": false}),
+            &json!({"refreshToken": false}),
         )
         .await?;
         let account = result.get("account").filter(|a| !a.is_null());
@@ -285,6 +285,22 @@ pub async fn read_account(config: &CodexConfig) -> Result<CodexAccount, AgentErr
                 .filter(|plan| *plan != "unknown")
                 .map(str::to_owned),
         })
+    }
+    .await;
+    transport.shutdown().await;
+    outcome
+}
+
+/// The account's limit windows, by Codex's own `account/rateLimits/read`: starts an app server,
+/// asks, ends it. `Ok(None)` when Codex reports none (an API-key login has no plan windows).
+pub async fn read_rate_limits(
+    config: &CodexConfig,
+) -> Result<Option<crate::usage::RateLimits>, AgentError> {
+    let (transport, _incoming, _exit) = Transport::spawn(&config.launch(None))?;
+    let outcome = async {
+        handshake(&transport).await?;
+        let result: Value = call(&transport, "account/rateLimits/read", &json!({})).await?;
+        Ok(crate::usage::codex_rate_limits(&result))
     }
     .await;
     transport.shutdown().await;
