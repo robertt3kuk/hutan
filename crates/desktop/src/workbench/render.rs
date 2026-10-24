@@ -1115,6 +1115,14 @@ impl Workbench {
             }),
         )
         .on_action(
+            cx.listener(|this, _: &actions::ShowFileHistory, window, cx| {
+                this.show_active_file_history(window, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, a: &actions::ShowFilesMenu, window, cx| {
+            this.show_files_menu(&a.0, window, cx);
+        }))
+        .on_action(
             cx.listener(|this, a: &actions::OpenChosenFile, window, cx| {
                 let target = super::files::FileOpen {
                     path: a.0.path.clone().into(),
@@ -2405,6 +2413,8 @@ impl Workbench {
                 cached_view(&self.regions, view)
             }
             ItemRef::File { path } => self.render_file_item(pane, path, window, cx),
+            ItemRef::History { path } => self.render_history_item(path, window, cx),
+            ItemRef::Revision { path, rev } => self.render_revision_item(path, rev, cx),
         }
     }
 

@@ -174,6 +174,7 @@ impl Workbench {
         }
         self.sync_chats(cx);
         self.sync_files(cx);
+        self.sync_history_views();
     }
 
     fn ensure_held(
@@ -1629,6 +1630,7 @@ impl Workbench {
             // `editor.vim_mode` is live in file tabs too (safe in the middle of a command).
             for view in self.file_views.values() {
                 view.update(cx, |view, cx| view.sync_vim(cx));
+                view.update(cx, |view, cx| view.sync_blame_setting(cx));
             }
             // `editor.agent_highlight` too.
             let highlight = self

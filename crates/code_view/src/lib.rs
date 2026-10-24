@@ -41,6 +41,7 @@
 
 pub mod actions;
 pub mod agent;
+pub mod blame;
 mod buffer;
 mod completion;
 pub mod diagnostics;
@@ -61,6 +62,7 @@ mod vim_host;
 
 pub use actions::*;
 pub use agent::{AgentChanges, AgentHunk, AgentLabel, HunkKind};
+pub use blame::{BlameCommit, BlameData, BlameLine};
 pub use buffer::{
     BufferEdited, Coalesce, Conflict, EditKind, FailReason, FileBuffer, LoadState,
     TYPING_GROUP_PAUSE, file_name, language_label,

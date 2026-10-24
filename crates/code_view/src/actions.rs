@@ -133,6 +133,9 @@ gpui::actions!(
         /// Scroll to the agent's newest change whenever it writes the file (the owner keeps the
         /// toggle).
         ToggleFollowAgent,
+        /// Show or hide the gutter's column of git blame (the owner keeps the toggle and asks
+        /// the daemon).
+        ToggleBlame,
         /// Go to the definition of the symbol at the caret (the owner asks the language server).
         GoToDefinition,
         /// Show the hover popover at the caret: its diagnostics and the language server's text.

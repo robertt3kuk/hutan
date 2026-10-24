@@ -45,7 +45,7 @@ use crate::icons::{Icon, icon};
 use crate::sessions::CheckoutActivity;
 use crate::settings::FilesPanelSettings;
 use crate::theme::DensityExt as _;
-use crate::workbench::actions::{ChosenFile, OpenChosenFile};
+use crate::workbench::actions::{ChosenFile, FilesMenuAt, OpenChosenFile, ShowFilesMenu};
 use crate::workbench::files::FilePlace;
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::style::UiStyle;
@@ -974,6 +974,27 @@ impl FilesPanel {
                     .when(is_active, |s| s.font_weight(gpui::FontWeight::MEDIUM))
                     .when(selected, |s| s.bg(theme.sidebar_accent))
                     .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                            let Some(row) = this.rows().get(index).cloned() else {
+                                return;
+                            };
+                            if matches!(row.kind, RowKind::More | RowKind::Failed) {
+                                return;
+                            }
+                            this.selected = Some(row.path.clone());
+                            window.dispatch_action(
+                                Box::new(ShowFilesMenu(FilesMenuAt {
+                                    path: row.path.display().to_string(),
+                                    file: matches!(row.kind, RowKind::File | RowKind::Link),
+                                    position: event.position,
+                                })),
+                                cx,
+                            );
+                            cx.notify();
+                        }),
+                    )
                     .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                         window.focus(&this.focus, cx);
                         let double = event.click_count() >= 2;

@@ -36,6 +36,17 @@ pub(crate) struct AgentMarks {
     pub removed_above: Option<Hsla>,
 }
 
+/// Width of the blame column in the gutter, in cells.
+pub(crate) const BLAME_COLS: usize = 40;
+/// Longest blame label at the end of the caret line, in characters.
+const INLINE_BLAME_CHARS: usize = 120;
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
+}
+
 /// Columns drawn past the right edge (and before the left one) of a horizontally scrolled view.
 const MARGIN_COLS: usize = 8;
 
@@ -80,6 +91,8 @@ struct LinePaint {
     glyph: Option<Severity>,
     /// The caret line's message, shaped, and the column it starts at.
     hint: Option<(Rc<ShapedLine>, f32)>,
+    /// The blame of the line, on the first line of each run of one commit.
+    blame: Option<Rc<ShapedLine>>,
 }
 
 pub(crate) struct Prepaint {
@@ -97,6 +110,8 @@ pub(crate) struct Prepaint {
     diagnostic_colors: [Hsla; 4],
     scroll_x: Pixels,
     lines: Vec<LinePaint>,
+    /// Where the gutter's blame text goes, when the column is on.
+    blame: Option<Bounds<Pixels>>,
     /// Whether the platform's text input goes to the view (it has the keyboard and may edit).
     input: bool,
 }
@@ -215,7 +230,7 @@ fn prepare(
 ) -> Prepaint {
     let style = view.style.clone();
     let (cell, line_h) = metrics(&style, window);
-    let (text, ready, editable, syntax, hunks, diagnostics, diagnostics_epoch) = {
+    let (text, ready, editable, syntax, hunks, diagnostics, diagnostics_epoch, has_blame) = {
         let buffer = view.buffer().read(cx);
         (
             buffer.text().clone(),
@@ -225,8 +240,12 @@ fn prepare(
             buffer.agent_hunks(),
             buffer.diagnostics(),
             buffer.diagnostics_epoch(),
+            buffer.has_blame(),
         )
     };
+    let blame_column = view.blame_gutter && has_blame;
+    let blame_inline = view.inline_blame && has_blame;
+    let now = now_secs();
     let line_count = if ready { text.line_count() } else { 0 };
     let digits = line_count.max(1).to_string().len().max(3);
     let previous_top = view.layout.map(|l| l.bounds.top());
@@ -237,7 +256,20 @@ fn prepare(
         cell * (digits as f32 + 3.5)
     } else {
         cell * 2.0
+    } + if blame_column {
+        cell * BLAME_COLS as f32
+    } else {
+        px(0.0)
     };
+    // The blame sits right of the marks (an agent's bar, a diagnostic's glyph) and left of the
+    // numbers.
+    let blame_area = blame_column.then(|| {
+        Bounds::new(
+            point(bounds.left() + cell * 2.0, bounds.top()),
+            size(cell * (BLAME_COLS as f32 - 1.0), bounds.size.height),
+        )
+    });
+    view.blame_area = blame_area;
     let text_left = bounds.left() + gutter_w + cell * 0.5;
     let rows = (f32::from(bounds.size.height) / f32::from(line_h)).ceil() as usize + 1;
     view.layout = Some(Layout {
@@ -287,6 +319,7 @@ fn prepare(
         diagnostic_colors: Severity::ALL.map(|s| style.diagnostic_color(s)),
         scroll_x: px(view.scroll_x),
         lines: Vec::new(),
+        blame: blame_area,
         input: focused && editable,
     };
     view.stats.last_diagnostics.clear();
@@ -617,6 +650,51 @@ fn prepare(
             _ => None,
         };
 
+        // Blame: the first line of a run of one commit says who, when and what; the caret line
+        // may also say it after its end (unless it has a diagnostic's message there).
+        let blame_text =
+            |view: &CodeView, cx: &gpui::Context<CodeView>| -> (Option<String>, Option<String>) {
+                let buffer = view.buffer().read(cx);
+                let Some(this) = buffer.blame_line(line) else {
+                    return (None, None);
+                };
+                let starts_run = line == 0
+                    || buffer
+                        .blame_line(line - 1)
+                        .is_none_or(|before| !before.same_run(this));
+                let label = crate::blame::label(this, now);
+                let column =
+                    (blame_column && starts_run).then(|| crate::blame::fit(&label, BLAME_COLS - 3));
+                let inline = (blame_inline && head_line == Some(line))
+                    .then(|| crate::blame::fit(&label, INLINE_BLAME_CHARS));
+                (column, inline)
+            };
+        let (column_label, inline_label) = if blame_column || blame_inline {
+            blame_text(view, cx)
+        } else {
+            (None, None)
+        };
+        let blame = column_label.map(|label| {
+            shape_muted(
+                &mut view.numbers,
+                &text_system,
+                &style,
+                (label, "blame", view.style_generation),
+            )
+        });
+        let hint = hint.or_else(|| {
+            inline_label.map(|label| {
+                let shaped = shape_muted(
+                    &mut view.numbers,
+                    &text_system,
+                    &style,
+                    (format!("   {label}"), "inline-blame", view.style_generation),
+                );
+                let end_col = crate::layout::line_columns(&window_text) as f32;
+                (shaped, end_col)
+            })
+        });
+
         prepaint.lines.push(LinePaint {
             y: bounds.top() + px((line - first) as f32 * line_hf - offset),
             number,
@@ -629,6 +707,7 @@ fn prepare(
             underlines,
             glyph,
             hint,
+            blame,
         });
         if prepaint.current_line.is_some()
             && head_line == Some(line)
@@ -655,6 +734,35 @@ fn prepare(
         view.times.first_highlighted.get_or_insert(now);
     }
     prepaint
+}
+
+/// `text` shaped in the gutter's muted color, found again by `(text, tag, style generation)`.
+fn shape_muted(
+    cache: &mut crate::view::LineCache,
+    text_system: &std::sync::Arc<gpui::WindowTextSystem>,
+    style: &CodeStyle,
+    (text, tag, generation): (String, &'static str, u64),
+) -> Rc<ShapedLine> {
+    let key = hash_of((tag, &text, generation));
+    if let Some(hit) = cache.get(key) {
+        return hit;
+    }
+    let run = TextRun {
+        len: text.len(),
+        font: style.font(None),
+        color: rgba(style.theme.gutter_foreground),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let shaped = Rc::new(text_system.shape_line(
+        SharedString::from(text),
+        px(style.font_size),
+        &[run],
+        None,
+    ));
+    cache.insert(key, shaped.clone());
+    shaped
 }
 
 /// The marks of an agent's changes (`hunks`, in byte order) on each line of `lines`.
@@ -879,6 +987,16 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
             let origin = point(number_right - number.width, line.y);
             let _ = number.paint(origin, line_h, TextAlign::Left, None, window, cx);
         }
+    }
+    if let Some(area) = state.blame {
+        window.with_content_mask(Some(ContentMask { bounds: area }), |window| {
+            for line in &state.lines {
+                if let Some(blame) = &line.blame {
+                    let origin = point(area.left(), line.y);
+                    let _ = blame.paint(origin, line_h, TextAlign::Left, None, window, cx);
+                }
+            }
+        });
     }
     // The gutter's marks of an agent's changes: a bar beside changed lines, a wedge where lines
     // were removed.

@@ -94,6 +94,47 @@ fn narrow(out: &mut Vec<Edit>, base: usize, a: &str, b: &str, deadline: Option<I
     }
 }
 
+/// For each line of `new`, the index of the line of `old` it is the same line as (`None`: the
+/// line is new or changed). Lines are compared whole, including their line break; the common
+/// leading and trailing lines are matched first and the lines between are diffed (Myers, under
+/// the same deadline as [`minimal_edits`]).
+pub fn line_map(old: &str, new: &str) -> Vec<Option<usize>> {
+    let deadline = Instant::now().checked_add(DEADLINE);
+    let a_lines: Vec<&str> = old.split_inclusive('\n').collect();
+    let b_lines: Vec<&str> = new.split_inclusive('\n').collect();
+    let prefix = a_lines
+        .iter()
+        .zip(&b_lines)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let max_suffix = a_lines.len().min(b_lines.len()) - prefix;
+    let suffix = a_lines
+        .iter()
+        .rev()
+        .zip(b_lines.iter().rev())
+        .take(max_suffix)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut map: Vec<Option<usize>> = vec![None; b_lines.len()];
+    for (at, slot) in map.iter_mut().take(prefix).enumerate() {
+        *slot = Some(at);
+    }
+    for back in 1..=suffix {
+        map[b_lines.len() - back] = Some(a_lines.len() - back);
+    }
+    let a_mid = &a_lines[prefix..a_lines.len() - suffix];
+    let b_mid = &b_lines[prefix..b_lines.len() - suffix];
+    for op in capture_diff_slices_deadline(Algorithm::Myers, a_mid, b_mid, deadline) {
+        let (tag, old_lines, new_lines) = op_ranges(&op);
+        if tag == DiffTag::Equal {
+            for (offset, line) in new_lines.enumerate() {
+                map[prefix + line] = Some(prefix + old_lines.start + offset);
+            }
+        }
+    }
+    map
+}
+
 fn op_ranges(op: &DiffOp) -> (DiffTag, std::ops::Range<usize>, std::ops::Range<usize>) {
     op.as_tag_tuple()
 }
@@ -169,6 +210,20 @@ mod tests {
         }
         out.push_str(&old[at..]);
         out
+    }
+
+    #[test]
+    fn line_map_follows_inserted_changed_and_removed_lines() {
+        let old = "a\nb\nc\nd\ne\n";
+        let new = "a\nX\nc\nd\nnew\ne\n";
+        assert_eq!(
+            line_map(old, new),
+            vec![Some(0), None, Some(2), Some(3), None, Some(4)]
+        );
+        assert_eq!(line_map("", "x\n"), vec![None]);
+        assert_eq!(line_map("x\ny", "x\ny"), vec![Some(0), Some(1)]);
+        // A last line that gained its line break is a different line.
+        assert_eq!(line_map("x\ny", "x\ny\n"), vec![Some(0), None]);
     }
 
     #[test]

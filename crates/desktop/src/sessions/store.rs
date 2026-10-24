@@ -2969,6 +2969,42 @@ impl SessionsStore {
         self.call(Request::WorktreeFileDiff(request), |diff| diff, cx)
     }
 
+    /// `git.log` (capability `git.history`): the commits of a checkout, or of a file or folder.
+    pub fn git_log(
+        &self,
+        request: hutan_protocol::git::GitLog,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::git::GitLogResult, String>> {
+        self.call(Request::GitLog(request), |log| log, cx)
+    }
+
+    /// `git.blame`: which commit last changed each line of a file.
+    pub fn git_blame(
+        &self,
+        request: hutan_protocol::git::GitBlame,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::git::GitBlameResult, String>> {
+        self.call(Request::GitBlame(request), |blame| blame, cx)
+    }
+
+    /// `git.show`: one commit's message, files and patch.
+    pub fn git_show(
+        &self,
+        request: hutan_protocol::git::GitShow,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::git::GitShowResult, String>> {
+        self.call(Request::GitShow(request), |shown| shown, cx)
+    }
+
+    /// `git.file`: a file as it was at a revision.
+    pub fn git_file(
+        &self,
+        request: hutan_protocol::git::GitFile,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::git::GitFileResult, String>> {
+        self.call(Request::GitFile(request), |file| file, cx)
+    }
+
     /// `worktree.finish`: the user's Finish of a checkout (commit, merge a worktree, push). A
     /// step that failed is in the answer; the error is a refusal before anything changed.
     pub fn finish_checkout(

@@ -500,6 +500,10 @@ impl Workbench {
                 ItemRef::Placeholder { .. } => ("placeholder", None, None, None),
                 ItemRef::Changes { .. } => ("changes", None, None, None),
                 ItemRef::File { path } => ("file", None, None, Some(PathBuf::from(path))),
+                ItemRef::History { path } => ("history", None, None, Some(PathBuf::from(path))),
+                ItemRef::Revision { path, .. } => {
+                    ("revision", None, None, Some(PathBuf::from(path)))
+                }
             };
             PaneItem {
                 kind: kind.to_owned(),

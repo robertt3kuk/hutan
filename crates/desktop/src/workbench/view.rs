@@ -412,6 +412,15 @@ pub enum Region {
     Changes(&'static str),
     /// File `index` of the Changes view's list, top to bottom.
     ChangesFile(usize),
+    /// A control of a file history tab, by name (`refresh`, `more`, `open-revision`, `copy`,
+    /// `root`, `detail`).
+    FileHistory(&'static str),
+    /// Commit `index` of a file history tab's list, newest first.
+    FileHistoryRow(usize),
+    /// Commit `index` of the Changes view's History list, newest first.
+    ChangesCommit(usize),
+    /// File `index` of the selected commit in the Changes view's History segment.
+    ChangesHistoryFile(usize),
     /// Hunk header `index` of the shown file's diff, top to bottom.
     ChangesHunk(usize),
     /// The number gutter of diff line `index` (an index into the shown file's diff lines) of
@@ -747,6 +756,11 @@ pub struct Workbench {
     /// The Changes view of every checkout a tab shows (see `review.rs`), by directory.
     pub(crate) changes_views: HashMap<String, Entity<super::changes::ChangesView>>,
     pub(crate) changes_subscriptions: Vec<Subscription>,
+    /// The history view of every file a history tab shows (see `file_history.rs`), by path.
+    pub(crate) history_views: HashMap<String, Entity<super::file_history::FileHistoryView>>,
+    pub(crate) history_subscriptions: HashMap<String, Subscription>,
+    /// The read-only views of files at a commit, by path and commit.
+    pub(crate) revision_views: HashMap<(String, String), Entity<super::file_history::RevisionView>>,
     /// The buffers of the files tabs show (see `files.rs`).
     pub(crate) buffers: super::files::BufferStore,
     /// The pending ledger of agents' edits (see `agent_edits.rs`).
@@ -1338,6 +1352,9 @@ impl Workbench {
             panel_views: HashMap::new(),
             changes_views: HashMap::new(),
             changes_subscriptions: Vec::new(),
+            history_views: HashMap::new(),
+            history_subscriptions: HashMap::new(),
+            revision_views: HashMap::new(),
             buffers: super::files::BufferStore::default(),
             agent_ledger: super::agent_edits::AgentLedger::for_state(options.state_path.as_deref()),
             lsp,
@@ -1603,6 +1620,23 @@ impl Workbench {
                 crate::icons::Icon::ItemFile,
                 hutan_code_view::file_name(std::path::Path::new(path)).into(),
             ),
+            ItemRef::History { path } => (
+                crate::icons::Icon::PanelHistory,
+                format!(
+                    "History · {}",
+                    hutan_code_view::file_name(std::path::Path::new(path))
+                )
+                .into(),
+            ),
+            ItemRef::Revision { path, rev } => (
+                crate::icons::Icon::ItemFile,
+                format!(
+                    "{} @ {}",
+                    hutan_code_view::file_name(std::path::Path::new(path)),
+                    rev.get(..7).unwrap_or(rev)
+                )
+                .into(),
+            ),
         }
     }
 
@@ -1750,6 +1784,8 @@ impl Workbench {
             .chain(self.chats.values().map(Entity::entity_id))
             .chain(self.changes_views.values().map(Entity::entity_id))
             .chain(self.file_views.values().map(Entity::entity_id))
+            .chain(self.history_views.values().map(Entity::entity_id))
+            .chain(self.revision_views.values().map(Entity::entity_id))
             .chain(self.terminals.values().map(|item| item.view.entity_id()));
         for id in ids {
             gpui::App::notify(cx, id);

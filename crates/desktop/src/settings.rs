@@ -1110,6 +1110,9 @@ pub struct EditorSettings {
     /// bar), with per-change Reject. Off, nothing is diffed or drawn; the agent's writes still
     /// reach the file and the pending ledger.
     pub agent_highlight: bool,
+    /// Show the git blame of the caret's line (author, date, message) after the end of the line.
+    /// Off by default; the gutter's blame column is the *Toggle Blame* command.
+    pub inline_blame: bool,
 }
 
 /// `editor.large_file_bytes` by default: 16 MiB.
@@ -1140,6 +1143,7 @@ impl Default for EditorSettings {
             autosave: Autosave::Off,
             autosave_delay_ms: 1000,
             agent_highlight: true,
+            inline_blame: false,
         }
     }
 }

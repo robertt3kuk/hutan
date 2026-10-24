@@ -351,6 +351,55 @@ impl CodeView {
         (at < content.end).then_some(at)
     }
 
+    /// The popover over a line's blame (GIT-HISTORY): the commit, who made it and when, below
+    /// the line.
+    pub(crate) fn render_blame_hover(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let row = self.blame_hover?;
+        let layout = self.layout?;
+        let area = self.blame_area?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+        let lines = {
+            let buffer = self.buffer().read(cx);
+            crate::blame::details(buffer.blame_line(row)?, now)
+        };
+        let theme = &self.style.theme;
+        let mut border = rgba(theme.gutter_foreground);
+        border.a *= 0.35;
+        let y =
+            layout.bounds.top() + layout.line_height * (row as f32 + 1.0) - gpui::px(self.scroll_y);
+        let mut body = div()
+            .id("code-blame-hover")
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .max_w(px(f32::from(layout.cell_width) * 72.0))
+            .px(px(10.0))
+            .py(px(6.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(border)
+            .bg(rgba(theme.gutter_background))
+            .shadow_md()
+            .text_size(px(self.style.font_size * 0.95))
+            .text_color(rgba(theme.foreground))
+            .on_mouse_move(|_, _, cx| cx.stop_propagation());
+        for (index, line) in lines.into_iter().enumerate() {
+            body = body.child(
+                div()
+                    .when(index == 0, |s| s.font_weight(FontWeight::SEMIBOLD))
+                    .when(index > 0, |s| s.text_color(rgba(theme.gutter_foreground)))
+                    .child(line),
+            );
+        }
+        Some(
+            deferred(anchored().position(point(area.left(), y)).child(body))
+                .with_priority(1)
+                .into_any_element(),
+        )
+    }
+
     /// The popover as an overlay below the line it is about.
     pub(crate) fn render_hover(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let hover = self.hover.as_ref().filter(|h| h.has_content())?;

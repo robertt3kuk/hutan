@@ -20,7 +20,8 @@ use hutan_chat_view::diff::DiffLine;
 use hutan_code_view::{
     AcceptAgentChanges, CloseFind, CodeStyle, CodeView, CodeViewEvent, Conflict, ExRun, FailReason,
     FileBuffer, Find, FindNext, FindPrevious, FindQuery, FindReplace, LoadState, NextAgentHunk,
-    PreviousAgentHunk, RejectAgentHunk, Save, ToggleFollowAgent, VimKey, VimSettings, VimWindow,
+    PreviousAgentHunk, RejectAgentHunk, Save, ToggleBlame, ToggleFollowAgent, VimKey, VimSettings,
+    VimWindow,
 };
 use hutan_settings::SettingsStore;
 use hutan_vim::ex::Ex;
@@ -31,6 +32,7 @@ use super::style::{TextTooltip, UiStyle};
 use super::text_field::FieldRef;
 use super::ui::{self, ButtonKind, FocusRingExt as _, Mascot};
 use super::vim_ui::{self, FieldEdit, VimConfig};
+use crate::settings::EditorSettings;
 use crate::theme::{DensityExt as _, Theme, Tokens};
 
 /// The key context of a file tab (find in file is bound here, so ⌘F works from the find field
@@ -76,6 +78,12 @@ pub enum FileViewEvent {
     AlternateFile,
     /// Vim's `⌃W` commands for the panes.
     VimWindow(VimWindow),
+    /// The tab wants a blame of the file now, or no longer (the gutter column or `editor.
+    /// inline_blame` changed): the workbench asks the daemon, or drops what the buffer holds
+    /// when no tab of the file wants one (GIT-HISTORY).
+    BlameChanged(PathBuf),
+    /// A click on a line's blame: open the history of the file at that commit.
+    OpenCommit { path: PathBuf, commit: String },
     /// The code view asks for completions (E-12b; see [`CodeViewEvent::CompletionRequested`]).
     Completion {
         request: u64,
@@ -145,6 +153,8 @@ pub struct FileView {
     had_command_bar: bool,
     /// The window's language servers, for the bar over the code (E-12a, `lsp_bar.rs`).
     lsp: Option<Entity<super::lsp::LspStore>>,
+    /// *Toggle Blame*: the gutter's column of git blame (GIT-HISTORY).
+    blame: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -185,6 +195,18 @@ impl FileView {
             }),
             cx.subscribe(&code, |this, _, event: &CodeViewEvent, cx| match event {
                 CodeViewEvent::Changed => cx.notify(),
+                CodeViewEvent::BlameClicked { row } => {
+                    let commit = this
+                        .buffer
+                        .read(cx)
+                        .blame_line(*row)
+                        .and_then(hutan_code_view::BlameLine::commit)
+                        .map(|c| c.id.clone());
+                    if let Some(commit) = commit {
+                        let path = this.buffer.read(cx).path().to_owned();
+                        cx.emit(FileViewEvent::OpenCommit { path, commit });
+                    }
+                }
                 CodeViewEvent::FocusLost => {
                     let path = this.buffer.read(cx).path().to_owned();
                     cx.emit(FileViewEvent::FocusLost(path));
@@ -261,9 +283,11 @@ impl FileView {
             had_bar: false,
             had_command_bar: false,
             lsp: None,
+            blame: false,
             _subscriptions: subscriptions,
         };
         this.sync_vim(cx);
+        this.sync_blame_setting(cx);
         this
     }
 
@@ -508,6 +532,40 @@ impl FileView {
             self.command = None;
         }
         self.code.update(cx, |code, cx| code.set_vim(settings, cx));
+    }
+
+    // ---- git blame (GIT-HISTORY) -------------------------------------------------------------
+
+    /// Whether the gutter's column of blame is on in this tab.
+    pub fn blame_on(&self) -> bool {
+        self.blame
+    }
+
+    /// Whether this tab shows any blame: the column, or the caret line's (`editor.inline_blame`).
+    pub fn wants_blame(&self) -> bool {
+        self.blame || self.settings.get::<EditorSettings>().inline_blame
+    }
+
+    /// *Toggle Blame*: the column of the gutter that says, per line, who changed it last.
+    pub fn toggle_blame(&mut self, cx: &mut Context<Self>) {
+        self.blame = !self.blame;
+        let on = self.blame;
+        self.code
+            .update(cx, |code, cx| code.set_blame_gutter(on, cx));
+        let path = self.buffer.read(cx).path().to_owned();
+        cx.emit(FileViewEvent::BlameChanged(path));
+        cx.notify();
+    }
+
+    /// Follows `editor.inline_blame` (live).
+    pub fn sync_blame_setting(&mut self, cx: &mut Context<Self>) {
+        let inline = self.settings.get::<EditorSettings>().inline_blame;
+        if self.code.read(cx).inline_blame() != inline {
+            self.code
+                .update(cx, |code, cx| code.set_inline_blame(inline, cx));
+            let path = self.buffer.read(cx).path().to_owned();
+            cx.emit(FileViewEvent::BlameChanged(path));
+        }
     }
 
     // ---- Vim's `:` line ---------------------------------------------------------------------
@@ -1612,6 +1670,7 @@ impl Render for FileView {
             .on_action(cx.listener(|this, _: &AcceptAgentChanges, _, cx| {
                 this.accept_agent_changes(cx);
             }))
+            .on_action(cx.listener(|this, _: &ToggleBlame, _, cx| this.toggle_blame(cx)))
             .on_action(cx.listener(|this, _: &ToggleFollowAgent, _, cx| {
                 let on = !this.follow;
                 this.set_follow(on, cx);

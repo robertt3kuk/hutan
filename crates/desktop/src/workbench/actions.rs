@@ -151,6 +151,8 @@ actions!(
         /// explains what happens first.
         TrackHomeChanges,
         RevealActiveFile,
+        /// Show the history of the focused file tab's file in a tab.
+        ShowFileHistory,
         RewindFocusedChat,
         UndoLastRestore,
         /// Show the Problems panel (the language servers' diagnostics) with the keyboard in it.
@@ -421,6 +423,9 @@ data_actions! {
     /// Show the Stop menu of a chat whose queue holds messages (Stop and clear the queue / Stop,
     /// keep the queue).
     ShowStopMenu(SessionMenuAt);
+    /// Show the context menu of a row of the Files panel (a file or a folder, by its path) at a
+    /// position: *Show File History* for a file.
+    ShowFilesMenu(FilesMenuAt);
     /// Open the Changes view of the checkout at this path (a worktree or a main checkout).
     ReviewChangesAt(String);
     /// Show the menu of the Assistant page's scope dropdown (Global / the workspace) at this
@@ -453,6 +458,16 @@ data_actions! {
     OpenAtPosition(PositionTarget);
     /// Replace the chosen matches of the Search panel, one undo step per file (E-13b).
     ReplaceInFiles(super::search_replace::ReplaceRequest);
+}
+
+/// A Files panel row's context menu: whose, and where.
+#[derive(Clone, PartialEq, Debug)]
+pub struct FilesMenuAt {
+    /// Absolute.
+    pub path: String,
+    /// Whether the row is a file (a folder has no history of its own to show in a tab).
+    pub file: bool,
+    pub position: gpui::Point<gpui::Pixels>,
 }
 
 /// A file to open, and where in it.
@@ -700,6 +715,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
             "Editor: Toggle Follow Agent",
             hutan_code_view::ToggleFollowAgent,
         ),
+        command("Editor: Toggle Blame", hutan_code_view::ToggleBlame),
         command("Editor: Go to Definition", hutan_code_view::GoToDefinition),
         command("Editor: Go Back", hutan_code_view::GoBack),
         command("Editor: Show Hover", hutan_code_view::ShowHover),
@@ -749,6 +765,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
             TrackHomeChanges,
         ),
         command("Files: Reveal Active File", RevealActiveFile),
+        command("Git: Show File History", ShowFileHistory),
         command("Search: Find in Files", ShowSearch),
         command("Search: Replace in Files", ShowSearchReplace),
         command("Instructions: Show Instruction Files", ShowInstructions),

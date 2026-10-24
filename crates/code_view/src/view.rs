@@ -38,6 +38,9 @@ pub const MAX_COLUMN_LINES: usize = 10_000;
 pub enum CodeViewEvent {
     /// The selections, the Vim state or the find state changed.
     Changed,
+    /// A click on a line's blame in the gutter (GIT-HISTORY): the owner opens the commit the
+    /// buffer blames line `row` (0-based) on (`FileBuffer::blame_line`).
+    BlameClicked { row: usize },
     /// The view lost the keyboard, or its window stopped being the active one (autosave on
     /// focus change).
     FocusLost,
@@ -278,6 +281,14 @@ pub struct CodeView {
     pub(crate) vim: Option<crate::modal::VimState>,
     /// `:set number`: the gutter shows line numbers.
     pub(crate) show_numbers: bool,
+    /// GIT-HISTORY: the gutter has a column of blame (while the buffer holds one).
+    pub(crate) blame_gutter: bool,
+    /// The caret's line shows its blame after its end.
+    pub(crate) inline_blame: bool,
+    /// Where the blame column was in the last frame, for the mouse.
+    pub(crate) blame_area: Option<gpui::Bounds<Pixels>>,
+    /// The line whose blame the pointer rests on: the popover with the commit shows.
+    pub(crate) blame_hover: Option<usize>,
     /// The `:s` / `:g` that is searching, and its cancel flag.
     pub(crate) ex_task: Option<Task<()>>,
     pub(crate) ex_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -366,6 +377,10 @@ impl CodeView {
             widest: 0,
             vim: None,
             show_numbers: true,
+            blame_gutter: false,
+            inline_blame: false,
+            blame_area: None,
+            blame_hover: None,
             ex_task: None,
             ex_cancel: None,
             hover: None,
@@ -781,6 +796,56 @@ impl CodeView {
         Some(gpui::point(x, y))
     }
 
+    // ---- blame (GIT-HISTORY) -----------------------------------------------------------------
+
+    /// Shows or hides the gutter's column of blame. It draws while the buffer holds a blame.
+    pub fn set_blame_gutter(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.blame_gutter != on {
+            self.blame_gutter = on;
+            if !on {
+                self.blame_hover = None;
+                self.blame_area = None;
+            }
+            self.lines.clear();
+            cx.notify();
+        }
+    }
+
+    pub fn blame_gutter(&self) -> bool {
+        self.blame_gutter
+    }
+
+    /// Shows the caret line's blame after its end (`editor.inline_blame`).
+    pub fn set_inline_blame(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.inline_blame != on {
+            self.inline_blame = on;
+            cx.notify();
+        }
+    }
+
+    pub fn inline_blame(&self) -> bool {
+        self.inline_blame
+    }
+
+    /// The line whose blame the pointer rests on, while the popover with its commit shows.
+    pub fn blame_hover(&self) -> Option<usize> {
+        self.blame_hover
+    }
+
+    /// The line (0-based) whose blame is under window position `position`: it is over the
+    /// blame column, on a line that has one.
+    pub(crate) fn blame_row_at(&self, position: Point<Pixels>, cx: &App) -> Option<usize> {
+        self.blame_area.filter(|a| a.contains(&position))?;
+        let layout = self.layout?;
+        let y = f32::from(position.y - layout.bounds.top()) + self.scroll_y;
+        let row = (y / f32::from(layout.line_height)).floor();
+        if row < 0.0 {
+            return None;
+        }
+        let row = row as usize;
+        self.buffer.read(cx).blame_line(row).map(|_| row)
+    }
+
     // ---- the mouse ----------------------------------------------------------------------------
 
     pub(crate) fn mouse_down(
@@ -793,6 +858,13 @@ impl CodeView {
             return;
         }
         window.focus(&self.focus, cx);
+        if let Some(row) = self.blame_row_at(event.position, cx) {
+            // The blame column is a button: it opens the commit and never moves the caret.
+            self.blame_hover = None;
+            cx.emit(CodeViewEvent::BlameClicked { row });
+            cx.notify();
+            return;
+        }
         let Some(at) = self.offset_at(event.position, cx) else {
             return;
         };
@@ -879,6 +951,11 @@ impl CodeView {
     pub(crate) fn mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
         let Some(drag) = self.drag.clone() else {
             if event.pressed_button.is_none() {
+                let row = self.blame_row_at(event.position, cx);
+                if row != self.blame_hover {
+                    self.blame_hover = row;
+                    cx.notify();
+                }
                 self.hover_pointer_moved(event.position, cx);
             }
             return;
@@ -1368,11 +1445,13 @@ impl Render for CodeView {
         }
         self.check_popups(cx);
         let hover = self.render_hover(cx);
+        let blame = self.render_blame_hover(cx);
         let completion = self.render_completion(cx);
         let signature = self.render_signature(cx);
         crate::actions::register(root, cx)
             .child(CodeElement::new(cx.entity()))
             .children(hover)
+            .children(blame)
             .children(signature)
             .children(completion)
     }

@@ -85,6 +85,8 @@ pub(crate) struct Stored {
     pub(crate) check: Option<Task<()>>,
     /// The pending `editor.autosave = "after_delay"` save.
     pub(crate) autosave: Option<Task<()>>,
+    /// The blame being asked of the daemon (`blame.rs`).
+    pub(crate) blame_task: Option<Task<()>>,
     /// Whether the tabs showed the buffer as changed (they are drawn again when it flips).
     pub(crate) dirty: bool,
     _subscriptions: Vec<Subscription>,
@@ -329,6 +331,7 @@ impl Workbench {
                 save: None,
                 check: None,
                 autosave: None,
+                blame_task: None,
                 dirty: false,
                 _subscriptions: subscriptions,
             },
@@ -464,6 +467,12 @@ impl Workbench {
                 FileViewEvent::AcceptAgentChanges(path) => {
                     this.accept_agent_changes(&path.display().to_string(), cx);
                 }
+                FileViewEvent::BlameChanged(path) => {
+                    this.refresh_blame(&path.display().to_string(), cx);
+                }
+                FileViewEvent::OpenCommit { path, commit } => {
+                    this.open_file_history(path, Some(commit.clone()), window, cx);
+                }
                 FileViewEvent::Hover { offset } => this.lsp_hover(view, *offset, cx),
                 FileViewEvent::Definition { offset } => {
                     this.go_to_definition(view, *offset, window, cx);
@@ -496,6 +505,11 @@ impl Workbench {
         self.file_subscriptions.insert(key.clone(), subscription);
         self.file_views.insert(key, view.clone());
         self.refresh_completion_triggers(cx);
+        // `editor.inline_blame` is on: this tab's buffer is blamed (asked again when its text
+        // arrives, if it has not).
+        if view.read(cx).wants_blame() {
+            self.refresh_blame(path, cx);
+        }
         view
     }
 
@@ -621,6 +635,7 @@ impl Workbench {
         for view in self.file_views.values() {
             view.update(cx, |view, cx| view.set_style(style.clone(), cx));
         }
+        self.restyle_revisions(&style, cx);
     }
 
     /// What the editor status items show at the workbench's level for the focused tab: its
@@ -755,12 +770,17 @@ impl Workbench {
         };
         let copy = path.to_owned();
         let reveal = path.to_owned();
+        let blame = path.to_owned();
         vec![
             split("Open in Split Right", Edge::Right, path.to_owned()),
             split("Open in Split Down", Edge::Bottom, path.to_owned()),
             Self::entry("Reveal in Files Panel", move |this, window, cx| {
                 this.show_files_at(Some(reveal.clone()), window, cx);
             }),
+            Self::entry("Toggle Blame", move |this, _, cx| {
+                this.toggle_blame_of(pane, &blame, cx);
+            }),
+            Self::show_history_entry(path),
             Self::entry("Copy Path", move |this, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
                 this.set_notice("Copied the file's path", cx);

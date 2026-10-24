@@ -28,6 +28,7 @@ use hutan_buffer::{Applied, Bias, Buffer, LineEnding, Selections, Text, Transact
 use hutan_syntax::{Language, Syntax, SyntaxStats, SyntaxView};
 
 use crate::agent::{self, AgentChanges, AgentHunk};
+use crate::blame::{BlameData, BlameLine, BlameState, MAX_BLAME_BYTES};
 use crate::diagnostics::{self, Diagnostic, DiagnosticCounts, DiagnosticInput};
 use crate::rules::IndentUnit;
 
@@ -175,6 +176,11 @@ pub struct FileBuffer {
     diagnostics: Arc<[Diagnostic]>,
     /// Bumped every time a server publishes a new set.
     diagnostics_epoch: u64,
+    /// GIT-HISTORY: which commit last changed each line, while the owner says there is a blame
+    /// (`blame.rs`).
+    blame: Option<BlameState>,
+    /// Bumped whenever the blame is replaced or taken away.
+    blame_epoch: u64,
     /// Wakes the views when the parser published a tree.
     published: Arc<Mutex<mpsc::Sender<()>>>,
     _repaint: Task<()>,
@@ -230,6 +236,8 @@ impl FileBuffer {
             last_reload: None,
             diagnostics: Arc::from(Vec::new()),
             diagnostics_epoch: 0,
+            blame: None,
+            blame_epoch: 0,
             published: Arc::new(Mutex::new(sender)),
             _repaint: repaint,
         }
@@ -592,6 +600,7 @@ impl FileBuffer {
         cx: &mut Context<Self>,
     ) -> bool {
         self.version += 1;
+        self.remap_blame();
         self.map_agent_hunks(&applied.transaction);
         if !self.diagnostics.is_empty() {
             self.diagnostics = Arc::from(diagnostics::map(&self.diagnostics, &applied.transaction));
@@ -626,6 +635,64 @@ impl FileBuffer {
             } else {
                 syntax.reparse(self.version, self.buffer.snapshot());
             }
+        }
+    }
+
+    // ---- blame (GIT-HISTORY) -----------------------------------------------------------------
+
+    /// Gives the buffer the blame of a text (or takes it away): every line of the current text
+    /// is matched to a line of it. A text over [`MAX_BLAME_BYTES`] is not blamed.
+    pub fn set_blame(&mut self, data: Option<BlameData>, cx: &mut Context<Self>) {
+        self.blame = match data {
+            Some(data) if self.buffer.snapshot().len() <= MAX_BLAME_BYTES => {
+                let current = self.current_text();
+                Some(BlameState::new(data, &current))
+            }
+            _ => None,
+        };
+        self.blame_epoch += 1;
+        cx.notify();
+    }
+
+    /// Whether the buffer holds a blame.
+    pub fn has_blame(&self) -> bool {
+        self.blame.is_some()
+    }
+
+    /// Bumped whenever the blame is replaced or taken away.
+    pub fn blame_epoch(&self) -> u64 {
+        self.blame_epoch
+    }
+
+    /// What line `row` of the current text is blamed on; `None` without a blame or past the
+    /// last line of text.
+    pub fn blame_line(&self, row: usize) -> Option<BlameLine<'_>> {
+        self.blame.as_ref()?.line(row)
+    }
+
+    /// How many lines the blame covers now.
+    pub fn blame_lines(&self) -> usize {
+        self.blame.as_ref().map_or(0, BlameState::lines)
+    }
+
+    fn current_text(&self) -> String {
+        let text = self.buffer.snapshot();
+        text.slice(0..text.len()).unwrap_or_default()
+    }
+
+    /// The text changed: its lines are matched to the blamed ones again.
+    fn remap_blame(&mut self) {
+        if self.blame.is_none() {
+            return;
+        }
+        if self.buffer.snapshot().len() > MAX_BLAME_BYTES {
+            self.blame = None;
+            self.blame_epoch += 1;
+            return;
+        }
+        let current = self.current_text();
+        if let Some(blame) = &mut self.blame {
+            blame.remap(&current);
         }
     }
 

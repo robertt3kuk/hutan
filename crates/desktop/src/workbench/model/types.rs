@@ -354,9 +354,18 @@ pub enum ItemRef {
         path: String,
     },
     /// A file in the code view, by its canonical absolute path.
-    /// A file in the code view, by its canonical absolute path.
     File {
         path: String,
+    },
+    /// The history of a file (GIT-HISTORY): its commits, and the diff of the one selected.
+    History {
+        path: String,
+    },
+    /// A file as it was at a commit (GIT-HISTORY): read-only text, by the file's absolute path
+    /// as it was named then and the commit's full hash.
+    Revision {
+        path: String,
+        rev: String,
     },
     /// A terminal tab that holds a tree of terminal splits (Ghostty / iTerm style): every leaf is
     /// its own daemon session, the tab has one title (the focused split's) and closes with its
@@ -389,6 +398,13 @@ enum ItemRepr {
     Changes {
         path: String,
     },
+    History {
+        path: String,
+    },
+    Revision {
+        path: String,
+        rev: String,
+    },
     /// A tab of terminal splits: the tree (each leaf a pane of one terminal item), the focused
     /// leaf, and whether it is zoomed. A binary from before splits reads this as a placeholder
     /// (the sessions stay in the daemon and in the sessions panel).
@@ -416,6 +432,8 @@ impl From<ItemRef> for ItemRepr {
             ItemRef::Panel { panel } => ItemRepr::Panel { panel },
             ItemRef::Placeholder { title } => ItemRepr::Placeholder { title, file: None },
             ItemRef::Changes { path } => ItemRepr::Changes { path },
+            ItemRef::History { path } => ItemRepr::History { path },
+            ItemRef::Revision { path, rev } => ItemRepr::Revision { path, rev },
             ItemRef::File { path } => ItemRepr::Placeholder {
                 title: std::path::Path::new(&path)
                     .file_name()
@@ -451,6 +469,8 @@ impl From<ItemOnDisk> for ItemRef {
                 ItemRef::Placeholder { title }
             }
             ItemOnDisk::Known(ItemRepr::Changes { path }) => ItemRef::Changes { path },
+            ItemOnDisk::Known(ItemRepr::History { path }) => ItemRef::History { path },
+            ItemOnDisk::Known(ItemRepr::Revision { path, rev }) => ItemRef::Revision { path, rev },
             ItemOnDisk::Known(ItemRepr::TerminalSplit {
                 tree,
                 focus,
@@ -480,6 +500,17 @@ impl ItemRef {
 
     pub fn file(path: impl Into<String>) -> Self {
         ItemRef::File { path: path.into() }
+    }
+
+    pub fn history(path: impl Into<String>) -> Self {
+        ItemRef::History { path: path.into() }
+    }
+
+    pub fn revision(path: impl Into<String>, rev: impl Into<String>) -> Self {
+        ItemRef::Revision {
+            path: path.into(),
+            rev: rev.into(),
+        }
     }
 
     pub fn panel(id: &str) -> Self {

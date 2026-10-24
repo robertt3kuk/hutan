@@ -48,6 +48,7 @@ mod transaction;
 
 pub use anchor::{Anchor, AnchorId, Bias};
 pub use buffer::{Applied, Buffer, LineEnding, MAX_ANCHORS, normalize_newlines};
+pub use diff::line_map;
 pub use edit::Edit;
 pub use error::BufferError;
 pub use history::HistoryLimits;

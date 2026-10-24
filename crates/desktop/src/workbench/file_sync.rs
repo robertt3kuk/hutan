@@ -135,6 +135,8 @@ impl Workbench {
         // The text is in: the language server gets the document (E-12a).
         let buffer = stored.buffer.clone();
         self.lsp.update(cx, |lsp, cx| lsp.open(path, &buffer, cx));
+        // A tab that shows blame has it for this text.
+        self.refresh_blame(path, cx);
         let Some(stored) = self.buffers.buffers.get_mut(path) else {
             return;
         };
@@ -282,6 +284,8 @@ impl Workbench {
                 stored.disk_text = text;
                 buffer.update(cx, |b, cx| b.saved(version, size, cx));
                 self.lsp.update(cx, |lsp, cx| lsp.saved(path, cx));
+                // The saved lines are in the working tree now: blamed again.
+                self.refresh_blame(path, cx);
                 if let Some(item) = then_close
                     && let Some((pane, index)) = self.state.find_item(&item)
                 {

@@ -680,6 +680,12 @@ const FIELDS: &[FieldText] = &[
         "Highlight agents' changes",
         "File tabs tint the lines an agent's turn changed and let you reject one change at a time. Off, nothing is compared or drawn.",
     ),
+    field(
+        "editor",
+        "inline_blame",
+        "Show git blame at the caret",
+        "The caret's line shows who last changed it, when, and the commit message after the end of the line. Off by default; Toggle Blame in the command palette shows a column for every line.",
+    ),
     // ---- agents ----
     field(
         "agents",
