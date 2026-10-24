@@ -418,7 +418,7 @@ fn mawas_more_menu_has_where_mawas_works_for_both_scopes(cx: &mut TestAppContext
 
     // Open Folder in Finder reveals it.
     run_entry(&view, cx, "Open Folder in Finder");
-    assert_eq!(*revealed.borrow(), [home_dir.clone()]);
+    assert_eq!(*revealed.borrow(), std::slice::from_ref(&home_dir));
 
     // Open Terminal Here: a terminal of Home, started in the folder.
     more_menu(&view, cx);
