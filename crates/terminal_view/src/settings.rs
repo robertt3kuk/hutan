@@ -129,6 +129,38 @@ impl Default for BlockSettings {
     }
 }
 
+/// The tints of find matches (the pack's `editor.search-match` and `.active`, drawn over the
+/// terminal's own background like the editor does).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FindSettings {
+    /// Every match.
+    pub matched: Tint,
+    /// The current match.
+    pub current: Tint,
+}
+
+impl FindSettings {
+    /// `self` with the colors of `editor` (a pack's `editor.search-match` roles).
+    pub fn with_colors(self, editor: &hutan_settings::themes::EditorTheme) -> Self {
+        Self {
+            matched: editor.search_match.into(),
+            current: editor.search_match_active.into(),
+        }
+    }
+}
+
+impl Default for FindSettings {
+    /// The colors of the built-in `hutan-dark` pack.
+    fn default() -> Self {
+        use hutan_settings::themes::{Builtin, builtin_theme};
+        let editor = builtin_theme(Builtin::HutanDark).editor();
+        Self {
+            matched: editor.search_match.into(),
+            current: editor.search_match_active.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerminalViewSettings {
     pub font_family: String,
@@ -147,6 +179,7 @@ pub struct TerminalViewSettings {
     /// grid (columns and rows, mouse hit-testing) is laid out in the padded content box.
     pub padding: f32,
     pub blocks: BlockSettings,
+    pub find: FindSettings,
 }
 
 impl Default for TerminalViewSettings {
@@ -163,6 +196,7 @@ impl Default for TerminalViewSettings {
             confirm_multiline_paste: true,
             padding: 0.0,
             blocks: BlockSettings::default(),
+            find: FindSettings::default(),
         }
     }
 }

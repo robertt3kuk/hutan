@@ -297,6 +297,19 @@ impl Workbench {
             }),
         )
         .on_action(
+            cx.listener(|this, _: &actions::FindInTerminal, window, cx| {
+                this.open_terminal_find(window, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::FindNextInTerminal, _, cx| {
+            this.step_terminal_find(true, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::FindPreviousInTerminal, _, cx| {
+                this.step_terminal_find(false, cx);
+            }),
+        )
+        .on_action(
             cx.listener(|this, _: &actions::SplitTerminalDown, window, cx| {
                 this.split_terminal_tab(Edge::Bottom, window, cx)
             }),

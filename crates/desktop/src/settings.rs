@@ -287,6 +287,9 @@ impl TerminalSettings {
                 enabled: self.blocks,
                 ..BlockSettings::default()
             },
+            // The find tints follow the chrome theme's editor colors; the workbench fills
+            // them in.
+            find: hutan_terminal_view::FindSettings::default(),
         }
     }
 }

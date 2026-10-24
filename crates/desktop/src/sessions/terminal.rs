@@ -459,6 +459,11 @@ impl TerminalSession {
         self.session
     }
 
+    /// The connection the attachment runs on (for requests about its terminal).
+    pub fn connection(&self) -> Connection {
+        self.connection.clone()
+    }
+
     /// The terminal currently attached, if any.
     pub fn terminal(&self) -> Option<TerminalId> {
         self.handle.borrow().as_ref().map(TerminalHandle::terminal)

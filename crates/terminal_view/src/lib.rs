@@ -6,11 +6,12 @@
 //! carry the view's input, resizes, acks and history requests to the daemon.
 //!
 //! GPUI-free building blocks (unit tested without a window): [`model`], [`blocks`], [`keys`],
-//! [`mouse`], [`paste`], [`links`], [`selection`] and [`theme`].
+//! [`mouse`], [`paste`], [`links`], [`find`], [`selection`] and [`theme`].
 
 pub mod blocks;
 mod convert;
 mod element;
+pub mod find;
 pub mod keys;
 pub mod links;
 pub mod model;
@@ -24,13 +25,15 @@ pub mod theme;
 pub mod trace;
 mod view;
 
+pub use find::{FindHighlights, FindSpan, FoundCells};
 use gpui::Task;
 pub use hutan_protocol::blocks::BlockPart;
 pub use hutan_protocol::messages::TerminalSize;
 pub use hutan_protocol::render::{Row, TerminalRender};
 pub use links::LinkTarget;
 pub use settings::{
-    BlockSettings, CursorSettings, CursorStyle, OptionAsMeta, TerminalViewSettings, Tint,
+    BlockSettings, CursorSettings, CursorStyle, FindSettings, OptionAsMeta, TerminalViewSettings,
+    Tint,
 };
 pub use shared::{SharedEvent, SharedTerminal};
 pub use theme::{DefaultColors, Rgb, TerminalPalette};

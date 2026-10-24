@@ -23,6 +23,7 @@ use crate::TerminalBackend;
 use crate::blocks::{self, DisplayRow};
 use crate::convert;
 use crate::element::TerminalElement;
+use crate::find::{FindHighlights, FindSpan};
 use crate::keys::{KeyOptions, Mods, encode_key};
 use crate::links::{self, Candidate, LinkTarget};
 use crate::model::{Applied, HISTORY_PAGE, TerminalModel, row_cells, row_width};
@@ -266,6 +267,10 @@ pub struct TerminalView {
     animation_task: Option<Task<()>>,
     /// What the last paint drew of the overlay.
     pub(crate) painted_overlay: blocks::OverlayReport,
+    /// The find matches to draw (see [`Self::set_find_highlights`]).
+    pub(crate) find: Option<FindHighlights>,
+    /// What the last paint drew of them: `(grid row, from, to, current)`.
+    pub(crate) painted_find: Vec<(u16, u16, u16, bool)>,
     pub(crate) rows: RowCache,
     /// Keystroke → paint correlation, fed only while `HUTAN_TRACE_LATENCY` is on.
     latency: crate::trace::LatencyTracker,
@@ -387,6 +392,8 @@ impl TerminalView {
             animation_phase: 0,
             animation_task: None,
             painted_overlay: blocks::OverlayReport::default(),
+            find: None,
+            painted_find: Vec::new(),
             rows: RowCache::default(),
             latency: crate::trace::LatencyTracker::default(),
             paints: 0,
@@ -1377,6 +1384,54 @@ impl TerminalView {
             self.scroll_accum = 0.0;
             cx.notify();
         }
+    }
+
+    // ---- find ------------------------------------------------------------------------------
+
+    /// Draws `highlights` over the output (every match tinted, the current one stronger), or
+    /// nothing for `None`. The owner runs the search; see [`crate::find`].
+    pub fn set_find_highlights(
+        &mut self,
+        highlights: Option<FindHighlights>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.find != highlights {
+            self.find = highlights;
+            cx.notify();
+        }
+    }
+
+    pub fn find_highlights(&self) -> Option<&FindHighlights> {
+        self.find.as_ref()
+    }
+
+    /// What the last paint drew of the find matches: `(grid row, first cell, cell after the
+    /// last, current)`, top to bottom.
+    pub fn painted_find(&self) -> &[(u16, u16, u16, bool)] {
+        &self.painted_find
+    }
+
+    /// Makes the match visible: nothing moves when it already is, otherwise it is scrolled to
+    /// the middle of the view. Scrolling into the scrollback asks the daemon for the rows
+    /// that are not loaded yet (`terminal.history`).
+    pub fn reveal_find_match(&mut self, span: FindSpan, cx: &mut Context<Self>) {
+        let line = self.model.get().line_of(span.row);
+        if self.display().iter().any(|row| shows(row, line)) {
+            return;
+        }
+        let rows = i64::from(
+            self.layout
+                .map_or(self.model.get().screen_rows(), |l| l.rows),
+        );
+        let (top, max) = {
+            let model = self.model.get();
+            (model.viewport_line(0), model.history_len())
+        };
+        let offset = (top + rows - 1 - line - rows / 2).clamp(0, i64::from(max));
+        self.set_scroll_offset(u32::try_from(offset).unwrap_or(0));
+        self.scroll_accum = 0.0;
+        self.ensure_history();
+        cx.notify();
     }
 
     /// Requests the first missing history page the viewport needs.

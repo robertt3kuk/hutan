@@ -13,6 +13,7 @@ use hutan_protocol::render::{CellFlags, Color, CursorShape, Row, Run};
 use hutan_settings::themes::derive_block_fills;
 
 use crate::blocks::{self, DisplayRow, OverlayReport, Tone};
+use crate::find::FoundCells;
 use crate::model::{row_cells, row_width};
 use crate::settings::Tint;
 use crate::shape::{
@@ -48,6 +49,8 @@ struct RowPaint {
     selected_text: Option<SelectionText>,
     /// Fill of the whole row (the summary row of a folded block).
     fill: Option<Hsla>,
+    /// Cells of find matches (empty unless a find is open).
+    found: Vec<FoundCells>,
 }
 
 /// The text of the selected cells of one row, recolored.
@@ -197,6 +200,8 @@ pub(crate) struct Prepaint {
     font: FontSpec,
     background: Hsla,
     selection: Hsla,
+    /// Tints of find matches and of the current one.
+    found: (Hsla, Hsla),
     rows: Vec<RowPaint>,
     overlay: OverlayPaint,
     cursor: Option<CursorPaint>,
@@ -339,6 +344,7 @@ fn prepare(
                 selected: None,
                 selected_text: None,
                 fill: None,
+                found: Vec::new(),
             });
             continue;
         };
@@ -367,6 +373,7 @@ fn prepare(
                 selected,
                 selected_text: None,
                 fill: Some(block_fills(view).folded),
+                found: Vec::new(),
             });
             continue;
         }
@@ -400,13 +407,28 @@ fn prepare(
             .and_then(|(color, (row, (from, to)))| {
                 selection_text(row, from, to, color, &view.theme, &font, text_system)
             });
+        let found = match (&view.find, model.abs_of(line)) {
+            (Some(find), Some(abs)) => find.cells_on(abs, model_cols),
+            _ => Vec::new(),
+        };
         rows.push(RowPaint {
             shaped,
             selected,
             selected_text,
             fill: None,
+            found,
         });
     }
+    view.painted_find = rows
+        .iter()
+        .enumerate()
+        .flat_map(|(r, row)| {
+            let r = u16::try_from(r).unwrap_or(u16::MAX);
+            row.found
+                .iter()
+                .map(move |cells| (r, cells.from, cells.to, cells.current))
+        })
+        .collect();
     let (overlay, report) = prepare_overlay(view, &display, grid_rows, &font, text_system);
     view.painted_overlay = report;
 
@@ -443,6 +465,10 @@ fn prepare(
         font,
         background: hsla(theme.background()),
         selection: hsla(theme.selection()),
+        found: (
+            tint_hsla(view.settings.find.matched),
+            tint_hsla(view.settings.find.current),
+        ),
         rows,
         overlay,
         cursor,
@@ -776,6 +802,17 @@ fn paint_grid(bounds: Bounds<Pixels>, state: &mut Prepaint, window: &mut Window,
             window.paint_quad(fill(
                 cell_bounds(origin, &font, r, from, to - from),
                 state.selection,
+            ));
+        }
+        for cells in &row.found {
+            let tint = if cells.current {
+                state.found.1
+            } else {
+                state.found.0
+            };
+            window.paint_quad(fill(
+                cell_bounds(origin, &font, r, cells.from, cells.to - cells.from),
+                tint,
             ));
         }
     }

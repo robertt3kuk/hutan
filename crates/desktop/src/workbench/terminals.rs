@@ -49,6 +49,7 @@ pub(crate) fn terminal_style(
             base.blocks.enabled,
             !super::ui::motion::reduce_motion(),
         ),
+        find: hutan_terminal_view::FindSettings::default().with_colors(&pack.editor()),
         ..base
     }
 }
@@ -68,6 +69,13 @@ pub(crate) struct TerminalItem {
     pub view: Entity<TerminalView>,
     /// What the view tells the workbench ("Send to agent").
     pub(crate) _events: gpui::Subscription,
+}
+
+/// An open find bar and what ends it.
+#[derive(Debug)]
+pub(crate) struct FindItem {
+    pub find: Entity<super::terminal_find::TerminalFind>,
+    pub(crate) _closed: gpui::Subscription,
 }
 
 /// The session an item shows; for a tab of terminal splits, the focused split's.
@@ -155,6 +163,7 @@ impl Workbench {
             .copied()
             .collect();
         for key in gone {
+            self.terminal_finds.remove(&key);
             if let Some(item) = self.terminals.remove(&key) {
                 // Focus may still sit on it; `rescue_orphaned_focus` checks before it is dropped.
                 self.pruned.push(item.view);
@@ -307,6 +316,81 @@ impl Workbench {
         let pane = self.state.active_pane_id();
         let session = self.focused_session()?;
         self.terminals.get(&(pane, session)).map(|t| t.view.clone())
+    }
+
+    /// ⌘F with the keyboard in a terminal: opens its find bar (or gives the open one the keyboard
+    /// again). Returns whether a terminal had the keyboard.
+    pub(crate) fn open_terminal_find(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let FocusTarget::Pane(_) = self.state.focus else {
+            return false;
+        };
+        let pane = self.state.active_pane_id();
+        let Some(session) = self.focused_session() else {
+            return false;
+        };
+        let Some(view) = self.terminals.get(&(pane, session)).map(|t| t.view.clone()) else {
+            return false;
+        };
+        let key = (pane, session);
+        if let Some(item) = self.terminal_finds.get(&key) {
+            let find = item.find.clone();
+            find.update(cx, |find, cx| find.open(window, cx));
+            return true;
+        }
+        let Some(attached) = self.held.get(&session).cloned() else {
+            return false;
+        };
+        // One bar per session: a second pane showing it takes the bar over.
+        self.terminal_finds.retain(|(_, s), _| *s != session);
+        let settings = self.settings.clone();
+        let find =
+            cx.new(|cx| super::terminal_find::TerminalFind::new(view, attached, settings, cx));
+        find.update(cx, |find, _| find.remember(self.last_terminal_find.clone()));
+        let closed = cx.subscribe(&find, move |this, _, event, cx| match event {
+            super::terminal_find::TerminalFindEvent::Closed(memory) => {
+                this.last_terminal_find = memory.clone();
+                this.terminal_finds.remove(&key);
+                cx.notify();
+            }
+        });
+        self.terminal_finds.insert(
+            key,
+            FindItem {
+                find: find.clone(),
+                _closed: closed,
+            },
+        );
+        find.update(cx, |find, cx| find.open(window, cx));
+        cx.notify();
+        true
+    }
+
+    /// The find bar of the focused pane's terminal, when it is open.
+    pub fn focused_terminal_find(&self) -> Option<Entity<super::terminal_find::TerminalFind>> {
+        let FocusTarget::Pane(_) = self.state.focus else {
+            return None;
+        };
+        let pane = self.state.active_pane_id();
+        let session = self.focused_session()?;
+        self.terminal_finds
+            .get(&(pane, session))
+            .map(|item| item.find.clone())
+    }
+
+    /// How many find bars are open.
+    pub fn terminal_find_count(&self) -> usize {
+        self.terminal_finds.len()
+    }
+
+    /// ⌘G / ⌘⇧G: the next / previous match of the open find bar.
+    pub(crate) fn step_terminal_find(&mut self, forward: bool, cx: &mut Context<Self>) {
+        if let Some(find) = self.focused_terminal_find() {
+            find.update(cx, |find, cx| find.step(forward, cx));
+        }
     }
 
     /// The view of `session` in any pane (tests, inspection).
@@ -1141,6 +1225,21 @@ impl Workbench {
                 ));
             }
             root = root.child(bar);
+        }
+        if let Some(item) = self.terminal_finds.get(&(pane, id)) {
+            // Below the Close / Restart buttons of an ended session.
+            let top = if ended && !self.daemon.stopped {
+                tokens.spacing * 2.0 + 36.0
+            } else {
+                tokens.spacing * 2.0
+            };
+            root = root.child(
+                div()
+                    .absolute()
+                    .top(px(top))
+                    .right(px(tokens.spacing * 4.0))
+                    .child(item.find.clone()),
+            );
         }
         if !self.daemon.stopped
             && let Some(bar) = self.render_terminal_recovery(id, ended, cx)

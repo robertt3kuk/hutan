@@ -65,6 +65,7 @@ mod setup_gpui;
 mod start_failure_gpui;
 mod statusbar_gpui;
 mod tasks_gpui;
+mod term_find_gpui;
 mod term_splits_gpui;
 mod text_input_gpui;
 mod theme_gpui;

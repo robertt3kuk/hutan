@@ -596,6 +596,10 @@ pub struct Workbench {
     pub(crate) sessions: Entity<SessionsStore>,
     pub(crate) env: PanelEnv,
     pub(crate) terminals: HashMap<(PaneId, SessionId), TerminalItem>,
+    /// The find bars that are open (⌘F in a terminal), one per session.
+    pub(crate) terminal_finds: HashMap<(PaneId, SessionId), super::terminals::FindItem>,
+    /// The query and options the last find bar ended with: the next one starts there.
+    pub(crate) last_terminal_find: super::terminal_find::FindMemory,
     /// The transcript and composer of every chat a tab shows (see `agents.rs`).
     pub(crate) chat_models: HashMap<SessionId, Entity<ChatModel>>,
     pub(crate) chats: HashMap<(PaneId, SessionId), Entity<ChatView>>,
@@ -1197,6 +1201,8 @@ impl Workbench {
             sessions,
             env,
             terminals: HashMap::new(),
+            terminal_finds: HashMap::new(),
+            last_terminal_find: super::terminal_find::FindMemory::default(),
             chat_models: HashMap::new(),
             chats: HashMap::new(),
             rendered_chats: std::collections::HashSet::new(),
