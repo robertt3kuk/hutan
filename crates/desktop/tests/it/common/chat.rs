@@ -4,13 +4,14 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use hutan_agents::CodexConfig;
 use hutan_core::SessionId;
 use hutan_protocol::chat::ChatCreate;
 use hutan_protocol::messages::{Request, SessionInfo, SessionResult};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::TestDaemon;
 
@@ -163,4 +164,39 @@ impl TestDaemon {
     pub fn chat_session_id(&self, cwd: &Path) -> SessionId {
         self.create_chat(cwd).id
     }
+}
+
+/// `plain-turn` with its turn repeated once per gate, each held after `turn/started` until its
+/// gate exists (the test edits files meanwhile, as the agent would); each turn has ids of its
+/// own.
+pub fn held_turns(dir: &Path, gates: &[PathBuf]) -> PathBuf {
+    let real = fs::read_to_string(fixtures().join("plain-turn.jsonl")).unwrap();
+    let lines: Vec<&str> = real.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains("\"method\":\"turn/start\""))
+        .unwrap();
+    let mut out: Vec<String> = lines[..at].iter().map(|l| (*l).to_owned()).collect();
+    for (n, gate) in gates.iter().enumerate() {
+        for line in &lines[at..] {
+            let line = line
+                .replace(
+                    "01a00000-0000-7000-8000-000000000002",
+                    &format!("01a00000-0000-7000-8000-0000000010{n:02}"),
+                )
+                .replace(
+                    "01a00000-0000-7000-8000-000000000003",
+                    &format!("01a00000-0000-7000-8000-0000000020{n:02}"),
+                )
+                .replace("msg_fixture_1", &format!("msg_fixture_t{n}"));
+            let started = line.contains("\"method\":\"turn/started\"");
+            out.push(line);
+            if started {
+                out.push(json!({"dir": "hold", "file": gate}).to_string());
+            }
+        }
+    }
+    let transcript = dir.join("held-turns.jsonl");
+    fs::write(&transcript, out.join("\n") + "\n").unwrap();
+    transcript
 }

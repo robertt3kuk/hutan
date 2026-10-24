@@ -16,13 +16,14 @@ use gpui::{
 };
 use hutan_client::ConnectionState;
 use hutan_core::WorkspaceId;
+use hutan_protocol::messages::WorkspaceKind;
 use hutan_protocol::worktree::{DiffFile, WorktreeDiffRequest, WorktreeInfo};
 
 use crate::icons::Icon;
 use crate::sessions::CheckoutActivity;
 use crate::theme::DensityExt as _;
 use crate::workbench::Region;
-use crate::workbench::actions::ReviewChangesAt;
+use crate::workbench::actions::{ReviewChangesAt, TrackHomeChanges};
 use crate::workbench::chat::{Look, counts_of};
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
@@ -492,15 +493,49 @@ impl Render for ChangesPanel {
                 .children(list.iter().enumerate().map(|(i, w)| self.row(i, w, cx)))
                 .into_any_element(),
             other => {
-                let text = match other {
-                    Checkouts::Idle => {
-                        "Connect to hutand and open a project to see its changes.".to_owned()
-                    }
-                    Checkouts::Loading => "Listing the checkouts…".to_owned(),
-                    Checkouts::Failed(error) => format!("Cannot list the checkouts: {error}"),
-                    Checkouts::Ready(_) => "This workspace has no git checkout.".to_owned(),
-                };
-                ui::empty_state(Mascot::Empty, text, None, &theme, &tokens).into_any_element()
+                // At Home, an empty listing means the Home folder is not a repository: say so
+                // and offer to track it (a confirm sheet follows).
+                let track = matches!(other, Checkouts::Ready(_))
+                    && self.env.sessions.read(cx).can_track_home()
+                    && self
+                        .env
+                        .sessions
+                        .read(cx)
+                        .active_workspace()
+                        .is_some_and(|w| w.kind == WorkspaceKind::Home);
+                if track {
+                    let button = ui::Button::new(
+                        "changes-track-home",
+                        "Track changes in this folder…",
+                        &theme,
+                        &tokens,
+                    )
+                    .primary()
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(TrackHomeChanges), cx);
+                    })
+                    .child(probe(&self.env.regions, Region::Changes("track-home")))
+                    .into_any_element();
+                    ui::empty_state(
+                        Mascot::Empty,
+                        "The Home folder does not track its changes yet. Track it to see what \
+                         Mawas edits here and to rewind her turns.",
+                        Some(button),
+                        &theme,
+                        &tokens,
+                    )
+                    .into_any_element()
+                } else {
+                    let text = match other {
+                        Checkouts::Idle => {
+                            "Connect to hutand and open a project to see its changes.".to_owned()
+                        }
+                        Checkouts::Loading => "Listing the checkouts…".to_owned(),
+                        Checkouts::Failed(error) => format!("Cannot list the checkouts: {error}"),
+                        Checkouts::Ready(_) => "This workspace has no git checkout.".to_owned(),
+                    };
+                    ui::empty_state(Mascot::Empty, text, None, &theme, &tokens).into_any_element()
+                }
             }
         };
 

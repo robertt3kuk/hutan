@@ -1079,6 +1079,11 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::ShowFiles, window, cx| {
             this.show_files(window, cx);
         }))
+        .on_action(
+            cx.listener(|this, _: &actions::TrackHomeChanges, window, cx| {
+                this.track_home_changes(window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, _: &actions::ShowProblems, window, cx| {
             this.show_problems(window, cx);
         }))

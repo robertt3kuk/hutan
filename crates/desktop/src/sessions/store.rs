@@ -106,6 +106,16 @@ pub enum MawasFocus {
     Workspace(WorkspaceId),
 }
 
+/// The folder Mawas works in under a [`MawasFocus`] (`SessionsStore::mawas_folder`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MawasFolder {
+    /// The workspace, project or Home the folder belongs to: the container new terminals join.
+    pub container: WorkspaceId,
+    /// The folder is the Home folder (Global scope).
+    pub home: bool,
+    pub root: PathBuf,
+}
+
 /// The container a scoped panel is about (`docs/design.md` § The active container): its name,
 /// kind and, for a repository or one of its worktrees, the branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1179,6 +1189,66 @@ impl SessionsStore {
             return Some(checkout);
         }
         self.root_in(self.active_workspace()?)
+    }
+
+    /// The folder Mawas works in under `focus`, with the container it belongs to: the Home
+    /// folder for Global, else the (active) project of the workspace. `None` while the daemon
+    /// has not said what the container is.
+    pub fn mawas_folder(&self, focus: MawasFocus) -> Option<MawasFolder> {
+        let container = match focus {
+            MawasFocus::Global => self.home_workspace()?,
+            MawasFocus::Workspace(id) => self.workspace(id)?,
+        };
+        let root = self.root_in(container)?;
+        Some(MawasFolder {
+            container: container.id,
+            home: container.kind == WorkspaceKind::Home,
+            root,
+        })
+    }
+
+    /// The Home folder (`~/Hutan`), when the daemon has said what Home is.
+    pub fn home_folder(&self) -> Option<PathBuf> {
+        self.home_workspace()?.roots.first().cloned()
+    }
+
+    /// Whether the Home folder is a git repository, as far as the daemon's checkout listing
+    /// says (the wire does not mark Home's workspace with a project). `false` until a listing
+    /// has been read.
+    pub fn home_is_repository(&self) -> bool {
+        let Some(home) = self.home_folder() else {
+            return false;
+        };
+        self.checkouts.iter().any(|c| c.repo_root == home)
+    }
+
+    /// Whether *Track changes in this folder…* is on offer for the Home folder: the daemon can
+    /// do it, the checkouts have been listed, and none of them is the Home folder.
+    pub fn can_track_home(&self) -> bool {
+        self.state.connection == ConnectionState::Connected
+            && self.connection.supports_project_git_init()
+            && self.checkouts_loaded
+            && self.home_folder().is_some()
+            && !self.home_is_repository()
+    }
+
+    /// `project.git_init` of the Home workspace's folder. The daemon refuses what must not be
+    /// tracked (the user's home directory, a folder inside a repository, a very large folder,
+    /// no git identity); the store follows the change through `worktree.changed`.
+    pub fn track_home(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::project::ProjectGitInitialized, String>> {
+        let Some(home) = self.home_workspace().map(|w| w.id) else {
+            return Task::ready(Err("Home is not known yet".to_owned()));
+        };
+        let connection = self.connection.clone();
+        cx.background_spawn(async move {
+            connection
+                .project_git_init(home)
+                .await
+                .map_err(|e| e.to_string())
+        })
     }
 
     /// The folder ⌘P searches: the root of the project the user works in, whatever Mawas Home

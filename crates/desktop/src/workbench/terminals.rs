@@ -598,6 +598,17 @@ impl Workbench {
                 .or_else(std::env::home_dir);
             (workspace.map(|w| w.id), cwd)
         };
+        self.start_terminal_in(workspace, cwd, window, cx);
+    }
+
+    /// Starts a terminal of `workspace` in `cwd` and opens it.
+    pub(crate) fn start_terminal_in(
+        &mut self,
+        workspace: Option<WorkspaceId>,
+        cwd: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let spec = self.new_terminal_spec(workspace, cwd, cx);
         let task = self
             .sessions

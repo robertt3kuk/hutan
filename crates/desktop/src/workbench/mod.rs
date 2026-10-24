@@ -80,6 +80,7 @@ mod term_splits;
 pub mod terminal_find;
 mod terminals;
 pub mod text_field;
+mod track_changes;
 pub mod ui;
 mod view;
 mod vim_keys;

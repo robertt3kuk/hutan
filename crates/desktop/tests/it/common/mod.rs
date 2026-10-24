@@ -237,6 +237,23 @@ impl TestDaemon {
         )
     }
 
+    /// [`start_with_codex_tweaked`](Self::start_with_codex_tweaked) with a `daemon.toml`
+    /// (`[assistant] backend = "codex"`, say).
+    #[allow(dead_code)]
+    pub fn start_with_codex_config(
+        daemon_toml: &str,
+        codex: hutan_agents::CodexConfig,
+        tweak: impl FnOnce(&mut DaemonConfig),
+    ) -> Self {
+        Self::start_configured(
+            Some(daemon_toml),
+            Some(codex),
+            hutan_daemon::GatewayConfig::default(),
+            None,
+            tweak,
+        )
+    }
+
     pub fn start_with_gateway(gateway: hutan_daemon::GatewayConfig) -> Self {
         Self::start_configured(None, None, gateway, None, |_| {})
     }

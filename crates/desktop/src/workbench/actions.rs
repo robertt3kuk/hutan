@@ -147,6 +147,9 @@ actions!(
         OpenFileInSplitDown,
         QuickOpen,
         ShowFiles,
+        /// Ask to put the Home folder under version control (`project.git_init`): a sheet
+        /// explains what happens first.
+        TrackHomeChanges,
         RevealActiveFile,
         RewindFocusedChat,
         UndoLastRestore,
@@ -739,6 +742,10 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Workspace: Jump to Workspace or Session…", OpenJump),
         command("File: Go to File…", QuickOpen),
         command("Files: Show Files Panel", ShowFiles),
+        command(
+            "Changes: Track Changes in the Home Folder…",
+            TrackHomeChanges,
+        ),
         command("Files: Reveal Active File", RevealActiveFile),
         command("Search: Find in Files", ShowSearch),
         command("Search: Replace in Files", ShowSearchReplace),

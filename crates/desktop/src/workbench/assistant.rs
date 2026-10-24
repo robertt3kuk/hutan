@@ -15,7 +15,8 @@ use super::actions;
 use super::chat::ContextChip;
 use super::model::{PanelId, SessionTab};
 use super::panels::{AssistantPanel, MawasMode, MemoryPanel, ScopeKey};
-use super::view::Workbench;
+use super::view::{MenuEntry, Workbench};
+use crate::sessions::MawasFocus;
 
 impl Workbench {
     /// `assistant.enabled`: off hides Mawas (its nav row, commands and shortcuts).
@@ -268,7 +269,54 @@ impl Workbench {
                 window.dispatch_action(Box::new(actions::ShowAssistantModelMenu(position)), cx);
             },
         ));
+        entries.extend(self.mawas_folder_entries(&panel, cx));
         self.open_menu(position, entries, window, cx);
+    }
+
+    /// The ⋯ menu's "Where Mawas works" entries: the folder her scope works in (a greyed-out
+    /// line), *Show Folder in Files*, *Open Folder in Finder*, *Open Terminal Here* and, for
+    /// the Home folder while it is not a repository, *Track changes in this folder…*.
+    fn mawas_folder_entries(
+        &self,
+        panel: &Entity<AssistantPanel>,
+        cx: &gpui::App,
+    ) -> Vec<MenuEntry> {
+        let focus = match panel.read(cx).key(cx) {
+            ScopeKey::Global => MawasFocus::Global,
+            ScopeKey::Workspace(id) => MawasFocus::Workspace(id),
+        };
+        let store = self.sessions.read(cx);
+        let Some(folder) = store.mawas_folder(focus) else {
+            return vec![Self::disabled_entry("Where Mawas works: not known yet")];
+        };
+        let track = folder.home && store.can_track_home();
+        let mut entries = vec![
+            Self::disabled_entry(format!(
+                "Where Mawas works: {}",
+                super::workspaces::tilde(&folder.root)
+            )),
+            Self::entry("Show Folder in Files", |this, window, cx| {
+                this.show_files(window, cx);
+            }),
+        ];
+        let root = folder.root.clone();
+        entries.push(Self::entry("Open Folder in Finder", move |this, _, cx| {
+            (this.daemon.reveal.clone())(&root, cx);
+        }));
+        let (container, root) = (folder.container, folder.root);
+        entries.push(Self::entry(
+            "Open Terminal Here",
+            move |this, window, cx| {
+                this.start_terminal_in(Some(container), Some(root.clone()), window, cx);
+            },
+        ));
+        if track {
+            entries.push(Self::entry(
+                "Track changes in this folder…",
+                |_, window, cx| window.dispatch_action(Box::new(actions::TrackHomeChanges), cx),
+            ));
+        }
+        entries
     }
 
     /// Opens the menu of Home's backend·model chip at `position`: Switch model…

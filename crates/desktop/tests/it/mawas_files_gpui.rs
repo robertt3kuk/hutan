@@ -12,17 +12,24 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use common::assistant::{AssistantEnv, Options, open, open_assistant};
-use common::{draw, wait_until};
-use gpui::{Entity, TestAppContext, VisualTestContext};
+use common::chat::{ChatEnv, held_turns};
+use common::{TestDaemon, draw, wait_until};
+use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::WorkspaceId;
 use hutan_desktop::sessions::{MawasFocus, ScopeKind, ScopeLabel};
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::model::ItemRef;
 use hutan_desktop::workbench::panels::{
-    AssistantChoice, AssistantPanel, FilesPanel, ProblemsPanel, SearchPanel,
+    AssistantChoice, AssistantPanel, ChangesCheckouts, ChangesPanel, FilesPanel, ProblemsPanel,
+    SearchPanel,
 };
-use hutan_desktop::workbench::{FileOpen, Workbench};
-use hutan_protocol::messages::{Request, WorkspaceCreate, WorkspaceInfo, WorkspaceKind};
+use hutan_desktop::workbench::{FileOpen, Region, Workbench};
+use hutan_protocol::assistant::{AssistantOpen, AssistantScope};
+use hutan_protocol::chat::{ChatSend, ChatSent};
+use hutan_protocol::checkpoint::{CheckpointList, CheckpointListRequest};
+use hutan_protocol::messages::{
+    Request, SessionResult, WorkspaceCreate, WorkspaceInfo, WorkspaceKind,
+};
 
 fn started() -> AssistantEnv {
     AssistantEnv::start(Options {
@@ -312,4 +319,326 @@ fn a_workspace_mawas_shows_the_workspaces_active_project(cx: &mut TestAppContext
         std::array::from_fn(|_| label("Mawas · shop", ScopeKind::Mawas))
     );
     scoped.wait_root(cx, "call 8", &shown);
+}
+
+fn click(view: &Entity<Workbench>, cx: &mut VisualTestContext, region: Region) {
+    let mut bounds = None;
+    wait_until(cx, &format!("{region:?} to be drawn"), |cx| {
+        bounds = view.read_with(cx, |wb, _| wb.region_bounds(region));
+        bounds.is_some()
+    });
+    cx.simulate_click(bounds.unwrap().center(), Modifiers::none());
+    draw(cx);
+}
+
+/// Opens Mawas Home's ⋯ menu and lists its entries. A click that lands while the layout is
+/// still moving (a dock opening) misses the button: it is made again on the next frame.
+fn more_menu(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<String> {
+    wait_until(cx, "the ⋯ menu to open", |cx| {
+        if view.read_with(cx, |wb, _| wb.context_menu_entries().is_some()) {
+            return true;
+        }
+        if let Some(bounds) =
+            view.read_with(cx, |wb, _| wb.region_bounds(Region::Assistant("more")))
+        {
+            cx.simulate_click(bounds.center(), Modifiers::none());
+        }
+        false
+    });
+    view.read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("the ⋯ menu")
+        .into_iter()
+        .map(|(label, _)| label.to_string())
+        .collect()
+}
+
+fn run_entry(view: &Entity<Workbench>, cx: &mut VisualTestContext, prefix: &str) {
+    let labels = view
+        .read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("the ⋯ menu is open");
+    let index = labels
+        .iter()
+        .position(|(label, _)| label.starts_with(prefix))
+        .unwrap_or_else(|| panic!("no entry `{prefix}` in {labels:?}"));
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(index, window, cx));
+}
+
+fn can_track(view: &Entity<Workbench>, cx: &mut VisualTestContext) -> bool {
+    view.read_with(cx, |wb, cx| wb.sessions().read(cx).can_track_home())
+}
+
+#[gpui::test]
+fn mawas_more_menu_has_where_mawas_works_for_both_scopes(cx: &mut TestAppContext) {
+    let env = started();
+    let home_dir = home_folder(&env);
+    let lab = env.project("lab");
+    let (view, cx) = open(cx, &env.daemon);
+    let revealed = std::rc::Rc::new(std::cell::RefCell::new(Vec::<PathBuf>::new()));
+    let sink = revealed.clone();
+    view.update(cx, |wb, _| {
+        wb.set_reveal_handler(move |path, _| sink.borrow_mut().push(path.to_owned()));
+    });
+
+    // Global (the window is at Home): the Home folder, with the way to version it.
+    let home = home_id(&view, cx);
+    cx.dispatch_action(actions::OpenWorkspace(home.to_string()));
+    wait_until(cx, "Home to be the active container", |cx| {
+        view.read_with(cx, |wb, _| wb.active_workspace() == Some(home))
+    });
+    open_assistant(&view, cx);
+    wait_until(cx, "the Home folder not to be a repository yet", |cx| {
+        can_track(&view, cx)
+    });
+    let labels = more_menu(&view, cx);
+    let at = labels
+        .iter()
+        .position(|l| l.starts_with("Backend: "))
+        .expect("the backend entry");
+    let tail = &labels[at + 1..];
+    assert!(
+        tail[0].starts_with("Where Mawas works: ") && tail[0].ends_with("Hutan"),
+        "{labels:?}"
+    );
+    assert_eq!(
+        tail[1..],
+        [
+            "Show Folder in Files",
+            "Open Folder in Finder",
+            "Open Terminal Here",
+            "Track changes in this folder…"
+        ],
+        "{labels:?}"
+    );
+    assert!(
+        view.read_with(cx, |wb, _| wb.context_menu_disabled())
+            .iter()
+            .any(|l| l.starts_with("Where Mawas works: ")),
+        "the folder line is greyed out"
+    );
+
+    // Open Folder in Finder reveals it.
+    run_entry(&view, cx, "Open Folder in Finder");
+    assert_eq!(*revealed.borrow(), [home_dir.clone()]);
+
+    // Open Terminal Here: a terminal of Home, started in the folder.
+    more_menu(&view, cx);
+    run_entry(&view, cx, "Open Terminal Here");
+    wait_until(cx, "a terminal in the Home folder", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).sessions().iter().any(|s| {
+                s.workspace_id == home
+                    && s.cwd.as_deref().and_then(|c| c.canonicalize().ok())
+                        == Some(home_dir.clone())
+            })
+        })
+    });
+
+    // The terminal is the tab shown.
+    wait_until(cx, "the terminal's tab", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.state().active_center_item() != Some(ItemRef::panel("assistant"))
+        })
+    });
+
+    // Show Folder in Files: the Files panel comes up, on the Home folder.
+    assert!(view.read_with(cx, |wb, _| wb.panel::<FilesPanel>("files").is_none()));
+    view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
+    draw(cx);
+    more_menu(&view, cx);
+    run_entry(&view, cx, "Show Folder in Files");
+    wait_until(cx, "the Files panel", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, cx| {
+            wb.panel::<FilesPanel>("files")
+                .is_some_and(|p| p.read(cx).root() == Some(home_dir.as_path()))
+        })
+    });
+
+    // Track changes in this folder… opens the confirm sheet (nothing runs before OK).
+    view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
+    draw(cx);
+    more_menu(&view, cx);
+    run_entry(&view, cx, "Track changes in this folder");
+    let (title, message) = view.read_with(cx, |wb, _| {
+        let modal = wb.modal().expect("the confirm sheet");
+        (modal.title.to_string(), modal.message.to_string())
+    });
+    assert_eq!(title, "Track changes in this folder?");
+    for words in [
+        "git init",
+        ".gitignore",
+        "first commit",
+        "git identity",
+        "Nothing leaves this machine",
+    ] {
+        assert!(message.contains(words), "{words}: {message}");
+    }
+    view.update_in(cx, |wb, window, cx| wb.close_modal(window, cx));
+    assert!(!home_dir.join(".git").exists(), "Cancel changes nothing");
+
+    // A workspace's Mawas works in its project: no Track entry, same folder entries.
+    let lab_id = project(&view, cx, &lab);
+    view.update_in(cx, |wb, window, cx| wb.open_assistant(window, cx));
+    draw(cx);
+    wait_until(cx, "Mawas's workspace scope", |cx| {
+        mawas_focus(&view, cx) == Some(MawasFocus::Workspace(lab_id))
+    });
+    let labels = more_menu(&view, cx);
+    let at = labels
+        .iter()
+        .position(|l| l.starts_with("Where Mawas works: "))
+        .expect("the folder line");
+    assert!(labels[at].ends_with("lab"), "{labels:?}");
+    assert_eq!(
+        labels[at + 1..],
+        [
+            "Show Folder in Files",
+            "Open Folder in Finder",
+            "Open Terminal Here"
+        ],
+        "{labels:?}"
+    );
+    run_entry(&view, cx, "Open Folder in Finder");
+    assert_eq!(revealed.borrow().last(), Some(&lab));
+}
+
+/// A daemon whose Mawas is a Codex replay, whose Home folder (`<work>/Hutan`, one file in it) is
+/// not a repository, and whose git has an identity.
+struct TrackEnv {
+    chat: ChatEnv,
+    daemon: TestDaemon,
+    home_dir: PathBuf,
+    gate: PathBuf,
+}
+
+fn track_env() -> TrackEnv {
+    let chat = ChatEnv::new();
+    let base = chat.cwd();
+    let home_dir = base.join("Hutan");
+    fs::create_dir(&home_dir).unwrap();
+    fs::write(home_dir.join("a.txt"), "alpha\n").unwrap();
+    let identity = base.join("gitconfig");
+    fs::write(
+        &identity,
+        "[user]\n\tname = Test\n\temail = test@example.com\n[commit]\n\tgpgsign = false\n",
+    )
+    .unwrap();
+    let gate = base.join("gate-0");
+    let transcript = held_turns(&base, std::slice::from_ref(&gate));
+    let folder = home_dir.clone();
+    let daemon = TestDaemon::start_with_codex_config(
+        "[assistant]\nbackend = \"codex\"\n",
+        chat.replay(&transcript),
+        move |config| {
+            config.checkpoints.git_env = std::collections::BTreeMap::from([
+                (
+                    "GIT_CONFIG_GLOBAL".to_owned(),
+                    identity.display().to_string(),
+                ),
+                ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
+            ]);
+            config.paths.default_home_folder = folder;
+        },
+    );
+    TrackEnv {
+        chat,
+        daemon,
+        home_dir,
+        gate,
+    }
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}");
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[gpui::test]
+fn track_changes_turns_changes_on_and_a_mawas_turn_gets_a_checkpoint(cx: &mut TestAppContext) {
+    let env = track_env();
+    let (view, cx) = open(cx, &env.daemon);
+    let home = home_id(&view, cx);
+    cx.dispatch_action(actions::OpenWorkspace(home.to_string()));
+    wait_until(cx, "Home to be the active container", |cx| {
+        view.read_with(cx, |wb, _| wb.active_workspace() == Some(home))
+    });
+    cx.dispatch_action(actions::OpenPanel("changes".into()));
+    draw(cx);
+    draw(cx);
+    let changes: Entity<ChangesPanel> = view
+        .read_with(cx, |wb, _| wb.panel("changes"))
+        .expect("Changes is drawn");
+
+    // Changes at Home: nothing to list, and the button that tracks the folder.
+    wait_until(cx, "Changes to say Home has no checkout", |cx| {
+        let empty = changes.read_with(
+            cx,
+            |p, _| matches!(p.checkouts(), ChangesCheckouts::Ready(list) if list.is_empty()),
+        );
+        empty && can_track(&view, cx)
+    });
+    click(&view, cx, Region::Changes("track-home"));
+    let title = view.read_with(cx, |wb, _| wb.modal().map(|m| m.title.to_string()));
+    assert_eq!(title.as_deref(), Some("Track changes in this folder?"));
+    assert!(!env.home_dir.join(".git").exists());
+
+    // OK: the daemon runs it, and Changes lists the Home folder as a checkout.
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
+    wait_until(cx, "Changes to list the Home folder", |cx| {
+        draw(cx);
+        changes.read_with(cx, |p, _| {
+            p.rows().len() == 1 && p.rows()[0].main && p.rows()[0].path == env.home_dir
+        })
+    });
+    wait_until(cx, "the store to know Home is a repository", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).home_is_repository())
+    });
+    assert!(!can_track(&view, cx));
+    assert_eq!(git(&env.home_dir, &["rev-list", "--count", "HEAD"]), "1");
+    assert!(env.home_dir.join(".gitignore").is_file());
+    assert!(view.read_with(cx, |wb, _| {
+        wb.notice().is_some_and(|n| n.contains("Tracking changes"))
+    }));
+
+    // Mawas's ⋯ no longer offers it.
+    open_assistant(&view, cx);
+    let labels = more_menu(&view, cx);
+    assert!(
+        labels.iter().any(|l| l == "Open Terminal Here")
+            && !labels.iter().any(|l| l.starts_with("Track changes")),
+        "{labels:?}"
+    );
+
+    // A Mawas turn that edits a file now has a checkpoint.
+    let session: SessionResult = env.daemon.call(Request::AssistantOpen(AssistantOpen {
+        scope: AssistantScope::Global,
+        workspace_id: None,
+        new: false,
+    }));
+    let session = session.session.id;
+    let _: ChatSent = env.daemon.call(Request::ChatSend(ChatSend {
+        session_id: session,
+        text: "turn 0".into(),
+        attachments: vec![],
+    }));
+    fs::write(env.home_dir.join("b.txt"), "written by Mawas\n").unwrap();
+    fs::write(&env.gate, "").unwrap();
+    wait_until(cx, "the turn's checkpoint", |_| {
+        let list: CheckpointList =
+            env.daemon
+                .call(Request::CheckpointList(CheckpointListRequest {
+                    session_id: Some(session),
+                    ..CheckpointListRequest::default()
+                }));
+        list.checkpoints.iter().any(|c| c.files_changed == 1)
+    });
+    let _ = &env.chat;
 }
