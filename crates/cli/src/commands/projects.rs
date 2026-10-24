@@ -1,14 +1,16 @@
-//! Project commands: `project ls|open|rename|pin|unpin|close|recent`. Projects are the
+//! Project commands: `project ls|open|rename|pin|unpin|close|recent|git-init`. Projects are the
 //! repositories and folders the daemon makes from the folders sessions start in; they are
 //! `WorkspaceInfo` with `kind: project` on the wire.
 
 use std::collections::HashMap;
+use std::io::{BufRead as _, IsTerminal as _, Write as _};
 use std::path::PathBuf;
 
 use hutan_protocol::messages::{
     CreatedBy, RecentProjects, Request, WorkspaceInfo, WorkspaceKind, WorkspaceOpen,
     WorkspaceOpened, WorkspaceRecent, WorkspaceRef,
 };
+use hutan_protocol::project::{ProjectGitInit, ProjectGitInitialized};
 use serde_json::Value;
 
 use super::Ctx;
@@ -35,7 +37,65 @@ impl Ctx {
             }
             ProjectCommand::Close { target } => self.project_close(&target).await,
             ProjectCommand::Recent { limit } => self.project_recent(limit).await,
+            ProjectCommand::GitInit { target, home, yes } => {
+                self.project_git_init(target.as_deref(), home, yes).await
+            }
         }
+    }
+
+    /// `project git-init`: asks (`--yes` without a terminal), then `project.git_init`; the
+    /// daemon's refusals reach the user as it words them.
+    async fn project_git_init(
+        &self,
+        target: Option<&str>,
+        home: bool,
+        yes: bool,
+    ) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        let all = self.workspace_list(&client).await?.workspaces;
+        let workspace = match (home, target) {
+            (true, _) => all
+                .iter()
+                .find(|w| w.kind == WorkspaceKind::Home)
+                .ok_or_else(|| CliError::Failed("the daemon lists no Home workspace".to_owned()))?,
+            (false, Some(target)) => resolve_of(&all, target, Kind::Project)?,
+            (false, None) => {
+                return Err(CliError::Usage(
+                    "name a project, or pass --home for the Home folder".to_owned(),
+                ));
+            }
+        };
+        let folder = workspace
+            .project
+            .as_ref()
+            .map(|p| p.root.clone())
+            .or_else(|| workspace.roots.first().cloned())
+            .map_or_else(|| workspace.name.clone(), |root| root.display().to_string());
+        if !yes {
+            confirm_git_init(&folder)?;
+        }
+        let done: ProjectGitInitialized = self
+            .call(
+                &client,
+                Request::ProjectGitInit(ProjectGitInit {
+                    project_id: workspace.id,
+                }),
+            )
+            .await?;
+        self.print(&done, || {
+            format!(
+                "tracking changes in {}: branch {}, first commit {} with {} files{}",
+                done.root.display(),
+                done.branch,
+                done.commit.get(..8).unwrap_or(&done.commit),
+                done.files,
+                if done.gitignore_written {
+                    " (.gitignore written)"
+                } else {
+                    ""
+                }
+            )
+        })
     }
 
     async fn project_ls(&self, args: ProjectLsArgs) -> Result<(), CliError> {
@@ -119,6 +179,31 @@ impl Ctx {
             )
             .await?;
         self.print(&recent, || recent_table(&recent, now_ms()))
+    }
+}
+
+/// Asks on the terminal; anything but `y` or `yes` is No.
+fn confirm_git_init(folder: &str) -> Result<(), CliError> {
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        return Err(CliError::Usage(format!(
+            "nothing was changed: stdin is not a terminal; pass --yes to track changes in {folder}"
+        )));
+    }
+    let mut stderr = std::io::stderr().lock();
+    writeln!(
+        stderr,
+        "This runs git init in {folder}, writes a .gitignore with Hutan's scratch files and \
+         commits what is there now with your git identity. Nothing leaves this machine."
+    )?;
+    write!(stderr, "Track changes in {folder}? [y/N] ")?;
+    stderr.flush()?;
+    let mut answer = String::new();
+    stdin.lock().read_line(&mut answer)?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        Err(CliError::Failed("nothing was changed".to_owned()))
     }
 }
 

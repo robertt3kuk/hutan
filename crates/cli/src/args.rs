@@ -1429,6 +1429,20 @@ pub enum ProjectCommand {
         #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..))]
         limit: u32,
     },
+    /// Put a folder under version control (`git init`, a `.gitignore` with Hutan's scratch
+    /// files, an initial commit with your git identity): a project's folder, or the Home folder
+    /// with `--home` (where Mawas works). Refused for the home directory, `/`, a folder that is
+    /// a repository or inside one, and a folder with more files than checkpoints seed
+    GitInit {
+        #[arg(help = PROJECT_TARGET_HELP, conflicts_with = "home", required_unless_present = "home")]
+        target: Option<String>,
+        /// The Home folder (`~/Hutan`) instead of a project
+        #[arg(long)]
+        home: bool,
+        /// Do it without asking (required when stdin is not a terminal)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Args)]

@@ -385,3 +385,107 @@ async fn wt_and_task_find_the_project_of_a_linked_worktree() {
     assert!(out.stderr.contains("belongs to no project"), "{out:?}");
     t.stop().await;
 }
+
+/// A configuration file with a git identity (the user's own, for the first commit).
+fn identity(dir: &Path) -> PathBuf {
+    let path = dir.join("gitconfig");
+    fs::write(
+        &path,
+        "[user]\n\tname = Test\n\temail = test@example.com\n[commit]\n\tgpgsign = false\n",
+    )
+    .unwrap();
+    path
+}
+
+fn commits(dir: &Path) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-list", "--count", "HEAD"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_git_init_tracks_the_home_folder_and_a_plain_project_with_the_daemons_refusals() {
+    let (_keep, base) = tmp();
+    let home_folder = mkdir(&base.join("Hutan"));
+    fs::write(home_folder.join("notes.md"), "# notes\n").unwrap();
+    let config = identity(&base);
+    let folder = home_folder.clone();
+    let t = TestDaemon::start_with(move |c| {
+        c.checkpoints.git_env = std::collections::BTreeMap::from([
+            ("GIT_CONFIG_GLOBAL".to_owned(), config.display().to_string()),
+            ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
+        ]);
+        c.paths.default_home_folder = folder;
+    })
+    .await;
+
+    // Without a terminal it asks for --yes and changes nothing; neither does a bare call run.
+    let out = t.hutan(&["project", "git-init", "--home"]).await;
+    assert_ne!(out.code, 0);
+    assert!(out.stderr.contains("--yes"), "{}", out.stderr);
+    assert!(!home_folder.join(".git").exists());
+    assert_ne!(t.hutan(&["project", "git-init"]).await.code, 0);
+    assert_ne!(
+        t.hutan(&["project", "git-init", "--home", "lab", "--yes"])
+            .await
+            .code,
+        0,
+        "a project and --home exclude each other"
+    );
+
+    // --yes: the daemon does it.
+    let done = t
+        .hutan(&["project", "git-init", "--home", "--yes", "--json"])
+        .await
+        .ok()
+        .json();
+    assert_eq!(done["root"], json!(home_folder));
+    assert_eq!(done["files"], 2, "notes.md and .gitignore: {done}");
+    assert_eq!(done["gitignore_written"], true);
+    assert_eq!(commits(&home_folder), "1");
+
+    // A second time the daemon refuses, in its own words.
+    let again = t.hutan(&["project", "git-init", "--home", "--yes"]).await;
+    assert_ne!(again.code, 0);
+    assert!(
+        again.stderr.contains("git repository already"),
+        "{}",
+        again.stderr
+    );
+    assert_eq!(commits(&home_folder), "1");
+
+    // A project that is a plain folder.
+    let plain = mkdir(&base.join("plain"));
+    fs::write(plain.join("a.txt"), "a\n").unwrap();
+    let opened = t
+        .hutan(&["project", "open", s(&plain), "--json"])
+        .await
+        .ok()
+        .json();
+    let id = opened["workspace"]["id"].as_str().unwrap().to_owned();
+    let text = t.hutan(&["project", "git-init", &id, "--yes"]).await.ok();
+    assert!(
+        text.stdout.contains("tracking changes in"),
+        "{}",
+        text.stdout
+    );
+    assert_eq!(commits(&plain), "1");
+
+    // A project in a repository is refused as well.
+    let inside = repo(&base, "app");
+    let opened = t
+        .hutan(&["project", "open", s(&inside), "--json"])
+        .await
+        .ok()
+        .json();
+    let id = opened["workspace"]["id"].as_str().unwrap().to_owned();
+    let refused = t.hutan(&["project", "git-init", &id, "--yes"]).await;
+    assert_ne!(refused.code, 0);
+    assert!(refused.stderr.contains("already"), "{}", refused.stderr);
+}

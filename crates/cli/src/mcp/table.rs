@@ -1442,6 +1442,13 @@ mod tests {
                 tool.description
             );
         }
+        // Putting a folder under version control is the user's alone (`project.git_init`).
+        assert!(
+            tools()
+                .iter()
+                .all(|t| t.name != "project_git_init" && t.name != "project_git-init"),
+            "agents cannot start tracking a folder"
+        );
         // Language servers: an agent reads their findings; trusting a folder (which lets a
         // server run the project's build scripts) is the user's alone.
         for name in ["lsp_trust", "lsp_restart", "lsp_stop"] {
