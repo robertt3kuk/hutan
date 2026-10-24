@@ -83,6 +83,7 @@ pub const CAPABILITIES: &[&str] = &[
     "project.git_init",
     "usage",
     "memory.files",
+    "git.history",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit
@@ -441,17 +442,37 @@ async fn handle_frame(frame: Frame, handle: &ConnHandle, ctx: &Arc<ConnContext>)
                 // connection goes on reading (its `fs.search.cancel` arrives meanwhile). So do
                 // completion and signature help: the next keystroke's `doc.change` must not
                 // wait behind them, and a newer one of them supersedes (cancels) the older. A
-                // terminal search too: the next keystroke of the find bar's query supersedes it.
+                // terminal search too: the next keystroke of the find bar's query supersedes it. Git
+                // history queries walk objects and must not hold the connection up either.
                 Ok(
                     request @ (Request::FsSearch(_)
                     | Request::TerminalSearch(_)
+                    | Request::GitLog(_)
+                    | Request::GitBlame(_)
+                    | Request::GitShow(_)
+                    | Request::GitFile(_)
                     | Request::LspCompletion(_)
                     | Request::LspCompletionResolve(_)
                     | Request::LspSignatureHelp(_)),
                 ) => {
                     let (ctx, handle) = (ctx.clone(), handle.clone());
+                    // A git query nobody waits for any more is dropped, which kills its git.
+                    let git = matches!(
+                        request,
+                        Request::GitLog(_)
+                            | Request::GitBlame(_)
+                            | Request::GitShow(_)
+                            | Request::GitFile(_)
+                    );
                     tokio::spawn(async move {
-                        let outcome = ctx.router.dispatch(&handle, request).await;
+                        let outcome = if git {
+                            tokio::select! {
+                                () = handle.cancel.cancelled() => return,
+                                outcome = ctx.router.dispatch(&handle, request) => outcome,
+                            }
+                        } else {
+                            ctx.router.dispatch(&handle, request).await
+                        };
                         handle.send_response(id, outcome);
                     });
                     return true;

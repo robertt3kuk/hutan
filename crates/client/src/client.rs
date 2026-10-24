@@ -34,6 +34,9 @@ use hutan_protocol::checkpoint::{
     CheckpointRestore, CheckpointRestored,
 };
 use hutan_protocol::daemon_settings::{DaemonSettingSet, DaemonSettings};
+use hutan_protocol::git::{
+    GitBlame, GitBlameResult, GitFile, GitFileResult, GitLog, GitLogResult, GitShow, GitShowResult,
+};
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
 use hutan_protocol::memory::{
     MemoryEntries, MemoryEntry, MemoryFilesStatus, MemoryFilesStatusRequest, MemoryHistory,
@@ -203,6 +206,8 @@ pub(crate) const TERMINAL_SEARCH_CAPABILITY: &str = "terminal.search";
 pub(crate) const PROJECT_GIT_INIT_CAPABILITY: &str = "project.git_init";
 /// Capability for `usage.summary` and the `usage.changed` event (protocol 0.45).
 pub(crate) const USAGE_CAPABILITY: &str = "usage";
+/// Capability for `git.log|blame|show|file` (protocol 0.46).
+pub(crate) const GIT_HISTORY_CAPABILITY: &str = "git.history";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -253,6 +258,7 @@ const CAPABILITIES: &[&str] = &[
     PROJECT_GIT_INIT_CAPABILITY,
     USAGE_CAPABILITY,
     MEMORY_FILES_CAPABILITY,
+    GIT_HISTORY_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -662,6 +668,15 @@ impl Client {
             .any(|capability| capability == PROJECT_GIT_INIT_CAPABILITY)
     }
 
+    /// True when the daemon advertised capability `git.history` (protocol 0.46): `git.log`,
+    /// `git.blame`, `git.show` and `git.file`.
+    pub fn supports_git_history(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == GIT_HISTORY_CAPABILITY)
+    }
+
     /// True when the daemon advertised capability `worktree.index` (protocol 0.34): the files
     /// of `worktree.diff` say whether they are staged, unstaged or both.
     pub fn supports_worktree_index(&self) -> bool {
@@ -924,6 +939,27 @@ impl Client {
     ) -> Result<ProjectGitInitialized, ClientError> {
         self.call(Request::ProjectGitInit(ProjectGitInit { project_id }))
             .await
+    }
+
+    /// `git.log`: the commits of a checkout, or of a file or folder in it, newest first; page
+    /// with the answer's `next_before`.
+    pub async fn git_log(&self, req: GitLog) -> Result<GitLogResult, ClientError> {
+        self.call(Request::GitLog(req)).await
+    }
+
+    /// `git.blame`: which commit last changed each line of a file.
+    pub async fn git_blame(&self, req: GitBlame) -> Result<GitBlameResult, ClientError> {
+        self.call(Request::GitBlame(req)).await
+    }
+
+    /// `git.show`: one commit, its message and its diff.
+    pub async fn git_show(&self, req: GitShow) -> Result<GitShowResult, ClientError> {
+        self.call(Request::GitShow(req)).await
+    }
+
+    /// `git.file`: a file as it was at a revision.
+    pub async fn git_file(&self, req: GitFile) -> Result<GitFileResult, ClientError> {
+        self.call(Request::GitFile(req)).await
     }
 
     /// Removes a workspace; its projects stay (`workspace.delete`).

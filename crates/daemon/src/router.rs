@@ -514,6 +514,10 @@ impl Router {
             }
             Request::WorktreeDiff(req) => ok(&self.worktrees.diff(req).await?),
             Request::WorktreeFileDiff(req) => ok(&self.worktrees.file_diff(req).await?),
+            Request::GitLog(req) => ok(&self.worktrees.git_log(req).await?),
+            Request::GitBlame(req) => ok(&self.worktrees.git_blame(req).await?),
+            Request::GitShow(req) => ok(&self.worktrees.git_show(req).await?),
+            Request::GitFile(req) => ok(&self.worktrees.git_file(req).await?),
             Request::WorktreeMerge(req) => {
                 let (merged, workspaces) = self.worktrees.merge(req).await?;
                 self.tasks
@@ -1015,6 +1019,11 @@ fn classification(request: &Request) -> (&'static str, Access) {
         // Reading what a checkout changed is free; merging commits in the main checkout.
         Request::WorktreeDiff(_) => ("worktree.diff", Read),
         Request::WorktreeFileDiff(_) => ("worktree.file_diff", Read),
+        // History is read-only: what the repository already records.
+        Request::GitLog(_) => ("git.log", Read),
+        Request::GitBlame(_) => ("git.blame", Read),
+        Request::GitShow(_) => ("git.show", Read),
+        Request::GitFile(_) => ("git.file", Read),
         Request::WorktreeMerge(_) => ("worktree.merge", Mutate),
         // Commits in a worktree an agent may work in, but it changes what a merge takes.
         Request::WorktreeCommit(_) => ("worktree.commit", Mutate),
@@ -1174,6 +1183,24 @@ mod classification_tests {
             ),
             Access::Read
         );
+        // History is read-only too.
+        for (method, params) in [
+            (
+                "git.log",
+                serde_json::json!({"path": "/work/repo", "limit": 5}),
+            ),
+            ("git.blame", serde_json::json!({"path": "/work/repo/a.rs"})),
+            (
+                "git.show",
+                serde_json::json!({"path": "/work/repo", "rev": "HEAD"}),
+            ),
+            (
+                "git.file",
+                serde_json::json!({"path": "/work/repo/a.rs", "rev": "HEAD"}),
+            ),
+        ] {
+            assert_eq!(access_of(method, params), Access::Read, "{method}");
+        }
         assert_eq!(access_of("worktree.merge", path), Access::Mutate);
         assert_eq!(
             access_of(

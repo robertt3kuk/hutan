@@ -1198,6 +1198,50 @@ impl Connection {
             .is_some_and(|client| client.supports_project_git_init())
     }
 
+    /// Whether the daemon answers git history queries (capability `git.history`,
+    /// [`Client::supports_git_history`]); false when disconnected.
+    pub fn supports_git_history(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_git_history())
+    }
+
+    /// `git.log` ([`Client::git_log`]).
+    pub async fn git_log(
+        &self,
+        req: hutan_protocol::git::GitLog,
+    ) -> Result<hutan_protocol::git::GitLogResult, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.git_log(req).await
+    }
+
+    /// `git.blame` ([`Client::git_blame`]).
+    pub async fn git_blame(
+        &self,
+        req: hutan_protocol::git::GitBlame,
+    ) -> Result<hutan_protocol::git::GitBlameResult, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.git_blame(req).await
+    }
+
+    /// `git.show` ([`Client::git_show`]).
+    pub async fn git_show(
+        &self,
+        req: hutan_protocol::git::GitShow,
+    ) -> Result<hutan_protocol::git::GitShowResult, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.git_show(req).await
+    }
+
+    /// `git.file` ([`Client::git_file`]).
+    pub async fn git_file(
+        &self,
+        req: hutan_protocol::git::GitFile,
+    ) -> Result<hutan_protocol::git::GitFileResult, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.git_file(req).await
+    }
+
     /// `project.git_init` ([`Client::project_git_init`]).
     pub async fn project_git_init(
         &self,

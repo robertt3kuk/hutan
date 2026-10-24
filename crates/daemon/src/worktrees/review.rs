@@ -943,7 +943,7 @@ fn diff_args(
 
 /// `git diff` and the options every diff of the review uses (no pager, no external diff or
 /// text conversion, fixed prefixes, renames found).
-fn diff_prefix() -> Vec<OsString> {
+pub(super) fn diff_prefix() -> Vec<OsString> {
     [
         "--no-pager",
         "--literal-pathspecs",
@@ -1189,15 +1189,15 @@ async fn scope_of(root: &Path, merge_base: &str) -> Result<Scope, ErrorBody> {
 
 /// One entry of `git diff --name-status -z`.
 #[derive(Debug, PartialEq, Eq)]
-struct NameStatus {
-    path: String,
-    old_path: Option<String>,
-    status: DiffStatus,
+pub(super) struct NameStatus {
+    pub(super) path: String,
+    pub(super) old_path: Option<String>,
+    pub(super) status: DiffStatus,
 }
 
 /// Parses `git diff --name-status -z -M`: `X NUL path NUL`, and `Rnn NUL old NUL new NUL`
 /// (`Cnn` likewise) for renames and copies.
-fn parse_name_status(output: &[u8]) -> Vec<NameStatus> {
+pub(super) fn parse_name_status(output: &[u8]) -> Vec<NameStatus> {
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     let mut fields = output.split(|b| *b == 0);
     let mut entries = Vec::new();
@@ -1238,16 +1238,16 @@ fn parse_name_status(output: &[u8]) -> Vec<NameStatus> {
 
 /// One entry of `git diff --numstat -z`.
 #[derive(Debug, PartialEq, Eq)]
-struct NumStat {
-    path: String,
-    additions: u32,
-    deletions: u32,
-    binary: bool,
+pub(super) struct NumStat {
+    pub(super) path: String,
+    pub(super) additions: u32,
+    pub(super) deletions: u32,
+    pub(super) binary: bool,
 }
 
 /// Parses `git diff --numstat -z -M`: `adds TAB dels TAB path NUL`, and for renames
 /// `adds TAB dels TAB NUL old NUL new NUL`; binary files count `-`.
-fn parse_numstat(output: &[u8]) -> Vec<NumStat> {
+pub(super) fn parse_numstat(output: &[u8]) -> Vec<NumStat> {
     let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
     let mut fields = output.split(|b| *b == 0);
     let mut entries = Vec::new();
@@ -1282,7 +1282,7 @@ fn parse_numstat(output: &[u8]) -> Vec<NumStat> {
 }
 
 /// The byte size of each file's part of a unified diff (split at `diff --git ` header lines).
-fn patch_sizes(patch: &[u8]) -> Vec<usize> {
+pub(super) fn patch_sizes(patch: &[u8]) -> Vec<usize> {
     const HEADER: &[u8] = b"diff --git ";
     let mut starts: Vec<usize> = Vec::new();
     let mut at = 0;

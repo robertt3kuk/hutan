@@ -38,6 +38,7 @@ use crate::projects;
 use crate::registry::{RegistryHandle, log_write, now_ms};
 
 mod finish;
+mod history;
 mod init;
 mod review;
 
@@ -369,14 +370,11 @@ impl WorktreeService {
         ))
     }
 
-    /// Looks for the worktree at `wanted` in every repository a workspace or a remembered
-    /// worktree points to.
-    async fn find(
+    /// The main checkouts of every repository a workspace or a remembered worktree points to.
+    async fn searched_repos(
         &self,
         workspaces: &[WorkspaceInfo],
-        wanted: &Path,
-        as_given: &Path,
-    ) -> Result<(PathBuf, RawWorktree), ErrorBody> {
+    ) -> Result<Vec<PathBuf>, ErrorBody> {
         let mut repos: Vec<PathBuf> = Vec::new();
         for workspace in workspaces {
             for main in repos_of(workspace).await {
@@ -395,7 +393,18 @@ impl WorktreeService {
                 repos.push(row.repo_root);
             }
         }
-        for main in repos {
+        Ok(repos)
+    }
+
+    /// Looks for the worktree at `wanted` in every repository a workspace or a remembered
+    /// worktree points to.
+    async fn find(
+        &self,
+        workspaces: &[WorkspaceInfo],
+        wanted: &Path,
+        as_given: &Path,
+    ) -> Result<(PathBuf, RawWorktree), ErrorBody> {
+        for main in self.searched_repos(workspaces).await? {
             let Ok(raw) = list_raw(&main).await else {
                 continue;
             };
@@ -410,6 +419,42 @@ impl WorktreeService {
             ErrorCode::NotFound,
             format!("git lists no worktree at {}", as_given.display()),
         ))
+    }
+
+    /// Like [`Self::find`], for a path anywhere inside a worktree: the innermost listed one
+    /// that holds `wanted` or `as_given`.
+    async fn find_containing(
+        &self,
+        workspaces: &[WorkspaceInfo],
+        wanted: &Path,
+        as_given: &Path,
+    ) -> Result<(PathBuf, RawWorktree), ErrorBody> {
+        let mut best: Option<(PathBuf, RawWorktree)> = None;
+        for main in self.searched_repos(workspaces).await? {
+            let Ok(raw) = list_raw(&main).await else {
+                continue;
+            };
+            for entry in raw {
+                if entry.prunable
+                    || entry.bare
+                    || !(wanted.starts_with(&entry.path) || as_given.starts_with(&entry.path))
+                {
+                    continue;
+                }
+                let deeper = best.as_ref().is_none_or(|(_, held)| {
+                    entry.path.components().count() > held.path.components().count()
+                });
+                if deeper {
+                    best = Some((main.clone(), entry));
+                }
+            }
+        }
+        best.ok_or_else(|| {
+            ErrorBody::new(
+                ErrorCode::NotFound,
+                format!("{} is in no git checkout Hutan knows", as_given.display()),
+            )
+        })
     }
 
     /// Announces `worktree.changed` for each workspace.
