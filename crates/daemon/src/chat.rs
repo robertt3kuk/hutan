@@ -64,6 +64,7 @@ use crate::memory::{MemoryContext, PreparedDelta, StartContext};
 use crate::partial::{Flush, PARTIAL_INTERVAL, Partials};
 use crate::providers::ProviderService;
 use crate::registry::{self, ChatNotifier};
+use crate::usage::{Attribution, TurnUsage, UsageService};
 
 /// The Codex app-server agent.
 pub const AGENT_CODEX: &str = "codex";
@@ -299,6 +300,25 @@ struct Live {
     /// channel of its own (Claude Code): taken by the first `chat.send`, put back when that
     /// send fails.
     first_turn: Mutex<Option<String>>,
+    /// What this session's turns used, and who they are charged to (`docs/agents.md` § Usage).
+    usage: LiveUsage,
+}
+
+/// The usage accounting of one running session.
+#[derive(Debug)]
+struct LiveUsage {
+    attribution: Mutex<Attribution>,
+    turn: Mutex<TurnUsage>,
+}
+
+impl LiveUsage {
+    /// `fresh`: the conversation began with this start (its cost, when reported, began at zero).
+    fn new(attribution: Attribution, fresh: bool) -> Self {
+        Self {
+            attribution: Mutex::new(attribution),
+            turn: Mutex::new(TurnUsage::new(fresh)),
+        }
+    }
 }
 
 impl Live {
@@ -309,6 +329,7 @@ impl Live {
         assistant: bool,
         mode: AssistantMode,
         mawas: bool,
+        usage: LiveUsage,
     ) -> Arc<Self> {
         Arc::new(Self {
             id,
@@ -326,6 +347,7 @@ impl Live {
             active_at: Mutex::new(Instant::now()),
             mawas,
             first_turn: Mutex::new(None),
+            usage,
         })
     }
 
@@ -432,6 +454,8 @@ pub struct ChatManager {
     checkpoints: Arc<TurnCheckpoints>,
     /// The queue of each chat session (protocol 0.36).
     queues: Queues,
+    /// Records what turns used and the limits harnesses report.
+    usage: Arc<UsageService>,
 }
 
 /// Why a subagent thread could not be interrupted.
@@ -523,6 +547,7 @@ impl ChatManager {
         policy: AssistantPolicy,
         tmp_dir: PathBuf,
         checkpoints: Arc<TurnCheckpoints>,
+        usage: Arc<UsageService>,
     ) -> Arc<Self> {
         // A daemon that was killed mid-turn left its images behind: nothing is in flight yet.
         let stale = tmp_dir.clone();
@@ -564,6 +589,7 @@ impl ChatManager {
             mcp: OnceLock::new(),
             tmp_dir,
             checkpoints,
+            usage,
         });
         tokio::spawn(Self::sleeper(Arc::downgrade(&manager)));
         manager
@@ -1067,6 +1093,10 @@ impl ChatManager {
             spec.assistant,
             self.assistant_policy().mode,
             spec.assistant,
+            LiveUsage::new(
+                Attribution::harness(AGENT_CODEX, Some(&started.model)),
+                !started.resumed,
+            ),
         );
         self.adopt(&live);
         info!(session = %id, model = %started.model, resumed = started.resumed, "chat agent started");
@@ -1137,6 +1167,10 @@ impl ChatManager {
             spec.assistant,
             self.assistant_policy().mode,
             spec.assistant,
+            LiveUsage::new(
+                Attribution::harness(&spec.agent, Some(&started.model)),
+                !started.resumed,
+            ),
         );
         if spec.agent == AGENT_CLAUDE
             && let Some(memory) = memory
@@ -1259,6 +1293,10 @@ impl ChatManager {
             false,
             AssistantMode::default(),
             spec.agent == AGENT_ASSISTANT,
+            LiveUsage::new(
+                Attribution::direct(&provider_id, &model),
+                spec.thread_id.is_none(),
+            ),
         );
         self.adopt(&live);
         info!(session = %id, provider = %provider_id, %model, "direct chat started");
@@ -1285,16 +1323,23 @@ impl ChatManager {
         let live = self.awake(id).await?;
         match &live.backend {
             Backend::Direct(session) => {
+                *lock(&live.usage.attribution) = Attribution::direct(&provider_id, &model);
                 session.set_model(provider_id, model).await;
                 Ok(())
             }
             Backend::Agent(adapter) => {
-                adapter.set_model(model).await.map_err(|error| match error {
-                    AgentError::Unsupported(_) | AgentError::UnknownModel { .. } => {
-                        ErrorBody::new(ErrorCode::BadRequest, error.to_string())
-                    }
-                    error => ErrorBody::new(ErrorCode::ProviderError, error.to_string()),
-                })
+                adapter
+                    .set_model(model.clone())
+                    .await
+                    .map_err(|error| match error {
+                        AgentError::Unsupported(_) | AgentError::UnknownModel { .. } => {
+                            ErrorBody::new(ErrorCode::BadRequest, error.to_string())
+                        }
+                        error => ErrorBody::new(ErrorCode::ProviderError, error.to_string()),
+                    })?;
+                let mut attribution = lock(&live.usage.attribution);
+                *attribution = Attribution::harness(&attribution.harness.clone(), Some(&model));
+                Ok(())
             }
         }
     }
@@ -2314,8 +2359,21 @@ impl ChatManager {
                                 self.after_turn(&live, failed);
                             }
                         }
-                        AdapterMessage::Node(update) => self.notifier.node(live.id, *update).await,
+                        AdapterMessage::Node(update) => {
+                            // An ACP harness reports the session's cost on its root node.
+                            if let Some(usage) = update.usage.as_ref()
+                                && usage.kind == "acp.context"
+                                && let Some(cost) = usage.cost_usd
+                            {
+                                lock(&live.usage.turn).cost_reported(cost);
+                            }
+                            self.notifier.node(live.id, *update).await;
+                        }
                         AdapterMessage::Mode(mode) => self.notifier.mode(live.id, mode).await,
+                        AdapterMessage::Limits(limits) => {
+                            let harness = lock(&live.usage.attribution).harness.clone();
+                            self.usage.limits_reported(&harness, &limits);
+                        }
                         AdapterMessage::Exited(info) => {
                             exit = info;
                             break;
@@ -2548,11 +2606,16 @@ impl ChatManager {
         let mut settled: Option<(QuestionId, QuestionOutcome, Option<DecidedBy>)> = None;
         match &event.kind {
             AgentEventKind::TurnStarted => {
+                lock(&live.usage.turn).turn_started();
                 *lock(&live.open_turn) = event.turn_id;
                 self.write_turn(&event, ChatTurnStatus::Running, None);
                 turn_flag = Some(true);
             }
+            AgentEventKind::Usage { total, last, .. } => {
+                lock(&live.usage.turn).observe(*total, *last);
+            }
             kind if kind.ends_turn() => {
+                self.record_turn_usage(live, &event);
                 *lock(&live.open_turn) = None;
                 // Before the next turn may start: its start waits for this end.
                 self.checkpoints.turn_ended(live.id, event.turn_id);
@@ -2780,6 +2843,23 @@ impl ChatManager {
             None => chat.append(row),
         };
         registry::log_write(result, "a chat event");
+    }
+
+    /// A turn ended, however it ended: what it used is recorded (`docs/agents.md` § Usage).
+    fn record_turn_usage(&self, live: &Live, event: &AgentEvent) {
+        let (tokens, cost) = lock(&live.usage.turn).turn_ended();
+        let attribution = lock(&live.usage.attribution).clone();
+        if let Some(turn) = event.turn_id {
+            self.usage.turn_ended(
+                live.id,
+                turn.to_string(),
+                &attribution,
+                tokens,
+                cost,
+                event.ts_ms,
+            );
+        }
+        self.usage.harness_turn_ended(&attribution.harness);
     }
 
     fn write_turn(&self, event: &AgentEvent, status: ChatTurnStatus, error: Option<String>) {

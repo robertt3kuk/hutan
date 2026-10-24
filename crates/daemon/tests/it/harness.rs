@@ -1636,3 +1636,153 @@ async fn control_mcp_false_keeps_hutans_server_out_of_harness_chats() {
     assert_eq!(new[0]["params"]["mcpServers"], serde_json::json!([]));
     t.stop().await;
 }
+
+// Usage and limits ------------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_omp_turn_is_recorded_with_its_tokens_its_cost_and_its_provider() {
+    // `plain-turn`: `usage_update` says the session cost 0.0042 so far, the prompt's answer says
+    // what the turn used (1 200 in, 900 of them cached, 34 out, 1 234 in all).
+    let mut t = H::omp(&fixture("plain-turn")).await;
+    let created = t.create("omp").await;
+    t.send(created.id, "Say hello.").await;
+    let summary = wait_event(
+        &mut t.events,
+        "usage.changed with the turn",
+        |event| match event {
+            Event::UsageChanged { summary }
+                if summary
+                    .harnesses
+                    .iter()
+                    .any(|h| h.harness == "omp" && h.week.turns == 1) =>
+            {
+                Some((**summary).clone())
+            }
+            _ => None,
+        },
+    )
+    .await;
+    let omp = &summary.harnesses[0];
+    assert_eq!(omp.harness, "omp");
+    assert!(omp.limits.is_empty(), "OMP was not asked for limits");
+    for totals in [&omp.today, &omp.week] {
+        assert_eq!(
+            (
+                totals.input_tokens,
+                totals.cached_input_tokens,
+                totals.output_tokens,
+                totals.total_tokens
+            ),
+            (1_200, 900, 34, 1_234)
+        );
+        assert_eq!(totals.cost_usd, Some(0.0042));
+        assert!(totals.cost_is_estimate, "a harness's cost is an estimate");
+    }
+    // OMP's model ids are `provider/model`: the provider is charged.
+    assert_eq!(summary.providers[0].provider, "gitlab-duo");
+    t.stop().await;
+}
+
+/// OMP's own `usage --json`, as a fake CLI prints it: the committed report with every reset in
+/// the far future (a window that has reset is not shown).
+fn omp_usage_report() -> String {
+    fn later(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                for (key, inner) in map.iter_mut() {
+                    if key == "resetsAt" {
+                        *inner = Value::from(4_102_444_800_000u64);
+                    } else {
+                        later(inner);
+                    }
+                }
+            }
+            Value::Array(items) => items.iter_mut().for_each(later),
+            _ => {}
+        }
+    }
+    let mut report: Value =
+        serde_json::from_str(include_str!("../fixtures/omp-usage.json")).unwrap();
+    later(&mut report);
+    report.to_string()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn omp_is_asked_for_its_limits_only_when_a_refresh_is_asked() {
+    let mut t = H::with(
+        |work| {
+            let omp = executable(
+                work,
+                "omp-usage",
+                &format!("case \"$1\" in\n  usage) cat <<'EOF'\n{}\nEOF\n  ;;\n  *) echo \"fake omp $*\" ;;\nesac", omp_usage_report()),
+            );
+            format!("[terminal]\nenv_inherit = \"daemon\"\n[harness.omp]\ncli = {omp:?}\n")
+        },
+        |c| c.usage_probes = true,
+    )
+    .await;
+    let before = t.client.usage_summary(false).await.unwrap();
+    assert!(
+        before.harnesses.is_empty(),
+        "nothing is known until a harness says so"
+    );
+
+    let summary = t.client.usage_summary(true).await.unwrap();
+    let omp = &summary.harnesses[0];
+    assert_eq!(omp.harness, "omp");
+    let windows: Vec<_> = omp
+        .limits
+        .iter()
+        .map(|l| {
+            (
+                l.provider.as_str(),
+                l.id.as_str(),
+                l.label.as_str(),
+                l.used_percent.round() as u64,
+                l.resets_at_ms,
+            )
+        })
+        .collect();
+    assert_eq!(
+        windows,
+        [
+            ("anthropic", "5h", "5-hour", 7, Some(4_102_444_800_000)),
+            ("anthropic", "7d", "weekly", 23, Some(4_102_444_800_000)),
+            (
+                "anthropic",
+                "7d:fable",
+                "weekly (fable)",
+                0,
+                Some(4_102_444_800_000)
+            ),
+        ],
+        "the tightest of the two accounts' 5-hour windows"
+    );
+    // Everyone is told, and what was learned stays without another refresh.
+    wait_event(
+        &mut t.events,
+        "usage.changed with the windows",
+        |event| match event {
+            Event::UsageChanged { summary }
+                if summary.harnesses.iter().any(|h| h.limits.len() == 3) =>
+            {
+                Some(())
+            }
+            _ => None,
+        },
+    )
+    .await;
+    let again = t.client.usage_summary(false).await.unwrap();
+    assert_eq!(again.harnesses[0].limits, omp.limits);
+    // The answer carries no e-mail address, account id or organisation.
+    let text = serde_json::to_string(&again).unwrap();
+    for private in [
+        "example.com",
+        "acct-redacted",
+        "org-redacted",
+        "Example Org",
+    ] {
+        assert!(!text.contains(private), "{private} in {text}");
+    }
+    t.stop().await;
+}

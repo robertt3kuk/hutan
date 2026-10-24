@@ -162,6 +162,7 @@ fn run_daemon(
         let mut config = DaemonConfig::new(paths.clone());
         config.native = native;
         config.menu_bar = menu_bar;
+        config.usage_probes = true;
         let daemon = hutan_daemon::start(config).await?;
         start_error::clear(&paths);
         started.store(true, Ordering::Release);

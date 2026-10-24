@@ -836,6 +836,8 @@ pub struct RegistryConfig {
     pub tmp_dir: PathBuf,
     /// Checkpoints of chat turns (ADR 0019).
     pub checkpoints: Arc<crate::checkpoints::turns::TurnCheckpoints>,
+    /// Usage and limits records: what the turns of chats used.
+    pub usage: Arc<crate::usage::UsageService>,
 }
 
 /// Starts the actor from the stored state. It stops when every [`RegistryHandle`] is dropped.
@@ -862,6 +864,7 @@ pub fn spawn(
         config.assistant_policy,
         config.tmp_dir,
         config.checkpoints,
+        config.usage,
     );
     let (workspaces, home, next_position) =
         restored_workspaces(&stored, &config.storage, &config.home_folder);

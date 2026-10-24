@@ -473,7 +473,7 @@ fn agent_message(error: &AgentError) -> String {
 
 /// stdout of `program args`, run in `env` with no input; fails on a non-zero exit, a timeout or
 /// output past [`MAX_OUTPUT`]. Never logs the output (it may name accounts).
-async fn run(
+pub(crate) async fn run(
     program: &Path,
     args: &[&str],
     env: &BTreeMap<String, String>,

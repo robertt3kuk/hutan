@@ -1226,8 +1226,8 @@ async fn rate_limit_notifications_become_limit_windows_and_never_journal_events(
     assert_eq!(
         windows,
         [
-            ("5h", 72.0, Some(1_792_024_800_000)),
-            ("7d", 31.0, Some(1_792_454_400_000))
+            ("5h", 72.0, Some(4_102_444_800_000)),
+            ("7d", 31.0, Some(4_102_531_200_000))
         ]
     );
     assert_eq!(limits[1].windows.len(), 1, "a sparse report carries one window");

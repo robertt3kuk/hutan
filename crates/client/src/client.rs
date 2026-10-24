@@ -71,6 +71,7 @@ use hutan_protocol::ui::{
     SessionSendText, SessionTextSent, UiActionList, UiCommandResult, UiLayoutResult, UiPublish,
     UiRan, UiRun, UiSetSetting, UiTarget,
 };
+use hutan_protocol::usage::{UsageSummary, UsageSummaryRequest};
 use hutan_protocol::worktree::{
     WorktreeCommit, WorktreeCommitted, WorktreeCreate, WorktreeCreated, WorktreeDiff,
     WorktreeDiffRequest, WorktreeFileDiff, WorktreeFileDiffRequest, WorktreeFinish,
@@ -197,6 +198,8 @@ pub(crate) const STOPPING_CAPABILITY: &str = "daemon.stopping";
 pub(crate) const TERMINAL_SEARCH_CAPABILITY: &str = "terminal.search";
 /// Capability for `project.git_init` (protocol 0.44).
 pub(crate) const PROJECT_GIT_INIT_CAPABILITY: &str = "project.git_init";
+/// Capability for `usage.summary` and the `usage.changed` event (protocol 0.45).
+pub(crate) const USAGE_CAPABILITY: &str = "usage";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -245,6 +248,7 @@ const CAPABILITIES: &[&str] = &[
     STOPPING_CAPABILITY,
     TERMINAL_SEARCH_CAPABILITY,
     PROJECT_GIT_INIT_CAPABILITY,
+    USAGE_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -484,6 +488,21 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == ACCOUNTS_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `usage` (protocol 0.45).
+    pub fn supports_usage(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == USAGE_CAPABILITY)
+    }
+
+    /// The limit windows the harnesses report and what the turns Hutan ran used
+    /// (`usage.summary`); `refresh` asks the harnesses first, which takes seconds.
+    pub async fn usage_summary(&self, refresh: bool) -> Result<UsageSummary, ClientError> {
+        self.call(Request::UsageSummary(UsageSummaryRequest { refresh }))
+            .await
     }
 
     /// The logins of the harnesses (`account.list`): names and plan only.

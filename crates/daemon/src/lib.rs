@@ -99,6 +99,7 @@ pub mod terminals;
 pub mod testing;
 pub mod tree;
 pub mod uihub;
+pub mod usage;
 pub mod worktrees;
 
 pub use bus::RingLimits;

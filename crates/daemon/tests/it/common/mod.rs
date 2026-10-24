@@ -35,12 +35,17 @@ impl TestDaemon {
     /// Starts with `daemon.toml` containing `toml` and `tweak` applied to the config. The Home
     /// folder defaults to `Hutan` inside the temporary `HUTAN_HOME`, never to `~/Hutan`.
     pub async fn start_with(toml: &str, tweak: impl FnOnce(&mut DaemonConfig)) -> Self {
+        Self::start_in(tempfile::tempdir().unwrap(), toml, tweak).await
+    }
+
+    /// [`start_with`](Self::start_with) in a home that already holds what the test put there
+    /// (a database it filled first).
+    pub async fn start_in(dir: TempDir, toml: &str, tweak: impl FnOnce(&mut DaemonConfig)) -> Self {
         // Daemon logs show up for failing tests; filter with RUST_LOG.
         let _ = tracing_subscriber::fmt()
             .with_test_writer()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
-        let dir = tempfile::tempdir().unwrap();
         let paths = Paths::in_home(dir.path());
         if !toml.is_empty() {
             std::fs::write(&paths.config_file, toml).unwrap();

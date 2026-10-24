@@ -50,6 +50,7 @@ use crate::router::{Router, Services};
 use crate::tasks::TaskService;
 use crate::terminals::TerminalHub;
 use crate::uihub::UiHub;
+use crate::usage::UsageService;
 use crate::worktrees::WorktreeService;
 
 pub const DEFAULT_OUTBOUND_QUEUE: usize = 1024;
@@ -120,6 +121,11 @@ pub struct DaemonConfig {
     pub checkpoints: checkpoint_turns::Tuning,
     /// What tests change of the language servers' timing (idle stop, coalescing, restarts).
     pub lsp: LspTuning,
+    /// `usage.summary` with `refresh` asks the harnesses what is left of their plans: `omp usage
+    /// --json` and a short-lived `codex app-server`. They answer over the network with the
+    /// user's own logins, so only `hutand` turns this on; a test that wants it points the
+    /// harness CLIs at fakes first.
+    pub usage_probes: bool,
 }
 
 impl DaemonConfig {
@@ -142,6 +148,7 @@ impl DaemonConfig {
             fs_limits: crate::files::Limits::default(),
             checkpoints: checkpoint_turns::Tuning::default(),
             lsp: LspTuning::default(),
+            usage_probes: false,
         }
     }
 }
@@ -295,6 +302,13 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         config.checkpoints.clone(),
     );
     tokio::spawn(checkpoints.clone().upkeep(shutdown.clone()));
+    let usage = UsageService::new(
+        storage.clone(),
+        bus.clone(),
+        harnesses.clone(),
+        codex_config.clone(),
+        config.usage_probes,
+    );
     let registry = registry::spawn(
         bus.clone(),
         hub.clone(),
@@ -326,6 +340,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             },
             tmp_dir: paths.base.join("tmp"),
             checkpoints: checkpoints.clone(),
+            usage: usage.clone(),
         },
         stored,
     );
@@ -472,6 +487,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             worktrees,
             tasks,
             accounts,
+            usage,
             resources,
             control,
             memory,

@@ -2134,3 +2134,241 @@ async fn questions_pending_at_a_daemon_restart_are_expired() {
     )));
     chat.stop().await;
 }
+
+// Usage and limits ------------------------------------------------------------------------------
+
+/// The `usage.changed` that shows the codex turn and both windows.
+async fn codex_usage(
+    events: &mut broadcast::Receiver<(Seq, Event)>,
+) -> hutan_protocol::usage::UsageSummary {
+    wait_event(
+        events,
+        "usage.changed with the turn and the windows",
+        |event| match event {
+            Event::UsageChanged { summary }
+                if summary
+                    .harnesses
+                    .iter()
+                    .any(|h| h.harness == "codex" && h.week.turns == 1 && h.limits.len() == 2) =>
+            {
+                Some((**summary).clone())
+            }
+            _ => None,
+        },
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_rate_limit_notifications_and_a_turns_tokens_reach_the_usage_summary() {
+    // `rate-limits`: the recorded plain turn with two `account/rateLimits/updated` notifications
+    // (a full report, then a sparse one that moves only the 5-hour window).
+    let mut t = Chat::with_fixture("rate-limits").await;
+    assert!(t.client.supports_usage());
+    let created = t.create().await;
+    t.send(
+        created.id,
+        "Reply with the single word pong and nothing else.",
+    )
+    .await;
+    let summary = codex_usage(&mut t.events).await;
+
+    let codex = summary
+        .harnesses
+        .iter()
+        .find(|h| h.harness == "codex")
+        .unwrap();
+    let windows: Vec<_> = codex
+        .limits
+        .iter()
+        .map(|l| {
+            (
+                l.id.as_str(),
+                l.label.as_str(),
+                l.used_percent,
+                l.resets_at_ms,
+            )
+        })
+        .collect();
+    assert_eq!(
+        windows,
+        [
+            ("5h", "5-hour", 81.0, Some(4_102_444_800_000)),
+            ("7d", "weekly", 31.0, Some(4_102_531_200_000)),
+        ],
+        "the sparse report moved the 5-hour window only"
+    );
+    assert!(codex.limits.iter().all(|l| l.provider == "openai"));
+    // The recorded turn: 22 178 tokens, 12 288 of them cached, no cost (a subscription).
+    for totals in [&codex.today, &codex.week] {
+        assert_eq!(totals.turns, 1);
+        assert_eq!(
+            (
+                totals.input_tokens,
+                totals.cached_input_tokens,
+                totals.output_tokens,
+                totals.total_tokens
+            ),
+            (22_173, 12_288, 5, 22_178)
+        );
+        assert_eq!((totals.cost_usd, totals.cost_is_estimate), (None, false));
+    }
+    assert_eq!(summary.providers.len(), 1);
+    assert_eq!(summary.providers[0].provider, "openai");
+    assert!(summary.day_start_ms <= summary.generated_at_ms);
+    assert!(summary.week_start_ms <= summary.day_start_ms);
+    // The same picture on request, and after the notifications the journal holds no chatter.
+    let asked = t.client.usage_summary(false).await.unwrap();
+    assert_eq!(asked.harnesses, summary.harnesses);
+    let history = t.history(created.id, None, 500).await;
+    assert!(
+        !history.events.iter().any(|e| e.kind.name() == "opaque"),
+        "rate limits are not journaled"
+    );
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nothing_private_in_a_rate_limit_report_is_stored_or_sent() {
+    const SECRETS: &[&str] = &[
+        "me@example.com",
+        "acct_SECRET_1",
+        "sk-ant-oat01-SECRETSECRETSECRET",
+        "Bearer-token-SECRET",
+        "99.99",
+        "Me Myself",
+    ];
+    let work = tempfile::tempdir().unwrap();
+    let transcript = work.path().join("leaky.jsonl");
+    let real = std::fs::read_to_string(fixtures().join("rate-limits.jsonl")).unwrap();
+    let leaky: String = real
+        .lines()
+        .map(|line| {
+            let mut value: Value = serde_json::from_str(line).unwrap();
+            if let Some(limits) = value.pointer_mut("/msg/params/rateLimits") {
+                let limits = limits.as_object_mut().unwrap();
+                limits.insert("limitName".into(), "Me Myself <me@example.com>".into());
+                limits.insert("accountId".into(), "acct_SECRET_1".into());
+                limits.insert(
+                    "accessToken".into(),
+                    "sk-ant-oat01-SECRETSECRETSECRET".into(),
+                );
+                limits.insert("planType".into(), "me@example.com".into());
+                limits.insert(
+                    "credits".into(),
+                    serde_json::json!({"hasCredits": true, "unlimited": false, "balance": "99.99"}),
+                );
+                if let Some(primary) = limits.get_mut("primary").and_then(Value::as_object_mut) {
+                    primary.insert("label".into(), "Bearer-token-SECRET".into());
+                }
+            }
+            format!("{value}\n")
+        })
+        .collect();
+    std::fs::write(&transcript, leaky).unwrap();
+    let mut t = Chat::with_transcripts(&transcript, |_| {}).await;
+    let created = t.create().await;
+    t.send(
+        created.id,
+        "Reply with the single word pong and nothing else.",
+    )
+    .await;
+    let summary = codex_usage(&mut t.events).await;
+
+    let sent = serde_json::to_string(&summary).unwrap();
+    assert!(
+        summary.harnesses[0].limits.iter().all(|l| l.plan.is_none()),
+        "{sent}"
+    );
+    // What was stored: every value of both tables, and the database files themselves (the
+    // write-ahead log included).
+    let db = rusqlite::Connection::open(&t.daemon.paths.database).unwrap();
+    let mut stored = String::new();
+    for table in ["usage_limits", "usage_turns"] {
+        let mut stmt = db.prepare(&format!("SELECT * FROM {table}")).unwrap();
+        let columns = stmt.column_count();
+        let mut rows = stmt.query([]).unwrap();
+        while let Some(row) = rows.next().unwrap() {
+            for column in 0..columns {
+                match row.get_ref(column).unwrap() {
+                    rusqlite::types::ValueRef::Text(text) => {
+                        stored.push_str(&String::from_utf8_lossy(text));
+                    }
+                    other => stored.push_str(&format!("{other:?}")),
+                }
+                stored.push(' ');
+            }
+        }
+    }
+    assert!(stored.contains("openai"), "the rows exist: {stored}");
+    let mut files = String::new();
+    for entry in std::fs::read_dir(t.daemon.paths.database.parent().unwrap()).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("hutan.db"))
+        {
+            files.push_str(&String::from_utf8_lossy(&std::fs::read(&path).unwrap()));
+        }
+    }
+    for secret in SECRETS {
+        assert!(!sent.contains(secret), "{secret} in the summary: {sent}");
+        assert!(!stored.contains(secret), "{secret} in the tables: {stored}");
+        assert!(!files.contains(secret), "{secret} in the database files");
+    }
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refresh_asks_a_codex_that_ran_through_hutan_for_its_rate_limits() {
+    // Spawn 1 is the chat (the recorded turn with its notifications, ending on 81 % and 31 %),
+    // spawn 2 the short-lived app server of the refresh (`account/rateLimits/read`: 72 %).
+    let work = tempfile::tempdir().unwrap();
+    let scripted = script(work.path(), &["rate-limits", "rate-limits-read"]);
+    let config = replay(&scripted, &work.path().join("received.jsonl"));
+    // No OMP either: the daemon must not run whatever `omp` the machine has.
+    let daemon = TestDaemon::start_with(
+        "[harness.omp]\ncli = \"/nonexistent/hutan-test-omp\"\n",
+        move |c| {
+            c.codex = Some(config);
+            c.usage_probes = true;
+        },
+    )
+    .await;
+    let (client, events) = daemon.connect_subscribed().await;
+    let mut t = Chat {
+        daemon,
+        work,
+        client,
+        events,
+    };
+    // Codex was never used: a refresh must not start it (that would take the transcript of the
+    // chat below).
+    let idle = t.client.usage_summary(true).await.unwrap();
+    assert!(idle.harnesses.is_empty(), "{idle:?}");
+
+    let created = t.create().await;
+    t.send(
+        created.id,
+        "Reply with the single word pong and nothing else.",
+    )
+    .await;
+    let known = codex_usage(&mut t.events).await;
+    assert_eq!(known.harnesses[0].limits[0].used_percent, 81.0);
+
+    let refreshed = t.client.usage_summary(true).await.unwrap();
+    let five_hours = &refreshed.harnesses[0].limits[0];
+    assert_eq!(
+        (five_hours.id.as_str(), five_hours.used_percent),
+        ("5h", 72.0)
+    );
+    assert_eq!(
+        t.received()
+            .iter()
+            .filter(|(m, _)| m == "account/rateLimits/read")
+            .count(),
+        1,
+        "asked once"
+    );
+    t.stop().await;
+}

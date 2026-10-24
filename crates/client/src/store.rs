@@ -132,6 +132,11 @@ pub enum Notice {
     AccountsChanged {
         harness: String,
     },
+    /// A turn ended or a harness reported a limit (`usage.changed`, protocol 0.45): the whole
+    /// summary as it is now.
+    UsageChanged {
+        summary: Box<hutan_protocol::usage::UsageSummary>,
+    },
     /// Mawas's memory changed, or a proposal arrived or was answered (`memory.changed`,
     /// protocol 0.32): list the entries and proposals again.
     MemoryChanged {
@@ -494,6 +499,9 @@ impl StoreState {
             Event::TaskRemoved { id } => effects.notices.push(Notice::TaskRemoved { id }),
             Event::AccountChanged { harness } => {
                 effects.notices.push(Notice::AccountsChanged { harness });
+            }
+            Event::UsageChanged { summary } => {
+                effects.notices.push(Notice::UsageChanged { summary });
             }
             Event::MemoryChanged {
                 scope,

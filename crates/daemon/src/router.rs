@@ -39,6 +39,7 @@ use crate::resources::{Actor, ResourceService, audit};
 use crate::tasks::TaskService;
 use crate::terminals::TerminalHub;
 use crate::uihub::UiHub;
+use crate::usage::UsageService;
 use crate::worktrees::WorktreeService;
 use hutan_protocol::ui::{SessionSendText, SessionTextSent};
 
@@ -51,6 +52,7 @@ pub struct Services {
     pub worktrees: Arc<WorktreeService>,
     pub tasks: Arc<TaskService>,
     pub accounts: Arc<AccountService>,
+    pub usage: Arc<UsageService>,
     pub resources: Arc<ResourceService>,
     pub control: Arc<ControlService>,
     pub memory: Arc<MemoryService>,
@@ -70,6 +72,7 @@ pub struct Router {
     worktrees: Arc<WorktreeService>,
     tasks: Arc<TaskService>,
     accounts: Arc<AccountService>,
+    usage: Arc<UsageService>,
     resources: Arc<ResourceService>,
     bus: Arc<EventBus>,
     started: Instant,
@@ -103,6 +106,7 @@ impl Router {
             worktrees: services.worktrees,
             tasks: services.tasks,
             accounts: services.accounts,
+            usage: services.usage,
             resources: services.resources,
             bus,
             started: Instant::now(),
@@ -548,6 +552,7 @@ impl Router {
                 ok(&self.tasks.review(req, by).await?)
             }
             Request::AccountList(_) => ok(&self.accounts.list().await),
+            Request::UsageSummary(req) => ok(&self.usage.summary(req.refresh).await?),
             Request::AccountLogin(req) => ok(&self.accounts.login(req).await?),
             Request::AccountLogout(req) => ok(&self.accounts.logout(req).await?),
             Request::ProviderList(_) => ok(&self.providers().list().await?),
@@ -963,6 +968,8 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::ProviderDiscover(_) => ("provider.discover", Read),
         Request::ChatSetModel(_) => ("chat.set_model", Mutate),
         Request::AccountList(_) => ("account.list", Read),
+        // Reading what the harnesses report and what turns used; nothing it says is a secret.
+        Request::UsageSummary(_) => ("usage.summary", Read),
         // Logging in or out changes which credentials a harness holds: the user's.
         Request::AccountLogin(_) => ("account.login", UserOnly),
         Request::AccountLogout(_) => ("account.logout", UserOnly),
