@@ -543,6 +543,13 @@ The daemon owns three kinds of container (ADR 0014, `docs/orchestration.md` § P
 - **New sessions** (⌘T, splits of a pane without a session) start in the active project, else the first project of the active workspace, else in Home; they get the `terminal.shell` / `terminal.env` of that project's layers.
 - **Status bar**: the `workspace` item shows the active container; click opens the jump palette.
 
+### Files at Home and Mawas's folder (MAWAS-FILES)
+
+- **Home has files.** With Home the active container, Files, Search and Problems show the Home folder (`~/Hutan`) and their scope chip says `Home`; before, they were empty there.
+- **Mawas focused.** While Mawas Home is the focused center tab the three follow **her scope**, not the active container: *Mawas · Global* → the Home folder, *Mawas · <workspace>* → that workspace's active project; the chip reads `Mawas · Global` / `Mawas · <workspace>`. Any other tab brings the container back. The store keeps this as desktop state (`MawasFocus`), synced after layout, session and panel changes (GPUI drops store notifications made while drawing). ⌘P is unchanged.
+- **Mawas ⋯** ends with a greyed-out *Where Mawas works: ~/…* line, *Show Folder in Files*, *Open Folder in Finder*, *Open Terminal Here* and — Global scope, Home folder not a repository, daemon with `project.git_init` — *Track changes in this folder…*.
+- **Track changes** is also the primary button of the Changes panel at Home while its list is empty ("The Home folder does not track its changes yet"). Both open the confirm sheet *Track changes in this folder?* (git init, `.gitignore` with Hutan's scratch files, an initial commit with your git identity, nothing leaves this machine; **Track Changes** / Cancel). Afterwards Changes lists the folder and a notice says how many files the first commit holds; a refusal shows the daemon's words. Palette: *Changes: Track Changes in the Home Folder…*.
+
 ## Agent Session History panel (M17-B, rebuilt by OL-3)
 
 The `history` panel is Orca's *Agent Session History* over the opt-in session history index (`docs/history-index.md`): a browsable catalog of the sessions on this machine — Hutan's own terminals and chats and the transcripts of Claude Code, Codex and OMP — from `history.sessions` (protocol 0.29), with full-text search (`history.search`) when a query is typed. It is the first (default) tab of the right sidebar's strip in every built-in preset, designed for its 350 px default width, and moves like any panel; ⌘K → "Panel: Open History" reveals it. The header says **Agent Session History** over *Indexed history* (below 300 px wide: **History**) and has the buttons *group by*, *sources*, *refresh* and ⚙ (the `history` settings).

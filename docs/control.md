@@ -129,6 +129,10 @@ Protocol 0.33, capabilities `fs` and `fs.watch`, slice E-3 (`docs/protocol.md` �
 
 A write by an agent through the service is attributed in `fs.changed` events of other clients as `origin: {kind: "agent", confidence: "session"}`; edits an agent makes with its own tools reach the same events through the `file_diff` heuristic (`docs/protocol.md` § Files, Origins).
 
+## Putting a folder under version control
+
+Protocol 0.43, capability `project.git_init`, slice MAWAS-FILES. `project.git_init` (`git init`, `.gitignore`, an initial commit in a project's folder or the Home folder) is **UserOnly**: an agent-originated connection — Mawas or any agent session — gets `forbidden` with `decision: user_only` under every `[control] agents` policy, and there is no MCP tool for it. Starting to track a folder changes what checkpoints and Changes do for the user's files; only the user, from the confirm sheet or `hutan project git-init`, may start it.
+
 ## Language servers
 
 Protocol 0.39, capabilities `doc.sync` and `lsp` (`docs/lsp.md`). `doc.open|change|save|close` are **Read**: a document mirror holds what its sender sends and changes nothing on disk, so an agent may use them without an approval — but only for files below the workspace folders (`forbidden` outside them; the user's connections may open any file). `lsp.status`, `lsp.diagnostics`, `lsp.hover` and `lsp.definition` are Read. `lsp.restart` and `lsp.stop` are **Mutate** (a server costs the user's memory; an approval under `ask`, audited), and a restart cannot start a server in a folder that is not trusted. `lsp.trust` is **UserOnly**: a language server runs the project's build scripts and procedural macros (rust-analyzer does not sandbox them), so trusting a folder is the user's decision under every `[control]` policy, never an agent's — `forbidden` with `error.data.control.decision = "user_only"`. The MCP tools `diagnostics` (the files an agent changed and the files that directly import them, or the given files, or the project; stale until the servers are ready) and `lsp_status` are reads; there is no MCP tool for `lsp.trust`, `lsp.restart` or `lsp.stop`.
