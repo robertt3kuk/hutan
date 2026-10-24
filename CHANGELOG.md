@@ -7,6 +7,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 ### Added
 - Find in a terminal: ⌘F in a terminal searches its whole scrollback in the daemon (wrapped lines joined, case and regex options, optionally only the selected block's output), ⌘G / ⌘⇧G step, matches highlighted; `hutan terminal search`.
 - Instruction files: an **Instructions** panel lists the files each agent reads (AGENTS.md, CLAUDE.md, OMP's rules; project and user level) and which agent reads which; *Share one file with every agent…* makes AGENTS.md the one file (CLAUDE.md imports it) after showing exactly what it writes, with Undo; Mawas knows how the project's AGENTS.md begins.
+- Mawas's folder: Files, Search and Problems show `~/Hutan` at Home and follow Mawas's scope while Mawas Home is in front; Mawas's ⋯ says where she works with *Show Folder in Files*, *Open in Finder*, *Open Terminal Here*; *Track changes in this folder…* turns the folder into a git repository (after a confirm, nothing leaves the machine) so Changes, checkpoints and *Rewind…* work for what Mawas writes; `hutan project git-init`. Finish without a remote commits only.
 
 ### Changed
 - Terminal splits like Ghostty and iTerm: ⌘D / ⌘⇧D split the terminal inside its tab (new terminal in the same folder), ⌘⌥ arrows move focus, ⌃⌘ arrows resize, ⌘⇧↩ zooms, ⌘W closes a split, ⌘⇧W the tab; drag dividers, double-click to even out, right-click menu, drop a terminal tab on another's edge to merge; unfocused splits dim slightly.
