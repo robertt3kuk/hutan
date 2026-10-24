@@ -23,7 +23,7 @@ mod rich;
 mod rich_view;
 mod view;
 pub mod vim;
-mod widgets;
+pub(crate) mod widgets;
 
 pub(crate) use cards::{counts_of, diff_row};
 pub use chip::{Chip, cut_to};

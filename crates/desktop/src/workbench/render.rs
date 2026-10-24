@@ -175,12 +175,14 @@ impl Render for Workbench {
         let restore_toast = self.render_restore_toast(cx);
         let layout_toast = self.render_layout_toast(cx);
         let instructions_toast = self.render_instructions_toast(cx);
+        let usage_toast = self.render_usage_toast(cx);
         let toasts = self.toast_stack(
             close_toast,
             attention_toasts,
             restore_toast,
             layout_toast,
             instructions_toast,
+            usage_toast,
         );
         let checkpoints_list = self.render_checkpoints_list(cx);
         let rewind_sheet = self.render_rewind_sheet(cx);
@@ -2475,6 +2477,7 @@ impl Workbench {
                 }
             },
             editor: self.editor_status(cx),
+            usage: self.env.usage.read(cx).status(),
         }
     }
 
@@ -2506,7 +2509,10 @@ impl Workbench {
             editor_items: &editor_items,
             height: tokens.status_bar,
         };
-        let status_bar = self.status_bar();
+        let mut status_bar = self.status_bar();
+        if self.usage_item_wanted() {
+            status_bar.with_item("usage");
+        }
         let render_side =
             |side: StatusSide, ids: &[String], cx: &mut Context<Self>| -> Vec<AnyElement> {
                 ids.iter()

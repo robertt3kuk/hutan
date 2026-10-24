@@ -1174,7 +1174,7 @@ impl AgentsScope {
 
 /// The `agents` namespace: what the Agents panel and the Agents page list. Blocked agents are
 /// always listed.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AgentsSettings {
     /// Panel: list subagents that have finished (dimmed). Off, only the ones still around
@@ -1188,6 +1188,26 @@ pub struct AgentsSettings {
     pub page_group_by_workspace: bool,
     /// Page: show the sessions that finished (they are folded under their heading otherwise).
     pub page_show_finished: bool,
+    /// Page: the Usage section — per harness its limit windows with reset times, and the tokens
+    /// and cost of the turns Hutan ran today and this week.
+    pub page_usage: bool,
+    /// Status bar: show the `usage` item — the tightest limit of any harness, `Codex 72% ·
+    /// resets 3h` — even when the layout's status bar does not name it.
+    pub usage_in_status_bar: bool,
+}
+
+impl Default for AgentsSettings {
+    fn default() -> Self {
+        Self {
+            show_finished: false,
+            only_blocked: false,
+            scope: AgentsScope::default(),
+            page_group_by_workspace: false,
+            page_show_finished: false,
+            page_usage: true,
+            usage_in_status_bar: false,
+        }
+    }
 }
 
 impl Setting for AgentsSettings {
@@ -1402,11 +1422,16 @@ pub struct NotificationsSettings {
     /// Show the number of sessions with a request waiting (an approval, a question, a plan) as a
     /// badge on the Dock icon. Only requests count: failures and finished work never do.
     pub dock_badge: bool,
+    /// A toast when a harness's limit window passes 80 % and 95 % (once per window).
+    pub usage_warnings: bool,
 }
 
 impl Default for NotificationsSettings {
     fn default() -> Self {
-        Self { dock_badge: true }
+        Self {
+            dock_badge: true,
+            usage_warnings: true,
+        }
     }
 }
 

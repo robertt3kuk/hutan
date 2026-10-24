@@ -345,6 +345,13 @@ pub struct AccountsChanged {
     pub harness: String,
 }
 
+/// Emitted by [`SessionsStore`] when the daemon says usage moved (`usage.changed`, protocol
+/// 0.45): the whole summary as it is now.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageSummaryChanged {
+    pub summary: Box<hutan_protocol::usage::UsageSummary>,
+}
+
 /// Emitted by [`SessionsStore`] when Mawas's memory changed or a proposal arrived or was answered
 /// (`memory.changed`, protocol 0.32): whoever lists memory asks again.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -533,6 +540,7 @@ impl EventEmitter<StoreChanged> for SessionsStore {}
 impl EventEmitter<AgentAttentionChanged> for SessionsStore {}
 impl EventEmitter<UiOpenRequested> for SessionsStore {}
 impl EventEmitter<AccountsChanged> for SessionsStore {}
+impl EventEmitter<UsageSummaryChanged> for SessionsStore {}
 impl EventEmitter<MemoryChanged> for SessionsStore {}
 impl EventEmitter<SessionClosed> for SessionsStore {}
 impl EventEmitter<CheckoutActivity> for SessionsStore {}
@@ -1034,6 +1042,10 @@ impl SessionsStore {
             // again.
             Notice::AccountsChanged { harness } => cx.emit(AccountsChanged {
                 harness: harness.clone(),
+            }),
+            // The usage model of the window folds it in (status item, Agents page, toasts).
+            Notice::UsageChanged { summary } => cx.emit(UsageSummaryChanged {
+                summary: summary.clone(),
             }),
             // The Memory page listens for itself and lists again when it is on screen.
             Notice::MemoryChanged { scope_revision, .. } => cx.emit(MemoryChanged {

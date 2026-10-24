@@ -14,6 +14,7 @@ pub struct PanelEnv {
     pub sessions: Entity<SessionsStore>,
     pub settings: SettingsStore,
     pub harnesses: Entity<super::harnesses::HarnessDirectory>,
+    pub usage: Entity<super::usage::UsageDirectory>,
     pub regions: super::regions::Regions,
     /// The folders of Codex, Claude Code and OMP whose instruction files the `instructions`
     /// panel lists; `None` lists none (the workbench sets them, tests replace them).
@@ -192,6 +193,8 @@ pub struct StatusData {
     /// The focused file tab's language and whether Vim is on in it; `None` when no file tab
     /// has focus.
     pub editor: Option<EditorStatus>,
+    /// The `usage` item: the tightest limit of any harness; `None` until one reported.
+    pub usage: Option<crate::sessions::usage::StatusText>,
 }
 
 /// What the editor items know of the focused file tab at the workbench's level. Its line and
@@ -275,6 +278,21 @@ impl StatusItemRegistry {
 pub struct StatusBarLayout {
     pub left: Vec<String>,
     pub right: Vec<String>,
+}
+
+impl StatusBarLayout {
+    /// Adds `id` on the right, before `working` or the palette's key, unless the bar names it.
+    pub fn with_item(&mut self, id: &str) {
+        if self.left.iter().chain(&self.right).any(|item| item == id) {
+            return;
+        }
+        let at = self
+            .right
+            .iter()
+            .position(|item| item == "working" || item == "palette_hint")
+            .unwrap_or(self.right.len());
+        self.right.insert(at, id.to_owned());
+    }
 }
 
 impl Default for StatusBarLayout {

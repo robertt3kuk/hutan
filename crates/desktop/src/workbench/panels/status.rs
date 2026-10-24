@@ -325,6 +325,32 @@ pub fn builtin_status_items() -> StatusItemRegistry {
                 .into_any_element()
         }),
     });
+    // The tightest limit any harness reported (USAGE-LIMITS): `Codex 72% · resets 3h`. Not in
+    // the built-in bar; `agents.usage_in_status_bar` (Settings → Agents) or a preset that names
+    // it shows it. Nothing reported, nothing drawn.
+    registry.register(StatusItemSpec {
+        id: "usage",
+        default_side: StatusSide::Right,
+        render: gives_way(|ctx: &StatusContext<'_>| {
+            let Some(usage) = &ctx.data.usage else {
+                return div().id("status-usage").into_any_element();
+            };
+            let color = match usage.severity {
+                crate::sessions::usage::Severity::Calm => ctx.theme.muted,
+                crate::sessions::usage::Severity::Warning => ctx.theme.warning,
+                crate::sessions::usage::Severity::Critical => ctx.theme.danger,
+            };
+            clickable("status-usage", ctx)
+                .text_color(color)
+                .tooltip(tooltip(format!(
+                    "{}\nClick for the Agents page",
+                    usage.tooltip
+                )))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowAgentsPage), cx))
+                .child(SharedString::from(usage.text.clone()))
+                .into_any_element()
+        }),
+    });
     registry.register(StatusItemSpec {
         id: "sessions",
         default_side: StatusSide::Left,
@@ -691,6 +717,7 @@ mod tests {
         }
         for id in [
             "sessions",
+            "usage",
             "approvals",
             "density",
             "theme",

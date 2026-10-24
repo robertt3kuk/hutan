@@ -180,6 +180,8 @@ pub enum Region {
     StatusItem(&'static str),
     /// A control of the "Moved … · Undo" toast of a layout change (`undo`).
     LayoutToast(&'static str),
+    /// A control of the usage warning toast (`toast`, `open`, `dismiss`).
+    UsageToast(&'static str),
     /// The ⋯ of a panel's header, by where the panel is (`left`, `right`, `bottom`, `center`).
     PanelMenu(&'static str),
     /// A control of the panel settings popover (`popover`, `open`, `close`).
@@ -201,6 +203,11 @@ pub enum Region {
     /// A control of the Agents page, by name (`search`, `scope`, `group`, `finished`, `start`,
     /// `integrations`, `clear`, `clear-group`, `daemon`, `offline`, `list`, `details`).
     AgentsPage(&'static str),
+    /// The row of harness `index` in the Usage section of the Agents page.
+    UsageRow(usize),
+    /// The filled part of limit `limit` of harness `harness` in the Usage section: its width is
+    /// the share of the window used.
+    UsageBar(usize, usize),
     /// The row of a session on the Agents page.
     AgentRow(hutan_core::SessionId),
     /// A control of a session's row on the Agents page: `primary`, `more`, `interrupt`.
@@ -767,6 +774,9 @@ pub struct Workbench {
     pub(crate) layout_toast: Option<super::customize::LayoutToast>,
     pub(crate) layout_undo: Option<super::customize::LayoutUndo>,
     pub(crate) layout_toast_exit: super::ui::motion::Ghost<super::customize::LayoutToast>,
+    /// The usage warning toast (`usage.rs`) and its exit.
+    pub(crate) usage_toast: Option<super::usage::UsageToast>,
+    pub(crate) usage_toast_exit: super::ui::motion::Ghost<super::usage::UsageToast>,
     /// The tab the × just closed, while it fades (`closing.rs`).
     pub(crate) closing_tab: Option<super::closing::ClosingTab>,
     /// Overlays while they leave (`ui::motion::Presences`).
@@ -934,10 +944,12 @@ impl Workbench {
         let instruction_homes = Rc::new(std::cell::RefCell::new(
             crate::instructions::HarnessHomes::from_env(),
         ));
+        let usage = cx.new(|cx| super::usage::UsageDirectory::new(sessions.clone(), cx));
         let env = PanelEnv {
             sessions: sessions.clone(),
             settings: settings.clone(),
             harnesses: harnesses.clone(),
+            usage: usage.clone(),
             regions: regions.clone(),
             instruction_homes: instruction_homes.clone(),
         };
@@ -1138,6 +1150,7 @@ impl Workbench {
                 },
             ),
             cx.observe(&harnesses, |this, _, cx| this.on_harnesses_changed(cx)),
+            cx.observe(&usage, |this, _, cx| this.on_usage_changed(cx)),
             cx.observe_window_activation(window, |this, window, cx| {
                 this.window_active = window.is_window_active();
                 this.sync_session_focus(cx);
@@ -1342,6 +1355,8 @@ impl Workbench {
             layout_toast: None,
             layout_undo: None,
             layout_toast_exit: super::ui::motion::Ghost::default(),
+            usage_toast: None,
+            usage_toast_exit: super::ui::motion::Ghost::default(),
             closing_tab: None,
             overlays: super::ui::motion::Presences::default(),
             exits: super::overlay_exit::OverlayExits::default(),

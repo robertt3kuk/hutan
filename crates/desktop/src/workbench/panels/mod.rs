@@ -6,7 +6,7 @@ mod agents_page;
 mod assistant;
 mod assistant_rail;
 mod changes;
-mod common;
+pub(crate) mod common;
 mod files;
 mod files_git;
 mod history;

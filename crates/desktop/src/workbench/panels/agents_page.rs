@@ -179,6 +179,15 @@ impl AgentsPage {
             }
         })
         .detach();
+        // The Usage section follows what the daemon says about limits.
+        cx.observe(&env.usage, |this, _, cx| {
+            if this.visible {
+                cx.notify();
+            } else {
+                this.stale = true;
+            }
+        })
+        .detach();
         let presentation = Arc::new(AgentPresentation::empty(Link::Loading, 0));
         Self {
             env,
@@ -355,6 +364,11 @@ impl AgentsPage {
         if visible {
             // Hidden pages kept no ticker; the draw starts it again.
             self.stale = false;
+            // Looking at the limits: ask the harnesses what is left (at most every 30 s).
+            if self.env.settings.get::<AgentsSettings>().page_usage {
+                let usage = self.env.usage.clone();
+                cx.defer(move |cx| usage.update(cx, |usage, cx| usage.refresh(false, cx)));
+            }
             cx.notify();
         } else {
             self.ticker = None;
@@ -979,6 +993,7 @@ impl Render for AgentsPage {
                 _ => None,
             })
             .child(self.filter_band(look, searching, cx))
+            .children(self.usage_section(look, cx))
             .child(body)
             .child(probe(&self.env.regions, Region::AgentsPage("page")))
             .child(
@@ -1004,6 +1019,154 @@ impl Render for AgentsPage {
 }
 
 impl AgentsPage {
+    /// The Usage section (USAGE-LIMITS): per harness its limit windows as bars with their reset
+    /// times, and the tokens and cost of the turns Hutan ran today and this week, a cost always
+    /// labelled as the estimate it is. Nothing while the daemon has reported no harness, or
+    /// while `agents.page_usage` is off.
+    fn usage_section(&self, look: Look, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.env.settings.get::<AgentsSettings>().page_usage {
+            return None;
+        }
+        let (theme, tokens) = (look.theme, look.tokens);
+        let usage = self.env.usage.read(cx);
+        let refreshing = usage.refreshing();
+        let rows = crate::sessions::usage::section(usage.summary()?, now_ms());
+        if rows.is_empty() {
+            return None;
+        }
+        let regions = &self.env.regions;
+        let rows: Vec<AnyElement> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let bars = row.limits.iter().enumerate().map(|(n, limit)| {
+                    let color = match limit.severity {
+                        crate::sessions::usage::Severity::Calm => theme.accent,
+                        crate::sessions::usage::Severity::Warning => theme.warning,
+                        crate::sessions::usage::Severity::Critical => theme.danger,
+                    };
+                    let name = if row.harness == "omp" {
+                        format!("{} ({})", limit.label, limit.provider)
+                    } else {
+                        limit.label.clone()
+                    };
+                    div()
+                        .id(("usage-limit", index * 16 + n))
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(
+                            div()
+                                .text_color(theme.muted)
+                                .child(SharedString::from(name)),
+                        )
+                        .child(
+                            div()
+                                .relative()
+                                .w(px(96.0))
+                                .h(px(6.0))
+                                .rounded_full()
+                                .bg(theme.border)
+                                .child(
+                                    div()
+                                        .h_full()
+                                        .rounded_full()
+                                        .w(gpui::relative(limit.fraction))
+                                        .bg(color)
+                                        .child(probe(regions, Region::UsageBar(index, n))),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_color(match limit.severity {
+                                    crate::sessions::usage::Severity::Calm => theme.fg,
+                                    crate::sessions::usage::Severity::Warning => theme.warning,
+                                    crate::sessions::usage::Severity::Critical => theme.danger,
+                                })
+                                .child(SharedString::from(limit.percent.clone())),
+                        )
+                        .children(limit.resets.clone().map(|resets| {
+                            div()
+                                .text_color(theme.muted)
+                                .child(SharedString::from(resets))
+                        }))
+                });
+                div()
+                    .id(("usage-row", index))
+                    .relative()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_x(px(16.0))
+                    .gap_y(px(2.0))
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(96.0))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(SharedString::from(row.name.clone())),
+                    )
+                    .children(bars)
+                    .children(row.note.clone().map(|note| {
+                        div()
+                            .text_color(theme.muted)
+                            .child(SharedString::from(note))
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .gap(px(12.0))
+                            .text_color(theme.muted)
+                            .child(SharedString::from(row.today.clone()))
+                            .child(SharedString::from(row.week.clone())),
+                    )
+                    .child(probe(regions, Region::UsageRow(index)))
+                    .into_any_element()
+            })
+            .collect();
+        Some(
+            div()
+                .id("agents-usage")
+                .relative()
+                .flex()
+                .flex_none()
+                .flex_col()
+                .gap(px(6.0))
+                .px(px(16.0))
+                .py(px(8.0))
+                .border_b_1()
+                .border_color(theme.border)
+                .text_size(px(tokens.secondary_font_size))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(div().text_color(theme.muted).child(if refreshing {
+                            "Usage · asking the harnesses…"
+                        } else {
+                            "Usage"
+                        }))
+                        .child(
+                            ui::Button::new("agents-usage-refresh", "Refresh", &theme, &tokens)
+                                .ghost()
+                                .compact()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.env
+                                        .usage
+                                        .update(cx, |usage, cx| usage.refresh(true, cx));
+                                }))
+                                .child(probe(regions, Region::AgentsPage("usage-refresh"))),
+                        ),
+                )
+                .children(rows)
+                .child(probe(regions, Region::AgentsPage("usage")))
+                .into_any_element(),
+        )
+    }
+
     /// The header (44 pt): the title at the page-title size (15, medium: the tab names the page, so
     /// no icon repeats it), the totals in muted text, and `Start agent…` as a ghost button.
     fn header(&self, counts: &Counts, look: Look, cx: &mut Context<Self>) -> AnyElement {

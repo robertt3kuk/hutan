@@ -17,6 +17,7 @@ pub mod tasks;
 mod terminal;
 pub mod tree;
 pub mod untracked;
+pub mod usage;
 pub mod workspaces;
 
 pub use agents::{AgentAttentionChanged, AgentBadge, BlockedNode};
@@ -31,7 +32,7 @@ pub use presentation::{
 pub use store::{
     AccountsChanged, ActivityCause, Checkout, CheckoutActivity, CloseFailure, MawasFocus,
     MawasFolder, MemoryChanged, REPLAY_WINDOW, RecoverySummaryDue, RequestCalled, ScopeKind,
-    ScopeLabel, SessionClosed, SessionsStore, StoreChanged, UI_OPEN_MAX_AGE_MS, UiOpenRequested,
+    ScopeLabel, SessionClosed, SessionsStore, StoreChanged, UI_OPEN_MAX_AGE_MS, UiOpenRequested, UsageSummaryChanged,
 };
 pub use terminal::TerminalSession;
 pub use untracked::Untracked;

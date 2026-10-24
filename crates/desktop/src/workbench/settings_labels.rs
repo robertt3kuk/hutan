@@ -179,6 +179,12 @@ const FIELDS: &[FieldText] = &[
         "Show a badge on the Dock icon",
         "Shows how many sessions have a request waiting (an approval, a question, a plan) on the Dock icon. Failures and finished work never count.",
     ),
+    field(
+        "notifications",
+        "usage_warnings",
+        "Warn when a usage limit runs low",
+        "Shows a toast when one of a harness's limit windows (the 5-hour or the weekly one) passes 80% and again at 95%, once per window. A limit that was already high when Hutan opened is not announced; the status item and the Agents page show it.",
+    ),
     // ---- keyboard ----
     choice(
         "keymap",
@@ -709,6 +715,18 @@ const FIELDS: &[FieldText] = &[
         "page_show_finished",
         "Show finished agents on the page",
         "On the Agents page, lists the sessions that finished. Off, they are folded under a Finished heading.",
+    ),
+    field(
+        "agents",
+        "page_usage",
+        "Show usage on the Agents page",
+        "On the Agents page, a Usage section lists each harness's limit windows (5-hour, weekly) with their reset times, and the tokens and cost of the turns Hutan ran today and this week. A cost is the harness's own estimate.",
+    ),
+    field(
+        "agents",
+        "usage_in_status_bar",
+        "Show the tightest limit in the status bar",
+        "Adds the usage item to the status bar: the harness limit closest to its end, such as Codex 72% · resets 3h. Harnesses report their limits themselves (Codex with its replies, OMP when asked), so it shows nothing until one has.",
     ),
     // ---- resources ----
     field(

@@ -1014,6 +1014,24 @@ impl Connection {
         client.account_list().await
     }
 
+    /// True while connected to a daemon that advertised capability `usage`
+    /// ([`Client::supports_usage`]); false when disconnected.
+    pub fn supports_usage(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_usage())
+    }
+
+    /// `usage.summary`: the limit windows the harnesses report and what the turns used;
+    /// `refresh` asks the harnesses first (it takes seconds).
+    pub async fn usage_summary(
+        &self,
+        refresh: bool,
+    ) -> Result<hutan_protocol::usage::UsageSummary, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.usage_summary(refresh).await
+    }
+
     /// `account.login`: the harness's own login in a terminal session.
     pub async fn account_login(
         &self,
