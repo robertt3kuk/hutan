@@ -236,7 +236,6 @@ impl Workbench {
             .flex_col()
             .items_start()
             .gap(px(tokens.spacing))
-            .px(px(tokens.spacing * 2.0))
             .py(px(tokens.spacing))
             .child(
                 note(
