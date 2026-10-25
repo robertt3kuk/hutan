@@ -234,7 +234,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "daemon.stopping",
             "terminal.search",
             "project.git_init",
-            "usage"
+            "usage",
+            "memory.files"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);

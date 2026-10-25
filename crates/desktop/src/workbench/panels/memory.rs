@@ -2089,7 +2089,7 @@ impl MemoryPanel {
                 );
             }
             sections.push(message(
-                "Hutan leaves a file with a problem as you wrote it until you fix it or put it back; only the sections that read cleanly were proposed, and nothing is archived because of it.",
+                "The file stays as you wrote it until you fix it. Its other sections were proposed; nothing is archived because of it.",
             ));
         }
         if !self.connected(cx) {

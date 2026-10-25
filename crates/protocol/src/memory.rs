@@ -181,7 +181,7 @@ pub struct MemoryProvenance {
 
 impl MemoryProvenance {
     /// One plain line: "entered by you in the desktop", "proposed by an agent in session 01K7…,
-    /// approved by you in the cli", "edited by you in a memory file, approved in the desktop".
+    /// approved by you in the cli", "edited in a memory file, approved in the desktop".
     pub fn summary(&self) -> String {
         let approved = |client: &Option<String>| {
             client
@@ -190,7 +190,7 @@ impl MemoryProvenance {
         };
         match self.origin.as_deref() {
             Some(ORIGIN_FILE) => {
-                return format!("edited by you in a memory file{}", approved(&self.client));
+                return format!("edited in a memory file{}", approved(&self.client));
             }
             Some(ORIGIN_IMPORT) => {
                 return format!("imported by you{}", approved(&self.client));
