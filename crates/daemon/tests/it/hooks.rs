@@ -1261,3 +1261,146 @@ async fn the_hooks_a_daemon_runs_are_the_ones_it_started_with() {
     let error = error.to_string();
     assert!(error.contains("timeout"), "{error}");
 }
+
+// The ntfy recipe -------------------------------------------------------------------------------
+
+/// What a server on the loopback interface was sent: the request line, the headers, the body.
+struct Received {
+    request_line: String,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
+impl Received {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+/// A one-request HTTP server standing in for ntfy: the address it listens on, and what it got.
+fn local_ntfy() -> (String, std::sync::mpsc::Receiver<Received>) {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line).unwrap();
+        let mut headers = Vec::new();
+        let mut length = 0usize;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let line = line.trim_end().to_owned();
+            if line.is_empty() {
+                break;
+            }
+            if let Some((name, value)) = line.split_once(':') {
+                if name.eq_ignore_ascii_case("content-length") {
+                    length = value.trim().parse().unwrap();
+                }
+                headers.push((name.to_owned(), value.trim().to_owned()));
+            }
+        }
+        let mut body = vec![0u8; length];
+        reader.read_exact(&mut body).unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            .unwrap();
+        let _ = tx.send(Received {
+            request_line: request_line.trim_end().to_owned(),
+            headers,
+            body: String::from_utf8(body).unwrap(),
+        });
+    });
+    (address, rx)
+}
+
+async fn received(rx: std::sync::mpsc::Receiver<Received>) -> Received {
+    tokio::task::spawn_blocking(move || rx.recv_timeout(WAIT))
+        .await
+        .unwrap()
+        .expect("the local ntfy server was never called")
+}
+
+/// The recipe of `docs/integrations.md` § User hooks, with the server's address for
+/// `https://ntfy.sh` (and curl told to ignore the proxy of the environment).
+fn ntfy_hook(on: &str, address: &str, home: &Path) -> String {
+    let command = r#"curl -s --max-time 10 --noproxy '*' \
+  -H "Title: Hutan: approval needed" -H "Priority: high" -H "Tags: lock" \
+  --data-raw "$HUTAN_EVENT_SESSION_TITLE: $HUTAN_EVENT_DETAIL" \
+  "http://ADDRESS/$(cat TOPIC)""#
+        .replace("ADDRESS", address)
+        .replace("TOPIC", home.join("ntfy-topic").to_str().unwrap());
+    format!(
+        "[[hooks]]\nname = \"Phone: an agent is waiting\"\non = {on}\nshell = true\nrun = [{command}]\nwhen_focused = false\n",
+        on = q(on),
+        command = q(command),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_ntfy_recipe_posts_the_kind_and_the_title_to_a_local_server() {
+    let home = tempfile::tempdir().unwrap();
+    fs::write(home.path().join("ntfy-topic"), "0123456789abcdef\n").unwrap();
+    let (address, rx) = local_ntfy();
+    let toml = ntfy_hook("approval.requested", &address, home.path());
+    let (env, work) = chat_env("approval-touch", move |_| toml).await;
+    let session = start_chat(
+        &env.client,
+        work.path(),
+        Some(ApprovalPolicy::Untrusted),
+        Some(SandboxMode::ReadOnly),
+    )
+    .await;
+    env.client
+        .chat_send(
+            session,
+            "Run `touch hi.txt` in a shell, then reply with the word done.",
+        )
+        .await
+        .unwrap();
+    let got = received(rx).await;
+    assert_eq!(got.request_line, "POST /0123456789abcdef HTTP/1.1");
+    assert_eq!(got.header("Title"), Some("Hutan: approval needed"));
+    assert_eq!(got.header("Priority"), Some("high"));
+    assert_eq!(got.header("Tags"), Some("lock"));
+    // The session's title and the approval's title: nothing of the conversation.
+    assert!(got.body.starts_with("fix the bug: "), "{}", got.body);
+    assert!(got.body.contains("touch hi.txt"), "{}", got.body);
+    assert!(got.body.chars().count() <= 120 + 2 + 240, "{}", got.body);
+    let hooks = wait_runs(&env.client, 0, 1).await;
+    assert_eq!(
+        hooks.hooks[0].last_run.as_ref().unwrap().outcome,
+        HookOutcome::Ok
+    );
+    env.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_title_that_starts_with_an_at_sign_is_sent_as_text_not_as_a_file() {
+    // `curl -d @file` would send the file; the recipe uses `--data-raw`.
+    let home = tempfile::tempdir().unwrap();
+    fs::write(home.path().join("ntfy-topic"), "topic\n").unwrap();
+    let secret = home.path().join("private.txt");
+    fs::write(&secret, "the contents of a private file").unwrap();
+    let (address, rx) = local_ntfy();
+    let toml = ntfy_hook("session.exited", &address, home.path());
+    let env = Env::start(move |_| toml).await;
+    exit_session(&env.client, None, 0, &format!("@{}", secret.display())).await;
+    let got = received(rx).await;
+    assert!(got.body.starts_with('@'), "{}", got.body);
+    assert!(
+        !got.body.contains("contents of a private file"),
+        "{}",
+        got.body
+    );
+    env.stop().await;
+}
