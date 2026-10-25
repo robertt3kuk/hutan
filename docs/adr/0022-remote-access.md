@@ -1,6 +1,6 @@
 # 0022. Remote and mobile access: SSH for hosts, a paired loopback web app for phones
 
-- Status: **proposed** (REMOTE-SPIKE, 2026-10-26; not accepted — see "Open for the user" below)
+- Status: **proposed** (REMOTE-SPIKE, 2026-10-26; not accepted — see "Open for the user" below). **R-1 implemented** (transport seam: generic stream in `client` and `daemon::conn`, `AuthenticatedPeer`, typed endpoints; nothing is exposed, no listener added — `docs/architecture.md` § Transport seam)
 - Date: 2026-10-26
 - Milestone: M9 (remote transport and mobile feasibility)
 - Builds on: ADR 0001 (daemon authoritative), ADR 0002 (frames, replay, bounded queues), ADR 0004 (credit-1 terminal pacing), ADR 0007 (notifications posted by the daemon), ADR 0008 (secrets only in Keychain), ADR 0009 (process survival), ADR 0015 (logins stay in harnesses), ADR 0016 (one control surface, `[control]`)
