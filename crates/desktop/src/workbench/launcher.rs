@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use gpui::{Context, KeyDownEvent, Window};
 use hutan_core::agent::ModelInfo;
-use hutan_core::{SafetyPreset, TaskId, WorkspaceId};
+use hutan_core::{Contain, SafetyPreset, TaskId, WorkspaceId};
 use hutan_protocol::chat::ChatCreate;
 use hutan_protocol::messages::{WorkspaceInfo, WorkspaceKind};
 use hutan_protocol::worktree::{WorktreeCreate, WorktreeInfo};
@@ -182,6 +182,25 @@ pub(crate) fn readiness_note(name: &str, readiness: &Readiness) -> Option<String
 /// lays the list out.
 pub(crate) const MODEL_REVEAL_FRAMES: u8 = 2;
 
+/// Why `harness` cannot honour `preset` on a daemon that does (or does not) offer Contain: its
+/// own table says so, or the preset's boundary is Hutan's Seatbelt and the daemon does not offer
+/// it (capability `sandbox`, protocol 0.52).
+pub(crate) fn preset_unavailable(
+    harness: &str,
+    preset: SafetyPreset,
+    sandbox_daemon: bool,
+) -> Option<String> {
+    match hutan_core::safety::plan(harness, preset) {
+        Err(reason) => Some(reason),
+        Ok(plan) if plan.needs_contain && !sandbox_daemon => Some(
+            "this hutand cannot contain a session (it predates protocol 0.52; restart it from \
+             Daemon → Restart)"
+                .to_owned(),
+        ),
+        Ok(_) => None,
+    }
+}
+
 /// One choice of the Safety row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SafetyChoice {
@@ -220,6 +239,14 @@ pub struct Launcher {
     pub(crate) safety_peek: Option<SafetyPreset>,
     /// The daemon takes `safety` on chats (capability `chat.safety`).
     pub(crate) safety_daemon: bool,
+    /// The daemon can run a session inside Hutan's Seatbelt (capability `sandbox`, protocol
+    /// 0.52): Contain for terminals and OMP, and OMP's *Contained* preset.
+    pub(crate) sandbox_daemon: bool,
+    /// The Contain row: run the session inside Hutan's Seatbelt boundary. Forced on by OMP's
+    /// *Contained* preset, which is that boundary.
+    pub(crate) contain: bool,
+    /// Whether a contained session may use the network (the row's second choice).
+    pub(crate) contain_network: bool,
     /// The row whose choices are open: ↑ ↓ change its value only then (↩ or Space opens it, Esc
     /// or Tab closes it), and ⌘↩ does not start while one is open.
     pub(crate) open_row: Option<LauncherStop>,
@@ -405,7 +432,61 @@ impl Launcher {
     pub fn effective_safety(&self) -> Option<SafetyPreset> {
         let harness = self.safety_harness()?;
         self.safety
-            .filter(|preset| hutan_core::safety::plan(harness, *preset).is_ok())
+            .filter(|preset| self.safety_unavailable(harness, *preset).is_none())
+    }
+
+    /// Why the harness cannot honour `preset` here ([`preset_unavailable`]).
+    fn safety_unavailable(&self, harness: &str, preset: SafetyPreset) -> Option<String> {
+        preset_unavailable(harness, preset, self.sandbox_daemon)
+    }
+
+    /// Whether the Contain row applies: the daemon offers it, and the session is a terminal,
+    /// a command, or an OMP chat or agent. Codex and Claude Code run their own sandbox, which
+    /// Seatbelt cannot nest in, so their *Contained* preset is the boundary there.
+    pub fn contain_available(&self) -> bool {
+        self.sandbox_daemon
+            && match (self.kind, &self.agent) {
+                (LaunchKind::Terminal | LaunchKind::Command, _) => true,
+                (LaunchKind::Chat | LaunchKind::TerminalAgent, LaunchAgent::Harness(id)) => {
+                    id == "omp"
+                }
+                _ => false,
+            }
+    }
+
+    /// The Contained preset is Hutan's Seatbelt for this harness: the row is on and stays on.
+    pub fn contain_forced(&self) -> bool {
+        self.contain_available()
+            && self.effective_safety().is_some_and(|preset| {
+                self.safety_harness().is_some_and(|harness| {
+                    hutan_core::safety::plan(harness, preset).is_ok_and(|plan| plan.needs_contain)
+                })
+            })
+    }
+
+    /// The session starts inside the boundary.
+    pub fn contain_on(&self) -> bool {
+        self.contain_available() && (self.contain || self.contain_forced())
+    }
+
+    /// What the sheet asks the daemon for: the boundary and its network choice.
+    pub fn contain_request(&self) -> Option<Contain> {
+        self.contain_on().then(|| Contain {
+            network: Some(self.contain_network),
+            extra_write: Vec::new(),
+        })
+    }
+
+    /// The honest sentence under the Contain row: what the boundary holds back and what it
+    /// leaves open, the wording the session chip uses afterwards.
+    pub fn contain_line(&self) -> String {
+        if self.contain_on() {
+            let mut line = hutan_core::summary_line(self.contain_network);
+            line[..1].make_ascii_uppercase();
+            format!("{line}.")
+        } else {
+            "No boundary: the session can write wherever you can.".to_owned()
+        }
     }
 
     /// The Safety row's choices for the harness: each preset, and why it is not available.
@@ -417,7 +498,7 @@ impl Launcher {
             .into_iter()
             .map(|preset| SafetyChoice {
                 preset,
-                unavailable: hutan_core::safety::plan(harness, preset).err(),
+                unavailable: self.safety_unavailable(harness, preset),
             })
             .collect()
     }
@@ -433,7 +514,7 @@ impl Launcher {
     pub fn safety_line(&self) -> Option<(String, bool)> {
         let harness = self.safety_harness()?;
         if let Some(peek) = self.safety_peek
-            && let Err(reason) = hutan_core::safety::plan(harness, peek)
+            && let Some(reason) = self.safety_unavailable(harness, peek)
         {
             return Some((
                 format!("{} is not available: {reason}.", peek.label()),
@@ -442,7 +523,7 @@ impl Launcher {
         }
         let chosen = self.safety;
         if let Some(preset) = chosen
-            && let Err(reason) = hutan_core::safety::plan(harness, preset)
+            && let Some(reason) = self.safety_unavailable(harness, preset)
         {
             return Some((
                 format!(
@@ -592,6 +673,7 @@ impl Launcher {
             .then(|| self.account.clone())
             .flatten(),
             safety: self.effective_safety(),
+            contain: self.contain_request(),
             // A plain terminal is not described: a title typed before switching is not used.
             title: if self.kind.has_task_fields() {
                 self.title.text().to_owned()
@@ -1178,6 +1260,9 @@ impl Workbench {
                 .preset(),
             safety_peek: None,
             safety_daemon: self.sessions.read(cx).supports_chat_safety(),
+            sandbox_daemon: self.sessions.read(cx).supports_sandbox(),
+            contain: false,
+            contain_network: true,
             open_row: None,
             model_scroll: gpui::ScrollHandle::new(),
             model_reveal: std::cell::Cell::new(0),
@@ -1460,7 +1545,7 @@ impl Workbench {
         let Some(harness) = launcher.safety_harness().map(str::to_owned) else {
             return;
         };
-        if hutan_core::safety::plan(&harness, preset).is_ok() {
+        if launcher.safety_unavailable(&harness, preset).is_none() {
             launcher.safety = Some(preset);
             launcher.safety_peek = None;
         } else {
@@ -1469,6 +1554,40 @@ impl Workbench {
         launcher.error = None;
         launcher.confirm = None;
         cx.notify();
+    }
+
+    /// Turns the Contain row on or off (terminals, commands, OMP). Not while the *Contained*
+    /// preset forces it on: that preset is this boundary.
+    pub fn launcher_set_contain(&mut self, on: bool, cx: &mut Context<Self>) {
+        let Some(launcher) = &mut self.launcher else {
+            return;
+        };
+        if launcher.starting || !launcher.contain_available() || launcher.contain_forced() {
+            return;
+        }
+        launcher.contain = on;
+        launcher.error = None;
+        launcher.confirm = None;
+        cx.notify();
+    }
+
+    /// Whether a contained session may use the network.
+    pub fn launcher_set_contain_network(&mut self, network: bool, cx: &mut Context<Self>) {
+        let Some(launcher) = &mut self.launcher else {
+            return;
+        };
+        if launcher.starting || !launcher.contain_available() {
+            return;
+        }
+        launcher.contain_network = network;
+        launcher.error = None;
+        launcher.confirm = None;
+        cx.notify();
+    }
+
+    /// What the sheet would ask the daemon to contain (tests, inspection).
+    pub fn launcher_contain(&self) -> Option<Contain> {
+        self.launcher.as_ref().and_then(Launcher::contain_request)
     }
 
     /// The preset the sheet would start with (tests, inspection).
@@ -2756,5 +2875,32 @@ mod start_warning_tests {
         let shown = short_start_warning(&long);
         assert_eq!(shown.chars().count(), 81);
         assert!(shown.ends_with('…'));
+    }
+}
+
+#[cfg(test)]
+mod contain_tests {
+    use hutan_core::SafetyPreset;
+
+    use super::preset_unavailable;
+
+    #[test]
+    fn omp_contained_needs_a_daemon_that_offers_contain_and_nothing_else_does() {
+        assert_eq!(
+            preset_unavailable("omp", SafetyPreset::Contained, true),
+            None
+        );
+        let reason = preset_unavailable("omp", SafetyPreset::Contained, false).unwrap();
+        assert!(reason.contains("protocol 0.52"), "{reason}");
+        for agent in ["codex", "claude"] {
+            for preset in SafetyPreset::ALL {
+                assert_eq!(
+                    preset_unavailable(agent, preset, false),
+                    None,
+                    "{agent} {preset}: their own sandbox needs no Contain"
+                );
+            }
+        }
+        assert_eq!(preset_unavailable("omp", SafetyPreset::Ask, false), None);
     }
 }

@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use common::{TestDaemon, draw, open_options, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
-use hutan_core::{SafetyPreset, Task, TaskPlacementKind, TaskRun, TaskState, WorkspaceId};
+use hutan_core::{Contain, SafetyPreset, Task, TaskPlacementKind, TaskRun, TaskState, WorkspaceId};
 use hutan_desktop::harness_install::FakeRunner;
 use hutan_desktop::sessions::launch::{LaunchKind, shell_argv, user_shell};
 use hutan_desktop::workbench::actions;
@@ -1981,20 +1981,11 @@ fn the_safety_row_offers_what_the_harness_can_honour_and_says_why_not(cx: &mut T
     draw(cx);
     assert!(region(&view, cx, Region::LauncherItem("safety", 0)));
 
-    // OMP has no OS sandbox: Contained is dimmed, with the reason, and cannot be picked.
+    // OMP has no OS sandbox of its own: Contained is Hutan's Seatbelt, which this daemon offers.
     let choices = safety_choices(&view, cx);
     let labels: Vec<_> = choices.iter().map(|(label, _)| *label).collect();
     assert_eq!(labels, ["Ask", "Contained", "Read-only", "Full access"]);
-    assert_eq!(choices[0].1, None);
-    assert!(
-        choices[1]
-            .1
-            .as_deref()
-            .is_some_and(|r| r.contains("no OS sandbox")),
-        "{choices:?}"
-    );
-    assert_eq!(choices[2].1, None);
-    assert_eq!(choices[3].1, None);
+    assert!(choices.iter().all(|(_, why)| why.is_none()), "{choices:?}");
     assert_eq!(
         safety_of(&view, cx),
         None,
@@ -2006,16 +1997,27 @@ fn the_safety_row_offers_what_the_harness_can_honour_and_says_why_not(cx: &mut T
         "{line}"
     );
 
+    // Contained for OMP is the boundary itself: the Contain row is on, stays on, and the line
+    // says what it holds back and what it leaves open.
+    assert_eq!(view.read_with(cx, |wb, _| wb.launcher_contain()), None);
     click_safety(&view, cx, 1);
-    assert_eq!(
-        safety_of(&view, cx),
-        None,
-        "an unavailable preset is not picked"
-    );
+    assert_eq!(safety_of(&view, cx), Some(SafetyPreset::Contained));
     let (line, warning) = safety_line(&view, cx).unwrap();
     assert!(
-        line.starts_with("Contained is not available") && line.contains("SANDBOX-2") && warning,
+        line.contains("Seatbelt") && line.contains("still read your files") && !warning,
         "{line}"
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.launcher_contain()),
+        Some(Contain {
+            network: Some(true),
+            extra_write: Vec::new()
+        })
+    );
+    view.update(cx, |wb, cx| wb.launcher_set_contain(false, cx));
+    assert!(
+        view.read_with(cx, |wb, _| wb.launcher_contain()).is_some(),
+        "Contained is this boundary: it cannot be turned off under it"
     );
 
     click_safety(&view, cx, 2);
@@ -2140,8 +2142,7 @@ fn launcher_safety_in_the_settings_is_the_rows_starting_choice_and_an_unavailabl
     chat_ready(&view, cx);
     assert_eq!(safety_of(&view, cx), Some(SafetyPreset::ReadOnly));
 
-    // The same default `contained` cannot apply to OMP: the chat starts with OMP's own settings
-    // and the sheet says so; Claude Code honours it.
+    // `contained` is a default OMP honours too (Hutan's Seatbelt); so does Claude Code.
     store
         .write_user("launcher.safety", toml::Value::String("contained".into()))
         .unwrap();
@@ -2157,14 +2158,202 @@ fn launcher_safety_in_the_settings_is_the_rows_starting_choice_and_an_unavailabl
         },
     );
     chat_ready(&view, cx);
-    assert_eq!(safety_of(&view, cx), None);
-    let (line, warning) = safety_line(&view, cx).unwrap();
-    assert!(
-        line.starts_with("Contained is not available for this agent") && warning,
-        "{line}"
-    );
+    assert_eq!(safety_of(&view, cx), Some(SafetyPreset::Contained));
+    assert!(view.read_with(cx, |wb, _| wb.launcher_contain()).is_some());
     view.update(cx, |wb, cx| {
         wb.launcher_choose_agent(LaunchAgent::Harness("claude".into()), cx)
     });
     assert_eq!(safety_of(&view, cx), Some(SafetyPreset::Contained));
+}
+
+// SANDBOX-2: the Contain row --------------------------------------------------------------------
+
+fn contain_of(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<Contain> {
+    view.read_with(cx, |wb, _| wb.launcher_contain())
+}
+
+fn contain_line(view: &Entity<Workbench>, cx: &VisualTestContext) -> String {
+    view.read_with(cx, |wb, _| wb.launcher().unwrap().contain_line())
+}
+
+#[gpui::test]
+fn an_omp_chat_started_contained_carries_the_boundary_in_its_task(cx: &mut TestAppContext) {
+    let env = Env::both();
+    let (view, cx) = open(cx, &env);
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            prompt: Some("Refactor the parser".into()),
+            queue: true,
+            kind: Some(LaunchKind::Chat),
+            ..LauncherPreset::default()
+        },
+    );
+    chat_ready(&view, cx);
+    draw(cx);
+    // The row is there for OMP: Off, Contained, and the network choice once it is on.
+    assert!(region(&view, cx, Region::LauncherItem("contain", 0)));
+    assert_eq!(contain_of(&view, cx), None);
+    click_safety(&view, cx, 1);
+    draw(cx);
+    assert_eq!(safety_of(&view, cx), Some(SafetyPreset::Contained));
+    assert_eq!(
+        contain_line(&view, cx),
+        "Writes limited to this worktree · can read your files · network on."
+    );
+    view.update(cx, |wb, cx| wb.launcher_set_contain_network(false, cx));
+    assert_eq!(
+        contain_line(&view, cx),
+        "Writes limited to this worktree · can read your files · network off."
+    );
+    click(&view, cx, Region::Launcher("start"));
+    wait_until(cx, "the task to exist", |_| {
+        env.task("Refactor the parser").is_some()
+    });
+    assert_eq!(
+        env.task("Refactor the parser").unwrap().run,
+        Some(TaskRun::Chat {
+            contain: Some(Contain {
+                network: Some(false),
+                extra_write: Vec::new()
+            }),
+            agent: "omp".into(),
+            model: None,
+            account: None,
+            safety: Some(SafetyPreset::Contained),
+        })
+    );
+}
+
+#[gpui::test]
+fn a_command_a_plain_terminal_and_a_terminal_agent_can_be_contained(cx: &mut TestAppContext) {
+    let env = Env::both();
+    let (view, cx) = open(cx, &env);
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            kind: Some(LaunchKind::Command),
+            queue: true,
+            ..LauncherPreset::default()
+        },
+    );
+    ready(&view, cx);
+    draw(cx);
+    assert!(region(&view, cx, Region::LauncherItem("contain", 0)));
+    assert_eq!(contain_of(&view, cx), None);
+    assert!(contain_line(&view, cx).starts_with("No boundary"));
+    view.update(cx, |wb, cx| {
+        wb.launcher_set_field(LauncherField::Command, "cargo test", cx);
+        wb.launcher_set_contain(true, cx);
+        wb.launcher_set_contain_network(false, cx);
+    });
+    assert_eq!(
+        contain_of(&view, cx),
+        Some(Contain {
+            network: Some(false),
+            extra_write: Vec::new()
+        })
+    );
+    click(&view, cx, Region::Launcher("start"));
+    wait_until(cx, "the task to exist", |_| {
+        env.task("cargo test").is_some()
+    });
+    assert_eq!(
+        env.task("cargo test").unwrap().run,
+        Some(TaskRun::Terminal {
+            contain: Some(Contain {
+                network: Some(false),
+                extra_write: Vec::new()
+            }),
+            argv: shell_argv(&user_shell(), "cargo test"),
+        })
+    );
+    wait_until(cx, "the sheet to close", |cx| !launcher_open(&view, cx));
+
+    // A plain terminal has no run of its own; contained, it is the login shell in the boundary.
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            kind: Some(LaunchKind::Terminal),
+            ..LauncherPreset::default()
+        },
+    );
+    ready(&view, cx);
+    assert_eq!(
+        contain_of(&view, cx),
+        None,
+        "a new sheet starts uncontained"
+    );
+    view.update(cx, |wb, cx| wb.launcher_set_contain(true, cx));
+    let request = view.read_with(cx, |wb, _| {
+        wb.launcher()
+            .unwrap()
+            .create_request(env.api_id, "terminal")
+            .unwrap()
+    });
+    assert_eq!(
+        request.run,
+        Some(TaskRun::Terminal {
+            contain: Some(Contain {
+                network: Some(true),
+                extra_write: Vec::new()
+            }),
+            argv: vec![user_shell(), "-l".into()],
+        })
+    );
+    view.update(cx, |wb, cx| wb.launcher_set_contain(false, cx));
+    let request = view.read_with(cx, |wb, _| {
+        wb.launcher()
+            .unwrap()
+            .create_request(env.api_id, "terminal")
+            .unwrap()
+    });
+    assert_eq!(request.run, None, "uncontained, as before");
+
+    // A terminal agent: OMP's Contained is the flag and the boundary; Claude Code has its own
+    // sandbox and no Contain row.
+    view.update(cx, |wb, cx| {
+        wb.launcher_set_kind(LaunchKind::TerminalAgent, cx);
+        wb.launcher_choose_agent(LaunchAgent::Harness("omp".into()), cx);
+        wb.launcher_set_field(LauncherField::Prompt, "fix it", cx);
+    });
+    ready(&view, cx);
+    draw(cx);
+    click_safety(&view, cx, 1);
+    let request = view.read_with(cx, |wb, _| {
+        wb.launcher()
+            .unwrap()
+            .create_request(env.api_id, "omp")
+            .unwrap()
+    });
+    assert_eq!(
+        request.run,
+        Some(TaskRun::Terminal {
+            contain: Some(Contain {
+                network: Some(true),
+                extra_write: Vec::new()
+            }),
+            argv: ["omp", "--approval-mode", "yolo", "fix it"]
+                .map(String::from)
+                .to_vec(),
+        })
+    );
+    view.update(cx, |wb, cx| {
+        wb.launcher_choose_agent(LaunchAgent::Harness("claude".into()), cx)
+    });
+    assert_eq!(
+        contain_of(&view, cx),
+        None,
+        "Claude Code's sandbox is its own"
+    );
+    assert!(
+        !view.read_with(cx, |wb, _| wb.launcher().unwrap().contain_available()),
+        "no row where Seatbelt would nest"
+    );
 }

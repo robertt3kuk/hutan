@@ -1772,8 +1772,8 @@ pub struct LauncherSettings {
     /// it. Off: Start sends at once. Plain terminals, commands and queued tasks never ask.
     pub confirm_agent_start: bool,
     /// The Safety row's starting choice for chats and terminal agents: `off` (the harness's own
-    /// settings), `ask`, `contained` or `read_only`. A harness that cannot honour it (OMP has
-    /// no OS sandbox, so no `contained`) starts as `off` and the sheet says why. Put it in a
+    /// settings), `ask`, `contained` or `read_only`. A harness that cannot honour it (or, for
+    /// OMP's `contained`, a daemon without Contain) starts as `off` and the sheet says why. Put it in a
     /// project's `.hutan/settings.toml` to set it for that project; *Full access* is never a
     /// default.
     pub safety: LauncherSafety,

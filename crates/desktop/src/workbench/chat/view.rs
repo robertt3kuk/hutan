@@ -809,11 +809,15 @@ impl ChatView {
         // `UX-MODE-CHIP` (protocol 0.34): the mode a harness reports, read only.
         // A chat started with a safety preset (protocol 0.51) says what the harness reported of
         // it instead, mode included: one chip, not two that could disagree.
-        let mode = chat.and_then(safety_chip).or_else(|| {
-            chat.filter(|chat| is_harness_chat(&chat.agent))
-                .filter(|_| self.sessions.read(cx).supports_chat_mode())
-                .map(mode_chip)
-        });
+        let contained = info.containment.as_ref();
+        let mode = chat
+            .and_then(|chat| safety_chip(chat, contained))
+            .or_else(|| contained.map(containment_chip))
+            .or_else(|| {
+                chat.filter(|chat| is_harness_chat(&chat.agent))
+                    .filter(|_| self.sessions.read(cx).supports_chat_mode())
+                    .map(mode_chip)
+            });
         // Direct and harness chats can change their model (`chat.set_model`), between turns.
         let switchable =
             chat.is_some_and(|chat| is_gateway_chat(&chat.agent) || is_harness_chat(&chat.agent));
@@ -1859,7 +1863,10 @@ pub fn mode_chip(chat: &hutan_protocol::chat::ChatInfo) -> ModeChip {
 ///   `Ask · requested` (OMP reports neither its approval mode nor its tool list);
 /// - *Full access*: a warning, `Full access · no boundary`;
 /// - not confirmed (the harness reported something else): a warning, `Contained · not applied`.
-pub fn safety_chip(chat: &hutan_protocol::chat::ChatInfo) -> Option<ModeChip> {
+pub fn safety_chip(
+    chat: &hutan_protocol::chat::ChatInfo,
+    containment: Option<&hutan_core::Containment>,
+) -> Option<ModeChip> {
     let safety = chat.safety.as_ref()?;
     let label = safety.preset.label();
     let full = safety.preset.is_full_access();
@@ -1910,6 +1917,12 @@ pub fn safety_chip(chat: &hutan_protocol::chat::ChatInfo) -> Option<ModeChip> {
                 parts.push("sandbox requested".to_owned());
             }
         }
+        _ if safety.enforced_by == hutan_core::SafetyEnforcer::Hutan => {
+            // Hutan's own boundary: the chip names what it holds back and what it leaves open.
+            parts.push(
+                containment.map_or_else(|| "Seatbelt".to_owned(), hutan_core::Containment::summary),
+            );
+        }
         _ => parts.push("requested".to_owned()),
     }
     Some(ModeChip {
@@ -1917,6 +1930,37 @@ pub fn safety_chip(chat: &hutan_protocol::chat::ChatInfo) -> Option<ModeChip> {
         tooltip: tooltip(&format!("{label}: what the agent reported it enforces.")),
         warning: false,
     })
+}
+
+/// What a session says of the boundary Hutan put around it (protocol 0.52, ADR 0021 decision 6):
+/// *writes limited to this worktree · can read your files · network off*, never a bare
+/// "secure". A boundary that was asked for and is not there is a warning with the reason.
+pub fn containment_chip(containment: &hutan_core::Containment) -> ModeChip {
+    if !containment.applied {
+        return ModeChip {
+            text: containment.summary(),
+            tooltip: "The session asked for Hutan's Seatbelt boundary and does not have it: it \
+                      was not started uncontained."
+                .to_owned(),
+            warning: true,
+        };
+    }
+    let roots = containment
+        .write_roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    ModeChip {
+        text: containment.summary(),
+        tooltip: format!(
+            "Hutan's Seatbelt boundary ({}). The process can write only in {roots} and the temp \
+             folders; what it is refused fails with \"Operation not permitted\". Reads stay open \
+             except credential folders and Hutan's own data.",
+            containment.kind.label()
+        ),
+        warning: false,
+    }
 }
 
 #[cfg(test)]
@@ -1967,18 +2011,21 @@ mod safety_chip_tests {
             None,
         );
         info.safety = None;
-        assert!(safety_chip(&info).is_none());
+        assert!(safety_chip(&info, None).is_none());
     }
 
     #[test]
     fn codex_says_its_sandbox_and_network_as_it_reported_them() {
-        let chip = safety_chip(&chat(
-            "codex",
-            SafetyPreset::Contained,
-            SafetyEnforcer::Harness,
-            Some(false),
+        let chip = safety_chip(
+            &chat(
+                "codex",
+                SafetyPreset::Contained,
+                SafetyEnforcer::Harness,
+                Some(false),
+                None,
+            ),
             None,
-        ))
+        )
         .unwrap();
         assert_eq!(chip.text, "Contained · workspace-write · network off");
         assert!(!chip.warning);
@@ -1997,7 +2044,7 @@ mod safety_chip_tests {
             ),
         );
         info.mode = Some(ChatMode::new("acceptEdits", Some("Accept Edits".into())));
-        let chip = safety_chip(&info).unwrap();
+        let chip = safety_chip(&info, None).unwrap();
         assert_eq!(chip.text, "Contained · Accept Edits · sandbox requested");
         assert!(chip.tooltip.contains("does not report it back"));
         assert!(!chip.warning);
@@ -2005,39 +2052,91 @@ mod safety_chip_tests {
 
     #[test]
     fn omp_says_requested_because_it_reports_nothing_back() {
-        let chip = safety_chip(&chat(
-            "omp",
-            SafetyPreset::Ask,
-            SafetyEnforcer::Harness,
-            None,
-            Some(
-                "The approval mode was passed on OMP's command line; OMP does not report it back.",
+        let chip = safety_chip(
+            &chat(
+                "omp",
+                SafetyPreset::Ask,
+                SafetyEnforcer::Harness,
+                None,
+                Some(
+                    "The approval mode was passed on OMP's command line; OMP does not report it back.",
+                ),
             ),
-        ))
+            None,
+        )
         .unwrap();
         assert_eq!(chip.text, "Ask · requested");
         assert!(!chip.warning);
     }
 
     #[test]
+    fn omp_contained_names_the_boundary_and_its_holes_from_what_was_applied() {
+        let boundary = hutan_core::Containment {
+            kind: hutan_core::ContainKind::Seatbelt,
+            network: false,
+            write_roots: vec!["/work/repo".into()],
+            applied: true,
+            reason: None,
+        };
+        let chip = safety_chip(
+            &chat(
+                "omp",
+                SafetyPreset::Contained,
+                SafetyEnforcer::Hutan,
+                Some(false),
+                None,
+            ),
+            Some(&boundary),
+        )
+        .unwrap();
+        assert_eq!(
+            chip.text,
+            "Contained · writes limited to this worktree · can read your files · network off"
+        );
+        assert!(!chip.warning);
+        assert!(!chip.text.to_lowercase().contains("secure"));
+        let plain = super::containment_chip(&boundary);
+        assert_eq!(
+            plain.text,
+            "writes limited to this worktree · can read your files · network off"
+        );
+        assert!(
+            plain.tooltip.contains("/work/repo")
+                && plain.tooltip.contains("Operation not permitted")
+        );
+        let refused = super::containment_chip(&hutan_core::Containment {
+            applied: false,
+            reason: Some("sandbox-exec is missing".into()),
+            ..boundary
+        });
+        assert!(refused.warning && refused.text.starts_with("not contained: "));
+    }
+
+    #[test]
     fn full_access_and_an_unconfirmed_preset_are_warnings() {
-        let full = safety_chip(&chat(
-            "codex",
-            SafetyPreset::Full,
-            SafetyEnforcer::None,
-            Some(true),
+        let full = safety_chip(
+            &chat(
+                "codex",
+                SafetyPreset::Full,
+                SafetyEnforcer::None,
+                Some(true),
+                None,
+            ),
             None,
-        ))
+        )
         .unwrap();
         assert_eq!(full.text, "Full access · no boundary");
         assert!(full.warning);
-        let unapplied = safety_chip(&chat(
-            "claude",
-            SafetyPreset::Contained,
-            SafetyEnforcer::None,
+        let unapplied = safety_chip(
+            &chat(
+                "claude",
+                SafetyPreset::Contained,
+                SafetyEnforcer::None,
+                None,
+                Some("Not applied: Claude Code is in mode default (asked for acceptEdits)"),
+            ),
             None,
-            Some("Not applied: Claude Code is in mode default (asked for acceptEdits)"),
-        ))
+        )
         .unwrap();
         assert_eq!(unapplied.text, "Contained · not applied");
         assert!(unapplied.warning);

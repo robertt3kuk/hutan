@@ -111,6 +111,16 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
                 help: "",
                 keys: &["finish.push"],
             },
+            Section {
+                title: words::SEC_CONTAIN,
+                help: words::SEC_CONTAIN_HELP,
+                keys: &[
+                    "sandbox.network",
+                    "sandbox.extra_write",
+                    "sandbox.read_deny",
+                    "sandbox.bin",
+                ],
+            },
         ],
         "history" => &[
             Section {

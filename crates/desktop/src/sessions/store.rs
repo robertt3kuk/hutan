@@ -2312,6 +2312,12 @@ impl SessionsStore {
         self.connection.supports_chat_safety()
     }
 
+    /// Whether the daemon can run a session inside Hutan's Seatbelt boundary (capability
+    /// `sandbox`, protocol 0.52).
+    pub fn supports_sandbox(&self) -> bool {
+        self.connection.supports_sandbox()
+    }
+
     /// Whether the daemon can mute a session's notifications.
     pub fn supports_mute(&self) -> bool {
         self.connection.supports_notify_mute()

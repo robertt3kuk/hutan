@@ -102,6 +102,9 @@ pub struct LaunchValues {
     /// The safety preset (protocol 0.51) of a chat, or the flags of a terminal agent; none: the
     /// harness's own settings. Never set for a direct chat, a command or a plain terminal.
     pub safety: Option<SafetyPreset>,
+    /// Run the session inside Hutan's Seatbelt boundary (protocol 0.52); none: no boundary.
+    /// Only set for a plain terminal, a command, a terminal agent or a chat with OMP.
+    pub contain: Option<hutan_core::Contain>,
     pub title: String,
     pub prompt: String,
     /// The command of [`LaunchKind::Command`]: shell text, run by [`shell_argv`].
@@ -271,25 +274,30 @@ pub fn build_create(
                 ));
             }
             Some(TaskRun::Chat {
-                contain: None,
                 agent: values.agent.clone(),
                 model: values.model.clone(),
                 account: values.account.clone(),
                 safety: values.safety,
+                contain: values.contain.clone(),
             })
         }
         LaunchKind::TerminalAgent => Some(TaskRun::Terminal {
-            contain: None,
+            contain: values.contain.clone(),
             argv: terminal_agent_argv(&values.agent, prompt, values.safety)?,
         }),
-        LaunchKind::Terminal => None,
+        // A contained terminal is a run of its own: the login shell, started like a terminal
+        // with no command, inside the boundary.
+        LaunchKind::Terminal => values.contain.clone().map(|contain| TaskRun::Terminal {
+            contain: Some(contain),
+            argv: vec![values.shell.clone(), "-l".to_owned()],
+        }),
         LaunchKind::Command => {
             let command = values.command.trim();
             if command.is_empty() {
                 return Err("Type the command to run.".to_owned());
             }
             Some(TaskRun::Terminal {
-                contain: None,
+                contain: values.contain.clone(),
                 argv: shell_argv(&values.shell, command),
             })
         }
@@ -351,6 +359,7 @@ mod tests {
 
     fn values() -> LaunchValues {
         LaunchValues {
+            contain: None,
             kind: LaunchKind::Terminal,
             agent: "omp".into(),
             model: None,
@@ -545,18 +554,72 @@ mod tests {
         let claude = argv("claude", Some(SafetyPreset::Contained));
         assert_eq!(claude[..3], ["claude", "--permission-mode", "acceptEdits"]);
         assert_eq!(claude.last().map(String::as_str), Some("fix it"));
+        // OMP's Contained is its approval flag plus Hutan's Seatbelt, which rides in the run.
+        assert_eq!(
+            argv("omp", Some(SafetyPreset::Contained)),
+            ["omp", "--approval-mode", "yolo", "fix it"]
+        );
         // A harness that cannot honour the preset is an error, never a plain start.
         let error = build(&LaunchValues {
             kind: LaunchKind::TerminalAgent,
-            agent: "omp".into(),
+            agent: "gemini".into(),
             prompt: "fix it".into(),
             safety: Some(SafetyPreset::Contained),
             ..values()
         })
         .unwrap_err();
         assert!(
-            error.contains("Contained") && error.contains("no OS sandbox"),
+            error.contains("Contained") && error.contains("no sandbox Hutan can switch on"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn contain_rides_in_the_run_of_every_kind_that_can_have_it() {
+        let contain = hutan_core::Contain {
+            network: Some(false),
+            extra_write: Vec::new(),
+        };
+        let run = |values: LaunchValues| build(&values).unwrap().run;
+        // A plain terminal has no run until it is contained: then it is the login shell.
+        assert_eq!(run(values()), None);
+        assert_eq!(
+            run(LaunchValues {
+                contain: Some(contain.clone()),
+                ..values()
+            }),
+            Some(TaskRun::Terminal {
+                contain: Some(contain.clone()),
+                argv: vec!["/bin/zsh".into(), "-l".into()],
+            })
+        );
+        assert_eq!(
+            run(LaunchValues {
+                kind: LaunchKind::Command,
+                command: "cargo test".into(),
+                contain: Some(contain.clone()),
+                ..values()
+            }),
+            Some(TaskRun::Terminal {
+                contain: Some(contain.clone()),
+                argv: shell_argv("/bin/zsh", "cargo test"),
+            })
+        );
+        assert_eq!(
+            run(LaunchValues {
+                kind: LaunchKind::Chat,
+                prompt: "go".into(),
+                safety: Some(SafetyPreset::Contained),
+                contain: Some(contain.clone()),
+                ..values()
+            }),
+            Some(TaskRun::Chat {
+                agent: "omp".into(),
+                model: None,
+                account: None,
+                safety: Some(SafetyPreset::Contained),
+                contain: Some(contain),
+            })
         );
     }
 

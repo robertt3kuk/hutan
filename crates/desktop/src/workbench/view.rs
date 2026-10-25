@@ -387,6 +387,8 @@ pub enum Region {
     Recovery(&'static str),
     /// A control of the "agent not recognised" strip of a terminal (`strip`, `track`).
     Untracked(&'static str),
+    /// The containment chip of a terminal (`chip`): what Hutan's Seatbelt holds back (protocol 0.52).
+    Contain(&'static str),
     /// A control of row `index` of the restart summary: `open`, `action` (Retry last message or
     /// Restart), `dismiss`.
     RecoveryRow(usize, &'static str),

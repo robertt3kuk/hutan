@@ -250,7 +250,7 @@ fn a_chat_started_with_a_preset_draws_the_safety_chip_the_daemon_reported(cx: &m
             .session(created.session.id)
             .and_then(|s| s.chat.clone())
             .unwrap();
-        hutan_desktop::workbench::chat::safety_chip(&chat).unwrap()
+        hutan_desktop::workbench::chat::safety_chip(&chat, None).unwrap()
     });
     assert_eq!(chip.text, "Full access · no boundary");
     assert!(chip.warning, "Full access is drawn as a warning");

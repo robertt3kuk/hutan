@@ -846,7 +846,7 @@ const FIELDS: &[FieldText] = &[
         "launcher",
         "safety",
         "Safety the Start sheet opens on",
-        "What the Safety row of the Start sheet starts on for agent chats and terminal agents: Off leaves the agent's own approval and sandbox settings alone; Ask, Contained (the agent's own sandbox, no questions inside it) and Read-only choose a preset. An agent that cannot honour it (OMP has no OS sandbox, so no Contained) starts on Off and the sheet says why. Full access is never a default. Put the key in a project's .hutan/settings.toml to set it for that project.",
+        "What the Safety row of the Start sheet starts on for agent chats and terminal agents: Off leaves the agent's own approval and sandbox settings alone; Ask, Contained (no questions inside a boundary: the agent's own sandbox, or Hutan's Seatbelt for OMP) and Read-only choose a preset. An agent that cannot honour it starts on Off and the sheet says why. Full access is never a default. Put the key in a project's .hutan/settings.toml to set it for that project.",
         &[
             ("off", "Off (the agent's own settings)"),
             ("ask", "Ask"),
@@ -1125,6 +1125,31 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "finish.push",
         "Push after Finish",
         "Finish in Changes commits (and merges a worktree), then pushes the branch to its upstream with your own git credentials; it never force-pushes. Off, the commit stays on this Mac until you push it yourself. Agents can never Finish.",
+    ),
+    // ---- Contain (ADR 0021; Settings → Agent control & security → Contain) ----
+    field(
+        "daemon",
+        "sandbox.network",
+        "Network inside Contain",
+        "Whether a contained session (a terminal, a command or an OMP chat that you started with Contain on) may use the network when its Start sheet does not say. Off also closes every unix socket. Contain limits where a session can write; it does not stop it reading your files. Read when hutand starts.",
+    ),
+    field(
+        "daemon",
+        "sandbox.extra_write",
+        "Folders a contained session may also write",
+        "Besides its worktree, the repository's git directory (hooks and config stay read-only) and the temp folders: for example ~/.cargo for builds. One folder per line; ~ is your home folder. Read when hutand starts.",
+    ),
+    field(
+        "daemon",
+        "sandbox.read_deny",
+        "Folders a contained session cannot read",
+        "Credential folders by default: ~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gh, ~/.netrc and the Keychain folder. Hutan's own data folder is always closed. Everything else stays readable. Read when hutand starts.",
+    ),
+    field(
+        "daemon",
+        "sandbox.bin",
+        "Seatbelt tool",
+        "The program that applies the boundary; empty is /usr/bin/sandbox-exec. Contain refuses to start a session when it cannot apply a profile, so a wrong path stops contained sessions instead of leaving them uncontained. Read when hutand starts.",
     ),
     // ---- checkpoints (ADR 0019; Settings → Agents & tools → Checkpoints, CK-5) ----
     field(
@@ -1695,6 +1720,8 @@ pub mod words {
         SEC_MCP = "MCP servers";
         SEC_LIMITS = "Limits";
         SEC_FINISH = "Finish";
+        SEC_CONTAIN = "Contain";
+        SEC_CONTAIN_HELP = "Hutan's own Seatbelt boundary for terminals, commands and OMP chats. Writes stay in the worktree; reads stay open except credential folders.";
         SEC_WORKTREES = "Worktrees";
         SEC_CHECKPOINTS = "Checkpoints";
         SEC_CHECKPOINTS_HELP = "What an agent chat's turns record, so their files can be rewound (Rewind… in a turn's footer).";

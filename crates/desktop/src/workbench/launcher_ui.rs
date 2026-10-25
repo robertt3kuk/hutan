@@ -1040,6 +1040,78 @@ impl Workbench {
             );
         }
 
+        // ---- Contain (protocol 0.52): Hutan's Seatbelt around a terminal, a command or OMP ----
+        if launcher.contain_available() {
+            let forced = launcher.contain_forced();
+            let on = launcher.contain_on();
+            let network = launcher.contain_network;
+            let mut choices = div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(tokens.spacing * 2.0));
+            for (at, (label, value)) in [("Off", false), ("Contained", true)]
+                .into_iter()
+                .enumerate()
+            {
+                choices = choices.child(
+                    ui::choice(
+                        id(format!(
+                            "launch-contain-{}",
+                            if value { "on" } else { "off" }
+                        )),
+                        label,
+                        on == value,
+                        &theme,
+                        &tokens,
+                    )
+                    .relative()
+                    .when(forced && !value, |s| s.opacity(0.55))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.launcher_set_contain(value, cx);
+                    }))
+                    .child(probe(&self.regions, Region::LauncherItem("contain", at))),
+                );
+            }
+            if on {
+                for (at, (label, value)) in [("Network on", true), ("Network off", false)]
+                    .into_iter()
+                    .enumerate()
+                {
+                    choices = choices.child(
+                        ui::choice(
+                            id(format!(
+                                "launch-contain-network-{}",
+                                if value { "on" } else { "off" }
+                            )),
+                            label,
+                            network == value,
+                            &theme,
+                            &tokens,
+                        )
+                        .relative()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.launcher_set_contain_network(value, cx);
+                        }))
+                        .child(probe(
+                            &self.regions,
+                            Region::LauncherItem("contain-network", at),
+                        )),
+                    );
+                }
+            }
+            let body = div()
+                .flex()
+                .flex_col()
+                .gap(px(tokens.spacing))
+                .child(choices)
+                .child(
+                    note(launcher.contain_line(), theme.muted)
+                        .child(probe(&self.regions, Region::Launcher("contain-line"))),
+                );
+            where_rows.push(row("Contain", body.into_any_element()).into_any_element());
+        }
+
         // ---- Title ----
         let title_row = row(
             "Title",

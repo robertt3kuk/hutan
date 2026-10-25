@@ -1276,7 +1276,56 @@ impl Workbench {
         {
             root = root.child(strip);
         }
+        if let Some(chip) = self.render_terminal_containment(id, cx) {
+            root = root.child(chip);
+        }
         root.into_any_element()
+    }
+
+    /// What the boundary around this terminal holds back and what it leaves open, at the foot
+    /// of the pane (protocol 0.52, ADR 0021 decision 6): *writes limited to this worktree ·
+    /// can read your files · network off*. A warning when it was asked for and is not there.
+    fn render_terminal_containment(
+        &mut self,
+        id: SessionId,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let containment = self.sessions.read(cx).session(id)?.containment.clone()?;
+        let chip = super::chat::containment_chip(&containment);
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let tooltip = gpui::SharedString::from(chip.tooltip.clone());
+        Some(
+            div()
+                .id("terminal-containment")
+                .absolute()
+                .bottom(px(tokens.spacing * 2.0))
+                .left(px(tokens.spacing * 3.0))
+                .max_w(px(640.0))
+                .px(px(tokens.spacing * 2.0))
+                .py(px(tokens.spacing))
+                .rounded(px(tokens.radius))
+                .bg(theme.surface)
+                .border_1()
+                .border_color(theme.border)
+                .text_size(px(tokens.secondary_font_size))
+                .text_color(if chip.warning {
+                    theme.warning
+                } else {
+                    theme.muted
+                })
+                .truncate()
+                .tooltip(move |_, cx| {
+                    cx.new(|_| crate::workbench::style::TextTooltip(tooltip.clone()))
+                        .into()
+                })
+                .child(gpui::SharedString::from(chip.text))
+                .child(crate::workbench::render::probe(
+                    &self.regions,
+                    crate::workbench::Region::Contain("chip"),
+                ))
+                .into_any_element(),
+        )
     }
 
     /// What the last daemon restart did to this terminal, until the user dismisses it or types:

@@ -63,10 +63,18 @@ pub struct Containment {
     pub reason: Option<String>,
 }
 
+/// The one honest line a client shows of a boundary (ADR 0021 decision 6): what it holds back
+/// and what it leaves open. Reads are open and the network is a plain on or off, so neither is
+/// ever hidden. The Start sheet shows it before the session exists, the chip afterwards.
+pub fn summary_line(network: bool) -> String {
+    format!(
+        "writes limited to this worktree · can read your files · network {}",
+        if network { "on" } else { "off" }
+    )
+}
+
 impl Containment {
-    /// The one honest line the chip shows (ADR 0021 decision 6): what the boundary holds back
-    /// and what it leaves open. Reads are open and `network` is a plain on or off, so neither
-    /// is ever hidden.
+    /// [`summary_line`] of what was applied; a boundary that is not there says why.
     pub fn summary(&self) -> String {
         if !self.applied {
             return match &self.reason {
@@ -74,12 +82,7 @@ impl Containment {
                 None => "not contained".to_owned(),
             };
         }
-        let network = if self.network {
-            "network on"
-        } else {
-            "network off"
-        };
-        format!("writes limited to this worktree · can read your files · {network}")
+        summary_line(self.network)
     }
 }
 

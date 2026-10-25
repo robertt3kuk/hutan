@@ -21,7 +21,7 @@ pub use checkpoint::{
     CheckpointAvailability, CheckpointInfo, CheckpointKind, CheckpointState, CheckpointStatus,
     SkipReason, SkippedFile,
 };
-pub use contain::{Contain, ContainKind, Containment};
+pub use contain::{Contain, ContainKind, Containment, summary_line};
 pub use ids::{
     ApprovalId, CheckpointId, Epoch, ItemId, ParseIdError, QuestionId, Seq, SessionId, TaskId,
     TerminalId, TurnId, WorkspaceId,
