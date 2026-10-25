@@ -18,6 +18,7 @@ mod tray;
 pub use comments::{Mark, ReviewComment, SnippetLine};
 pub use delivery::{CleanupDefault, DeliveryForm};
 pub use finish::{StepTone, step_lines as finish_step_lines};
+pub use staging::HunkRow;
 pub use tray::{Selection, SendTarget};
 
 use std::collections::{HashMap, HashSet};
@@ -216,6 +217,9 @@ pub struct ChangesView {
     delivery: delivery::Delivery,
     /// The History segment (`changes/history.rs`).
     history: history::HistoryState,
+    /// The Stage pane: hunks of the selected file, the focused one, a discard being asked and
+    /// the Undo offer after one (`changes/staging.rs`).
+    staging: staging::StagingState,
     /// The file strip of a narrow view is unfolded into the list of files.
     files_open: bool,
     /// Horizontal scroll of the diff, for lines wider than the pane.
@@ -277,6 +281,7 @@ impl ChangesView {
             review: tray::Review::new(comments, cx),
             delivery: delivery::Delivery::new(cx),
             history: history::HistoryState::default(),
+            staging: staging::StagingState::default(),
             files_open: true,
             diff_x: ScrollHandle::new(),
             width: std::rc::Rc::default(),
@@ -584,6 +589,7 @@ impl ChangesView {
                         this.refreshed_ms = Some(hutan_client::time::now_ms());
                         this.refresh_error = None;
                         this.refresh_patches(cx);
+                        this.refresh_hunks(cx);
                         this.review_listed(cx);
                         this.refill_finish(cx);
                     }
@@ -718,6 +724,7 @@ impl ChangesView {
         self.review.selection = None;
         self.selected = Some(file.to_owned());
         self.load_patch(file, cx);
+        self.refresh_hunks(cx);
         cx.notify();
     }
 
@@ -950,6 +957,9 @@ impl Render for ChangesView {
         if let Some(tray) = self.render_review_tray(&theme, &tokens, cx) {
             root = root.child(tray);
         }
+        if let Some(offer) = self.render_undo_offer(&theme, &tokens, cx) {
+            root = root.child(offer);
+        }
         if let Some(done) = &self.finished {
             root = root.child(self.render_finished(done, &theme, &tokens, cx));
         }
@@ -1004,14 +1014,14 @@ impl Render for ChangesView {
                 .flex()
                 .flex_col()
                 .child(self.render_file_strip(&theme, &tokens, cx))
-                .child(self.render_patch(&look, window, cx))
+                .child(self.render_diff_side(&look, &theme, &tokens, window, cx))
                 .into_any_element(),
             Listing::Ready(_) => div()
                 .flex_1()
                 .min_h_0()
                 .flex()
                 .child(self.render_files(&theme, &tokens, true, cx))
-                .child(self.render_patch(&look, window, cx))
+                .child(self.render_diff_side(&look, &theme, &tokens, window, cx))
                 .into_any_element(),
         })
         .into_any_element()

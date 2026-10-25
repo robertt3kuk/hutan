@@ -468,7 +468,7 @@ pub enum Region {
     /// The staging checkbox of file `index` of the Changes view's list.
     ChangesFileCheck(usize),
     /// A control of hunk `index` (unstaged ones first, then the staged ones) in the Changes
-    /// view's staging pane, by name: `stage`, `unstage`, `discard`.
+    /// view's staging pane, by name: `card`, `stage`, `unstage`, `discard`.
     ChangesStage(usize, &'static str),
     /// The *Open* button of a file row of chat entry `index`: part `part` (as `ChatPart`).
     ChatOpen(usize, u32),

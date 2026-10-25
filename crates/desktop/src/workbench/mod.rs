@@ -99,9 +99,9 @@ mod worktrees;
 
 pub use agents::{AgentPicker, CODEX, Models};
 pub use changes::{
-    ChangesEvent, ChangesView, CleanupDefault, DeliveryForm, IndexFilter, Mark, ReviewComment,
-    Scope, Selection, SendTarget, SnippetLine, StepTone, finish_step_lines, hunk_ranges,
-    index_mark,
+    ChangesEvent, ChangesView, CleanupDefault, DeliveryForm, HunkRow, IndexFilter, Mark,
+    ReviewComment, Scope, Selection, SendTarget, SnippetLine, StepTone, finish_step_lines,
+    hunk_ranges, index_mark,
 };
 pub use customize::{LAYOUT_TOAST_CONTEXT, LAYOUT_TOAST_TIME, LayoutToast, PanelPopover};
 pub use customize_bar::{DraggedStatusItem, StatusOption, status_item_title};

@@ -888,6 +888,10 @@ impl ChangesView {
             || ks.modifiers.alt
             || ks.modifiers.function
             || ks.modifiers.shift);
+        if self.staging_key(ks.key.as_str(), plain, cx) {
+            cx.stop_propagation();
+            return;
+        }
         let pending = self.review.bracket.take();
         match ks.key.as_str() {
             "enter" if ks.modifiers.platform => self.send_review(None, cx),
