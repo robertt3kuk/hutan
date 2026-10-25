@@ -281,6 +281,7 @@ fn chat_info() -> ChatInfo {
         images: None,
         mode: None,
         checkpoints: None,
+        account: None,
     }
 }
 
@@ -303,6 +304,7 @@ fn harness_chat_session_info() -> SessionInfo {
             images: Some(true),
             mode: None,
             checkpoints: None,
+            account: None,
         }),
         ..chat_session_info()
     }
@@ -327,6 +329,7 @@ fn harness_assistant_session_info() -> SessionInfo {
             images: Some(false),
             mode: None,
             checkpoints: None,
+            account: None,
         }),
         ..chat_session_info()
     }
@@ -351,6 +354,7 @@ fn direct_chat_session_info() -> SessionInfo {
             images: None,
             mode: None,
             checkpoints: None,
+            account: None,
         }),
         ..chat_session_info()
     }
@@ -437,6 +441,7 @@ fn assistant_session_info() -> SessionInfo {
             images: None,
             mode: None,
             checkpoints: None,
+            account: None,
         }),
         ..chat_session_info()
     }
@@ -1686,6 +1691,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 mode: None,
                 provider_id: None,
                 system_prompt: None,
+                account: None,
             }),
         ),
         (
@@ -1701,6 +1707,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 mode: None,
                 provider_id: None,
                 system_prompt: None,
+                account: None,
             }),
         ),
         (
@@ -1848,6 +1855,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 mode: None,
                 provider_id: Some("openrouter".into()),
                 system_prompt: Some("Answer in one sentence.".into()),
+                account: None,
             }),
         ),
         (
@@ -2208,6 +2216,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 mode: Some("plan".into()),
                 provider_id: None,
                 system_prompt: None,
+                account: None,
             }),
         ),
         ("account_list", Request::AccountList(Empty {})),
@@ -2216,6 +2225,7 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::AccountLogin(AccountLogin {
                 harness: "omp".into(),
                 provider: Some("anthropic".into()),
+                account: None,
             }),
         ),
         (
@@ -2223,6 +2233,7 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::AccountLogin(AccountLogin {
                 harness: "claude".into(),
                 provider: None,
+                account: None,
             }),
         ),
         (
@@ -2230,6 +2241,78 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::AccountLogout(AccountLogout {
                 harness: "codex".into(),
                 provider: None,
+                account: None,
+            }),
+        ),
+        (
+            "account_login_managed",
+            Request::AccountLogin(AccountLogin {
+                harness: "claude".into(),
+                provider: None,
+                account: Some("work".into()),
+            }),
+        ),
+        (
+            "account_add",
+            Request::AccountAdd(AccountAdd {
+                harness: "claude".into(),
+                name: "work".into(),
+                label: Some("Work".into()),
+            }),
+        ),
+        (
+            "account_add_unlabelled",
+            Request::AccountAdd(AccountAdd {
+                harness: "codex".into(),
+                name: "home".into(),
+                label: None,
+            }),
+        ),
+        (
+            "account_remove",
+            Request::AccountRemove(AccountRemove {
+                harness: "claude".into(),
+                name: "work".into(),
+            }),
+        ),
+        (
+            "account_default_harness",
+            Request::AccountDefault(AccountDefaultSet {
+                harness: "claude".into(),
+                account: Some("work".into()),
+                project: None,
+            }),
+        ),
+        (
+            "account_default_project_system",
+            Request::AccountDefault(AccountDefaultSet {
+                harness: "claude".into(),
+                account: Some("system".into()),
+                project: Some("web".into()),
+            }),
+        ),
+        (
+            "account_default_clear",
+            Request::AccountDefault(AccountDefaultSet {
+                harness: "omp".into(),
+                account: None,
+                project: None,
+            }),
+        ),
+        (
+            "chat_create_account",
+            Request::ChatCreate(ChatCreate {
+                workspace_id: None,
+                cwd: "/work/repo".into(),
+                agent: "claude".into(),
+                model: None,
+                approval_policy: None,
+                sandbox: None,
+                title: None,
+                mode: None,
+                provider_id: None,
+                system_prompt: None,
+                account: Some("work".into()),
             }),
         ),
         (
@@ -4026,6 +4109,22 @@ fn events() -> Vec<(&'static str, Event)> {
             "session_updated_chat_harness",
             Event::SessionUpdated {
                 session: harness_chat_session_info(),
+            },
+        ),
+        (
+            "session_updated_chat_account",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    chat: harness_chat_session_info().chat.map(|chat| ChatInfo {
+                        agent: "claude".into(),
+                        account: Some(ChatAccount {
+                            name: "work".into(),
+                            label: "Work".into(),
+                        }),
+                        ..chat
+                    }),
+                    ..harness_chat_session_info()
+                },
             },
         ),
         (
@@ -5954,6 +6053,110 @@ fn responses_match_fixtures() {
                             detail: None,
                         },
                     ],
+                    managed: Vec::new(),
+                    defaults: Vec::new(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "account_list_managed",
+            ControlMessage::ok(
+                35,
+                &AccountList {
+                    accounts: vec![AccountInfo {
+                        harness: "claude".into(),
+                        provider: "anthropic".into(),
+                        label: "Claude subscription".into(),
+                        plan: Some("max".into()),
+                        status: AccountStatus::LoggedIn,
+                        detail: None,
+                    }],
+                    managed: vec![
+                        ManagedAccount {
+                            harness: "claude".into(),
+                            name: "work".into(),
+                            label: "Work".into(),
+                            home: "/Users/me/Library/Application Support/Hutan/accounts/claude/work"
+                                .into(),
+                            created_at_ms: 1_761_350_000_000,
+                            logins: vec![AccountInfo {
+                                harness: "claude".into(),
+                                provider: "anthropic".into(),
+                                label: "Claude subscription".into(),
+                                plan: Some("team".into()),
+                                status: AccountStatus::LoggedIn,
+                                detail: None,
+                            }],
+                        },
+                        ManagedAccount {
+                            harness: "codex".into(),
+                            name: "home".into(),
+                            label: "home".into(),
+                            home: "/Users/me/Library/Application Support/Hutan/accounts/codex/home"
+                                .into(),
+                            created_at_ms: 1_761_350_100_000,
+                            logins: Vec::new(),
+                        },
+                    ],
+                    defaults: vec![
+                        AccountDefault {
+                            harness: "claude".into(),
+                            project: None,
+                            account: "work".into(),
+                            source: DefaultSource::Registry,
+                        },
+                        AccountDefault {
+                            harness: "claude".into(),
+                            project: Some("01K7F3B5N2Q9W8E4R6T1Y0V3KN".into()),
+                            account: "system".into(),
+                            source: DefaultSource::Registry,
+                        },
+                        AccountDefault {
+                            harness: "codex".into(),
+                            project: None,
+                            account: "home".into(),
+                            source: DefaultSource::Config,
+                        },
+                    ],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "account_added",
+            ControlMessage::ok(
+                36,
+                &ManagedAccount {
+                    harness: "claude".into(),
+                    name: "work".into(),
+                    label: "Work".into(),
+                    home: "/Users/me/Library/Application Support/Hutan/accounts/claude/work"
+                        .into(),
+                    created_at_ms: 1_761_350_000_000,
+                    logins: Vec::new(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "account_removed",
+            ControlMessage::ok(
+                37,
+                &AccountRemoved {
+                    logout: RemoveLogout::Failed,
+                    detail: Some("the harness did not answer in time".into()),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "account_removed_done",
+            ControlMessage::ok(
+                38,
+                &AccountRemoved {
+                    logout: RemoveLogout::Done,
+                    detail: None,
                 },
             )
             .unwrap(),

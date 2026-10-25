@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use hutan_agents::AcpConfig;
 use hutan_protocol::control::{ErrorBody, ErrorCode};
@@ -24,6 +25,7 @@ use serde_json::{Value, json};
 
 use hutan_core::{ApprovalPolicy, SandboxMode};
 
+use crate::account_registry::AccountRegistry;
 use crate::config::{AssistantMode, HarnessSettings, McpSettings};
 
 /// OMP, over `omp acp`.
@@ -169,6 +171,8 @@ pub struct Harnesses {
     mcp: Vec<Value>,
     env_inherit: EnvInherit,
     login_shell: Option<String>,
+    /// The managed accounts a harness can run as (protocol 0.50).
+    accounts: Arc<AccountRegistry>,
 }
 
 impl Harnesses {
@@ -186,7 +190,20 @@ impl Harnesses {
                 .collect(),
             env_inherit,
             login_shell,
+            accounts: Arc::new(AccountRegistry::detached()),
         }
+    }
+
+    /// The registry of managed accounts the harnesses run as (default: none).
+    #[must_use]
+    pub fn with_accounts(mut self, accounts: Arc<AccountRegistry>) -> Self {
+        self.accounts = accounts;
+        self
+    }
+
+    /// The managed accounts.
+    pub fn accounts(&self) -> &Arc<AccountRegistry> {
+        &self.accounts
     }
 
     /// The MCP servers handed to every harness session, as ACP `McpServer` objects.
@@ -279,17 +296,23 @@ impl Harnesses {
         agent: &str,
         assistant: Option<AssistantMode>,
     ) -> Result<AcpConfig, ErrorBody> {
-        self.acp_config_with(agent, assistant, None)
+        self.acp_config_with(agent, assistant, None, None)
     }
 
     /// [`acp_config`](Self::acp_config) with the append-system-prompt of an OMP assistant given
     /// as the path of a file (`prompt_file`, which holds the prompt and Mawas's memory: memory
     /// never goes into argv) instead of the prompt's text.
+    ///
+    /// With `account` (a managed account of `agent`, protocol 0.50) the process runs as that
+    /// account: its configuration home variable is set, last, and the credential variables of
+    /// the login environment that would outrank the account's login are dropped
+    /// ([`AccountEnv`]).
     pub fn acp_config_with(
         &self,
         agent: &str,
         assistant: Option<AssistantMode>,
         prompt_file: Option<&Path>,
+        account: Option<&str>,
     ) -> Result<AcpConfig, ErrorBody> {
         let def = def(agent)
             .filter(|_| is_harness_agent(agent))
@@ -300,7 +323,13 @@ impl Harnesses {
                 )
             })?;
         let settings = self.settings_of(agent);
+        let account_env = account
+            .map(|name| self.accounts.launch_env(agent, name))
+            .transpose()?;
         let mut env = self.environment();
+        if let Some(account_env) = &account_env {
+            account_env.strip(&mut env);
+        }
         let program = self.locate(agent, settings.bin.as_deref(), def.acp_bins, &env)?;
         let mut args: Vec<String> = if settings.args.is_empty() {
             def.acp_args.iter().map(|a| (*a).to_owned()).collect()
@@ -326,6 +355,9 @@ impl Harnesses {
             args.extend(["--append-system-prompt".to_owned(), prompt]);
         }
         env.extend(settings.env);
+        if let Some(account_env) = &account_env {
+            account_env.apply(&mut env);
+        }
         with_program_dir(&mut env, &program);
         Ok(AcpConfig {
             agent: agent.to_owned(),
@@ -342,27 +374,43 @@ impl Harnesses {
         agent: &str,
         codex_bin: &Path,
     ) -> Result<(PathBuf, BTreeMap<String, String>), ErrorBody> {
+        self.cli_as(agent, codex_bin, None)
+    }
+
+    /// [`cli`](Self::cli) running as the managed account `account` (its home variable set,
+    /// see [`acp_config_with`](Self::acp_config_with)); `None`: the harness's own login.
+    pub fn cli_as(
+        &self,
+        agent: &str,
+        codex_bin: &Path,
+        account: Option<&str>,
+    ) -> Result<(PathBuf, BTreeMap<String, String>), ErrorBody> {
         let Some(def) = def(agent) else {
             return Err(ErrorBody::new(
                 ErrorCode::BadRequest,
                 format!("`{agent}` is not a harness with accounts (omp, claude, codex)"),
             ));
         };
-        if agent == "codex" {
-            let mut env = self.environment();
-            let program = self.locate(agent, Some(codex_bin), &[def.cli], &env)?;
-            with_program_dir(&mut env, &program);
-            return Ok((program, env));
-        }
-        let settings = self.settings_of(agent);
+        let account_env = account
+            .map(|name| self.accounts.launch_env(agent, name))
+            .transpose()?;
         let mut env = self.environment();
-        // OMP's ACP executable is its CLI.
-        let configured = settings.cli.as_deref().or_else(|| {
-            (agent == AGENT_OMP)
-                .then_some(settings.bin.as_deref())
-                .flatten()
-        });
-        let program = self.locate(agent, configured, &[def.cli], &env)?;
+        if let Some(account_env) = &account_env {
+            account_env.strip(&mut env);
+        }
+        let configured: Option<PathBuf> = if agent == "codex" {
+            Some(codex_bin.to_owned())
+        } else {
+            let settings = self.settings_of(agent);
+            // OMP's ACP executable is its CLI.
+            settings
+                .cli
+                .or_else(|| (agent == AGENT_OMP).then_some(settings.bin).flatten())
+        };
+        let program = self.locate(agent, configured.as_deref(), &[def.cli], &env)?;
+        if let Some(account_env) = &account_env {
+            account_env.apply(&mut env);
+        }
         with_program_dir(&mut env, &program);
         Ok((program, env))
     }
@@ -698,6 +746,7 @@ mod tests {
                 args: vec!["acp".into(), "--profile".into(), "work".into()],
                 env: BTreeMap::from([("OMP_PROFILE".to_owned(), "work".to_owned())]),
                 cli: None,
+                account: None,
             },
         )]);
         let config = h.acp_config("omp", None).unwrap();

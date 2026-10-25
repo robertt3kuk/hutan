@@ -1079,6 +1079,7 @@ fn the_send_menu_offers_the_assistant_when_no_chat_running_is_one(cx: &mut TestA
                     mode: None,
                     provider_id: Some("mock".to_owned()),
                     system_prompt: None,
+                    account: None,
                 }));
     }
     let (view, cx) = open(cx, &env.daemon);

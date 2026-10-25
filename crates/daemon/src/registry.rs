@@ -3148,6 +3148,27 @@ impl SessionRegistry {
             }
             None => self.workspace_for(assignment.unwrap_or(Assignment::Home))?,
         };
+        // The account the agent runs as: the request's, else the project's default, else the
+        // harness's (protocol 0.50). Fixed here, so a restart keeps it.
+        let account = if harness || req.agent == AGENT_CODEX {
+            self.chats
+                .harnesses()
+                .accounts()
+                .resolve(
+                    &req.agent,
+                    req.account.as_deref(),
+                    Some(&workspace_id.to_string()),
+                )?
+                .map(|record| (record.name, record.label))
+        } else if req.account.is_some() {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                "an account belongs to a Codex, OMP or Claude Code chat",
+            ));
+        } else {
+            None
+        };
+        let (account, account_label) = account.unzip();
         let spec = match direct {
             Some((provider_id, model, system_prompt)) => ChatSpec {
                 agent: req.agent,
@@ -3159,6 +3180,8 @@ impl SessionRegistry {
                 system_prompt,
                 mode: None,
                 assistant: false,
+                account: None,
+                account_label: None,
             },
             None => ChatSpec {
                 agent: req.agent,
@@ -3170,6 +3193,8 @@ impl SessionRegistry {
                 system_prompt: None,
                 mode: req.mode.filter(|m| !m.trim().is_empty()),
                 assistant,
+                account,
+                account_label,
             },
         };
         let folder = req
@@ -3892,6 +3917,8 @@ impl SessionRegistry {
                         system_prompt: None,
                         mode: None,
                         assistant: false,
+                        account: None,
+                        account_label: None,
                     },
                     Some(format!("stored spec unreadable: {error}")),
                 )
@@ -4814,6 +4841,13 @@ fn chat_info(spec: &ChatSpec) -> ChatInfo {
         images: None,
         mode: None,
         checkpoints: None,
+        account: spec
+            .account
+            .as_ref()
+            .map(|name| hutan_protocol::account::ChatAccount {
+                name: name.clone(),
+                label: spec.account_label.clone().unwrap_or_else(|| name.clone()),
+            }),
         agent_session_id: (!is_gateway_agent(&spec.agent))
             .then(|| spec.thread_id.clone())
             .flatten(),

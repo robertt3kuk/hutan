@@ -588,6 +588,12 @@ impl Router {
             Request::UsageSummary(req) => ok(&self.usage.summary(req.refresh).await?),
             Request::AccountLogin(req) => ok(&self.accounts.login(req).await?),
             Request::AccountLogout(req) => ok(&self.accounts.logout(req).await?),
+            Request::AccountAdd(req) => ok(&self.accounts.add(req).await?),
+            Request::AccountRemove(req) => ok(&self.accounts.remove(req).await?),
+            Request::AccountDefault(req) => {
+                self.accounts.set_default(req).await?;
+                ok(&Empty {})
+            }
             Request::ProviderList(_) => ok(&self.providers().list().await?),
             Request::ProviderAdd(req) => ok(&self.providers().add(req).await?),
             Request::ProviderUpdate(req) => ok(&self.providers().update(req).await?),
@@ -1006,6 +1012,11 @@ fn classification(request: &Request) -> (&'static str, Access) {
         // Logging in or out changes which credentials a harness holds: the user's.
         Request::AccountLogin(_) => ("account.login", UserOnly),
         Request::AccountLogout(_) => ("account.logout", UserOnly),
+        // Which login a harness runs as, and deleting one, is the user's: an agent must not
+        // spend (or remove) another subscription.
+        Request::AccountAdd(_) => ("account.add", UserOnly),
+        Request::AccountRemove(_) => ("account.remove", UserOnly),
+        Request::AccountDefault(_) => ("account.default", UserOnly),
         Request::AssistantOpen(_) => ("assistant.open", Mutate),
         Request::AssistantConfigure(_) => ("assistant.configure", Mutate),
         // Forgetting a scope's choice changes what answers the user's assistant: the user's.

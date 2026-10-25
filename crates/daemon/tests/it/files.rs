@@ -994,6 +994,7 @@ async fn a_file_diff_in_a_chat_names_the_tool_call_of_the_change_that_follows() 
             mode: None,
             provider_id: None,
             system_prompt: None,
+            account: None,
         }))
         .await
         .unwrap();

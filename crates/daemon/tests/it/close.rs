@@ -600,6 +600,7 @@ async fn a_closed_chat_keeps_its_journal_and_reopening_resumes_the_conversation(
             mode: None,
             provider_id: None,
             system_prompt: None,
+            account: None,
         }))
         .await
         .unwrap()
@@ -673,6 +674,7 @@ async fn omp_chat(transcript: &str) -> (TestDaemon, Client, tempfile::TempDir, S
             mode: None,
             provider_id: None,
             system_prompt: None,
+            account: None,
         }))
         .await
         .unwrap()

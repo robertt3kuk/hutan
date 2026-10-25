@@ -25,8 +25,9 @@ use std::time::{Duration, Instant};
 use hutan_agents::{AgentError, CodexConfig};
 use hutan_core::{ModelInfo, SessionId};
 use hutan_protocol::account::{
-    AccountInfo, AccountList, AccountLogin, AccountLogout, AccountSession, AccountStatus,
-    HARNESS_CLAUDE, HARNESS_CODEX, HARNESS_OMP,
+    AccountAdd, AccountDefaultSet, AccountInfo, AccountList, AccountLogin, AccountLogout,
+    AccountRemove, AccountRemoved, AccountSession, AccountStatus, HARNESS_CLAUDE, HARNESS_CODEX,
+    HARNESS_OMP, ManagedAccount, RemoveLogout, SYSTEM_ACCOUNT,
 };
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_protocol::messages::{
@@ -80,6 +81,9 @@ pub struct AccountService {
     shutdown: CancellationToken,
     /// The last readiness answer; dropped when a login or logout ends.
     readiness: ReadinessCache,
+    /// Login and logout terminals of managed accounts that may still run:
+    /// `(harness, account, session)`. Removing an account refuses while one is live.
+    flows: std::sync::Mutex<Vec<(String, String, SessionId)>>,
 }
 
 impl AccountService {
@@ -97,30 +101,58 @@ impl AccountService {
             bus,
             shutdown,
             readiness: Arc::default(),
+            flows: std::sync::Mutex::default(),
         })
     }
 
-    /// The CLI of `harness` and its environment (the lookup may run a login shell).
-    async fn cli(&self, harness: &str) -> Result<(PathBuf, BTreeMap<String, String>), ErrorBody> {
+    /// The CLI of `harness` and its environment (the lookup may run a login shell), running as
+    /// the managed account `account` when one is given.
+    async fn cli(
+        &self,
+        harness: &str,
+        account: Option<&str>,
+    ) -> Result<(PathBuf, BTreeMap<String, String>), ErrorBody> {
         let harnesses = self.harnesses.clone();
         let name = harness.to_owned();
+        let account = account.map(str::to_owned);
         let codex = self.codex.program.clone();
-        tokio::task::spawn_blocking(move || harnesses.cli(&name, &codex))
+        tokio::task::spawn_blocking(move || harnesses.cli_as(&name, &codex, account.as_deref()))
             .await
             .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("locating {harness}: {e}")))?
     }
 
     // Listing ---------------------------------------------------------------------------------
 
-    /// The accounts every harness reports, omp first, then claude, then codex.
+    /// The accounts every harness reports, omp first, then claude, then codex: its own login,
+    /// and for each managed account what the harness says with that account's home set.
     pub async fn list(&self) -> AccountList {
-        let (omp, claude, codex) = tokio::join!(
-            self.omp_accounts(),
-            self.claude_accounts(),
-            self.codex_accounts()
+        let registry = self.harnesses.accounts();
+        let records = registry.list();
+        let (omp, claude, codex, managed) = tokio::join!(
+            self.omp_accounts(None),
+            self.claude_accounts(None),
+            self.codex_accounts(None),
+            futures::future::join_all(records.iter().map(|record| async move {
+                let mut account = registry.managed(record);
+                account.logins = self.logins(&record.harness, Some(&record.name)).await;
+                account
+            }))
         );
         let accounts = omp.into_iter().chain(claude).chain(codex).collect();
-        AccountList { accounts }
+        AccountList {
+            accounts,
+            managed: order_managed(managed),
+            defaults: registry.defaults(),
+        }
+    }
+
+    /// What `harness` reports as logged in, as the system account or as a managed one.
+    async fn logins(&self, harness: &str, account: Option<&str>) -> Vec<AccountInfo> {
+        match harness {
+            HARNESS_OMP => self.omp_accounts(account).await,
+            HARNESS_CLAUDE => self.claude_accounts(account).await,
+            _ => self.codex_accounts(account).await,
+        }
     }
 
     // Readiness -------------------------------------------------------------------------------
@@ -166,7 +198,7 @@ impl AccountService {
     }
 
     async fn omp_ready(&self) -> Result<(), String> {
-        let (program, env) = self.cli(HARNESS_OMP).await.map_err(short_reason)?;
+        let (program, env) = self.cli(HARNESS_OMP, None).await.map_err(short_reason)?;
         let entries = omp_catalog(&program, &env).await.map_err(short_reason)?;
         if entries.is_empty() {
             return Err("no provider has a login (`hutan account login omp`)".to_owned());
@@ -175,7 +207,7 @@ impl AccountService {
     }
 
     async fn claude_ready(&self) -> Result<(), String> {
-        logged_in(self.claude_accounts().await)?;
+        logged_in(self.claude_accounts(None).await)?;
         let harnesses = self.harnesses.clone();
         tokio::task::spawn_blocking(move || harnesses.acp_config(HARNESS_CLAUDE, None))
             .await
@@ -185,7 +217,7 @@ impl AccountService {
     }
 
     async fn codex_ready(&self) -> Result<(), String> {
-        logged_in(self.codex_accounts().await)
+        logged_in(self.codex_accounts(None).await)
     }
 
     fn unknown(harness: &str, provider: &str, detail: String) -> Vec<AccountInfo> {
@@ -199,8 +231,8 @@ impl AccountService {
         }]
     }
 
-    async fn omp_accounts(&self) -> Vec<AccountInfo> {
-        let (program, env) = match self.cli(HARNESS_OMP).await {
+    async fn omp_accounts(&self, account: Option<&str>) -> Vec<AccountInfo> {
+        let (program, env) = match self.cli(HARNESS_OMP, account).await {
             Ok(found) => found,
             Err(error) => return Self::unknown(HARNESS_OMP, "omp", error.message),
         };
@@ -238,8 +270,8 @@ impl AccountService {
             .collect()
     }
 
-    async fn claude_accounts(&self) -> Vec<AccountInfo> {
-        let (program, env) = match self.cli(HARNESS_CLAUDE).await {
+    async fn claude_accounts(&self, account: Option<&str>) -> Vec<AccountInfo> {
+        let (program, env) = match self.cli(HARNESS_CLAUDE, account).await {
             Ok(found) => found,
             Err(error) => return Self::unknown(HARNESS_CLAUDE, "anthropic", error.message),
         };
@@ -249,10 +281,10 @@ impl AccountService {
         }
     }
 
-    async fn codex_accounts(&self) -> Vec<AccountInfo> {
+    async fn codex_accounts(&self, account: Option<&str>) -> Vec<AccountInfo> {
         // Found as the other CLIs are (the login environment's PATH), so a GUI-launched
         // daemon starts the same Codex a shell would.
-        let (program, env) = match self.cli(HARNESS_CODEX).await {
+        let (program, env) = match self.cli(HARNESS_CODEX, account).await {
             Ok(found) => found,
             Err(error) => return Self::unknown(HARNESS_CODEX, "openai", error.message),
         };
@@ -290,20 +322,31 @@ impl AccountService {
 
     /// Starts the harness's own login in a terminal session.
     pub async fn login(&self, req: AccountLogin) -> Result<AccountSession, ErrorBody> {
-        self.flow(&req.harness, req.provider.as_deref(), Flow::Login)
-            .await
+        self.flow(
+            &req.harness,
+            req.provider.as_deref(),
+            req.account.as_deref(),
+            Flow::Login,
+        )
+        .await
     }
 
     /// Starts the harness's own logout in a terminal session.
     pub async fn logout(&self, req: AccountLogout) -> Result<AccountSession, ErrorBody> {
-        self.flow(&req.harness, req.provider.as_deref(), Flow::Logout)
-            .await
+        self.flow(
+            &req.harness,
+            req.provider.as_deref(),
+            req.account.as_deref(),
+            Flow::Logout,
+        )
+        .await
     }
 
     async fn flow(
         &self,
         harness: &str,
         provider: Option<&str>,
+        account: Option<&str>,
         flow: Flow,
     ) -> Result<AccountSession, ErrorBody> {
         let provider = provider.map(str::trim).filter(|p| !p.is_empty());
@@ -314,8 +357,19 @@ impl AccountService {
                 "unknown harness `{harness}` (omp, claude, codex)"
             )));
         }
-        let (program, _) = self.cli(harness).await?;
+        // The harness's own login is `system`; a managed account must exist.
+        let account = account.filter(|a| *a != SYSTEM_ACCOUNT);
+        let (program, _) = self.cli(harness, account).await?;
         let program = program.to_string_lossy().into_owned();
+        // What the terminal needs on top of the login environment it starts from: the
+        // account's home variable (the daemon's own environment is never copied into it).
+        let mut terminal_env = BTreeMap::new();
+        if let Some(account) = account {
+            self.harnesses
+                .accounts()
+                .launch_env(harness, account)?
+                .apply(&mut terminal_env);
+        }
         let (args, instructions, what): (Vec<String>, Option<String>, String) =
             match (harness, flow) {
                 (HARNESS_OMP, Flow::Login) => (
@@ -351,22 +405,202 @@ impl AccountService {
             Flow::Login => "Log in to",
             Flow::Logout => "Log out of",
         };
+        let title = match account {
+            Some(account) => format!("{verb} {what} ({account})"),
+            None => format!("{verb} {what}"),
+        };
         let session = self
             .registry
             .create_session(SessionCreate {
                 workspace_id: None,
                 spec: SessionSpec::Terminal(TerminalSpec {
                     command: argv,
-                    title: Some(format!("{verb} {what}")),
+                    title: Some(title),
+                    env: terminal_env,
                     ..TerminalSpec::default()
                 }),
             })
             .await?;
+        if let Some(account) = account {
+            self.flows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((harness.to_owned(), account.to_owned(), session.id));
+        }
         self.watch(harness.to_owned(), session.id);
         Ok(AccountSession {
             session,
             instructions,
         })
+    }
+
+    // Managed accounts --------------------------------------------------------------------------
+
+    /// `account.add`: an empty home and a record; no login (that is `account.login`).
+    pub async fn add(&self, req: AccountAdd) -> Result<ManagedAccount, ErrorBody> {
+        let registry = self.harnesses.accounts().clone();
+        let record = tokio::task::spawn_blocking(move || {
+            registry.add(&req.harness, &req.name, req.label.as_deref())
+        })
+        .await
+        .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("adding the account: {e}")))??;
+        self.changed(&record.harness).await;
+        Ok(self.harnesses.accounts().managed(&record))
+    }
+
+    /// `account.default`: the default of a harness, or of one project (name or id).
+    pub async fn set_default(&self, req: AccountDefaultSet) -> Result<(), ErrorBody> {
+        let project = match req.project.as_deref() {
+            Some(project) => Some(self.project_id(project).await?),
+            None => None,
+        };
+        let registry = self.harnesses.accounts().clone();
+        let harness = req.harness.clone();
+        tokio::task::spawn_blocking(move || {
+            registry.set_default(&req.harness, req.account.as_deref(), project.as_deref())
+        })
+        .await
+        .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("setting the default: {e}")))??;
+        self.changed(&harness).await;
+        Ok(())
+    }
+
+    /// The id of the workspace `name_or_id` names.
+    async fn project_id(&self, name_or_id: &str) -> Result<String, ErrorBody> {
+        let workspaces = self.registry.list_workspaces().await?.workspaces;
+        let found: Vec<_> = workspaces
+            .iter()
+            .filter(|w| w.id.to_string() == name_or_id)
+            .chain(workspaces.iter().filter(|w| w.name == name_or_id))
+            .collect();
+        match found.first() {
+            Some(workspace) => Ok(workspace.id.to_string()),
+            None => Err(ErrorBody::new(
+                ErrorCode::NotFound,
+                format!(
+                    "no project or workspace has the id or name `{name_or_id}` (`hutan ws ls`)"
+                ),
+            )),
+        }
+    }
+
+    /// `account.remove`: the harness's own logout with the account's home set (so a Keychain
+    /// item goes with it), then the home is deleted and the account forgotten.
+    pub async fn remove(&self, req: AccountRemove) -> Result<AccountRemoved, ErrorBody> {
+        let registry = self.harnesses.accounts().clone();
+        let Some(record) = registry.get(&req.harness, &req.name) else {
+            return Err(ErrorBody::new(
+                ErrorCode::NotFound,
+                format!(
+                    "{} has no account named `{}` (`hutan account list`)",
+                    req.harness, req.name
+                ),
+            ));
+        };
+        self.refuse_while_in_use(&record.harness, &record.name)
+            .await?;
+        let (logout, detail) = self
+            .log_out_before_removal(&record.harness, &record.name)
+            .await;
+        let doomed = record.clone();
+        let registry2 = registry.clone();
+        tokio::task::spawn_blocking(move || {
+            registry2.delete_home(&doomed)?;
+            registry2.forget(&doomed.harness, &doomed.name)
+        })
+        .await
+        .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("removing the account: {e}")))??;
+        self.flows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|(h, a, _)| !(h == &record.harness && a == &record.name));
+        self.changed(&record.harness).await;
+        Ok(AccountRemoved { logout, detail })
+    }
+
+    /// `invalid_state` when a live chat or a login terminal runs as the account.
+    async fn refuse_while_in_use(&self, harness: &str, name: &str) -> Result<(), ErrorBody> {
+        let sessions = self
+            .registry
+            .list_sessions(SessionListFilter::default())
+            .await?
+            .sessions;
+        let flows: Vec<SessionId> = self
+            .flows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|(h, a, _)| h == harness && a == name)
+            .map(|(_, _, id)| *id)
+            .collect();
+        let busy = sessions.iter().find(|s| {
+            s.state.is_live()
+                && (flows.contains(&s.id)
+                    || s.chat.as_ref().is_some_and(|c| {
+                        c.agent == harness && c.account.as_ref().is_some_and(|a| a.name == name)
+                    }))
+        });
+        match busy {
+            Some(session) => Err(ErrorBody::new(
+                ErrorCode::InvalidState,
+                format!(
+                    "the session \"{}\" runs as {harness} account `{name}`; stop it first",
+                    session.title
+                ),
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// The harness's non-interactive logout, run with the account's home set, so that what the
+    /// harness keeps outside the home (a Keychain item) goes too. OMP has none: its login is in
+    /// the home that is deleted next. Never reads the home.
+    async fn log_out_before_removal(
+        &self,
+        harness: &str,
+        name: &str,
+    ) -> (RemoveLogout, Option<String>) {
+        let args: &[&str] = match harness {
+            HARNESS_CLAUDE => &["auth", "logout"],
+            HARNESS_CODEX => &["logout"],
+            _ => return (RemoveLogout::Skipped, None),
+        };
+        // Not logged in: nothing to log out of.
+        let status = self.logins(harness, Some(name)).await;
+        if status
+            .iter()
+            .all(|login| login.status == AccountStatus::LoggedOut)
+        {
+            return (RemoveLogout::Skipped, None);
+        }
+        let by_hand = |why: String| {
+            (
+                RemoveLogout::Failed,
+                Some(format!(
+                    "{why}; a login the harness keeps outside the folder (a Keychain item named for it) may remain: `{harness} {}` with the account's folder set removes it",
+                    args.join(" ")
+                )),
+            )
+        };
+        let (program, env) = match self.cli(harness, Some(name)).await {
+            Ok(found) => found,
+            Err(error) => return by_hand(short_reason(error)),
+        };
+        match timeout(STATUS_TIMEOUT, run(&program, args, &env)).await {
+            Ok(Ok(_)) => (RemoveLogout::Done, None),
+            Ok(Err(error)) => by_hand(short_reason(error)),
+            Err(_) => by_hand("the harness did not answer in time".to_owned()),
+        }
+    }
+
+    /// `account.changed` for `harness`, after dropping the readiness answer it made stale.
+    async fn changed(&self, harness: &str) {
+        self.readiness.lock().await.take();
+        if let Err(error) = self.bus.publish(&Event::AccountChanged {
+            harness: harness.to_owned(),
+        }) {
+            warn!(%error, "failed to publish account.changed");
+        }
     }
 
     /// Publishes `account.changed` when the session ends (or is gone), after dropping the
@@ -401,6 +635,17 @@ impl AccountService {
             }
         });
     }
+}
+
+/// The managed accounts in the order omp, claude, codex, then by name.
+fn order_managed(mut accounts: Vec<ManagedAccount>) -> Vec<ManagedAccount> {
+    let rank = |harness: &str| match harness {
+        HARNESS_OMP => 0,
+        HARNESS_CLAUDE => 1,
+        _ => 2,
+    };
+    accounts.sort_by(|a, b| (rank(&a.harness), &a.name).cmp(&(rank(&b.harness), &b.name)));
+    accounts
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -1346,6 +1346,7 @@ mod tests {
             images: None,
             mode: None,
             checkpoints: None,
+            account: None,
         }
     }
 

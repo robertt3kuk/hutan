@@ -65,6 +65,13 @@ pub struct ChatCreate {
     /// Protocol 0.11, `agent: "direct"` only: sent to the model ahead of the conversation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+    /// Protocol 0.50 (capability `accounts.multi`), `codex`, `omp` and `claude` only: the
+    /// managed account the agent runs as (`account.list`), or [`crate::account::SYSTEM_ACCOUNT`]
+    /// for the harness's own login. Absent takes the project's default, else the harness's
+    /// default, else the harness's own login. `not_found` for an account that does not exist,
+    /// `bad_request` for `direct` chats.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
 }
 
 /// `chat.send`: the user's message; the turn's events follow as `chat.event`.
@@ -426,6 +433,11 @@ pub struct ChatInfo {
     /// the agent first started; it keeps the last state once the agent stopped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoints: Option<hutan_core::CheckpointStatus>,
+    /// Protocol 0.50 (capability `accounts.multi`): the managed account the agent runs as,
+    /// fixed when the chat was created (a restart or restore keeps it). Absent: the harness's
+    /// own login, and chats that never had an account (direct chats).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::account::ChatAccount>,
 }
 
 impl ChatInfo {

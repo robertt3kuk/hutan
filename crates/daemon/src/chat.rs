@@ -137,6 +137,14 @@ pub struct ChatSpec {
     /// its tools restricted (`Harnesses::acp_config`, `AssistantService`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub assistant: bool,
+    /// Codex and harness chats only (protocol 0.50): the managed account the agent runs as,
+    /// resolved when the chat was created (a restart or restore keeps it whatever the defaults
+    /// say now); `None`: the harness's own login.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    /// The account's label when the chat was created, for the chat header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_label: Option<String>,
 }
 
 /// What runs a session: an agent process, or the model gateway.
@@ -649,19 +657,30 @@ impl ChatManager {
     }
 
     /// The Codex command line for the agent of `session`, with `hutan mcp` registered.
-    async fn codex_for(&self, session: SessionId) -> CodexConfig {
-        let mut codex = self.resolved_codex().await;
+    async fn codex_for(
+        &self,
+        session: SessionId,
+        account: Option<&str>,
+    ) -> Result<CodexConfig, ErrorBody> {
+        let mut codex = self.resolved_codex(account).await?;
         if let Some(server) = self.mcp_server(session) {
             codex.args.extend(server.codex_overrides());
         }
-        codex
+        Ok(codex)
     }
 
     /// `[codex]` with its program found the way the harnesses are (`PATH` of the login
     /// environment, then the usual install folders) and that environment underneath the
     /// configured one. When it is not found the configuration stays as it is and starting it
     /// reports the error.
-    async fn resolved_codex(&self) -> CodexConfig {
+    ///
+    /// With `account` (a managed account, protocol 0.50) Codex runs with that account's
+    /// `CODEX_HOME`; an account that does not exist is an error rather than a silent fall back
+    /// to the user's own login.
+    async fn resolved_codex(&self, account: Option<&str>) -> Result<CodexConfig, ErrorBody> {
+        let account_env = account
+            .map(|name| self.harnesses.accounts().launch_env(AGENT_CODEX, name))
+            .transpose()?;
         let mut codex = self.codex.clone();
         let harnesses = self.harnesses.clone();
         let program = codex.program.clone();
@@ -680,7 +699,19 @@ impl ChatManager {
             merged.append(&mut codex.env);
             codex.env = merged;
         }
-        codex
+        // The account's home wins over everything, found or not.
+        if let Some(account_env) = account_env {
+            for (name, value) in account_env.set {
+                codex.env.retain(|(k, _)| *k != name);
+                codex.env.push((name, value));
+            }
+        }
+        Ok(codex)
+    }
+
+    /// The harnesses (and the managed accounts they run as).
+    pub(crate) fn harnesses(&self) -> &Arc<Harnesses> {
+        &self.harnesses
     }
 
     /// Whether the session has a running backend (not merely a record).
@@ -1078,7 +1109,7 @@ impl ChatManager {
             resume_thread_id: spec.thread_id.clone(),
             developer_instructions: memory.map(|memory| memory.text),
         };
-        let codex = self.codex_for(id).await;
+        let codex = self.codex_for(id, spec.account.as_deref()).await?;
         let CodexSession {
             adapter,
             started,
@@ -1114,6 +1145,7 @@ impl ChatManager {
     ) -> Result<Started, StartFailure> {
         let harnesses = self.harnesses.clone();
         let agent = spec.agent.clone();
+        let account = spec.account.clone();
         let mode = spec.assistant.then(|| self.assistant_policy().mode);
         // Mawas's memory: OMP gets it in a private prompt file named on its command line (never
         // in argv itself), Claude Code on its first turn, below.
@@ -1130,7 +1162,7 @@ impl ChatManager {
             _ => None,
         };
         let config = tokio::task::spawn_blocking(move || {
-            harnesses.acp_config_with(&agent, mode, prompt_file.as_deref())
+            harnesses.acp_config_with(&agent, mode, prompt_file.as_deref(), account.as_deref())
         })
         .await
         .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("locating the agent: {e}")))??;
@@ -2277,7 +2309,7 @@ impl ChatManager {
         let models = if harness {
             self.harness_models(agent).await?
         } else {
-            let codex = self.resolved_codex().await;
+            let codex = self.resolved_codex(None).await?;
             hutan_agents::codex::list_models(&codex)
                 .await
                 .map_err(|e| provider_error(&e, &codex.program))?

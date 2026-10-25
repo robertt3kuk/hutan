@@ -19,6 +19,7 @@ use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use crate::account_registry::AccountRegistry;
 use crate::accounts::AccountService;
 use crate::agent;
 use crate::assistant::AssistantService;
@@ -282,12 +283,31 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         .login_shell
         .as_ref()
         .map(|shell| shell.to_string_lossy().into_owned());
-    let harnesses = Arc::new(Harnesses::new(
-        settings.harness.clone(),
-        &settings.mcp,
-        settings.terminal.env_inherit,
-        login_shell,
-    ));
+    // The managed accounts (ADR 0015 § Amendment) and the `daemon.toml` defaults beside them.
+    let account_defaults: std::collections::BTreeMap<String, String> = settings
+        .harness
+        .iter()
+        .filter_map(|(id, h)| Some((id.clone(), h.account.clone()?)))
+        .chain(
+            settings
+                .codex
+                .account
+                .clone()
+                .map(|account| ("codex".to_owned(), account)),
+        )
+        .collect();
+    let harnesses = Arc::new(
+        Harnesses::new(
+            settings.harness.clone(),
+            &settings.mcp,
+            settings.terminal.env_inherit,
+            login_shell,
+        )
+        .with_accounts(Arc::new(AccountRegistry::open(
+            &paths.base,
+            account_defaults,
+        ))),
+    );
     let codex_config = config.codex.unwrap_or_else(|| settings.codex.to_config());
     let hutan_bin = config
         .hutan_bin

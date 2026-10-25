@@ -2089,6 +2089,7 @@ impl Workbench {
                     mode: None,
                     provider_id: Some(provider),
                     system_prompt: (!system.is_empty()).then_some(system),
+                    account: None,
                 })
                 .await;
             let info = match created {

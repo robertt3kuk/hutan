@@ -1900,6 +1900,7 @@ mod mode_chip_tests {
             images: None,
             mode,
             checkpoints: None,
+            account: None,
         }
     }
 

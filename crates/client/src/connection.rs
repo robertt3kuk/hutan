@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
 use hutan_core::{ApprovalId, QuestionId, QuestionResponse, SessionId, TerminalId, WorkspaceId};
-use hutan_protocol::account::{AccountInfo, AccountSession};
+use hutan_protocol::account::{
+    AccountInfo, AccountList, AccountRemoved, AccountSession, ManagedAccount,
+};
 use hutan_protocol::assistant::{
     AssistantConfig, AssistantConfigure, AssistantEntry, AssistantListRequest, AssistantOpen,
     AssistantScope, Attachment,
@@ -1116,6 +1118,62 @@ impl Connection {
     ) -> Result<AccountSession, ClientError> {
         let client = self.shared.client().ok_or(ClientError::Disconnected)?;
         client.account_logout(harness, provider).await
+    }
+
+    /// True while connected to a daemon that advertised capability `accounts.multi`.
+    pub fn supports_accounts_multi(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_accounts_multi())
+    }
+
+    /// `account.list` with everything it says: own logins, managed accounts, defaults.
+    pub async fn account_overview(&self) -> Result<AccountList, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.account_overview().await
+    }
+
+    /// `account.login` for a managed account (`None`: the harness's own login).
+    pub async fn account_login_as(
+        &self,
+        harness: &str,
+        provider: Option<String>,
+        account: Option<String>,
+    ) -> Result<AccountSession, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.account_login_as(harness, provider, account).await
+    }
+
+    /// `account.add`: a managed account with an empty home.
+    pub async fn account_add(
+        &self,
+        harness: &str,
+        name: &str,
+        label: Option<String>,
+    ) -> Result<ManagedAccount, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.account_add(harness, name, label).await
+    }
+
+    /// `account.remove`: logs the account out, deletes its home, forgets it.
+    pub async fn account_remove(
+        &self,
+        harness: &str,
+        name: &str,
+    ) -> Result<AccountRemoved, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.account_remove(harness, name).await
+    }
+
+    /// `account.default`: sets or clears the default account of a harness or of a project.
+    pub async fn account_default(
+        &self,
+        harness: &str,
+        account: Option<String>,
+        project: Option<String>,
+    ) -> Result<(), ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.account_default(harness, account, project).await
     }
 
     /// `chat.set_model`: switches the model (and for a direct chat the provider) of a chat for

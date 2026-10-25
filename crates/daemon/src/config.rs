@@ -253,6 +253,9 @@ pub struct CodexSettings {
     /// The arguments of the executable, replacing the default `["app-server"]` when not empty
     /// (`["app-server", "-c", "key=value"]` adds overrides).
     pub args: Vec<String>,
+    /// The managed account new Codex chats run as unless the registry has a default
+    /// (`hutan account default`); `system` is the harness's own login (protocol 0.50).
+    pub account: Option<String>,
 }
 
 impl CodexSettings {
@@ -286,6 +289,9 @@ pub struct HarnessSettings {
     /// The harness's own CLI for `hutan account` (`omp`, `claude`); `None`: `bin` for `omp`,
     /// else the default name on `PATH`.
     pub cli: Option<PathBuf>,
+    /// The managed account new chats of this harness run as unless the registry has a default
+    /// (`hutan account default`); `system` is the harness's own login (protocol 0.50).
+    pub account: Option<String>,
 }
 
 /// `[mcp.<name>]` of `daemon.toml`: one MCP server handed to harness sessions.
@@ -1270,6 +1276,22 @@ impl DaemonSettings {
                 "unknown harness `{unknown}` in [harness.{unknown}] (known: {})",
                 HARNESS_IDS.join(", ")
             )));
+        }
+        let accounts = file
+            .harness
+            .iter()
+            .map(|(id, h)| (format!("[harness.{id}] account"), &h.account))
+            .chain(std::iter::once((
+                "[codex] account".to_owned(),
+                &file.codex.account,
+            )));
+        for (key, account) in accounts {
+            if let Some(account) = account
+                && account != hutan_protocol::account::SYSTEM_ACCOUNT
+                && let Err(error) = crate::account_registry::check_name(account)
+            {
+                return Err(toml::de::Error::custom(format!("{key}: {}", error.message)));
+            }
         }
         for (name, server) in &file.mcp {
             check_mcp(name, server)?;

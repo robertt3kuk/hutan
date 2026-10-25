@@ -21,7 +21,10 @@ impl Ctx {
     async fn account_ls(&self) -> Result<(), CliError> {
         let client = self.connect().await?;
         let accounts = client.account_list().await.map_err(|e| self.fail(e))?;
-        let list = AccountList { accounts };
+        let list = AccountList {
+            accounts,
+            ..AccountList::default()
+        };
         self.print(&list, || account_table(&list.accounts))
     }
 

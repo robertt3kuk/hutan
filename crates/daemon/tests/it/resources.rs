@@ -659,6 +659,7 @@ async fn codex_session(client: &Client, cwd: &Path) -> SessionInfo {
             title: None,
             provider_id: None,
             system_prompt: None,
+            account: None,
         }))
         .await
         .unwrap()

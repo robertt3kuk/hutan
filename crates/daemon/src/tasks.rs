@@ -906,6 +906,7 @@ impl TaskService {
                 mode: None,
                 provider_id: None,
                 system_prompt: None,
+                account: None,
             })
             .await?;
         self.link(task.id, session.id);

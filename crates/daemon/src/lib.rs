@@ -53,6 +53,7 @@
 //! - [`daemon_settings`]: `daemon.toml` as a list of settings: `daemon.settings.get` / `.set`
 //!   validate, edit the file in place and apply what can change live (protocol 0.28).
 
+pub mod account_registry;
 pub mod accounts;
 pub mod agent;
 pub mod assistant;

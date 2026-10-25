@@ -514,6 +514,7 @@ async fn chats_that_are_not_assistants_are_left_running() {
             mode: None,
             provider_id: None,
             system_prompt: None,
+            account: None,
         }))
         .await
         .unwrap()

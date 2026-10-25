@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::ProtocolVersion;
-use crate::account::{AccountLogin, AccountLogout};
+use crate::account::{AccountAdd, AccountDefaultSet, AccountLogin, AccountLogout, AccountRemove};
 use crate::assistant::{AssistantConfigure, AssistantListRequest, AssistantOpen, AssistantReset};
 use crate::blocks::{Block, TerminalBlockText, TerminalBlocks};
 use crate::chat::{
@@ -488,6 +488,18 @@ pub enum Request {
     /// `AccountSession`.
     #[serde(rename = "account.logout")]
     AccountLogout(AccountLogout),
+    /// Capability `accounts.multi` (protocol 0.50): create a managed account (an empty
+    /// configuration home) for a harness; answered with `ManagedAccount`.
+    #[serde(rename = "account.add")]
+    AccountAdd(AccountAdd),
+    /// Capability `accounts.multi`: log the harness out of the account, delete its home and
+    /// forget it; answered with `AccountRemoved`.
+    #[serde(rename = "account.remove")]
+    AccountRemove(AccountRemove),
+    /// Capability `accounts.multi`: set or clear the default account of a harness or of one
+    /// project; answered with `Empty`.
+    #[serde(rename = "account.default")]
+    AccountDefault(AccountDefaultSet),
     /// Capability `resources` (protocol 0.18): one fresh sample of the processes of the live
     /// sessions and of `hutand`; answered with `ResourceSample`.
     #[serde(rename = "resources.list")]

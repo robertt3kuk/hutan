@@ -219,6 +219,11 @@ macro_rules! harness_specs {
             Kind::Path(PathRule::Executable),
             |c| path_value(harness(c, $id).cli.as_ref()),
         ));
+        $specs.push(restart(
+            concat!("harness.", $id, ".account"),
+            Kind::String,
+            |c| text_value(harness(c, $id).account.as_ref()),
+        ));
     };
 }
 
@@ -314,6 +319,9 @@ fn build_specs() -> Vec<Spec> {
         }),
         restart("codex.args", Kind::StringList(None), |c| {
             list_value(&c.codex.args)
+        }),
+        restart("codex.account", Kind::String, |c| {
+            text_value(c.codex.account.as_ref())
         }),
     ];
     harness_specs!(specs, "omp");
@@ -1628,12 +1636,17 @@ mod tests {
                     omp: _,
                 },
         } = history;
-        let config::CodexSettings { bin: _, args: _ } = codex;
+        let config::CodexSettings {
+            bin: _,
+            args: _,
+            account: _,
+        } = codex;
         let config::HarnessSettings {
             bin: _,
             args: _,
             env: _,
             cli: _,
+            account: _,
         } = config::HarnessSettings::default();
         let config::McpSettings {
             command: _,
@@ -1734,6 +1747,7 @@ mod tests {
             "history.roots.omp",
             "codex.bin",
             "codex.args",
+            "codex.account",
             "gateway.max_context_chars",
             "assistant.backend",
             "assistant.provider",
@@ -1781,7 +1795,7 @@ mod tests {
             }
         }
         for id in HARNESS_IDS {
-            for field in ["bin", "args", "env", "cli"] {
+            for field in ["bin", "args", "env", "cli", "account"] {
                 expected.push(format!("harness.{id}.{field}"));
             }
         }

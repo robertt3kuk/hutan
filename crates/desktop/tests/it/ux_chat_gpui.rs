@@ -91,6 +91,7 @@ fn create_chat(daemon: &TestDaemon, cwd: &Path) -> SessionId {
         mode: None,
         provider_id: None,
         system_prompt: None,
+        account: None,
     }));
     created.session.id
 }

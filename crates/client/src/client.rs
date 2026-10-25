@@ -12,7 +12,8 @@ use hutan_core::{
     TaskState, TerminalId, WorkspaceId,
 };
 use hutan_protocol::account::{
-    AccountInfo, AccountList, AccountLogin, AccountLogout, AccountSession,
+    AccountAdd, AccountDefaultSet, AccountInfo, AccountList, AccountLogin, AccountLogout,
+    AccountRemove, AccountRemoved, AccountSession, ManagedAccount,
 };
 use hutan_protocol::assistant::{
     AssistantConfig, AssistantConfigure, AssistantEntry, AssistantList, AssistantListRequest,
@@ -131,6 +132,9 @@ pub(crate) const TASK_CAPABILITY: &str = "task";
 pub(crate) const HARNESS_CAPABILITY: &str = "harness.acp";
 /// Capability for `account.*` and the `account.changed` event (protocol 0.17).
 pub(crate) const ACCOUNTS_CAPABILITY: &str = "accounts";
+/// Capability for `account.add|remove|default`, accounts in `account.list`, `chat.create`'s
+/// `account` and `ChatInfo.account` (protocol 0.50).
+pub(crate) const ACCOUNTS_MULTI_CAPABILITY: &str = "accounts.multi";
 /// Capability for `resources.*`, `session.kill`, `process.signal`, `agent.interrupt` and the
 /// `resources.updated` event (protocol 0.18).
 pub(crate) const RESOURCES_CAPABILITY: &str = "resources";
@@ -231,6 +235,7 @@ const CAPABILITIES: &[&str] = &[
     TASK_CAPABILITY,
     HARNESS_CAPABILITY,
     ACCOUNTS_CAPABILITY,
+    ACCOUNTS_MULTI_CAPABILITY,
     RESOURCES_CAPABILITY,
     PROJECTS_CAPABILITY,
     ASSISTANT_BACKEND_CAPABILITY,
@@ -529,6 +534,21 @@ impl Client {
         Ok(list.accounts)
     }
 
+    /// True when the daemon advertised capability `accounts.multi` (protocol 0.50).
+    pub fn supports_accounts_multi(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == ACCOUNTS_MULTI_CAPABILITY)
+    }
+
+    /// Everything `account.list` says: the harnesses' own logins, the managed accounts with
+    /// what each reports, and the defaults (protocol 0.50; an older daemon leaves the last
+    /// two empty).
+    pub async fn account_overview(&self) -> Result<AccountList, ClientError> {
+        self.call(Request::AccountList(Empty {})).await
+    }
+
     /// Starts the harness's own login in a terminal session (`account.login`); the user
     /// completes it there, and `account.changed` follows when the session ends.
     pub async fn account_login(
@@ -536,9 +556,21 @@ impl Client {
         harness: impl Into<String>,
         provider: Option<String>,
     ) -> Result<AccountSession, ClientError> {
+        self.account_login_as(harness, provider, None).await
+    }
+
+    /// [`account_login`](Self::account_login) for a managed account (`None`: the harness's
+    /// own login).
+    pub async fn account_login_as(
+        &self,
+        harness: impl Into<String>,
+        provider: Option<String>,
+        account: Option<String>,
+    ) -> Result<AccountSession, ClientError> {
         self.call(Request::AccountLogin(AccountLogin {
             harness: harness.into(),
             provider,
+            account,
         }))
         .await
     }
@@ -549,11 +581,68 @@ impl Client {
         harness: impl Into<String>,
         provider: Option<String>,
     ) -> Result<AccountSession, ClientError> {
+        self.account_logout_as(harness, provider, None).await
+    }
+
+    /// [`account_logout`](Self::account_logout) for a managed account.
+    pub async fn account_logout_as(
+        &self,
+        harness: impl Into<String>,
+        provider: Option<String>,
+        account: Option<String>,
+    ) -> Result<AccountSession, ClientError> {
         self.call(Request::AccountLogout(AccountLogout {
             harness: harness.into(),
             provider,
+            account,
         }))
         .await
+    }
+
+    /// Creates a managed account (`account.add`): an empty home, not yet logged in.
+    pub async fn account_add(
+        &self,
+        harness: impl Into<String>,
+        name: impl Into<String>,
+        label: Option<String>,
+    ) -> Result<ManagedAccount, ClientError> {
+        self.call(Request::AccountAdd(AccountAdd {
+            harness: harness.into(),
+            name: name.into(),
+            label,
+        }))
+        .await
+    }
+
+    /// Logs the account out, deletes its home and forgets it (`account.remove`).
+    pub async fn account_remove(
+        &self,
+        harness: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Result<AccountRemoved, ClientError> {
+        self.call(Request::AccountRemove(AccountRemove {
+            harness: harness.into(),
+            name: name.into(),
+        }))
+        .await
+    }
+
+    /// Sets (`Some`) or clears (`None`) the default account of a harness, or of one project
+    /// (`account.default`).
+    pub async fn account_default(
+        &self,
+        harness: impl Into<String>,
+        account: Option<String>,
+        project: Option<String>,
+    ) -> Result<(), ClientError> {
+        let _: Empty = self
+            .call(Request::AccountDefault(AccountDefaultSet {
+                harness: harness.into(),
+                account,
+                project,
+            }))
+            .await?;
+        Ok(())
     }
 
     /// True when the daemon advertised capability `chat.direct` (model providers and direct
