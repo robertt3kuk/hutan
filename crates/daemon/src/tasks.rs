@@ -32,8 +32,8 @@ use std::time::Duration;
 
 use hutan_core::{
     AgentEvent, AgentEventKind, AgentNode, Delivery, DeliveryActor, DeliveryRecord, DeliveryState,
-    NodeKind, NodeOutcome, NodeState, ReviewDecision, SafetyPreset, SessionId, SessionState, Task,
-    TaskEvent, TaskId, TaskPlacement, TaskPlacementKind, TaskRun, TaskState, TurnId, WorkspaceId,
+    NodeKind, NodeOutcome, NodeState, ReviewDecision, SessionId, SessionState, Task, TaskEvent,
+    TaskId, TaskPlacement, TaskPlacementKind, TaskRun, TaskState, TurnId, WorkspaceId,
     task as model,
 };
 use hutan_protocol::chat::ChatCreate;
@@ -838,22 +838,8 @@ impl TaskService {
             || !self.registry.auto_projects())
         .then_some(task.workspace_id);
         let session = match &task.run {
-            Some(TaskRun::Chat {
-                agent,
-                model,
-                account,
-                safety,
-            }) => {
-                self.start_chat(
-                    task,
-                    session_workspace,
-                    agent,
-                    model.clone(),
-                    account.clone(),
-                    *safety,
-                    cwd,
-                )
-                .await?
+            Some(chat @ TaskRun::Chat { .. }) => {
+                self.start_chat(task, session_workspace, chat, cwd).await?
             }
             run => {
                 let argv = match run {
@@ -898,12 +884,18 @@ impl TaskService {
         &self,
         task: &Task,
         workspace_id: Option<WorkspaceId>,
-        agent: &str,
-        model: Option<String>,
-        account: Option<String>,
-        safety: Option<SafetyPreset>,
+        chat: &TaskRun,
         cwd: PathBuf,
     ) -> Result<SessionInfo, ErrorBody> {
+        let TaskRun::Chat {
+            agent,
+            model,
+            account,
+            safety,
+        } = chat
+        else {
+            return Err(bad_request("not a chat run"));
+        };
         let prompt = task
             .prompt
             .clone()
@@ -914,15 +906,15 @@ impl TaskService {
                 workspace_id,
                 cwd,
                 agent: agent.to_owned(),
-                model,
+                model: model.clone(),
                 approval_policy: None,
                 sandbox: None,
                 title: Some(task.title.clone()),
                 mode: None,
                 provider_id: None,
                 system_prompt: None,
-                account,
-                safety,
+                account: account.clone(),
+                safety: *safety,
             })
             .await?;
         self.link(task.id, session.id);
