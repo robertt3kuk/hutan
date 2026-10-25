@@ -516,9 +516,7 @@ fn two_checkouts_on_one_branch_name_say_their_repository_in_the_tab_title(cx: &m
         });
         let item = ItemRef::changes(path.display().to_string());
         wait_until(cx, &format!("the title {expected}"), |cx| {
-            view.read_with(cx, |wb, cx| {
-                wb.item_title(&item, cx).to_string() == expected
-            })
+            view.read_with(cx, |wb, cx| wb.item_title(&item, cx).as_ref() == expected)
         });
     }
 }

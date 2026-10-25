@@ -1032,7 +1032,12 @@ impl ChangesView {
         let segment = |id: &'static str, label: &'static str, scope: Scope| {
             ui::segment(id, label, selected == scope, theme, tokens)
                 .relative()
-                .on_click(cx.listener(move |this, _, _, cx| this.set_scope(scope, cx)))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.set_scope(scope, cx);
+                    // The list the keyboard sat in may be swapped out: the keyboard goes to
+                    // the view itself, so ⌘P, ⌘⇧P and the other shortcuts keep their path.
+                    window.focus(&this.review.focus, cx);
+                }))
                 .child(probe(&self.env.regions, Region::Changes(id)))
         };
         let mut strip = ui::segmented(theme, tokens)
