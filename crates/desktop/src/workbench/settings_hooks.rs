@@ -24,6 +24,7 @@ use super::ui::Button;
 use super::view::{Region, Workbench};
 use crate::sessions::agents_text::age_text;
 use crate::theme::DensityExt as _;
+use gpui::prelude::FluentBuilder as _;
 
 /// Runs of the log the page shows.
 const LOG_ROWS: u32 = 20;
@@ -237,6 +238,54 @@ impl Workbench {
             );
             return out;
         }
+        let busy = self.daemon.busy.is_some();
+        out.push(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(tokens.spacing))
+                .py(px(tokens.spacing * 2.0))
+                .child(note(words::HOOKS_LOADED_AT_START, &theme, &tokens))
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(tokens.spacing * 2.0))
+                        .child(
+                            Button::new(
+                                "hooks-open-daemon-toml",
+                                words::OPEN_DAEMON_TOML,
+                                &theme,
+                                &tokens,
+                            )
+                            .compact()
+                            .on_click(cx.listener(|this, _, _, cx| this.open_daemon_toml(cx)))
+                            .child(probe(
+                                &self.regions,
+                                Region::Settings("hooks-open-daemon-toml"),
+                            )),
+                        )
+                        .child(
+                            Button::new(
+                                "hooks-restart-daemon",
+                                words::RESTART_DAEMON,
+                                &theme,
+                                &tokens,
+                            )
+                            .compact()
+                            .disabled(busy)
+                            .when(!busy, |s| {
+                                s.on_click(cx.listener(|this, _, window, cx| {
+                                    this.restart_daemon(window, cx)
+                                }))
+                            })
+                            .child(probe(
+                                &self.regions,
+                                Region::Settings("hooks-restart-daemon"),
+                            )),
+                        ),
+                )
+                .into_any_element(),
+        );
         if let Some(error) = self.hooks_page.error.clone() {
             out.push(
                 div()

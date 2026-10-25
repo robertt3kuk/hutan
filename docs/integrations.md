@@ -196,6 +196,7 @@ What is **never** in a payload: transcript or message text, a prompt, the failur
 ### Seeing and testing hooks
 
 - **Settings → Automation** lists each hook with what it runs on, its command, its last run (exit, duration, how long ago, what it printed), its counters (runs, failed, dropped, skipped) and **Run test** (runs it now with a sample payload of its event and shows how it went, ignoring filters and `when_focused`), and below them the log.
+- The page also says that hooks are read **when the daemon starts**, and has **Open daemon.toml** (the editor the system opens it with) and **Restart daemon…** (the same confirmation as the Daemon menu) beside that note, so a hook you just wrote is one click from running.
 - **`hutan hooks list`** is the table (hooks are numbered from 1; `--json` is the daemon's answer). **`hutan hooks test <N|name>`** runs one with a sample payload, prints the result and the payload, and exits 1 when it did not end `ok`. **`hutan hooks log [N|name] [-n COUNT]`** prints the runs, newest first. All three are refused inside an agent's session (`only available to the user`).
 - The sample of `hooks.test` is made up (`test: true`, a session titled `Sample session`), shaped like the real payload of the hook's event; the hook's own `harness`, `project` and `workspace` filters are used for it.
 

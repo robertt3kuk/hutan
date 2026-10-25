@@ -4,6 +4,10 @@
 //! runs, and a daemon that has no hooks says so. The daemon is in-process on a temporary home
 //! whose `daemon.toml` holds the hooks.
 
+use std::cell::RefCell;
+use std::path::PathBuf;
+use std::rc::Rc;
+
 use crate::common;
 
 use common::{TestDaemon, draw, open_with, wait_until};
@@ -142,6 +146,40 @@ fn the_page_says_so_when_there_are_no_hooks(cx: &mut TestAppContext) {
     });
     assert!(!view.read_with(cx, |wb, _| wb.hooks_page().unsupported));
     draw(cx);
+}
+
+#[gpui::test]
+fn the_page_says_hooks_load_at_start_and_opens_daemon_toml(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start_with_config(HOOKS);
+    let (view, cx) = open(cx, &daemon);
+    open_automation(&view, cx);
+    wait_until(cx, "the hooks to be listed", |cx| {
+        view.read_with(cx, |wb, _| wb.hooks_page().list.is_some())
+    });
+    // The note about when hooks load, with the two actions beside it.
+    wait_until(cx, "Open daemon.toml and Restart daemon…", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Settings("hooks-open-daemon-toml"))
+                .is_some()
+                && wb
+                    .region_bounds(Region::Settings("hooks-restart-daemon"))
+                    .is_some()
+        })
+    });
+    let opened = Rc::new(RefCell::new(Vec::<PathBuf>::new()));
+    let sink = opened.clone();
+    view.update(cx, |wb, _| {
+        wb.set_open_handler(move |path, _| sink.borrow_mut().push(path.to_owned()));
+    });
+    let bounds = view
+        .read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Settings("hooks-open-daemon-toml"))
+        })
+        .unwrap();
+    cx.simulate_click(bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(*opened.borrow(), vec![daemon.home().join("daemon.toml")]);
 }
 
 #[gpui::test]

@@ -1703,6 +1703,7 @@ pub mod words {
         HOOKS_UNSUPPORTED = "This hutand is older than the app and has no hooks: restart it (Daemon → Restart).";
         HOOKS_LOADING = "Asking the daemon…";
         HOOKS_NONE = "No hooks yet. Add a [[hooks]] table to daemon.toml (the Hooks guide has examples, including a phone notification and a sound) and restart the daemon.";
+        HOOKS_LOADED_AT_START = "Hooks are read when the daemon starts: after you change them in daemon.toml, restart the daemon for them to take effect.";
         HOOK_NEVER_RAN = "Has not run since the daemon started.";
         HOOK_RUN_TEST = "Run test";
         HOOK_TESTING = "Running…";
