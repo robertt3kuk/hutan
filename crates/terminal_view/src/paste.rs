@@ -74,19 +74,39 @@ pub fn shell_quote(path: &str) -> String {
     }
 }
 
+/// `path` as one word with a backslash before every character a shell treats specially (the
+/// form Terminal.app types for a dropped file, which the agents' prompts read back): the same
+/// characters stay plain as in [`shell_quote`].
+pub fn escape_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        if !(c.is_alphanumeric() || "_@%+:,./-".contains(c)) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// What dropping (or pasting from Finder) `paths` types: each path quoted, separated and
 /// followed by a space, as Terminal.app does. Paths that are not UTF-8 or hold a control
 /// character (which a shell would act on) are left out; `None` when nothing is left.
 pub fn dropped_paths_text<P: AsRef<Path>>(paths: &[P]) -> Option<String> {
+    paths_text(paths, None)
+}
+
+/// [`dropped_paths_text`] for the prompt of `agent` (see [`crate::image_paste::path_text`]);
+/// `None` is a shell.
+pub fn paths_text<P: AsRef<Path>>(
+    paths: &[P],
+    agent: Option<crate::image_paste::PasteAgent>,
+) -> Option<String> {
     let mut out = String::new();
     for path in paths {
-        let Some(path) = path.as_ref().to_str() else {
+        let Some(text) = crate::image_paste::path_text(path.as_ref(), agent) else {
             continue;
         };
-        if path.chars().any(char::is_control) {
-            continue;
-        }
-        out.push_str(&shell_quote(path));
+        out.push_str(&text);
         out.push(' ');
     }
     (!out.is_empty()).then_some(out)
@@ -169,5 +189,27 @@ mod tests {
         );
         assert_eq!(dropped_paths_text(&["/tmp/a\x1bb"]), None);
         assert_eq!(dropped_paths_text::<&str>(&[]), None);
+    }
+
+    #[test]
+    fn an_agents_prompt_gets_the_backslash_form() {
+        use crate::image_paste::PasteAgent;
+        assert_eq!(escape_path("/tmp/a-b_c.png"), "/tmp/a-b_c.png");
+        assert_eq!(
+            escape_path("/Users/me/Library/Application Support/Hutan/it's.png"),
+            "/Users/me/Library/Application\\ Support/Hutan/it\\'s.png"
+        );
+        assert_eq!(escape_path("日本 語"), "日本\\ 語");
+        for agent in [PasteAgent::ClaudeCode, PasteAgent::Codex, PasteAgent::Omp] {
+            assert_eq!(
+                paths_text(&["/tmp/my dir/a.png"], Some(agent)).as_deref(),
+                Some("/tmp/my\\ dir/a.png ")
+            );
+        }
+        assert_eq!(
+            paths_text(&["/tmp/my dir/a.png"], None).as_deref(),
+            Some("'/tmp/my dir/a.png' ")
+        );
+        assert_eq!(paths_text(&["/tmp/a\nb"], Some(PasteAgent::Omp)), None);
     }
 }

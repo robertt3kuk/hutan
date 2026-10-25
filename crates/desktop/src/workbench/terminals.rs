@@ -188,6 +188,16 @@ impl Workbench {
         let attached = self
             .sessions
             .update(cx, |store, cx| store.terminal_session(session, cx))?;
+        // Images pasted into the terminal are saved under the data folder.
+        let data_folder = self
+            .settings
+            .paths()
+            .and_then(|paths| paths.user.parent().map(std::path::Path::to_path_buf));
+        if let Some(data_folder) = data_folder {
+            attached.update(cx, |attached, _| {
+                attached.set_scratch_root(Some(data_folder))
+            });
+        }
         self.held.insert(session, attached.clone());
         self.watch_collapsed(session, &attached, cx);
         Some(attached)
@@ -296,6 +306,7 @@ impl Workbench {
                 }
                 TerminalViewEvent::OpenLink(target) => this.open_terminal_link(target, window, cx),
                 TerminalViewEvent::Notice(text) => this.set_notice(text.clone(), cx),
+                TerminalViewEvent::ImageSaved(path) => this.show_paste_toast(path.clone(), cx),
                 TerminalViewEvent::TitleChanged(_) => {}
             },
         );

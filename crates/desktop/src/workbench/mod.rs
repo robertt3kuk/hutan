@@ -46,6 +46,7 @@ pub mod open_link;
 mod overlay_exit;
 pub mod palette;
 pub mod panels;
+mod paste_toast;
 pub mod persistence;
 mod projects;
 mod providers;

@@ -339,6 +339,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
                 max_actions: settings.assistant.max_actions_per_turn,
             },
             tmp_dir: paths.base.join("tmp"),
+            scratch_dir: paths.base.join("scratch"),
             checkpoints: checkpoints.clone(),
             usage: usage.clone(),
         },

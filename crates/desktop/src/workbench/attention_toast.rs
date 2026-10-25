@@ -234,11 +234,20 @@ impl Workbench {
         layout: Option<AnyElement>,
         instructions: Option<AnyElement>,
         usage: Option<AnyElement>,
+        paste: Option<AnyElement>,
     ) -> Option<AnyElement> {
-        let toasts: Vec<AnyElement> = [attention, close, restore, layout, instructions, usage]
-            .into_iter()
-            .flatten()
-            .collect();
+        let toasts: Vec<AnyElement> = [
+            attention,
+            close,
+            restore,
+            layout,
+            instructions,
+            usage,
+            paste,
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         if toasts.is_empty() {
             return None;
         }

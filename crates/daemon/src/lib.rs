@@ -90,6 +90,7 @@ pub mod registry;
 pub mod resources;
 pub mod restore;
 pub mod router;
+pub mod scratch;
 pub mod session_names;
 pub mod start_error;
 pub mod tasks;

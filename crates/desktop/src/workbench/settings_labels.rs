@@ -289,6 +289,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "terminal",
+        "paste_images",
+        "Paste images as files",
+        "⌘V of an image (a screenshot, Copy Image in a browser) into a terminal saves it as a PNG in that session's scratch folder, up to 20 MiB, and pastes the file's path, which Claude Code, Codex and OMP read as an image. A notice says where it went, with Reveal; the file goes when the session is closed. Off, an image is refused with a notice. Text on the clipboard always wins.",
+    ),
+    field(
+        "terminal",
         "dim_unfocused_splits",
         "Dim unfocused splits",
         "Splits of a terminal tab that do not have the keyboard lose a few percent of contrast. Off, only the edge marks the focused one.",

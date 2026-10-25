@@ -182,6 +182,9 @@ pub enum Region {
     LayoutToast(&'static str),
     /// A control of the usage warning toast (`toast`, `open`, `dismiss`).
     UsageToast(&'static str),
+    /// A control of the "Saved the image … · Reveal" toast of an image paste (`toast`,
+    /// `reveal`, `dismiss`).
+    PasteToast(&'static str),
     /// The ⋯ of a panel's header, by where the panel is (`left`, `right`, `bottom`, `center`).
     PanelMenu(&'static str),
     /// A control of the panel settings popover (`popover`, `open`, `close`).
@@ -793,6 +796,9 @@ pub struct Workbench {
     /// The usage warning toast (`usage.rs`) and its exit.
     pub(crate) usage_toast: Option<super::usage::UsageToast>,
     pub(crate) usage_toast_exit: super::ui::motion::Ghost<super::usage::UsageToast>,
+    /// The toast of a pasted image (`paste_toast.rs`) and its exit.
+    pub(crate) paste_toast: Option<super::paste_toast::PasteToast>,
+    pub(crate) paste_toast_exit: super::ui::motion::Ghost<super::paste_toast::PasteToast>,
     /// The tab the × just closed, while it fades (`closing.rs`).
     pub(crate) closing_tab: Option<super::closing::ClosingTab>,
     /// Overlays while they leave (`ui::motion::Presences`).
@@ -1377,6 +1383,8 @@ impl Workbench {
             layout_toast_exit: super::ui::motion::Ghost::default(),
             usage_toast: None,
             usage_toast_exit: super::ui::motion::Ghost::default(),
+            paste_toast: None,
+            paste_toast_exit: super::ui::motion::Ghost::default(),
             closing_tab: None,
             overlays: super::ui::motion::Presences::default(),
             exits: super::overlay_exit::OverlayExits::default(),

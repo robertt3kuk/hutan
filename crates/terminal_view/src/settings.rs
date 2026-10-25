@@ -175,6 +175,9 @@ pub struct TerminalViewSettings {
     /// Ask before pasting several lines into an application that did not turn on bracketed
     /// paste (a shell that would run every line at once).
     pub confirm_multiline_paste: bool,
+    /// ⌘V of an image (nothing else on the clipboard) saves it as a file and pastes its path;
+    /// off, an image is refused with a notice.
+    pub paste_images: bool,
     /// Space between the view's edge and the grid, on all four sides, in logical pixels. The
     /// grid (columns and rows, mouse hit-testing) is laid out in the padded content box.
     pub padding: f32,
@@ -194,6 +197,7 @@ impl Default for TerminalViewSettings {
             copy_on_select: false,
             scroll_to_bottom_on_input: true,
             confirm_multiline_paste: true,
+            paste_images: true,
             padding: 0.0,
             blocks: BlockSettings::default(),
             find: FindSettings::default(),

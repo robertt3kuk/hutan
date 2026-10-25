@@ -6,12 +6,13 @@
 //! carry the view's input, resizes, acks and history requests to the daemon.
 //!
 //! GPUI-free building blocks (unit tested without a window): [`model`], [`blocks`], [`keys`],
-//! [`mouse`], [`paste`], [`links`], [`find`], [`selection`] and [`theme`].
+//! [`mouse`], [`paste`], [`image_paste`], [`links`], [`find`], [`selection`] and [`theme`].
 
 pub mod blocks;
 mod convert;
 mod element;
 pub mod find;
+pub mod image_paste;
 pub mod keys;
 pub mod links;
 pub mod model;
@@ -30,6 +31,7 @@ use gpui::Task;
 pub use hutan_protocol::blocks::BlockPart;
 pub use hutan_protocol::messages::TerminalSize;
 pub use hutan_protocol::render::{Row, TerminalRender};
+pub use image_paste::{ImagePasteTarget, PasteAgent};
 pub use links::LinkTarget;
 pub use settings::{
     BlockSettings, CursorSettings, CursorStyle, FindSettings, OptionAsMeta, TerminalViewSettings,
@@ -65,6 +67,12 @@ pub trait TerminalBackend: 'static {
     /// The folder the shell is in now, for relative paths in output that no block places
     /// (`None`: unknown; such paths are not links).
     fn working_dir(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+    /// Where this terminal's pasted images are saved and which agent reads them (`None`: the
+    /// owner has no folder for them, so an image on the clipboard is refused with a notice).
+    /// Asked at every paste, so the answer follows the session.
+    fn image_paste(&self) -> Option<image_paste::ImagePasteTarget> {
         None
     }
 }

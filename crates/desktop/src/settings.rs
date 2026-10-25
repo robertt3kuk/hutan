@@ -135,6 +135,9 @@ pub struct TerminalSettings {
     /// shell would run every line at once). Programs that handle bracketed paste are never
     /// asked about.
     pub confirm_multiline_paste: bool,
+    /// ⌘V of an image alone on the clipboard saves it as a PNG in the session's scratch folder
+    /// and pastes its path (agents read a path); off, the image is refused with a notice.
+    pub paste_images: bool,
     /// Dim the text of the terminal splits of a tab that do not have the keyboard by a few
     /// percent, so the focused one is not told apart by its top edge alone.
     pub dim_unfocused_splits: bool,
@@ -171,6 +174,7 @@ impl Default for TerminalSettings {
             tab_close: TabClose::Detach,
             open_files_with: OpenFilesWith::Editor,
             confirm_multiline_paste: true,
+            paste_images: true,
             dim_unfocused_splits: true,
             quick_terminal: true,
             quick_hotkey: "ctrl-shift-grave".to_owned(),
@@ -322,6 +326,7 @@ impl TerminalSettings {
             copy_on_select: self.copy_on_select,
             scroll_to_bottom_on_input: self.scroll_to_bottom_on_input,
             confirm_multiline_paste: self.confirm_multiline_paste,
+            paste_images: self.paste_images,
             // Padding follows the density; the workbench fills it in.
             padding: 0.0,
             // The gutter width, colors and motion follow the density and the chrome theme; the
@@ -1985,6 +1990,18 @@ mod tests {
                 .confirm_multiline_paste
         );
         assert_eq!(off.open_files_with, OpenFilesWith::System);
+        // Image paste: on by default; `paste_images = false` reaches the view.
+        assert!(on.paste_images);
+        assert!(
+            on.view_settings(&terminal, &pack, TerminalExplicit::ALL)
+                .paste_images
+        );
+        let no_images: TerminalSettings = toml::from_str("paste_images = false").unwrap();
+        assert!(
+            !no_images
+                .view_settings(&terminal, &pack, TerminalExplicit::ALL)
+                .paste_images
+        );
     }
 
     #[test]

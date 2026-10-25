@@ -24,6 +24,7 @@ use crate::blocks::{self, DisplayRow};
 use crate::convert;
 use crate::element::TerminalElement;
 use crate::find::{FindHighlights, FindSpan};
+use crate::image_paste;
 use crate::keys::{KeyOptions, Mods, encode_key};
 use crate::links::{self, Candidate, LinkTarget};
 use crate::model::{Applied, HISTORY_PAGE, TerminalModel, row_cells, row_width};
@@ -132,6 +133,9 @@ pub enum TerminalViewEvent {
     /// Something the user should be told that the view cannot show itself (a paste of an image):
     /// the owner shows it as a notice.
     Notice(String),
+    /// A pasted image was saved as `path` (and its path typed): the owner tells the user where
+    /// it went.
+    ImageSaved(std::path::PathBuf),
 }
 
 /// How the user answered the multi-line paste confirmation.
@@ -1268,8 +1272,10 @@ impl TerminalView {
 
     /// ⌘V. Files copied in Finder type their quoted paths (as a drop does); text is pasted,
     /// bracketed when the application enabled it, and a multi-line text for an application
-    /// that did not asks first (`terminal.confirm_multiline_paste`); an image cannot be pasted
-    /// into a terminal and says so.
+    /// that did not asks first (`terminal.confirm_multiline_paste`); an image alone on the
+    /// clipboard is saved as a PNG in the session's scratch folder and its path is pasted
+    /// (`terminal.paste_images`; off, or with no folder to save in, the image is refused with a
+    /// notice).
     pub fn paste(&mut self, cx: &mut Context<Self>) {
         if self.pending_paste.is_some() {
             return;
@@ -1290,13 +1296,66 @@ impl TerminalView {
             self.insert_paths(&paths, cx);
         } else if let Some(text) = item.text() {
             self.paste_text(text, cx);
-        } else if item
-            .entries()
-            .iter()
-            .any(|entry| matches!(entry, ClipboardEntry::Image(_)))
-        {
-            cx.emit(TerminalViewEvent::Notice(IMAGE_PASTE_NOTICE.to_owned()));
+        } else if let Some(image) = item.entries().iter().find_map(|entry| match entry {
+            ClipboardEntry::Image(image) => Some(image),
+            _ => None,
+        }) {
+            self.paste_image(&image.bytes, cx);
         }
+    }
+
+    /// Saves the image `bytes` (off the UI thread) and types the path of the file; the owner is
+    /// told where it went ([`TerminalViewEvent::ImageSaved`]), or why not
+    /// ([`TerminalViewEvent::Notice`]).
+    fn paste_image(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        let target = if self.settings.paste_images {
+            self.backend.image_paste()
+        } else {
+            None
+        };
+        let Some(target) = target else {
+            cx.emit(TerminalViewEvent::Notice(IMAGE_PASTE_NOTICE.to_owned()));
+            return;
+        };
+        if !self.accepts_input() {
+            return;
+        }
+        // Refused before a copy of it is made.
+        if bytes.len() > image_paste::MAX_IMAGE_BYTES {
+            let error = image_paste::ImagePasteError::TooLarge { size: bytes.len() };
+            cx.emit(TerminalViewEvent::Notice(error.to_string()));
+            return;
+        }
+        let bytes = bytes.to_vec();
+        let dir = target.dir.clone();
+        let saving = cx.background_spawn(async move { image_paste::save_png(&dir, &bytes) });
+        cx.spawn(async move |this, cx| {
+            let saved = saving.await;
+            this.update(cx, |this, cx| match saved {
+                Ok(saved) => this.image_saved(saved, target.agent, cx),
+                Err(error) => cx.emit(TerminalViewEvent::Notice(error.to_string())),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The saved image's path goes to the program like a drop's (bracketed when it turned that
+    /// on), in the form its agent reads.
+    fn image_saved(
+        &mut self,
+        saved: image_paste::SavedImage,
+        agent: Option<image_paste::PasteAgent>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.accepts_input() {
+            cx.emit(TerminalViewEvent::Notice(
+                "The session ended before the image could be pasted".to_owned(),
+            ));
+            return;
+        }
+        self.insert_agent_paths(&[&saved.path], agent, cx);
+        cx.emit(TerminalViewEvent::ImageSaved(saved.path));
     }
 
     fn paste_text(&mut self, text: String, cx: &mut Context<Self>) {
@@ -1313,10 +1372,21 @@ impl TerminalView {
         self.send_input(paste_bytes(&text, bracketed), cx);
     }
 
-    /// Types `paths` at the cursor, quoted for the shell (a drop, or ⌘V of files copied in
-    /// Finder).
+    /// Types `paths` at the cursor (a drop, or ⌘V of files copied in Finder): quoted for the
+    /// shell, or in the form the agent running in the terminal reads when the owner knows one
+    /// ([`TerminalBackend::image_paste`]).
     pub fn insert_paths<P: AsRef<std::path::Path>>(&mut self, paths: &[P], cx: &mut Context<Self>) {
-        let Some(text) = paste::dropped_paths_text(paths) else {
+        let agent = self.backend.image_paste().and_then(|target| target.agent);
+        self.insert_agent_paths(paths, agent, cx);
+    }
+
+    fn insert_agent_paths<P: AsRef<std::path::Path>>(
+        &mut self,
+        paths: &[P],
+        agent: Option<image_paste::PasteAgent>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(text) = paste::paths_text(paths, agent) else {
             return;
         };
         let bracketed = self.model.get().modes().bracketed_paste;

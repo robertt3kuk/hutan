@@ -795,6 +795,9 @@ struct SessionRegistry {
     commands_dirty: bool,
     /// The git checkout of the directories sessions work in (`SessionInfo.placement`).
     placements: PlacementCache,
+    /// `<home>/scratch`: one folder per session with the images pasted into its terminal
+    /// (`docs/design.md` § Terminal drops and pastes), removed when the session is closed.
+    scratch_dir: PathBuf,
 }
 
 /// What [`spawn`] needs besides the shared services.
@@ -834,6 +837,8 @@ pub struct RegistryConfig {
     pub assistant_policy: AssistantPolicy,
     /// `<home>/tmp`: scratch files of chat deliveries (clipboard images for Codex).
     pub tmp_dir: PathBuf,
+    /// `<home>/scratch`: the images pasted into terminals, one folder per session id.
+    pub scratch_dir: PathBuf,
     /// Checkpoints of chat turns (ADR 0019).
     pub checkpoints: Arc<crate::checkpoints::turns::TurnCheckpoints>,
     /// Usage and limits records: what the turns of chats used.
@@ -895,6 +900,7 @@ pub fn spawn(
         tree_flush_at: None,
         commands_dirty: false,
         placements: PlacementCache::default(),
+        scratch_dir: config.scratch_dir,
     };
     registry.restore_sessions(
         stored.sessions,
@@ -902,6 +908,14 @@ pub fn spawn(
         stored.agent_trees,
         stored.facts,
     );
+    // Folders of sessions this daemon no longer has (closed while it was stopped).
+    let known: HashSet<String> = registry
+        .sessions
+        .iter()
+        .map(|s| s.info.id.to_string())
+        .collect();
+    let scratch = registry.scratch_dir.clone();
+    tokio::task::spawn_blocking(move || crate::scratch::sweep(&scratch, &known));
     tokio::spawn(registry.run(rx));
     RegistryHandle {
         tx,
@@ -1634,11 +1648,21 @@ impl SessionRegistry {
         log_write(self.storage.workspaces().delete(id), "a workspace removal");
         // Ended sessions go with their workspace, and so do their terminals.
         let hub = &self.hub;
-        self.closed.retain(|c| c.session.workspace_id != id);
+        let scratch = &self.scratch_dir;
+        self.closed.retain(|c| {
+            let keep = c.session.workspace_id != id;
+            if !keep {
+                crate::scratch::remove(scratch, c.session.id);
+            }
+            keep
+        });
         self.sessions.retain(|s| {
             let keep = s.info.workspace_id != id;
-            if !keep && let Some(terminal) = &s.terminal {
-                hub.remove(terminal.id());
+            if !keep {
+                if let Some(terminal) = &s.terminal {
+                    hub.remove(terminal.id());
+                }
+                crate::scratch::remove(scratch, s.info.id);
             }
             keep
         });
@@ -2414,6 +2438,8 @@ impl SessionRegistry {
             "closing a session",
         );
         let entry = self.sessions.remove(index);
+        // The images pasted into its terminal go with it.
+        crate::scratch::remove(&self.scratch_dir, id);
         if let Some(terminal) = &entry.terminal {
             self.hub.remove(terminal.id());
         }

@@ -20,7 +20,9 @@ use hutan_protocol::messages::{
     Request, SessionInfo, TerminalColors, TerminalHistory, TerminalHistoryRows, TerminalSize,
 };
 use hutan_protocol::render::TerminalRender;
-use hutan_terminal_view::{DefaultColors, SharedTerminal, TerminalBackend, ViewStatus};
+use hutan_terminal_view::{
+    DefaultColors, ImagePasteTarget, PasteAgent, SharedTerminal, TerminalBackend, ViewStatus,
+};
 
 use super::attention::ended_text;
 
@@ -40,6 +42,20 @@ fn info_folder(info: &SessionInfo) -> Option<PathBuf> {
     info.folder.clone().or_else(|| info.cwd.clone())
 }
 
+/// The coding agent the session's terminal runs, when it reported one that takes the path of an
+/// image pasted into its prompt.
+fn info_agent(info: &SessionInfo) -> Option<PasteAgent> {
+    info.agent
+        .as_ref()
+        .and_then(|report| PasteAgent::from_report(&report.agent))
+}
+
+/// `<data folder>/scratch/<session>`: what a session's pasted images are saved under. The
+/// daemon removes it when the session is closed.
+pub(crate) fn scratch_dir(data_folder: &std::path::Path, session: SessionId) -> PathBuf {
+    data_folder.join("scratch").join(session.to_string())
+}
+
 /// What views of a terminal ask of the daemon, through the session's handle.
 struct SessionBackend {
     handle: SharedHandle,
@@ -49,6 +65,12 @@ struct SessionBackend {
     /// Where the shell is (the session's `folder`, else the folder it started in): relative
     /// paths in output that no block places are looked for there.
     folder: RefCell<Option<PathBuf>>,
+    session: SessionId,
+    /// The data folder (`$HUTAN_HOME`), which holds `scratch/<session>`: where pasted images
+    /// are saved. `None` until the workbench says where it is.
+    scratch_root: RefCell<Option<PathBuf>>,
+    /// The agent the session runs (its last report).
+    agent: RefCell<Option<PasteAgent>>,
 }
 
 impl TerminalBackend for SessionBackend {
@@ -105,6 +127,14 @@ impl TerminalBackend for SessionBackend {
 
     fn working_dir(&self) -> Option<PathBuf> {
         self.folder.borrow().clone()
+    }
+
+    fn image_paste(&self) -> Option<ImagePasteTarget> {
+        let root = self.scratch_root.borrow().clone()?;
+        Some(ImagePasteTarget {
+            dir: scratch_dir(&root, self.session),
+            agent: *self.agent.borrow(),
+        })
     }
 
     fn block_text(&self, block_id: u64, part: BlockPart) -> Task<Option<String>> {
@@ -196,6 +226,9 @@ impl TerminalSession {
                 shared: shared.downgrade(),
                 cx: cx.to_async(),
                 folder: RefCell::new(info_folder(&info)),
+                session: info.id,
+                scratch_root: RefCell::new(None),
+                agent: RefCell::new(info_agent(&info)),
             });
             let mut this = Self {
                 session: info.id,
@@ -417,6 +450,12 @@ impl TerminalSession {
         cx.notify();
     }
 
+    /// Where the data folder is, so that images pasted into this terminal have a folder
+    /// (`<data folder>/scratch/<session>`).
+    pub fn set_scratch_root(&self, data_folder: Option<PathBuf>) {
+        *self.backend.scratch_root.borrow_mut() = data_folder;
+    }
+
     /// The store's latest word on the session (`None`: it is gone from the daemon), from the
     /// daemon of `epoch`.
     pub fn update_info(
@@ -429,6 +468,7 @@ impl TerminalSession {
             return;
         }
         *self.backend.folder.borrow_mut() = info.as_ref().and_then(info_folder);
+        *self.backend.agent.borrow_mut() = info.as_ref().and_then(info_agent);
         self.info = info;
         self.info_epoch = epoch;
         if !self.rebind_to_respawn(cx) {

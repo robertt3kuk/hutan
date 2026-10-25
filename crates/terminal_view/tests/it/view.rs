@@ -1,6 +1,7 @@
 //! GPUI tests: the view lays out against GPUI's deterministic test text system (every glyph is
 //! 0.6 em wide, so a 13 px font gives 7.8 × 15.6 px cells), applies renders, and acks after a
 //! frame.
+#![allow(clippy::unwrap_used, clippy::expect_used)] // test helpers outside #[test] fns
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -16,8 +17,8 @@ use hutan_protocol::render::{
     TerminalRender, TerminalSnapshot,
 };
 use hutan_terminal_view::{
-    DefaultColors, PasteChoice, TerminalBackend, TerminalSize, TerminalView, TerminalViewEvent,
-    TerminalViewSettings, ViewStatus,
+    DefaultColors, ImagePasteTarget, PasteChoice, TerminalBackend, TerminalSize, TerminalView,
+    TerminalViewEvent, TerminalViewSettings, ViewStatus,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +36,8 @@ struct Recorder {
     calls: RefCell<Vec<Call>>,
     /// What `block_text` answers.
     texts: RefCell<Vec<(u64, BlockPart, String)>>,
+    /// Where `image_paste` says pasted images go (`None`: nowhere).
+    target: RefCell<Option<ImagePasteTarget>>,
 }
 
 impl Recorder {
@@ -82,6 +85,9 @@ impl TerminalBackend for Recorder {
                 .find(|(id, p, _)| *id == block_id && *p == part)
                 .map(|(_, _, text)| text.clone()),
         )
+    }
+    fn image_paste(&self) -> Option<ImagePasteTarget> {
+        self.target.borrow().clone()
     }
 }
 
@@ -861,7 +867,9 @@ fn a_session_that_ended_takes_no_drops(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn files_copied_in_finder_paste_as_paths_and_an_image_says_it_cannot(cx: &mut TestAppContext) {
+fn files_copied_in_finder_paste_as_paths_and_an_image_without_a_folder_is_refused(
+    cx: &mut TestAppContext,
+) {
     let (view, cx, recorder) = pasting(cx, TerminalViewSettings::default(), Modes::default());
     let seen = events(cx, &view);
     cx.write_to_clipboard(gpui::ClipboardItem {
@@ -872,6 +880,7 @@ fn files_copied_in_finder_paste_as_paths_and_an_image_says_it_cannot(cx: &mut Te
     cx.simulate_keystrokes("cmd-v");
     assert_eq!(recorder.inputs().concat(), b"'/tmp/a b.txt' ");
 
+    // The owner has no folder for pasted images: the view says so and types nothing.
     cx.write_to_clipboard(gpui::ClipboardItem::from(gpui::Image::from_bytes(
         gpui::ImageFormat::Png,
         vec![1, 2, 3],
@@ -884,6 +893,307 @@ fn files_copied_in_finder_paste_as_paths_and_an_image_says_it_cannot(cx: &mut Te
             "Images can't be pasted into a terminal — attach them in a chat".into()
         )]
     );
+}
+
+/// A PNG of a few pixels.
+fn png_bytes(format: image::ImageFormat) -> Vec<u8> {
+    let picture = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        4,
+        3,
+        image::Rgb([200, 100, 50]),
+    ));
+    let mut out = std::io::Cursor::new(Vec::new());
+    picture.write_to(&mut out, format).unwrap();
+    out.into_inner()
+}
+
+fn clipboard_image(cx: &mut VisualTestContext, format: gpui::ImageFormat, bytes: Vec<u8>) {
+    cx.write_to_clipboard(gpui::ClipboardItem::from(gpui::Image::from_bytes(
+        format, bytes,
+    )));
+}
+
+fn image_pasting<'a>(
+    cx: &'a mut TestAppContext,
+    settings: TerminalViewSettings,
+    modes: Modes,
+    dir: &std::path::Path,
+    agent: Option<hutan_terminal_view::PasteAgent>,
+) -> (
+    Entity<TerminalView>,
+    &'a mut VisualTestContext,
+    Rc<Recorder>,
+) {
+    let (view, cx, recorder) = pasting(cx, settings, modes);
+    recorder.target.replace(Some(ImagePasteTarget {
+        dir: dir.to_path_buf(),
+        agent,
+    }));
+    (view, cx, recorder)
+}
+
+#[gpui::test]
+fn an_image_on_the_clipboard_is_saved_and_its_path_typed(cx: &mut TestAppContext) {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("scratch").join("s1");
+    let (view, cx, recorder) = image_pasting(
+        cx,
+        TerminalViewSettings::default(),
+        Modes::default(),
+        &dir,
+        None,
+    );
+    let seen = events(cx, &view);
+    let png = png_bytes(image::ImageFormat::Png);
+    clipboard_image(cx, gpui::ImageFormat::Png, png.clone());
+    cx.simulate_keystrokes("cmd-v");
+    cx.run_until_parked();
+
+    let saved = dir.join("paste-1.png");
+    assert_eq!(std::fs::read(&saved).unwrap(), png, "the PNG, as it was");
+    assert_eq!(
+        recorder.inputs().concat(),
+        format!("{} ", saved.display()).into_bytes(),
+        "the path of the file, typed like a drop"
+    );
+    assert_eq!(*seen.borrow(), [TerminalViewEvent::ImageSaved(saved)]);
+
+    // The next one is the next number.
+    cx.simulate_keystrokes("cmd-v");
+    cx.run_until_parked();
+    assert!(dir.join("paste-2.png").exists());
+}
+
+#[gpui::test]
+fn the_path_is_pasted_bracketed_when_the_program_turned_that_on(cx: &mut TestAppContext) {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("s");
+    let modes = Modes {
+        bracketed_paste: true,
+        ..Modes::default()
+    };
+    let (_view, cx, recorder) =
+        image_pasting(cx, TerminalViewSettings::default(), modes, &dir, None);
+    clipboard_image(
+        cx,
+        gpui::ImageFormat::Png,
+        png_bytes(image::ImageFormat::Png),
+    );
+    cx.simulate_keystrokes("cmd-v");
+    cx.run_until_parked();
+    assert_eq!(
+        recorder.inputs().concat(),
+        format!("\x1b[200~{} \x1b[201~", dir.join("paste-1.png").display()).into_bytes()
+    );
+}
+
+#[gpui::test]
+fn a_known_agent_gets_the_path_in_the_form_it_reads(cx: &mut TestAppContext) {
+    use hutan_terminal_view::PasteAgent;
+    let home = tempfile::tempdir().unwrap();
+    // A folder with a space, like `~/Library/Application Support/Hutan`.
+    let dir = home.path().join("Application Support").join("s");
+    let (_view, cx, recorder) = image_pasting(
+        cx,
+        TerminalViewSettings::default(),
+        Modes::default(),
+        &dir,
+        Some(PasteAgent::ClaudeCode),
+    );
+    clipboard_image(
+        cx,
+        gpui::ImageFormat::Png,
+        png_bytes(image::ImageFormat::Png),
+    );
+    cx.simulate_keystrokes("cmd-v");
+    cx.run_until_parked();
+    let path = dir.join("paste-1.png").display().to_string();
+    assert_eq!(
+        recorder.inputs().concat(),
+        format!("{} ", path.replace(' ', "\\ ")).into_bytes()
+    );
+
+    // No agent: a shell quotes it.
+    recorder
+        .target
+        .replace(Some(ImagePasteTarget { dir, agent: None }));
+    cx.simulate_keystrokes("cmd-v");
+    cx.run_until_parked();
+    let path = path.replace("paste-1", "paste-2");
+    assert_eq!(
+        recorder.inputs().concat(),
+        format!("'{path}' ").into_bytes()
+    );
+}
+
+#[gpui::test]
+fn a_dropped_file_follows_the_agent_too(cx: &mut TestAppContext) {
+    use hutan_terminal_view::PasteAgent;
+    let home = tempfile::tempdir().unwrap();
+    let (view, cx, recorder) = image_pasting(
+        cx,
+        TerminalViewSettings::default(),
+        Modes::default(),
+        home.path(),
+        Some(PasteAgent::Codex),
+    );
+    view.update(cx, |v, cx| v.insert_paths(&["/tmp/my dir/shot.png"], cx));
+    assert_eq!(recorder.inputs().concat(), b"/tmp/my\\ dir/shot.png ");
+}
+
+#[gpui::test]
+fn other_clipboard_formats_are_saved_as_png(cx: &mut TestAppContext) {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("s");
+    let (_view, cx, recorder) = image_pasting(
+        cx,
+        TerminalViewSettings::default(),
+        Modes::default(),
+        &dir,
+        None,
+    );
+    // What a screenshot taken to the clipboard may be: TIFF.
+    clipboard_image(
+        cx,
+        gpui::ImageFormat::Tiff,
+        png_bytes(image::ImageFormat::Tiff),
+    );
+    cx.simulate_keystrokes("cmd-v");
+    cx.run_until_parked();
+    let written = std::fs::read(dir.join("paste-1.png")).unwrap();
+    let back = image::load_from_memory_with_format(&written, image::ImageFormat::Png).unwrap();
+    assert_eq!((back.width(), back.height()), (4, 3));
+    assert!(!recorder.inputs().is_empty());
+}
+
+#[gpui::test]
+fn an_image_over_20_mib_is_refused_with_a_notice_and_nothing_is_written(cx: &mut TestAppContext) {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("s");
+    let (view, cx, recorder) = image_pasting(
+        cx,
+        TerminalViewSettings::default(),
+        Modes::default(),
+        &dir,
+        None,
+    );
+    let seen = events(cx, &view);
+    let mut big = png_bytes(image::ImageFormat::Png);
+    big.resize(21 * 1024 * 1024, 0);
+    clipboard_image(cx, gpui::ImageFormat::Png, big);
+    cx.simulate_keystrokes("cmd-v");
+    cx.run_until_parked();
+    assert!(recorder.inputs().is_empty());
+    assert!(!dir.exists(), "nothing was created");
+    assert_eq!(
+        *seen.borrow(),
+        [TerminalViewEvent::Notice(
+            "The image is 21.0 MiB: at most 20.0 MiB can be pasted into a terminal".into()
+        )]
+    );
+}
+
+#[gpui::test]
+fn something_that_is_not_an_image_is_refused_with_a_notice(cx: &mut TestAppContext) {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("s");
+    let (view, cx, recorder) = image_pasting(
+        cx,
+        TerminalViewSettings::default(),
+        Modes::default(),
+        &dir,
+        None,
+    );
+    let seen = events(cx, &view);
+    clipboard_image(cx, gpui::ImageFormat::Png, b"not a picture".to_vec());
+    cx.simulate_keystrokes("cmd-v");
+    cx.run_until_parked();
+    assert!(recorder.inputs().is_empty());
+    assert_eq!(
+        *seen.borrow(),
+        [TerminalViewEvent::Notice(
+            "The image on the clipboard could not be read".into()
+        )]
+    );
+}
+
+#[gpui::test]
+fn with_paste_images_off_an_image_is_refused_as_before(cx: &mut TestAppContext) {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("s");
+    let settings = TerminalViewSettings {
+        paste_images: false,
+        ..TerminalViewSettings::default()
+    };
+    let (view, cx, recorder) = image_pasting(cx, settings, Modes::default(), &dir, None);
+    let seen = events(cx, &view);
+    clipboard_image(
+        cx,
+        gpui::ImageFormat::Png,
+        png_bytes(image::ImageFormat::Png),
+    );
+    cx.simulate_keystrokes("cmd-v");
+    cx.run_until_parked();
+    assert!(recorder.inputs().is_empty());
+    assert!(!dir.exists());
+    assert_eq!(
+        *seen.borrow(),
+        [TerminalViewEvent::Notice(
+            hutan_terminal_view::IMAGE_PASTE_NOTICE.into()
+        )]
+    );
+}
+
+#[gpui::test]
+fn text_on_the_clipboard_wins_over_an_image(cx: &mut TestAppContext) {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("s");
+    let (_view, cx, recorder) = image_pasting(
+        cx,
+        TerminalViewSettings::default(),
+        Modes::default(),
+        &dir,
+        None,
+    );
+    cx.write_to_clipboard(gpui::ClipboardItem {
+        entries: vec![
+            gpui::ClipboardEntry::Image(gpui::Image::from_bytes(
+                gpui::ImageFormat::Png,
+                png_bytes(image::ImageFormat::Png),
+            )),
+            gpui::ClipboardEntry::String(gpui::ClipboardString::new("ls".into())),
+        ],
+    });
+    cx.simulate_keystrokes("cmd-v");
+    cx.run_until_parked();
+    assert_eq!(recorder.inputs().concat(), b"ls");
+    assert!(!dir.exists());
+}
+
+#[gpui::test]
+fn an_image_pasted_into_an_ended_session_types_nothing(cx: &mut TestAppContext) {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("s");
+    let (view, cx, recorder) = image_pasting(
+        cx,
+        TerminalViewSettings::default(),
+        Modes::default(),
+        &dir,
+        None,
+    );
+    view.update(cx, |v, cx| {
+        v.set_status(ViewStatus::Ended("exited".into()), cx)
+    });
+    draw(cx);
+    clipboard_image(
+        cx,
+        gpui::ImageFormat::Png,
+        png_bytes(image::ImageFormat::Png),
+    );
+    view.update(cx, |v, cx| v.paste(cx));
+    cx.run_until_parked();
+    assert!(recorder.inputs().is_empty());
+    assert!(!dir.exists());
 }
 
 #[gpui::test]

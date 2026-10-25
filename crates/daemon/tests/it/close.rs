@@ -392,6 +392,75 @@ async fn a_closed_session_is_not_restored_and_can_be_reopened_after_a_daemon_res
     t.stop().await;
 }
 
+/// What the desktop saves for a pasted image: `<home>/scratch/<session>/paste-<n>.png`.
+fn scratch_of(t: &TestDaemon, id: SessionId) -> PathBuf {
+    t.paths.base.join("scratch").join(id.to_string())
+}
+
+fn paste_into(t: &TestDaemon, id: SessionId) -> PathBuf {
+    let dir = scratch_of(t, id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("paste-1.png");
+    std::fs::write(&file, b"png").unwrap();
+    file
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_a_session_removes_the_images_pasted_into_its_terminal() {
+    let t = TestDaemon::start().await;
+    let client = t.connect().await;
+    let closed = create(&client, spec(&["/bin/cat"])).await;
+    let kept = create(&client, spec(&["/bin/cat"])).await;
+    let (gone, stays) = (paste_into(&t, closed.id), paste_into(&t, kept.id));
+
+    close(&client, closed.id, false).await.unwrap();
+    // The reply comes after the removal: nothing to wait for.
+    assert!(!gone.exists(), "the closed session's image is removed");
+    assert!(
+        !scratch_of(&t, closed.id).exists(),
+        "and its folder with it"
+    );
+    assert!(stays.exists(), "an open session keeps its images");
+
+    // A session that ended on its own keeps them until it is closed.
+    let ended = create(&client, sh("exit 3")).await;
+    let file = paste_into(&t, ended.id);
+    wait_listed(&client, ended.id, "the exit", |s| {
+        matches!(s.state, SessionState::Exited { .. })
+    })
+    .await;
+    assert!(file.exists());
+    close(&client, ended.id, false).await.unwrap();
+    assert!(!file.exists());
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_daemon_start_removes_the_folders_of_sessions_it_no_longer_has() {
+    let t = TestDaemon::start().await;
+    let client = t.connect().await;
+    let kept = create(&client, spec(&["/bin/cat"])).await;
+    let stays = paste_into(&t, kept.id);
+    // A session closed while no daemon ran leaves its folder behind.
+    let orphan = scratch_of(&t, SessionId::new());
+    std::fs::create_dir_all(&orphan).unwrap();
+    std::fs::write(orphan.join("paste-1.png"), b"png").unwrap();
+    drop(client);
+
+    let t = t.restart().await;
+    let client = t.connect().await;
+    assert!(listed(&client, kept.id).await.is_some());
+    timeout(WAIT, async {
+        while orphan.exists() {
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("the sweep removes the orphan");
+    assert!(stays.exists(), "the restored session keeps its images");
+    t.stop().await;
+}
+
 /// A fake agent on `PATH`: records its argv, then waits.
 fn install_fake_agent(dir: &Path) {
     use std::os::unix::fs::PermissionsExt;

@@ -2700,6 +2700,7 @@ dependencies = [
  "hutan-storage",
  "hutan-terminal-view",
  "hutan-vim",
+ "image",
  "libc",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -2885,8 +2886,10 @@ dependencies = [
  "hutan-daemon",
  "hutan-protocol",
  "hutan-settings",
+ "image",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "unicode-width",
 ]
