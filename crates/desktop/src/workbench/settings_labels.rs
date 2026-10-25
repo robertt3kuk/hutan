@@ -1732,11 +1732,6 @@ pub mod words {
         format!("Last run: {run}")
     }
 
-    /// "Test: ok in 212 ms, 3s ago".
-    pub fn hook_test_result(run: &str) -> String {
-        format!("Test with a sample payload: {run}")
-    }
-
     /// "4 runs, 1 failed, 2 dropped (queue full), 3 skipped (window focused)"; nothing before
     /// the first run.
     pub fn hook_counts(runs: u64, failures: u64, dropped: u64, skipped: u64) -> Option<String> {
@@ -2204,7 +2199,6 @@ mod tests {
             words::no_match("zzz"),
             words::mcp_remove_title("docs"),
             words::hook_last_run("ok in 212 ms, 3m ago"),
-            words::hook_test_result("ok in 212 ms, 3s ago"),
             words::hook_counts(4, 1, 2, 3).unwrap(),
             words::hook_counts(1, 0, 0, 0).unwrap(),
             words::hooks_limits(1, 4, 8),

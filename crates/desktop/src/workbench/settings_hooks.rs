@@ -360,18 +360,8 @@ impl Workbench {
                     .into_any_element(),
             );
         }
-        if let Some(tested) = self.hooks_page.tested.get(&index) {
-            under.push(
-                note(
-                    words::hook_test_result(&run_line(&tested.run, now)),
-                    &theme,
-                    &tokens,
-                )
-                .id(SharedString::from(format!("hook-test-{index}")))
-                .into_any_element(),
-            );
-            under.extend(output_under(&tested.run, &theme, &tokens));
-        } else if let Some(run) = &hook.last_run {
+        // The latest run is the test just made, or a real one after it; a test says "(test)".
+        if let Some(run) = &hook.last_run {
             under.extend(output_under(run, &theme, &tokens));
         }
         let testing = self.hooks_page.testing == Some(index);
