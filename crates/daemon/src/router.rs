@@ -30,6 +30,7 @@ use crate::control::{Access, ControlService};
 use crate::daemon_settings::SettingsService;
 use crate::files::FileService;
 use crate::history::HistoryService;
+use crate::hooks::HooksService;
 use crate::lsp::LspHub;
 use crate::memory::MemoryService;
 use crate::notify::NotifyService;
@@ -59,6 +60,7 @@ pub struct Services {
     pub files: Arc<FileService>,
     pub lsp: Arc<LspHub>,
     pub ui: Arc<UiHub>,
+    pub hooks: Arc<HooksService>,
     pub settings: Arc<SettingsService>,
 }
 
@@ -83,6 +85,7 @@ pub struct Router {
     files: Arc<FileService>,
     lsp: Arc<LspHub>,
     ui: Arc<UiHub>,
+    hooks: Arc<HooksService>,
     settings: Arc<SettingsService>,
     /// The shutdown in progress asked to drop the stopped sessions from the restore set.
     forget: AtomicBool,
@@ -117,6 +120,7 @@ impl Router {
             files: services.files,
             lsp: services.lsp,
             ui: services.ui,
+            hooks: services.hooks,
             settings: services.settings,
             forget: AtomicBool::new(false),
         }
@@ -485,6 +489,9 @@ impl Router {
             }
             Request::MemoryImport(req) => ok(&self.memory.import(req, conn.client_kind()).await?),
             Request::MemoryFilesStatus(req) => ok(&self.memory.files_status(req).await?),
+            Request::HooksList(_) => ok(&self.hooks.list()),
+            Request::HooksLog(req) => ok(&self.hooks.log(req)),
+            Request::HooksTest(req) => ok(&self.hooks.test(req).await?),
             Request::NotifyList(_) => ok(&NotifyList {
                 intents: self.notify.list(),
             }),
@@ -542,6 +549,7 @@ impl Router {
                         .checkout_finished(&finished.checkout, commit, by)
                         .await;
                 }
+                self.hooks.finish_done(&finished.result, &finished.checkout);
                 ok(&finished.result)
             }
             Request::TaskCreate(req) => ok(&TaskResult {
@@ -1005,6 +1013,12 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::MemoryImport(_) => ("memory.import", UserOnly),
         Request::MemoryFilesStatus(_) => ("memory.files.status", UserOnly),
         Request::AssistantList(_) => ("assistant.list", Read),
+        // A hook's command line can carry a token, its log what the command printed, and a test
+        // runs the user's command: all the user's (protocol 0.49). There is no request that
+        // adds or changes a hook: they live in the user's `daemon.toml`.
+        Request::HooksList(_) => ("hooks.list", UserOnly),
+        Request::HooksLog(_) => ("hooks.log", UserOnly),
+        Request::HooksTest(_) => ("hooks.test", UserOnly),
         Request::NotifyList(_) => ("notify.list", Read),
         Request::NotifyAck(_) => ("notify.ack", Mutate),
         // Acting on an intent can answer an approval.

@@ -1587,6 +1587,10 @@ mod tests {
             // (`[lsp.servers.<id>]`, `[lsp.projects.<p>]`); `daemon.toml` is where they are set
             // (`docs/lsp.md`).
             lsp: _,
+            // User hooks are commands the daemon runs: they are written by hand in
+            // `daemon.toml` and are no setting of the table, so neither `hutan config` nor an
+            // agent can add or change one (`docs/integrations.md` § User hooks).
+            hooks: _,
         } = Config::default();
         let config::HistorySettings {
             enabled: _,

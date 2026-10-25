@@ -1048,6 +1048,38 @@ impl Connection {
             .is_some_and(|client| client.supports_usage())
     }
 
+    /// True while connected to a daemon that advertised capability `hooks`; false when
+    /// disconnected.
+    pub fn supports_hooks(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_hooks())
+    }
+
+    /// `hooks.list` ([`Client::hooks_list`]).
+    pub async fn hooks_list(&self) -> Result<hutan_protocol::hooks::HooksList, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.hooks_list().await
+    }
+
+    /// `hooks.log` ([`Client::hooks_log`]).
+    pub async fn hooks_log(
+        &self,
+        req: hutan_protocol::hooks::HooksLogRequest,
+    ) -> Result<hutan_protocol::hooks::HooksLog, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.hooks_log(req).await
+    }
+
+    /// `hooks.test` ([`Client::hooks_test`]).
+    pub async fn hooks_test(
+        &self,
+        hook: u32,
+    ) -> Result<hutan_protocol::hooks::HooksTested, ClientError> {
+        let client = self.shared.client().ok_or(ClientError::Disconnected)?;
+        client.hooks_test(hook).await
+    }
+
     /// `usage.summary`: the limit windows the harnesses report and what the turns used;
     /// `refresh` asks the harnesses first (it takes seconds).
     pub async fn usage_summary(

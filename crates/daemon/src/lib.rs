@@ -34,6 +34,8 @@
 //! - [`context_file`]: file attachments, read below the workspace roots without following symlinks.
 //! - [`resources`]: process trees, CPU and memory while watched, `session.kill`, `process.signal`,
 //!   `agent.interrupt`, and their audit trail.
+//! - [`hooks`]: the user's `[[hooks]]`: commands run on Hutan events, with a bounded redacted
+//!   payload, a concurrency limit and a log (`hooks.list|log|test`, protocol 0.49).
 //! - [`notify`]: notification intents derived from the event stream, `notify.*`, `client.focus`.
 //! - [`partial`]: journaled snapshots of streaming chat text (protocol 0.15).
 //! - [`notify_native`]: posting the intents to the system's notification centre from `Hutan.app`
@@ -72,6 +74,7 @@ pub mod files;
 pub mod harness;
 pub mod history;
 pub mod history_catalog;
+pub mod hooks;
 pub mod lsp;
 pub mod mcp_wiring;
 pub mod memory;

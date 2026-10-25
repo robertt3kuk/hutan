@@ -62,6 +62,8 @@ struct Inner {
     /// Internal consumer of the file changes agents report (`file_diff` journal events), which
     /// the file service attributes `fs.changed` events with.
     fs_observer: Option<mpsc::Sender<Event>>,
+    /// Internal consumer of the events user hooks run on.
+    hooks_observer: Option<mpsc::Sender<Event>>,
 }
 
 #[derive(Debug)]
@@ -86,6 +88,7 @@ impl EventBus {
                 task_observer: None,
                 attention: None,
                 fs_observer: None,
+                hooks_observer: None,
             }),
         }
     }
@@ -123,6 +126,13 @@ impl EventBus {
     /// now on (`None` stops). Never blocks: when the queue is full the event is dropped for it.
     pub fn set_fs_observer(&self, observer: Option<mpsc::Sender<Event>>) {
         self.lock().fs_observer = observer;
+    }
+
+    /// Sends a copy of every event user hooks are derived from (see [`feeds_hooks`]) to
+    /// `observer` from now on (`None` stops). Never blocks: when the queue is full the event is
+    /// dropped for it.
+    pub fn set_hooks_observer(&self, observer: Option<mpsc::Sender<Event>>) {
+        self.lock().hooks_observer = observer;
     }
 
     /// Pokes `attention` whenever an event that may change what needs the user (see
@@ -222,6 +232,17 @@ impl EventBus {
                     tracing::debug!("file observer is full; dropped an event");
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => inner.fs_observer = None,
+            }
+        }
+        if feeds_hooks(event)
+            && let Some(observer) = &inner.hooks_observer
+        {
+            match observer.try_send(event.clone()) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    tracing::warn!("hooks observer is full; dropped an event");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => inner.hooks_observer = None,
             }
         }
         if feeds_attention(event)
@@ -392,6 +413,34 @@ fn feeds_notifications(event: &Event) -> bool {
                             role: MessageRole::Assistant,
                             ..
                         }
+                )
+        }
+        _ => false,
+    }
+}
+
+/// The events user hooks are derived from: approvals, questions, agent tree changes, session
+/// exits and closes, task updates, and the live start, end and file changes of a chat turn.
+fn feeds_hooks(event: &Event) -> bool {
+    use hutan_core::AgentEventKind;
+    use hutan_core::agent::Delivery;
+    match event {
+        Event::ApprovalRequired { .. }
+        | Event::ApprovalResolved { .. }
+        | Event::QuestionRequired { .. }
+        | Event::QuestionResolved { .. }
+        | Event::AgentTreeUpdated { .. }
+        | Event::SessionExited { .. }
+        | Event::SessionClosed { .. }
+        | Event::TaskUpdated { .. } => true,
+        Event::ChatEvent { event, .. } => {
+            event.delivery == Delivery::Live
+                && matches!(
+                    event.kind,
+                    AgentEventKind::TurnStarted
+                        | AgentEventKind::TurnCompleted { .. }
+                        | AgentEventKind::TurnFailed { .. }
+                        | AgentEventKind::FileDiff { .. }
                 )
         }
         _ => false,

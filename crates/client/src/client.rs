@@ -38,6 +38,7 @@ use hutan_protocol::git::{
     GitBlame, GitBlameResult, GitFile, GitFileResult, GitLog, GitLogResult, GitShow, GitShowResult,
 };
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
+use hutan_protocol::hooks::{HooksList, HooksLog, HooksLogRequest, HooksTest, HooksTested};
 use hutan_protocol::memory::{
     MemoryEntries, MemoryEntry, MemoryFilesStatus, MemoryFilesStatusRequest, MemoryHistory,
     MemoryHistoryRequest, MemoryImport, MemoryImported, MemoryList, MemoryProposal,
@@ -208,6 +209,8 @@ pub(crate) const PROJECT_GIT_INIT_CAPABILITY: &str = "project.git_init";
 pub(crate) const USAGE_CAPABILITY: &str = "usage";
 /// Capability for `git.log|blame|show|file` (protocol 0.47).
 pub(crate) const GIT_HISTORY_CAPABILITY: &str = "git.history";
+/// Capability for `hooks.list|log|test` (protocol 0.49).
+pub(crate) const HOOKS_CAPABILITY: &str = "hooks";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -259,6 +262,7 @@ const CAPABILITIES: &[&str] = &[
     USAGE_CAPABILITY,
     MEMORY_FILES_CAPABILITY,
     GIT_HISTORY_CAPABILITY,
+    HOOKS_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -666,6 +670,30 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == PROJECT_GIT_INIT_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `hooks` (protocol 0.49): `hooks.list`,
+    /// `hooks.log` and `hooks.test`.
+    pub fn supports_hooks(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == HOOKS_CAPABILITY)
+    }
+
+    /// `hooks.list`: the user's `[[hooks]]` with their counters and last runs.
+    pub async fn hooks_list(&self) -> Result<HooksList, ClientError> {
+        self.call(Request::HooksList(Empty {})).await
+    }
+
+    /// `hooks.log`: the finished runs, newest first.
+    pub async fn hooks_log(&self, req: HooksLogRequest) -> Result<HooksLog, ClientError> {
+        self.call(Request::HooksLog(req)).await
+    }
+
+    /// `hooks.test`: runs one hook with a sample payload and waits for it.
+    pub async fn hooks_test(&self, hook: u32) -> Result<HooksTested, ClientError> {
+        self.call(Request::HooksTest(HooksTest { hook })).await
     }
 
     /// True when the daemon advertised capability `git.history` (protocol 0.47): `git.log`,

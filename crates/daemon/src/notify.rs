@@ -650,7 +650,7 @@ fn question_candidate(question: &QuestionInfo) -> Candidate {
 /// `text` as one redacted line of at most `max_chars` characters; a cut ends in `…`. Redaction
 /// comes first and sees the whole text: cutting first could clip a quoted secret before its
 /// closing quote, or a URL password before its `@`, and the prefix would then pass the masks.
-fn clean(text: &str, max_chars: usize) -> String {
+pub(crate) fn clean(text: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
     }

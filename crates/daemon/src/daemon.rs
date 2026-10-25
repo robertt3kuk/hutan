@@ -33,6 +33,7 @@ use crate::error::{DaemonError, MAX_SOCKET_PATH_BYTES};
 use crate::files::FileService;
 use crate::harness::Harnesses;
 use crate::history::HistoryService;
+use crate::hooks::{HooksInputs, HooksService};
 use crate::lsp::{Inputs as LspInputs, LspHub, LspTuning};
 use crate::mcp_wiring::McpWiring;
 use crate::memory::MemoryService;
@@ -416,7 +417,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         bus: bus.clone(),
         storage: storage.clone(),
         source: processes.clone(),
-        harnesses,
+        harnesses: harnesses.clone(),
         tuning: config.lsp.clone(),
         shutdown: shutdown.clone(),
     })
@@ -449,6 +450,17 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         config.fs_limits,
     );
     let ui = UiHub::with_timeout(bus.clone(), config.ui_command_timeout);
+    let hooks = HooksService::new(HooksInputs {
+        settings: settings.hooks.clone(),
+        bus: bus.clone(),
+        registry: registry.clone(),
+        ui: ui.clone(),
+        harnesses: harnesses.clone(),
+        socket: paths.socket.clone(),
+        hutan_bin: hutan_bin.clone(),
+        home: paths.user_home.clone(),
+    });
+    hooks.start(shutdown.clone());
     let menu_bar = menu_bar.map(|(menu_bar, _, changes)| {
         (
             menu_bar,
@@ -495,6 +507,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             files,
             lsp,
             ui,
+            hooks,
             settings: settings_service,
         },
         bus.clone(),

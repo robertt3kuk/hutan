@@ -20,6 +20,7 @@ mod git_init;
 mod harness;
 mod history;
 mod history_sessions;
+mod hooks;
 mod login_env;
 mod lsp;
 mod mawas;

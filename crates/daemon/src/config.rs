@@ -128,6 +128,13 @@
 //! enabled = false                # no server starts for this project's files
 //! [lsp.projects.hutan.roots]
 //! rust-analyzer = "crates/core"  # this server's root for the project's files (relative to the project's folder)
+//!
+//! [[hooks]]                      # user hooks (protocol 0.49, docs/integrations.md § User hooks); read at start, only from here
+//! on = "turn.finished"           # turn.finished | turn.failed | approval.requested | attention.changed | session.exited | task.done | finish.done
+//! harness = "claude"             # optional filters: harness, project, workspace (name or id)
+//! run = ["afplay", "/System/Library/Sounds/Glass.aiff"]   # argv, no shell unless `shell = true` (then one command line)
+//! timeout = 30                   # seconds, 1-300
+//! when_focused = false           # skip while a desktop window is focused
 //! ```
 
 use std::collections::BTreeMap;
@@ -175,6 +182,9 @@ pub struct DaemonSettings {
     pub finish: FinishSettings,
     pub checkpoints: CheckpointSettings,
     pub lsp: LspSettings,
+    /// `[[hooks]]`: user hooks (protocol 0.49, `docs/integrations.md` § User hooks); read at
+    /// start.
+    pub hooks: Vec<HookSettings>,
 }
 
 /// `[projects]` of `daemon.toml`: automatic projects (protocol 0.19).
@@ -948,6 +958,99 @@ impl Default for ControlSettings {
     }
 }
 
+/// Most `[[hooks]]` entries.
+pub const MAX_HOOKS: usize = 64;
+/// Most arguments of a hook's command, and most bytes of them together.
+const MAX_HOOK_ARGS: usize = 64;
+const MAX_HOOK_ARG_BYTES: usize = 8 * 1024;
+
+fn default_hook_timeout() -> u32 {
+    hutan_protocol::hooks::DEFAULT_TIMEOUT_SECS
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// One `[[hooks]]` entry of `daemon.toml` (user-only; nothing from a repository is ever read
+/// here): a command the daemon runs when `on` happens (`docs/integrations.md` § User hooks).
+///
+/// ```toml
+/// [[hooks]]
+/// on = "turn.finished"
+/// harness = "claude"               # optional filters: harness, project, workspace (name or id)
+/// run = ["afplay", "/System/Library/Sounds/Glass.aiff"]   # argv; no shell unless `shell = true`
+/// timeout = 30                     # seconds, 1–300 (default 30)
+/// when_focused = false             # skip while a desktop window is focused (default: run)
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HookSettings {
+    /// A label for the lists; optional.
+    #[serde(default)]
+    pub name: Option<String>,
+    pub on: hutan_protocol::hooks::HookEvent,
+    #[serde(default)]
+    pub harness: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub workspace: Option<String>,
+    /// The program and its arguments; with `shell = true` exactly one command line, run by
+    /// `/bin/sh -c`.
+    pub run: Vec<String>,
+    #[serde(default)]
+    pub shell: bool,
+    /// Seconds before the hook is killed.
+    #[serde(default = "default_hook_timeout")]
+    pub timeout: u32,
+    /// `false`: the hook does not run while a desktop window is focused.
+    #[serde(default = "yes")]
+    pub when_focused: bool,
+}
+
+impl HookSettings {
+    fn check(&self, index: usize) -> Result<(), String> {
+        let bad = |what: &str| format!("[[hooks]] #{}: {what}", index + 1);
+        if self.run.is_empty() || self.run[0].trim().is_empty() {
+            return Err(bad("`run` needs a program"));
+        }
+        if self.shell && self.run.len() != 1 {
+            return Err(bad(
+                "with `shell = true`, `run` is one command line (a one-element list)",
+            ));
+        }
+        if self.run.len() > MAX_HOOK_ARGS
+            || self.run.iter().map(String::len).sum::<usize>() > MAX_HOOK_ARG_BYTES
+        {
+            return Err(bad(&format!(
+                "`run` is longer than {MAX_HOOK_ARGS} arguments or {MAX_HOOK_ARG_BYTES} bytes"
+            )));
+        }
+        if self.run.iter().any(|arg| arg.contains('\0')) {
+            return Err(bad("`run` contains a NUL character"));
+        }
+        if !(1..=hutan_protocol::hooks::MAX_TIMEOUT_SECS).contains(&self.timeout) {
+            return Err(bad(&format!(
+                "`timeout` must be 1 to {} seconds, not {}",
+                hutan_protocol::hooks::MAX_TIMEOUT_SECS,
+                self.timeout
+            )));
+        }
+        for (key, value) in [
+            ("name", &self.name),
+            ("harness", &self.harness),
+            ("project", &self.project),
+            ("workspace", &self.workspace),
+        ] {
+            if value.as_ref().is_some_and(|v| v.trim().is_empty()) {
+                return Err(bad(&format!("`{key}` is empty")));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The `range_days` values the settings accept.
 pub const RANGE_DAYS: [u32; 3] = [0, 30, 90];
 
@@ -985,6 +1088,8 @@ struct File {
     checkpoints: CheckpointSettings,
     #[serde(default)]
     lsp: LspSettings,
+    #[serde(default)]
+    hooks: Vec<HookSettings>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1078,6 +1183,15 @@ impl DaemonSettings {
         }
         file.checkpoints.check().map_err(toml::de::Error::custom)?;
         file.lsp.check().map_err(toml::de::Error::custom)?;
+        if file.hooks.len() > MAX_HOOKS {
+            return Err(toml::de::Error::custom(format!(
+                "at most {MAX_HOOKS} [[hooks]] are allowed, not {}",
+                file.hooks.len()
+            )));
+        }
+        for (index, hook) in file.hooks.iter().enumerate() {
+            hook.check(index).map_err(toml::de::Error::custom)?;
+        }
         Ok(Self {
             restore_sessions: file.daemon.restore_sessions,
             home_folder,
@@ -1095,6 +1209,7 @@ impl DaemonSettings {
             finish: file.finish,
             checkpoints: file.checkpoints,
             lsp: file.lsp,
+            hooks: file.hooks,
         })
     }
 }
@@ -1710,6 +1825,102 @@ rust-analyzer = "crates/core"
             "[lsp.projects.p]\nmystery = 1\n",
         ] {
             assert!(DaemonSettings::parse(bad, None).is_err(), "{bad}");
+        }
+    }
+    #[test]
+    fn hooks_read_every_key_and_default_the_rest() {
+        let toml = r#"
+[[hooks]]
+name = "Phone"
+on = "approval.requested"
+harness = "claude"
+project = "hutan"
+workspace = "work"
+run = ["curl", "-d", "waiting"]
+timeout = 300
+when_focused = false
+
+[[hooks]]
+on = "finish.done"
+shell = true
+run = ["echo done >> ~/journal.txt"]
+"#;
+        let hooks = DaemonSettings::parse(toml, None).unwrap().hooks;
+        assert_eq!(hooks.len(), 2);
+        assert_eq!(hooks[0].name.as_deref(), Some("Phone"));
+        assert_eq!(
+            hooks[0].on,
+            hutan_protocol::hooks::HookEvent::ApprovalRequested
+        );
+        assert_eq!(hooks[0].harness.as_deref(), Some("claude"));
+        assert_eq!(hooks[0].timeout, 300);
+        assert!(!hooks[0].when_focused);
+        assert!(!hooks[0].shell);
+        assert_eq!(hooks[1].timeout, 30, "the default timeout");
+        assert!(
+            hooks[1].when_focused,
+            "hooks run while focused unless told not to"
+        );
+        assert!(hooks[1].shell);
+        assert!(DaemonSettings::parse("", None).unwrap().hooks.is_empty());
+        // Every event the protocol names is accepted.
+        for event in hutan_protocol::hooks::HookEvent::ALL {
+            let toml = format!("[[hooks]]\non = \"{}\"\nrun = [\"true\"]\n", event.as_str());
+            assert_eq!(
+                DaemonSettings::parse(&toml, None).unwrap().hooks[0].on,
+                event
+            );
+        }
+    }
+
+    #[test]
+    fn a_hook_that_is_not_valid_stops_the_start_and_names_itself() {
+        let many = "[[hooks]]\non = \"turn.finished\"\nrun = [\"true\"]\n".repeat(MAX_HOOKS + 1);
+        let long_arg = format!(
+            "[[hooks]]\non = \"turn.finished\"\nrun = [\"true\", \"{}\"]\n",
+            "a".repeat(MAX_HOOK_ARG_BYTES)
+        );
+        for (bad, mention) in [
+            ("[[hooks]]\nrun = [\"true\"]\n", "on"),
+            (
+                "[[hooks]]\non = \"turn.started\"\nrun = [\"true\"]\n",
+                "turn.started",
+            ),
+            ("[[hooks]]\non = \"turn.finished\"\n", "run"),
+            ("[[hooks]]\non = \"turn.finished\"\nrun = []\n", "program"),
+            (
+                "[[hooks]]\non = \"turn.finished\"\nrun = [\" \"]\n",
+                "program",
+            ),
+            (
+                "[[hooks]]\non = \"turn.finished\"\nrun = [\"true\"]\ntimeout = 0\n",
+                "timeout",
+            ),
+            (
+                "[[hooks]]\non = \"turn.finished\"\nrun = [\"true\"]\ntimeout = 301\n",
+                "timeout",
+            ),
+            (
+                "[[hooks]]\non = \"turn.finished\"\nrun = [\"a\", \"b\"]\nshell = true\n",
+                "one command line",
+            ),
+            (
+                "[[hooks]]\non = \"turn.finished\"\nrun = [\"true\"]\nharness = \"\"\n",
+                "harness",
+            ),
+            (
+                "[[hooks]]\non = \"turn.finished\"\nrun = [\"true\"]\nmystery = 1\n",
+                "mystery",
+            ),
+            (
+                "[[hooks]]\non = \"turn.finished\"\nrun = [\"tr\\u0000ue\"]\n",
+                "NUL",
+            ),
+            (many.as_str(), "at most"),
+            (long_arg.as_str(), "arguments or"),
+        ] {
+            let error = DaemonSettings::parse(bad, None).unwrap_err().to_string();
+            assert!(error.contains(mention), "{mention} in {error}");
         }
     }
 }

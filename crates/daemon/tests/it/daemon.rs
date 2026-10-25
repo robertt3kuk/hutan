@@ -236,7 +236,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "project.git_init",
             "usage",
             "memory.files",
-            "git.history"
+            "git.history",
+            "hooks"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);

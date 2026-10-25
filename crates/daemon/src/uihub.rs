@@ -70,6 +70,15 @@ struct Target {
 }
 
 impl UiHub {
+    /// Whether a window of a desktop is the one the user is working in now (its last publish
+    /// said `window_active`): what a user hook with `when_focused = false` waits out.
+    pub fn any_window_active(&self) -> bool {
+        self.lock()
+            .windows
+            .values()
+            .any(|w| w.publish.layout.window_active)
+    }
+
     pub fn new(bus: Arc<EventBus>) -> Arc<Self> {
         Self::with_timeout(bus, Duration::from_millis(COMMAND_TIMEOUT_MS))
     }
