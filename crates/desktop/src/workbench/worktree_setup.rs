@@ -2,7 +2,7 @@
 //! `docs/orchestration.md` § Setup and cleanup).
 //!
 //! - The state line of a checkout row in the Changes panel ([`setup_line`]): *Setting up…*,
-//!   *Setup failed* with *Show output*, *Setup needs your confirmation* with *Review…*.
+//!   *Setup failed* with *Show output*, *Setup waits for your confirmation* with *Review…*.
 //! - The **trust sheet** ([`Workbench::review_worktree_setup`]): the exact commands the repository's
 //!   `.hutan/worktree.toml` asks to run, confirmed by the user with the hash the daemon showed.
 //!   Only the user can confirm (`worktree.setup_trust` is user-only on the daemon).
@@ -73,7 +73,7 @@ pub fn setup_line(worktree: &WorktreeInfo) -> Option<SetupLine> {
             }),
         }),
         WorktreeSetupState::NeedsTrust => Some(SetupLine {
-            text: "Setup needs your confirmation".to_owned(),
+            text: "Setup waits for your confirmation".to_owned(),
             tone: SetupTone::Warn,
             action: Some(("Review…", SetupAction::Review)),
         }),
@@ -435,7 +435,7 @@ mod tests {
             false,
         ))))
         .unwrap();
-        assert_eq!(trust.text, "Setup needs your confirmation");
+        assert_eq!(trust.text, "Setup waits for your confirmation");
         assert_eq!(trust.action, Some(("Review…", SetupAction::Review)));
     }
 

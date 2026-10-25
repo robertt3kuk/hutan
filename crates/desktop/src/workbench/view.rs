@@ -417,7 +417,7 @@ pub enum Region {
     /// File `file` of group `group` of the Changes tab (top to bottom, folded groups have none).
     ChangesPanelFile(usize, usize),
     /// The setup state line of the checkout row at this index (*Setting up…*, *Setup failed*,
-    /// *Setup needs your confirmation*).
+    /// *Setup waits for your confirmation*).
     ChangesSetup(usize),
     /// The action of that line (*Show output*, *Review…*, *Run again*).
     ChangesSetupAction(usize),

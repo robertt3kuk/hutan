@@ -1,6 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)] // test helpers
 //! Worktree setup and cleanup in the desktop (protocol 0.49): the Changes panel's row says
-//! *Setting up…* / *Setup failed* / *Setup needs your confirmation* with its action, the trust
+//! *Setting up…* / *Setup failed* / *Setup waits for your confirmation* with its action, the trust
 //! sheet lists the exact commands and confirming runs them, and ⌘K *Worktree: Clean Up…* lists
 //! what the policy offers in a sheet and removes only what the user confirms. Real daemon, real
 //! git repositories in temporary directories.
@@ -229,7 +229,7 @@ fn the_trust_sheet_lists_the_commands_and_confirming_runs_them(cx: &mut TestAppC
         row_of(&panel, cx, &wt.path)
             .and_then(|(_, w)| setup_line(&w))
             .is_some_and(|line| {
-                line.text == "Setup needs your confirmation"
+                line.text == "Setup waits for your confirmation"
                     && line.action == Some(("Review…", SetupAction::Review))
             })
     });
