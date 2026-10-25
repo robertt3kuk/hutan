@@ -569,7 +569,7 @@ mod tests {
         })
         .unwrap_err();
         assert!(
-            error.contains("Contained") && error.contains("no sandbox Hutan can switch on"),
+            error.contains("Contained") && error.contains("has no safety presets"),
             "{error}"
         );
     }

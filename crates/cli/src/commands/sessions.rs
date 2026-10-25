@@ -66,7 +66,7 @@ impl Ctx {
                 Request::SessionCreate(SessionCreate {
                     workspace_id: workspace,
                     spec: SessionSpec::Terminal(TerminalSpec {
-                        contain: args.contain.then(|| hutan_core::Contain {
+                        contain: args.contain.then_some(hutan_core::Contain {
                             network: args.network,
                             extra_write: args.write,
                         }),

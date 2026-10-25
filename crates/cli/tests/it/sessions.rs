@@ -428,6 +428,7 @@ async fn close_refuses_a_busy_session_without_force_and_reopen_brings_it_back() 
 // Contain (SANDBOX-2) ---------------------------------------------------------------------------
 
 /// A folder outside everything a contained session may write (not a temp folder).
+#[allow(clippy::unwrap_used)]
 fn outside_dir(name: &str) -> std::path::PathBuf {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("cli-contain-{name}-{}", std::process::id()));
