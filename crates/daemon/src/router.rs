@@ -1014,7 +1014,7 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::MemoryFilesStatus(_) => ("memory.files.status", UserOnly),
         Request::AssistantList(_) => ("assistant.list", Read),
         // A hook's command line can carry a token, its log what the command printed, and a test
-        // runs the user's command: all the user's (protocol 0.49). There is no request that
+        // runs the user's command: all the user's (protocol 0.48). There is no request that
         // adds or changes a hook: they live in the user's `daemon.toml`.
         Request::HooksList(_) => ("hooks.list", UserOnly),
         Request::HooksLog(_) => ("hooks.log", UserOnly),

@@ -636,7 +636,7 @@ pub enum Request {
     /// `UsageSummary`. `refresh` asks the harnesses first. Read-only.
     #[serde(rename = "usage.summary")]
     UsageSummary(UsageSummaryRequest),
-    /// Capability `hooks` (protocol 0.49): the user's `[[hooks]]` with their last runs and
+    /// Capability `hooks` (protocol 0.48): the user's `[[hooks]]` with their last runs and
     /// counters; answered with `HooksList`. User-only: a hook's command line can carry a token.
     #[serde(rename = "hooks.list")]
     HooksList(Empty),

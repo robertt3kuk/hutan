@@ -129,7 +129,7 @@
 //! [lsp.projects.hutan.roots]
 //! rust-analyzer = "crates/core"  # this server's root for the project's files (relative to the project's folder)
 //!
-//! [[hooks]]                      # user hooks (protocol 0.49, docs/integrations.md § User hooks); read at start, only from here
+//! [[hooks]]                      # user hooks (protocol 0.48, docs/integrations.md § User hooks); read at start, only from here
 //! on = "turn.finished"           # turn.finished | turn.failed | approval.requested | attention.changed | session.exited | task.done | finish.done
 //! harness = "claude"             # optional filters: harness, project, workspace (name or id)
 //! run = ["afplay", "/System/Library/Sounds/Glass.aiff"]   # argv, no shell unless `shell = true` (then one command line)
@@ -182,7 +182,7 @@ pub struct DaemonSettings {
     pub finish: FinishSettings,
     pub checkpoints: CheckpointSettings,
     pub lsp: LspSettings,
-    /// `[[hooks]]`: user hooks (protocol 0.49, `docs/integrations.md` § User hooks); read at
+    /// `[[hooks]]`: user hooks (protocol 0.48, `docs/integrations.md` § User hooks); read at
     /// start.
     pub hooks: Vec<HookSettings>,
 }

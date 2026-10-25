@@ -346,7 +346,7 @@ impl TestDaemon {
         self.connection_without("daemon.settings", "older.sock")
     }
 
-    /// A connection to this daemon as if it predated the capability `hooks` (protocol 0.49): the
+    /// A connection to this daemon as if it predated the capability `hooks` (protocol 0.48): the
     /// Automation page then says the daemon is older.
     pub fn connection_without_hooks(&mut self) -> Connection {
         self.connection_without("\"hooks", "no-hooks.sock")

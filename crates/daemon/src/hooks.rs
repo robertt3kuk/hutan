@@ -1,4 +1,4 @@
-//! User hooks (protocol 0.49, capability `hooks`): commands the user's `daemon.toml` asks the
+//! User hooks (protocol 0.48, capability `hooks`): commands the user's `daemon.toml` asks the
 //! daemon to run when something happens in Hutan (`[[hooks]]`, `docs/integrations.md` § User
 //! hooks).
 //!

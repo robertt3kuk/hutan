@@ -1,5 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)] // test helpers
-//! Settings → Automation (USER-HOOKS, protocol 0.49): the page lists the user's hooks from the
+//! Settings → Automation (USER-HOOKS, protocol 0.48): the page lists the user's hooks from the
 //! daemon, *Run test* runs one with a sample payload and shows how it went, the log lists the
 //! runs, and a daemon that has no hooks says so. The daemon is in-process on a temporary home
 //! whose `daemon.toml` holds the hooks.

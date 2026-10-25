@@ -1,8 +1,8 @@
-# Hutan IPC Protocol — v0.49
+# Hutan IPC Protocol — v0.48
 
 Normative decisions: ADR 0002 (transport, framing, sequencing) and ADR 0004 (terminal render stream). This file is the message catalog; the `protocol` crate (`PROTOCOL_VERSION`) is the source of truth and this document must match it.
 
-Latest: 0.49 — user hooks (capability `hooks`, slice USER-HOOKS): `hooks.list` → `{hooks: [HookInfo], running, max_concurrent, queue_capacity}`, `hooks.log {hook?, limit?}` → `{runs: [HookRun], capacity}` and `hooks.test {hook}` → `{run, payload}`; all three user-only. The hooks themselves are `[[hooks]]` of the user's `daemon.toml`; no request adds or changes one. See § Hooks. (0.48 is WORKTREE-SETUP's.)
+Latest: 0.48 — user hooks (capability `hooks`, slice USER-HOOKS): `hooks.list` → `{hooks: [HookInfo], running, max_concurrent, queue_capacity}`, `hooks.log {hook?, limit?}` → `{runs: [HookRun], capacity}` and `hooks.test {hook}` → `{run, payload}`; all three user-only. The hooks themselves are `[[hooks]]` of the user's `daemon.toml`; no request adds or changes one. See § Hooks.
 
 Also 0.47 — read-only git history (capability `git.history`, slice GIT-HISTORY): `git.log {path, rev?, limit ≤ 200, before?}` → `{root, commits: [{id, author, email, time, subject, merge?, path?, old_path?}], more?, next_before?}`, `git.blame {path, rev?, contents?}` → `{root, path, rev?, lines, hunks: [{line, count, commit}], commits: [{id, author, email, time, subject, path, boundary?}], truncated?}`, `git.show {path, rev, old_path?, patch?}` → `{root, commit, message, parent?, files: [DiffFile], patch?, truncated?}` and `git.file {path, rev}` → `{root, path, rev, size, content, binary?, too_large?}`. See § Git history. (0.45 is USAGE-LIMITS, 0.46 MEMORY-FILES.)
 
@@ -207,7 +207,7 @@ Milestone tag = when the method lands.
 | `account.login` | command | `{harness, provider?}` → `{session, instructions?}`: the harness's own login in a new terminal session the user completes; `bad_request` (unknown harness, a provider the harness cannot take), `provider_error` (the harness's CLI is not found); capability `accounts` | M8 |
 | `account.logout` | command | `{harness, provider?}` → `{session, instructions?}`: the harness's own logout in a terminal session; capability `accounts` | M8 |
 | `usage.summary` | query | `{refresh?: bool}` → `UsageSummary` `{generated_at_ms, day_start_ms, week_start_ms, harnesses: [{harness, limits: [UsageLimit], today, week}], providers: [{provider, today, week}]}`; capability `usage` (0.45), read-only; see § Usage | USAGE-LIMITS |
-| `hooks.list` | query | `{}` → `HooksList {hooks: [HookInfo], running, max_concurrent, queue_capacity}`; capability `hooks` (0.49), user-only; see § Hooks | USER-HOOKS |
+| `hooks.list` | query | `{}` → `HooksList {hooks: [HookInfo], running, max_concurrent, queue_capacity}`; capability `hooks` (0.48), user-only; see § Hooks | USER-HOOKS |
 | `hooks.log` | query | `{hook?, limit?}` → `HooksLog {runs: [HookRun], capacity}`, newest first; capability `hooks`, user-only | USER-HOOKS |
 | `hooks.test` | command | `{hook}` → `HooksTested {run: HookRun, payload: HookPayload}`: runs the hook once with a sample payload and waits; capability `hooks`, user-only | USER-HOOKS |
 | `worktree.remove` | command | `{path, force?, delete_branch?}` → `{}`, or `{branch_kept: string}` when `delete_branch` left the branch; `invalid_state` (with the reason) for the main worktree, live sessions inside, a locked worktree, uncommitted changes without `force`; `not_found` for a path git does not list | M7 |
@@ -638,7 +638,7 @@ Account-level usage: what each harness says is left of its plan, and what the tu
 - **`usage.changed`** `{summary}`: the whole summary after a turn ended or a limit moved, coalesced (at most one per 250 ms); it is in the replay ring like `account.changed`. A client that connects asks `usage.summary`.
 - **Control.** `usage.summary` is Read. There is no mutating usage request: the daemon records what the adapters report.
 
-## Hooks (protocol 0.49, capability `hooks`)
+## Hooks (protocol 0.48, capability `hooks`)
 
 User hooks: commands the user's `daemon.toml` asks the daemon to run when something happens (`[[hooks]]`; configuration, payload per event, limits and examples: `docs/integrations.md` § User hooks). Code: `crates/protocol/src/hooks.rs`, `crates/daemon/src/hooks.rs`.
 

@@ -1,5 +1,5 @@
 //! `hutan hooks list|test|log`: the user's `[[hooks]]` of `daemon.toml`, what they last did, and
-//! a way to try one (protocol 0.49, capability `hooks`; `docs/integrations.md` § User hooks).
+//! a way to try one (protocol 0.48, capability `hooks`; `docs/integrations.md` § User hooks).
 //!
 //! Hooks are numbered from 1 here, as a person counts; the wire counts from 0.
 
@@ -21,7 +21,7 @@ impl Ctx {
         let client = self.connect().await?;
         if !client.supports_hooks() {
             return Err(CliError::Failed(
-                "this hutand has no user hooks (it is older than protocol 0.49); restart it with \
+                "this hutand has no user hooks (it is older than protocol 0.48); restart it with \
                  `hutan daemon restart`"
                     .to_owned(),
             ));

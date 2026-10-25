@@ -1,4 +1,4 @@
-//! User hooks (protocol 0.49, capability `hooks`): the DTOs of `hooks.list`, `hooks.log` and
+//! User hooks (protocol 0.48, capability `hooks`): the DTOs of `hooks.list`, `hooks.log` and
 //! `hooks.test`, and the payload a hook receives (`docs/integrations.md` § User hooks).
 //!
 //! A hook is a `[[hooks]]` entry of the user's `daemon.toml`: a command the daemon runs when a

@@ -1,5 +1,5 @@
 //! The Automation page of the settings sheet: the user's hooks (`[[hooks]]` of `daemon.toml`,
-//! protocol 0.49, `docs/integrations.md` § User hooks), what they last did, *Run test* with a
+//! protocol 0.48, `docs/integrations.md` § User hooks), what they last did, *Run test* with a
 //! sample payload, and the log of runs.
 //!
 //! The daemon runs the hooks and keeps the numbers; this only asks (`hooks.list`, `hooks.log`,
@@ -36,7 +36,7 @@ pub struct HooksPage {
     pub list: Option<HooksList>,
     /// Newest first.
     pub log: Vec<HookRun>,
-    /// The daemon has no hooks (older than protocol 0.49).
+    /// The daemon has no hooks (older than protocol 0.48).
     pub unsupported: bool,
     pub error: Option<String>,
     /// The hook whose test is running.

@@ -1,4 +1,4 @@
-//! `hutan hooks list|test|log` (protocol 0.49, `docs/integrations.md` § User hooks) against a
+//! `hutan hooks list|test|log` (protocol 0.48, `docs/integrations.md` § User hooks) against a
 //! real daemon whose `daemon.toml` holds `[[hooks]]`, and the same commands typed inside an
 //! agent's session, where they are refused.
 

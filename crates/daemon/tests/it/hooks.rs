@@ -1,4 +1,4 @@
-//! User hooks (protocol 0.49, capability `hooks`, `docs/integrations.md` § User hooks) end to end:
+//! User hooks (protocol 0.48, capability `hooks`, `docs/integrations.md` § User hooks) end to end:
 //! a real daemon on a temporary `HUTAN_HOME` whose `daemon.toml` holds `[[hooks]]`, real sessions,
 //! chats on the committed Codex transcripts, and shell scripts as the hooks' commands. A hook
 //! writes what it was given into a temporary directory; the tests read it back once the hook's

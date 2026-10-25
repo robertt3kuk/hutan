@@ -126,7 +126,7 @@ Not yet: reconstructing trees from OMP directories, Claude `subagents/` files or
 
 ## User hooks
 
-Hutan's own hooks above only feed its state. **User hooks** are yours: commands the daemon runs when something happens in Hutan — a turn ends, an agent asks for a permission, a session exits, a task is done — to notify your phone, play a sound, append to a journal, or start anything else (the need behind [Codex #2109](https://github.com/openai/codex/issues/2109)). Protocol 0.49, capability `hooks` (`docs/protocol.md` § Hooks); code: `crates/daemon/src/hooks.rs`, `crates/protocol/src/hooks.rs`.
+Hutan's own hooks above only feed its state. **User hooks** are yours: commands the daemon runs when something happens in Hutan — a turn ends, an agent asks for a permission, a session exits, a task is done — to notify your phone, play a sound, append to a journal, or start anything else (the need behind [Codex #2109](https://github.com/openai/codex/issues/2109)). Protocol 0.48, capability `hooks` (`docs/protocol.md` § Hooks); code: `crates/daemon/src/hooks.rs`, `crates/protocol/src/hooks.rs`.
 
 ### Configuration
 
