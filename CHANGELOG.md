@@ -4,6 +4,8 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ## Unreleased
 
+## 0.3.0 — 2026-10-26
+
 ### Added
 - Find in a terminal: ⌘F in a terminal searches its whole scrollback in the daemon (wrapped lines joined, case and regex options, optionally only the selected block's output), ⌘G / ⌘⇧G step, matches highlighted; `hutan terminal search`.
 - Instruction files: an **Instructions** panel lists the files each agent reads (AGENTS.md, CLAUDE.md, OMP's rules; project and user level) and which agent reads which; *Share one file with every agent…* makes AGENTS.md the one file (CLAUDE.md imports it) after showing exactly what it writes, with Undo; Mawas knows how the project's AGENTS.md begins.

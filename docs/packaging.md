@@ -141,7 +141,7 @@ This uses the same release bundle builder as `bundle --release`, with
 `ditto -c -k --keepParent`, creates a source archive of **HEAD** with `git archive`,
 and writes these files under `target/release-artifacts/` (or `$CARGO_TARGET_DIR`):
 
-- `Hutan-<version>-arm64.zip` (e.g. `Hutan-0.2.0-arm64.zip`)
+- `Hutan-<version>-arm64.zip` (e.g. `Hutan-0.3.0-arm64.zip`)
 - `Hutan-<version>-source.tar.gz`
 - `Hutan.app` (the bundle used to make the zip)
 
@@ -236,17 +236,17 @@ Merge the source changes before preparing the final release, review both tap
 definitions, and run the local tap checks documented in its README. The source
 archive must represent the commit to tag. The release notes are the version's
 `CHANGELOG.md` section plus install/upgrade commands and the Gatekeeper note, written
-to `target/release-artifacts/NOTES.md`. From the Hutan checkout (0.2.0 as the example):
+to `target/release-artifacts/NOTES.md`. From the Hutan checkout (0.3.0 as the example):
 
 ```sh
 cargo run -p xtask -- release --tap /path/to/homebrew-hutan
 git push origin master
-git tag -a v0.2.0 -m "Hutan 0.2.0"
-git push origin v0.2.0
-gh release create v0.2.0 \
-  target/release-artifacts/Hutan-0.2.0-arm64.zip \
-  target/release-artifacts/Hutan-0.2.0-source.tar.gz \
-  --repo robertt3kuk/hutan --verify-tag --prerelease --title "Hutan 0.2.0" \
+git tag -a v0.3.0 -m "Hutan 0.3.0"
+git push origin v0.3.0
+gh release create v0.3.0 \
+  target/release-artifacts/Hutan-0.3.0-arm64.zip \
+  target/release-artifacts/Hutan-0.3.0-source.tar.gz \
+  --repo robertt3kuk/hutan --verify-tag --prerelease --title "Hutan 0.3.0" \
   --notes-file target/release-artifacts/NOTES.md
 ```
 
@@ -254,7 +254,7 @@ Then, from the tap checkout, commit the generated definitions and publish:
 
 ```sh
 git add Casks/hutan.rb Formula/hutan.rb README.md
-git commit -m "hutan 0.2.0"
+git commit -m "hutan 0.3.0"
 git push origin main
 ```
 
