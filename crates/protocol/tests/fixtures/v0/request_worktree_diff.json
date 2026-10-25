@@ -1,1 +1,1 @@
-{"id":139,"method":"worktree.diff","params":{"base":"main","include_uncommitted":false,"path":"/work/repo-wt/feature-login"}}
+{"id":140,"method":"worktree.diff","params":{"base":"main","include_uncommitted":false,"path":"/work/repo-wt/feature-login"}}

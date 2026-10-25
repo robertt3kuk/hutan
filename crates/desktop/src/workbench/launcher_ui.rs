@@ -418,6 +418,44 @@ impl Workbench {
             agent_rows.push(
                 row("Agent", ring(LauncherStop::Agent, body.into_any_element())).into_any_element(),
             );
+            // The account the chat runs as (protocol 0.50), when the harness has a managed one.
+            if kind == LaunchKind::Chat
+                && let LaunchAgent::Harness(hid) = &launcher.agent
+            {
+                let project = launcher.project.map(|p| p.to_string());
+                let choices = self
+                    .env
+                    .harnesses
+                    .read(cx)
+                    .account_choices(hid, project.as_deref());
+                if !choices.is_empty() {
+                    let mut accounts = div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(tokens.spacing * 2.0));
+                    for (at, choice) in choices.into_iter().enumerate() {
+                        let selected = launcher.account == choice.account;
+                        let account = choice.account.clone();
+                        accounts = accounts.child(
+                            ui::choice(
+                                id(format!("launch-account-{at}")),
+                                choice.label,
+                                selected,
+                                &theme,
+                                &tokens,
+                            )
+                            .relative()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.launcher_focus_stop(LauncherStop::Agent, window, cx);
+                                this.launcher_choose_account(account.clone(), cx);
+                            }))
+                            .child(probe(&self.regions, Region::LauncherItem("account", at))),
+                        );
+                    }
+                    agent_rows.push(row("Account", accounts.into_any_element()).into_any_element());
+                }
+            }
         }
 
         // ---- Model ----

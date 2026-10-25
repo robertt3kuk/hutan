@@ -1211,6 +1211,7 @@ async fn tasks_run_as_omp_and_claude_chats() {
         run: Some(TaskRun::Chat {
             agent: agent.to_owned(),
             model: None,
+            account: None,
         }),
         auto_start: false,
         after_policy: Default::default(),
@@ -1286,6 +1287,7 @@ async fn a_chat_task_starts_on_the_model_it_names() {
         run: Some(TaskRun::Chat {
             agent: "omp".into(),
             model: Some(model.to_owned()),
+            account: None,
         }),
         auto_start: false,
         after_policy: Default::default(),
@@ -1310,7 +1312,8 @@ async fn a_chat_task_starts_on_the_model_it_names() {
         task.run,
         Some(TaskRun::Chat {
             agent: "omp".into(),
-            model: Some(HAIKU.into())
+            model: Some(HAIKU.into()),
+            account: None,
         })
     );
     let started = t.client.task_start(task.id).await.unwrap();

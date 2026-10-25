@@ -1,1 +1,1 @@
-{"id":143,"method":"worktree.merge","params":{"into":"main","message":"Add login","path":"/work/repo-wt/feature-login","strategy":"squash"}}
+{"id":144,"method":"worktree.merge","params":{"into":"main","message":"Add login","path":"/work/repo-wt/feature-login","strategy":"squash"}}

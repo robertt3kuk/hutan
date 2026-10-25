@@ -69,6 +69,7 @@ impl Ctx {
             Some(TaskRun::Chat {
                 agent,
                 model: args.model.clone(),
+                account: args.account.clone(),
             })
         } else if args.argv.is_empty() {
             None
@@ -470,7 +471,7 @@ fn task_tree(tasks: &[Task], ids: &HashMap<TaskId, String>) -> String {
                 });
             }
             match &task.run {
-                Some(TaskRun::Chat { agent, model }) => notes.push(match model {
+                Some(TaskRun::Chat { agent, model, .. }) => notes.push(match model {
                     Some(model) => format!("chat {agent} ({model})"),
                     None => format!("chat {agent}"),
                 }),
@@ -593,7 +594,7 @@ fn task_details(
         "run",
         match &task.run {
             Some(TaskRun::Terminal { argv }) => format!("terminal: {}", argv.join(" ")),
-            Some(TaskRun::Chat { agent, model }) => match model {
+            Some(TaskRun::Chat { agent, model, .. }) => match model {
                 Some(model) => format!("chat with {agent} on {model}"),
                 None => format!("chat with {agent}"),
             },
@@ -866,6 +867,7 @@ mod tests {
         ship.run = Some(TaskRun::Chat {
             agent: "codex".into(),
             model: None,
+            account: None,
         });
         ship.outcome = Some("turn failed: boom".into());
         ship.started_at_ms = Some(1_000);

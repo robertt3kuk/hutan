@@ -601,6 +601,7 @@ async fn bad_tasks_and_bad_changes_are_refused() {
             run: Some(TaskRun::Chat {
                 agent: "codex".into(),
                 model: None,
+                account: None,
             }),
             ..t.create_request("chat without a prompt")
         },
@@ -608,6 +609,7 @@ async fn bad_tasks_and_bad_changes_are_refused() {
             run: Some(TaskRun::Chat {
                 agent: "gemini".into(),
                 model: None,
+                account: None,
             }),
             prompt: Some("hi".into()),
             ..t.create_request("unknown agent")
@@ -1129,6 +1131,7 @@ async fn a_chat_task_sends_its_prompt_and_is_done_when_the_turn_completes() {
             run: Some(TaskRun::Chat {
                 agent: "codex".into(),
                 model: None,
+                account: None,
             }),
             ..t.create_request("Say pong")
         })
@@ -1164,6 +1167,7 @@ async fn a_chat_task_whose_turn_fails_is_failed() {
             run: Some(TaskRun::Chat {
                 agent: "codex".into(),
                 model: None,
+                account: None,
             }),
             ..t.create_request("Doomed chat")
         })
@@ -1321,6 +1325,7 @@ async fn running_tasks_keep_running_when_their_session_is_restored_and_fail_when
             run: Some(TaskRun::Chat {
                 agent: "codex".into(),
                 model: None,
+                account: None,
             }),
             depends_on: vec![a.id, b.id],
             ..t.create_request("Kept")
@@ -1769,6 +1774,7 @@ async fn changes_requested_on_a_chat_task_reach_the_chat_and_the_task_runs_again
             run: Some(TaskRun::Chat {
                 agent: "codex".into(),
                 model: None,
+                account: None,
             }),
             ..t.create_request("Say pong")
         })

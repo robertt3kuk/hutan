@@ -1,1 +1,1 @@
-{"id":183,"method":"fs.write.begin","params":{"expect":{"ino":8834113,"mtime_ns":1791894150123456789,"size":6291456},"path":"/repo/src/main.rs","size_hint":6291456}}
+{"id":184,"method":"fs.write.begin","params":{"expect":{"ino":8834113,"mtime_ns":1791894150123456789,"size":6291456},"path":"/repo/src/main.rs","size_hint":6291456}}

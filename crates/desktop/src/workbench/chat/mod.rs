@@ -36,7 +36,7 @@ pub use markdown_view::Look;
 pub use model::{ChatModel, LoadStatus};
 pub use rewind::changed_text;
 pub use rich::{LONG_PASTE_CHARS, LONG_PASTE_LINES, format_size, is_long_paste};
-pub use view::{ChatView, KEY_CONTEXT};
+pub use view::{ChatView, KEY_CONTEXT, who_runs};
 pub use vim::Vim;
 pub use widgets::ButtonKind;
 pub(crate) use widgets::{always_note, approval_group, approval_option, scope_tooltip};

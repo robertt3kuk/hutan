@@ -352,6 +352,106 @@ async fn account_ls_shows_what_each_harness_reports() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn accounts_are_added_listed_defaulted_used_by_a_chat_and_removed() {
+    let e = Env::start("plain-turn").await;
+    // Adding creates the account's empty home; `--no-login` leaves the login for later.
+    let added =
+        e.t.hutan(&[
+            "--json",
+            "account",
+            "add",
+            "omp",
+            "second",
+            "--label",
+            "Second",
+            "--no-login",
+        ])
+        .await
+        .ok()
+        .json();
+    assert_eq!(added["name"], "second");
+    let home = std::path::PathBuf::from(added["home"].as_str().unwrap());
+    assert!(home.is_dir());
+    // A name the daemon refuses is a failed command, and nothing is created.
+    let refused =
+        e.t.hutan(&["account", "add", "omp", "Bad Name", "--no-login"])
+            .await;
+    assert_eq!(refused.code, 1, "{refused:?}");
+
+    let table = e.t.hutan(&["account", "list"]).await.ok().stdout;
+    assert!(
+        table.contains("HARNESS  ACCOUNT  LABEL   STATUS"),
+        "{table}"
+    );
+    assert!(table.contains("omp      second   Second"), "{table}");
+    assert!(!table.contains("default"), "no default yet:\n{table}");
+
+    // Set, read back, and clear a default; the harness's own login can be named too.
+    let out =
+        e.t.hutan(&["account", "default", "omp", "second"])
+            .await
+            .ok()
+            .stdout;
+    assert_eq!(out, "new omp sessions take second\n");
+    let table = e.t.hutan(&["account", "list"]).await.ok().stdout;
+    assert!(
+        table
+            .lines()
+            .any(|l| l.starts_with("omp") && l.ends_with("default")),
+        "{table}"
+    );
+    let json = e.t.hutan(&["--json", "account", "list"]).await.ok().json();
+    assert_eq!(json["defaults"][0]["account"], "second");
+    assert_eq!(json["managed"][0]["name"], "second");
+    let missing = e.t.hutan(&["account", "default", "omp", "ghost"]).await;
+    assert_eq!(missing.code, 1, "{missing:?}");
+
+    // A chat takes the default; `--account system` is the harness's own login.
+    let id = e.new_chat(&[]).await;
+    let sessions = e.t.hutan(&["--json", "ls"]).await.ok().json();
+    let chat = sessions["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == id.as_str())
+        .unwrap()["chat"]
+        .clone();
+    assert_eq!(chat["account"]["name"], "second");
+    let own = e.new_chat(&["--account", "system"]).await;
+    let sessions = e.t.hutan(&["--json", "ls"]).await.ok().json();
+    let chat = sessions["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == own.as_str())
+        .unwrap()["chat"]
+        .clone();
+    assert!(chat.get("account").is_none(), "{chat}");
+
+    // Removing needs a yes: without a terminal and without --yes nothing happens.
+    let refused = e.t.hutan(&["account", "remove", "omp", "second"]).await;
+    assert_eq!(refused.code, 2, "{refused:?}");
+    assert!(home.is_dir());
+    // A live chat on the account keeps it.
+    let busy =
+        e.t.hutan(&["account", "remove", "omp", "second", "--yes"])
+            .await;
+    assert_eq!(busy.code, 1, "{busy:?}");
+    e.t.hutan(&["stop", &id]).await.ok();
+    e.t.wait_state(&id, "stopped").await;
+    let out =
+        e.t.hutan(&["account", "remove", "omp", "second", "--yes"])
+            .await
+            .ok()
+            .stdout;
+    assert!(out.starts_with("removed omp account second"), "{out}");
+    assert!(!home.exists());
+    let table = e.t.hutan(&["account", "list"]).await.ok().stdout;
+    assert!(!table.contains("second"), "{table}");
+    e.t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn account_login_and_logout_start_the_harnesss_own_flow_in_a_session() {
     let e = Env::start("plain-turn").await;
     let started =

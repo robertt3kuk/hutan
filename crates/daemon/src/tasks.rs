@@ -838,9 +838,20 @@ impl TaskService {
             || !self.registry.auto_projects())
         .then_some(task.workspace_id);
         let session = match &task.run {
-            Some(TaskRun::Chat { agent, model }) => {
-                self.start_chat(task, session_workspace, agent, model.clone(), cwd)
-                    .await?
+            Some(TaskRun::Chat {
+                agent,
+                model,
+                account,
+            }) => {
+                self.start_chat(
+                    task,
+                    session_workspace,
+                    agent,
+                    model.clone(),
+                    account.clone(),
+                    cwd,
+                )
+                .await?
             }
             run => {
                 let argv = match run {
@@ -887,6 +898,7 @@ impl TaskService {
         workspace_id: Option<WorkspaceId>,
         agent: &str,
         model: Option<String>,
+        account: Option<String>,
         cwd: PathBuf,
     ) -> Result<SessionInfo, ErrorBody> {
         let prompt = task
@@ -906,7 +918,7 @@ impl TaskService {
                 mode: None,
                 provider_id: None,
                 system_prompt: None,
-                account: None,
+                account,
             })
             .await?;
         self.link(task.id, session.id);
@@ -1745,7 +1757,7 @@ fn check_run(run: Option<&TaskRun>, prompt: Option<&str>) -> Result<(), ErrorBod
             }
             Ok(())
         }
-        Some(TaskRun::Chat { agent, model }) => {
+        Some(TaskRun::Chat { agent, model, .. }) => {
             if model.as_deref().is_some_and(|m| m.trim().is_empty()) {
                 return Err(bad_request("a chat task's model cannot be empty"));
             }
@@ -1909,6 +1921,7 @@ mod tests {
         let chat = TaskRun::Chat {
             agent: "codex".into(),
             model: None,
+            account: None,
         };
         assert!(check_run(Some(&chat), Some("go")).is_ok());
         assert!(
@@ -1918,11 +1931,13 @@ mod tests {
         let other = TaskRun::Chat {
             agent: "direct".into(),
             model: None,
+            account: None,
         };
         assert!(check_run(Some(&other), Some("go")).is_err());
         let empty_model = TaskRun::Chat {
             agent: "codex".into(),
             model: Some(" ".into()),
+            account: None,
         };
         assert!(check_run(Some(&empty_model), Some("go")).is_err());
         assert!(check_run(None, None).is_ok());
@@ -2090,6 +2105,7 @@ mod tests {
         t.run = Some(TaskRun::Chat {
             agent: "codex".into(),
             model: None,
+            account: None,
         });
         assert!(
             !reviewable(&t, true),

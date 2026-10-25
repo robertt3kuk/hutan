@@ -904,6 +904,17 @@ impl Workbench {
         };
         let editing = sheet.edit.is_some();
         if event.keystroke.key == "enter" && editing {
+            // A box of the Add account form may start the harness's login, which needs the window.
+            let form_field = sheet
+                .edit
+                .as_ref()
+                .and_then(|e| e.field.strip_prefix(super::settings_daemon::EDIT_PREFIX))
+                .and_then(|f| f.strip_prefix(super::settings_accounts::FORM_PREFIX))
+                .and_then(super::settings_accounts::AccountField::parse);
+            if let Some(field) = form_field {
+                self.account_commit_field(field, window, cx);
+                return;
+            }
             self.sheet_commit_edit(cx);
             return;
         }

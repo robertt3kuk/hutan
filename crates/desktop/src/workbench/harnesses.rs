@@ -13,7 +13,7 @@ use gpui::{
     AnyElement, Context, Entity, InteractiveElement, IntoElement, ParentElement, SharedString,
     Styled, Subscription, Window, div, prelude::*, px,
 };
-use hutan_protocol::account::{AccountInfo, AccountStatus};
+use hutan_protocol::account::{AccountDefault, AccountInfo, AccountStatus, ManagedAccount};
 
 use super::agents::Models;
 use super::chat::Look;
@@ -59,6 +59,19 @@ pub fn harness_name(agent: &str) -> String {
         .map_or_else(|| agent.to_owned(), |h| h.name.to_owned())
 }
 
+/// The account name that stands for a harness's own login (`hutan_protocol::account`).
+const SYSTEM: &str = hutan_protocol::account::SYSTEM_ACCOUNT;
+/// What the desktop calls it.
+pub const OWN_LOGIN: &str = "Harness login";
+
+/// One choice of the Start sheet's Account row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountChoice {
+    /// What `chat.create` takes: `None` follows the defaults.
+    pub account: Option<String>,
+    pub label: String,
+}
+
 /// Whether a harness could be found on the daemon's machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Detection {
@@ -87,6 +100,9 @@ pub enum Listing {
 pub struct HarnessDirectory {
     sessions: Entity<SessionsStore>,
     accounts: Vec<AccountInfo>,
+    /// The accounts Hutan created (protocol 0.50) and the defaults; empty from an older daemon.
+    managed: Vec<ManagedAccount>,
+    defaults: Vec<AccountDefault>,
     listing: Listing,
     /// Counts the listings asked for; an answer to an older one is dropped.
     listings: u64,
@@ -118,6 +134,8 @@ impl HarnessDirectory {
         Self {
             sessions,
             accounts: Vec::new(),
+            managed: Vec::new(),
+            defaults: Vec::new(),
             listing: Listing::Idle,
             listings: 0,
             models: HashMap::new(),
@@ -137,6 +155,68 @@ impl HarnessDirectory {
     /// could not be asked is one entry with status `unknown`).
     pub fn accounts(&self) -> &[AccountInfo] {
         &self.accounts
+    }
+
+    /// The managed accounts of `harness`, by name.
+    pub fn managed_of<'a>(&'a self, harness: &'a str) -> impl Iterator<Item = &'a ManagedAccount> {
+        self.managed.iter().filter(move |a| a.harness == harness)
+    }
+
+    /// The name of the account new sessions of `harness` take (`system`: its own login), when
+    /// one is set for the harness as a whole.
+    pub fn default_account(&self, harness: &str) -> Option<&str> {
+        self.defaults
+            .iter()
+            .find(|d| d.harness == harness && d.project.is_none())
+            .map(|d| d.account.as_str())
+    }
+
+    /// What a new session of `harness` in `project` takes when nothing is chosen: the account
+    /// name, `system` for the harness's own login, `None` without any default.
+    pub fn effective_default(&self, harness: &str, project: Option<&str>) -> Option<&str> {
+        project
+            .and_then(|project| {
+                self.defaults
+                    .iter()
+                    .find(|d| d.harness == harness && d.project.as_deref() == Some(project))
+            })
+            .map(|d| d.account.as_str())
+            .or_else(|| self.default_account(harness))
+    }
+
+    /// The choices of the Start sheet's Account row for `harness`: empty unless the harness has
+    /// a managed account (then its own login and each account are two choices or more).
+    pub fn account_choices(&self, harness: &str, project: Option<&str>) -> Vec<AccountChoice> {
+        let managed: Vec<&ManagedAccount> = self.managed_of(harness).collect();
+        if managed.is_empty() {
+            return Vec::new();
+        }
+        let label_of = |name: &str| -> String {
+            if name == SYSTEM {
+                OWN_LOGIN.to_owned()
+            } else {
+                managed
+                    .iter()
+                    .find(|a| a.name == name)
+                    .map_or_else(|| name.to_owned(), |a| a.label.clone())
+            }
+        };
+        let default = self
+            .effective_default(harness, project)
+            .map_or_else(|| OWN_LOGIN.to_owned(), label_of);
+        let mut choices = vec![AccountChoice {
+            account: None,
+            label: format!("Default · {default}"),
+        }];
+        choices.push(AccountChoice {
+            account: Some(SYSTEM.to_owned()),
+            label: OWN_LOGIN.to_owned(),
+        });
+        choices.extend(managed.iter().map(|a| AccountChoice {
+            account: Some(a.name.clone()),
+            label: a.label.clone(),
+        }));
+        choices
     }
 
     /// The accounts of `harness`.
@@ -216,14 +296,19 @@ impl HarnessDirectory {
         self.listing = Listing::Loading;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let answer = connection.account_list().await.map_err(|e| e.to_string());
+            let answer = connection
+                .account_overview()
+                .await
+                .map_err(|e| e.to_string());
             this.update(cx, |this, cx| {
                 if this.listings != listing {
                     return;
                 }
                 match answer {
-                    Ok(accounts) => {
-                        this.accounts = accounts;
+                    Ok(list) => {
+                        this.accounts = list.accounts;
+                        this.managed = list.managed;
+                        this.defaults = list.defaults;
                         this.listing = Listing::Ready;
                     }
                     Err(error) => this.listing = Listing::Failed(error),
@@ -323,11 +408,24 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.account_flow_as(harness, provider, None, login, window, cx);
+    }
+
+    /// [`account_flow`](Self::account_flow) for a managed account (protocol 0.50).
+    pub fn account_flow_as(
+        &mut self,
+        harness: &str,
+        provider: Option<String>,
+        account: Option<String>,
+        login: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.env
             .harnesses
             .update(cx, |directory, cx| directory.set_problem(None, cx));
         let task = self.sessions.update(cx, |store, cx| {
-            store.account_flow(harness, provider, login, cx)
+            store.account_flow_as(harness, provider, account, login, cx)
         });
         let directory = self.env.harnesses.clone();
         cx.spawn_in(window, async move |this, cx| match task.await {
@@ -538,6 +636,7 @@ impl Workbench {
                     .child(SharedString::from(how))
             }))
             .children(rows)
+            .children(self.render_managed_accounts(id, found, cx))
             .child(probe(&self.regions, Region::Account(id, "card")))
             .into_any_element()
     }

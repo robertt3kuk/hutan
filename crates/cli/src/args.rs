@@ -338,6 +338,15 @@ pub struct TaskAddArgs {
         conflicts_with = "argv"
     )]
     pub model: Option<String>,
+    /// The account a chat task's agent runs as (`hutan account list`; `system`: the harness's
+    /// own login); default: the project's default, else the harness's
+    #[arg(
+        long,
+        value_name = "NAME",
+        requires = "prompt",
+        conflicts_with = "argv"
+    )]
+    pub account: Option<String>,
     /// Start by itself when ready, within the daemon's `[tasks] max_parallel`
     #[arg(long)]
     pub auto: bool,
@@ -758,15 +767,25 @@ pub struct UsageArgs {
     pub cached: bool,
 }
 
-/// The logins of the agent harnesses.
+/// The logins of the agent harnesses, and the accounts Hutan keeps for them.
 #[derive(Debug, Subcommand)]
 pub enum AccountCommand {
-    /// List the harnesses' logins: provider, label, plan, status (never tokens or e-mails)
-    Ls,
+    /// List the harnesses' own logins and the accounts you added: provider, label, plan,
+    /// status, defaults (never tokens or e-mails)
+    #[command(visible_alias = "ls")]
+    List,
     /// Log in through the harness's own flow, in a terminal session you complete
     Login(AccountLoginArgs),
     /// Log out through the harness's own flow
     Logout(AccountLoginArgs),
+    /// Add an account for a harness: an empty folder Hutan keeps, which the harness fills when
+    /// you log in (one account per work/personal subscription)
+    Add(AccountAddArgs),
+    /// Remove an account: the harness logs out of it, its folder is deleted
+    #[command(visible_alias = "rm")]
+    Remove(AccountRemoveArgs),
+    /// Set the account new sessions of a harness take (or of one project with --project)
+    Default(AccountDefaultArgs),
 }
 
 #[derive(Debug, Args)]
@@ -777,9 +796,57 @@ pub struct AccountLoginArgs {
     /// The provider to log in to (omp: `anthropic`, `openai-codex`, ...; omit to let the
     /// harness ask)
     pub provider: Option<String>,
+    /// The account to log in (see `hutan account list`); default: the harness's own login
+    #[arg(long, value_name = "NAME")]
+    pub account: Option<String>,
     /// Attach this terminal to the login session now (detach with ctrl+\ then d)
     #[arg(long)]
     pub attach: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct AccountAddArgs {
+    /// omp, claude or codex
+    #[arg(value_parser = ["omp", "claude", "codex"])]
+    pub harness: String,
+    /// The account's name: 1 to 32 lowercase letters, digits, `-` or `_`
+    pub name: String,
+    /// What to call it (shown in the desktop); default: the name
+    #[arg(long)]
+    pub label: Option<String>,
+    /// Only create the account; do not start the harness's login for it
+    #[arg(long)]
+    pub no_login: bool,
+    /// Attach this terminal to the login session now (detach with ctrl+\ then d)
+    #[arg(long, conflicts_with = "no_login")]
+    pub attach: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct AccountRemoveArgs {
+    /// omp, claude or codex
+    #[arg(value_parser = ["omp", "claude", "codex"])]
+    pub harness: String,
+    pub name: String,
+    /// Do not ask
+    #[arg(long, short = 'y')]
+    pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct AccountDefaultArgs {
+    /// omp, claude or codex
+    #[arg(value_parser = ["omp", "claude", "codex"])]
+    pub harness: String,
+    /// An account name, or `system` for the harness's own login; omit with --clear
+    #[arg(required_unless_present = "clear", conflicts_with = "clear")]
+    pub account: Option<String>,
+    /// Remove the default instead
+    #[arg(long)]
+    pub clear: bool,
+    /// Set it for this project or workspace (id, prefix or exact name) instead of the harness
+    #[arg(long, value_name = "ID|NAME")]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -890,6 +957,10 @@ pub struct ChatNewArgs {
     /// System prompt of a direct chat
     #[arg(long, value_name = "TEXT", requires = "direct")]
     pub system: Option<String>,
+    /// The account the agent runs as (`hutan account list`; `system` is the harness's own
+    /// login). Default: the project's default, else the harness's
+    #[arg(long, value_name = "NAME", conflicts_with = "direct")]
+    pub account: Option<String>,
 }
 
 #[derive(Debug, Args)]

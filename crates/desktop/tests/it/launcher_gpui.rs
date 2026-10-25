@@ -462,6 +462,7 @@ fn a_chat_in_a_new_worktree_creates_the_task_with_that_placement_and_starts_it(
         Some(TaskRun::Chat {
             agent: "omp".into(),
             model: None,
+            account: None,
         })
     );
     assert_eq!(task.prompt.as_deref(), Some("Fix the flaky test"));
@@ -1010,7 +1011,8 @@ fn a_picked_model_goes_into_the_task_even_when_it_is_queued(cx: &mut TestAppCont
         queued.run,
         Some(TaskRun::Chat {
             agent: "omp".into(),
-            model: Some(model)
+            model: Some(model),
+            account: None,
         }),
         "the pick rides in the task, queued or not"
     );

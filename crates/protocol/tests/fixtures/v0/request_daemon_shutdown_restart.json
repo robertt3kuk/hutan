@@ -1,1 +1,1 @@
-{"id":241,"method":"daemon.shutdown","params":{"restart":true,"stop_sessions":true}}
+{"id":242,"method":"daemon.shutdown","params":{"restart":true,"stop_sessions":true}}

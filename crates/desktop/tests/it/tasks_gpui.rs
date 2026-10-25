@@ -2022,6 +2022,7 @@ fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAp
             request.run = Some(TaskRun::Chat {
                 agent: "codex".into(),
                 model: None,
+                account: None,
             });
         });
         let started: TaskStarted = env.daemon.call(Request::TaskStart(TaskRef { id: task.id }));

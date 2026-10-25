@@ -81,7 +81,7 @@ impl Ctx {
                 mode: args.mode,
                 provider_id: args.provider,
                 system_prompt: args.system,
-                account: None,
+                account: args.account,
             })
             .await
             .map_err(|e| self.fail(e))?;

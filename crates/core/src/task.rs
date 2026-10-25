@@ -203,6 +203,10 @@ pub enum TaskRun {
         /// A model the agent offers (`chat.models`); absent: the agent's own default.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        /// A managed account of the harness (protocol 0.50, `account.list`), or `system` for
+        /// the harness's own login; absent: the project's default, else the harness's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<String>,
     },
 }
 
@@ -949,12 +953,14 @@ mod tests {
         let chat = serde_json::to_value(TaskRun::Chat {
             agent: "codex".into(),
             model: None,
+            account: None,
         })
         .unwrap();
         assert_eq!(chat, serde_json::json!({"kind": "chat", "agent": "codex"}));
         let picked = serde_json::to_value(TaskRun::Chat {
             agent: "omp".into(),
             model: Some("anthropic/claude-opus-4-5".into()),
+            account: None,
         })
         .unwrap();
         assert_eq!(

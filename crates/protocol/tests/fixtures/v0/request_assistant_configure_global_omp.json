@@ -1,1 +1,1 @@
-{"id":126,"method":"assistant.configure","params":{"backend":"omp","model":"anthropic/claude-sonnet-4-5","scope":"global"}}
+{"id":127,"method":"assistant.configure","params":{"backend":"omp","model":"anthropic/claude-sonnet-4-5","scope":"global"}}

@@ -94,6 +94,7 @@ impl Env {
                 run: Some(TaskRun::Chat {
                     agent: "codex".into(),
                     model: None,
+                    account: None,
                 }),
                 auto_start: false,
                 after_policy: AfterPolicy::Done,

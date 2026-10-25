@@ -94,6 +94,9 @@ pub struct LaunchValues {
     pub agent: String,
     /// The model of a chat (one the agent offers); none: the agent's own default.
     pub model: Option<String>,
+    /// The managed account of the harness (protocol 0.50) the chat runs as; `system` is the
+    /// harness's own login; none: the project's default, else the harness's.
+    pub account: Option<String>,
     pub title: String,
     pub prompt: String,
     /// The command of [`LaunchKind::Command`]: shell text, run by [`shell_argv`].
@@ -255,6 +258,7 @@ pub fn build_create(
             Some(TaskRun::Chat {
                 agent: values.agent.clone(),
                 model: values.model.clone(),
+                account: values.account.clone(),
             })
         }
         LaunchKind::TerminalAgent => Some(TaskRun::Terminal {
@@ -331,6 +335,7 @@ mod tests {
             kind: LaunchKind::Terminal,
             agent: "omp".into(),
             model: None,
+            account: None,
             title: "  Build it  ".into(),
             prompt: String::new(),
             command: String::new(),
@@ -433,6 +438,7 @@ mod tests {
             Some(TaskRun::Chat {
                 agent: "codex".into(),
                 model: Some("gpt-x".into()),
+                account: None,
             })
         );
     }

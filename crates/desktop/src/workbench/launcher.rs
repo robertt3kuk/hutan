@@ -200,6 +200,9 @@ pub struct Launcher {
     pub(crate) agent_peek: Option<String>,
     /// The model of a chat; none: the harness's own default.
     pub(crate) model: Option<String>,
+    /// The account of a harness chat (protocol 0.50): none follows the defaults, `system` is
+    /// the harness's own login. Shown when the harness has a managed account.
+    pub(crate) account: Option<String>,
     /// The row whose choices are open: ↑ ↓ change its value only then (↩ or Space opens it, Esc
     /// or Tab closes it), and ⌘↩ does not start while one is open.
     pub(crate) open_row: Option<LauncherStop>,
@@ -482,6 +485,10 @@ impl Launcher {
             model: (self.kind == LaunchKind::Chat && !matches!(self.agent, LaunchAgent::Direct(_)))
                 .then(|| self.model.clone())
                 .flatten(),
+            account: (self.kind == LaunchKind::Chat
+                && !matches!(self.agent, LaunchAgent::Direct(_)))
+            .then(|| self.account.clone())
+            .flatten(),
             // A plain terminal is not described: a title typed before switching is not used.
             title: if self.kind.has_task_fields() {
                 self.title.text().to_owned()
@@ -1060,6 +1067,7 @@ impl Workbench {
             agent_chosen: preset.direct,
             agent_peek: None,
             model,
+            account: None,
             open_row: None,
             model_scroll: gpui::ScrollHandle::new(),
             model_reveal: std::cell::Cell::new(0),
@@ -1298,6 +1306,7 @@ impl Workbench {
             launcher.agent_chosen = true;
             launcher.agent_peek = None;
             launcher.model = None;
+            launcher.account = None;
             if launcher.open_row == Some(LauncherStop::Model) {
                 launcher.open_row = None;
             }
@@ -1309,6 +1318,23 @@ impl Workbench {
         }
         self.launcher_load_models(cx);
         cx.notify();
+    }
+
+    /// Picks the account of a harness chat (`None`: the defaults decide).
+    pub fn launcher_choose_account(&mut self, account: Option<String>, cx: &mut Context<Self>) {
+        if let Some(launcher) = &mut self.launcher
+            && !launcher.starting
+        {
+            launcher.account = account;
+            launcher.error = None;
+            launcher.confirm = None;
+            cx.notify();
+        }
+    }
+
+    /// The account the sheet would start with, as the Account row names it (tests, inspection).
+    pub fn launcher_account(&self) -> Option<&str> {
+        self.launcher.as_ref().and_then(|l| l.account.as_deref())
     }
 
     /// Picks the model of a chat; none: the harness's default.

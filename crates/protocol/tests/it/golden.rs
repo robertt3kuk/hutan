@@ -898,6 +898,7 @@ fn running_task() -> Task {
         run: Some(TaskRun::Chat {
             agent: "codex".into(),
             model: None,
+            account: None,
         }),
         auto_start: true,
         sessions: vec![sid()],
@@ -2098,6 +2099,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 run: Some(TaskRun::Chat {
                     agent: "codex".into(),
                     model: None,
+                    account: None,
                 }),
                 auto_start: true,
                 after_policy: AfterPolicy::Accepted,
@@ -2114,6 +2116,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 run: Some(TaskRun::Chat {
                     agent: "omp".into(),
                     model: Some("anthropic/claude-opus-4-5".into()),
+                    account: None,
                 }),
                 auto_start: false,
                 after_policy: AfterPolicy::Done,
@@ -2250,6 +2253,23 @@ fn requests() -> Vec<(&'static str, Request)> {
                 harness: "claude".into(),
                 provider: None,
                 account: Some("work".into()),
+            }),
+        ),
+        (
+            "task_create_chat_account",
+            Request::TaskCreate(TaskCreate {
+                workspace_id: ws(),
+                title: "Review as work".into(),
+                prompt: Some("Review the diff".into()),
+                depends_on: vec![],
+                placement: None,
+                run: Some(TaskRun::Chat {
+                    agent: "claude".into(),
+                    model: None,
+                    account: Some("work".into()),
+                }),
+                auto_start: false,
+                after_policy: AfterPolicy::Done,
             }),
         ),
         (

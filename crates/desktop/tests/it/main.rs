@@ -1,3 +1,4 @@
+mod accounts_gpui;
 mod agent_edits_gpui;
 mod agents_gpui;
 mod agents_page_gpui;

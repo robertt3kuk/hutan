@@ -347,7 +347,7 @@ pub fn run_label(run: Option<&TaskRun>, names: &ModelNames) -> String {
             }
             format!("$ {short}")
         }
-        Some(TaskRun::Chat { agent, model }) => match model {
+        Some(TaskRun::Chat { agent, model, .. }) => match model {
             Some(model) => format!("{agent} chat · {}", names.label(agent, model)),
             None => format!("{agent} chat"),
         },
@@ -618,6 +618,7 @@ mod tests {
         t.run = Some(TaskRun::Chat {
             agent: "omp".into(),
             model: None,
+            account: None,
         });
         let row = &tree_rows(
             &book(&[&t]),

@@ -304,6 +304,8 @@ pub struct DaemonSettingsState {
     typed: BTreeMap<String, String>,
     /// The form of an MCP server that is being added or edited (`settings_mcp.rs`).
     pub(super) mcp_form: Option<McpForm>,
+    /// The form of an account that is being added (`settings_accounts.rs`).
+    pub(super) account_form: Option<super::settings_accounts::AccountForm>,
     requested: u64,
     applied: u64,
     /// The daemon run the list was asked of.

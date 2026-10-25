@@ -2801,11 +2801,26 @@ impl SessionsStore {
         login: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<hutan_protocol::account::AccountSession, String>> {
+        self.account_flow_as(harness, provider, None, login, cx)
+    }
+
+    /// [`account_flow`](Self::account_flow) for a managed account (protocol 0.50): the
+    /// harness's command runs with that account's home.
+    pub fn account_flow_as(
+        &mut self,
+        harness: &str,
+        provider: Option<String>,
+        account: Option<String>,
+        login: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::account::AccountSession, String>> {
         let connection = self.connection.clone();
         let harness = harness.to_owned();
         cx.spawn(async move |this, cx| {
             let answer = if login {
-                connection.account_login(&harness, provider).await
+                connection
+                    .account_login_as(&harness, provider, account)
+                    .await
             } else {
                 connection.account_logout(&harness, provider).await
             }
@@ -2818,6 +2833,58 @@ impl SessionsStore {
             })
             .ok();
             Ok(answer)
+        })
+    }
+
+    /// `account.add`: a managed account with an empty home (protocol 0.50).
+    pub fn account_add(
+        &mut self,
+        harness: &str,
+        name: &str,
+        label: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::account::ManagedAccount, String>> {
+        let connection = self.connection.clone();
+        let (harness, name) = (harness.to_owned(), name.to_owned());
+        cx.spawn(async move |_, _| {
+            connection
+                .account_add(&harness, &name, label)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    /// `account.remove`: logs the account out, deletes its home and forgets it.
+    pub fn account_remove(
+        &mut self,
+        harness: &str,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::account::AccountRemoved, String>> {
+        let connection = self.connection.clone();
+        let (harness, name) = (harness.to_owned(), name.to_owned());
+        cx.spawn(async move |_, _| {
+            connection
+                .account_remove(&harness, &name)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    /// `account.default`: the default account of a harness (`None` clears it).
+    pub fn account_default(
+        &mut self,
+        harness: &str,
+        account: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), String>> {
+        let connection = self.connection.clone();
+        let harness = harness.to_owned();
+        cx.spawn(async move |_, _| {
+            connection
+                .account_default(&harness, account, None)
+                .await
+                .map_err(|e| e.to_string())
         })
     }
 

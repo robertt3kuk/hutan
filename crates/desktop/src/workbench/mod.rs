@@ -64,6 +64,7 @@ pub mod rewind;
 mod rewind_view;
 pub mod search_replace;
 pub(crate) mod send_key;
+pub mod settings_accounts;
 mod settings_assistant;
 mod settings_daemon;
 mod settings_hooks;
@@ -108,7 +109,7 @@ pub use daemon::{DaemonBusy, log_file as daemon_log_file};
 pub use docks::{COLLAPSE_DRAG, RESIZE_CONTEXT};
 pub use files::{BufferStore, FileOpen};
 pub use first_run::NotifyOffer;
-pub use harnesses::{Detection, HARNESSES, Harness, HarnessDirectory, Listing};
+pub use harnesses::{AccountChoice, Detection, HARNESSES, Harness, HarnessDirectory, Listing};
 pub use instructions::{InstructionsToast, TOAST_TIME as INSTRUCTIONS_TOAST_TIME};
 pub use launcher::{
     HarnessChoice, LaunchAgent, LaunchWhere, Launcher, LauncherField, LauncherPreset, LauncherStop,
@@ -120,6 +121,7 @@ pub use quick_terminal::{QuickEvent, QuickPanelView, QuickTerminal};
 pub use registry::{PanelEnv, StatusBarLayout, StatusData};
 pub use render::TabLook;
 pub use review::ReviewHandoff;
+pub use settings_accounts::{AccountField, AccountForm};
 pub use settings_assistant::{AssistantDefaults, MawasGrants, Running as AssistantRunning};
 pub use settings_daemon::DaemonSettingsState;
 pub use settings_hooks::HooksPage;

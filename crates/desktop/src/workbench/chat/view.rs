@@ -473,11 +473,14 @@ impl ChatView {
             )
         } else if is_harness_chat(&chat.agent) {
             // The harness decides what asks and what is sandboxed: no Hutan policy to show.
-            format!("{} · {}", harness_name(&chat.agent), model)
+            format!("{} · {}", who_runs(&harness_name(&chat.agent), chat), model)
         } else {
             format!(
                 "{} · {} · approvals {} · sandbox {}",
-                chat.agent, model, chat.approval_policy, chat.sandbox
+                who_runs(&chat.agent, chat),
+                model,
+                chat.approval_policy,
+                chat.sandbox
             )
         };
         Some((detail, full_model))
@@ -1797,6 +1800,15 @@ pub struct ModeChip {
     pub tooltip: String,
     /// The mode lets the agent act without asking: drawn as a warning.
     pub warning: bool,
+}
+
+/// The agent as the header names it: `Claude Code (Work)` when it runs as a managed account
+/// (protocol 0.50), else just its name.
+pub fn who_runs(name: &str, chat: &hutan_protocol::chat::ChatInfo) -> String {
+    match &chat.account {
+        Some(account) => format!("{name} ({})", account.label),
+        None => name.to_owned(),
+    }
 }
 
 /// What the header says about the mode a harness runs in: `Mode: Plan`, a warning for a mode
