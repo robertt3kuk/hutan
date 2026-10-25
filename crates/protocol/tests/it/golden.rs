@@ -39,6 +39,10 @@ use hutan_protocol::fs::*;
 use hutan_protocol::git::*;
 use hutan_protocol::grants::{ControlGrant, ControlGrantRevoke, ControlGrants, ControlGrantsList};
 use hutan_protocol::history::*;
+use hutan_protocol::hooks::{
+    HookEvent, HookInfo, HookOutcome, HookPayload, HookRun, HooksList, HooksLog, HooksLogRequest,
+    HooksTest, HooksTested,
+};
 use hutan_protocol::lsp::*;
 use hutan_protocol::memory::*;
 use hutan_protocol::messages::*;
@@ -1275,6 +1279,55 @@ fn fs_entry(name: &str, kind: FsKind, ignored: bool) -> FsEntry {
         mtime_ns: 1_791_894_150_123_456_789,
         ino: 8_834_113,
         ignored,
+    }
+}
+
+fn hook_run() -> HookRun {
+    HookRun {
+        id: 7,
+        hook: 0,
+        event: HookEvent::ApprovalRequested,
+        test: false,
+        started_at_ms: 1_791_894_200_000,
+        duration_ms: 212,
+        outcome: HookOutcome::Ok,
+        exit_code: Some(0),
+        signal: None,
+        session_id: Some(sid()),
+        stdout: "sent\n".into(),
+        stderr: String::new(),
+        output_truncated: false,
+        error: None,
+    }
+}
+
+fn hook_payload() -> HookPayload {
+    HookPayload {
+        session_id: Some(sid()),
+        session_title: Some("api".into()),
+        harness: Some("claude".into()),
+        project_id: Some(ws()),
+        project: Some("hutan".into()),
+        workspace_id: None,
+        workspace: None,
+        state: Some("pending".into()),
+        detail: Some("Run `cargo test`".into()),
+        approval_id: Some("01K7F3B5N2Q9W8E4R6T1Y0V3KP".into()),
+        ..HookPayload::new(HookEvent::ApprovalRequested, 1_791_894_200_000)
+    }
+}
+
+fn finish_payload() -> HookPayload {
+    HookPayload {
+        state: Some("ok".into()),
+        detail: Some("hutan-wt-feature".into()),
+        branch: Some("feature".into()),
+        target_branch: Some("main".into()),
+        commit_step: Some("ok".into()),
+        merge_step: Some("ok".into()),
+        push_step: Some("skipped".into()),
+        changed_files: Some(3),
+        ..HookPayload::new(HookEvent::FinishDone, 1_791_894_200_000)
     }
 }
 
@@ -3258,6 +3311,19 @@ fn requests() -> Vec<(&'static str, Request)> {
                 rev: "9d8c7b6a5f4e3d2c1b0a99887766554433221100".into(),
             }),
         ),
+        ("hooks_list", Request::HooksList(Empty {})),
+        (
+            "hooks_log",
+            Request::HooksLog(HooksLogRequest {
+                hook: Some(1),
+                limit: Some(20),
+            }),
+        ),
+        (
+            "hooks_log_all",
+            Request::HooksLog(HooksLogRequest::default()),
+        ),
+        ("hooks_test", Request::HooksTest(HooksTest { hook: 1 })),
     ]
 }
 
@@ -6889,6 +6955,116 @@ fn responses_match_fixtures() {
                     data: Some(serde_json::json!({"reason": "superseded"})),
                 },
             ),
+        ),
+        (
+            "hooks_list",
+            ControlMessage::ok(
+                40,
+                &HooksList {
+                    hooks: vec![
+                        HookInfo {
+                            index: 0,
+                            name: Some("Phone".into()),
+                            on: HookEvent::ApprovalRequested,
+                            harness: None,
+                            project: Some("hutan".into()),
+                            workspace: None,
+                            run: vec!["curl".into(), "-d".into(), "an approval waits".into()],
+                            shell: false,
+                            timeout_secs: 30,
+                            when_focused: false,
+                            runs: 4,
+                            failures: 1,
+                            dropped: 0,
+                            skipped: 2,
+                            last_run: Some(hook_run()),
+                        },
+                        HookInfo {
+                            index: 1,
+                            name: None,
+                            on: HookEvent::SessionExited,
+                            harness: Some("claude".into()),
+                            project: None,
+                            workspace: Some("work".into()),
+                            run: vec!["echo done >> ~/journal.txt".into()],
+                            shell: true,
+                            timeout_secs: 300,
+                            when_focused: true,
+                            runs: 0,
+                            failures: 0,
+                            dropped: 3,
+                            skipped: 0,
+                            last_run: None,
+                        },
+                    ],
+                    running: 1,
+                    max_concurrent: 4,
+                    queue_capacity: 8,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "hooks_log",
+            ControlMessage::ok(
+                41,
+                &HooksLog {
+                    runs: vec![
+                        hook_run(),
+                        HookRun {
+                            id: 6,
+                            outcome: HookOutcome::TimedOut,
+                            exit_code: None,
+                            signal: None,
+                            stdout: String::new(),
+                            stderr: String::new(),
+                            error: Some("killed after 30 s".into()),
+                            ..hook_run()
+                        },
+                    ],
+                    capacity: 200,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "hooks_tested",
+            ControlMessage::ok(
+                42,
+                &HooksTested {
+                    run: HookRun {
+                        test: true,
+                        ..hook_run()
+                    },
+                    payload: HookPayload {
+                        test: true,
+                        ..hook_payload()
+                    },
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "hooks_tested_finish",
+            ControlMessage::ok(
+                43,
+                &HooksTested {
+                    run: HookRun {
+                        test: true,
+                        event: HookEvent::FinishDone,
+                        session_id: None,
+                        outcome: HookOutcome::Failed,
+                        exit_code: Some(2),
+                        stderr: "no such topic\n".into(),
+                        ..hook_run()
+                    },
+                    payload: HookPayload {
+                        test: true,
+                        ..finish_payload()
+                    },
+                },
+            )
+            .unwrap(),
         ),
         (
             "usage_summary",

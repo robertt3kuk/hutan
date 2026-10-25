@@ -1,5 +1,7 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`hooks`]: user hooks — `hooks.list`, `hooks.log`, `hooks.test` and the payload a hook
+//!   receives (protocol 0.49, capability `hooks`).
 //! - [`memory_files`]: Mawas's memory as Markdown files — the format of the mirror, the export
 //!   and the import — and `memory.import` / `memory.files.status` (protocol 0.46, capability
 //!   `memory.files`); [`memory`]'s provenance names the origin of an edit made in a file.
@@ -90,6 +92,7 @@ pub mod fs;
 pub mod git;
 pub mod grants;
 pub mod history;
+pub mod hooks;
 pub mod lsp;
 pub mod memory;
 pub mod memory_files;
@@ -117,7 +120,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 47,
+    minor: 49,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

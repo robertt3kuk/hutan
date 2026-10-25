@@ -37,6 +37,7 @@ use crate::fs::{
 use crate::git::{GitBlame, GitFile, GitLog, GitShow};
 use crate::grants::{ControlGrantRevoke, ControlGrantsList};
 use crate::history::{HistorySearch, HistorySetEnabled};
+use crate::hooks::{HooksLogRequest, HooksTest};
 use crate::lsp::{
     DocChange, DocOpen, DocRef, LspCompletionRequest, LspCompletionResolve, LspDiagnostic,
     LspDiagnosticsRequest, LspPositionRequest, LspServerInfo, LspServerRef,
@@ -635,6 +636,18 @@ pub enum Request {
     /// `UsageSummary`. `refresh` asks the harnesses first. Read-only.
     #[serde(rename = "usage.summary")]
     UsageSummary(UsageSummaryRequest),
+    /// Capability `hooks` (protocol 0.49): the user's `[[hooks]]` with their last runs and
+    /// counters; answered with `HooksList`. User-only: a hook's command line can carry a token.
+    #[serde(rename = "hooks.list")]
+    HooksList(Empty),
+    /// Capability `hooks`: the finished runs of the hooks with their captured output, newest
+    /// first; answered with `HooksLog`. User-only.
+    #[serde(rename = "hooks.log")]
+    HooksLog(HooksLogRequest),
+    /// Capability `hooks`: runs one hook once with a sample payload and waits for it; answered
+    /// with `HooksTested`. User-only: it runs the user's command.
+    #[serde(rename = "hooks.test")]
+    HooksTest(HooksTest),
 }
 
 impl Request {
