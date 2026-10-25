@@ -599,6 +599,7 @@ fn below_640_pt_the_header_folds_today_leaves_and_the_composer_keeps_its_width(
     wait_until(cx, "the header controls", |cx| {
         painted(cx, "backend") && painted(cx, "new") && painted(cx, "today")
     });
+    assert!(!painted(cx, "backend-line"), "the chip says it, no line");
 
     // No room (a 1000 × 700 pt window with the right panel open at 480 pt): scope, mode and ⋯;
     // no Today column; a composer of a usable width.
@@ -616,6 +617,10 @@ fn below_640_pt_the_header_folds_today_leaves_and_the_composer_keeps_its_width(
     for what in ["scope", "mode", "more"] {
         assert!(painted(cx, what), "{what} stays in the folded header");
     }
+    // What Mawas runs on still shows, as a line under the header.
+    wait_until(cx, "the backend line", |cx| painted(cx, "backend-line"));
+    let label = panel.read_with(cx, |p, cx| p.backend_label(cx));
+    assert!(label.contains(" · "), "backend · model: {label:?}");
     let page = view
         .read_with(cx, |wb, _| wb.region_bounds(Region::Assistant("header")))
         .expect("the header");

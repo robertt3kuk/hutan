@@ -1266,7 +1266,7 @@ impl ChatView {
             LoadStatus::Failed(_) => (Mascot::Error, "No conversation to show."),
             LoadStatus::Ready if mawas => (
                 Mascot::Empty,
-                "Ask Mawas about this project. Attach context with @ or\u{a0}+.",
+                "Ask Mawas anything. Attach context with @ or\u{a0}+.",
             ),
             LoadStatus::Ready => (
                 Mascot::Empty,

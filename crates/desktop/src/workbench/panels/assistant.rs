@@ -1209,9 +1209,12 @@ impl AssistantPanel {
                 let store = self.env.sessions.read(cx);
                 let chat = store.session(session)?.chat.clone()?;
                 let backend = if chat.agent == "assistant" {
-                    chat.provider_id.unwrap_or_else(|| "provider".to_owned())
+                    chat.provider_id
+                        .clone()
+                        .unwrap_or_else(|| "provider".to_owned())
                 } else {
-                    harnesses::harness_name(&chat.agent)
+                    // `Claude Code (Work)` when it runs as a managed account, as the chat's header.
+                    crate::workbench::chat::who_runs(&harnesses::harness_name(&chat.agent), &chat)
                 };
                 // The model by its display name when the desktop knows the harness's catalog.
                 let model = store.model_names().label(&chat.agent, &chat.model);
@@ -1657,6 +1660,22 @@ impl Render for AssistantPanel {
                 .into_any_element()
         })
         .collect();
+        // Below 640 pt the backend leaves the header for ⋯; what Mawas runs on still shows, as
+        // one muted line under it.
+        let backend_line = self.folded.then(|| {
+            div()
+                .relative()
+                .flex_none()
+                .px(px(tokens.spacing * 3.0))
+                .py(px(tokens.spacing * 0.5))
+                .border_b_1()
+                .border_color(theme.border)
+                .text_color(theme.muted)
+                .text_size(px(tokens.secondary_font_size))
+                .truncate()
+                .child(SharedString::from(self.backend_label(cx)))
+                .child(probe(&self.env.regions, Region::Assistant("backend-line")))
+        });
         let connected = self.connected(cx);
         let today_page = self.folded && self.today_only && connected;
         let rail = (!self.folded && self.rail_open && connected)
@@ -1691,6 +1710,7 @@ impl Render for AssistantPanel {
             .text_color(theme.fg)
             .text_size(px(tokens.font_size))
             .child(header)
+            .children(backend_line)
             .children(notes)
             .child(
                 div()
