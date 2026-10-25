@@ -120,7 +120,7 @@ pub struct MemoryPanel {
     /// The entry whose archiving waits for the user's answer.
     confirm_archive: Option<String>,
     history: Option<Shown>,
-    /// The memory files of the scopes the page shows (protocol 0.47): where they are, and which
+    /// The memory files of the scopes the page shows (protocol 0.46): where they are, and which
     /// edits of them could not be used.
     files: Vec<MemoryFilesStatus>,
     /// What the last export or import did, in words.

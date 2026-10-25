@@ -1,4 +1,4 @@
-//! The memory as Markdown files (protocol 0.47, capability `memory.files`; `docs/assistant.md`
+//! The memory as Markdown files (protocol 0.46, capability `memory.files`; `docs/assistant.md`
 //! § Memory files, ADR 0017 amendment).
 //!
 //! **SQLite stays the source of truth.** The files are a mirror the daemon writes after every

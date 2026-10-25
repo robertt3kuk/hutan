@@ -450,7 +450,7 @@ pub struct AssistantSettings {
     /// Most active memory entries; a write past it is refused until one is archived.
     pub memory_max_entries: u32,
     /// Whether a workspace's memory is also written as Markdown files in its project
-    /// (`<project>/.hutan/memory/`, protocol 0.47). Off by default: they are files of the
+    /// (`<project>/.hutan/memory/`, protocol 0.46). Off by default: they are files of the
     /// user's repository. The global memory's files (in the Home folder) are always written.
     pub memory_files_in_project: bool,
     /// What assistants of project workspaces may read.

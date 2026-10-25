@@ -767,7 +767,7 @@ pub struct MemoryService {
     gate: tokio::sync::Mutex<()>,
     /// The approvals of the pending proposals (derived from `memory_proposals`).
     approvals: Mutex<HashMap<ApprovalId, ApprovalInfo>>,
-    /// The memory as Markdown files (protocol 0.47).
+    /// The memory as Markdown files (protocol 0.46).
     files: files::Mirror,
     me: Weak<MemoryService>,
 }

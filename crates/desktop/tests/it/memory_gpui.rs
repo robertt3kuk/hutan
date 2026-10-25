@@ -1405,7 +1405,7 @@ fn settings_mawas_turns_memory_off_and_sets_the_limit(cx: &mut TestAppContext) {
     });
 }
 
-// ---- memory files (MEMORY-FILES, protocol 0.47) --------------------------------------------------
+// ---- memory files (MEMORY-FILES, protocol 0.46) --------------------------------------------------
 
 fn memory_folder(env: &AssistantEnv) -> std::path::PathBuf {
     env.daemon

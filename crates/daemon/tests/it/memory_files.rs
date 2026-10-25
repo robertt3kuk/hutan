@@ -1,4 +1,4 @@
-//! Mawas's memory as Markdown files (protocol 0.47, `docs/assistant.md` § Memory files): a real
+//! Mawas's memory as Markdown files (protocol 0.46, `docs/assistant.md` § Memory files): a real
 //! daemon on a temporary `HUTAN_HOME`, the Home folder inside it. The files are a mirror of the
 //! memory (SQLite stays the source of truth); an edit of one becomes a proposal and never a
 //! change; `memory.import` makes proposals from a file or text.

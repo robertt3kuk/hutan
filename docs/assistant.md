@@ -106,7 +106,7 @@ Mawas remembers what the user approved — about the user (**profile**), about e
 
 **MCP.** `hutan mcp` has `memory_list` and `memory_search` (reads, free) and `memory_propose` (its result says it is **not saved** until the user approves it); there is no write tool.
 
-## Memory files (MEMORY-FILES, protocol 0.47; ADR 0017 amendment)
+## Memory files (MEMORY-FILES, protocol 0.46; ADR 0017 amendment)
 
 Mawas's memory is also a folder of Markdown files you can read, edit, review in a pull request and keep in git — without the files becoming a second source of truth. **SQLite stays the source of truth** (ADR 0017 decisions 3 and 4: revisions, provenance, approvals); the files are a **mirror the daemon writes**, and an edit of one is a **proposal**, never a change.
 

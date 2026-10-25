@@ -81,7 +81,7 @@ impl Ctx {
             return Ok(());
         }
         Err(CliError::Failed(
-            "this hutand does not keep the memory in files (it is older than protocol 0.47); \
+            "this hutand does not keep the memory in files (it is older than protocol 0.46); \
              restart it with `hutan daemon restart`"
                 .to_owned(),
         ))

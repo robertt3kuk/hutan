@@ -161,7 +161,7 @@ pub(crate) const SESSION_CLOSE_CAPABILITY: &str = "session.close";
 pub(crate) const CONTROL_GRANTS_CAPABILITY: &str = "control.grants";
 /// Capability for `memory.*` and the `memory.changed` event (protocol 0.32).
 pub(crate) const MEMORY_CAPABILITY: &str = "memory";
-/// Capability for `memory.import` and `memory.files.status` (protocol 0.47).
+/// Capability for `memory.import` and `memory.files.status` (protocol 0.46).
 pub(crate) const MEMORY_FILES_CAPABILITY: &str = "memory.files";
 /// Capability for the `fs.*` requests and the `fs.search.progress` event (protocol 0.33).
 pub(crate) const FS_CAPABILITY: &str = "fs";
@@ -1079,7 +1079,7 @@ impl Client {
             .any(|capability| capability == MEMORY_CAPABILITY)
     }
 
-    /// True when the daemon advertised capability `memory.files` (protocol 0.47): Mawas's
+    /// True when the daemon advertised capability `memory.files` (protocol 0.46): Mawas's
     /// memory as Markdown files, `memory.import` and `memory.files.status`.
     pub fn supports_memory_files(&self) -> bool {
         self.has_capability(MEMORY_FILES_CAPABILITY)
