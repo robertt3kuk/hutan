@@ -758,6 +758,16 @@ mod audit {
             "the file strip's toggle, a file row, a hunk header",
         ),
         (
+            "desktop/src/workbench/changes/history.rs",
+            2,
+            "a commit row and a file row of the History segment",
+        ),
+        (
+            "desktop/src/workbench/file_history.rs",
+            1,
+            "a commit row of the file history list",
+        ),
+        (
             "desktop/src/workbench/changes/tray.rs",
             6,
             "the review summary disclosure, menu entries, a review row, a diff line",

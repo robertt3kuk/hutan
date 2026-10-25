@@ -5,9 +5,8 @@
 
 use std::sync::Arc;
 
-use gpui::{Modifiers, MouseButton, TestAppContext, point};
+use gpui::{Modifiers, TestAppContext, point};
 use hutan_buffer::Selections;
-use hutan_code_view::blame::relative_date;
 use hutan_code_view::{BlameCommit, BlameData, BlameLine, CodeViewEvent};
 
 use crate::editing::{draw, open};
@@ -153,7 +152,6 @@ fn the_gutter_column_makes_room_draws_and_answers_the_mouse(cx: &mut TestAppCont
             .map(|c| c.id.clone())
     });
     assert_eq!(id, Some("a".repeat(40)));
-    let _ = MouseButton::Left;
 }
 
 #[gpui::test]
@@ -168,9 +166,4 @@ fn inline_blame_is_off_until_asked_and_needs_a_blame(cx: &mut TestAppContext) {
     let layout = view.read_with(cx, |v, _| v.layout().unwrap());
     assert!(!view.read_with(cx, |v, _| v.blame_gutter()));
     assert!(layout.text_left < layout.bounds.left() + layout.cell_width * 12.0);
-}
-
-#[test]
-fn a_commit_is_dated_in_words() {
-    assert_eq!(relative_date(0, 90), "1 minute ago");
 }

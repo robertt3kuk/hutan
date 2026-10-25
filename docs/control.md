@@ -170,6 +170,8 @@ A stdio MCP server (hand-rolled JSON-RPC, one message per line; protocol version
 | `worktree_list` | `worktree.list` | no | worktrees and the sessions in them |
 | `worktree_diff` | `worktree.diff` | no | the files a worktree changed against its base (commits plus uncommitted) |
 | `worktree_file_diff` | `worktree.file_diff` | no | one changed file's unified diff |
+| `git_log` | `git.log` | no | the commits of a checkout, a folder or a file (renames followed), newest first, 200 a page |
+| `git_blame` | `git.blame` | no | which commit last changed each line of a file (`0000…` for lines not committed yet) |
 | `worktree_merge` | `worktree.merge` | yes | merge a worktree's branch into the main checkout's branch (local commit; refusals and conflicts change nothing) |
 | `worktree_commit` | `worktree.commit` | yes | stage everything in a worktree and commit it, so a merge takes it (0.25) |
 | `worktree_rm` | `worktree.remove` | yes | remove a worktree |
