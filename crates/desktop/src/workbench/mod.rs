@@ -50,6 +50,7 @@ pub mod persistence;
 mod projects;
 mod providers;
 pub mod quick_open;
+pub mod quick_terminal;
 mod recovery_summary;
 pub mod regions;
 pub mod registry;
@@ -112,6 +113,7 @@ pub use launcher::{
 };
 pub use modal::{Modal, ModalCheckbox, ModalChoice};
 pub use panels::{HistoryConfirm, HistoryPanel, StatusTone, connection_label};
+pub use quick_terminal::{QuickEvent, QuickPanelView, QuickTerminal};
 pub use registry::{PanelEnv, StatusBarLayout, StatusData};
 pub use render::TabLook;
 pub use review::ReviewHandoff;

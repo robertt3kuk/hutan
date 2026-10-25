@@ -8,8 +8,8 @@ use std::rc::Rc;
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use hutan_desktop::macos::{
-    FakeDock, FakeHotkey, FakeLoginItem, FakeNotifications, FakePresence, FakeStatusItem,
-    MacServices,
+    FakeDock, FakeHotkey, FakeLoginItem, FakeNotifications, FakePresence, FakeQuickPanel,
+    FakeStatusItem, MacServices,
 };
 use hutan_desktop::workbench::{Workbench, WorkbenchOptions};
 use hutan_settings::{SettingsPaths, SettingsStore};
@@ -23,6 +23,9 @@ pub struct Fakes {
     pub item: FakeStatusItem,
     pub dock: FakeDock,
     pub hotkey: FakeHotkey,
+    /// The quick terminal's shortcut and the system side of its panel.
+    pub quick_hotkey: FakeHotkey,
+    pub quick_panel: FakeQuickPanel,
     pub presence: FakePresence,
 }
 
@@ -34,6 +37,8 @@ impl Fakes {
             item: FakeStatusItem::new(),
             dock: FakeDock::new(),
             hotkey: FakeHotkey::new(),
+            quick_hotkey: FakeHotkey::new(),
+            quick_panel: FakeQuickPanel::new(),
             presence: FakePresence::new(),
         }
     }
@@ -45,6 +50,8 @@ impl Fakes {
             status_item: Rc::new(self.item.clone()),
             dock: Rc::new(self.dock.clone()),
             hotkey: Rc::new(self.hotkey.clone()),
+            quick_hotkey: Rc::new(self.quick_hotkey.clone()),
+            quick_panel: Rc::new(self.quick_panel.clone()),
             presence: Rc::new(self.presence.clone()),
             ..MacServices::inert()
         }

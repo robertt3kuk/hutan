@@ -249,6 +249,10 @@ pub fn number_range(namespace: &str, key: &str) -> Option<(f64, f64)> {
             TerminalSettings::MIN_LINE_HEIGHT,
             TerminalSettings::MAX_LINE_HEIGHT,
         )),
+        ("terminal", "quick_height") => Some((
+            TerminalSettings::MIN_QUICK_HEIGHT,
+            TerminalSettings::MAX_QUICK_HEIGHT,
+        )),
         ("resources", "interval_ms") => Some((
             f64::from(hutan_protocol::resources::MIN_INTERVAL_MS),
             f64::from(crate::workbench::panels::MAX_INTERVAL_MS),

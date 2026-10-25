@@ -295,6 +295,37 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "terminal",
+        "quick_terminal",
+        "Quick terminal",
+        "A terminal that drops down from the top of the screen on the shortcut below, from any app and over full-screen apps. It is one terminal session that Hutan keeps between shows: hiding it never ends the session. Escape or the shortcut hides it, ⌘T adds a tab inside it and ⌘⇧Return moves the tab into the main window. Off, the shortcut is released.",
+    ),
+    field(
+        "terminal",
+        "quick_hotkey",
+        "Quick terminal shortcut",
+        "The system-wide shortcut of the quick terminal, for example ctrl-shift-grave (the default), alt-space or cmd-shift-k. It needs at least one of cmd, ctrl or alt. Leave it empty to turn it off. If another app already uses it, Hutan tells you once and leaves the setting alone. It never shows the panel while another app is reading a password (secure input).",
+    ),
+    field(
+        "terminal",
+        "quick_height",
+        "Quick terminal height",
+        "How much of the screen's height the quick terminal covers, in percent. It opens on the screen the pointer is on.",
+    ),
+    choice(
+        "terminal",
+        "quick_start_in",
+        "Quick terminal starts in",
+        "Where the quick terminal's first session starts: your Home folder, or the folder of the project that is active in the main window when the panel first shows. Tabs added with ⌘T start next to the tab you are in.",
+        &[("home", "Home"), ("project", "The active project")],
+    ),
+    field(
+        "terminal",
+        "quick_escape_hides",
+        "Escape hides the quick terminal",
+        "Escape hides the panel. A program that uses the alternate screen (vim, less, most TUIs) always gets its Escape. Turn this off if you run agents or editors that need Escape in the shell itself: the shortcut still hides the panel.",
+    ),
+    field(
+        "terminal",
         "blocks",
         "Command blocks",
         "Groups each command and its output into a block with a marker bar, a status chip and hover actions. Off, a plain terminal.",

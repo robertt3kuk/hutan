@@ -86,6 +86,17 @@ pub enum OpenFilesWith {
     Editor,
 }
 
+/// Where the quick terminal's first session starts (`terminal.quick_start_in`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QuickStart {
+    /// The Home folder.
+    #[default]
+    Home,
+    /// The folder of the project that is active in the main window when the panel first shows.
+    Project,
+}
+
 /// The `terminal` namespace: font, theme and behavior of every terminal view.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -127,6 +138,20 @@ pub struct TerminalSettings {
     /// Dim the text of the terminal splits of a tab that do not have the keyboard by a few
     /// percent, so the focused one is not told apart by its top edge alone.
     pub dim_unfocused_splits: bool,
+    /// The quick terminal: a terminal that drops down from the top of the screen on a
+    /// system-wide shortcut (`quick_hotkey`). Off, the shortcut is released.
+    pub quick_terminal: bool,
+    /// The shortcut that shows and hides the quick terminal from any app, written like a
+    /// keystroke (`ctrl-shift-grave`, `alt-space`, `cmd-shift-k`); at least one of `cmd`, `ctrl`,
+    /// `alt` is needed. Empty turns it off.
+    pub quick_hotkey: String,
+    /// How much of the screen's height the quick terminal covers, in percent.
+    pub quick_height: f64,
+    /// Where the quick terminal's first session starts: `home` or `project`.
+    pub quick_start_in: QuickStart,
+    /// Escape hides the quick terminal. A program that has the alternate screen (vim, less) keeps
+    /// its Escape either way.
+    pub quick_escape_hides: bool,
 }
 
 impl Default for TerminalSettings {
@@ -147,6 +172,11 @@ impl Default for TerminalSettings {
             open_files_with: OpenFilesWith::Editor,
             confirm_multiline_paste: true,
             dim_unfocused_splits: true,
+            quick_terminal: true,
+            quick_hotkey: "ctrl-shift-grave".to_owned(),
+            quick_height: 40.0,
+            quick_start_in: QuickStart::Home,
+            quick_escape_hides: true,
         }
     }
 }
@@ -212,6 +242,19 @@ impl TerminalSettings {
     /// The line heights (multiples of the font size) a terminal view accepts.
     pub const MIN_LINE_HEIGHT: f64 = 0.8;
     pub const MAX_LINE_HEIGHT: f64 = 3.0;
+    /// The share of the screen's height (percent) the quick terminal may cover.
+    pub const MIN_QUICK_HEIGHT: f64 = 20.0;
+    pub const MAX_QUICK_HEIGHT: f64 = 90.0;
+
+    /// `quick_height` as a fraction of the screen's height, kept within the accepted range.
+    pub fn quick_height_fraction(&self) -> f32 {
+        let percent = if self.quick_height.is_finite() {
+            self.quick_height
+        } else {
+            Self::default().quick_height
+        };
+        (percent.clamp(Self::MIN_QUICK_HEIGHT, Self::MAX_QUICK_HEIGHT) / 100.0) as f32
+    }
 
     /// Puts `shell` and `env` into the session `spec` a new terminal is created with: `env`, and
     /// a non-empty `shell` as `SHELL` (over `env.SHELL`). Variables `spec` already carries win
@@ -1942,6 +1985,28 @@ mod tests {
                 .confirm_multiline_paste
         );
         assert_eq!(off.open_files_with, OpenFilesWith::System);
+    }
+
+    #[test]
+    fn the_quick_terminal_is_on_by_default_and_its_height_stays_in_range() {
+        let defaults = TerminalSettings::default();
+        assert!(defaults.quick_terminal);
+        assert_eq!(defaults.quick_hotkey, "ctrl-shift-grave");
+        assert_eq!(defaults.quick_start_in, QuickStart::Home);
+        assert!(defaults.quick_escape_hides);
+        assert!((defaults.quick_height_fraction() - 0.4).abs() < 1e-6);
+        let parse = |text: &str| -> TerminalSettings { toml::from_str(text).unwrap() };
+        let custom = parse(
+            "quick_terminal = false\nquick_hotkey = \"alt-space\"\nquick_start_in = \"project\"\n\
+             quick_escape_hides = false\nquick_height = 55",
+        );
+        assert!(!custom.quick_terminal && !custom.quick_escape_hides);
+        assert_eq!(custom.quick_start_in, QuickStart::Project);
+        assert!((custom.quick_height_fraction() - 0.55).abs() < 1e-6);
+        // A value the panel cannot use is clamped, and the default stands for not a number.
+        assert!((parse("quick_height = 5").quick_height_fraction() - 0.2).abs() < 1e-6);
+        assert!((parse("quick_height = 400").quick_height_fraction() - 0.9).abs() < 1e-6);
+        assert!((parse("quick_height = nan").quick_height_fraction() - 0.4).abs() < 1e-6);
     }
 
     #[test]

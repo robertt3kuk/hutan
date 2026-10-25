@@ -1,10 +1,13 @@
-//! The system-wide Assistant shortcut (`assistant.global_shortcut`).
+//! The system-wide shortcuts: the Assistant's (`assistant.global_shortcut`) and the quick
+//! terminal's (`terminal.quick_hotkey`).
 //!
 //! The real implementation registers a Carbon hot key (`RegisterEventHotKey`), which needs no
 //! Accessibility permission and works while another app is in front. It is behind
-//! [`GlobalHotkey`]; tests use [`FakeHotkey`].
+//! [`GlobalHotkey`]; tests use [`FakeHotkey`]. Each shortcut owns one [`GlobalHotkey`] value that
+//! fires its own [`MacEvent`](super::MacEvent).
 //!
-//! Shortcuts are written like GPUI keystrokes: `alt-space`, `cmd-shift-space`, `ctrl-alt-k`.
+//! Shortcuts are written like GPUI keystrokes: `alt-space`, `cmd-shift-space`, `ctrl-alt-k`,
+//! `ctrl-shift-grave` (the key under Escape; `` ` `` works too).
 
 use std::cell::RefCell;
 use std::fmt;
@@ -89,6 +92,7 @@ const KEYS: &[(&str, u32, &str)] = &[
     ("m", 0x2E, "M"),
     ("tab", 0x30, "Tab"),
     ("space", 0x31, "Space"),
+    ("grave", 0x32, "`"),
     ("backspace", 0x33, "Delete"),
     ("escape", 0x35, "Escape"),
     ("f1", 0x7A, "F1"),
@@ -146,6 +150,11 @@ impl Shortcut {
         let key = if key == "return" { "enter" } else { key };
         let key = if key == "esc" { "escape" } else { key };
         let key = if key == "delete" { "backspace" } else { key };
+        let key = if matches!(key, "`" | "backtick" | "backquote") {
+            "grave"
+        } else {
+            key
+        };
         let Some((_, key_code, label)) = KEYS.iter().find(|(name, _, _)| *name == key) else {
             return Err(invalid(format!("\"{key}\" is not a key I can register")));
         };
@@ -156,12 +165,32 @@ impl Shortcut {
             display,
         })
     }
+
+    /// Whether macOS or a popular launcher gives this combination a meaning of its own, in words
+    /// for a notice. Registering it still works (the system lets the last registrant win for
+    /// some of them), but the user probably does not want it.
+    pub fn known_conflict(&self) -> Option<&'static str> {
+        const SPACE: u32 = 0x31;
+        const TAB: u32 = 0x30;
+        const GRAVE: u32 = 0x32;
+        match (self.modifiers, self.key_code) {
+            (CMD, SPACE) => Some("Spotlight"),
+            (m, SPACE) if m == CMD | OPTION => Some("Spotlight's Finder search"),
+            (m, SPACE) if m == CMD | CONTROL => Some("the emoji and symbols picker"),
+            (CONTROL, SPACE) => Some("switching the input source"),
+            (m, SPACE) if m == CONTROL | OPTION => Some("switching to the previous input source"),
+            (OPTION, SPACE) => Some("Raycast and Alfred, which use it by default"),
+            (CMD, TAB) => Some("the app switcher"),
+            (CMD, GRAVE) => Some("switching between the windows of an app"),
+            _ => None,
+        }
+    }
 }
 
-/// The system-wide hot key.
+/// A system-wide hot key: one shortcut that fires one [`MacEvent`](super::MacEvent).
 pub trait GlobalHotkey {
-    /// Makes `shortcut` fire [`MacEvent::Hotkey`](super::MacEvent::Hotkey) system-wide,
-    /// replacing the one registered before.
+    /// Makes `shortcut` fire this hot key's event system-wide, replacing the one registered
+    /// before.
     fn register(&self, shortcut: &Shortcut) -> Result<(), HotkeyError>;
     /// Gives the shortcut up.
     fn unregister(&self);
@@ -307,6 +336,15 @@ mod carbon {
             out: *mut EventHotKeyRef,
         ) -> OsStatus;
         fn UnregisterEventHotKey(hot_key: EventHotKeyRef) -> OsStatus;
+        fn GetEventParameter(
+            event: EventRef,
+            name: u32,
+            desired_type: u32,
+            actual_type: *mut u32,
+            buffer_size: u32,
+            actual_size: *mut u32,
+            data: *mut c_void,
+        ) -> OsStatus;
     }
 
     /// `'keyb'`.
@@ -317,33 +355,71 @@ mod carbon {
     const SIGNATURE: u32 = 0x6875_746E;
     /// `eventHotKeyExistsErr`.
     const HOT_KEY_EXISTS: OsStatus = -9878;
+    /// `eventNotHandledErr`: another handler of the application may take the event.
+    const NOT_HANDLED: OsStatus = -9874;
     const NO_ERR: OsStatus = 0;
+    /// `kEventParamDirectObject` (`'----'`) and `typeEventHotKeyID` (`'hkid'`).
+    const PARAM_DIRECT_OBJECT: u32 = 0x2D2D_2D2D;
+    const TYPE_HOT_KEY_ID: u32 = 0x686B_6964;
+
+    /// What a handler needs to answer one hot key: where to send, what to send, and which
+    /// registration (`id`) is its own, because every [`SystemHotkey`] installs a handler on the
+    /// same application target and each one hears every hot key press.
+    struct Target {
+        sender: EventSender,
+        event: MacEvent,
+        id: u32,
+    }
 
     extern "C" fn on_hot_key(
         _call: EventHandlerCallRef,
-        _event: EventRef,
+        event: EventRef,
         user_data: *mut c_void,
     ) -> OsStatus {
-        // SAFETY: `user_data` is the `EventSender` that `SystemHotkey::handler` boxed and keeps
-        // alive until it has removed this handler (in `Drop`); it is only read.
-        let sender = unsafe { &*(user_data.cast::<EventSender>()) };
+        let mut pressed = EventHotKeyId {
+            signature: 0,
+            id: 0,
+        };
+        // SAFETY: `event` is the event Carbon is delivering; `pressed` is a valid buffer of the
+        // size passed for a `typeEventHotKeyID` parameter.
+        let status = unsafe {
+            GetEventParameter(
+                event,
+                PARAM_DIRECT_OBJECT,
+                TYPE_HOT_KEY_ID,
+                ptr::null_mut(),
+                std::mem::size_of::<EventHotKeyId>() as u32,
+                ptr::null_mut(),
+                (&raw mut pressed).cast::<c_void>(),
+            )
+        };
+        if status != NO_ERR {
+            return NOT_HANDLED;
+        }
+        // SAFETY: `user_data` is the `Target` that `SystemHotkey` boxed and keeps alive until it
+        // has removed this handler (in `Drop`); it is only read.
+        let target = unsafe { &*(user_data.cast::<Target>()) };
+        if pressed.signature != SIGNATURE || pressed.id != target.id {
+            return NOT_HANDLED;
+        }
         // A full queue means the workbench already has a press to handle.
-        let _ = sender.try_send(MacEvent::Hotkey);
+        let _ = target.sender.try_send(target.event);
         NO_ERR
     }
 
-    /// The Carbon hot key of this process.
+    /// One Carbon hot key of this process: [`MacEvent`] `event` is sent when its shortcut is
+    /// pressed. `id` tells the registrations of several of these apart.
     pub struct SystemHotkey {
-        sender: Box<EventSender>,
+        target: Box<Target>,
         handler: Cell<EventHandlerRef>,
         hot_key: RefCell<Option<EventHotKeyRef>>,
     }
 
     impl SystemHotkey {
         /// Nothing is installed until the first `register`.
-        pub fn new(sender: EventSender) -> Self {
+        pub fn new(sender: EventSender, event: MacEvent, id: u32) -> Self {
             Self {
-                sender: Box::new(sender),
+                target: Box::new(Target { sender, event, id }),
                 handler: Cell::new(ptr::null_mut()),
                 hot_key: RefCell::new(None),
             }
@@ -358,7 +434,7 @@ mod carbon {
                 event_kind: EVENT_HOT_KEY_PRESSED,
             };
             let mut handler: EventHandlerRef = ptr::null_mut();
-            let user_data = ptr::from_ref::<EventSender>(&self.sender)
+            let user_data = ptr::from_ref::<Target>(&self.target)
                 .cast_mut()
                 .cast::<c_void>();
             // SAFETY: the target is the application's; `spec` outlives the call; `user_data`
@@ -403,7 +479,7 @@ mod carbon {
                     shortcut.modifiers,
                     EventHotKeyId {
                         signature: SIGNATURE,
-                        id: 1,
+                        id: self.target.id,
                     },
                     GetApplicationEventTarget(),
                     0,
@@ -433,7 +509,7 @@ mod carbon {
             self.unregister();
             let handler = self.handler.replace(ptr::null_mut());
             if !handler.is_null() {
-                // SAFETY: installed by `ensure_handler` and removed once, before `sender`
+                // SAFETY: installed by `ensure_handler` and removed once, before `target`
                 // (its user data) is dropped.
                 unsafe { RemoveEventHandler(handler) };
             }
@@ -478,6 +554,38 @@ mod tests {
                 matches!(Shortcut::parse(text), Err(HotkeyError::Invalid(_))),
                 "{text:?} was accepted"
             );
+        }
+    }
+
+    #[test]
+    fn the_key_under_escape_is_grave_or_a_backtick() {
+        let named = Shortcut::parse("ctrl-shift-grave").unwrap();
+        assert_eq!(named.key_code, 0x32);
+        assert_eq!(named.modifiers, CONTROL | SHIFT);
+        assert_eq!(named.display, "⌃⇧`");
+        for text in [
+            "ctrl-shift-`",
+            "ctrl-shift-backtick",
+            "CTRL-SHIFT-Backquote",
+        ] {
+            assert_eq!(Shortcut::parse(text).unwrap(), named, "{text}");
+        }
+        // Hutan's own ⌃` (bottom dock) is a different shortcut from the quick terminal's.
+        assert_ne!(Shortcut::parse("ctrl-`").unwrap(), named);
+    }
+
+    #[test]
+    fn what_macos_and_the_launchers_use_is_known_and_the_default_is_free() {
+        let owner = |text: &str| Shortcut::parse(text).unwrap().known_conflict();
+        assert_eq!(owner("cmd-space"), Some("Spotlight"));
+        assert_eq!(owner("alt-cmd-space"), Some("Spotlight's Finder search"));
+        assert_eq!(owner("ctrl-space"), Some("switching the input source"));
+        assert!(owner("alt-space").is_some_and(|who| who.contains("Raycast")));
+        assert!(owner("cmd-tab").is_some());
+        assert!(owner("cmd-`").is_some());
+        // The quick terminal's default, and a few free ones.
+        for free in ["ctrl-shift-grave", "ctrl-alt-k", "cmd-shift-k", "alt-f12"] {
+            assert_eq!(owner(free), None, "{free}");
         }
     }
 

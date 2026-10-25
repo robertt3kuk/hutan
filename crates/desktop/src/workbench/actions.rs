@@ -54,6 +54,7 @@ actions!(
         ToggleZoom,
         TogglePalette,
         NewTerminal,
+        ToggleQuickTerminal,
         NewAgent,
         NewChat,
         StopSession,
@@ -646,6 +647,7 @@ pub fn preset_number_action(n: usize) -> Option<Box<dyn Action>> {
 pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: bool) -> Vec<Command> {
     let mut out = vec![
         command("Session: New Terminal", NewTerminal),
+        command("Terminal: Toggle Quick Terminal", ToggleQuickTerminal),
         command("Start Agent or Task…", NewAgent),
         command("Chat: New Direct Chat…", NewChat),
         command("Session: Rename…", RenameSession),
@@ -1090,6 +1092,17 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<modal::Cancel>("escape", Some("Modal")),
         bind::<sheet::Dismiss>("escape", Some("SettingsSheet")),
         bind::<palette::Dismiss>("escape", Some("DaemonPopover")),
+        // The quick terminal's panel (`quick_terminal.rs`): ⎋ hides it unless the program in the
+        // terminal has the alternate screen; ⌘⇧↩ (a split zoom in the terminal) moves the tab
+        // into the main window. ⌘T, ⌘W and the tab keys are the main window's own.
+        bind::<super::quick_terminal::HideOnEscape>(
+            "escape",
+            Some(super::quick_terminal::KEY_CONTEXT),
+        ),
+        bind::<super::quick_terminal::MoveToMain>(
+            "cmd-shift-enter",
+            Some(super::quick_terminal::KEY_CONTEXT),
+        ),
         bind::<chat::SendMessage>("cmd-enter", Some(super::chat::KEY_CONTEXT)),
         bind::<chat::InterruptTurn>("cmd-.", Some(super::chat::KEY_CONTEXT)),
         // Send now (UX-QUEUE-STEER): the send key queues while a turn runs; ⌃↩ does not wait.
@@ -1586,6 +1599,8 @@ mod tests {
             "escape | modal::Cancel | Modal",
             "escape | settings_sheet::Dismiss | SettingsSheet",
             "escape | palette::Dismiss | DaemonPopover",
+            "escape | quick_terminal::HideOnEscape | QuickTerminal",
+            "shift-cmd-enter | quick_terminal::MoveToMain | QuickTerminal",
             "cmd-enter | chat::SendMessage | HutanChat",
             "cmd-. | chat::InterruptTurn | HutanChat",
             "ctrl-enter | chat::SendNow | HutanChat",

@@ -29,6 +29,9 @@ pub(crate) struct MacControl {
     status_item: Rc<dyn StatusItemHost>,
     dock: Rc<dyn DockBadge>,
     hotkey: Rc<dyn GlobalHotkey>,
+    /// The quick terminal's shortcut and the system side of its panel (`quick_terminal.rs`).
+    pub(crate) quick_hotkey: Rc<dyn GlobalHotkey>,
+    pub(crate) quick_panel: Rc<dyn crate::macos::QuickPanelHost>,
     presence: Rc<dyn Presence>,
     /// The Open panel of *File: Open File…* (`files.rs`).
     pub(crate) open_panel: Rc<dyn crate::macos::OpenPanel>,
@@ -66,6 +69,8 @@ impl MacControl {
             status_item,
             dock,
             hotkey,
+            quick_hotkey,
+            quick_panel,
             presence,
             open_panel,
             events,
@@ -80,6 +85,8 @@ impl MacControl {
                 status_item,
                 dock,
                 hotkey,
+                quick_hotkey,
+                quick_panel,
                 presence,
                 open_panel,
                 in_menu_bar: false,
@@ -481,6 +488,7 @@ impl Workbench {
         self.sync_status_item(cx);
         self.sync_dock(cx);
         self.sync_hotkey(cx);
+        self.sync_quick_hotkey(cx);
         self.sync_last_window_close_note();
     }
 
@@ -488,6 +496,7 @@ impl Workbench {
     pub(crate) fn sync_mac_surfaces(&mut self, cx: &mut Context<Self>) {
         self.sync_status_item(cx);
         self.sync_dock(cx);
+        self.sync_quick_tabs(cx);
     }
 
     /// Says in the settings diagnostics when `app.on_last_window_close` cannot take effect.
@@ -519,6 +528,9 @@ impl Workbench {
         }
         if changes.contains("assistant") {
             self.sync_hotkey(cx);
+        }
+        if changes.contains("terminal") || changes.contains("assistant") {
+            self.sync_quick_hotkey(cx);
         }
     }
 
@@ -583,6 +595,7 @@ impl Workbench {
                 self.bring_forward(window, cx);
                 self.open_assistant(window, cx);
             }
+            MacEvent::QuickHotkey => self.toggle_quick_terminal(cx),
             MacEvent::Menu(MenuCommand::OpenHutan) => self.bring_forward(window, cx),
             MacEvent::Menu(MenuCommand::NewTerminal) => {
                 self.bring_forward(window, cx);

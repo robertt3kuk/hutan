@@ -1,10 +1,10 @@
 //! macOS integration of the desktop (roadmap M6.4, D-2): starting the daemon at login as a login
-//! item, the notification permission, the menu bar status item, the Dock badge and the
-//! system-wide Assistant shortcut.
+//! item, the notification permission, the menu bar status item, the Dock badge, the
+//! system-wide Assistant shortcut and the quick terminal's shortcut and panel host.
 //!
 //! Every system API sits behind a small trait ([`LoginItem`], [`NotificationPermission`],
-//! [`StatusItemHost`], [`DockBadge`], [`GlobalHotkey`], [`Presence`]) with a fake that records
-//! what the workbench asked for.
+//! [`StatusItemHost`], [`DockBadge`], [`GlobalHotkey`], [`Presence`], [`QuickPanelHost`]) with a
+//! fake that records what the workbench asked for.
 //! The workbench ([`crate::workbench`], `mac.rs`) only talks to the traits, and tests only use
 //! the fakes: they never call `SMAppService`, `UNUserNotificationCenter`, `NSStatusBar`, the Dock
 //! tile or the hotkey API.
@@ -21,6 +21,7 @@ pub mod login_item;
 pub mod notifications;
 pub mod open_panel;
 pub mod presence;
+pub mod quick_panel;
 pub mod status_item;
 
 use std::fmt;
@@ -36,6 +37,7 @@ pub use login_item::{FAKE_BUNDLE, FakeLoginItem, LoginItem, LoginItemCall, Login
 pub use notifications::{FakeNotifications, NotificationAnswer, NotificationPermission};
 pub use open_panel::{FakeOpenPanel, OpenPanel};
 pub use presence::{FakePresence, Presence, PresenceCall};
+pub use quick_panel::{FakeQuickPanel, PointerScreen, QuickPanelCall, QuickPanelHost};
 pub use status_item::{FakeStatusItem, MenuSpec, StatusItemHost, StatusItemModel};
 
 /// How long a desktop that expects a launchd-started daemon waits for it before it starts one
@@ -64,6 +66,8 @@ pub enum MacEvent {
     Menu(MenuCommand),
     /// The global shortcut was pressed.
     Hotkey,
+    /// The quick terminal's shortcut was pressed.
+    QuickHotkey,
 }
 
 /// The sending half of the event channel, handed to the real hosts. `try_send`s from the main
@@ -83,6 +87,10 @@ pub struct MacServices {
     pub status_item: Rc<dyn StatusItemHost>,
     pub dock: Rc<dyn DockBadge>,
     pub hotkey: Rc<dyn GlobalHotkey>,
+    /// The quick terminal's own shortcut (`terminal.quick_hotkey`).
+    pub quick_hotkey: Rc<dyn GlobalHotkey>,
+    /// The system side of the quick terminal's panel.
+    pub quick_panel: Rc<dyn QuickPanelHost>,
     pub presence: Rc<dyn Presence>,
     /// The Open panel of *File: Open File…*.
     pub open_panel: Rc<dyn OpenPanel>,
@@ -114,6 +122,8 @@ impl MacServices {
             status_item: Rc::new(status_item::Nothing),
             dock: Rc::new(dock::Nothing),
             hotkey: Rc::new(hotkey::Nothing),
+            quick_hotkey: Rc::new(hotkey::Nothing),
+            quick_panel: Rc::new(quick_panel::Nothing),
             presence: Rc::new(presence::Nothing),
             open_panel: Rc::new(open_panel::GpuiPrompt),
             events: None,
@@ -143,7 +153,13 @@ impl MacServices {
                 notifications,
                 status_item: Rc::new(status_item::SystemStatusItem::new(sender.clone())),
                 dock: Rc::new(dock::SystemDock),
-                hotkey: Rc::new(hotkey::SystemHotkey::new(sender)),
+                hotkey: Rc::new(hotkey::SystemHotkey::new(
+                    sender.clone(),
+                    MacEvent::Hotkey,
+                    1,
+                )),
+                quick_hotkey: Rc::new(hotkey::SystemHotkey::new(sender, MacEvent::QuickHotkey, 2)),
+                quick_panel: Rc::new(quick_panel::SystemQuickPanel::new()),
                 presence: Rc::new(presence::SystemPresence),
                 open_panel: Rc::new(open_panel::SystemOpenPanel),
                 events: Some(receiver),

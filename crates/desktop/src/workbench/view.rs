@@ -718,6 +718,8 @@ pub struct Workbench {
     /// The branch of the active project, for the `workspace` status item.
     pub(crate) status_branch: super::status_branch::StatusBranch,
     pub(crate) mac: MacControl,
+    /// The quick terminal's panel and shortcut (`quick_terminal.rs`).
+    pub(crate) quick: super::quick_terminal::QuickControl,
     pub(crate) setup: super::setup::SetupControl,
     pub(crate) first_run: super::first_run::FirstRunControl,
     /// This install against the one the desktop last saw (`reinstall.rs`).
@@ -1324,6 +1326,7 @@ impl Workbench {
             daemon: DaemonControl::new(options.own_daemon),
             status_branch: super::status_branch::StatusBranch::default(),
             mac,
+            quick: super::quick_terminal::QuickControl::new(cx),
             setup: super::setup::SetupControl::new(cx.focus_handle(), options.cli_link),
             first_run: super::first_run::FirstRunControl::default(),
             install,
@@ -1394,6 +1397,7 @@ impl Workbench {
             _subscriptions: subscriptions,
         };
         this.mac.events_task = events_task;
+        this.watch_quick_events(window, cx);
         this.start_agent_ledger(cx);
         // The first run is a first screen in the centre, not a modal walk-through; "Run setup
         // again" opens the walk-through.

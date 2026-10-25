@@ -54,6 +54,7 @@ mod polish_gpui;
 mod projects_gpui;
 mod queue_gpui;
 mod quick_open_gpui;
+mod quick_terminal_gpui;
 mod recovery_gpui;
 mod reinstall_gpui;
 mod resources_gpui;

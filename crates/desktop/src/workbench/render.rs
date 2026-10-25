@@ -683,6 +683,11 @@ impl Workbench {
             this.new_terminal(window, cx);
         }))
         .on_action(
+            cx.listener(|this, _: &actions::ToggleQuickTerminal, _, cx| {
+                this.toggle_quick_terminal(cx);
+            }),
+        )
+        .on_action(
             cx.listener(|this, _: &actions::NewTerminalInWorktree, window, cx| {
                 this.new_terminal_in_worktree(window, cx);
             }),
