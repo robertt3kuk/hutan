@@ -460,16 +460,22 @@ impl ChangesPanel {
     }
 
     /// The rows (indexes into [`rows`](Self::rows)) the panel draws: the checkout the window
-    /// works in, or every checkout of the workspace.
+    /// works in (and any worktree with a setup to tell about), or every checkout of the
+    /// workspace.
     pub fn shown(&self, cx: &gpui::App) -> Vec<usize> {
         let rows = self.rows();
         match self.shown_scope() {
             ChangesScope::Workspace => (0..rows.len()).collect(),
-            ChangesScope::Checkout => self
-                .current_in(rows, cx)
-                .and_then(|current| rows.iter().position(|w| w.path == current.path))
-                .into_iter()
-                .collect(),
+            ChangesScope::Checkout => {
+                let current = self
+                    .current_in(rows, cx)
+                    .and_then(|current| rows.iter().position(|w| w.path == current.path));
+                // A worktree whose setup runs, failed or waits for the user is news wherever
+                // the window works: its row stays in the list until the setup is done.
+                (0..rows.len())
+                    .filter(|&i| Some(i) == current || setup_line(&rows[i]).is_some())
+                    .collect()
+            }
         }
     }
 
