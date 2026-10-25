@@ -241,6 +241,19 @@ pub struct LspTrustRow {
     pub decided_by: String,
 }
 
+/// The setup and teardown commands of a repository the user confirmed
+/// (`worktree_setup_trust`, protocol 0.48).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeSetupTrustRow {
+    /// The repository's main checkout, canonical.
+    pub repo_root: PathBuf,
+    /// sha-256 (hex) of the commands that were confirmed.
+    pub hash: String,
+    pub decided_at_ms: u64,
+    /// The client that confirmed (`desktop`, `cli`, ...).
+    pub decided_by: String,
+}
+
 /// One grant of the control gate (`control_grants`, protocol 0.31): `tool` may run without an
 /// approval for Mawas chats of `workspace_id`, or for the chat `chat_session_id` alone (exactly
 /// one of the two is set).

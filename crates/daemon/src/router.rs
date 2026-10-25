@@ -329,9 +329,14 @@ impl Router {
                 self.history.rebuild().await?;
                 ok(&Empty {})
             }
-            Request::ChatCreate(req) => ok(&SessionResult {
-                session: self.registry.create_chat(req).await?,
-            }),
+            Request::ChatCreate(req) => {
+                // An agent placed in a worktree that is still setting up waits for it
+                // (`[worktrees] wait_for_setup`).
+                self.worktrees.wait_for_setup(&req.cwd).await;
+                ok(&SessionResult {
+                    session: self.registry.create_chat(req).await?,
+                })
+            }
             Request::ChatSend(req) => {
                 self.live_chat(req.session_id).await?;
                 let by = self.actor(conn).await;
@@ -551,6 +556,20 @@ impl Router {
                 }
                 self.hooks.finish_done(&finished.result, &finished.checkout);
                 ok(&finished.result)
+            }
+            Request::WorktreeSetup(req) => ok(&self.worktrees.setup(req).await?),
+            Request::WorktreeSetupTrust(req) => {
+                let by = self.actor(conn).await;
+                ok(&self.worktrees.setup_trust(req, by.as_str()).await?)
+            }
+            Request::WorktreeCleanup(req) => ok(&self.worktrees.cleanup(req).await?),
+            Request::WorktreePrune(req) => {
+                let (pruned, removed) = self.worktrees.prune(req).await?;
+                let by = self.actor(conn).await;
+                for removed in &removed {
+                    self.tasks.worktree_removed(removed, by);
+                }
+                ok(&pruned)
             }
             Request::TaskCreate(req) => ok(&TaskResult {
                 task: self.tasks.create(req).await?,
@@ -1044,6 +1063,14 @@ fn classification(request: &Request) -> (&'static str, Access) {
         // The user's Finish commits, merges and pushes to a remote: never an agent's, whatever
         // `[control]` says (ADR 0020). Agents keep their own tools.
         Request::WorktreeFinish(_) => ("worktree.finish", UserOnly),
+        // Running the commands a repository asks for again: a change an agent asks about first.
+        Request::WorktreeSetup(_) => ("worktree.setup", Mutate),
+        // Confirming that those commands may run is the user's alone, whatever `[control]` says:
+        // an agent that could confirm its own setup would run anything the repository holds.
+        Request::WorktreeSetupTrust(_) => ("worktree.setup_trust", UserOnly),
+        Request::WorktreeCleanup(_) => ("worktree.cleanup", Read),
+        // Removing worktrees in bulk, teardown commands included, is the user's.
+        Request::WorktreePrune(_) => ("worktree.prune", UserOnly),
         Request::TaskCreate(_) => ("task.create", Mutate),
         Request::TaskList(_) => ("task.list", Read),
         Request::TaskUpdate(_) => ("task.update", Mutate),

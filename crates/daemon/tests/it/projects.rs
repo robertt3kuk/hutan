@@ -898,6 +898,7 @@ async fn tasks_and_worktree_sessions_land_in_the_project_of_their_folder() {
             branch: "feature/x".into(),
             base: None,
             path: None,
+            no_setup: false,
         })
         .await
         .unwrap();

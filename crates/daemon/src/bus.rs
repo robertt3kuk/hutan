@@ -57,6 +57,9 @@ struct Inner {
     observer: Option<mpsc::Sender<Event>>,
     /// Internal consumer of the events the task service follows.
     task_observer: Option<mpsc::Sender<Event>>,
+    /// Internal consumer of the session updates the worktree service follows: the end of a
+    /// worktree's *Setup* session.
+    setup_observer: Option<mpsc::Sender<Event>>,
     /// Told (never with the event) when something the menu bar item shows may have changed.
     attention: Option<mpsc::Sender<()>>,
     /// Internal consumer of the file changes agents report (`file_diff` journal events), which
@@ -86,6 +89,7 @@ impl EventBus {
                 tap: None,
                 observer: None,
                 task_observer: None,
+                setup_observer: None,
                 attention: None,
                 fs_observer: None,
                 hooks_observer: None,
@@ -120,6 +124,13 @@ impl EventBus {
     /// for it (the service looks at its sessions directly now and then).
     pub fn set_task_observer(&self, observer: Option<mpsc::Sender<Event>>) {
         self.lock().task_observer = observer;
+    }
+
+    /// Sends a copy of every `session.updated` event to `observer` from now on (`None` stops):
+    /// the worktree service sees its *Setup* sessions end. Never blocks: when the queue is full
+    /// the event is dropped for it (the service looks at its sessions directly now and then).
+    pub fn set_setup_observer(&self, observer: Option<mpsc::Sender<Event>>) {
+        self.lock().setup_observer = observer;
     }
 
     /// Sends a copy of every `file_diff` event of a chat (see [`feeds_fs`]) to `observer` from
@@ -221,6 +232,17 @@ impl EventBus {
                     tracing::warn!("task observer is full; dropped an event");
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => inner.task_observer = None,
+            }
+        }
+        if matches!(event, Event::SessionUpdated { .. })
+            && let Some(observer) = &inner.setup_observer
+        {
+            match observer.try_send(event.clone()) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    tracing::debug!("setup observer is full; dropped an event");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => inner.setup_observer = None,
             }
         }
         if feeds_fs(event)

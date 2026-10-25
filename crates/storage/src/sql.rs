@@ -16,6 +16,7 @@ use crate::rows::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
     CreatedBy, EpochEnd, EpochRecord, GrantRow, LspTrustRow, ProviderRow, QuestionOutcome,
     QuestionRow, QueuedRow, RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
+    WorktreeSetupTrustRow,
 };
 
 pub const EPOCH_HISTORY_KEY: &str = "epoch_history";
@@ -106,6 +107,9 @@ pub enum Write {
     DeleteLspTrust {
         folder: PathBuf,
     },
+    /// Records that the user confirmed the setup commands with `hash` in a repository
+    /// (`worktree_setup_trust`); confirming again changes nothing.
+    TrustWorktreeSetup(Box<WorktreeSetupTrustRow>),
     /// Appends to the epoch history, keeping the newest [`EPOCH_HISTORY_KEPT`].
     RecordEpoch(EpochRecord),
     /// Marks a recorded run as cleanly stopped (nothing happens for an unknown or untracked one).
@@ -331,6 +335,21 @@ pub fn apply(conn: &Connection, write: &Write) -> Result<()> {
                 [folder.to_string_lossy()],
             )
             .map_err(StorageError::sqlite("deleting an LSP trust decision"))?;
+        }
+        Write::TrustWorktreeSetup(row) => {
+            conn.execute(
+                "INSERT INTO worktree_setup_trust (repo_root, hash, decided_at_ms, decided_by) \
+                 VALUES (?1, ?2, ?3, ?4) ON CONFLICT (repo_root, hash) DO NOTHING",
+                params![
+                    row.repo_root.to_string_lossy(),
+                    row.hash,
+                    ms(row.decided_at_ms),
+                    row.decided_by,
+                ],
+            )
+            .map_err(StorageError::sqlite(
+                "writing a worktree setup confirmation",
+            ))?;
         }
         Write::RecordEpoch(record) => record_epoch(conn, *record)?,
         Write::RecordEpochStop {
@@ -1079,6 +1098,29 @@ pub fn lsp_trust(conn: &Connection) -> Result<Vec<LspTrustRow>> {
         });
     }
     Ok(out)
+}
+
+/// The confirmed setup commands, by repository and hash.
+pub fn worktree_setup_trust(conn: &Connection) -> Result<Vec<WorktreeSetupTrustRow>> {
+    let context = "reading worktree setup confirmations";
+    let mut stmt = conn
+        .prepare(
+            "SELECT repo_root, hash, decided_at_ms, decided_by FROM worktree_setup_trust \
+             ORDER BY repo_root, hash",
+        )
+        .map_err(StorageError::sqlite(context))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(WorktreeSetupTrustRow {
+                repo_root: PathBuf::from(row.get::<_, String>(0)?),
+                hash: row.get(1)?,
+                decided_at_ms: unms(row.get(2)?),
+                decided_by: row.get(3)?,
+            })
+        })
+        .map_err(StorageError::sqlite(context))?;
+    rows.map(|row| row.map_err(StorageError::sqlite(context)))
+        .collect()
 }
 
 fn grant_from(row: &Row<'_>) -> Result<GrantRow> {

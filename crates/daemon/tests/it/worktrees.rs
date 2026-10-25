@@ -112,6 +112,7 @@ impl Env {
             branch: branch.to_owned(),
             base: None,
             path: None,
+            no_setup: false,
         }
     }
 

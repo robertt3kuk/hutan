@@ -2391,3 +2391,42 @@ fn lsp_trust_decisions_are_replaced_listed_by_folder_and_forgotten() {
     );
     storage.close();
 }
+
+#[test]
+fn confirmed_setup_commands_are_kept_by_repository_and_hash_and_survive_a_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(db(&dir)).unwrap();
+    let row = |repo: &str, hash: &str, at: u64| crate::WorktreeSetupTrustRow {
+        repo_root: repo.into(),
+        hash: hash.to_owned(),
+        decided_at_ms: at,
+        decided_by: "desktop".to_owned(),
+    };
+    storage
+        .worktree_setup_trust()
+        .trust(row("/b/repo", "aa", 1))
+        .unwrap();
+    storage
+        .worktree_setup_trust()
+        .trust(row("/a/repo", "bb", 2))
+        .unwrap();
+    storage
+        .worktree_setup_trust()
+        .trust(row("/a/repo", "aa", 3))
+        .unwrap();
+    // Confirming the same commands again keeps the first decision.
+    storage
+        .worktree_setup_trust()
+        .trust(row("/b/repo", "aa", 9))
+        .unwrap();
+    let expected = [
+        row("/a/repo", "aa", 3),
+        row("/a/repo", "bb", 2),
+        row("/b/repo", "aa", 1),
+    ];
+    assert_eq!(storage.worktree_setup_trust().list().unwrap(), expected);
+    storage.close();
+    let storage = Storage::open(db(&dir)).unwrap();
+    assert_eq!(storage.worktree_setup_trust().list().unwrap(), expected);
+    storage.close();
+}

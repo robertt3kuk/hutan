@@ -123,6 +123,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "usage",
         sql: include_str!("../migrations/0019_usage.sql"),
     },
+    Migration {
+        version: 20,
+        name: "worktree_setup_trust",
+        sql: include_str!("../migrations/0020_worktree_setup_trust.sql"),
+    },
 ];
 
 /// Schema version recorded in the database; 0 for a database without `app_meta`.

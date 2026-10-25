@@ -964,7 +964,9 @@ impl TaskService {
                     ),
                 ));
             }
-            return Ok(existing.path.clone());
+            let path = existing.path.clone();
+            self.worktrees.wait_for_setup(&path).await;
+            return Ok(path);
         }
         let created = self
             .worktrees
@@ -977,6 +979,8 @@ impl TaskService {
                 no_setup: false,
             })
             .await?;
+        // A new worktree's setup (`worktree.setup`) comes first, when `wait_for_setup` is on.
+        self.worktrees.wait_for_setup(&created.worktree.path).await;
         Ok(created.worktree.path)
     }
 

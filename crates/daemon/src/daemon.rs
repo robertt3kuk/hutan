@@ -52,7 +52,7 @@ use crate::tasks::TaskService;
 use crate::terminals::TerminalHub;
 use crate::uihub::UiHub;
 use crate::usage::UsageService;
-use crate::worktrees::WorktreeService;
+use crate::worktrees::{WorktreeConfig, WorktreeService};
 
 pub const DEFAULT_OUTBOUND_QUEUE: usize = 1024;
 
@@ -392,11 +392,15 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         storage.clone(),
         bus.clone(),
         harnesses.clone(),
-        settings.finish,
+        WorktreeConfig {
+            finish: settings.finish,
+            worktrees: settings.worktrees.clone(),
+        },
         paths.user_home.clone(),
         checkpoints.clone(),
-        settings.worktrees.clone(),
     );
+    // Observes the sessions until shutdown: a worktree's Setup session ends there.
+    drop(worktrees.run(shutdown.clone()));
     // After the registry restored its sessions and the notifier listens: a task whose session
     // did not survive the last daemon ends here, and says so.
     let tasks = TaskService::open(

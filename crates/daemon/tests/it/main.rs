@@ -43,4 +43,5 @@ mod terminal_search;
 mod usage;
 mod workspaces;
 mod worktree_review;
+mod worktree_setup;
 mod worktrees;

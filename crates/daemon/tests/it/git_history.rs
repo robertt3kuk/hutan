@@ -696,6 +696,7 @@ async fn a_linked_worktree_answers_for_its_own_files() {
             branch: "feature".into(),
             base: None,
             path: None,
+            no_setup: false,
         })
         .await
         .unwrap();

@@ -44,6 +44,7 @@ pub use rows::{
     ApprovalOutcome, ApprovalRow, ChatItemRow, ChatTurnRow, ChatTurnStatus, ClosedSession,
     CreatedBy, EpochEnd, EpochRecord, GrantRow, LspTrustRow, ProviderRow, QuestionOutcome,
     QuestionRow, QueuedRow, RecentProject, SessionRow, WorkspaceKind, WorkspaceRow, WorktreeRow,
+    WorktreeSetupTrustRow,
 };
 pub use sql::{EPOCH_HISTORY_KEPT, RECENT_PROJECTS_KEPT, Write};
 pub use usage::{USAGE_KEPT_DAYS, Usage, UsageLimitRow, UsageSum, UsageTurnRow};
@@ -195,6 +196,11 @@ impl Storage {
 
     pub fn lsp_trust(&self) -> LspTrust<'_> {
         LspTrust(self)
+    }
+
+    /// The setup commands of repositories the user confirmed (protocol 0.48).
+    pub fn worktree_setup_trust(&self) -> WorktreeSetupTrust<'_> {
+        WorktreeSetupTrust(self)
     }
 
     pub fn memory(&self) -> Memory<'_> {
@@ -610,6 +616,24 @@ impl LspTrust<'_> {
     /// Every decision, folders sorted.
     pub fn list(&self) -> Result<Vec<LspTrustRow>> {
         self.0.read(sql::lsp_trust)
+    }
+}
+
+/// Which setup and teardown commands of a repository's `.hutan/worktree.toml` the user confirmed
+/// (protocol 0.48).
+#[derive(Debug, Clone, Copy)]
+pub struct WorktreeSetupTrust<'a>(&'a Storage);
+
+impl WorktreeSetupTrust<'_> {
+    /// Records a confirmation, applied before it returns (a failing database is the error).
+    pub fn trust(&self, row: WorktreeSetupTrustRow) -> Result<()> {
+        self.0
+            .write_checked(Write::TrustWorktreeSetup(Box::new(row)))
+    }
+
+    /// Every confirmation, by repository and hash.
+    pub fn list(&self) -> Result<Vec<WorktreeSetupTrustRow>> {
+        self.0.read(sql::worktree_setup_trust)
     }
 }
 

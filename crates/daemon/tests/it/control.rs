@@ -903,6 +903,7 @@ async fn an_agent_reads_a_worktree_diff_freely_and_a_merge_waits_for_the_user() 
             branch: "feature/agent".into(),
             base: None,
             path: None,
+            no_setup: false,
         })
         .await
         .unwrap();

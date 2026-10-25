@@ -834,7 +834,7 @@ async fn branch_exists(dir: &Path, branch: &str) -> Result<bool, ErrorBody> {
 
 /// The repository's default branch: the branch `origin/HEAD` points to (its local branch when
 /// there is one), else `main`, else `master`.
-async fn default_branch(main: &Path) -> Option<String> {
+pub(super) async fn default_branch(main: &Path) -> Option<String> {
     if let Ok(out) = git(
         main,
         &[

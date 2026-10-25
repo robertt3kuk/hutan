@@ -37,10 +37,12 @@ use crate::placement;
 use crate::projects;
 use crate::registry::{RegistryHandle, log_write, now_ms};
 
+mod cleanup;
 mod finish;
 mod history;
 mod init;
 mod review;
+mod setup;
 pub mod setup_file;
 
 /// Reads (list, status, rev-parse) finish well within this, even in a large repository.
@@ -59,6 +61,15 @@ pub struct RemovedWorktree {
     pub workspaces: Vec<WorkspaceId>,
     /// The branch it had checked out.
     pub branch: Option<String>,
+}
+
+/// The settings the worktree service starts with.
+#[derive(Debug, Clone, Default)]
+pub struct WorktreeConfig {
+    /// `[finish]`.
+    pub finish: FinishSettings,
+    /// `[worktrees]`.
+    pub worktrees: WorktreeSettings,
 }
 
 /// The worktree service: git on one side, the registry (workspaces, sessions) and storage on
@@ -82,6 +93,8 @@ pub struct WorktreeService {
     /// `[worktrees]` as it is now: cleanup policy, waiting for setup, the user's per-project
     /// setup.
     settings: parking_lot::RwLock<WorktreeSettings>,
+    /// The state of the setups this daemon ran ([`setup`]).
+    setups: setup::Setups,
 }
 
 impl WorktreeService {
@@ -90,10 +103,9 @@ impl WorktreeService {
         storage: Storage,
         bus: Arc<EventBus>,
         harnesses: Arc<Harnesses>,
-        finish: FinishSettings,
+        config: WorktreeConfig,
         user_home: Option<PathBuf>,
         checkpoints: Arc<TurnCheckpoints>,
-        settings: WorktreeSettings,
     ) -> Arc<Self> {
         Arc::new(Self {
             registry,
@@ -101,10 +113,11 @@ impl WorktreeService {
             bus,
             writes: Mutex::new(()),
             harnesses,
-            finish_push: AtomicBool::new(finish.push),
+            finish_push: AtomicBool::new(config.finish.push),
             user_home,
             checkpoints,
-            settings: parking_lot::RwLock::new(settings),
+            settings: parking_lot::RwLock::new(config.worktrees),
+            setups: setup::Setups::default(),
         })
     }
 
@@ -129,7 +142,7 @@ impl WorktreeService {
     }
 
     pub async fn create(&self, req: WorktreeCreate) -> Result<WorktreeCreated, ErrorBody> {
-        let _writing = self.writes.lock().await;
+        let writing = self.writes.lock().await;
         let workspaces = self.registry.list_workspaces().await?.workspaces;
         let workspace = workspaces
             .iter()
@@ -240,17 +253,23 @@ impl WorktreeService {
             announce.push(req.workspace_id);
         }
         self.changed(&announce);
+        // Copying files and starting the Setup session do not need the write lock.
+        drop(writing);
+        if !req.no_setup {
+            self.begin_setup(workspace, &main, &canonical).await;
+        }
 
-        let sessions = self.live_sessions().await?;
-        let stored = self.stored_paths().await?;
-        let listed = describe(&main, list_raw(&main).await?, &stored, &sessions).await;
-        let worktree = listed
-            .into_iter()
-            .find(|w| w.path == canonical)
-            .ok_or_else(|| {
+        let worktree = self
+            .describe_one(&main, &canonical)
+            .await
+            .map_err(|error| {
                 ErrorBody::new(
                     ErrorCode::Internal,
-                    format!("git does not list the new worktree {}", canonical.display()),
+                    format!(
+                        "the new worktree {}: {}",
+                        canonical.display(),
+                        error.message
+                    ),
                 )
             })?;
         Ok(WorktreeCreated { worktree })
@@ -284,6 +303,7 @@ impl WorktreeService {
                 }
             }
         }
+        self.annotate(&mut worktrees);
         Ok(WorktreeList { worktrees })
     }
 
@@ -339,6 +359,15 @@ impl WorktreeService {
             )));
         }
 
+        if !entry.prunable
+            && let Err(failure) = self.run_teardown(&workspaces, &main, &entry.path).await
+            && !req.force
+        {
+            return Err(invalid_state(format!(
+                "{failure}; the worktree was not removed (pass force to remove it anyway)"
+            )));
+        }
+
         let mut args: Vec<&OsStr> = vec![OsStr::new("worktree"), OsStr::new("remove")];
         // A directory that is gone has nothing to lose, but git validates it unless forced.
         if req.force || entry.prunable {
@@ -374,6 +403,7 @@ impl WorktreeService {
             self.storage.worktrees().delete(entry.path.clone()),
             "a worktree",
         );
+        self.forget_setup(&entry.path);
         self.registry.invalidate_placements().await?;
         let affected = workspaces_of_repo(&workspaces, &main).await;
         self.changed(&affected);
