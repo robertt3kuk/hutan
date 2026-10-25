@@ -1181,6 +1181,7 @@ struct File {
     lsp: LspSettings,
     #[serde(default)]
     hooks: Vec<HookSettings>,
+    #[serde(default)]
     worktrees: WorktreeSettings,
 }
 
