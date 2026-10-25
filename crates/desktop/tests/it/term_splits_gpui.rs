@@ -628,6 +628,13 @@ fn the_attention_of_any_split_shows_on_the_tab(cx: &mut TestAppContext) {
     // Another tab in front: the split's tab is out of sight.
     show(&view, cx, c);
     assert_eq!(tabs(&view, cx).len(), 2);
+    // The daemon must know c is looked at (not a) before a's request arrives, or it withdraws
+    // the call for a session it believes in front.
+    wait_until(cx, "the daemon to hold the focus on c", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).focus_reported() == Some(Some(c))
+        })
+    });
     let split_tab = view.read_with(cx, |wb, _| wb.state().find_session_tab(&a.to_string()));
     let (pane, index) = split_tab.expect("the tab of splits");
     blocked(&daemon, a);
