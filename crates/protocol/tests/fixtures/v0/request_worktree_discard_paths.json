@@ -1,1 +1,1 @@
-{"id":277,"method":"worktree.discard","params":{"checkout":"/work/repo-wt/feature-login","paths":["notes.txt"],"staged":true}}
+{"id":280,"method":"worktree.discard","params":{"checkout":"/work/repo-wt/feature-login","paths":["notes.txt"],"staged":true}}
