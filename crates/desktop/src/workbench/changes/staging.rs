@@ -1110,7 +1110,7 @@ impl ChangesView {
             .flex_col()
             .rounded(px(tokens.radius))
             .border_1()
-            .border_color(if focused { theme.accent } else { theme.border })
+            .border_color(if focused { theme.focus } else { theme.border })
             .bg(theme.bg)
             .overflow_hidden()
             .on_click(cx.listener(move |this, _, window, cx| {
