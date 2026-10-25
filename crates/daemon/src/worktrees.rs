@@ -44,6 +44,7 @@ mod init;
 mod review;
 mod setup;
 pub mod setup_file;
+mod staging;
 
 /// Reads (list, status, rev-parse) finish well within this, even in a large repository.
 const READ_TIMEOUT: Duration = Duration::from_secs(20);

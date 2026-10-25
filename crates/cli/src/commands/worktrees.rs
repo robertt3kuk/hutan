@@ -131,6 +131,7 @@ impl Ctx {
             .worktree_commit(WorktreeCommit {
                 path: target.path.clone(),
                 message: args.message,
+                staged_only: false,
             })
             .await
             .map_err(|e| self.fail(e))?;
@@ -207,6 +208,7 @@ impl Ctx {
                 push: args.no_push.then_some(false),
                 into: args.into,
                 strategy,
+                staged_only: false,
             })
             .await
             .map_err(|e| self.fail(e))?;

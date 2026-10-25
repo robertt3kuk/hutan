@@ -557,6 +557,26 @@ impl Router {
                 self.hooks.finish_done(&finished.result, &finished.checkout);
                 ok(&finished.result)
             }
+            Request::WorktreeHunks(req) => ok(&self.worktrees.hunks(req).await?),
+            Request::WorktreeStage(req) => {
+                let target = req.checkout.display().to_string();
+                let staged = self.worktrees.change_index(req, true).await;
+                audit(Actor::of(conn), "worktree.stage", &target, &staged);
+                ok(&staged?)
+            }
+            Request::WorktreeUnstage(req) => {
+                let target = req.checkout.display().to_string();
+                let unstaged = self.worktrees.change_index(req, false).await;
+                audit(Actor::of(conn), "worktree.unstage", &target, &unstaged);
+                ok(&unstaged?)
+            }
+            Request::WorktreeDiscard(req) => {
+                let target = req.checkout.display().to_string();
+                let ctx = self.restore_context().await;
+                let discarded = self.worktrees.discard(req, ctx).await;
+                audit(Actor::of(conn), "worktree.discard", &target, &discarded);
+                ok(&discarded?)
+            }
             Request::WorktreeSetup(req) => ok(&self.worktrees.setup(req).await?),
             Request::WorktreeSetupTrust(req) => {
                 let by = self.actor(conn).await;
@@ -1069,8 +1089,16 @@ fn classification(request: &Request) -> (&'static str, Access) {
         Request::GitShow(_) => ("git.show", Read),
         Request::GitFile(_) => ("git.file", Read),
         Request::WorktreeMerge(_) => ("worktree.merge", Mutate),
-        // Commits in a worktree an agent may work in, but it changes what a merge takes.
+        // Commits in a worktree an agent may work in, but it changes what a merge takes; taking
+        // only what the user staged is the user's (ADR 0020 § Amendment 2026-10-26).
+        Request::WorktreeCommit(r) if r.staged_only => ("worktree.commit", UserOnly),
         Request::WorktreeCommit(_) => ("worktree.commit", Mutate),
+        // Staging, unstaging and discarding are the user's, like Finish: an agent's own tools
+        // are git in its shell and its file edits (ADR 0020).
+        Request::WorktreeHunks(_) => ("worktree.hunks", Read),
+        Request::WorktreeStage(_) => ("worktree.stage", UserOnly),
+        Request::WorktreeUnstage(_) => ("worktree.unstage", UserOnly),
+        Request::WorktreeDiscard(_) => ("worktree.discard", UserOnly),
         // The user's Finish commits, merges and pushes to a remote: never an agent's, whatever
         // `[control]` says (ADR 0020). Agents keep their own tools.
         Request::WorktreeFinish(_) => ("worktree.finish", UserOnly),

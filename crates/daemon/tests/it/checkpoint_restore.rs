@@ -69,7 +69,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
     run_git(dir, args, &[])
 }
 
-fn git_env() -> BTreeMap<String, String> {
+pub(crate) fn git_env() -> BTreeMap<String, String> {
     BTreeMap::from([
         ("GIT_CONFIG_GLOBAL".to_owned(), "/dev/null".to_owned()),
         ("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned()),
@@ -578,7 +578,7 @@ async fn a_symlink_and_a_file_too_large_to_capture_are_skipped_with_their_reason
 
 // Through a daemon and a fixture chat -----------------------------------------------------------
 
-fn codex(transcript: &Path, received: &Path) -> CodexConfig {
+pub(crate) fn codex(transcript: &Path, received: &Path) -> CodexConfig {
     let exe = std::env::current_exe().unwrap();
     let bin = exe
         .parent()
@@ -604,7 +604,7 @@ fn codex(transcript: &Path, received: &Path) -> CodexConfig {
 
 /// `plain-turn` with its turn repeated once per gate, each held after `turn/started` until its
 /// gate exists; each turn has ids of its own.
-fn held_turns(dir: &Path, gates: &[PathBuf]) -> PathBuf {
+pub(crate) fn held_turns(dir: &Path, gates: &[PathBuf]) -> PathBuf {
     let fixtures =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../agents/tests/fixtures/codex-0.162");
     let real = fs::read_to_string(fixtures.join("plain-turn.jsonl")).unwrap();
@@ -638,7 +638,7 @@ fn held_turns(dir: &Path, gates: &[PathBuf]) -> PathBuf {
     transcript
 }
 
-async fn turn_end(events: &mut broadcast::Receiver<(Seq, Event)>) {
+pub(crate) async fn turn_end(events: &mut broadcast::Receiver<(Seq, Event)>) {
     wait_event(events, "the turn's end", |event| match event {
         Event::ChatEvent { event, .. } if event.kind.ends_turn() => Some(()),
         _ => None,
@@ -672,7 +672,7 @@ async fn preview_when(
     .expect("the preview never got there")
 }
 
-fn restore_of(preview: &CheckpointPreview, id: CheckpointId) -> CheckpointRestore {
+pub(crate) fn restore_of(preview: &CheckpointPreview, id: CheckpointId) -> CheckpointRestore {
     CheckpointRestore {
         checkpoint_id: id,
         through: None,

@@ -504,6 +504,7 @@ impl ChangesView {
             push: form.push_chosen.then_some(form.push),
             into: if worktree { self.base.clone() } else { None },
             strategy: form.strategy,
+            staged_only: false,
         };
         let finishing = self
             .env

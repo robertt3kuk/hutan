@@ -712,6 +712,7 @@ async fn a_finish_runs_its_hook_with_the_steps_and_the_project() {
             push: Some(false),
             into: None,
             strategy: MergeStrategy::Merge,
+            staged_only: false,
         })
         .await
         .unwrap();

@@ -588,6 +588,129 @@ impl TurnCheckpoints {
         }
     }
 
+    /// A change the user makes to the files of `checkout` outside a turn (`worktree.discard`),
+    /// kept undoable: the checkout is held, a snapshot is taken (`restore-pre`), `change` runs,
+    /// and a second snapshot ends it. The pair is a checkpoint of kind `restore` in a session
+    /// of its own, which `checkpoint.restore` of its id puts back (Undo). `change` gets the
+    /// checkpoint's id, to announce each path it writes to the file service
+    /// ([`RestoreContext::announce`]).
+    ///
+    /// Refused, with nothing changed: checkpoints off ([`Self::restore_caps`]), an agent
+    /// session with a turn running in the checkout, a checkout that cannot have checkpoints.
+    /// When `change` fails the snapshot is dropped and its error returned.
+    pub async fn guarded_change<T, Fut>(
+        self: &Arc<Self>,
+        checkout: &Path,
+        ctx: &RestoreContext,
+        what: &str,
+        change: impl FnOnce(CheckpointId) -> Fut,
+    ) -> Result<(T, hutan_core::CheckpointInfo), ErrorBody>
+    where
+        Fut: Future<Output = Result<T, ErrorBody>>,
+    {
+        let session = SessionId::new();
+        let caps = self.restore_caps(session)?;
+        let busy = occupants(&ctx.sessions, checkout, session).busy;
+        if !busy.is_empty() {
+            let names: Vec<String> = busy.iter().map(ToString::to_string).collect();
+            return Err(invalid_state(format!(
+                "a turn is running in {} (session {}): interrupt it or let it end, then {what}",
+                checkout.display(),
+                names.join(", ")
+            )));
+        }
+        let mut held = self
+            .engine
+            .exclusive(checkout)
+            .await
+            .map_err(engine_error)?;
+        let common_dir = held.common_dir().to_owned();
+        let id = CheckpointId::new();
+        let mut row = CheckpointRow::new(
+            id,
+            session,
+            CheckpointKind::Restore,
+            CheckpointState::Running,
+            now_ms(),
+        );
+        row.checkout = Some(held.checkout().to_owned());
+        row.common_dir = Some(common_dir.clone());
+        let pre_label = Label::restore(session.to_string(), id.to_string(), Kind::RestorePre);
+        row.reference = pre_label.reference();
+        if !self.write(row.clone()).await {
+            return Err(internal("the checkpoint could not be recorded"));
+        }
+        let pre = match held.snapshot(&pre_label, &caps).await {
+            Ok(pre) => pre,
+            Err(error) => {
+                self.abandon(&row, None).await;
+                return Err(engine_error(error));
+            }
+        };
+        let Some(pre_commit) = pre.commit.clone() else {
+            self.abandon(&row, pre.reference.clone()).await;
+            return Err(internal("the snapshot before the change wrote no commit"));
+        };
+        row.start_commit = Some(pre_commit.clone());
+
+        let changed = change(id).await;
+        let post_label = Label::restore(session.to_string(), id.to_string(), Kind::RestorePost)
+            .with_parent(pre_commit.clone());
+        let post = match &changed {
+            Ok(_) => Some(held.snapshot(&post_label, &caps).await),
+            Err(_) => None,
+        };
+        drop(held);
+        let (value, post) = match (changed, post) {
+            (Ok(value), Some(Ok(post))) => (value, post),
+            (Ok(_), Some(Err(error))) => {
+                // The files are changed: what they replaced stays in the start's ref.
+                row.ended_ms = Some(now_ms());
+                row.state = CheckpointState::Failed;
+                row.reason = Some(format!("the snapshot after the change failed: {error}"));
+                row.skipped = skipped(&pre, None);
+                self.record(row.clone()).await;
+                return Err(internal(format!(
+                    "the change was made, but the snapshot after it failed ({error}); the \
+                     checkout before it is kept in {}",
+                    row.reference.as_deref().unwrap_or("its checkpoint")
+                )));
+            }
+            (Err(error), _) => {
+                // The callers check what they are about to write before writing, so a change
+                // that fails leaves the files as they were and the start has nothing to keep.
+                self.abandon(&row, pre.reference.clone()).await;
+                return Err(error);
+            }
+            (Ok(_), None) => return Err(internal("no snapshot after the change")),
+        };
+        row.ended_ms = Some(now_ms());
+        row.state = CheckpointState::Ok;
+        row.commit.clone_from(&post.commit);
+        row.tree = Some(post.tree.clone());
+        row.reference.clone_from(&post.reference);
+        row.bytes = pre.bytes_hashed.saturating_add(post.bytes_hashed);
+        row.skipped = skipped(&pre, Some(&post));
+        if let Some(commit) = &post.commit {
+            match self
+                .engine
+                .diff_stat(&common_dir, &pre_commit, commit)
+                .await
+            {
+                Ok(stat) => {
+                    row.files_changed = stat.files;
+                    row.lines_added = stat.added;
+                    row.lines_removed = stat.removed;
+                }
+                Err(error) => warn!(%error, "checkpoints: counting a change"),
+            }
+        }
+        info!(checkpoint = %id, what, "files changed under a checkpoint");
+        self.record(row.clone()).await;
+        self.delete_refs(&common_dir, pre.reference.clone()).await;
+        Ok((value, row.info()))
+    }
+
     /// Deletes, then writes, what `plan` says (deletions first: a file may take the place of a
     /// folder the restore empties).
     async fn apply(

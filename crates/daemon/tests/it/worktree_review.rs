@@ -408,6 +408,7 @@ async fn commit_all_puts_every_uncommitted_change_into_one_commit_so_a_merge_tak
             .worktree_commit(WorktreeCommit {
                 path: wt.path.clone(),
                 message: "  ".into(),
+                staged_only: false,
             })
             .await,
     );
@@ -417,6 +418,7 @@ async fn commit_all_puts_every_uncommitted_change_into_one_commit_so_a_merge_tak
             .worktree_commit(WorktreeCommit {
                 path: env.repo.root.clone(),
                 message: "no".into(),
+                staged_only: false,
             })
             .await,
     );
@@ -434,6 +436,7 @@ async fn commit_all_puts_every_uncommitted_change_into_one_commit_so_a_merge_tak
         .worktree_commit(WorktreeCommit {
             path: wt.path.clone(),
             message: "Finish the work\n\nmore words".into(),
+            staged_only: false,
         })
         .await
         .unwrap();
@@ -471,6 +474,7 @@ async fn commit_all_puts_every_uncommitted_change_into_one_commit_so_a_merge_tak
             .worktree_commit(WorktreeCommit {
                 path: wt.path.clone(),
                 message: "again".into(),
+                staged_only: false,
             })
             .await,
     );

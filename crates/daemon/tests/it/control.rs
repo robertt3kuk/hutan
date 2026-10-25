@@ -1102,6 +1102,7 @@ async fn an_agents_review_of_a_task_waits_for_the_user_and_is_recorded_as_the_ag
                 .worktree_commit(WorktreeCommit {
                     path: "/nowhere".into(),
                     message: "x".into(),
+                    staged_only: false,
                 })
                 .await
         }

@@ -215,6 +215,7 @@ impl Env {
                 push,
                 into: None,
                 strategy: MergeStrategy::Merge,
+                staged_only: false,
             })
             .await
     }
@@ -418,6 +419,7 @@ async fn a_worktree_finish_commits_merges_and_pushes_the_target() {
             push: None,
             into: None,
             strategy: MergeStrategy::Squash,
+            staged_only: false,
         })
         .await
         .unwrap();
@@ -501,7 +503,7 @@ async fn a_conflicting_worktree_finish_keeps_its_commit_and_pushes_nothing() {
 
 // Who may finish ------------------------------------------------------------------------------
 
-async fn report_agent(t: &TestDaemon, session: SessionId) {
+pub(crate) async fn report_agent(t: &TestDaemon, session: SessionId) {
     let client = t.connect().await;
     let applied: AgentApplied = client
         .call(Request::AgentReport(AgentReportRequest {
@@ -545,6 +547,7 @@ async fn an_agent_may_never_finish_whatever_the_control_policy() {
                 push: Some(true),
                 into: None,
                 strategy: MergeStrategy::Merge,
+                staged_only: false,
             })
             .await;
         match &refused {

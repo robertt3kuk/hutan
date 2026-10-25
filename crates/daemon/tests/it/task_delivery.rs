@@ -282,6 +282,7 @@ async fn only_a_turn_that_changed_files_awaits_review_and_the_next_message_reope
             push: Some(false),
             into: None,
             strategy: MergeStrategy::Merge,
+            staged_only: false,
         })
         .await
         .unwrap();
@@ -328,6 +329,7 @@ async fn a_finish_delivers_only_the_open_work_of_its_checkout() {
             push: Some(true),
             into: None,
             strategy: MergeStrategy::Merge,
+            staged_only: false,
         })
         .await
         .unwrap();
@@ -352,6 +354,7 @@ async fn a_finish_delivers_only_the_open_work_of_its_checkout() {
             push: Some(false),
             into: None,
             strategy: MergeStrategy::Merge,
+            staged_only: false,
         })
         .await
         .unwrap();

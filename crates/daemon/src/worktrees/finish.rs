@@ -26,7 +26,7 @@ use hutan_protocol::worktree::{
     WorktreeFinished, WorktreeMerge, WorktreeMerged, conflict_files,
 };
 
-use super::review::{commit_all, git, git_ok_in, operation_in_progress};
+use super::review::{commit_all, git, git_ok_in, has_staged, operation_in_progress};
 use super::{GitOutput, READ_TIMEOUT, WorktreeService, bad_request, dirty, invalid_state};
 use super::{run_git_in, workspaces_of_repo};
 
@@ -107,7 +107,11 @@ impl WorktreeService {
             }
             Some(target)
         };
-        let uncommitted = dirty(&entry.path).await?;
+        let uncommitted = if req.staged_only {
+            has_staged(&entry.path).await?
+        } else {
+            dirty(&entry.path).await?
+        };
         if uncommitted && message.is_empty() {
             return Err(bad_request(format!(
                 "{} has uncommitted changes: the commit needs a message",
@@ -118,7 +122,7 @@ impl WorktreeService {
 
         // 1. Commit.
         let commit = if uncommitted {
-            match commit_all(&entry.path, &message).await {
+            match commit_all(&entry.path, &message, req.staged_only).await {
                 Ok((hash, files)) => FinishCommit {
                     status: StepStatus::Ok,
                     reason: None,
@@ -140,7 +144,11 @@ impl WorktreeService {
             FinishCommit {
                 status: StepStatus::Skipped,
                 reason: Some(StepReason::NothingToCommit),
-                message: Some(format!("{} has nothing to commit", entry.path.display())),
+                message: Some(if req.staged_only {
+                    format!("nothing is staged in {}", entry.path.display())
+                } else {
+                    format!("{} has nothing to commit", entry.path.display())
+                }),
                 branch: branch.clone(),
                 commit: None,
                 files: 0,

@@ -80,10 +80,11 @@ use hutan_protocol::ui::{
 use hutan_protocol::usage::{UsageSummary, UsageSummaryRequest};
 use hutan_protocol::worktree::{
     WorktreeCleanupList, WorktreeCleanupRequest, WorktreeCommit, WorktreeCommitted, WorktreeCreate,
-    WorktreeCreated, WorktreeDiff, WorktreeDiffRequest, WorktreeFileDiff, WorktreeFileDiffRequest,
-    WorktreeFinish, WorktreeFinished, WorktreeInfo, WorktreeList, WorktreeListRequest,
-    WorktreeMerge, WorktreeMerged, WorktreePrune, WorktreePruned, WorktreeRemove, WorktreeRemoved,
-    WorktreeSetupRequest, WorktreeSetupResult, WorktreeSetupTrust,
+    WorktreeCreated, WorktreeDiff, WorktreeDiffRequest, WorktreeDiscard, WorktreeDiscarded,
+    WorktreeFileDiff, WorktreeFileDiffRequest, WorktreeFinish, WorktreeFinished, WorktreeHunks,
+    WorktreeHunksRequest, WorktreeIndexChange, WorktreeIndexed, WorktreeInfo, WorktreeList,
+    WorktreeListRequest, WorktreeMerge, WorktreeMerged, WorktreePrune, WorktreePruned,
+    WorktreeRemove, WorktreeRemoved, WorktreeSetupRequest, WorktreeSetupResult, WorktreeSetupTrust,
 };
 use hutan_protocol::{
     ControlMessage, ErrorBody, Frame, FrameCodec, FrameKind, MAX_PAYLOAD, PROTOCOL_VERSION,
@@ -225,6 +226,8 @@ pub(crate) const CHAT_SAFETY_CAPABILITY: &str = "chat.safety";
 /// Capability for Contain: `contain` on terminal specs, chats and task runs, and
 /// `SessionInfo.containment` (protocol 0.52).
 pub(crate) const SANDBOX_CAPABILITY: &str = "sandbox";
+/// Capability for `worktree.hunks|stage|unstage|discard` and `staged_only` (protocol 0.53).
+pub(crate) const WORKTREE_STAGE_CAPABILITY: &str = "worktree.stage";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -281,6 +284,7 @@ const CAPABILITIES: &[&str] = &[
     GIT_HISTORY_CAPABILITY,
     HOOKS_CAPABILITY,
     WORKTREE_SETUP_CAPABILITY,
+    WORKTREE_STAGE_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -1493,6 +1497,47 @@ impl Client {
         req: WorktreeFinish,
     ) -> Result<WorktreeFinished, ClientError> {
         self.call(Request::WorktreeFinish(req)).await
+    }
+
+    /// The hunks of a checkout's files, with ids (`worktree.hunks`).
+    pub async fn worktree_hunks(
+        &self,
+        req: WorktreeHunksRequest,
+    ) -> Result<WorktreeHunks, ClientError> {
+        self.call(Request::WorktreeHunks(req)).await
+    }
+
+    /// Copies files or hunks into git's index (`worktree.stage`).
+    pub async fn worktree_stage(
+        &self,
+        req: WorktreeIndexChange,
+    ) -> Result<WorktreeIndexed, ClientError> {
+        self.call(Request::WorktreeStage(req)).await
+    }
+
+    /// Takes files or hunks out of git's index (`worktree.unstage`).
+    pub async fn worktree_unstage(
+        &self,
+        req: WorktreeIndexChange,
+    ) -> Result<WorktreeIndexed, ClientError> {
+        self.call(Request::WorktreeUnstage(req)).await
+    }
+
+    /// Throws working-tree changes away after a checkpoint (`worktree.discard`).
+    pub async fn worktree_discard(
+        &self,
+        req: WorktreeDiscard,
+    ) -> Result<WorktreeDiscarded, ClientError> {
+        self.call(Request::WorktreeDiscard(req)).await
+    }
+
+    /// True when the daemon advertised capability `worktree.stage` (protocol 0.53): staging,
+    /// unstaging, discarding and committing only what is staged.
+    pub fn supports_worktree_stage(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == WORKTREE_STAGE_CAPABILITY)
     }
 
     /// True when the daemon advertised capability `task` (protocol 0.16).

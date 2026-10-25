@@ -39,6 +39,7 @@ mod safety;
 mod session_env;
 mod session_names;
 mod sessions;
+mod staging;
 mod start_error;
 mod task_delivery;
 mod tasks;

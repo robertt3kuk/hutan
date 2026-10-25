@@ -43,7 +43,7 @@ pub(super) const TOTAL_PATCH_CAP: usize = 20 * 1024 * 1024;
 /// A diff lists at most this many files.
 pub(super) const MAX_FILES: usize = 5000;
 /// Diffing a large repository is slower than a status.
-const DIFF_TIMEOUT: Duration = Duration::from_secs(60);
+pub(super) const DIFF_TIMEOUT: Duration = Duration::from_secs(60);
 /// stderr is only read for the message of a failure.
 const STDERR_CAP: usize = 64 * 1024;
 
@@ -145,7 +145,7 @@ pub(super) async fn git(
     run_git(cwd, &args, limit).await
 }
 
-fn os_refs(args: &[OsString]) -> Vec<&OsStr> {
+pub(super) fn os_refs(args: &[OsString]) -> Vec<&OsStr> {
     args.iter().map(OsString::as_os_str).collect()
 }
 
@@ -579,7 +579,7 @@ impl WorktreeService {
             return Err(bad_request("a commit needs a message"));
         }
         let (_, entry) = self.checkout(&req.path).await?;
-        if entry.is_main {
+        if entry.is_main && !req.staged_only {
             return Err(invalid_state(format!(
                 "{} is the main checkout; commit there yourself",
                 entry.path.display()
@@ -597,13 +597,20 @@ impl WorktreeService {
                 entry.path.display()
             )));
         }
-        if !dirty(&entry.path).await? {
+        if req.staged_only {
+            if !has_staged(&entry.path).await? {
+                return Err(invalid_state(format!(
+                    "nothing is staged in {}: stage something first",
+                    entry.path.display()
+                )));
+            }
+        } else if !dirty(&entry.path).await? {
             return Err(invalid_state(format!(
                 "{} has nothing to commit",
                 entry.path.display()
             )));
         }
-        let (commit, files) = commit_all(&entry.path, message).await?;
+        let (commit, files) = commit_all(&entry.path, message, req.staged_only).await?;
         let workspaces = self.registry.list_workspaces().await?.workspaces;
         if let Ok((main, _)) = self.checkout(&req.path).await {
             self.changed(&workspaces_of_repo(&workspaces, &main).await);
@@ -616,13 +623,34 @@ impl WorktreeService {
     }
 }
 
-/// Stages everything in the checkout `dir` (`git add -A`) and commits it with `message`, hooks
-/// off; the new commit's hash and how many files it changed. When git refuses, the index is
-/// left as it was.
-pub(super) async fn commit_all(dir: &Path, message: &str) -> Result<(String, u32), ErrorBody> {
-    let staged = git(dir, &["add", "-A"], WORKTREE_MERGE_TIMEOUT).await?;
-    if !staged.success {
-        return Err(git_failed("add", &staged));
+/// Whether git's index differs from `HEAD` in the checkout `dir`: something a commit takes.
+pub(super) async fn has_staged(dir: &Path) -> Result<bool, ErrorBody> {
+    let listed = git(
+        dir,
+        &["diff", "--cached", "--name-only", "-z", "--no-ext-diff"],
+        READ_TIMEOUT,
+    )
+    .await?;
+    if !listed.success {
+        return Err(git_failed("diff --cached", &listed));
+    }
+    Ok(!listed.stdout.is_empty())
+}
+
+/// Stages everything in the checkout `dir` (`git add -A`; nothing with `staged_only`: the index
+/// is committed as the user left it) and commits it with `message`, hooks off; the new commit's
+/// hash and how many files it changed. When git refuses, the index is left as it was (and a
+/// commit of everything unstages what it staged).
+pub(super) async fn commit_all(
+    dir: &Path,
+    message: &str,
+    staged_only: bool,
+) -> Result<(String, u32), ErrorBody> {
+    if !staged_only {
+        let staged = git(dir, &["add", "-A"], WORKTREE_MERGE_TIMEOUT).await?;
+        if !staged.success {
+            return Err(git_failed("add", &staged));
+        }
     }
     let committed = git(
         dir,
@@ -634,7 +662,9 @@ pub(super) async fn commit_all(dir: &Path, message: &str) -> Result<(String, u32
         Ok(out) if out.success => {}
         failed => {
             // Leave the index as it was: nothing the caller did not ask for stays staged.
-            let _ = git(dir, &["reset", "--quiet"], WORKTREE_MERGE_TIMEOUT).await;
+            if !staged_only {
+                let _ = git(dir, &["reset", "--quiet"], WORKTREE_MERGE_TIMEOUT).await;
+            }
             return Err(match failed {
                 Ok(out) => git_failed("commit", &out),
                 Err(error) => error,
@@ -926,7 +956,7 @@ async fn resolve_base(
 }
 
 /// A file name inside a checkout: relative, no `..`, no NUL.
-fn validate_relative(file: &str) -> Result<(), ErrorBody> {
+pub(super) fn validate_relative(file: &str) -> Result<(), ErrorBody> {
     let path = Path::new(file);
     let plain = !file.is_empty()
         && !file.contains('\0')

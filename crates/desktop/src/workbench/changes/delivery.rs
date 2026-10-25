@@ -354,6 +354,7 @@ impl ChangesView {
         let request = WorktreeCommit {
             path: self.path.clone(),
             message,
+            staged_only: false,
         };
         let committing = self
             .env
