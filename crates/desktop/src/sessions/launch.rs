@@ -5,7 +5,9 @@
 //! it with `task.start`; "Queue as task" leaves it to the scheduler (`auto_start`).
 
 use hutan_core::task::{PROMPT_MAX_BYTES, TITLE_MAX_CHARS, slug};
-use hutan_core::{AfterPolicy, TaskId, TaskPlacement, TaskPlacementKind, TaskRun, WorkspaceId};
+use hutan_core::{
+    AfterPolicy, SafetyPreset, TaskId, TaskPlacement, TaskPlacementKind, TaskRun, WorkspaceId,
+};
 use hutan_protocol::task::TaskCreate;
 
 /// The longest title the sheet proposes from a command line (the daemon allows
@@ -97,6 +99,9 @@ pub struct LaunchValues {
     /// The managed account of the harness (protocol 0.50) the chat runs as; `system` is the
     /// harness's own login; none: the project's default, else the harness's.
     pub account: Option<String>,
+    /// The safety preset (protocol 0.51) of a chat, or the flags of a terminal agent; none: the
+    /// harness's own settings. Never set for a direct chat, a command or a plain terminal.
+    pub safety: Option<SafetyPreset>,
     pub title: String,
     pub prompt: String,
     /// The command of [`LaunchKind::Command`]: shell text, run by [`shell_argv`].
@@ -177,10 +182,20 @@ pub fn branch_for_title(title: &str) -> String {
     }
 }
 
-/// The command a terminal agent starts: its binary, then `prompt` as the first message when there
-/// is one.
-pub fn terminal_agent_argv(agent: &str, prompt: &str) -> Result<Vec<String>, String> {
+/// The command a terminal agent starts: its binary, the flags of its safety preset
+/// ([`hutan_core::safety::terminal_args`]), then `prompt` as the first message when there is one.
+pub fn terminal_agent_argv(
+    agent: &str,
+    prompt: &str,
+    safety: Option<SafetyPreset>,
+) -> Result<Vec<String>, String> {
     let mut argv = vec![agent.to_owned()];
+    if let Some(preset) = safety {
+        argv.extend(
+            hutan_core::safety::terminal_args(agent, preset)
+                .map_err(|reason| format!("{}: {reason}", preset.label()))?,
+        );
+    }
     let prompt = prompt.trim();
     if !prompt.is_empty() {
         if prompt.starts_with('-') {
@@ -259,11 +274,11 @@ pub fn build_create(
                 agent: values.agent.clone(),
                 model: values.model.clone(),
                 account: values.account.clone(),
-                safety: None,
+                safety: values.safety,
             })
         }
         LaunchKind::TerminalAgent => Some(TaskRun::Terminal {
-            argv: terminal_agent_argv(&values.agent, prompt)?,
+            argv: terminal_agent_argv(&values.agent, prompt, values.safety)?,
         }),
         LaunchKind::Terminal => None,
         LaunchKind::Command => {
@@ -337,6 +352,7 @@ mod tests {
             agent: "omp".into(),
             model: None,
             account: None,
+            safety: None,
             title: "  Build it  ".into(),
             prompt: String::new(),
             command: String::new(),
@@ -473,6 +489,66 @@ mod tests {
             Some(TaskRun::Terminal {
                 argv: vec!["omp".into()]
             })
+        );
+    }
+
+    #[test]
+    fn a_chats_safety_rides_in_its_task_and_a_terminal_agents_in_its_flags() {
+        let chat = build(&LaunchValues {
+            kind: LaunchKind::Chat,
+            agent: "codex".into(),
+            prompt: "fix it".into(),
+            safety: Some(SafetyPreset::Contained),
+            ..values()
+        })
+        .unwrap();
+        assert_eq!(
+            chat.run,
+            Some(TaskRun::Chat {
+                agent: "codex".into(),
+                model: None,
+                account: None,
+                safety: Some(SafetyPreset::Contained),
+            })
+        );
+        let argv = |agent: &str, safety| {
+            let tui = build(&LaunchValues {
+                kind: LaunchKind::TerminalAgent,
+                agent: agent.into(),
+                prompt: "fix it".into(),
+                safety,
+                ..values()
+            })
+            .unwrap();
+            match tui.run {
+                Some(TaskRun::Terminal { argv }) => argv,
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(argv("omp", None), ["omp", "fix it"]);
+        assert_eq!(
+            argv("codex", Some(SafetyPreset::ReadOnly)),
+            ["codex", "-s", "read-only", "-a", "never", "fix it"]
+        );
+        assert_eq!(
+            argv("omp", Some(SafetyPreset::Ask)),
+            ["omp", "--approval-mode", "always-ask", "fix it"]
+        );
+        let claude = argv("claude", Some(SafetyPreset::Contained));
+        assert_eq!(claude[..3], ["claude", "--permission-mode", "acceptEdits"]);
+        assert_eq!(claude.last().map(String::as_str), Some("fix it"));
+        // A harness that cannot honour the preset is an error, never a plain start.
+        let error = build(&LaunchValues {
+            kind: LaunchKind::TerminalAgent,
+            agent: "omp".into(),
+            prompt: "fix it".into(),
+            safety: Some(SafetyPreset::Contained),
+            ..values()
+        })
+        .unwrap_err();
+        assert!(
+            error.contains("Contained") && error.contains("no OS sandbox"),
+            "{error}"
         );
     }
 

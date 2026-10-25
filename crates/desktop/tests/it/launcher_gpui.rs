@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use common::{TestDaemon, draw, open_options, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
-use hutan_core::{Task, TaskPlacementKind, TaskRun, TaskState, WorkspaceId};
+use hutan_core::{SafetyPreset, Task, TaskPlacementKind, TaskRun, TaskState, WorkspaceId};
 use hutan_desktop::harness_install::FakeRunner;
 use hutan_desktop::sessions::launch::{LaunchKind, shell_argv, user_shell};
 use hutan_desktop::workbench::actions;
@@ -1924,4 +1924,239 @@ fn the_model_list_is_a_popover_that_opens_on_the_model_in_use(cx: &mut TestAppCo
     assert_eq!(open_row(cx), Some(LauncherStop::Model));
     click(&view, cx, Region::Launcher("start"));
     assert_eq!(open_row(cx), None);
+}
+
+// SANDBOX-1: the Safety row ---------------------------------------------------------------------
+
+/// The Safety row's choices as `(label, unavailable reason)`.
+fn safety_choices(
+    view: &Entity<Workbench>,
+    cx: &VisualTestContext,
+) -> Vec<(&'static str, Option<String>)> {
+    view.read_with(cx, |wb, _| {
+        wb.launcher()
+            .unwrap()
+            .safety_choices()
+            .into_iter()
+            .map(|choice| (choice.preset.label(), choice.unavailable))
+            .collect()
+    })
+}
+
+fn safety_line(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<(String, bool)> {
+    view.read_with(cx, |wb, _| wb.launcher().unwrap().safety_line())
+}
+
+fn safety_of(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<SafetyPreset> {
+    view.read_with(cx, |wb, _| wb.launcher_safety())
+}
+
+/// The row is drawn, one choice per preset, and a click lands on it.
+fn click_safety(view: &Entity<Workbench>, cx: &mut VisualTestContext, index: usize) {
+    click(view, cx, Region::LauncherItem("safety", index));
+}
+
+#[gpui::test]
+fn the_safety_row_offers_what_the_harness_can_honour_and_says_why_not(cx: &mut TestAppContext) {
+    let env = Env::both();
+    let (view, cx) = open(cx, &env);
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            prompt: Some("Review the diff".into()),
+            queue: true,
+            kind: Some(LaunchKind::Chat),
+            ..LauncherPreset::default()
+        },
+    );
+    chat_ready(&view, cx);
+    draw(cx);
+    assert!(region(&view, cx, Region::LauncherItem("safety", 0)));
+
+    // OMP has no OS sandbox: Contained is dimmed, with the reason, and cannot be picked.
+    let choices = safety_choices(&view, cx);
+    let labels: Vec<_> = choices.iter().map(|(label, _)| *label).collect();
+    assert_eq!(labels, ["Ask", "Contained", "Read-only", "Full access"]);
+    assert_eq!(choices[0].1, None);
+    assert!(
+        choices[1]
+            .1
+            .as_deref()
+            .is_some_and(|r| r.contains("no OS sandbox")),
+        "{choices:?}"
+    );
+    assert_eq!(choices[2].1, None);
+    assert_eq!(choices[3].1, None);
+    assert_eq!(
+        safety_of(&view, cx),
+        None,
+        "nothing is chosen until the user chooses"
+    );
+    let (line, warning) = safety_line(&view, cx).unwrap();
+    assert!(
+        line.contains("own approval and sandbox settings") && !warning,
+        "{line}"
+    );
+
+    click_safety(&view, cx, 1);
+    assert_eq!(
+        safety_of(&view, cx),
+        None,
+        "an unavailable preset is not picked"
+    );
+    let (line, warning) = safety_line(&view, cx).unwrap();
+    assert!(
+        line.starts_with("Contained is not available") && line.contains("SANDBOX-2") && warning,
+        "{line}"
+    );
+
+    click_safety(&view, cx, 2);
+    assert_eq!(safety_of(&view, cx), Some(SafetyPreset::ReadOnly));
+    let (line, warning) = safety_line(&view, cx).unwrap();
+    assert!(line.contains("not an OS boundary") && !warning, "{line}");
+
+    click_safety(&view, cx, 3);
+    assert_eq!(safety_of(&view, cx), Some(SafetyPreset::Full));
+    let (line, warning) = safety_line(&view, cx).unwrap();
+    assert!(
+        line.contains("No boundary") && warning,
+        "Full access is a warning: {line}"
+    );
+
+    // Claude Code has a sandbox: every preset is available, and the pick rides in the task.
+    view.update(cx, |wb, cx| {
+        wb.launcher_choose_agent(LaunchAgent::Harness("claude".into()), cx)
+    });
+    assert!(
+        safety_choices(&view, cx)
+            .iter()
+            .all(|(_, why)| why.is_none())
+    );
+    click_safety(&view, cx, 1);
+    assert_eq!(safety_of(&view, cx), Some(SafetyPreset::Contained));
+    let (line, _) = safety_line(&view, cx).unwrap();
+    assert!(
+        line.contains("Bash sandbox") && line.contains("outside the sandbox"),
+        "{line}"
+    );
+    click(&view, cx, Region::Launcher("start"));
+    wait_until(cx, "the task to exist", |_| {
+        env.task("Review the diff").is_some()
+    });
+    assert_eq!(
+        env.task("Review the diff").unwrap().run,
+        Some(TaskRun::Chat {
+            agent: "claude".into(),
+            model: None,
+            account: None,
+            safety: Some(SafetyPreset::Contained),
+        })
+    );
+}
+
+#[gpui::test]
+fn a_terminal_agent_gets_the_presets_flags_and_other_kinds_have_no_row(cx: &mut TestAppContext) {
+    let env = Env::both();
+    let (view, cx) = open(cx, &env);
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            prompt: Some("fix it".into()),
+            queue: true,
+            kind: Some(LaunchKind::TerminalAgent),
+            ..LauncherPreset::default()
+        },
+    );
+    ready(&view, cx);
+    draw(cx);
+    click_safety(&view, cx, 2);
+    assert_eq!(safety_of(&view, cx), Some(SafetyPreset::ReadOnly));
+    let (line, _) = safety_line(&view, cx).unwrap();
+    assert!(line.contains("command-line flags"), "{line}");
+    click(&view, cx, Region::Launcher("start"));
+    wait_until(cx, "the task to exist", |_| env.task("fix it").is_some());
+    assert_eq!(
+        env.task("fix it").unwrap().run,
+        Some(TaskRun::Terminal {
+            argv: ["omp", "--tools", "read,grep,glob", "fix it"]
+                .map(String::from)
+                .to_vec(),
+        })
+    );
+
+    // A command and a plain terminal run no agent: no row.
+    wait_until(cx, "the sheet to close", |cx| !launcher_open(&view, cx));
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            kind: Some(LaunchKind::Command),
+            ..LauncherPreset::default()
+        },
+    );
+    ready(&view, cx);
+    for kind in [LaunchKind::Command, LaunchKind::Terminal] {
+        view.update(cx, |wb, cx| wb.launcher_set_kind(kind, cx));
+        assert!(safety_choices(&view, cx).is_empty(), "{kind:?}");
+        assert!(safety_line(&view, cx).is_none());
+        assert_eq!(safety_of(&view, cx), None);
+    }
+}
+
+#[gpui::test]
+fn launcher_safety_in_the_settings_is_the_rows_starting_choice_and_an_unavailable_one_says_so(
+    cx: &mut TestAppContext,
+) {
+    let env = Env::both();
+    let store = settings(&env);
+    store
+        .write_user("launcher.safety", toml::Value::String("read_only".into()))
+        .unwrap();
+    let (view, cx) = open_with(cx, store.clone(), env.daemon.connection(), None);
+    synced(&view, cx);
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            prompt: Some("look".into()),
+            kind: Some(LaunchKind::Chat),
+            ..LauncherPreset::default()
+        },
+    );
+    chat_ready(&view, cx);
+    assert_eq!(safety_of(&view, cx), Some(SafetyPreset::ReadOnly));
+
+    // The same default `contained` cannot apply to OMP: the chat starts with OMP's own settings
+    // and the sheet says so; Claude Code honours it.
+    store
+        .write_user("launcher.safety", toml::Value::String("contained".into()))
+        .unwrap();
+    view.update_in(cx, |wb, window, cx| wb.close_launcher(window, cx));
+    open_sheet(
+        &view,
+        cx,
+        LauncherPreset {
+            project: Some(env.api_id),
+            prompt: Some("look".into()),
+            kind: Some(LaunchKind::Chat),
+            ..LauncherPreset::default()
+        },
+    );
+    chat_ready(&view, cx);
+    assert_eq!(safety_of(&view, cx), None);
+    let (line, warning) = safety_line(&view, cx).unwrap();
+    assert!(
+        line.starts_with("Contained is not available for this agent") && warning,
+        "{line}"
+    );
+    view.update(cx, |wb, cx| {
+        wb.launcher_choose_agent(LaunchAgent::Harness("claude".into()), cx)
+    });
+    assert_eq!(safety_of(&view, cx), Some(SafetyPreset::Contained));
 }

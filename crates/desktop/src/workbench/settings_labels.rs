@@ -842,6 +842,18 @@ const FIELDS: &[FieldText] = &[
         "Ask before an agent chat sends its prompt",
         "The first time you start an agent chat with a prompt on a given agent and model, the Start sheet asks before it sends the prompt (it spends model usage). “Don't ask again for this model” remembers the choice per model. Turn this off to start at once. Plain terminals, commands and queued chats never ask. The choices you remembered are listed below, where you can revoke them.",
     ),
+    choice(
+        "launcher",
+        "safety",
+        "Safety the Start sheet opens on",
+        "What the Safety row of the Start sheet starts on for agent chats and terminal agents: Off leaves the agent's own approval and sandbox settings alone; Ask, Contained (the agent's own sandbox, no questions inside it) and Read-only choose a preset. An agent that cannot honour it (OMP has no OS sandbox, so no Contained) starts on Off and the sheet says why. Full access is never a default. Put the key in a project's .hutan/settings.toml to set it for that project.",
+        &[
+            ("off", "Off (the agent's own settings)"),
+            ("ask", "Ask"),
+            ("contained", "Contained"),
+            ("read_only", "Read-only"),
+        ],
+    ),
 ];
 
 fn entry(namespace: &str, key: &str) -> Option<&'static FieldText> {

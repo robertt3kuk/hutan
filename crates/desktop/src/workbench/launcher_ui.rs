@@ -456,6 +456,53 @@ impl Workbench {
                     agent_rows.push(row("Account", accounts.into_any_element()).into_any_element());
                 }
             }
+            // The safety preset (protocol 0.51): an autonomy level and a boundary, chosen
+            // together. A preset the harness cannot honour is dimmed; clicking it says why.
+            let safety_choices = launcher.safety_choices();
+            if !safety_choices.is_empty() {
+                let shown = launcher
+                    .effective_safety()
+                    .unwrap_or(hutan_core::SafetyPreset::Ask);
+                let mut presets = div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(tokens.spacing * 2.0));
+                for (at, choice) in safety_choices.into_iter().enumerate() {
+                    let preset = choice.preset;
+                    let available = choice.unavailable.is_none();
+                    let full = preset.is_full_access();
+                    presets = presets.child(
+                        ui::choice(
+                            id(format!("launch-safety-{}", preset.as_str())),
+                            preset.label(),
+                            available && shown == preset,
+                            &theme,
+                            &tokens,
+                        )
+                        .relative()
+                        .when(!available, |s| s.opacity(0.55))
+                        .when(full, |s| s.text_color(theme.warning))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.launcher_focus_stop(LauncherStop::Agent, window, cx);
+                            this.launcher_choose_safety(preset, cx);
+                        }))
+                        .child(probe(&self.regions, Region::LauncherItem("safety", at))),
+                    );
+                }
+                let mut body = div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(tokens.spacing))
+                    .child(presets);
+                if let Some((text, warning)) = launcher.safety_line() {
+                    body = body.child(
+                        note(text, if warning { theme.warning } else { theme.muted })
+                            .child(probe(&self.regions, Region::Launcher("safety-line"))),
+                    );
+                }
+                agent_rows.push(row("Safety", body.into_any_element()).into_any_element());
+            }
         }
 
         // ---- Model ----

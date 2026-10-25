@@ -208,6 +208,53 @@ fn start_lists_the_harnesses_and_starts_an_omp_chat(cx: &mut TestAppContext) {
     assert!(!chat.model.is_empty());
 }
 
+/// SANDBOX-1: a chat created with a preset draws the safety chip in its header (in place of
+/// the harness's mode chip), built from what the daemon reports of it, not from the request.
+#[gpui::test]
+fn a_chat_started_with_a_preset_draws_the_safety_chip_the_daemon_reported(cx: &mut TestAppContext) {
+    use hutan_core::{SafetyEnforcer, SafetyPreset};
+    let scripts = tempfile::tempdir().unwrap();
+    let daemon = daemon(scripts.path(), "plain-turn", "");
+    let cwd = scripts.path().canonicalize().unwrap();
+    let created: SessionResult = daemon.call(Request::ChatCreate(ChatCreate {
+        workspace_id: None,
+        cwd,
+        agent: "omp".into(),
+        model: None,
+        approval_policy: None,
+        sandbox: None,
+        title: None,
+        mode: None,
+        provider_id: None,
+        system_prompt: None,
+        account: None,
+        safety: Some(SafetyPreset::Full),
+    }));
+    let safety = created.session.chat.clone().unwrap().safety.unwrap();
+    assert_eq!(
+        (safety.preset, safety.enforced_by),
+        (SafetyPreset::Full, SafetyEnforcer::None)
+    );
+    let (view, cx) = open(cx, &daemon);
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_session(created.session.id, window, cx)
+    });
+    wait_until(cx, "the safety chip in the header", |cx| {
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::Chat("mode")).is_some())
+    });
+    let chip = view.read_with(cx, |wb, cx| {
+        let chat = wb
+            .sessions()
+            .read(cx)
+            .session(created.session.id)
+            .and_then(|s| s.chat.clone())
+            .unwrap();
+        hutan_desktop::workbench::chat::safety_chip(&chat).unwrap()
+    });
+    assert_eq!(chip.text, "Full access · no boundary");
+    assert!(chip.warning, "Full access is drawn as a warning");
+}
+
 #[gpui::test]
 fn a_harness_chat_switches_its_model_between_turns(cx: &mut TestAppContext) {
     let scripts = tempfile::tempdir().unwrap();

@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use gpui::{Context, KeyDownEvent, Window};
 use hutan_core::agent::ModelInfo;
-use hutan_core::{TaskId, WorkspaceId};
+use hutan_core::{SafetyPreset, TaskId, WorkspaceId};
 use hutan_protocol::chat::ChatCreate;
 use hutan_protocol::messages::{WorkspaceInfo, WorkspaceKind};
 use hutan_protocol::worktree::{WorktreeCreate, WorktreeInfo};
@@ -182,6 +182,14 @@ pub(crate) fn readiness_note(name: &str, readiness: &Readiness) -> Option<String
 /// lays the list out.
 pub(crate) const MODEL_REVEAL_FRAMES: u8 = 2;
 
+/// One choice of the Safety row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SafetyChoice {
+    pub preset: SafetyPreset,
+    /// Why the harness cannot honour it; none: it can.
+    pub unavailable: Option<String>,
+}
+
 /// The open sheet.
 #[derive(Debug)]
 pub struct Launcher {
@@ -203,6 +211,15 @@ pub struct Launcher {
     /// The account of a harness chat (protocol 0.50): none follows the defaults, `system` is
     /// the harness's own login. Shown when the harness has a managed account.
     pub(crate) account: Option<String>,
+    /// The safety preset of a chat or terminal agent (protocol 0.51): the Safety row's choice,
+    /// which starts on `launcher.safety`. None leaves the harness's own settings. It only
+    /// applies where the harness can honour it ([`Launcher::effective_safety`]).
+    pub(crate) safety: Option<SafetyPreset>,
+    /// A preset the user clicked that the harness cannot honour: the line below the Safety row
+    /// says why, while the choice stays where it was.
+    pub(crate) safety_peek: Option<SafetyPreset>,
+    /// The daemon takes `safety` on chats (capability `chat.safety`).
+    pub(crate) safety_daemon: bool,
     /// The row whose choices are open: ↑ ↓ change its value only then (↩ or Space opens it, Esc
     /// or Tab closes it), and ⌘↩ does not start while one is open.
     pub(crate) open_row: Option<LauncherStop>,
@@ -369,6 +386,91 @@ impl Launcher {
         matches!(self.agent, LaunchAgent::Direct(_))
     }
 
+    /// The harness the Safety row is about: a chat's or terminal agent's, never a direct
+    /// model's, a command's or a plain terminal's. A chat needs a daemon that takes presets;
+    /// a terminal agent only needs flags.
+    pub fn safety_harness(&self) -> Option<&str> {
+        match (&self.agent, self.kind) {
+            (LaunchAgent::Harness(id), LaunchKind::Chat)
+                if !id.is_empty() && self.safety_daemon =>
+            {
+                Some(id)
+            }
+            (LaunchAgent::Harness(id), LaunchKind::TerminalAgent) if !id.is_empty() => Some(id),
+            _ => None,
+        }
+    }
+
+    /// The preset the sheet would start with: the choice, when the harness can honour it.
+    pub fn effective_safety(&self) -> Option<SafetyPreset> {
+        let harness = self.safety_harness()?;
+        self.safety
+            .filter(|preset| hutan_core::safety::plan(harness, *preset).is_ok())
+    }
+
+    /// The Safety row's choices for the harness: each preset, and why it is not available.
+    pub fn safety_choices(&self) -> Vec<SafetyChoice> {
+        let Some(harness) = self.safety_harness() else {
+            return Vec::new();
+        };
+        SafetyPreset::ALL
+            .into_iter()
+            .map(|preset| SafetyChoice {
+                preset,
+                unavailable: hutan_core::safety::plan(harness, preset).err(),
+            })
+            .collect()
+    }
+
+    /// The preset the row shows as chosen, and the preset it was clicked on while unavailable.
+    pub fn safety_peek(&self) -> Option<SafetyPreset> {
+        self.safety_peek
+    }
+
+    /// The sentence under the Safety row, and whether it is a warning: what the preset in
+    /// effect (or the one the user clicked and cannot have) means for this harness, and the
+    /// holes it leaves (ADR 0021 decision 6).
+    pub fn safety_line(&self) -> Option<(String, bool)> {
+        let harness = self.safety_harness()?;
+        if let Some(peek) = self.safety_peek
+            && let Err(reason) = hutan_core::safety::plan(harness, peek)
+        {
+            return Some((
+                format!("{} is not available: {reason}.", peek.label()),
+                true,
+            ));
+        }
+        let chosen = self.safety;
+        if let Some(preset) = chosen
+            && let Err(reason) = hutan_core::safety::plan(harness, preset)
+        {
+            return Some((
+                format!(
+                    "{} is not available for this agent ({reason}): it starts with its own settings.",
+                    preset.label()
+                ),
+                true,
+            ));
+        }
+        let (preset, text) = match chosen {
+            Some(preset) => (preset, hutan_core::safety::describe(harness, preset)?),
+            None => {
+                return Some((
+                    "The agent's own approval and sandbox settings apply; Hutan changes none."
+                        .to_owned(),
+                    false,
+                ));
+            }
+        };
+        let flags = self.kind == LaunchKind::TerminalAgent;
+        let suffix = if flags {
+            " Passed as command-line flags; the agent's own screen shows what applies."
+        } else {
+            ""
+        };
+        Some((format!("{text}{suffix}"), preset.is_full_access()))
+    }
+
     /// The worktrees git lists besides the main checkout, with a branch to name them by.
     pub fn existing_worktrees(&self) -> Vec<&WorktreeInfo> {
         match &self.worktrees {
@@ -489,6 +591,7 @@ impl Launcher {
                 && !matches!(self.agent, LaunchAgent::Direct(_)))
             .then(|| self.account.clone())
             .flatten(),
+            safety: self.effective_safety(),
             // A plain terminal is not described: a title typed before switching is not used.
             title: if self.kind.has_task_fields() {
                 self.title.text().to_owned()
@@ -1068,6 +1171,13 @@ impl Workbench {
             agent_peek: None,
             model,
             account: None,
+            safety: self
+                .settings
+                .get::<crate::settings::LauncherSettings>()
+                .safety
+                .preset(),
+            safety_peek: None,
+            safety_daemon: self.sessions.read(cx).supports_chat_safety(),
             open_row: None,
             model_scroll: gpui::ScrollHandle::new(),
             model_reveal: std::cell::Cell::new(0),
@@ -1307,6 +1417,7 @@ impl Workbench {
             launcher.agent_peek = None;
             launcher.model = None;
             launcher.account = None;
+            launcher.safety_peek = None;
             if launcher.open_row == Some(LauncherStop::Model) {
                 launcher.open_row = None;
             }
@@ -1335,6 +1446,34 @@ impl Workbench {
     /// The account the sheet would start with, as the Account row names it (tests, inspection).
     pub fn launcher_account(&self) -> Option<&str> {
         self.launcher.as_ref().and_then(|l| l.account.as_deref())
+    }
+
+    /// Picks the safety preset of a chat or terminal agent. One the harness cannot honour is
+    /// not picked: the line below the row says why (and the choice stays where it was).
+    pub fn launcher_choose_safety(&mut self, preset: SafetyPreset, cx: &mut Context<Self>) {
+        let Some(launcher) = &mut self.launcher else {
+            return;
+        };
+        if launcher.starting {
+            return;
+        }
+        let Some(harness) = launcher.safety_harness().map(str::to_owned) else {
+            return;
+        };
+        if hutan_core::safety::plan(&harness, preset).is_ok() {
+            launcher.safety = Some(preset);
+            launcher.safety_peek = None;
+        } else {
+            launcher.safety_peek = Some(preset);
+        }
+        launcher.error = None;
+        launcher.confirm = None;
+        cx.notify();
+    }
+
+    /// The preset the sheet would start with (tests, inspection).
+    pub fn launcher_safety(&self) -> Option<SafetyPreset> {
+        self.launcher.as_ref().and_then(Launcher::effective_safety)
     }
 
     /// Picks the model of a chat; none: the harness's default.

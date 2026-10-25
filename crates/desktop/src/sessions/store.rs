@@ -2306,6 +2306,12 @@ impl SessionsStore {
         self.connection.supports_chat_mode()
     }
 
+    /// Whether the daemon takes safety presets on chats and reports `ChatInfo.safety`
+    /// (protocol 0.51).
+    pub fn supports_chat_safety(&self) -> bool {
+        self.connection.supports_chat_safety()
+    }
+
     /// Whether the daemon can mute a session's notifications.
     pub fn supports_mute(&self) -> bool {
         self.connection.supports_notify_mute()

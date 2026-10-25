@@ -113,7 +113,7 @@ pub use harnesses::{AccountChoice, Detection, HARNESSES, Harness, HarnessDirecto
 pub use instructions::{InstructionsToast, TOAST_TIME as INSTRUCTIONS_TOAST_TIME};
 pub use launcher::{
     HarnessChoice, LaunchAgent, LaunchWhere, Launcher, LauncherField, LauncherPreset, LauncherStop,
-    ProjectChoice, Readiness, StartConfirm, WorktreeList,
+    ProjectChoice, Readiness, SafetyChoice, StartConfirm, WorktreeList,
 };
 pub use modal::{Modal, ModalCheckbox, ModalChoice};
 pub use panels::{HistoryConfirm, HistoryPanel, StatusTone, connection_label};

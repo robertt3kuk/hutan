@@ -1734,6 +1734,35 @@ impl Setting for IntegrationsSettings {
     const NAMESPACE: &'static str = "integrations";
 }
 
+/// The safety preset the Start… sheet opens on (`launcher.safety`). *Full access* is never a
+/// default: the sheet asks for it each time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LauncherSafety {
+    /// Nothing is chosen: the harness keeps its own approval and sandbox settings (what a chat
+    /// did before presets existed).
+    #[default]
+    Off,
+    /// The agent asks before it acts.
+    Ask,
+    /// The agent works without asking inside its harness's own sandbox (Codex, Claude Code).
+    Contained,
+    /// The agent reads and plans; it changes nothing.
+    ReadOnly,
+}
+
+impl LauncherSafety {
+    /// The preset this default stands for.
+    pub fn preset(self) -> Option<hutan_core::SafetyPreset> {
+        match self {
+            LauncherSafety::Off => None,
+            LauncherSafety::Ask => Some(hutan_core::SafetyPreset::Ask),
+            LauncherSafety::Contained => Some(hutan_core::SafetyPreset::Contained),
+            LauncherSafety::ReadOnly => Some(hutan_core::SafetyPreset::ReadOnly),
+        }
+    }
+}
+
 /// The `launcher` namespace: the Start… sheet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -1742,18 +1771,26 @@ pub struct LauncherSettings {
     /// time for each agent and model, with "Don't ask again for this model" to stop asking for
     /// it. Off: Start sends at once. Plain terminals, commands and queued tasks never ask.
     pub confirm_agent_start: bool,
+    /// The Safety row's starting choice for chats and terminal agents: `off` (the harness's own
+    /// settings), `ask`, `contained` or `read_only`. A harness that cannot honour it (OMP has
+    /// no OS sandbox, so no `contained`) starts as `off` and the sheet says why. Put it in a
+    /// project's `.hutan/settings.toml` to set it for that project; *Full access* is never a
+    /// default.
+    pub safety: LauncherSafety,
 }
 
 impl Default for LauncherSettings {
     fn default() -> Self {
         Self {
             confirm_agent_start: true,
+            safety: LauncherSafety::Off,
         }
     }
 }
 
 impl Setting for LauncherSettings {
     const NAMESPACE: &'static str = "launcher";
+    const WORKSPACE_OVERRIDABLE: bool = true;
 }
 
 /// Which default key table the app starts from; `keymap.toml` is merged on top of it.
