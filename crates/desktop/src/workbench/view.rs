@@ -1189,6 +1189,15 @@ impl Workbench {
             ),
             cx.observe(&harnesses, |this, _, cx| this.on_harnesses_changed(cx)),
             cx.observe(&usage, |this, _, cx| this.on_usage_changed(cx)),
+            // The element that had the keyboard left the drawn tree (a segment's click swapped
+            // the list it sat in): without a dispatch path no shortcut reaches the window. Focus
+            // goes to the nearest ancestor still drawn, else to what the pane shows.
+            cx.on_focus_lost(window, |this, window, cx| {
+                match window.focus_lost_restore_target(cx) {
+                    Some(target) => window.focus(&target, cx),
+                    None => this.focus_root(window, cx),
+                }
+            }),
             cx.observe_window_activation(window, |this, window, cx| {
                 this.window_active = window.is_window_active();
                 this.sync_session_focus(cx);

@@ -567,3 +567,53 @@ fn file_history_keeps_the_detail_readable_in_a_narrow_centre_pane(cx: &mut TestA
     draw(cx);
     assert!(!history.read_with(cx, |h, _| h.stacked()));
 }
+
+#[gpui::test]
+fn shortcuts_keep_working_after_a_click_on_a_segment_of_changes(cx: &mut TestAppContext) {
+    use hutan_desktop::workbench::ChangesView;
+
+    let fx = Fx::new();
+    let (view, cx) = open(cx, &fx);
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_changes(fx.root.clone(), window, cx);
+    });
+    draw(cx);
+    let changes: Entity<ChangesView> = view
+        .read_with(cx, |wb, _| wb.changes(&fx.root.display().to_string()))
+        .expect("the Changes view was opened");
+    wait_until(cx, "the first listing", |cx| {
+        changes.read_with(cx, |c, _| c.refreshed_ms().is_some())
+    });
+
+    for segment in [
+        "changes-scope-history",
+        "changes-scope-committed",
+        "changes-index-all",
+    ] {
+        // The keyboard is on an element the view no longer draws (the one that had it went
+        // away with the list it was in).
+        let orphan = cx.update(|window, cx| {
+            let handle = cx.focus_handle();
+            window.focus(&handle, cx);
+            handle
+        });
+        draw(cx);
+        let bounds = view
+            .read_with(cx, |wb, _| wb.region_bounds(Region::Changes(segment)))
+            .expect("the segment is drawn");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        draw(cx);
+        assert!(
+            cx.update(|window, cx| window.focused(cx)).is_some(),
+            "the keyboard is on a drawn element after {segment}"
+        );
+        cx.simulate_keystrokes("cmd-shift-p");
+        assert!(
+            view.read_with(cx, |wb, _| wb.palette_open()),
+            "⌘⇧P opens the palette after a click on {segment}"
+        );
+        cx.simulate_keystrokes("escape");
+        assert!(!view.read_with(cx, |wb, _| wb.palette_open()));
+        drop(orphan);
+    }
+}
