@@ -1663,7 +1663,7 @@ impl Workbench {
             ItemRef::Changes { path } => (
                 crate::icons::Icon::PanelChanges,
                 match self.changes_views.get(path) {
-                    Some(view) => view.read(cx).title().into(),
+                    Some(view) => view.read(cx).title(cx).into(),
                     None => format!(
                         "Changes · {}",
                         std::path::Path::new(path)

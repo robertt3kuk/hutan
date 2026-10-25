@@ -344,7 +344,9 @@ fn changed(view: &Entity<Workbench>, cx: &VisualTestContext, project: WorkspaceI
 }
 
 #[gpui::test]
-fn a_project_row_the_window_does_not_work_in_carries_its_changed_files(cx: &mut TestAppContext) {
+fn every_project_row_carries_its_changed_files_also_the_one_the_window_works_in(
+    cx: &mut TestAppContext,
+) {
     let fx = Fx::new();
     let connection = fx.daemon.connection();
     let (view, cx) = open(cx, &fx, connection);
@@ -357,7 +359,8 @@ fn a_project_row_the_window_does_not_work_in_carries_its_changed_files(cx: &mut 
     });
     assert_eq!(changed(&view, cx, alpha), 0);
 
-    // Beta's row shows the badge while the window works in alpha; alpha's row has none.
+    // Beta's row shows the badge while the window works in alpha; alpha's row has none (nothing
+    // is uncommitted there).
     wait_until(cx, "the badge on beta's row", |cx| {
         view.read_with(cx, |wb, _| {
             wb.region_bounds(Region::ProjectChanged(beta)).is_some()
@@ -370,15 +373,17 @@ fn a_project_row_the_window_does_not_work_in_carries_its_changed_files(cx: &mut 
         "no badge where there is nothing uncommitted"
     );
 
-    // The window goes to beta: its own row has no badge (the Changes panel says it there).
+    // The window goes to beta: its own row keeps the badge.
     work_in(cx, beta);
-    wait_until(cx, "the badge to leave beta's row", |cx| {
+    draw(cx);
+    wait_until(cx, "beta's row to keep its badge", |cx| {
+        draw(cx);
         view.read_with(cx, |wb, _| {
-            wb.region_bounds(Region::ProjectChanged(beta)).is_none()
+            wb.region_bounds(Region::ProjectChanged(beta)).is_some()
         })
     });
     work_in(cx, alpha);
-    wait_until(cx, "the badge to come back", |cx| {
+    wait_until(cx, "the badge on beta's row", |cx| {
         view.read_with(cx, |wb, _| {
             wb.region_bounds(Region::ProjectChanged(beta)).is_some()
         })
@@ -489,4 +494,31 @@ fn the_default_scope_is_this_checkout_and_a_lone_repository_has_no_switch(cx: &m
         "no switch while there is one place that changes"
     );
     region(&view, cx, Region::ChangesPanelFile(0, 0));
+}
+
+#[gpui::test]
+fn two_checkouts_on_one_branch_name_say_their_repository_in_the_tab_title(cx: &mut TestAppContext) {
+    use hutan_desktop::workbench::model::ItemRef;
+
+    let fx = Fx::new();
+    let connection = fx.daemon.connection();
+    let (view, cx) = open(cx, &fx, connection);
+    let _panel = ready_panel(&view, cx, &fx);
+    // alpha and beta are both on `main`: the repository comes first; the worktree's branch is
+    // its own.
+    for (path, expected) in [
+        (&fx.alpha, "Changes · alpha · main"),
+        (&fx.beta, "Changes · beta · main"),
+        (&fx.wt, "Changes · feature/x"),
+    ] {
+        view.update_in(cx, |wb, window, cx| {
+            wb.open_changes(path.clone(), window, cx);
+        });
+        let item = ItemRef::changes(path.display().to_string());
+        wait_until(cx, &format!("the title {expected}"), |cx| {
+            view.read_with(cx, |wb, cx| {
+                wb.item_title(&item, cx).to_string() == expected
+            })
+        });
+    }
 }

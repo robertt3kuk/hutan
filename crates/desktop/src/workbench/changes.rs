@@ -305,8 +305,10 @@ impl ChangesView {
         &self.path
     }
 
-    /// `Changes · <branch>` (the directory name until the worktree is listed).
-    pub fn title(&self) -> String {
+    /// `Changes · <branch>` (the directory name until the worktree is listed); when another
+    /// listed checkout has the same branch name (two repositories on `main`) the repository
+    /// comes first: `Changes · alpha · main`.
+    pub fn title(&self, cx: &gpui::App) -> String {
         let name = self
             .info
             .as_ref()
@@ -317,7 +319,26 @@ impl ChangesView {
                     .map(|n| n.to_string_lossy().into_owned())
             })
             .unwrap_or_else(|| self.path.display().to_string());
-        format!("Changes · {name}")
+        let shared = self.info.as_ref().is_some_and(|info| {
+            info.branch.is_some()
+                && self
+                    .env
+                    .sessions
+                    .read(cx)
+                    .checkouts_all()
+                    .iter()
+                    .any(|other| other.path != info.path && other.branch == info.branch)
+        });
+        let repo = self
+            .info
+            .as_ref()
+            .filter(|_| shared)
+            .and_then(|info| info.repo_root.file_name())
+            .map(|n| n.to_string_lossy().into_owned());
+        match repo {
+            Some(repo) => format!("Changes · {repo} · {name}"),
+            None => format!("Changes · {name}"),
+        }
     }
 
     pub fn info(&self) -> Option<&WorktreeInfo> {

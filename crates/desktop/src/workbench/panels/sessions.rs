@@ -1072,7 +1072,7 @@ impl SessionsPanel {
                 needs: node.needs,
                 working: rolled(info),
                 branch: is_project.then(|| store.main_branch(info)).flatten(),
-                changed: if is_project && active_project != Some(info.id) {
+                changed: if is_project {
                     store.changed_files_of(info)
                 } else {
                     0
