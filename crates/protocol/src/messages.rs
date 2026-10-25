@@ -64,8 +64,9 @@ use crate::tree::{AgentTreeRequest, NodeReport};
 use crate::ui::{SessionSendText, UiCommandResult, UiPublish, UiRun, UiSetSetting, UiTarget};
 use crate::usage::{UsageSummary, UsageSummaryRequest};
 use crate::worktree::{
-    Placement, WorktreeCommit, WorktreeCreate, WorktreeDiffRequest, WorktreeFileDiffRequest,
-    WorktreeFinish, WorktreeListRequest, WorktreeMerge, WorktreeRemove,
+    Placement, WorktreeCleanupRequest, WorktreeCommit, WorktreeCreate, WorktreeDiffRequest,
+    WorktreeFileDiffRequest, WorktreeFinish, WorktreeListRequest, WorktreeMerge, WorktreePrune,
+    WorktreeRemove, WorktreeSetupRequest, WorktreeSetupTrust,
 };
 
 /// Parameterless request body; encoded as `{}`.
@@ -440,6 +441,22 @@ pub enum Request {
     /// its target, push; user-only. Answered with `WorktreeFinished`.
     #[serde(rename = "worktree.finish")]
     WorktreeFinish(WorktreeFinish),
+    /// Capability `worktree.setup` (protocol 0.48): run a worktree's setup again; answered with
+    /// `WorktreeSetupResult`.
+    #[serde(rename = "worktree.setup")]
+    WorktreeSetup(WorktreeSetupRequest),
+    /// Capability `worktree.setup`: the user confirms the repository's setup commands (by their
+    /// content hash) and the setup runs; user-only. Answered with `WorktreeSetupResult`.
+    #[serde(rename = "worktree.setup_trust")]
+    WorktreeSetupTrust(WorktreeSetupTrust),
+    /// Capability `worktree.setup`: the worktrees retention would remove now; answered with
+    /// `WorktreeCleanupList`. Read-only.
+    #[serde(rename = "worktree.cleanup")]
+    WorktreeCleanup(WorktreeCleanupRequest),
+    /// Capability `worktree.setup`: remove what `worktree.cleanup` lists (teardown first);
+    /// user-only. Answered with `WorktreePruned`.
+    #[serde(rename = "worktree.prune")]
+    WorktreePrune(WorktreePrune),
     /// Capability `task` (protocol 0.16): a new task; answered with `TaskResult`.
     #[serde(rename = "task.create")]
     TaskCreate(TaskCreate),

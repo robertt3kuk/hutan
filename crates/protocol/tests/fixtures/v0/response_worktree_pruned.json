@@ -1,0 +1,1 @@
+{"id":25,"result":{"failed":[{"path":"/work/repo-wt/old","reason":"teardown failed: `docker compose down` exited with 1"}],"removed":["/work/repo-wt/feature-login"]}}

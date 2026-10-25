@@ -85,6 +85,7 @@ pub const CAPABILITIES: &[&str] = &[
     "memory.files",
     "git.history",
     "hooks",
+    "worktree.setup",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit

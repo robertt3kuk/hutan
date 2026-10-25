@@ -78,10 +78,11 @@ use hutan_protocol::ui::{
 };
 use hutan_protocol::usage::{UsageSummary, UsageSummaryRequest};
 use hutan_protocol::worktree::{
-    WorktreeCommit, WorktreeCommitted, WorktreeCreate, WorktreeCreated, WorktreeDiff,
-    WorktreeDiffRequest, WorktreeFileDiff, WorktreeFileDiffRequest, WorktreeFinish,
-    WorktreeFinished, WorktreeInfo, WorktreeList, WorktreeListRequest, WorktreeMerge,
-    WorktreeMerged, WorktreeRemove, WorktreeRemoved,
+    WorktreeCleanupList, WorktreeCleanupRequest, WorktreeCommit, WorktreeCommitted, WorktreeCreate,
+    WorktreeCreated, WorktreeDiff, WorktreeDiffRequest, WorktreeFileDiff, WorktreeFileDiffRequest,
+    WorktreeFinish, WorktreeFinished, WorktreeInfo, WorktreeList, WorktreeListRequest,
+    WorktreeMerge, WorktreeMerged, WorktreePrune, WorktreePruned, WorktreeRemove, WorktreeRemoved,
+    WorktreeSetupRequest, WorktreeSetupResult, WorktreeSetupTrust,
 };
 use hutan_protocol::{
     ControlMessage, ErrorBody, Frame, FrameCodec, FrameKind, MAX_PAYLOAD, PROTOCOL_VERSION,
@@ -211,6 +212,8 @@ pub(crate) const USAGE_CAPABILITY: &str = "usage";
 pub(crate) const GIT_HISTORY_CAPABILITY: &str = "git.history";
 /// Capability for `hooks.list|log|test` (protocol 0.48).
 pub(crate) const HOOKS_CAPABILITY: &str = "hooks";
+/// Capability for worktree setup, teardown and retention (protocol 0.48).
+pub(crate) const WORKTREE_SETUP_CAPABILITY: &str = "worktree.setup";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -263,6 +266,7 @@ const CAPABILITIES: &[&str] = &[
     MEMORY_FILES_CAPABILITY,
     GIT_HISTORY_CAPABILITY,
     HOOKS_CAPABILITY,
+    WORKTREE_SETUP_CAPABILITY,
 ];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Generous on purpose: the first launch of a freshly built or updated `hutand` can take
@@ -703,6 +707,15 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == GIT_HISTORY_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `worktree.setup` (protocol 0.48): worktree
+    /// setup, teardown and retention.
+    pub fn supports_worktree_setup(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == WORKTREE_SETUP_CAPABILITY)
     }
 
     /// True when the daemon advertised capability `worktree.index` (protocol 0.34): the files
@@ -1265,6 +1278,36 @@ impl Client {
     /// Merges a worktree's branch into the main checkout's branch (`worktree.merge`).
     pub async fn worktree_merge(&self, req: WorktreeMerge) -> Result<WorktreeMerged, ClientError> {
         self.call(Request::WorktreeMerge(req)).await
+    }
+
+    /// Runs a worktree's setup again (`worktree.setup`).
+    pub async fn worktree_setup(
+        &self,
+        req: WorktreeSetupRequest,
+    ) -> Result<WorktreeSetupResult, ClientError> {
+        self.call(Request::WorktreeSetup(req)).await
+    }
+
+    /// Confirms the repository's setup commands and runs the setup (`worktree.setup_trust`,
+    /// user-only).
+    pub async fn worktree_setup_trust(
+        &self,
+        req: WorktreeSetupTrust,
+    ) -> Result<WorktreeSetupResult, ClientError> {
+        self.call(Request::WorktreeSetupTrust(req)).await
+    }
+
+    /// The worktrees retention would remove now (`worktree.cleanup`).
+    pub async fn worktree_cleanup(
+        &self,
+        req: WorktreeCleanupRequest,
+    ) -> Result<WorktreeCleanupList, ClientError> {
+        self.call(Request::WorktreeCleanup(req)).await
+    }
+
+    /// Removes the worktrees retention lists, teardown first (`worktree.prune`, user-only).
+    pub async fn worktree_prune(&self, req: WorktreePrune) -> Result<WorktreePruned, ClientError> {
+        self.call(Request::WorktreePrune(req)).await
     }
 
     /// Commits everything in a worktree (`worktree.commit`).

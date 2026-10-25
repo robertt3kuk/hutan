@@ -31,6 +31,10 @@ pub struct WorktreeCreate {
     /// Absolute and not existing; absent: `<parent of repo>/<repo name>-wt/<branch with / as ->`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
+    /// Protocol 0.48 (capability `worktree.setup`): do not copy files or run the setup of
+    /// `.hutan/worktree.toml` (`hutan wt create --no-setup`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_setup: bool,
 }
 
 /// Result of `worktree.create`.
@@ -78,6 +82,9 @@ pub struct WorktreeInfo {
     pub locked: bool,
     /// The directory is gone; `git worktree prune` would drop the entry.
     pub prunable: bool,
+    /// Protocol 0.48 (capability `worktree.setup`): where the setup of this worktree stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<WorktreeSetup>,
 }
 
 /// `worktree.remove`: removes the worktree directory, optionally its branch. Answered with
@@ -539,4 +546,191 @@ pub struct FinishPush {
 
 fn is_zero(value: &u32) -> bool {
     *value == 0
+}
+
+// Setup, teardown and retention (protocol 0.48, capability `worktree.setup`) ------------------
+
+/// Where a worktree's setup stands (`WorktreeInfo.setup`). Setup is what the repository's
+/// `.hutan/worktree.toml` (or the user's `[worktrees.projects.<name>]`) asks for after
+/// `worktree.create`: copy gitignored files, then run commands in a terminal session named
+/// *Setup* (`docs/orchestration.md` § Setup and cleanup). The state is the daemon's memory of
+/// this run: it is not kept across a daemon restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeSetupState {
+    /// The files were copied and the *Setup* session is running its commands.
+    Running,
+    /// The commands come from the repository and the user has not confirmed exactly these
+    /// yet (never, or the file changed): nothing ran. `worktree.setup_trust` with
+    /// [`WorktreeSetup::hash`] confirms them and runs the setup.
+    NeedsTrust,
+    /// A command failed, or the session was stopped; [`WorktreeSetup::message`] says how and
+    /// the session (still listed) has the output.
+    Failed,
+    /// Everything ran and succeeded.
+    Done,
+}
+
+/// What `worktree.list` and `worktree.create` say about the setup of one worktree; absent when
+/// no setup was asked for (no config, or `no_setup`) or the daemon has not run one since it
+/// started.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeSetup {
+    pub state: WorktreeSetupState,
+    /// The *Setup* terminal session: running, or ended (`failed`, `done`) with its output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    /// The commands of `setup`, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
+    /// The commands of `teardown`, in order (they run before the worktree is removed).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub teardown: Vec<String>,
+    /// For `needs_trust`: the content hash of the repository's commands (sha-256, hex) that
+    /// `worktree.setup_trust` must repeat, so the user confirms what they were shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+    /// How many gitignored files were copied from the main checkout.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub copied: u32,
+    /// Why the setup failed, or what was left out (copy limits, unknown keys of the config).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// `worktree.setup`: runs the setup of an existing worktree again (copies what is missing, runs
+/// the commands in a new *Setup* session). A running setup is `invalid_state`. Answered with
+/// [`WorktreeSetupResult`]. Errors: `bad_request` (`path` not absolute), `not_found` (no such
+/// worktree), `invalid_state` (the main worktree; a running setup; nothing configured).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeSetupRequest {
+    pub path: PathBuf,
+}
+
+/// `worktree.setup_trust`: the user confirms the repository's setup and teardown commands of the
+/// worktree at `path` (and, with them, of every worktree of the repository while the commands
+/// stay the same), then the setup runs. `hash` must equal [`WorktreeSetup::hash`] now (the
+/// config may have changed since it was shown: `conflict`). The decision is remembered by the
+/// content hash; editing the commands asks again. **User-only**: an agent gets `forbidden`.
+/// Answered with [`WorktreeSetupResult`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeSetupTrust {
+    pub path: PathBuf,
+    pub hash: String,
+}
+
+/// Result of `worktree.setup` and `worktree.setup_trust`: the worktree as it is now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeSetupResult {
+    pub worktree: WorktreeInfo,
+}
+
+/// `[worktrees] cleanup`: which worktrees `worktree.cleanup` lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeCleanup {
+    /// None (the default).
+    #[default]
+    Never,
+    /// Worktrees whose branch got commits of its own and is merged into the default branch.
+    Merged,
+    /// Worktrees nothing has touched for `idle_days`.
+    Idle,
+}
+
+impl WorktreeCleanup {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::Merged => "merged",
+            Self::Idle => "idle",
+        }
+    }
+}
+
+/// `worktree.cleanup`: the worktrees that retention would remove now. Read-only. Answered with
+/// [`WorktreeCleanupList`].
+///
+/// Only worktrees Hutan created qualify, and only when no session is live in them, nothing in
+/// them is uncommitted (untracked files count), they are not locked, and no setup is running.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeCleanupRequest {
+    /// Only the repositories of this workspace; absent: every workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<WorkspaceId>,
+    /// Absent: `[worktrees] cleanup`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<WorktreeCleanup>,
+    /// Absent: `[worktrees] cleanup_idle_days`. Only for `idle`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_days: Option<u64>,
+}
+
+/// Why a worktree is listed by `worktree.cleanup`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupReason {
+    /// Its branch is merged into the repository's default branch.
+    Merged,
+    /// Nothing touched it for [`WorktreeCleanupList::idle_days`] days.
+    Idle,
+}
+
+/// One worktree of [`WorktreeCleanupList`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CleanupCandidate {
+    pub path: PathBuf,
+    pub repo_root: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub reason: CleanupReason,
+    /// Whole days since anything touched it (the later of its newest commit and the last change
+    /// of its git state).
+    pub idle_days: u64,
+    /// Removing it runs these teardown commands first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub teardown: Vec<String>,
+}
+
+/// Result of `worktree.cleanup`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeCleanupList {
+    /// The policy that was applied (the request's, else the setting).
+    pub mode: WorktreeCleanup,
+    /// The idle limit that was applied.
+    pub idle_days: u64,
+    pub candidates: Vec<CleanupCandidate>,
+}
+
+/// `worktree.prune`: removes the worktrees `worktree.cleanup` lists with the same `workspace_id`,
+/// `mode` and `idle_days` (looked at again now), or only those among them whose path is in
+/// `paths`. Each one's teardown runs first; one that fails stays and is reported. A merged
+/// branch is deleted with `git branch -d`. **User-only**: nothing is removed by an agent.
+/// Answered with [`WorktreePruned`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreePrune {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<WorkspaceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<WorktreeCleanup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_days: Option<u64>,
+    /// Empty: every candidate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<PathBuf>,
+}
+
+/// Result of `worktree.prune`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreePruned {
+    pub removed: Vec<PathBuf>,
+    pub failed: Vec<PruneFailure>,
+}
+
+/// A worktree `worktree.prune` kept, and why (a failing teardown, git's refusal, a worktree
+/// that stopped being a candidate).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PruneFailure {
+    pub path: PathBuf,
+    pub reason: String,
 }

@@ -2,6 +2,9 @@
 //!
 //! - [`hooks`]: user hooks — `hooks.list`, `hooks.log`, `hooks.test` and the payload a hook
 //!   receives (protocol 0.48, capability `hooks`).
+//! - [`worktree`] also carries setup and retention — `worktree.setup`, `worktree.setup_trust`
+//!   (user-only), `worktree.cleanup`, `worktree.prune` (user-only), `WorktreeCreate.no_setup` and
+//!   `WorktreeInfo.setup` (protocol 0.48, capability `worktree.setup`).
 //! - [`memory_files`]: Mawas's memory as Markdown files — the format of the mirror, the export
 //!   and the import — and `memory.import` / `memory.files.status` (protocol 0.46, capability
 //!   `memory.files`); [`memory`]'s provenance names the origin of an edit made in a file.

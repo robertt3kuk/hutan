@@ -977,6 +977,37 @@ fn worktree_info() -> WorktreeInfo {
         live_sessions: vec![sid()],
         locked: false,
         prunable: false,
+        setup: None,
+    }
+}
+
+fn setting_up_worktree_info() -> WorktreeInfo {
+    WorktreeInfo {
+        setup: Some(WorktreeSetup {
+            state: WorktreeSetupState::NeedsTrust,
+            session_id: None,
+            commands: vec!["pnpm install".into()],
+            teardown: vec!["docker compose down".into()],
+            hash: Some("5f2b8c0a9d7e4a31b6c8e0f2a4d6b8c0e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2".into()),
+            copied: 2,
+            message: Some("`.hutan/worktree.toml`: unknown key `retries`".into()),
+        }),
+        ..worktree_info()
+    }
+}
+
+fn failed_setup_worktree_info() -> WorktreeInfo {
+    WorktreeInfo {
+        setup: Some(WorktreeSetup {
+            state: WorktreeSetupState::Failed,
+            session_id: Some(sid()),
+            commands: vec!["pnpm install".into(), "pnpm build".into()],
+            teardown: vec![],
+            hash: None,
+            copied: 0,
+            message: Some("setup exited with code 1".into()),
+        }),
+        ..worktree_info()
     }
 }
 
@@ -992,6 +1023,7 @@ fn main_worktree_info() -> WorktreeInfo {
         live_sessions: vec![],
         locked: false,
         prunable: false,
+        setup: None,
     }
 }
 
@@ -1007,6 +1039,7 @@ fn detached_worktree_info() -> WorktreeInfo {
         live_sessions: vec![],
         locked: true,
         prunable: true,
+        setup: None,
     }
 }
 
@@ -2002,6 +2035,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 branch: "feature/login".into(),
                 base: Some("origin/main".into()),
                 path: Some("/work/repo-wt/feature-login".into()),
+                no_setup: false,
             }),
         ),
         (
@@ -2012,6 +2046,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 branch: "fix-typo".into(),
                 base: None,
                 path: None,
+                no_setup: false,
             }),
         ),
         (
@@ -3324,6 +3359,51 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::HooksLog(HooksLogRequest::default()),
         ),
         ("hooks_test", Request::HooksTest(HooksTest { hook: 1 })),
+        (
+            "worktree_create_no_setup",
+            Request::WorktreeCreate(WorktreeCreate {
+                workspace_id: ws(),
+                repo: None,
+                branch: "feature/login".into(),
+                base: None,
+                path: None,
+                no_setup: true,
+            }),
+        ),
+        (
+            "worktree_setup",
+            Request::WorktreeSetup(WorktreeSetupRequest {
+                path: "/work/repo-wt/feature-login".into(),
+            }),
+        ),
+        (
+            "worktree_setup_trust",
+            Request::WorktreeSetupTrust(WorktreeSetupTrust {
+                path: "/work/repo-wt/feature-login".into(),
+                hash: "5f2b8c0a9d7e4a31b6c8e0f2a4d6b8c0e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0b2".into(),
+            }),
+        ),
+        (
+            "worktree_cleanup",
+            Request::WorktreeCleanup(WorktreeCleanupRequest {
+                workspace_id: Some(ws()),
+                mode: Some(WorktreeCleanup::Idle),
+                idle_days: Some(30),
+            }),
+        ),
+        (
+            "worktree_cleanup_default",
+            Request::WorktreeCleanup(WorktreeCleanupRequest::default()),
+        ),
+        (
+            "worktree_prune",
+            Request::WorktreePrune(WorktreePrune {
+                workspace_id: Some(ws()),
+                mode: Some(WorktreeCleanup::Merged),
+                idle_days: None,
+                paths: vec!["/work/repo-wt/feature-login".into()],
+            }),
+        ),
     ]
 }
 
@@ -5437,6 +5517,69 @@ fn responses_match_fixtures() {
                 23,
                 &WorktreeCreated {
                     worktree: worktree_info(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "worktree_setup_result_needs_trust",
+            ControlMessage::ok(
+                23,
+                &WorktreeSetupResult {
+                    worktree: setting_up_worktree_info(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "worktree_setup_result_failed",
+            ControlMessage::ok(
+                23,
+                &WorktreeSetupResult {
+                    worktree: failed_setup_worktree_info(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "worktree_cleanup_list",
+            ControlMessage::ok(
+                24,
+                &WorktreeCleanupList {
+                    mode: WorktreeCleanup::Merged,
+                    idle_days: 14,
+                    candidates: vec![
+                        CleanupCandidate {
+                            path: "/work/repo-wt/feature-login".into(),
+                            repo_root: "/work/repo".into(),
+                            branch: Some("feature/login".into()),
+                            reason: CleanupReason::Merged,
+                            idle_days: 3,
+                            teardown: vec!["docker compose down".into()],
+                        },
+                        CleanupCandidate {
+                            path: "/work/repo-wt/old".into(),
+                            repo_root: "/work/repo".into(),
+                            branch: None,
+                            reason: CleanupReason::Idle,
+                            idle_days: 40,
+                            teardown: vec![],
+                        },
+                    ],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "worktree_pruned",
+            ControlMessage::ok(
+                25,
+                &WorktreePruned {
+                    removed: vec!["/work/repo-wt/feature-login".into()],
+                    failed: vec![PruneFailure {
+                        path: "/work/repo-wt/old".into(),
+                        reason: "teardown failed: `docker compose down` exited with 1".into(),
+                    }],
                 },
             )
             .unwrap(),

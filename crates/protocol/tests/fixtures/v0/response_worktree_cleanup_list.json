@@ -1,0 +1,1 @@
+{"id":24,"result":{"candidates":[{"branch":"feature/login","idle_days":3,"path":"/work/repo-wt/feature-login","reason":"merged","repo_root":"/work/repo","teardown":["docker compose down"]},{"idle_days":40,"path":"/work/repo-wt/old","reason":"idle","repo_root":"/work/repo"}],"idle_days":14,"mode":"merged"}}
