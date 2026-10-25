@@ -7,12 +7,13 @@ use hutan_client::Client;
 use hutan_core::WorkspaceId;
 use hutan_protocol::messages::{CreatedBy, Request, WorkspaceKind, WorkspaceOpen, WorkspaceOpened};
 use hutan_protocol::worktree::{
-    CleanupReason, DiffFile, DiffStatus, FinishCommit, FinishMerge, FinishPush, MergeStrategy,
-    StepReason, StepStatus, WorktreeCleanup, WorktreeCleanupRequest, WorktreeCommit,
-    WorktreeCreate, WorktreeCreated, WorktreeDiff, WorktreeDiffRequest, WorktreeFileDiffRequest,
-    WorktreeFinish, WorktreeFinished, WorktreeInfo, WorktreeList, WorktreeMerge, WorktreeMerged,
-    WorktreePrune, WorktreeRemove, WorktreeSetup, WorktreeSetupRequest, WorktreeSetupState,
-    WorktreeSetupTrust, conflict_files,
+    CleanupReason, DiffFile, DiffStatus, FinishCommit, FinishMerge, FinishPush, HunkRef,
+    MergeStrategy, StepReason, StepStatus, WorktreeCleanup, WorktreeCleanupRequest, WorktreeCommit,
+    WorktreeCreate, WorktreeCreated, WorktreeDiff, WorktreeDiffRequest, WorktreeDiscard,
+    WorktreeFileDiffRequest, WorktreeFinish, WorktreeFinished, WorktreeHunks, WorktreeHunksRequest,
+    WorktreeIndexChange, WorktreeInfo, WorktreeList, WorktreeMerge, WorktreeMerged, WorktreePrune,
+    WorktreeRemove, WorktreeSetup, WorktreeSetupRequest, WorktreeSetupState, WorktreeSetupTrust,
+    conflict_files,
 };
 use serde_json::json;
 
@@ -20,8 +21,8 @@ use super::Ctx;
 use super::sessions::with_source;
 use super::workspaces::workspace_target;
 use crate::args::{
-    FinishArgs, WtCommand, WtCommitArgs, WtDiffArgs, WtLsArgs, WtMergeArgs, WtNewArgs, WtPruneArgs,
-    WtRmArgs, WtSetupArgs,
+    FinishArgs, WtCommand, WtCommitArgs, WtDiffArgs, WtDiscardArgs, WtIndexArgs, WtLsArgs,
+    WtMergeArgs, WtNewArgs, WtPruneArgs, WtRmArgs, WtSetupArgs,
 };
 use crate::error::CliError;
 
@@ -40,6 +41,9 @@ impl Ctx {
             WtCommand::Diff(args) => self.wt_diff(args).await,
             WtCommand::Merge(args) => self.wt_merge(args).await,
             WtCommand::Commit(args) => self.wt_commit(args).await,
+            WtCommand::Stage(args) => self.wt_index(args, true).await,
+            WtCommand::Unstage(args) => self.wt_index(args, false).await,
+            WtCommand::Discard(args) => self.wt_discard(args).await,
             WtCommand::Setup(args) => self.wt_setup(args).await,
             WtCommand::Prune(args) => self.wt_prune(args).await,
         }
@@ -65,6 +69,9 @@ impl Ctx {
         let target = self
             .wt_target(&client, &args.target, args.workspace)
             .await?;
+        if args.hunks {
+            return self.wt_hunks(&client, &target).await;
+        }
         let include_uncommitted = !args.committed;
         let diff = client
             .worktree_diff(WorktreeDiffRequest {
@@ -124,6 +131,9 @@ impl Ctx {
 
     async fn wt_commit(&self, args: WtCommitArgs) -> Result<(), CliError> {
         let client = self.connect().await?;
+        if args.staged && !client.supports_worktree_stage() {
+            return Err(stage_unsupported());
+        }
         let target = self
             .wt_target(&client, &args.target, args.workspace)
             .await?;
@@ -131,7 +141,7 @@ impl Ctx {
             .worktree_commit(WorktreeCommit {
                 path: target.path.clone(),
                 message: args.message,
-                staged_only: false,
+                staged_only: args.staged,
             })
             .await
             .map_err(|e| self.fail(e))?;
@@ -141,6 +151,164 @@ impl Ctx {
                 committed.files,
                 committed.branch,
                 committed.commit.chars().take(7).collect::<String>()
+            )
+        })
+    }
+
+    /// `hutan wt diff --hunks`: what can be staged, unstaged or discarded, with the ids.
+    async fn wt_hunks(&self, client: &Client, target: &WorktreeInfo) -> Result<(), CliError> {
+        let listed = self.hunks_of(client, target).await?;
+        self.print(&listed, || hunks_text(&listed))
+    }
+
+    async fn hunks_of(
+        &self,
+        client: &Client,
+        target: &WorktreeInfo,
+    ) -> Result<WorktreeHunks, CliError> {
+        if !client.supports_worktree_stage() {
+            return Err(stage_unsupported());
+        }
+        client
+            .worktree_hunks(WorktreeHunksRequest {
+                path: target.path.clone(),
+                files: Vec::new(),
+            })
+            .await
+            .map_err(|e| self.fail(e))
+    }
+
+    /// The files and hunks `hutan wt stage|unstage|discard` names, as the daemon takes them.
+    async fn index_selection(
+        &self,
+        client: &Client,
+        target: &WorktreeInfo,
+        paths: &[String],
+        hunk_ids: &[String],
+        lines: &[u32],
+    ) -> Result<(Vec<String>, Vec<HunkRef>), CliError> {
+        if !lines.is_empty() && hunk_ids.len() != 1 {
+            return Err(CliError::Usage(
+                "--lines needs exactly one --hunk".to_owned(),
+            ));
+        }
+        let paths = paths
+            .iter()
+            .map(|path| inside_checkout(&target.path, path))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut hunks = Vec::new();
+        if !hunk_ids.is_empty() {
+            let listed = self.hunks_of(client, target).await?;
+            for id in hunk_ids {
+                let owners: Vec<&str> = listed
+                    .files
+                    .iter()
+                    .filter(|f| f.unstaged.iter().chain(&f.staged).any(|h| h.id == *id))
+                    .map(|f| f.path.as_str())
+                    .collect();
+                match owners.as_slice() {
+                    [path] => hunks.push(HunkRef {
+                        path: (*path).to_owned(),
+                        hunk_id: id.clone(),
+                        lines: lines.to_vec(),
+                    }),
+                    [] => {
+                        return Err(CliError::Failed(format!(
+                            "no hunk {id} in {}: list them with `hutan wt diff {} --hunks`",
+                            target.path.display(),
+                            target.branch.as_deref().unwrap_or("<checkout>")
+                        )));
+                    }
+                    _ => {
+                        return Err(CliError::Failed(format!(
+                            "hunk {id} is in several files: {}",
+                            owners.join(", ")
+                        )));
+                    }
+                }
+            }
+        }
+        Ok((paths, hunks))
+    }
+
+    /// `hutan wt stage` and `unstage`.
+    async fn wt_index(&self, args: WtIndexArgs, stage: bool) -> Result<(), CliError> {
+        if !args.all && args.paths.is_empty() && args.hunks.is_empty() {
+            return Err(CliError::Usage(
+                "name files or --hunk ids, or pass --all".to_owned(),
+            ));
+        }
+        let client = self.connect().await?;
+        let target = self
+            .wt_target(&client, &args.target, args.workspace)
+            .await?;
+        let (paths, hunks) = self
+            .index_selection(&client, &target, &args.paths, &args.hunks, &args.lines)
+            .await?;
+        let request = WorktreeIndexChange {
+            checkout: target.path.clone(),
+            paths,
+            hunks,
+            all: args.all,
+        };
+        let done = if stage {
+            client.worktree_stage(request).await
+        } else {
+            client.worktree_unstage(request).await
+        }
+        .map_err(|e| self.fail(e))?;
+        self.print(&done, || {
+            let verb = if stage { "staged" } else { "unstaged" };
+            if args.all {
+                format!("{verb} everything in {}", target.path.display())
+            } else {
+                format!(
+                    "{verb} {} file(s) and {} hunk(s) in {}",
+                    done.paths,
+                    done.hunks,
+                    target.path.display()
+                )
+            }
+        })
+    }
+
+    /// `hutan wt discard`.
+    async fn wt_discard(&self, args: WtDiscardArgs) -> Result<(), CliError> {
+        if args.paths.is_empty() && args.hunks.is_empty() {
+            return Err(CliError::Usage(
+                "name the files or --hunk ids to discard".to_owned(),
+            ));
+        }
+        let client = self.connect().await?;
+        let target = self
+            .wt_target(&client, &args.target, args.workspace)
+            .await?;
+        let (paths, hunks) = self
+            .index_selection(&client, &target, &args.paths, &args.hunks, &args.lines)
+            .await?;
+        if !self.json {
+            confirm_discard(&paths, hunks.len(), args.yes)?;
+        } else if !args.yes {
+            return Err(CliError::Usage(
+                "nothing was discarded: pass --yes to discard with --json".to_owned(),
+            ));
+        }
+        let discarded = client
+            .worktree_discard(WorktreeDiscard {
+                checkout: target.path.clone(),
+                paths,
+                hunks,
+                staged: args.staged,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&discarded, || {
+            format!(
+                "discarded {} file(s) and {} hunk(s) in {}\nundo: hutan checkpoint restore {}",
+                discarded.paths,
+                discarded.hunks,
+                target.path.display(),
+                discarded.checkpoint.id
             )
         })
     }
@@ -186,6 +354,9 @@ impl Ctx {
     /// did stays).
     pub(super) async fn finish(&self, args: FinishArgs) -> Result<(), CliError> {
         let client = self.connect().await?;
+        if args.staged && !client.supports_worktree_stage() {
+            return Err(stage_unsupported());
+        }
         let scope = self.wt_scope(&client, args.workspace).await?.map(|s| s.0);
         let list = client
             .worktree_list(scope)
@@ -208,7 +379,7 @@ impl Ctx {
                 push: args.no_push.then_some(false),
                 into: args.into,
                 strategy,
-                staged_only: false,
+                staged_only: args.staged,
             })
             .await
             .map_err(|e| self.fail(e))?;
@@ -902,6 +1073,84 @@ fn confirm_setup(setup: &WorktreeSetup, path: &Path, yes: bool) -> Result<(), Cl
     }
 }
 
+fn stage_unsupported() -> CliError {
+    CliError::Failed(
+        "this hutand cannot stage (it is older than protocol 0.53); restart it to update"
+            .to_owned(),
+    )
+}
+
+/// `path` as the daemon names files: relative to the checkout's top level. An absolute path
+/// must lie inside it.
+fn inside_checkout(checkout: &Path, path: &str) -> Result<String, CliError> {
+    let given = Path::new(path);
+    let relative = if given.is_absolute() {
+        given.strip_prefix(checkout).map_err(|_| {
+            CliError::Usage(format!(
+                "{path} is not inside the checkout {}",
+                checkout.display()
+            ))
+        })?
+    } else {
+        given
+    };
+    relative
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| CliError::Usage(format!("{path} is not valid UTF-8")))
+}
+
+fn confirm_discard(paths: &[String], hunks: usize, yes: bool) -> Result<(), CliError> {
+    use std::io::{BufRead as _, IsTerminal as _, Write as _};
+    if yes {
+        return Ok(());
+    }
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        return Err(CliError::Usage(
+            "nothing was discarded: stdin is not a terminal; pass --yes to discard".to_owned(),
+        ));
+    }
+    let mut stderr = std::io::stderr().lock();
+    write!(
+        stderr,
+        "Discard the changes of {} file(s) and {hunks} hunk(s)? A checkpoint is taken first; \
+         `hutan checkpoint restore` puts them back. [y/N] ",
+        paths.len()
+    )?;
+    stderr.flush()?;
+    let mut answer = String::new();
+    stdin.lock().read_line(&mut answer)?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        Err(CliError::Failed("nothing was discarded".to_owned()))
+    }
+}
+
+/// `hutan wt diff --hunks`: per file, one line per hunk with its side, id and header.
+fn hunks_text(listed: &WorktreeHunks) -> String {
+    if listed.files.is_empty() {
+        return "no hunks: nothing is changed in the working tree or the index".to_owned();
+    }
+    let mut lines = Vec::new();
+    for file in &listed.files {
+        lines.push(if file.binary {
+            format!("{} (binary: stage, unstage or discard it whole)", file.path)
+        } else {
+            file.path.clone()
+        });
+        for (side, hunks) in [("unstaged", &file.unstaged), ("staged  ", &file.staged)] {
+            for hunk in hunks {
+                lines.push(format!("  {side} {}  {}", hunk.id, hunk.header));
+            }
+        }
+    }
+    if listed.truncated {
+        lines.push("(more than the daemon lists: 5000 files or a diff over 20 MiB)".to_owned());
+    }
+    lines.join("\n")
+}
 fn confirm_prune(count: usize, yes: bool) -> Result<(), CliError> {
     use std::io::{BufRead as _, IsTerminal as _, Write as _};
     if yes {

@@ -31,6 +31,7 @@ mod render;
 mod resources;
 mod sessions;
 mod ssh_host;
+mod staging;
 mod tasks;
 mod terminal_search;
 mod theme;

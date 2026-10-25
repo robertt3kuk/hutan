@@ -473,6 +473,15 @@ pub enum WtCommand {
     /// Commit everything in a worktree (tracked changes and untracked files that are not
     /// ignored), so that a merge takes it: `hutan wt commit BRANCH -m MSG`
     Commit(WtCommitArgs),
+    /// Stage files or hunks: copy them from the working tree into git's index (the working tree
+    /// is never touched): `hutan wt stage BRANCH src/a.rs`, `--hunk ID`, `--all`
+    Stage(WtIndexArgs),
+    /// Unstage files or hunks: take them out of git's index again; the working tree is never
+    /// touched
+    Unstage(WtIndexArgs),
+    /// Discard working-tree changes of files or hunks, after asking. A checkpoint is taken first:
+    /// `hutan checkpoint restore ID` (printed) puts everything back
+    Discard(WtDiscardArgs),
     /// Run a worktree's setup again (`.hutan/worktree.toml`: copy, setup); commands that come
     /// from the repository ask for your confirmation the first time and whenever they change
     Setup(WtSetupArgs),
@@ -572,6 +581,10 @@ pub struct WtDiffArgs {
     /// Print the changed files with their line counts instead of the patch
     #[arg(long)]
     pub stat: bool,
+    /// Print the hunks that can be staged, unstaged or discarded, with their ids, instead of
+    /// the patch
+    #[arg(long, conflicts_with = "stat")]
+    pub hunks: bool,
 }
 
 #[derive(Debug, Args)]
@@ -604,6 +617,53 @@ pub struct WtCommitArgs {
     /// The commit message
     #[arg(short = 'm', long, value_name = "MSG")]
     pub message: String,
+    /// Commit only what is staged (see `hutan wt stage`), nothing else; works in the main
+    /// checkout too
+    #[arg(long)]
+    pub staged: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct WtIndexArgs {
+    /// The checkout: a worktree's path or branch, or a main checkout's path (see `hutan wt ls`)
+    pub target: String,
+    /// Files (or folders), relative to the checkout's top level
+    pub paths: Vec<String>,
+    #[arg(long = "ws", value_name = "ID|NAME", help = WT_WS_HELP)]
+    pub workspace: Option<String>,
+    /// A hunk, by the id `hutan wt diff --hunks` prints (repeatable)
+    #[arg(long = "hunk", value_name = "ID")]
+    pub hunks: Vec<String>,
+    /// With exactly one --hunk: only these changed lines of it (numbers into its body, from 0,
+    /// comma separated; `hutan wt diff --hunks --json` has the bodies)
+    #[arg(long, value_name = "N,N", value_delimiter = ',', requires = "hunks")]
+    pub lines: Vec<u32>,
+    /// Every file of the checkout (not with files or hunks)
+    #[arg(long, conflicts_with_all = ["paths", "hunks"])]
+    pub all: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct WtDiscardArgs {
+    /// The checkout: a worktree's path or branch, or a main checkout's path (see `hutan wt ls`)
+    pub target: String,
+    /// Files (or folders), relative to the checkout's top level: their working tree is made
+    /// equal to the index (an untracked file is deleted)
+    pub paths: Vec<String>,
+    #[arg(long = "ws", value_name = "ID|NAME", help = WT_WS_HELP)]
+    pub workspace: Option<String>,
+    /// An unstaged hunk, by the id `hutan wt diff --hunks` prints (repeatable)
+    #[arg(long = "hunk", value_name = "ID")]
+    pub hunks: Vec<String>,
+    /// With exactly one --hunk: only these changed lines of it (numbers into its body, from 0)
+    #[arg(long, value_name = "N,N", value_delimiter = ',', requires = "hunks")]
+    pub lines: Vec<u32>,
+    /// Also discard what is staged for the files (back to HEAD)
+    #[arg(long)]
+    pub staged: bool,
+    /// Discard without asking (required when stdin is not a terminal)
+    #[arg(long, short = 'y')]
+    pub yes: bool,
 }
 
 #[derive(Debug, Args)]
@@ -631,6 +691,9 @@ pub struct FinishArgs {
     /// A worktree: rebase the branch onto the target, then fast-forward the target
     #[arg(long)]
     pub rebase: bool,
+    /// Commit only what is staged (see `hutan wt stage`); the rest stays uncommitted
+    #[arg(long)]
+    pub staged: bool,
 }
 
 #[derive(Debug, Subcommand)]
