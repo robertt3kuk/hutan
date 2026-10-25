@@ -107,6 +107,7 @@ enum Group {
     Tasks,
     Gateway,
     Finish,
+    Worktrees,
     Checkpoints,
 }
 
@@ -453,6 +454,24 @@ fn build_specs() -> Vec<Spec> {
         live("finish.push", Kind::Bool, Group::Finish, |c| {
             json!(c.finish.push)
         }),
+        live(
+            "worktrees.cleanup",
+            Kind::Enum(&["never", "merged", "idle"]),
+            Group::Worktrees,
+            |c| json!(c.worktrees.cleanup.as_str()),
+        ),
+        live(
+            "worktrees.cleanup_idle_days",
+            POSITIVE,
+            Group::Worktrees,
+            |c| int_value(c.worktrees.cleanup_idle_days),
+        ),
+        live(
+            "worktrees.wait_for_setup",
+            Kind::Bool,
+            Group::Worktrees,
+            |c| json!(c.worktrees.wait_for_setup),
+        ),
         live(
             "checkpoints.mode",
             Kind::Enum(&CHECKPOINT_MODES),
@@ -1351,6 +1370,7 @@ impl SettingsService {
         running.tasks.max_parallel = self.tasks.max_parallel();
         running.gateway.max_context_chars = self.registry.chats().max_context_chars();
         running.finish.push = self.worktrees.finish_push();
+        running.worktrees = self.worktrees.settings();
         running.checkpoints = self.registry.chats().checkpoints().settings();
         running
     }
@@ -1482,6 +1502,7 @@ impl SettingsService {
                 .chats()
                 .set_max_context_chars(fresh.gateway.max_context_chars),
             Group::Finish => self.worktrees.set_finish_push(fresh.finish.push),
+            Group::Worktrees => self.worktrees.set_settings(fresh.worktrees.clone()),
             Group::Checkpoints => self
                 .registry
                 .chats()
@@ -1583,6 +1604,7 @@ mod tests {
             control,
             finish,
             checkpoints,
+            worktrees,
             // Language servers are read when the daemon starts and take tables of their own
             // (`[lsp.servers.<id>]`, `[lsp.projects.<p>]`); `daemon.toml` is where they are set
             // (`docs/lsp.md`).
@@ -1667,6 +1689,13 @@ mod tests {
             approval_timeout_secs: _,
         } = control;
         let config::FinishSettings { push: _ } = finish;
+        let config::WorktreeSettings {
+            cleanup: _,
+            cleanup_idle_days: _,
+            wait_for_setup: _,
+            // `[worktrees.projects.<p>]` is a table of its own, like the checkpoint overrides.
+            projects: _,
+        } = worktrees;
         let config::CheckpointSettings {
             mode: _,
             max_file_bytes: _,
@@ -1730,6 +1759,9 @@ mod tests {
             "control.mcp",
             "control.approval_timeout_secs",
             "finish.push",
+            "worktrees.cleanup",
+            "worktrees.cleanup_idle_days",
+            "worktrees.wait_for_setup",
             "checkpoints.mode",
             "checkpoints.max_file_bytes",
             "checkpoints.snapshot_budget_bytes",

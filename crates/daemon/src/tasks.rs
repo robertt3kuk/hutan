@@ -974,6 +974,7 @@ impl TaskService {
                 branch,
                 base: task.placement.base.clone(),
                 path: None,
+                no_setup: false,
             })
             .await?;
         Ok(created.worktree.path)

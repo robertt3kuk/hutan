@@ -90,6 +90,16 @@
 //! [finish]                       # the user's Finish in Changes / `hutan finish` (protocol 0.35, ADR 0020)
 //! push = true                    # push to the upstream after committing (and merging); false: keep it local
 //!
+//! [worktrees]                    # worktree setup and retention (protocol 0.48, docs/orchestration.md § Setup and cleanup)
+//! cleanup = "never"              # "never", "merged" (branch merged into the default branch) or "idle" (untouched for cleanup_idle_days)
+//! cleanup_idle_days = 14         # with "idle": days without a commit or a change of git state
+//! wait_for_setup = true          # an agent chat started in a worktree that is still setting up waits for it
+//!
+//! [worktrees.projects.hutan]     # per project (name or id): replaces what `.hutan/worktree.toml` says for that key
+//! copy = [".env", ".env.local"]  # gitignored files copied from the main checkout (globs; at most 200 files, 5 MiB each)
+//! setup = ["pnpm install"]       # run in the new worktree, in a visible terminal session named "Setup"
+//! teardown = ["docker compose down"]   # run before the worktree is removed
+//!
 //! [checkpoints]                  # a snapshot of an agent chat's checkout per turn (ADR 0019, docs/agents.md § Checkpoints)
 //! mode = "on"                    # "off": no snapshot from the next turn on
 //! max_file_bytes = 10485760      # a larger file is left out (and listed)
@@ -143,6 +153,7 @@ use std::path::{Path, PathBuf};
 
 use hutan_protocol::assistant::AttachmentKind;
 use hutan_protocol::notify::IntentKind;
+use hutan_protocol::worktree::WorktreeCleanup;
 use hutan_terminal::EnvInherit;
 use serde::Deserialize;
 use serde::de::Error as _;
@@ -185,6 +196,7 @@ pub struct DaemonSettings {
     /// `[[hooks]]`: user hooks (protocol 0.48, `docs/integrations.md` § User hooks); read at
     /// start.
     pub hooks: Vec<HookSettings>,
+    pub worktrees: WorktreeSettings,
 }
 
 /// `[projects]` of `daemon.toml`: automatic projects (protocol 0.19).
@@ -605,6 +617,85 @@ pub struct FinishSettings {
 impl Default for FinishSettings {
     fn default() -> Self {
         Self { push: true }
+    }
+}
+
+/// `worktrees.cleanup_idle_days` when the setting is absent.
+pub const DEFAULT_WORKTREE_IDLE_DAYS: u64 = 14;
+
+/// `[worktrees]` of `daemon.toml`: what happens around a worktree's life (protocol 0.48,
+/// `docs/orchestration.md` § Setup and cleanup). What to copy and run is the repository's
+/// `.hutan/worktree.toml`; `projects` is the user's own say for one project.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorktreeSettings {
+    /// Which worktrees `worktree.cleanup` lists. Never removed without the user's say-so.
+    pub cleanup: WorktreeCleanup,
+    /// With `cleanup = "idle"`: days without a commit or a change of the worktree's git state.
+    pub cleanup_idle_days: u64,
+    /// An agent chat started in a worktree whose setup runs waits for the setup to end.
+    pub wait_for_setup: bool,
+    /// `[worktrees.projects.<name or id>]`.
+    pub projects: BTreeMap<String, WorktreeProject>,
+}
+
+impl Default for WorktreeSettings {
+    fn default() -> Self {
+        Self {
+            cleanup: WorktreeCleanup::Never,
+            cleanup_idle_days: DEFAULT_WORKTREE_IDLE_DAYS,
+            wait_for_setup: true,
+            projects: BTreeMap::new(),
+        }
+    }
+}
+
+/// `[worktrees.projects.<name or id>]`: a key set here replaces the same key of the repository's
+/// `.hutan/worktree.toml`. These commands are the user's own: they run without the trust
+/// question the repository's commands need.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorktreeProject {
+    pub copy: Option<Vec<String>>,
+    pub setup: Option<Vec<String>>,
+    pub teardown: Option<Vec<String>>,
+}
+
+impl WorktreeSettings {
+    /// The override of the project with `id` and `name` (either may be empty): the table of the
+    /// id, then the table of the name applied over it.
+    pub fn for_project(&self, id: &str, name: &str) -> WorktreeProject {
+        let mut project = WorktreeProject::default();
+        for key in [id, name] {
+            if key.is_empty() {
+                continue;
+            }
+            if let Some(over) = self.projects.get(key) {
+                project.copy = over.copy.clone().or(project.copy);
+                project.setup = over.setup.clone().or(project.setup);
+                project.teardown = over.teardown.clone().or(project.teardown);
+            }
+        }
+        project
+    }
+
+    fn check(&self) -> Result<(), String> {
+        if self.cleanup_idle_days == 0 {
+            return Err("worktrees.cleanup_idle_days must be at least 1".to_owned());
+        }
+        for (project, over) in &self.projects {
+            for (key, list) in [
+                ("copy", &over.copy),
+                ("setup", &over.setup),
+                ("teardown", &over.teardown),
+            ] {
+                if let Some(list) = list {
+                    crate::worktrees::setup_file::check_list(key, list)
+                        .map_err(|e| format!("[worktrees.projects.{project}]: {e}"))?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1090,6 +1181,7 @@ struct File {
     lsp: LspSettings,
     #[serde(default)]
     hooks: Vec<HookSettings>,
+    worktrees: WorktreeSettings,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1192,6 +1284,7 @@ impl DaemonSettings {
         for (index, hook) in file.hooks.iter().enumerate() {
             hook.check(index).map_err(toml::de::Error::custom)?;
         }
+        file.worktrees.check().map_err(toml::de::Error::custom)?;
         Ok(Self {
             restore_sessions: file.daemon.restore_sessions,
             home_folder,
@@ -1210,6 +1303,7 @@ impl DaemonSettings {
             checkpoints: file.checkpoints,
             lsp: file.lsp,
             hooks: file.hooks,
+            worktrees: file.worktrees,
         })
     }
 }
@@ -1629,6 +1723,37 @@ mod tests {
         assert_eq!(silent.sound, NotifySound::None);
         assert!(DaemonSettings::parse("[notify]\nsound = \"loud\"\n", None).is_err());
         assert!(DaemonSettings::parse("[notify]\nsound = false\n", None).is_err());
+    }
+
+    #[test]
+    fn worktrees_never_clean_up_by_default_and_a_project_overrides_what_it_names() {
+        let default = DaemonSettings::parse("", None).unwrap().worktrees;
+        assert_eq!(default.cleanup, WorktreeCleanup::Never);
+        assert_eq!(default.cleanup_idle_days, 14);
+        assert!(default.wait_for_setup);
+        let text = "[worktrees]\ncleanup = \"idle\"\ncleanup_idle_days = 3\nwait_for_setup = false\n\n\
+                    [worktrees.projects.web]\nsetup = [\"pnpm i\"]\n\n\
+                    [worktrees.projects.01WS]\ncopy = [\".env\"]\nsetup = [\"npm ci\"]\n";
+        let set = DaemonSettings::parse(text, None).unwrap().worktrees;
+        assert_eq!(set.cleanup, WorktreeCleanup::Idle);
+        assert_eq!(set.cleanup_idle_days, 3);
+        assert!(!set.wait_for_setup);
+        // The name's table is applied over the id's.
+        let project = set.for_project("01WS", "web");
+        assert_eq!(project.copy, Some(vec![".env".to_owned()]));
+        assert_eq!(project.setup, Some(vec!["pnpm i".to_owned()]));
+        assert_eq!(project.teardown, None);
+        assert_eq!(set.for_project("other", "x"), WorktreeProject::default());
+        for bad in [
+            "[worktrees]\ncleanup = \"sometimes\"\n",
+            "[worktrees]\ncleanup_idle_days = 0\n",
+            "[worktrees]\nmystery = 1\n",
+            "[worktrees.projects.p]\nsetup = [\"\"]\n",
+            "[worktrees.projects.p]\ncopy = [\"../x\"]\n",
+            "[worktrees.projects.p]\nsetup = \"npm ci\"\n",
+        ] {
+            assert!(DaemonSettings::parse(bad, None).is_err(), "{bad}");
+        }
     }
 
     #[test]

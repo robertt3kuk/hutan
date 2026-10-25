@@ -30,6 +30,7 @@ hutan-lsp-client.workspace = true
 hutan-protocol.workspace = true
 hutan-storage.workspace = true
 hutan-terminal.workspace = true
+globset.workspace = true
 ignore.workspace = true
 libc.workspace = true
 notify.workspace = true

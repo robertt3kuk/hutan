@@ -49,6 +49,8 @@ futures = "0.3.34"
 ignore = "0.4.33"
 # Clipboard images that are not PNG (TIFF, JPEG, …) become PNG files for terminal paste (hutan-terminal-view); the formats GPUI's clipboard reads, no others.
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
+# Glob patterns of `.hutan/worktree.toml` `copy` (already linked through `ignore`).
+globset = "0.4.20"
 libc = "0.2.190"
 # LSP types for hutan-lsp-client (E-11a): the maintained fork of `lsp-types 0.97` (same API but
 # `ReferencesOptions` → `ReferenceOptions`, `NotebookCellKind` as a constant struct, no `proposed`

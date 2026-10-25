@@ -31,7 +31,7 @@ use tracing::{error, warn};
 
 use crate::bus::EventBus;
 use crate::checkpoints::turns::TurnCheckpoints;
-use crate::config::FinishSettings;
+use crate::config::{FinishSettings, WorktreeSettings};
 use crate::harness::Harnesses;
 use crate::placement;
 use crate::projects;
@@ -41,6 +41,7 @@ mod finish;
 mod history;
 mod init;
 mod review;
+pub mod setup_file;
 
 /// Reads (list, status, rev-parse) finish well within this, even in a large repository.
 const READ_TIMEOUT: Duration = Duration::from_secs(20);
@@ -78,6 +79,9 @@ pub struct WorktreeService {
     user_home: Option<PathBuf>,
     /// `[checkpoints]` as it is now: the file limit of `project.git_init`.
     checkpoints: Arc<TurnCheckpoints>,
+    /// `[worktrees]` as it is now: cleanup policy, waiting for setup, the user's per-project
+    /// setup.
+    settings: parking_lot::RwLock<WorktreeSettings>,
 }
 
 impl WorktreeService {
@@ -89,6 +93,7 @@ impl WorktreeService {
         finish: FinishSettings,
         user_home: Option<PathBuf>,
         checkpoints: Arc<TurnCheckpoints>,
+        settings: WorktreeSettings,
     ) -> Arc<Self> {
         Arc::new(Self {
             registry,
@@ -99,7 +104,18 @@ impl WorktreeService {
             finish_push: AtomicBool::new(finish.push),
             user_home,
             checkpoints,
+            settings: parking_lot::RwLock::new(settings),
         })
+    }
+
+    /// `[worktrees]` as the daemon uses it now.
+    pub fn settings(&self) -> WorktreeSettings {
+        self.settings.read().clone()
+    }
+
+    /// Takes a new `[worktrees]` (a live setting).
+    pub fn set_settings(&self, settings: WorktreeSettings) {
+        *self.settings.write() = settings;
     }
 
     /// `[finish] push` as the daemon uses it now.
@@ -883,6 +899,7 @@ async fn describe(
             locked: entry.locked,
             prunable: entry.prunable,
             path: entry.path,
+            setup: None,
         })
         .collect()
 }

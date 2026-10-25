@@ -2643,6 +2643,7 @@ dependencies = [
  "bytes",
  "dispatch2",
  "futures",
+ "globset",
  "hutan-agents",
  "hutan-buffer",
  "hutan-client",
