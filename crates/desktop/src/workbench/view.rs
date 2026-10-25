@@ -416,6 +416,11 @@ pub enum Region {
     ChangesFinish(usize),
     /// File `file` of group `group` of the Changes tab (top to bottom, folded groups have none).
     ChangesPanelFile(usize, usize),
+    /// The setup state line of the checkout row at this index (*Setting up…*, *Setup failed*,
+    /// *Setup needs your confirmation*).
+    ChangesSetup(usize),
+    /// The action of that line (*Show output*, *Review…*, *Run again*).
+    ChangesSetupAction(usize),
     /// A control of the Changes view, by name (`toggle`, `refresh`, `merge`, `merge-confirm`,
     /// `merge-cancel`, `strategy-merge`, `strategy-squash`, `strategy-rebase`, `message`,
     /// `remove`, `keep`; delivery: `delivery`, `accept`, `request-changes`, `request-note`,

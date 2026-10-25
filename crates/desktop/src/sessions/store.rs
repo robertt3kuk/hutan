@@ -3170,6 +3170,79 @@ impl SessionsStore {
         self.call(Request::WorktreeRemove(request), |removed| removed, cx)
     }
 
+    /// `worktree.setup`: runs a worktree's setup again.
+    pub fn worktree_setup(
+        &self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WorktreeInfo, String>> {
+        self.call(
+            Request::WorktreeSetup(hutan_protocol::worktree::WorktreeSetupRequest { path }),
+            |result: hutan_protocol::worktree::WorktreeSetupResult| result.worktree,
+            cx,
+        )
+    }
+
+    /// `worktree.setup_trust` (user-only): confirms the repository's setup commands (by the hash
+    /// the user was shown) and runs the setup.
+    pub fn worktree_setup_trust(
+        &self,
+        path: PathBuf,
+        hash: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WorktreeInfo, String>> {
+        self.call(
+            Request::WorktreeSetupTrust(hutan_protocol::worktree::WorktreeSetupTrust {
+                path,
+                hash,
+            }),
+            |result: hutan_protocol::worktree::WorktreeSetupResult| result.worktree,
+            cx,
+        )
+    }
+
+    /// `worktree.cleanup`: the worktrees the cleanup policy would remove now.
+    pub fn worktree_cleanup(
+        &self,
+        workspace: Option<WorkspaceId>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::worktree::WorktreeCleanupList, String>> {
+        self.call(
+            Request::WorktreeCleanup(hutan_protocol::worktree::WorktreeCleanupRequest {
+                workspace_id: workspace,
+                mode: None,
+                idle_days: None,
+            }),
+            |list| list,
+            cx,
+        )
+    }
+
+    /// `worktree.prune` (user-only): removes exactly `paths` of the worktrees the cleanup policy
+    /// lists, teardown first.
+    pub fn worktree_prune(
+        &self,
+        workspace: Option<WorkspaceId>,
+        paths: Vec<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<hutan_protocol::worktree::WorktreePruned, String>> {
+        self.call(
+            Request::WorktreePrune(hutan_protocol::worktree::WorktreePrune {
+                workspace_id: workspace,
+                mode: None,
+                idle_days: None,
+                paths,
+            }),
+            |pruned| pruned,
+            cx,
+        )
+    }
+
+    /// The checkouts of the repositories as `worktree.list` last said (setup state included).
+    pub fn checkouts_all(&self) -> &[WorktreeInfo] {
+        &self.checkouts
+    }
+
     // ---- messages to agents ----------------------------------------------------------------
 
     /// `chat.send` with attachments: one user message to an agent chat (the turn's events

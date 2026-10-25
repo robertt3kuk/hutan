@@ -101,6 +101,7 @@ impl Workbench {
                                     branch: branch.clone(),
                                     base: None,
                                     path: None,
+                                    no_setup: false,
                                 },
                                 cx,
                             )

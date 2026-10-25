@@ -139,6 +139,8 @@ actions!(
         OpenMawasMemory,
         NewTerminalInWorktree,
         RemoveWorktree,
+        /// List the worktrees the cleanup policy offers and remove the ones the user confirms.
+        CleanUpWorktrees,
         NewTask,
         ShowTasksPanel,
         ReviewChanges,
@@ -435,6 +437,13 @@ data_actions! {
     /// Open the Changes view of the checkout at this path with its Finish form (a group header
     /// of the Changes panel).
     FinishChangesAt(String);
+    /// Show the confirmation sheet for the setup commands the repository asks to run in the
+    /// worktree at this path.
+    ReviewWorktreeSetup(String);
+    /// Show the *Setup* terminal session of the worktree at this path.
+    ShowWorktreeSetupOutput(String);
+    /// Run the setup of the worktree at this path again.
+    RerunWorktreeSetup(String);
     /// Show the menu of the Assistant page's scope dropdown (Global / the workspace) at this
     /// position.
     ShowAssistantScopeMenu(gpui::Point<gpui::Pixels>);
@@ -869,6 +878,7 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
     out.extend([
         command("Worktree: New Terminal in Worktree…", NewTerminalInWorktree),
         command("Worktree: Remove…", RemoveWorktree),
+        command("Worktree: Clean Up…", CleanUpWorktrees),
         command("Worktree: Review Changes…", ReviewChanges),
     ]);
     out.extend([

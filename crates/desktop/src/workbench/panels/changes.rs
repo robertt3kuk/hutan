@@ -21,12 +21,13 @@ use hutan_protocol::messages::WorkspaceKind;
 use hutan_protocol::worktree::{DiffFile, WorktreeDiffRequest, WorktreeInfo};
 
 use crate::icons::Icon;
-use crate::sessions::CheckoutActivity;
+use crate::sessions::{CheckoutActivity, StoreChanged};
 use crate::settings::{ChangesScope, ChangesSettings};
 use crate::theme::{DensityExt as _, Theme, Tokens};
 use crate::workbench::Region;
 use crate::workbench::actions::{
-    ChangedFileAt, FinishChangesAt, ReviewChangesAt, ReviewFileAt, TrackHomeChanges,
+    ChangedFileAt, FinishChangesAt, RerunWorktreeSetup, ReviewChangesAt, ReviewFileAt,
+    ReviewWorktreeSetup, ShowWorktreeSetupOutput, TrackHomeChanges,
 };
 use crate::workbench::chat::{Look, counts_of};
 use crate::workbench::registry::PanelEnv;
@@ -34,6 +35,7 @@ use crate::workbench::render::probe;
 use crate::workbench::style::UiStyle;
 use crate::workbench::ui::{self, Mascot};
 use crate::workbench::workspaces::tilde;
+use crate::workbench::worktree_setup::{SetupAction, SetupTone, setup_line};
 
 /// A drawn panel lists the checkouts again after this long.
 pub const REFRESH_AFTER: Duration = Duration::from_secs(15);
@@ -157,6 +159,12 @@ impl ChangesPanel {
             // Something may have changed in a checkout: an agent's turn or a command ended.
             cx.subscribe(&sessions, |this, _, _: &CheckoutActivity, cx| {
                 this.refresh_soon(cx);
+            }),
+            // `worktree.changed`: a worktree was made or removed, or its setup moved on.
+            cx.subscribe(&sessions, |this, _, change: &StoreChanged, cx| {
+                if change.intersects(StoreChanged::CHECKOUTS) {
+                    this.refresh_soon(cx);
+                }
             }),
         ];
         let default_scope = env.settings.get::<ChangesSettings>().default_scope;
@@ -654,7 +662,48 @@ impl ChangesPanel {
                             .text_size(px(tokens.secondary_font_size))
                             .text_color(theme.muted)
                             .child(SharedString::from(detail)),
-                    ),
+                    )
+                    .children(setup_line(worktree).map(|line| {
+                        let tone = match line.tone {
+                            SetupTone::Busy => theme.accent,
+                            SetupTone::Warn => theme.warning,
+                        };
+                        let action_path = path.display().to_string();
+                        let action = line.action.map(|(label, action)| {
+                            ui::Button::new(
+                                SharedString::from(format!("changes-setup-action-{index}")),
+                                label,
+                                &theme,
+                                &tokens,
+                            )
+                            .link()
+                            .compact()
+                            .on_click(move |_, window, cx| {
+                                let path = action_path.clone();
+                                match action {
+                                    SetupAction::ShowOutput => window.dispatch_action(
+                                        Box::new(ShowWorktreeSetupOutput(path)),
+                                        cx,
+                                    ),
+                                    SetupAction::Review => window
+                                        .dispatch_action(Box::new(ReviewWorktreeSetup(path)), cx),
+                                    SetupAction::RunAgain => window
+                                        .dispatch_action(Box::new(RerunWorktreeSetup(path)), cx),
+                                }
+                            })
+                            .child(probe(&self.env.regions, Region::ChangesSetupAction(index)))
+                        });
+                        div()
+                            .id(SharedString::from(format!("changes-setup-{index}")))
+                            .flex()
+                            .items_center()
+                            .gap(px(tokens.spacing * 2.0))
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(tone)
+                            .child(SharedString::from(line.text))
+                            .children(action)
+                            .child(probe(&self.env.regions, Region::ChangesSetup(index)))
+                    })),
             )
             .when(can_finish, |s| {
                 s.child(

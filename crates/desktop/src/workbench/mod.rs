@@ -93,6 +93,7 @@ mod view;
 mod vim_keys;
 pub mod vim_ui;
 mod workspaces;
+pub mod worktree_setup;
 mod worktrees;
 
 pub use agents::{AgentPicker, CODEX, Models};

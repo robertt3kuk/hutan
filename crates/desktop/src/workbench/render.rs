@@ -722,6 +722,26 @@ impl Workbench {
             }),
         )
         .on_action(
+            cx.listener(|this, _: &actions::CleanUpWorktrees, window, cx| {
+                this.clean_up_worktrees(window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::ReviewWorktreeSetup, window, cx| {
+                this.review_worktree_setup(std::path::PathBuf::from(&a.0), window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::ShowWorktreeSetupOutput, window, cx| {
+                this.show_worktree_setup_output(std::path::PathBuf::from(&a.0), window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, a: &actions::RerunWorktreeSetup, window, cx| {
+                this.rerun_worktree_setup(std::path::PathBuf::from(&a.0), window, cx);
+            }),
+        )
+        .on_action(
             cx.listener(|this, a: &actions::ReviewChangesAt, window, cx| {
                 this.open_changes(std::path::PathBuf::from(&a.0), window, cx);
             }),

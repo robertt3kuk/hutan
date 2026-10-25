@@ -75,16 +75,27 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
                 "notify.expire_secs",
             ],
         }],
-        "sessions_restore" => &[Section {
-            title: "",
-            help: "",
-            keys: &[
-                "daemon.restore_sessions",
-                "workspaces.home_folder",
-                "terminal.env_inherit",
-                "projects.auto",
-            ],
-        }],
+        "sessions_restore" => &[
+            Section {
+                title: "",
+                help: "",
+                keys: &[
+                    "daemon.restore_sessions",
+                    "workspaces.home_folder",
+                    "terminal.env_inherit",
+                    "projects.auto",
+                ],
+            },
+            Section {
+                title: words::SEC_WORKTREES,
+                help: "",
+                keys: &[
+                    "worktrees.cleanup",
+                    "worktrees.cleanup_idle_days",
+                    "worktrees.wait_for_setup",
+                ],
+            },
+        ],
         "control" => &[
             Section {
                 title: "",

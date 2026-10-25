@@ -944,6 +944,30 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "Projects from folders",
         "Place each session in the project of its folder, creating the project the first time. Off, sessions go to Home unless you choose a workspace.",
     ),
+    // ---- worktrees (setup and cleanup, WORKTREE-SETUP) ----
+    choice(
+        "daemon",
+        "worktrees.cleanup",
+        "Clean up worktrees",
+        "Which worktrees Hutan made are offered for removal in Worktree: Clean Up… and by hutan wt prune: “Never”, those whose branch was merged into the default branch, or those untouched for the number of days below. Only worktrees with no live session and no uncommitted changes are offered, each one after its teardown, and nothing is removed without your say-so.",
+        &[
+            ("never", "Never"),
+            ("merged", "After merge"),
+            ("idle", "After days idle"),
+        ],
+    ),
+    field(
+        "daemon",
+        "worktrees.cleanup_idle_days",
+        "Days idle before cleanup",
+        "With “After days idle”: a worktree is offered once its newest commit and its last git activity are this many days old.",
+    ),
+    field(
+        "daemon",
+        "worktrees.wait_for_setup",
+        "Agents wait for setup",
+        "An agent started in a new worktree waits until the worktree's setup (the commands of .hutan/worktree.toml, shown in a terminal named Setup) has finished. Off, the agent starts at once.",
+    ),
     // ---- assistant ----
     choice(
         "daemon",
@@ -1641,6 +1665,7 @@ pub mod words {
         SEC_MCP = "MCP servers";
         SEC_LIMITS = "Limits";
         SEC_FINISH = "Finish";
+        SEC_WORKTREES = "Worktrees";
         SEC_CHECKPOINTS = "Checkpoints";
         SEC_CHECKPOINTS_HELP = "What an agent chat's turns record, so their files can be rewound (Rewind… in a turn's footer).";
         SEC_CHECKPOINTS_KEPT = "Checkpoints kept";

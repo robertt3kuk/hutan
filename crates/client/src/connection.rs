@@ -655,6 +655,14 @@ impl Connection {
             .is_some_and(|client| client.supports_worktrees())
     }
 
+    /// True while connected to a daemon that advertised capability `worktree.setup`
+    /// ([`Client::supports_worktree_setup`]); false when disconnected.
+    pub fn supports_worktree_setup(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_worktree_setup())
+    }
+
     /// True while connected to a daemon that advertised capability `control`
     /// ([`Client::supports_control`]); false when disconnected.
     pub fn supports_control(&self) -> bool {

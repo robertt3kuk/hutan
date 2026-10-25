@@ -88,6 +88,7 @@ impl Fx {
             branch: "feature/x".into(),
             base: None,
             path: None,
+            no_setup: false,
         }));
         let wt = created.worktree.path;
         fs::write(wt.join("a.txt"), feature).unwrap();

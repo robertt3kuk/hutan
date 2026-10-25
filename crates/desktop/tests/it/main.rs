@@ -84,4 +84,5 @@ mod vim_gpui;
 mod vim_keys_gpui;
 mod workbench_gpui;
 mod workspaces_gpui;
+mod worktree_setup_gpui;
 mod worktrees_gpui;

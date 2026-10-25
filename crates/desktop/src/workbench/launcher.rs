@@ -2047,6 +2047,7 @@ impl Workbench {
                     branch: branch.trim().to_owned(),
                     base: (!base.is_empty()).then(|| base.to_owned()),
                     path: None,
+                    no_setup: false,
                 };
                 Some(
                     self.sessions
