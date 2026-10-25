@@ -661,8 +661,28 @@ async fn chat_new_takes_a_safety_preset_and_prints_what_the_harness_reported() {
     assert_eq!(safety["preset"], "full");
     assert_eq!(safety["enforced_by"], "none");
 
-    // A harness that cannot honour a preset refuses it with the reason; nothing starts.
-    let refused =
+    // OMP's Contained is Hutan's Seatbelt: the session says who enforces it and the network.
+    let contained =
+        e.t.hutan(&[
+            "chat",
+            "new",
+            "--agent",
+            "omp",
+            "--cwd",
+            &cwd,
+            "--safety",
+            "contained",
+            "--json",
+        ])
+        .await
+        .ok()
+        .json();
+    let safety = &contained["session"]["chat"]["safety"];
+    assert_eq!(safety["preset"], "contained");
+    assert_eq!(safety["enforced_by"], "hutan");
+    assert_eq!(safety["network"], true);
+    assert_eq!(contained["session"]["containment"]["applied"], true);
+    let text =
         e.t.hutan(&[
             "chat",
             "new",
@@ -673,12 +693,12 @@ async fn chat_new_takes_a_safety_preset_and_prints_what_the_harness_reported() {
             "--safety",
             "contained",
         ])
-        .await;
-    assert_ne!(refused.code, 0);
+        .await
+        .ok()
+        .stdout;
     assert!(
-        refused.stderr.contains("no OS sandbox") && refused.stderr.contains("SANDBOX-2"),
-        "{}",
-        refused.stderr
+        text.contains("safety contained: enforced by hutan, network on"),
+        "{text}"
     );
 
     // clap: not a preset, and not together with the settings it replaces.
@@ -719,13 +739,10 @@ async fn task_add_takes_a_safety_preset_for_a_chat_and_the_daemon_refuses_what_t
             .await
         }
     };
-    let refused = add("contained", "omp").await;
-    assert_ne!(refused.code, 0);
-    assert!(
-        refused.stderr.contains("no OS sandbox"),
-        "{}",
-        refused.stderr
-    );
+    // OMP's Contained is Hutan's Seatbelt, which this daemon offers: the task is made, and it
+    // keeps the preset the chat will start with.
+    let contained = add("contained", "omp").await.ok().stdout.trim().to_owned();
+    assert!(!contained.is_empty());
 
     let id = add("read_only", "omp").await.ok().stdout.trim().to_owned();
     let tasks =

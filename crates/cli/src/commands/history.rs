@@ -149,6 +149,9 @@ impl Ctx {
             env: Vec::new(),
             attach,
             worktree: None,
+            contain: false,
+            network: None,
+            write: Vec::new(),
             argv,
         })
         .await

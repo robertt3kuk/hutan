@@ -66,7 +66,10 @@ impl Ctx {
                 Request::SessionCreate(SessionCreate {
                     workspace_id: workspace,
                     spec: SessionSpec::Terminal(TerminalSpec {
-                        contain: None,
+                        contain: args.contain.then(|| hutan_core::Contain {
+                            network: args.network,
+                            extra_write: args.write,
+                        }),
                         command: args.argv,
                         cwd: Some(cwd),
                         env: args.env.into_iter().collect::<BTreeMap<_, _>>(),
@@ -77,6 +80,12 @@ impl Ctx {
             )
             .await?;
         self.announce(&created.session, &created)?;
+        if !self.json
+            && let Some(boundary) = &created.session.containment
+        {
+            // What the daemon applied to the spawn, with the holes named.
+            print_line(&format!("contained: {}", boundary.summary()))?;
+        }
         if let SessionState::Failed { reason } = &created.session.state {
             return Err(CliError::Failed(format!(
                 "session {} failed to start: {reason}",

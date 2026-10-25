@@ -424,3 +424,110 @@ async fn close_refuses_a_busy_session_without_force_and_reopen_brings_it_back() 
     assert_eq!(out.code, 1, "{out:?}");
     t.stop().await;
 }
+
+// Contain (SANDBOX-2) ---------------------------------------------------------------------------
+
+/// A folder outside everything a contained session may write (not a temp folder).
+fn outside_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("cli-contain-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.canonicalize().unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_contain_runs_the_session_in_the_boundary_and_says_what_it_holds_back() {
+    let t = TestDaemon::start().await;
+    let work = tempfile::tempdir().unwrap();
+    let cwd = work.path().canonicalize().unwrap();
+    let outside = outside_dir("new");
+    let script = "echo in > in.txt; echo \"in=$?\"; ( echo x > \"$OUT/x\" ) 2>/dev/null; echo \"out=$?\"; exec cat";
+
+    let out = t
+        .hutan(&[
+            "new",
+            "--contain",
+            "--network",
+            "off",
+            "--cwd",
+            cwd.to_str().unwrap(),
+            "--env",
+            &format!("OUT={}", outside.display()),
+            "--",
+            "sh",
+            "-c",
+            script,
+        ])
+        .await
+        .ok();
+    assert!(
+        out.stdout.contains(
+            "contained: writes limited to this worktree · can read your files · network off"
+        ),
+        "{out:?}"
+    );
+    let id = out.stdout.split_whitespace().nth(1).unwrap().to_owned();
+    wait_history(&t, &id, "out=1").await;
+    wait_history(&t, &id, "in=0").await;
+    assert!(!outside.join("x").exists());
+
+    // `--json` carries what was applied, the network choice included.
+    let json = t
+        .hutan(&[
+            "new",
+            "--contain",
+            "--json",
+            "--cwd",
+            cwd.to_str().unwrap(),
+            "--",
+            "cat",
+        ])
+        .await
+        .ok()
+        .json();
+    let containment = &json["session"]["containment"];
+    assert_eq!(containment["kind"], "seatbelt");
+    assert_eq!(containment["applied"], true);
+    assert_eq!(containment["network"], true, "on unless told otherwise");
+    assert_eq!(containment["write_roots"], serde_json::json!([cwd]));
+    // A session without the flag says nothing of a boundary.
+    let plain = t
+        .new_session(&["--cwd", cwd.to_str().unwrap()], &["cat"])
+        .await;
+    assert!(t.session(&plain).await.get("containment").is_none());
+    let _ = std::fs::remove_dir_all(&outside);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_contain_flags_go_together_and_a_boundary_that_cannot_be_applied_refuses() {
+    let t =
+        TestDaemon::start_toml("[sandbox]\nbin = \"/nonexistent/sandbox-exec\"\n", |_| {}).await;
+    let work = tempfile::tempdir().unwrap();
+    let cwd = work.path().to_str().unwrap().to_owned();
+    // clap: --network and --write only make sense with --contain; the value is on or off.
+    for args in [
+        ["--network", "off"].as_slice(),
+        ["--write", "/tmp"].as_slice(),
+        ["--contain", "--network", "maybe"].as_slice(),
+    ] {
+        let mut all = vec!["new", "--cwd", &cwd];
+        all.extend_from_slice(args);
+        all.extend(["--", "cat"]);
+        assert_eq!(t.hutan(&all).await.code, 2, "{args:?}");
+    }
+    // Never started uncontained.
+    let refused = t
+        .hutan(&["new", "--contain", "--cwd", &cwd, "--", "touch", "started"])
+        .await;
+    assert_ne!(refused.code, 0);
+    assert!(
+        refused.stderr.contains("Contain is not available")
+            && refused.stderr.contains("not started uncontained"),
+        "{}",
+        refused.stderr
+    );
+    assert!(t.sessions().await.is_empty());
+    assert!(!work.path().join("started").exists());
+    t.stop().await;
+}

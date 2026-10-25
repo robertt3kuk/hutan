@@ -972,10 +972,11 @@ pub struct ChatNewArgs {
     /// login). Default: the project's default, else the harness's
     #[arg(long, value_name = "NAME", conflicts_with = "direct")]
     pub account: Option<String>,
-    /// Safety preset: ask, contained (the agent's own sandbox, no questions inside it),
-    /// read_only or full (no boundary, no questions). A harness that cannot honour it refuses
-    /// with the reason (OMP has no OS sandbox, so no contained); replaces --approval-policy,
-    /// --sandbox and --mode. Default: the agent's own settings
+    /// Safety preset: ask, contained (no questions inside a boundary: the agent's own sandbox for
+    /// Codex and Claude Code, Hutan's Seatbelt for OMP, which can read your files but writes
+    /// only in its worktree), read_only or full (no boundary, no questions). A harness that
+    /// cannot honour it refuses with the reason; replaces --approval-policy, --sandbox and
+    /// --mode. Default: the agent's own settings
     #[arg(
         long,
         value_name = "PRESET",
@@ -1867,6 +1868,18 @@ pub struct NewArgs {
     /// then the session starts in it and goes to the project of the repository
     #[arg(long, value_name = "BRANCH", conflicts_with = "cwd")]
     pub worktree: Option<String>,
+    /// Run the session inside Hutan's Seatbelt boundary: it can write only in its worktree (and
+    /// the repository's git directory, the temp folders and --write folders) and still reads
+    /// your files. Refused, never started uncontained, when the boundary cannot be applied
+    #[arg(long)]
+    pub contain: bool,
+    /// With --contain: whether the session may use the network (default: `[sandbox] network` of
+    /// daemon.toml, on); `off` also closes every unix socket, the daemon's included
+    #[arg(long, value_name = "on|off", requires = "contain", value_parser = parse_on_off)]
+    pub network: Option<bool>,
+    /// With --contain: a folder the session may also write; repeatable
+    #[arg(long = "write", value_name = "PATH", requires = "contain")]
+    pub write: Vec<PathBuf>,
     /// Command to run after `--`; the login shell if omitted
     #[arg(last = true, value_name = "ARGV")]
     pub argv: Vec<String>,
@@ -2355,6 +2368,14 @@ fn parse_age_ms(text: &str) -> Result<u64, String> {
     number
         .checked_mul(unit_ms)
         .ok_or_else(|| format!("`{text}` is too long ago"))
+}
+
+fn parse_on_off(text: &str) -> Result<bool, String> {
+    match text {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        other => Err(format!("expected `on` or `off`, got `{other}`")),
+    }
 }
 
 fn parse_env(text: &str) -> Result<(String, String), String> {
