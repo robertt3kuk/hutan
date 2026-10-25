@@ -68,9 +68,9 @@ impl Ctx {
                 .await
             {
                 Ok(_) => opened = true,
-                // No window is open: say where the file is, as before.
-                Err(hutan_client::ClientError::Remote(body))
-                    if body.code == hutan_protocol::ErrorCode::InvalidState => {}
+                // No window is open: say where the file is, as before. A window that refuses
+                // is an error, not a path on stdout.
+                Err(error) if super::ui::no_window(&error) => {}
                 Err(error) => return Err(self.fail(error)),
             }
         }

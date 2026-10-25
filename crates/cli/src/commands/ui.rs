@@ -14,6 +14,18 @@ use hutan_protocol::messages::Request;
 /// The catalog id of the desktop's *Run Setup Again…* (`workbench::RunSetup`).
 const SETUP_ACTION: &str = "workbench::RunSetup";
 
+/// Whether `error` is the daemon saying that no desktop window is connected. Any other refusal
+/// (the window has no handler for the action, a bad argument) is a failure to report, never a
+/// silent "nothing is open".
+pub(super) fn no_window(error: &hutan_client::ClientError) -> bool {
+    matches!(
+        error,
+        hutan_client::ClientError::Remote(body)
+            if body.code == hutan_protocol::ErrorCode::InvalidState
+                && body.message.starts_with("no Hutan window is open")
+    )
+}
+
 impl Ctx {
     pub(super) async fn ui(&self, command: UiCommand) -> Result<(), CliError> {
         match command {
@@ -41,8 +53,7 @@ impl Ctx {
             {
                 Ok(_) => opened = true,
                 // No window is open.
-                Err(hutan_client::ClientError::Remote(body))
-                    if body.code == hutan_protocol::ErrorCode::InvalidState => {}
+                Err(error) if no_window(&error) => {}
                 Err(error) => return Err(self.fail(error)),
             }
         }

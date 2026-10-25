@@ -648,3 +648,39 @@ fn the_assistant_action_follows_the_assistant_setting_in_both_directions(cx: &mu
     run(&daemon, cx, "workbench::OpenAssistant", None).unwrap();
     assert!(view.read_with(cx, |wb, _| wb.panel_open("assistant")));
 }
+
+/// `hutan open` runs `workbench::OpenFile`; a focus the window no longer draws (its element is
+/// gone) must not turn that into "has no handler where the window's focus is now".
+#[gpui::test]
+fn open_file_reaches_the_workbench_when_the_focused_element_is_gone(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let file = root.join("note.txt");
+    std::fs::write(&file, "one\ntwo\n").unwrap();
+    daemon.create_workspace("proj", &[&root]);
+    let (view, cx) = open(cx, &daemon, daemon.connection());
+    settle(cx, "the first publish", |_| layout_of(&daemon).is_some());
+
+    // A focus handle nothing draws: what a removed element leaves behind.
+    let orphan = cx.update(|window, cx| {
+        let handle = cx.focus_handle();
+        window.focus(&handle, cx);
+        handle
+    });
+    common::draw(cx);
+    let ran = run(
+        &daemon,
+        cx,
+        "workbench::OpenFile",
+        Some(json!({"path": file, "line": 2})),
+    );
+    assert!(ran.is_ok(), "{ran:?}");
+    wait_until(cx, "the file's tab", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.focused_file_view()
+                .is_some_and(|v| v.read(cx).buffer().read(cx).path() == file)
+        })
+    });
+    drop(orphan);
+}

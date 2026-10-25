@@ -27,7 +27,7 @@ use tokio::time::{sleep, timeout};
 
 type Seen = Arc<Mutex<Vec<(String, Value)>>>;
 
-struct FakeDesktop {
+pub(crate) struct FakeDesktop {
     commands: Seen,
     _client: Client,
 }
@@ -52,6 +52,11 @@ fn catalog() -> UiPublish {
             UiAction {
                 id: "workbench::RunSetup".into(),
                 title: "Hutan: Run Setup Again…".into(),
+                args_schema: None,
+            },
+            UiAction {
+                id: "workbench::OpenFile".into(),
+                title: "File: Open".into(),
                 args_schema: None,
             },
             UiAction {
@@ -116,7 +121,7 @@ fn catalog() -> UiPublish {
 }
 
 impl FakeDesktop {
-    async fn start(socket: &Path) -> Self {
+    pub(crate) async fn start(socket: &Path) -> Self {
         let client = Client::connect(ConnectOptions {
             socket: Some(socket.to_owned()),
             autostart: None,
@@ -151,12 +156,23 @@ impl FakeDesktop {
                 else {
                     continue;
                 };
+                let args_path = args["path"].as_str().unwrap_or_default().to_owned();
                 seen.lock().push((action.clone(), args));
                 let result = if action == "workbench::Broken" {
                     UiCommandResult {
                         request_id,
                         ok: None,
                         error: Some(ErrorBody::new(ErrorCode::InvalidState, "nothing to break")),
+                    }
+                } else if action == "workbench::OpenFile" && args_path.ends_with("README.md") {
+                    // A window whose focus reaches no handler for the action.
+                    UiCommandResult {
+                        request_id,
+                        ok: None,
+                        error: Some(ErrorBody::new(
+                            ErrorCode::InvalidState,
+                            "`workbench::OpenFile` has no handler where the window's focus is now",
+                        )),
                     }
                 } else {
                     UiCommandResult {
@@ -176,7 +192,7 @@ impl FakeDesktop {
         }
     }
 
-    fn seen(&self) -> Vec<(String, Value)> {
+    pub(crate) fn seen(&self) -> Vec<(String, Value)> {
         self.commands.lock().clone()
     }
 }
@@ -271,6 +287,7 @@ async fn ui_actions_layout_run_and_set_talk_to_the_desktop() {
             "workbench::SplitRight",
             "workbench::ApplyPreset",
             "workbench::RunSetup",
+            "workbench::OpenFile",
             "workbench::Broken",
         ]
     );

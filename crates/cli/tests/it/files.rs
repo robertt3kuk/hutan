@@ -167,6 +167,41 @@ async fn ls_cat_stat_find_search_and_open_work_from_a_shell() {
     repo.t.stop().await;
 }
 
+/// With a window, `open` runs `workbench::OpenFile` there and says so; a window that refuses is
+/// an error, not the path printed as if nothing was open.
+#[tokio::test(flavor = "multi_thread")]
+async fn open_shows_the_file_in_the_window_and_reports_a_refusing_window() {
+    let repo = Repo::new().await;
+    let desktop = crate::control::FakeDesktop::start(&repo.t.paths.socket).await;
+
+    let opened = repo
+        .hutan(&["open", "src/router.rs:2", "--json"])
+        .await
+        .ok()
+        .json();
+    assert_eq!(opened["opened"], true, "{opened}");
+    let text = repo.hutan(&["open", "src/lib.rs"]).await.ok().stdout;
+    assert_eq!(
+        text.trim(),
+        format!("opened {} in Hutan", repo.root.join("src/lib.rs").display())
+    );
+    let seen = desktop.seen();
+    assert_eq!(seen[0].0, "workbench::OpenFile");
+    assert_eq!(
+        seen[0].1,
+        serde_json::json!({"path": repo.root.join("src/router.rs"), "line": 2})
+    );
+
+    let refused = repo.hutan(&["open", "README.md"]).await;
+    assert_eq!(refused.code, 1, "{refused:?}");
+    assert!(refused.stderr.contains("no handler"), "{refused:?}");
+    assert!(
+        !refused.stdout.contains("README.md"),
+        "no path printed: {refused:?}"
+    );
+    repo.t.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn write_replaces_a_file_and_a_stale_expect_is_a_conflict() {
     let repo = Repo::new().await;

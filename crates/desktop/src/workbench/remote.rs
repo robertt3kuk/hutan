@@ -195,7 +195,12 @@ async fn run_command(
             let id = boxed.name();
             let dispatched = cx
                 .update(|window, cx| {
-                    let focus = window.focused(cx).unwrap_or(fallback_focus);
+                    // A focus the window no longer draws (its element went away with a view
+                    // that changed) reaches no handler; the workbench's own handle does.
+                    let focus = window
+                        .focused(cx)
+                        .filter(|focus| window.is_action_available_in(boxed.as_ref(), focus))
+                        .unwrap_or(fallback_focus);
                     if !window.is_action_available_in(boxed.as_ref(), &focus) {
                         return false;
                     }
