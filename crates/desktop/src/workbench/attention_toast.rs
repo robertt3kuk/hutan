@@ -223,31 +223,11 @@ impl Workbench {
     }
 
     /// Every toast of the window in one column at the bottom right of the center, 16 px above
-    /// the status bar and 16 px left of the right dock: the earlier request toasts on top, the
-    /// "Closed … Undo", "Restored … Undo" and "Moved … Undo" toasts under them. Never over the
-    /// left sidebar, whose footer holds Start.
-    pub(crate) fn toast_stack(
-        &self,
-        close: Option<AnyElement>,
-        attention: Option<AnyElement>,
-        restore: Option<AnyElement>,
-        layout: Option<AnyElement>,
-        instructions: Option<AnyElement>,
-        usage: Option<AnyElement>,
-        paste: Option<AnyElement>,
-    ) -> Option<AnyElement> {
-        let toasts: Vec<AnyElement> = [
-            attention,
-            close,
-            restore,
-            layout,
-            instructions,
-            usage,
-            paste,
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+    /// the status bar and 16 px left of the right dock. `toasts` are top to bottom: the earlier
+    /// request toasts, then the "Closed … Undo", "Restored … Undo", "Moved … Undo", instruction,
+    /// usage and image paste toasts. Never over the left sidebar, whose footer holds Start.
+    pub(crate) fn toast_stack(&self, toasts: [Option<AnyElement>; 7]) -> Option<AnyElement> {
+        let toasts: Vec<AnyElement> = toasts.into_iter().flatten().collect();
         if toasts.is_empty() {
             return None;
         }

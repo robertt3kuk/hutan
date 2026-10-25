@@ -177,15 +177,15 @@ impl Render for Workbench {
         let instructions_toast = self.render_instructions_toast(cx);
         let usage_toast = self.render_usage_toast(cx);
         let paste_toast = self.render_paste_toast(cx);
-        let toasts = self.toast_stack(
-            close_toast,
+        let toasts = self.toast_stack([
             attention_toasts,
+            close_toast,
             restore_toast,
             layout_toast,
             instructions_toast,
             usage_toast,
             paste_toast,
-        );
+        ]);
         let checkpoints_list = self.render_checkpoints_list(cx);
         let rewind_sheet = self.render_rewind_sheet(cx);
         let daemon_popover = self.render_daemon_popover(cx);
