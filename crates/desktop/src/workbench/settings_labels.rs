@@ -1264,7 +1264,7 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "daemon",
         "harness.omp.account",
         "OMP default account",
-        "The account new OMP chats run as when you have not set a default on the Accounts page: the name of an account you added (`hutan account list`), or system for the harness's own login. Applies after the daemon restarts.",
+        "The account new OMP chats run as when you have not set a default on the Accounts page: the name of an account you added (see Accounts), or system for the harness's own login. Applies after the daemon restarts.",
     ),
     field(
         "daemon",
@@ -1294,7 +1294,7 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "daemon",
         "harness.claude.account",
         "Claude Code default account",
-        "The account new Claude Code chats run as when you have not set a default on the Accounts page: the name of an account you added (`hutan account list`), or system for the harness's own login. Applies after the daemon restarts.",
+        "The account new Claude Code chats run as when you have not set a default on the Accounts page: the name of an account you added (see Accounts), or system for the harness's own login. Applies after the daemon restarts.",
     ),
     field(
         "daemon",
@@ -1312,7 +1312,7 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "daemon",
         "codex.account",
         "Codex default account",
-        "The account new Codex chats run as when you have not set a default on the Accounts page: the name of an account you added (`hutan account list`), or system for the harness's own login. Applies after the daemon restarts.",
+        "The account new Codex chats run as when you have not set a default on the Accounts page: the name of an account you added (see Accounts), or system for the harness's own login. Applies after the daemon restarts.",
     ),
     field(
         "daemon",
