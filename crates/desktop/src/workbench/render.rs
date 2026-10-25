@@ -177,6 +177,7 @@ impl Render for Workbench {
         let instructions_toast = self.render_instructions_toast(cx);
         let usage_toast = self.render_usage_toast(cx);
         let paste_toast = self.render_paste_toast(cx);
+        let setup_toast = self.render_setup_toast(cx);
         let toasts = self.toast_stack([
             attention_toasts,
             close_toast,
@@ -185,6 +186,7 @@ impl Render for Workbench {
             instructions_toast,
             usage_toast,
             paste_toast,
+            setup_toast,
         ]);
         let checkpoints_list = self.render_checkpoints_list(cx);
         let rewind_sheet = self.render_rewind_sheet(cx);

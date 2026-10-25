@@ -89,8 +89,8 @@ impl Workbench {
                 list.into_iter()
                     .find(|w| !w.main && w.branch.as_deref() == Some(branch.as_str()))
             });
-            let path = match existing {
-                Some(worktree) => worktree.path,
+            let worktree = match existing {
+                Some(worktree) => worktree,
                 None => {
                     let creating = this.update(cx, |this, cx| {
                         this.sessions.update(cx, |store, cx| {
@@ -109,7 +109,7 @@ impl Workbench {
                     });
                     let Ok(creating) = creating else { return };
                     match creating.await {
-                        Ok(worktree) => worktree.path,
+                        Ok(worktree) => worktree,
                         Err(err) => {
                             this.update(cx, |this, cx| failed(this, err, cx)).ok();
                             return;
@@ -118,7 +118,10 @@ impl Workbench {
                 }
             };
             let starting = this.update(cx, |this, cx| {
-                let spec = this.new_terminal_spec(Some(workspace), Some(path), cx);
+                // A setup that waits for the user's confirmation is said before the terminal
+                // shows a plain shell.
+                this.tell_setup_waits(&worktree, cx);
+                let spec = this.new_terminal_spec(Some(workspace), Some(worktree.path.clone()), cx);
                 this.sessions.update(cx, |store, cx| {
                     store.create_session(Some(workspace), spec, cx)
                 })

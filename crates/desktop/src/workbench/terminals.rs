@@ -543,6 +543,7 @@ impl Workbench {
             });
         }
         self.focus_root(window, cx);
+        self.tell_setup_waits_for_session(session, cx);
     }
 
     /// Opens `session` in a new split at `edge` of the focused pane.

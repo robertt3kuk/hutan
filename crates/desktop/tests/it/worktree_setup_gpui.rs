@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use common::{TestDaemon, draw, open_with, wait_until};
-use gpui::{Entity, TestAppContext, VisualTestContext};
+use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use hutan_core::WorkspaceId;
 use hutan_desktop::workbench::actions;
 use hutan_desktop::workbench::panels::ChangesPanel;
@@ -272,6 +272,54 @@ fn the_trust_sheet_lists_the_commands_and_confirming_runs_them(cx: &mut TestAppC
     draw(cx);
     let (index, _) = row_of(&panel, cx, &wt.path).unwrap();
     assert!(!region(&view, cx, Region::ChangesSetup(index)));
+}
+
+#[gpui::test]
+fn a_terminal_in_a_worktree_that_waits_for_trust_says_so_and_trusting_shows_the_setup(
+    cx: &mut TestAppContext,
+) {
+    let fx = Fx::new("", Some("setup = [\"echo from-the-repository\"]\n"));
+    let (view, panel, cx) = open(cx, &fx);
+
+    // New Terminal in Worktree…: a plain shell, and a toast that the setup waits.
+    cx.dispatch_action(actions::NewTerminalInWorktree);
+    draw(cx);
+    view.update(cx, |wb, cx| wb.set_modal_input("topic", cx));
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
+    wait_until(cx, "the toast that the setup waits", |cx| {
+        view.read_with(cx, |wb, _| wb.setup_toast().is_some())
+    });
+    draw(cx);
+    let text = view.read_with(cx, |wb, _| wb.setup_toast().unwrap().text.to_string());
+    assert_eq!(text, "Setup of topic waits for your confirmation");
+    assert!(region(&view, cx, Region::SetupToast("review")));
+    assert!(
+        fx.sessions().iter().all(|s| s.title != "Setup"),
+        "nothing ran before the confirmation"
+    );
+
+    // Review… opens the trust sheet and takes the toast away.
+    let review = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::SetupToast("review")))
+        .unwrap();
+    cx.simulate_click(review.center(), Modifiers::none());
+    draw(cx);
+    assert!(view.read_with(cx, |wb, _| wb.setup_toast().is_none()));
+    let (title, _, _) = modal(&view, cx).expect("the trust sheet");
+    assert_eq!(title, "Run setup commands from this repository?");
+
+    // Trust and Run: the Setup terminal is the focused tab.
+    view.update_in(cx, |wb, window, cx| wb.confirm_modal(window, cx));
+    wait_until(cx, "the Setup terminal to be the focused tab", |cx| {
+        let setup = fx
+            .sessions()
+            .into_iter()
+            .find(|s| s.title == "Setup")
+            .map(|s| s.id);
+        draw(cx);
+        setup.is_some() && view.read_with(cx, |wb, _| wb.focused_session()) == setup
+    });
+    drop(panel);
 }
 
 #[gpui::test]

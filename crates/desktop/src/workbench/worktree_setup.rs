@@ -12,7 +12,10 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{Context, Window};
+use std::time::Duration;
+
+use gpui::prelude::*;
+use gpui::{AnyElement, Context, SharedString, Window, div, px};
 use hutan_client::ConnectionState;
 use hutan_protocol::worktree::{
     CleanupReason, WorktreeCleanup, WorktreeCleanupList, WorktreeInfo, WorktreeSetup,
@@ -20,8 +23,28 @@ use hutan_protocol::worktree::{
 };
 
 use super::panels::ChangesPanel;
-use super::view::Workbench;
+use super::render::probe;
+use super::ui::motion;
+use super::ui::{Button, IconButton, StyledExt as _};
+use super::view::{Region, Workbench};
 use super::workspaces::tilde;
+use crate::theme::DensityExt as _;
+
+/// How long the toast stays.
+const SETUP_TOAST_TIME: Duration = Duration::from_secs(12);
+
+/// *Setup of `wt feature` waits for your confirmation · Review…*: told when a terminal or an
+/// agent starts in a worktree whose setup has not run yet (the trust sheet is the only way to
+/// run a repository's commands).
+#[derive(Debug, Clone)]
+pub struct SetupToast {
+    pub text: SharedString,
+    /// The worktree.
+    pub path: PathBuf,
+    /// What the daemon said it asks to run (the listing of the window may not have it yet).
+    setup: WorktreeSetup,
+    rev: u64,
+}
 
 /// How strongly a setup line is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,38 +221,215 @@ impl Workbench {
             self.set_notice("This worktree's setup does not wait for a confirmation", cx);
             return;
         };
+        self.open_trust_sheet(path, &setup, window, cx);
+    }
+
+    /// The trust sheet for `setup` of the worktree at `path`.
+    fn open_trust_sheet(
+        &mut self,
+        path: PathBuf,
+        setup: &WorktreeSetup,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(hash) = setup.hash.clone() else {
             return;
         };
-        let text = trust_sheet_text(&path, &setup);
+        let text = trust_sheet_text(&path, setup);
         // Running commands a repository supplied is the risky choice: Cancel is the default (Return
         // cancels), the button is drawn as a caution.
         self.open_destructive(
             "Run setup commands from this repository?",
             text,
             "Trust and Run",
-            move |this, _window, cx| this.confirm_worktree_setup(path.clone(), hash.clone(), cx),
+            move |this, window, cx| {
+                this.confirm_worktree_setup(path.clone(), hash.clone(), window, cx);
+            },
             window,
             cx,
         );
     }
 
-    fn confirm_worktree_setup(&mut self, path: PathBuf, hash: String, cx: &mut Context<Self>) {
+    /// *Trust and Run*: the setup starts, and its *Setup* terminal is shown (the focused tab) so
+    /// the user sees what the repository's commands do.
+    fn confirm_worktree_setup(
+        &mut self,
+        path: PathBuf,
+        hash: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.dismiss_setup_toast(cx);
+        self.setup_told.remove(&path);
         let task = self
             .sessions
             .update(cx, |store, cx| store.worktree_setup_trust(path, hash, cx));
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.refresh_changes_panel(cx);
                 match result {
-                    Ok(_) => this.set_notice("Setup started", cx),
+                    Ok(worktree) => {
+                        this.set_notice("Setup started", cx);
+                        if let Some(session) = worktree.setup.and_then(|s| s.session_id) {
+                            this.open_session(session, window, cx);
+                        }
+                    }
                     Err(err) => this.set_notice(format!("Cannot run the setup: {err}"), cx),
                 }
             })
             .ok();
         })
         .detach();
+    }
+
+    /// The toast of a setup that waits, while it shows (tests).
+    pub fn setup_toast(&self) -> Option<&SetupToast> {
+        self.setup_toast.as_ref()
+    }
+
+    /// A session started in `worktree`: when the worktree's setup waits for the user's
+    /// confirmation, say so once, with *Review…*. Nothing is told twice for the same worktree
+    /// until the setup was confirmed.
+    pub(crate) fn tell_setup_waits(&mut self, worktree: &WorktreeInfo, cx: &mut Context<Self>) {
+        let waits = worktree
+            .setup
+            .as_ref()
+            .is_some_and(|s| s.state == WorktreeSetupState::NeedsTrust);
+        if !waits || worktree.main || !self.setup_told.insert(worktree.path.clone()) {
+            return;
+        }
+        let name = worktree
+            .branch
+            .clone()
+            .unwrap_or_else(|| tilde(&worktree.path));
+        self.setup_toast_rev += 1;
+        let rev = self.setup_toast_rev;
+        let Some(setup) = worktree.setup.clone() else {
+            return;
+        };
+        self.setup_toast = Some(SetupToast {
+            text: format!("Setup of {name} waits for your confirmation").into(),
+            path: worktree.path.clone(),
+            setup,
+            rev,
+        });
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SETUP_TOAST_TIME).await;
+            this.update(cx, |this, cx| {
+                if this.setup_toast.as_ref().is_some_and(|t| t.rev == rev) {
+                    this.setup_toast = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// A session was opened: when it works in a worktree whose setup waits, tell
+    /// ([`tell_setup_waits`](Self::tell_setup_waits)). The store's listing is read first; a
+    /// worktree it does not know yet (just made) is looked up in the daemon's.
+    pub(crate) fn tell_setup_waits_for_session(
+        &mut self,
+        session: hutan_core::SessionId,
+        cx: &mut Context<Self>,
+    ) {
+        let store = self.sessions.read(cx);
+        let Some(info) = store.session(session) else {
+            return;
+        };
+        let Some(placement) = info
+            .placement
+            .as_ref()
+            .filter(|p| p.kind == hutan_protocol::worktree::PlacementKind::Worktree)
+        else {
+            return;
+        };
+        let root = placement.root.clone();
+        if self.setup_told.contains(&root) {
+            return;
+        }
+        let known = store
+            .checkouts_all()
+            .iter()
+            .find(|w| w.path == root)
+            .cloned();
+        if let Some(worktree) = known {
+            self.tell_setup_waits(&worktree, cx);
+            return;
+        }
+        let workspace = info.workspace_id;
+        let listing = self
+            .sessions
+            .update(cx, |store, cx| store.list_worktrees(workspace, cx));
+        cx.spawn(async move |this, cx| {
+            let Ok(list) = listing.await else { return };
+            if let Some(worktree) = list.into_iter().find(|w| w.path == root) {
+                this.update(cx, |this, cx| this.tell_setup_waits(&worktree, cx))
+                    .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Takes the toast off.
+    pub fn dismiss_setup_toast(&mut self, cx: &mut Context<Self>) {
+        if self.setup_toast.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn render_setup_toast(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let toast =
+            self.setup_toast_exit
+                .follow(self.setup_toast.as_ref(), motion::Kind::Toast, cx)?;
+        let (theme, tokens) = (self.theme, self.density.ui());
+        let (wanted, toast) = (toast.wanted, toast.value);
+        let (path, setup) = (toast.path.clone(), toast.setup.clone());
+        Some(
+            motion::present(
+                "setup-toast-motion",
+                motion::Kind::Toast,
+                wanted,
+                motion::Slide::Rise,
+                div()
+                    .id("setup-toast")
+                    .flex()
+                    .items_center()
+                    .gap(px(tokens.spacing * 3.0))
+                    .toast(&theme, &tokens)
+                    .px(px(tokens.spacing * 3.0))
+                    .py(px(tokens.spacing * 2.0))
+                    .child(div().min_w_0().truncate().child(toast.text.clone()))
+                    .child(
+                        Button::new("setup-toast-review", "Review…", &theme, &tokens)
+                            .link()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.dismiss_setup_toast(cx);
+                                if !this.worktree_setup_unavailable(cx) {
+                                    this.open_trust_sheet(path.clone(), &setup, window, cx);
+                                }
+                            }))
+                            .child(probe(&self.regions, Region::SetupToast("review"))),
+                    )
+                    .child(
+                        IconButton::new(
+                            "setup-toast-dismiss",
+                            crate::icons::Icon::ActionClose,
+                            "Dismiss",
+                            &theme,
+                            &tokens,
+                        )
+                        .compact()
+                        .on_click(cx.listener(|this, _, _, cx| this.dismiss_setup_toast(cx)))
+                        .child(probe(&self.regions, Region::SetupToast("dismiss"))),
+                    )
+                    .child(probe(&self.regions, Region::SetupToast("toast"))),
+            )
+            .into_any_element(),
+        )
     }
 
     /// Shows the *Setup* terminal session of the worktree at `path` (its output, live or kept).

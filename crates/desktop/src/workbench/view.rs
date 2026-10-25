@@ -185,6 +185,9 @@ pub enum Region {
     /// A control of the "Saved the image … · Reveal" toast of an image paste (`toast`,
     /// `reveal`, `dismiss`).
     PasteToast(&'static str),
+    /// A control of the "Setup waits for your confirmation · Review…" toast of a worktree
+    /// (`toast`, `review`, `dismiss`).
+    SetupToast(&'static str),
     /// The ⋯ of a panel's header, by where the panel is (`left`, `right`, `bottom`, `center`).
     PanelMenu(&'static str),
     /// A control of the panel settings popover (`popover`, `open`, `close`).
@@ -815,6 +818,12 @@ pub struct Workbench {
     /// The toast of a pasted image (`paste_toast.rs`) and its exit.
     pub(crate) paste_toast: Option<super::paste_toast::PasteToast>,
     pub(crate) paste_toast_exit: super::ui::motion::Ghost<super::paste_toast::PasteToast>,
+    /// The toast of a worktree whose setup waits for the user (`worktree_setup.rs`), its exit,
+    /// and the worktrees it has been shown for.
+    pub(crate) setup_toast: Option<super::worktree_setup::SetupToast>,
+    pub(crate) setup_toast_exit: super::ui::motion::Ghost<super::worktree_setup::SetupToast>,
+    pub(crate) setup_toast_rev: u64,
+    pub(crate) setup_told: std::collections::HashSet<std::path::PathBuf>,
     /// The tab the × just closed, while it fades (`closing.rs`).
     pub(crate) closing_tab: Option<super::closing::ClosingTab>,
     /// Overlays while they leave (`ui::motion::Presences`).
@@ -1417,6 +1426,10 @@ impl Workbench {
             usage_toast_exit: super::ui::motion::Ghost::default(),
             paste_toast: None,
             paste_toast_exit: super::ui::motion::Ghost::default(),
+            setup_toast: None,
+            setup_toast_exit: super::ui::motion::Ghost::default(),
+            setup_toast_rev: 0,
+            setup_told: std::collections::HashSet::new(),
             closing_tab: None,
             overlays: super::ui::motion::Presences::default(),
             exits: super::overlay_exit::OverlayExits::default(),

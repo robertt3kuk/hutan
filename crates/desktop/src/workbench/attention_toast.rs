@@ -226,7 +226,7 @@ impl Workbench {
     /// the status bar and 16 px left of the right dock. `toasts` are top to bottom: the earlier
     /// request toasts, then the "Closed … Undo", "Restored … Undo", "Moved … Undo", instruction,
     /// usage and image paste toasts. Never over the left sidebar, whose footer holds Start.
-    pub(crate) fn toast_stack(&self, toasts: [Option<AnyElement>; 7]) -> Option<AnyElement> {
+    pub(crate) fn toast_stack(&self, toasts: [Option<AnyElement>; 8]) -> Option<AnyElement> {
         let toasts: Vec<AnyElement> = toasts.into_iter().flatten().collect();
         if toasts.is_empty() {
             return None;
