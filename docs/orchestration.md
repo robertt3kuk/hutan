@@ -35,8 +35,10 @@ Creating and removing are serialised in the daemon. A repository that cannot be 
 ## CLI
 
 ```text
-hutan wt new <branch> [--ws ID|NAME] [--base REF] [--model MODEL] [--path PATH] [--repo PATH]
+hutan wt new <branch> [--ws ID|NAME] [--base REF] [--model MODEL] [--path PATH] [--repo PATH] [--no-setup]   (alias: wt create)
 hutan wt ls [--ws ID|NAME] [--json]
+hutan wt setup <path|branch> [--yes]
+hutan wt prune [--dry-run] [--yes] [--merged | --idle-days N] [--ws ID|NAME]
 hutan wt rm <path|branch> [--ws ID|NAME] [--force] [--delete-branch]
 hutan new --worktree <branch> [--ws ...] [--title T] [--attach] [-- argv]
 hutan ls
@@ -154,6 +156,59 @@ Slice M7-C (protocol 0.22, capability `worktree.review`). Wire details: `docs/pr
 - **Finish** (PR-FINISH, protocol 0.35, capability `finish`, ADR 0020 — amends "never pushes"): `worktree.finish {checkout, message, push?, into?, strategy?}` is the one way Hutan delivers, for **both placements**. A main checkout: commit everything (`git add -A`, hooks off) on its branch, then push that branch. A worktree: commit, merge into the main checkout's branch with the merge modes above (a squash takes the Finish message), then push the target. Every refusal that does not depend on the commit (dirty main checkout, target not checked out, operation in progress, detached HEAD, an empty message with something to commit) is made before anything changes. The push is `git push <remote> refs/heads/<b>:<upstream>` in the user's login environment (their credential helper and SSH agent; Hutan stores nothing), never forced, after a read-only `git fetch` that says how far the branch is ahead and behind: a branch behind its upstream is reported `rejected` and not pushed (Hutan does not pull, merge or rebase for you); no upstream, a remote refusal (hook, protected branch) and credentials (`auth`) are reported with git's words, and the commit stays. `[finish] push = true` in daemon.toml (live; `false` keeps it local; a request's own `push` wins). **User-only** (ADR 0016): an agent-originated `worktree.finish` is `forbidden` whatever `[control]` says; `worktree.commit` stays refused for the main checkout (Finish is how the user commits there). CLI: `hutan finish [path|branch] [-m MSG] [--no-push] [--squash|--rebase] [--into BRANCH]` (one line per step, exit 1 when a step failed). Desktop: the Changes header's **Finish…** (it replaces *Merge into …*): the message starts as what the commit changes, in git's own words (FX-E2E2-A; no model is asked) — the files a main checkout commits (its uncommitted ones) or everything a worktree delivers: `Update app.py`, `Update app.py and store.rs`, `Update 4 files in src/` (the folder they share, if any), `Add todo.md` when every file is new (untracked), `Delete …` when every file goes — then, after a blank line, one line per task whose turns changed files in the checkout, newest first (FX-REVIEW's open work; never a chat that changed nothing): `Agent: OMP — <chat title>`, or `Task: <title>` for a run with no harness. Until the user edits it, the message follows a new listing. Merge modes for a worktree, *Push* starting as `[finish] push`, then one line per step (failures in red with their reason) and, after a merge, the worktree cleanup offer. Tests: `crates/daemon/tests/it/finish.rs` (temporary repositories with a local bare `origin`, its reflog checked for fast-forwards only), `crates/cli/tests/it/worktree_review.rs`, `crates/desktop/tests/it/tasks_gpui.rs`, `crates/desktop/tests/it/fx_e2e2_gpui.rs`, `crates/desktop/src/workbench/changes/finish.rs` (the subject rule).
 - **Delivery follows the worktree**: a successful `worktree.merge` of a task's branch marks that task `merged` (merge commit and strategy recorded); `worktree.remove` of the branch's worktree without a merge marks its open work `discarded`; a Finish that landed marks the open work of the tasks that ran in its checkout `merged` (FX-REVIEW). See § Delivery.
 
+## Setup and cleanup
+
+Slice WORKTREE-SETUP (protocol 0.48, capability `worktree.setup`, SQLite migration 20). A fresh worktree has no `node_modules`, no `.env`, no build cache; and old worktrees pile up (vibe-kanban #765, claude-squad #181). Wire details: `docs/protocol.md` § Worktree setup and retention. Code: `crates/daemon/src/worktrees/{setup,setup_file,cleanup}.rs`, `crates/cli/src/commands/worktrees.rs`, `crates/desktop/src/workbench/worktree_setup.rs`.
+
+### What a worktree needs: `.hutan/worktree.toml`
+
+Committed in the repository (the team shares it), read from the main checkout when a worktree is made or its setup is run again:
+
+```toml
+copy = [".env", ".env.local", "config/*.local.json"]   # gitignored files copied from the main checkout
+setup = ["pnpm install"]                               # run in the new worktree, in order
+teardown = ["docker compose down"]                     # run before the worktree is removed
+```
+
+- **`copy`** — globs relative to the repository (`*` does not cross `/`, `**` does; files only, so use `dir/**` for a folder). Only files that are **ignored by git** and exist in the main checkout are copied: tracked files are already in the worktree and untracked-but-not-ignored ones are not config. A file already present is kept, a path under a symlink of the worktree is skipped, symlinks are not followed. Bounds: 200 files, 5 MiB each, 50 MiB together, a search looks at 100 000 directory entries; what is left out is listed in the state's `message`. A pattern with a leading `/`, `~` or `!`, or a `..`, is an error. Copying needs no confirmation: it only reads inside the repository.
+- **`setup`** — commands run with `/bin/sh -c`, one after the other, the first failure ending the run.
+- **`teardown`** — commands run before the worktree is removed (see below).
+- Each list holds at most 100 entries of at most 4096 characters; the file at most 64 KiB. Unknown keys are **warned about** (in the state's `message`), a wrong type or an over-long list stops the setup with the reason shown on the row (*Setup failed*).
+- **The user's own say** is in `daemon.toml` (Settings → Sessions → Worktrees for the policy; the commands are written in the file): `[worktrees.projects.<project name or id>]` with `copy`, `setup` and `teardown` — a key set there replaces the same key of the repository's file. `[worktrees] cleanup`, `cleanup_idle_days` and `wait_for_setup` are live settings (Settings → Sessions → Worktrees, `daemon.settings.set`).
+
+### Running it
+
+`worktree.create` (and `hutan wt new`, a task placed in a worktree, `hutan new --worktree`) copies the files, then runs `setup` in a **terminal session named *Setup*** with the worktree as its directory: the user sees the commands and their output, can scroll, interrupt or close it like any terminal, and `HUTAN_MAIN_CHECKOUT` names the main checkout. The create answers at once; the worktree's `setup` says `running`. When the session exits 0 the state is `done`, otherwise `failed` (the exit code, or *stopped* when the user stopped it); the session stays listed with its output (*Show output*). `hutan wt setup <wt>` and the row's *Run again* run it again (files already copied stay). `wt new --no-setup` / `worktree.create {no_setup: true}` skips it. The state is the daemon's memory of this run: after a daemon restart a worktree simply shows none.
+
+- **Rows.** The Changes panel's checkout row says **Setting up…** (with *Show output*), **Setup failed** (with *Show output*, or *Run again* when no session was left) or **Setup needs your confirmation** (with *Review…*). `hutan wt ls` adds `setting up`, `setup failed` or `setup needs confirmation` to the state column.
+- **Agents wait.** `[worktrees] wait_for_setup` (default on): an agent chat (`chat.create` with a `cwd` in the worktree) and a task placed in the worktree wait for a running setup to end, at most 30 minutes; a setup that needs the user's confirmation or has failed does not hold them back. Off, they start at once. A terminal session started by hand never waits.
+
+### Trust: repository commands are the user's to approve
+
+Whoever can push to the repository can put commands in `.hutan/worktree.toml`. So the commands **from the file** run only after the user confirmed exactly these (the pattern of language servers, `docs/lsp.md`): the first time a repository's setup would run, and again whenever the content changes, the worktree's setup is `needs_trust`, nothing runs, and the user is shown the exact `setup` and `teardown` commands — a sheet in the desktop (*Review…* on the row: *Run setup commands from this repository?* with the commands and *Trust and Run*), the commands and a `[y/N]` question in `hutan wt setup` (`--yes` is required without a terminal). The confirmation is remembered by the sha-256 of the two lists and the repository's main checkout (`worktree_setup_trust`); editing a command, or moving it between the lists, asks again. Commands the user wrote in `daemon.toml` are theirs and never ask, and a key the user replaces is not the file's any more (the hash covers only what the file still provides).
+
+`worktree.setup_trust` is **user-only**: an agent connection gets `forbidden` under every `[control] agents` policy. A worktree an agent creates therefore comes up `needs_trust` unless the user confirmed the same commands before — an agent can neither run an unconfirmed command nor confirm it. `worktree.setup` (running it again) is an ordinary mutation: it asks the user first under `ask`, and still never runs unconfirmed commands.
+
+### Teardown
+
+`worktree.remove` (from `hutan wt rm`, the palette, a Finish that removes, cleanup) runs the worktree's `teardown` commands before `git worktree remove`: headless, with the worktree as the directory and the login environment, 10 minutes each, output captured. The same trust rule applies — unconfirmed commands of the file are not run. A failing command refuses the removal with its output (`invalid_state`; the worktree stays); `force` removes anyway. The refusals for live sessions, a lock and uncommitted changes come first.
+
+### Retention
+
+`[worktrees] cleanup` in `daemon.toml` (Settings → Sessions → Worktrees):
+
+| Value | Offers for cleanup |
+|---|---|
+| `never` (default) | nothing |
+| `merged` | a worktree whose branch has commits of its own (the branch's reflog has more than its creation entry — a branch made and never used is not "merged" just because the default branch moved on) and whose commits the default branch contains |
+| `idle` | a worktree untouched for `cleanup_idle_days` (default 14): the later of its newest commit, the last change of its `HEAD`, `index` or reflog, and its creation |
+
+Only worktrees **Hutan created** qualify (the user's own are left alone), and only with **no live session, no running setup, nothing uncommitted** (untracked files count; when git cannot say, the worktree stays), and not locked. Nothing is ever removed in the background: the candidates are **listed** — ⌘K *Worktree: Clean Up…* shows them in a sheet (branch, path, why, the teardown that will run), and removes exactly those on *Remove*; `hutan wt prune --dry-run` prints the table; `hutan wt prune` prints it and asks `[y/N]` (`--yes` is required without a terminal). `--merged` and `--idle-days N` pick the policy for one run whatever the setting says. Each removal is `worktree.remove` without `force`, so the teardown runs first and a failing teardown keeps the worktree (reported as *kept*, exit 1); a merged branch is deleted with `git branch -d`, an idle one stays. `worktree.prune` is user-only; the tasks that worked in a removed worktree are marked discarded as for any removal.
+
+### Tests
+
+`crates/daemon/src/worktrees/setup_file.rs` (the file's format, unknown keys, bounds, the user's override, the trust hash, globs, copying within bounds and never through a symlink), `crates/daemon/src/worktrees/setup.rs` (quoting, the script stops at the first failure), `crates/daemon/src/config.rs` (`[worktrees]`), `crates/storage/src/tests.rs` (confirmations survive a reopen), `crates/daemon/tests/it/worktree_setup.rs` (a real daemon on temporary repositories: copy of gitignored files only, a visible *Setup* session with output that can be stopped, `done` and `failed` with the code and the rest skipped, trust required and remembered by hash and across a restart, an agent can neither confirm nor run, `--no-setup` and a later setup, teardown before removal and a failing one keeping the worktree, unconfirmed teardown not run, tasks waiting for the setup, cleanup listing only clean merged or idle worktrees of Hutan and prune running teardown), `crates/cli/tests/it/worktrees.rs` (`wt create --no-setup`, `wt setup` with and without `--yes`, `wt prune`), `crates/desktop/tests/it/worktree_setup_gpui.rs` (the row states, *Show output*, the trust sheet, the cleanup sheet), golden fixtures `*worktree_setup*`, `*worktree_cleanup*`, `*worktree_prune*`.
+
 ## Tasks panel
 
 The `tasks` panel (default: the Tasks page of the left sidebar's nav; movable; settings namespace `tasks`) draws the daemon's tasks (`task.list`, `task.updated`, `task.removed`; the store lists once per connection and follows the events) as a dependency tree: see `docs/design.md` § Tasks panel for rows, actions, the new-task form and filters. The Changes view is a center tab (`ItemRef::Changes`, one per checkout) reached from a task row's **Changes** button, the placement badge's menu of a session row (*Review Changes…*, *Copy Checkout Path*), a session's context menu, or ⌘K *Worktree: Review Changes…*; its header has *Finish…* (commit, merge with a strategy for a worktree, push; a refusal stays in the form) and, after a success, *Remove worktree and branch*. Tests: `crates/desktop/tests/it/tasks_gpui.rs`, `crates/desktop/src/sessions/tasks.rs`.
@@ -192,4 +247,4 @@ No protocol change: a review is an ordinary user message, so the chat journal ke
 
 ## Not here
 
-Remote repositories, fetching and pushing are never done by these requests; resolving conflicts (the merge is aborted and the files listed, the user resolves them in a checkout), a worktrees panel.
+Remote repositories, fetching and pushing are never done by these requests; running a setup inside a sandbox (the commands run with the user's rights, which is why the repository's commands need the user's confirmation); resolving conflicts (the merge is aborted and the files listed, the user resolves them in a checkout), a worktrees panel.
