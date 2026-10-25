@@ -31,7 +31,7 @@ pub struct WorktreeCreate {
     /// Absolute and not existing; absent: `<parent of repo>/<repo name>-wt/<branch with / as ->`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
-    /// Protocol 0.48 (capability `worktree.setup`): do not copy files or run the setup of
+    /// Protocol 0.49 (capability `worktree.setup`): do not copy files or run the setup of
     /// `.hutan/worktree.toml` (`hutan wt create --no-setup`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_setup: bool,
@@ -82,7 +82,7 @@ pub struct WorktreeInfo {
     pub locked: bool,
     /// The directory is gone; `git worktree prune` would drop the entry.
     pub prunable: bool,
-    /// Protocol 0.48 (capability `worktree.setup`): where the setup of this worktree stands.
+    /// Protocol 0.49 (capability `worktree.setup`): where the setup of this worktree stands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup: Option<WorktreeSetup>,
 }
@@ -548,7 +548,7 @@ fn is_zero(value: &u32) -> bool {
     *value == 0
 }
 
-// Setup, teardown and retention (protocol 0.48, capability `worktree.setup`) ------------------
+// Setup, teardown and retention (protocol 0.49, capability `worktree.setup`) ------------------
 
 /// Where a worktree's setup stands (`WorktreeInfo.setup`). Setup is what the repository's
 /// `.hutan/worktree.toml` (or the user's `[worktrees.projects.<name>]`) asks for after

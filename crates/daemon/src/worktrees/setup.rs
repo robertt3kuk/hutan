@@ -1,4 +1,4 @@
-//! Setup and teardown of worktrees (protocol 0.48, capability `worktree.setup`).
+//! Setup and teardown of worktrees (protocol 0.49, capability `worktree.setup`).
 //!
 //! After `worktree.create` the daemon resolves what the repository's `.hutan/worktree.toml` and
 //! the user's `[worktrees.projects.<p>]` ask for ([`super::setup_file`]), copies the gitignored

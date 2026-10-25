@@ -1,4 +1,4 @@
-//! Worktree setup, teardown and retention (protocol 0.48, capability `worktree.setup`) end to end:
+//! Worktree setup, teardown and retention (protocol 0.49, capability `worktree.setup`) end to end:
 //! a real daemon on a temporary `HUTAN_HOME`, real connections and PTY sessions, and git
 //! repositories the tests make in temporary directories.
 

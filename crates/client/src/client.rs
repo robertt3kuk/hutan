@@ -212,7 +212,7 @@ pub(crate) const USAGE_CAPABILITY: &str = "usage";
 pub(crate) const GIT_HISTORY_CAPABILITY: &str = "git.history";
 /// Capability for `hooks.list|log|test` (protocol 0.48).
 pub(crate) const HOOKS_CAPABILITY: &str = "hooks";
-/// Capability for worktree setup, teardown and retention (protocol 0.48).
+/// Capability for worktree setup, teardown and retention (protocol 0.49).
 pub(crate) const WORKTREE_SETUP_CAPABILITY: &str = "worktree.setup";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
@@ -709,7 +709,7 @@ impl Client {
             .any(|capability| capability == GIT_HISTORY_CAPABILITY)
     }
 
-    /// True when the daemon advertised capability `worktree.setup` (protocol 0.48): worktree
+    /// True when the daemon advertised capability `worktree.setup` (protocol 0.49): worktree
     /// setup, teardown and retention.
     pub fn supports_worktree_setup(&self) -> bool {
         self.welcome

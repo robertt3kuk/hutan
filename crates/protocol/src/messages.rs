@@ -441,7 +441,7 @@ pub enum Request {
     /// its target, push; user-only. Answered with `WorktreeFinished`.
     #[serde(rename = "worktree.finish")]
     WorktreeFinish(WorktreeFinish),
-    /// Capability `worktree.setup` (protocol 0.48): run a worktree's setup again; answered with
+    /// Capability `worktree.setup` (protocol 0.49): run a worktree's setup again; answered with
     /// `WorktreeSetupResult`.
     #[serde(rename = "worktree.setup")]
     WorktreeSetup(WorktreeSetupRequest),

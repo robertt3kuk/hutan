@@ -198,7 +198,7 @@ impl Storage {
         LspTrust(self)
     }
 
-    /// The setup commands of repositories the user confirmed (protocol 0.48).
+    /// The setup commands of repositories the user confirmed (protocol 0.49).
     pub fn worktree_setup_trust(&self) -> WorktreeSetupTrust<'_> {
         WorktreeSetupTrust(self)
     }
@@ -620,7 +620,7 @@ impl LspTrust<'_> {
 }
 
 /// Which setup and teardown commands of a repository's `.hutan/worktree.toml` the user confirmed
-/// (protocol 0.48).
+/// (protocol 0.49).
 #[derive(Debug, Clone, Copy)]
 pub struct WorktreeSetupTrust<'a>(&'a Storage);
 

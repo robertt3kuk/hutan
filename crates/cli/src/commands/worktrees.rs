@@ -254,7 +254,7 @@ impl Ctx {
         let client = self.connect().await?;
         if !client.supports_worktree_setup() {
             return Err(CliError::Failed(
-                "this hutand cannot run worktree setup (it is older than protocol 0.48); restart \
+                "this hutand cannot run worktree setup (it is older than protocol 0.49); restart \
                  it to update"
                     .to_owned(),
             ));
@@ -294,7 +294,7 @@ impl Ctx {
         let client = self.connect().await?;
         if !client.supports_worktree_setup() {
             return Err(CliError::Failed(
-                "this hutand cannot clean up worktrees (it is older than protocol 0.48); restart \
+                "this hutand cannot clean up worktrees (it is older than protocol 0.49); restart \
                  it to update"
                     .to_owned(),
             ));

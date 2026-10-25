@@ -90,7 +90,7 @@
 //! [finish]                       # the user's Finish in Changes / `hutan finish` (protocol 0.35, ADR 0020)
 //! push = true                    # push to the upstream after committing (and merging); false: keep it local
 //!
-//! [worktrees]                    # worktree setup and retention (protocol 0.48, docs/orchestration.md § Setup and cleanup)
+//! [worktrees]                    # worktree setup and retention (protocol 0.49, docs/orchestration.md § Setup and cleanup)
 //! cleanup = "never"              # "never", "merged" (branch merged into the default branch) or "idle" (untouched for cleanup_idle_days)
 //! cleanup_idle_days = 14         # with "idle": days without a commit or a change of git state
 //! wait_for_setup = true          # an agent chat started in a worktree that is still setting up waits for it
@@ -623,7 +623,7 @@ impl Default for FinishSettings {
 /// `worktrees.cleanup_idle_days` when the setting is absent.
 pub const DEFAULT_WORKTREE_IDLE_DAYS: u64 = 14;
 
-/// `[worktrees]` of `daemon.toml`: what happens around a worktree's life (protocol 0.48,
+/// `[worktrees]` of `daemon.toml`: what happens around a worktree's life (protocol 0.49,
 /// `docs/orchestration.md` § Setup and cleanup). What to copy and run is the repository's
 /// `.hutan/worktree.toml`; `projects` is the user's own say for one project.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

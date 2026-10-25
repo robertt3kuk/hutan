@@ -391,7 +391,7 @@ async fn ls_shows_the_placement_and_warns_when_two_agents_share_a_checkout() {
     t.stop().await;
 }
 
-// Setup, teardown and cleanup (protocol 0.48) ---------------------------------------------------
+// Setup, teardown and cleanup (protocol 0.49) ---------------------------------------------------
 
 /// Polls `hutan wt ls --json` from `cwd` until the worktree at `path` has a setup in `state`.
 async fn wait_setup(t: &TestDaemon, cwd: &Path, path: &Path, state: &str) -> Value {

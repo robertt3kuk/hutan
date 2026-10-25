@@ -242,7 +242,7 @@ pub struct LspTrustRow {
 }
 
 /// The setup and teardown commands of a repository the user confirmed
-/// (`worktree_setup_trust`, protocol 0.48).
+/// (`worktree_setup_trust`, protocol 0.49).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeSetupTrustRow {
     /// The repository's main checkout, canonical.

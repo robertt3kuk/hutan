@@ -1,4 +1,4 @@
-//! Retention of worktrees (protocol 0.48, capability `worktree.setup`): `worktree.cleanup` lists
+//! Retention of worktrees (protocol 0.49, capability `worktree.setup`): `worktree.cleanup` lists
 //! the worktrees `[worktrees] cleanup` would remove, `worktree.prune` removes them.
 //!
 //! Nothing is removed by itself: the daemon never prunes in the background. A worktree is a

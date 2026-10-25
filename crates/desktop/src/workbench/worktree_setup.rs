@@ -1,4 +1,4 @@
-//! Setup and cleanup of worktrees in the desktop (protocol 0.48, capability `worktree.setup`,
+//! Setup and cleanup of worktrees in the desktop (protocol 0.49, capability `worktree.setup`,
 //! `docs/orchestration.md` § Setup and cleanup).
 //!
 //! - The state line of a checkout row in the Changes panel ([`setup_line`]): *Setting up…*,

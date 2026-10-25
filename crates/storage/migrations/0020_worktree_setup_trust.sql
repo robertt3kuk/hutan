@@ -1,5 +1,5 @@
 -- Schema v20: which setup and teardown commands of a repository the user confirmed (slice
--- WORKTREE-SETUP, protocol 0.48, capability `worktree.setup`).
+-- WORKTREE-SETUP, protocol 0.49, capability `worktree.setup`).
 --
 -- `.hutan/worktree.toml` is committed with the repository, so whoever can push to it can put
 -- commands in it. The commands of the file run only after the user confirmed exactly these:

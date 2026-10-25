@@ -1,5 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)] // test helpers
-//! Worktree setup and cleanup in the desktop (protocol 0.48): the Changes panel's row says
+//! Worktree setup and cleanup in the desktop (protocol 0.49): the Changes panel's row says
 //! *Setting up…* / *Setup failed* / *Setup needs your confirmation* with its action, the trust
 //! sheet lists the exact commands and confirming runs them, and ⌘K *Worktree: Clean Up…* lists
 //! what the policy offers in a sheet and removes only what the user confirms. Real daemon, real

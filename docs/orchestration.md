@@ -158,7 +158,7 @@ Slice M7-C (protocol 0.22, capability `worktree.review`). Wire details: `docs/pr
 
 ## Setup and cleanup
 
-Slice WORKTREE-SETUP (protocol 0.48, capability `worktree.setup`, SQLite migration 20). A fresh worktree has no `node_modules`, no `.env`, no build cache; and old worktrees pile up (vibe-kanban #765, claude-squad #181). Wire details: `docs/protocol.md` § Worktree setup and retention. Code: `crates/daemon/src/worktrees/{setup,setup_file,cleanup}.rs`, `crates/cli/src/commands/worktrees.rs`, `crates/desktop/src/workbench/worktree_setup.rs`.
+Slice WORKTREE-SETUP (protocol 0.49, capability `worktree.setup`, SQLite migration 20). A fresh worktree has no `node_modules`, no `.env`, no build cache; and old worktrees pile up (vibe-kanban #765, claude-squad #181). Wire details: `docs/protocol.md` § Worktree setup and retention. Code: `crates/daemon/src/worktrees/{setup,setup_file,cleanup}.rs`, `crates/cli/src/commands/worktrees.rs`, `crates/desktop/src/workbench/worktree_setup.rs`.
 
 ### What a worktree needs: `.hutan/worktree.toml`
 
