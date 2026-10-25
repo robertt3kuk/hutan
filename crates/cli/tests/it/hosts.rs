@@ -311,7 +311,7 @@ async fn host_forward_runs_ssh_with_a_replaceable_socket_and_cleans_up() {
         .env("HUTAN_SSH", &ssh.script)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = spawn_child(&mut command);
+    let child = spawn_child(&mut command);
 
     // The second ssh run is the forward.
     timeout(WAIT, async {
