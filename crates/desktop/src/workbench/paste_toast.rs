@@ -30,7 +30,8 @@ pub struct PasteToast {
     rev: u64,
 }
 
-/// `Image saved to …/scratch/<session>/paste-1.png`: the end of the path when it is long.
+/// `Image saved to …/scratch/<session>/paste-1.png`: the end of the path, from a `/`, when it is
+/// long.
 fn toast_text(path: &Path) -> String {
     let full = path.display().to_string();
     let count = full.chars().count();
@@ -38,6 +39,8 @@ fn toast_text(path: &Path) -> String {
         return format!("Image saved to {full}");
     }
     let tail: String = full.chars().skip(count - SHOWN_CHARS).collect();
+    // Start at a folder boundary rather than in the middle of a name.
+    let tail = tail.find('/').map_or(tail.as_str(), |at| &tail[at..]);
     format!("Image saved to …{tail}")
 }
 
@@ -156,9 +159,13 @@ mod tests {
         let text = toast_text(Path::new(&long));
         assert!(text.starts_with("Image saved to …"), "{text}");
         assert!(text.ends_with("/paste-12.png"), "{text}");
-        assert_eq!(
-            text.chars().count(),
-            "Image saved to …".chars().count() + SHOWN_CHARS
+        assert!(
+            text.chars().count() <= "Image saved to …".chars().count() + SHOWN_CHARS,
+            "{text}"
+        );
+        assert!(
+            text.starts_with("Image saved to …/"),
+            "starts at a folder: {text}"
         );
     }
 }
