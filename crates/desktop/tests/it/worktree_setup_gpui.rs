@@ -251,7 +251,10 @@ fn the_trust_sheet_lists_the_commands_and_confirming_runs_them(cx: &mut TestAppC
         "{message}"
     );
     assert!(message.contains("  $ echo bye"), "{message}");
-    assert!(!destructive);
+    assert!(
+        destructive,
+        "Return cancels: the repository's commands are the risky choice"
+    );
     assert!(fx.sessions().iter().all(|s| s.title != "Setup"));
 
     // Confirming runs the setup; the row stops asking.

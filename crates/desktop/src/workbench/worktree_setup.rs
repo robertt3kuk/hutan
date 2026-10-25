@@ -202,7 +202,9 @@ impl Workbench {
             return;
         };
         let text = trust_sheet_text(&path, &setup);
-        self.open_confirm(
+        // Running commands a repository supplied is the risky choice: Cancel is the default (Return
+        // cancels), the button is drawn as a caution.
+        self.open_destructive(
             "Run setup commands from this repository?",
             text,
             "Trust and Run",
