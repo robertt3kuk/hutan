@@ -329,6 +329,62 @@ fn open_at_this_revision_is_a_read_only_tab_of_the_text_then(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+fn a_revision_tab_draws_all_its_lines_again_after_another_tab_was_shown(cx: &mut TestAppContext) {
+    let fx = Fx::new();
+    let (view, cx) = open(cx, &fx);
+    let history = history_of(&view, cx, &fx.file(), None);
+    wait_until(cx, "the commits", |cx| {
+        history.read_with(cx, |h, _| h.commits().len() == 3)
+    });
+    let first = history.read_with(cx, |h, _| h.commits()[2].id.clone());
+    history.update(cx, |h, cx| h.select(&first, cx));
+    draw(cx);
+    history.update(cx, |h, cx| h.open_revision(cx));
+    draw(cx);
+    let path = fx.file().display().to_string();
+    let revision: Entity<RevisionView> = view
+        .read_with(cx, |wb, _| wb.revision(&path, &first))
+        .expect("the revision view");
+    wait_until(cx, "the text of that revision", |cx| {
+        revision.read_with(cx, |r, _| *r.state() == RevisionState::Ready)
+    });
+    draw(cx);
+    let drawn = |cx: &mut VisualTestContext| {
+        revision.read_with(cx, |r, cx| r.code().read(cx).stats().last_lines.clone())
+    };
+    // Three lines and the empty one after the last newline.
+    let lines = V1.lines().count() + 1;
+    assert_eq!(drawn(cx), 0..lines, "first draw");
+
+    // Away to the history tab and back: the same lines are drawn again.
+    for round in 0..3 {
+        view.update_in(cx, |wb, window, cx| {
+            wb.open_file_history(&fx.file(), None, window, cx);
+        });
+        draw(cx);
+        assert_eq!(
+            view.read_with(cx, |wb, _| wb.state().active_center_item()),
+            Some(ItemRef::history(path.clone()))
+        );
+        view.update_in(cx, |wb, window, cx| {
+            wb.open_revision(&fx.file(), &first, window, cx);
+        });
+        draw(cx);
+        assert_eq!(
+            view.read_with(cx, |wb, _| wb.state().active_center_item()),
+            Some(ItemRef::revision(path.clone(), first.clone()))
+        );
+        assert_eq!(drawn(cx), 0..lines, "after switch {round}");
+        // Nothing moved the text: line 1 is still at the top.
+        assert_eq!(
+            revision.read_with(cx, |r, cx| r.code().read(cx).scroll_y()),
+            0.0,
+            "scrolled after switch {round}"
+        );
+    }
+}
+
+#[gpui::test]
 fn a_click_on_a_blame_opens_the_history_at_its_commit(cx: &mut TestAppContext) {
     let fx = Fx::new();
     let (view, cx) = open(cx, &fx);

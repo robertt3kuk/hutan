@@ -306,11 +306,14 @@ pub fn scan_line(scan: &HistoryScanInfo, now_ms: u64) -> String {
     }
     match scan.finished_ms {
         Some(finished) => format!(
-            "✓ Scanned {} files · {}",
-            scan.files,
+            "✓ Scanned {} · {}",
+            crate::workbench::search_replace::plural(scan.files as usize, "file", "files"),
             capitalised(&hutan_client::time::relative_text(now_ms, finished))
         ),
-        None => format!("Scanned {} files", scan.files),
+        None => format!(
+            "Scanned {}",
+            crate::workbench::search_replace::plural(scan.files as usize, "file", "files")
+        ),
     }
 }
 

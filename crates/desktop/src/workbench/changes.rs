@@ -1131,7 +1131,11 @@ impl ChangesView {
                                 .flex_none()
                                 .text_size(px(tokens.secondary_font_size))
                                 .text_color(theme.muted)
-                                .child(SharedString::from(format!("{} files", files.len()))),
+                                .child(SharedString::from(super::search_replace::plural(
+                                    files.len(),
+                                    "file",
+                                    "files",
+                                ))),
                         )
                         .child(counts_of(added, removed, &look))
                     }),

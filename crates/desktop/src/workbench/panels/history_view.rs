@@ -681,8 +681,10 @@ impl HistoryPanel {
                     format!("hutan · {} rows · {indexed}", source.rows)
                 } else {
                     format!(
-                        "{} · {files} files · {} rows · {indexed}",
-                        source.name, source.rows
+                        "{} · {} · {} rows · {indexed}",
+                        source.name,
+                        crate::workbench::search_replace::plural(files as usize, "file", "files"),
+                        source.rows
                     )
                 };
                 lines = lines.child(div().truncate().child(shared(text)));
