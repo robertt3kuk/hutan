@@ -322,6 +322,10 @@ impl QuickPanelView {
                 let request = match event {
                     TerminalViewEvent::OpenLink(target) => QuickEvent::OpenLink(target.clone()),
                     TerminalViewEvent::Notice(text) => QuickEvent::Notice(text.clone()),
+                    // The panel has no toast stack; the path is already typed in the terminal.
+                    TerminalViewEvent::ImageSaved(path) => {
+                        QuickEvent::Notice(format!("Image saved to {}", path.display()))
+                    }
                     // The panel has no chat to send a block to; the title is the session's.
                     TerminalViewEvent::SendBlockToAgent { .. }
                     | TerminalViewEvent::TitleChanged(_) => return,
