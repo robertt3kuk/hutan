@@ -70,9 +70,13 @@ impl Workbench {
                     }
                     this.set_notice(
                         format!(
-                            "Tracking changes in {} · {} files in the first commit",
+                            "Tracking changes in {} · {} in the first commit",
                             tilde(&done.root),
-                            done.files
+                            if done.files == 1 {
+                                "1 file".to_owned()
+                            } else {
+                                format!("{} files", done.files)
+                            }
                         ),
                         cx,
                     );

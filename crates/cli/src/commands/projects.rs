@@ -84,11 +84,15 @@ impl Ctx {
             .await?;
         self.print(&done, || {
             format!(
-                "tracking changes in {}: branch {}, first commit {} with {} files{}",
+                "tracking changes in {}: branch {}, first commit {} with {}{}",
                 done.root.display(),
                 done.branch,
                 done.commit.get(..8).unwrap_or(&done.commit),
-                done.files,
+                if done.files == 1 {
+                    "1 file".to_owned()
+                } else {
+                    format!("{} files", done.files)
+                },
                 if done.gitignore_written {
                     " (.gitignore written)"
                 } else {
