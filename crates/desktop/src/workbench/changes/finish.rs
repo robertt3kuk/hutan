@@ -285,6 +285,11 @@ impl ChangesView {
         self.finish.as_ref().map(|f| f.push)
     }
 
+    /// Whether the open form commits only what is staged.
+    pub fn finish_staged_only(&self) -> Option<bool> {
+        self.finish.as_ref().map(|f| f.staged_only)
+    }
+
     pub fn finish_message(&self) -> Option<String> {
         self.finish.as_ref().map(|f| f.message.text().to_owned())
     }

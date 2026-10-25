@@ -378,6 +378,12 @@ impl TestDaemon {
         self.connection_without("\"checkpoint", "no-checkpoints.sock")
     }
 
+    /// A connection to this daemon as if it predated the capability `worktree.stage` (protocol
+    /// 0.53): the Changes view then offers no staging.
+    pub fn connection_without_worktree_stage(&mut self) -> Connection {
+        self.connection_without("worktree.stage", "no-stage.sock")
+    }
+
     /// A connection through a proxy that renames `capability` in the daemon's welcome (to a name
     /// of the same length, so the frame stays valid) and passes everything else on.
     fn connection_without(&mut self, capability: &'static str, socket: &str) -> Connection {
