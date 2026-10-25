@@ -33,6 +33,8 @@ pub(crate) const SSH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 const STDERR_TAIL: usize = 4096;
 /// How much of what `ssh` printed first is kept to recognise text that is not a frame.
 const HEAD: usize = 128;
+/// How many of those lines an error shows.
+const STDERR_LINES: usize = 4;
 /// The most `run` keeps of what the remote command printed.
 const RUN_OUTPUT_LIMIT: u64 = 1 << 20;
 /// How long a failed handshake waits for the rest of `ssh`'s standard error.
@@ -318,24 +320,18 @@ impl SshHost {
 /// One word for the host's shell: left alone when it is plain, else single-quoted; a leading
 /// `~/` stays outside the quotes so the shell still expands it.
 fn remote_word(path: &str) -> String {
-    let plain = |s: &str| {
-        !s.is_empty()
-            && s.chars().all(|c| {
-                c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '+' | '@')
-            })
-    };
-    if plain(path) {
-        return path.to_owned();
-    }
     let (home, rest) = match path.strip_prefix("~/") {
         Some(rest) => ("~/", rest),
         None => ("", path),
     };
-    if home.is_empty() || !rest.is_empty() {
-        let quoted = rest.replace('\'', r"'\''");
-        return format!("{home}'{quoted}'");
+    let plain = !rest.is_empty()
+        && rest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '+' | '@'));
+    if plain || rest.is_empty() {
+        return format!("{home}{rest}");
     }
-    home.to_owned()
+    format!("{home}'{}'", rest.replace('\'', r"'\''"))
 }
 
 /// What `ssh` said, kept bounded.
@@ -373,15 +369,17 @@ impl SshDiagnostics {
         }
     }
 
-    /// The end of what `ssh` or the remote command wrote to standard error, as one line each.
+    /// The last [`STDERR_LINES`] lines of what `ssh` or the remote command wrote to standard
+    /// error (the end is where `ssh` says why it stopped), joined into one line.
     pub(crate) fn stderr_text(&self) -> String {
         let tail = self.stderr.lock().unwrap_or_else(PoisonError::into_inner);
         let text = String::from_utf8_lossy(&tail);
-        text.lines()
+        let lines: Vec<&str> = text
+            .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
-            .collect::<Vec<_>>()
-            .join("; ")
+            .collect();
+        lines[lines.len().saturating_sub(STDERR_LINES)..].join("; ")
     }
 
     /// The first bytes of the host's output when they are text and not a frame: every frame of
@@ -546,6 +544,16 @@ mod tests {
             .await
             .to_string();
         assert_eq!(text, "ssh box: Permission denied (publickey).");
+    }
+
+    #[test]
+    fn only_the_last_lines_of_stderr_are_shown() {
+        let diagnostics = SshDiagnostics::default();
+        diagnostics.push_stderr(b"@@@ WARNING @@@\nsomeone may be listening\n\nHost key for h has changed\nfingerprint X\nadd the key\nHost key verification failed.\n");
+        assert_eq!(
+            diagnostics.stderr_text(),
+            "Host key for h has changed; fingerprint X; add the key; Host key verification failed."
+        );
     }
 
     #[test]
