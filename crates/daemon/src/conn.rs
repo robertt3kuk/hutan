@@ -1,4 +1,5 @@
-//! Per-client connection task: peer check, handshake, request loop, bounded outbound queue.
+//! Per-client connection task over any byte stream: handshake, request loop, bounded outbound
+//! queue. Who the peer is has been decided by the acceptor ([`crate::peer`]).
 //!
 //! Each connection is a reader (this task) plus a writer task fed by a bounded queue. Nothing
 //! ever awaits a client: producers use `try_send`, and a full queue closes that connection
@@ -16,9 +17,8 @@ use hutan_protocol::messages::{ClientInfo, ClientKind, DaemonBuild, Hello, Reque
 use hutan_protocol::{
     ControlMessage, Frame, FrameCodec, FrameKind, MAX_PAYLOAD, PROTOCOL_VERSION, ProtocolError,
 };
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UnixStream;
-use tokio::net::unix::OwnedWriteHalf;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::time::timeout;
 use tokio_util::codec::{FramedRead, FramedWrite};
@@ -27,6 +27,7 @@ use tracing::{debug, info, warn};
 
 use crate::bus::EventBus;
 use crate::menu_bar::DesktopPresence;
+use crate::peer::AuthenticatedPeer;
 use crate::router::Router;
 
 /// Capabilities this daemon offers in `welcome`.
@@ -249,7 +250,6 @@ pub struct ConnContext {
     pub shutdown: CancellationToken,
     pub clients: Arc<AtomicU32>,
     pub outbound_queue: usize,
-    pub daemon_uid: u32,
     /// The `desktop` clients attached now (the daemon's menu bar item hides while there is one).
     pub desktops: DesktopPresence,
     /// How long a new connection may stay silent before `hello` arrives.
@@ -266,7 +266,6 @@ impl ConnContext {
         shutdown: CancellationToken,
         clients: Arc<AtomicU32>,
         outbound_queue: usize,
-        daemon_uid: u32,
         handshake_timeout: Duration,
     ) -> Self {
         Self {
@@ -275,7 +274,6 @@ impl ConnContext {
             shutdown,
             clients,
             outbound_queue,
-            daemon_uid,
             desktops: DesktopPresence::default(),
             handshake_timeout,
             build: daemon_build(crate::registry::now_ms()),
@@ -300,24 +298,35 @@ impl Drop for ClientGuard {
     }
 }
 
-type Reader = FramedRead<tokio::net::unix::OwnedReadHalf, FrameCodec>;
+/// Serves one accepted connection over any byte stream until it closes: handshake, request
+/// loop, bounded outbound queue. `peer` is the acceptor's proof that the other side was
+/// authenticated (see [`crate::peer`]); this function trusts it and checks nothing itself.
+pub async fn serve<S>(stream: S, peer: AuthenticatedPeer, ctx: Arc<ConnContext>)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (read_half, write_half) = tokio::io::split(stream);
+    serve_halves(read_half, write_half, peer, ctx).await;
+}
 
-/// Serves one accepted connection until it closes.
-pub async fn serve(stream: UnixStream, ctx: Arc<ConnContext>) {
-    let id = ConnId(ctx.next_conn_id.fetch_add(1, Ordering::Relaxed));
-    match stream.peer_cred() {
-        Ok(cred) if cred.uid() == ctx.daemon_uid => {}
-        Ok(cred) => {
-            warn!(conn = %id, peer_uid = cred.uid(), "rejecting connection from a different user");
-            return;
-        }
-        Err(e) => {
-            warn!(conn = %id, error = %e, "rejecting connection: peer credentials unavailable");
-            return;
-        }
-    }
-
+/// [`serve`] for a Unix-socket connection: the socket's own split halves need no lock, which
+/// keeps the local path as cheap as it was before the transport was generic.
+pub async fn serve_local(stream: UnixStream, peer: AuthenticatedPeer, ctx: Arc<ConnContext>) {
     let (read_half, write_half) = stream.into_split();
+    serve_halves(read_half, write_half, peer, ctx).await;
+}
+
+async fn serve_halves<R, W>(
+    read_half: R,
+    write_half: W,
+    peer: AuthenticatedPeer,
+    ctx: Arc<ConnContext>,
+) where
+    R: AsyncRead + Unpin + Send,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    let id = ConnId(ctx.next_conn_id.fetch_add(1, Ordering::Relaxed));
+    debug!(conn = %id, peer_uid = ?peer.uid(), "serving authenticated peer");
     let mut reader = FramedRead::new(read_half, FrameCodec);
     let (tx, rx) = mpsc::channel(ctx.outbound_queue);
     let cancel = CancellationToken::new();
@@ -347,8 +356,8 @@ pub async fn serve(stream: UnixStream, ctx: Arc<ConnContext>) {
     }
 }
 
-async fn write_loop(
-    mut sink: FramedWrite<OwnedWriteHalf, FrameCodec>,
+async fn write_loop<W: AsyncWrite + Unpin>(
+    mut sink: FramedWrite<W, FrameCodec>,
     mut rx: mpsc::Receiver<Outbound>,
     cancel: CancellationToken,
     id: ConnId,
@@ -404,7 +413,11 @@ async fn next_frame<R: AsyncRead + Unpin>(
     }
 }
 
-async fn run(reader: &mut Reader, handle: &ConnHandle, ctx: &Arc<ConnContext>) {
+async fn run<R: AsyncRead + Unpin>(
+    reader: &mut FramedRead<R, FrameCodec>,
+    handle: &ConnHandle,
+    ctx: &Arc<ConnContext>,
+) {
     let Some(client) = handshake(reader, handle, ctx).await else {
         return;
     };
@@ -512,8 +525,8 @@ async fn handle_input(frame: &Frame, handle: &ConnHandle, ctx: &ConnContext) -> 
 
 /// First frame must be `hello`, and must arrive within the handshake timeout. On success the
 /// welcome (and any replay) is queued and the client's info is returned.
-async fn handshake(
-    reader: &mut Reader,
+async fn handshake<R: AsyncRead + Unpin>(
+    reader: &mut FramedRead<R, FrameCodec>,
     handle: &ConnHandle,
     ctx: &ConnContext,
 ) -> Option<ClientInfo> {

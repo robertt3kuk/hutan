@@ -42,6 +42,7 @@ use crate::menu_bar::{self, MenuBar};
 use crate::notify::NotifyService;
 use crate::notify_native::NativePoster;
 use crate::paths::Paths;
+use crate::peer::LocalAcceptor;
 use crate::project_migration;
 use crate::projects;
 use crate::providers::{GatewayConfig, ProviderService};
@@ -162,6 +163,9 @@ pub struct RunningDaemon {
     epoch: Epoch,
     shutdown: CancellationToken,
     task: JoinHandle<()>,
+    // Only `serve_stream` (test support) uses it after `start`.
+    #[cfg_attr(not(feature = "test-support"), allow(dead_code))]
+    ctx: Arc<ConnContext>,
 }
 
 impl RunningDaemon {
@@ -176,6 +180,22 @@ impl RunningDaemon {
     /// Token that stops the daemon when cancelled (what signal handlers trigger).
     pub fn shutdown_token(&self) -> CancellationToken {
         self.shutdown.clone()
+    }
+
+    /// Serves `stream` as one more connection of this daemon, as the local acceptor would after
+    /// authenticating its peer; the returned task ends when the connection closes. For tests
+    /// that run the protocol over an in-memory duplex or a socket pair: there is no listener
+    /// behind it, and the `test-support` feature is never enabled in the `hutand` binary.
+    #[cfg(feature = "test-support")]
+    pub fn serve_stream<S>(&self, stream: S) -> JoinHandle<()>
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        tokio::spawn(conn::serve(
+            stream,
+            crate::peer::AuthenticatedPeer::unchecked_for_tests(),
+            self.ctx.clone(),
+        ))
     }
 
     /// Requests an orderly stop; returns immediately. Pair with [`wait`](Self::wait).
@@ -230,12 +250,10 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
     fs::set_permissions(&paths.socket, fs::Permissions::from_mode(0o600)).map_err(
         DaemonError::io(format!("securing {}", paths.socket.display())),
     )?;
-    let daemon_uid = fs::metadata(&paths.socket)
-        .map_err(DaemonError::io(format!(
-            "inspecting {}",
-            paths.socket.display()
-        )))?
-        .uid();
+    // The acceptor admits only the user who owns the socket just created: this one.
+    let acceptor = LocalAcceptor::new(listener, &paths.socket).map_err(DaemonError::io(
+        format!("inspecting {}", paths.socket.display()),
+    ))?;
 
     let epoch = Epoch::new();
     if let Err(error) = storage.app_meta().record_epoch(epoch, registry::now_ms()) {
@@ -545,7 +563,6 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         shutdown.clone(),
         clients,
         config.outbound_queue.max(2),
-        daemon_uid,
         config.handshake_timeout,
     ));
     // Shows the item while no desktop is connected, until shutdown takes it off.
@@ -586,8 +603,8 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         shutdown.clone(),
     ));
     let task = tokio::spawn(accept_loop(
-        listener,
-        ctx,
+        acceptor,
+        ctx.clone(),
         shutdown.clone(),
         held,
         storage,
@@ -600,6 +617,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         epoch,
         shutdown,
         task,
+        ctx,
     })
 }
 
@@ -679,7 +697,7 @@ impl Drop for SocketGuard {
 
 #[allow(clippy::too_many_arguments)] // What the daemon's last task owns until it stops.
 async fn accept_loop(
-    listener: UnixListener,
+    acceptor: LocalAcceptor,
     ctx: Arc<ConnContext>,
     shutdown: CancellationToken,
     held: Held,
@@ -692,10 +710,12 @@ async fn accept_loop(
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,
-            accepted = listener.accept() => match accepted {
-                Ok((stream, _)) => {
-                    conns.spawn(conn::serve(stream, ctx.clone()));
+            accepted = acceptor.accept() => match accepted {
+                Ok(Some((stream, peer))) => {
+                    conns.spawn(conn::serve_local(stream, peer, ctx.clone()));
                 }
+                // Rejected before one byte was read; the acceptor logged it.
+                Ok(None) => {}
                 Err(e) => {
                     // Typically fd exhaustion; back off instead of spinning.
                     error!(error = %e, "accept failed");
@@ -708,7 +728,7 @@ async fn accept_loop(
         }
     }
     info!("shutting down");
-    drop(listener);
+    drop(acceptor);
 
     // Session processes die with the daemon (ADR 0009): hang them up and reap them while the
     // connections (which watch the same token) flush their queues and close.

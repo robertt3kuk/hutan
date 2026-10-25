@@ -84,6 +84,7 @@ pub mod notify;
 pub mod notify_native;
 pub mod partial;
 pub mod paths;
+pub mod peer;
 pub mod placement;
 pub mod project_instructions;
 pub mod project_migration;
