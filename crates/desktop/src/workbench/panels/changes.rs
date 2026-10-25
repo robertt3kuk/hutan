@@ -760,6 +760,12 @@ impl ChangesPanel {
             Some((dir, name)) => (name.to_owned(), Some(dir.to_owned())),
             None => (file.path.clone(), None),
         };
+        let home = self.env.sessions.read(cx).home_folder();
+        let hint = crate::workbench::changes::memory_files_hint(
+            home.as_deref(),
+            &[std::path::Path::new(checkout)],
+            &file.path,
+        );
         let action = ChangedFileAt {
             checkout: checkout.to_owned(),
             file: file.path.clone(),
@@ -811,14 +817,29 @@ impl ChangesPanel {
                             .truncate()
                             .child(SharedString::from(name)),
                     )
-                    .children(dir.map(|dir| {
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(tokens.secondary_font_size))
-                            .text_color(theme.muted)
-                            .child(SharedString::from(dir))
-                    })),
+                    .children(
+                        hint.map(|hint| {
+                            div()
+                                .flex_none()
+                                .text_size(px(tokens.secondary_font_size))
+                                .text_color(theme.muted)
+                                .child(hint)
+                                .child(probe(
+                                    &self.env.regions,
+                                    Region::ChangesPanelMemoryHint(group, index),
+                                ))
+                        })
+                        .or_else(|| {
+                            dir.map(|dir| {
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(theme.muted)
+                                    .child(SharedString::from(dir))
+                            })
+                        }),
+                    ),
             )
             .child(if file.binary {
                 div()

@@ -780,6 +780,32 @@ fn changes_follows_mawass_scope_like_files_while_mawas_home_is_the_focused_tab(
         label("Mawas · Global", ScopeKind::Mawas)
     );
 
+    // A memory file Mawas wrote into the tracked Home folder carries the hint; another file
+    // of the folder does not.
+    fs::create_dir_all(home_dir.join(".mawas/memory")).unwrap();
+    fs::write(home_dir.join(".mawas/memory/global.md"), "# Memory\n").unwrap();
+    fs::write(home_dir.join("notes.txt"), "notes\n").unwrap();
+    changes.update(cx, |panel, cx| panel.refresh(cx));
+    wait_until(cx, "the memory file in Home's changes", |cx| {
+        draw(cx);
+        cx.read(|cx| changes.read(cx).files_of(&home_dir).len()) == 2
+    });
+    let rows: Vec<String> = cx.read(|cx| {
+        changes
+            .read(cx)
+            .files_of(&home_dir)
+            .iter()
+            .map(|f| f.path.clone())
+            .collect()
+    });
+    for (index, path) in rows.iter().enumerate() {
+        let hinted = view.read_with(cx, |wb, _| {
+            wb.region_bounds(Region::ChangesPanelMemoryHint(0, index))
+                .is_some()
+        });
+        assert_eq!(hinted, path.starts_with(".mawas/memory/"), "{path}");
+    }
+
     // Another tab: the project's again.
     show_other_tab(&view, cx, "Elsewhere");
     wait_until(cx, "Changes to leave Mawas", |cx| {

@@ -432,6 +432,10 @@ pub enum Region {
     Changes(&'static str),
     /// File `index` of the Changes view's list, top to bottom.
     ChangesFile(usize),
+    /// The *Mawas's memory files* hint on file `index` of the Changes view's list.
+    ChangesMemoryHint(usize),
+    /// The same hint on file `file` of group `group` of the Changes tab.
+    ChangesPanelMemoryHint(usize, usize),
     /// A control of a file history tab, by name (`refresh`, `more`, `open-revision`, `copy`,
     /// `root`, `detail`).
     FileHistory(&'static str),

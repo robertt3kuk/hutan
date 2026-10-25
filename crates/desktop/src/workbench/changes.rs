@@ -897,6 +897,21 @@ impl ChangesView {
     }
 }
 
+/// What a Changes row says about a file Mawas keeps for itself.
+pub(crate) const MEMORY_FILES_HINT: &str = "Mawas's memory files";
+
+/// [`MEMORY_FILES_HINT`] for `rel` (relative to `checkout`) when `checkout` is the Home folder
+/// and `rel` is under `.mawas/memory/`: the mirror of Mawas's memory, which a tracked Home
+/// folder shows in Changes like any file (`docs/assistant.md` § Memory files).
+pub(crate) fn memory_files_hint(
+    home: Option<&Path>,
+    checkout: &[&Path],
+    rel: &str,
+) -> Option<&'static str> {
+    let home = home?;
+    (checkout.contains(&home) && rel.starts_with(".mawas/memory/")).then_some(MEMORY_FILES_HINT)
+}
+
 pub(crate) fn status_mark(status: DiffStatus, theme: &Theme) -> (&'static str, gpui::Hsla) {
     match status {
         DiffStatus::Added => ("A", theme.diff_added),
@@ -1419,10 +1434,16 @@ impl ChangesView {
         } else {
             IndexFilter::All
         };
+        let home = self.env.sessions.read(cx).home_folder();
         for (index, file) in self.files().iter().enumerate() {
             if !filter.shows(file) {
                 continue;
             }
+            let hint = memory_files_hint(
+                home.as_deref(),
+                &[self.path.as_path(), self.canonical.as_path()],
+                &file.path,
+            );
             let (mark, color) = status_mark(file.status, theme);
             // staged / unstaged / both: a 14 px glyph with the word in its tooltip (a state is
             // not a pill that doubles the row's marks): a check for staged, a dot in the
@@ -1500,8 +1521,21 @@ impl ChangesView {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .truncate()
-                            .child(SharedString::from(name)),
+                            .flex()
+                            .gap(px(tokens.spacing))
+                            .child(div().min_w_0().truncate().child(SharedString::from(name)))
+                            .children(hint.map(|hint| {
+                                div()
+                                    .id(SharedString::from(format!("changes-memory-hint-{index}")))
+                                    .flex_none()
+                                    .text_size(px(tokens.secondary_font_size))
+                                    .text_color(theme.muted)
+                                    .child(hint)
+                                    .child(probe(
+                                        &self.env.regions,
+                                        Region::ChangesMemoryHint(index),
+                                    ))
+                            })),
                     )
                     .children(index_glyph)
                     .child(if file.binary {
