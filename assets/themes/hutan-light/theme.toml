@@ -32,6 +32,11 @@ root = true
 "state.success" = "#2f7a48"
 "state.warning" = "#8a6300"
 "state.error" = "#b93a26"
+# Find matches: the default (the warning color at 28 % / 60 %) made every match a pale tan on the
+# paper and the current one barely stronger. A pale amber for every match, a saturated one for
+# the current match (dark ink on it: 7.7:1).
+"editor.search-match" = "#f3e2b0"
+"editor.search-match.active" = "#e8a838"
 # Links are the only accent text; the brand orange itself is 3.20:1 on bg.
 "markdown.link" = "#b04818"
 # Black at 12 % (31/255 = 0.1216) and 28 % (71/255 = 0.2784).

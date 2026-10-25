@@ -295,6 +295,31 @@ fn the_builtins_contrast_baseline_is_reviewed() {
     }
 }
 
+#[test]
+fn the_current_find_match_is_clearly_stronger_than_the_others_in_both_builtins() {
+    // FX-E2E5: on the light paper every match was a pale tan and the current one hardly
+    // different. The current match must stand out from the others and from the background,
+    // composed over the background the terminal and the editor draw them on.
+    for builtin in Builtin::ALL {
+        let theme = builtin_theme(builtin);
+        let ground = theme.color(Color::EditorBackground).rgb();
+        let every = theme.color(Color::EditorSearchMatch).over(ground);
+        let current = theme.color(Color::EditorSearchMatchActive).over(ground);
+        let apart = themes::contrast_ratio(every, current);
+        let from_ground = themes::contrast_ratio(current, ground);
+        assert!(
+            apart >= 1.25,
+            "{}: the current match vs the others is {apart:.2}:1",
+            builtin.id()
+        );
+        assert!(
+            from_ground >= 1.8,
+            "{}: the current match vs the background is {from_ground:.2}:1",
+            builtin.id()
+        );
+    }
+}
+
 // ---- editor and syntax tokens (E-4) ---------------------------------------------------------
 
 #[test]
