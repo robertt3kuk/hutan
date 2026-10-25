@@ -885,6 +885,10 @@ fn sharing_writes_what_the_sheet_showed_and_undo_puts_it_back(cx: &mut TestAppCo
     let home = fixture_home(dir.path());
     project(&view, cx, &root, &home);
     let panel = panel(&view, cx, 1);
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.share_button_label()),
+        "Share one file with every agent…"
+    );
     let user_before: Vec<String> = [".claude/CLAUDE.md", ".codex/AGENTS.md"]
         .iter()
         .map(|f| std::fs::read_to_string(home.join(f)).unwrap())
@@ -955,7 +959,12 @@ fn cancelling_the_sheet_writes_nothing_and_a_shared_project_offers_nothing(
     let root = root.canonicalize().unwrap();
     let home = fixture_home(dir.path());
     project(&view, cx, &root, &home);
-    panel(&view, cx, 1);
+    let shared_panel = panel(&view, cx, 1);
+    // Every agent reads AGENTS.md already: the offer is optional and says why.
+    assert_eq!(
+        shared_panel.read_with(cx, |p, _| p.share_button_label()),
+        "Optional — for older Claude Code versions"
+    );
 
     click(&view, cx, Region::Instructions("share"));
     let sheet = confirm_text(&view, cx);

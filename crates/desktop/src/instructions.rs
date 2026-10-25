@@ -427,6 +427,23 @@ impl Discovery {
                     })
             })
     }
+
+    /// `AGENTS.md` is read by all three as it is, Claude Code included (2.1.277 and later), but
+    /// Claude Code has no `@AGENTS.md` import or link of its own: sharing is then only for older
+    /// Claude Code versions, and the panel says so.
+    pub fn share_is_optional(&self) -> bool {
+        self.project
+            .iter()
+            .find(|f| f.label == "AGENTS.md")
+            .is_some_and(|agents| {
+                Harness::ALL
+                    .iter()
+                    .all(|h| agents.reader(*h).is_some_and(|r| r.reads.is_read()))
+                    && agents
+                        .reader(Harness::Claude)
+                        .is_some_and(|r| r.reads == Reads::Always)
+            })
+    }
 }
 
 /// Folder and name of a project-relative path.

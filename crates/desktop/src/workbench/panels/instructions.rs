@@ -106,6 +106,12 @@ impl InstructionsPanel {
         &self.state
     }
 
+    /// The words of the Share button: *Optional — for older Claude Code versions* while every
+    /// agent already reads `AGENTS.md`.
+    pub fn share_button_label(&self) -> &'static str {
+        share_label(self.discovery().is_some_and(Discovery::share_is_optional))
+    }
+
     pub fn discovery(&self) -> Option<&Discovery> {
         match &self.state {
             Instructions::Ready(discovery) => Some(discovery),
@@ -381,6 +387,15 @@ fn harness_icon(harness: Harness) -> Icon {
     }
 }
 
+/// The Share button's label: while every agent reads `AGENTS.md` already, sharing is optional.
+pub(crate) fn share_label(optional: bool) -> &'static str {
+    if optional {
+        "Optional — for older Claude Code versions"
+    } else {
+        "Share one file with every agent…"
+    }
+}
+
 impl Render for InstructionsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.env.regions.rendered(cx.entity_id());
@@ -404,24 +419,26 @@ impl Render for InstructionsPanel {
         let header = panel_toolbar("panels.instructions", Vec::new(), vec![refresh], cx);
 
         let shared = self.discovery().is_some_and(Discovery::shared);
+        let optional = self.discovery().is_some_and(Discovery::share_is_optional);
+        let share_label = self.share_button_label();
         let share_row = (self.root.is_some() && projects > 0 && !shared).then(|| {
             div()
                 .flex_none()
                 .px(px(tokens.spacing * 3.0))
                 .pb(px(tokens.spacing * 2.0))
                 .child(
-                    ui::Button::new(
-                        "instructions-share",
-                        "Share one file with every agent…",
-                        &theme,
-                        &tokens,
-                    )
-                    .compact()
-                    .tooltip("Make AGENTS.md the file Codex, Claude Code and OMP all read")
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(ShareInstructions), cx);
-                    })
-                    .child(probe(&self.env.regions, Region::Instructions("share"))),
+                    ui::Button::new("instructions-share", share_label, &theme, &tokens)
+                        .compact()
+                        .tooltip(if optional {
+                            "Codex, Claude Code and OMP already read AGENTS.md; this adds an \
+                             @AGENTS.md import to CLAUDE.md for Claude Code versions before 2.1.277"
+                        } else {
+                            "Make AGENTS.md the file Codex, Claude Code and OMP all read"
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(ShareInstructions), cx);
+                        })
+                        .child(probe(&self.env.regions, Region::Instructions("share"))),
                 )
                 .into_any_element()
         });
