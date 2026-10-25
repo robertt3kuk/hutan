@@ -417,3 +417,75 @@ fn drawing_frames_asks_the_daemon_nothing(cx: &mut TestAppContext) {
         "drawing frames sent requests to the daemon"
     );
 }
+
+#[gpui::test]
+fn changes_default_scope_picks_what_the_panel_opens_on(cx: &mut TestAppContext) {
+    let fx = Fx::new();
+    fs::write(
+        fx.daemon.home().join("settings.toml"),
+        "[changes]\ndefault_scope = \"workspace\"\n",
+    )
+    .unwrap();
+    let connection = fx.daemon.connection();
+    let (view, cx) = open(cx, &fx, connection);
+    let panel = ready_panel(&view, cx, &fx);
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.changes_scope()),
+        ChangesScope::Workspace
+    );
+    assert_eq!(panel.read_with(cx, |p, cx| p.shown(cx).len()), 3);
+    // The switch shows it, and *This checkout* narrows the list to one group for this window.
+    click(&view, cx, Region::Changes("panel-scope-checkout"));
+    assert_eq!(panel.read_with(cx, |p, cx| p.shown(cx).len()), 1);
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.changes_scope()),
+        ChangesScope::Checkout
+    );
+}
+
+#[gpui::test]
+fn the_default_scope_is_this_checkout_and_a_lone_repository_has_no_switch(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    fs::write(
+        daemon.home().join("settings.toml"),
+        "[changes]\ndefault_scope = \"workspace\"\n",
+    )
+    .unwrap();
+    let keep = tempfile::tempdir().unwrap();
+    let solo = repo(&fs::canonicalize(keep.path()).unwrap(), "solo");
+    fs::write(solo.join("edit.txt"), "x\n").unwrap();
+    let workspace = daemon.create_workspace("solo", &[&solo]).id;
+    let (view, cx) = open_with(
+        cx,
+        SettingsStore::new(SettingsPaths::in_dir(daemon.home())),
+        daemon.connection(),
+        None,
+    );
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    view.update_in(cx, |wb, window, cx| {
+        wb.switch_workspace(workspace, window, cx)
+    });
+    let panel = panel(&view, cx);
+    wait_until(cx, "the checkout and its file", |cx| {
+        panel.read_with(cx, |p, _| {
+            p.rows().len() == 1 && p.counts(&solo).is_some_and(|c| c.files == 1)
+        })
+    });
+    // One repository, no worktree with changes: the setting has nothing to choose between.
+    assert!(!panel.read_with(cx, |p, _| p.all_available()));
+    assert_eq!(
+        panel.read_with(cx, |p, _| p.shown_scope()),
+        ChangesScope::Checkout
+    );
+    assert!(
+        view.read_with(cx, |wb, _| wb
+            .region_bounds(Region::Changes("panel-scope-workspace"))
+            .is_none()),
+        "no switch while there is one place that changes"
+    );
+    region(&view, cx, Region::ChangesPanelFile(0, 0));
+}

@@ -1332,6 +1332,29 @@ impl ChangesScope {
     }
 }
 
+/// The `changes` namespace: the Changes panel (`docs/design.md` § Changes panel).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ChangesSettings {
+    /// What the panel lists when it opens: `checkout` (the files of the checkout you work in)
+    /// or `workspace` (every checkout of the workspace, grouped). It only applies while the
+    /// workspace has more than one repository or a worktree with changes; the panel's own
+    /// switch changes it for the open window without writing it here.
+    pub default_scope: ChangesScope,
+}
+
+impl Default for ChangesSettings {
+    fn default() -> Self {
+        Self {
+            default_scope: ChangesScope::Checkout,
+        }
+    }
+}
+
+impl Setting for ChangesSettings {
+    const NAMESPACE: &'static str = "changes";
+}
+
 /// The `resources` namespace: the resources panel (processes per session, CPU and memory).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -1798,6 +1821,7 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<AgentsSettings>();
     store.register::<ResourcesSettings>();
     store.register::<TasksSettings>();
+    store.register::<ChangesSettings>();
 }
 
 /// Panels use this for `PanelId` lookups without importing the model.
@@ -2370,6 +2394,7 @@ mod tests {
             "agents",
             "resources",
             "tasks",
+            "changes",
         ] {
             assert!(
                 schema["namespaces"][ns].is_object(),

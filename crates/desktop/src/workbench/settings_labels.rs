@@ -71,6 +71,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("agents", "Agents"),
     ("resources", "Resources"),
     ("tasks", "Tasks"),
+    ("changes", "Changes"),
     ("assistant", "Mawas"),
     ("integrations", "Agent Integrations"),
     ("automation", "Automation"),
@@ -801,6 +802,17 @@ const FIELDS: &[FieldText] = &[
         &[
             ("workspace", "The current workspace"),
             ("all", "All workspaces"),
+        ],
+    ),
+    // ---- changes ----
+    choice(
+        "changes",
+        "default_scope",
+        "Changes panel lists",
+        "What the Changes panel shows when it opens: the files of the checkout you work in, or every checkout of the workspace grouped by checkout. It only applies while the workspace has more than one repository or a worktree with changes; the panel's own switch changes it for this window.",
+        &[
+            ("checkout", "This checkout"),
+            ("workspace", "All in workspace"),
         ],
     ),
     // ---- assistant ----

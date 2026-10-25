@@ -405,6 +405,7 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<crate::settings::StatusSettings>(),
         CatalogEntry::of::<WorkspacesSettings>(),
         CatalogEntry::of::<TasksSettings>(),
+        CatalogEntry::of::<crate::settings::ChangesSettings>(),
         CatalogEntry::of::<NotificationsSettings>(),
         // Agents
         CatalogEntry::of::<AssistantSettings>(),

@@ -22,7 +22,7 @@ use hutan_protocol::worktree::{DiffFile, WorktreeDiffRequest, WorktreeInfo};
 
 use crate::icons::Icon;
 use crate::sessions::CheckoutActivity;
-use crate::settings::ChangesScope;
+use crate::settings::{ChangesScope, ChangesSettings};
 use crate::theme::{DensityExt as _, Theme, Tokens};
 use crate::workbench::Region;
 use crate::workbench::actions::{
@@ -111,6 +111,8 @@ pub struct ChangesPanel {
     collapsed: HashSet<PathBuf>,
     /// *This checkout* or *All in workspace*, as chosen with the chip.
     changes_scope: ChangesScope,
+    /// `changes.default_scope` as last seen: a change of the setting moves the chip.
+    default_scope: ChangesScope,
     /// The checkout the window worked in when the files were last read.
     counted_for: Option<PathBuf>,
     counts_task: Option<Task<()>>,
@@ -157,6 +159,7 @@ impl ChangesPanel {
                 this.refresh_soon(cx);
             }),
         ];
+        let default_scope = env.settings.get::<ChangesSettings>().default_scope;
         let mut panel = Self {
             env,
             checkouts: Checkouts::Idle,
@@ -170,7 +173,8 @@ impl ChangesPanel {
             task: None,
             diffs: HashMap::new(),
             collapsed: HashSet::new(),
-            changes_scope: ChangesScope::default(),
+            changes_scope: default_scope,
+            default_scope,
             counted_for: None,
             counts_task: None,
             _subscriptions: subscriptions,
@@ -803,6 +807,11 @@ impl ChangesPanel {
 impl Render for ChangesPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.env.regions.rendered(cx.entity_id());
+        let default_scope = self.env.settings.get::<ChangesSettings>().default_scope;
+        if default_scope != self.default_scope {
+            self.default_scope = default_scope;
+            self.changes_scope = default_scope;
+        }
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         // Drawn means visible: that is when stale checkouts are listed again.

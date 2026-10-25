@@ -829,8 +829,8 @@ mod audit {
         ),
         (
             "desktop/src/workbench/panels/changes.rs",
-            1,
-            "a checkout row",
+            3,
+            "a checkout header, a changed file row and the \"N more files\" row",
         ),
         (
             "desktop/src/workbench/panels/common.rs",
