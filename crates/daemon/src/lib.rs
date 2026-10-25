@@ -64,6 +64,7 @@ pub mod chat_queue;
 pub mod checkpoints;
 pub mod config;
 pub mod conn;
+pub mod contain;
 pub mod context;
 pub mod context_file;
 pub mod control;

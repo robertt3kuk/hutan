@@ -71,6 +71,9 @@ pub struct TerminalConfig {
     pub shell_integration: bool,
     /// Directory written by [`crate::shell_integration::install`]; `None` = nothing to inject.
     pub shell_integration_dir: Option<PathBuf>,
+    /// A program and arguments placed before the command line, which they execute: a sandbox
+    /// wrapper (`sandbox-exec -p <profile> --`). Empty: the command runs as it is.
+    pub wrap: Vec<String>,
 }
 
 impl Default for TerminalConfig {
@@ -90,6 +93,7 @@ impl Default for TerminalConfig {
             default_colors: DefaultColors::default(),
             shell_integration: true,
             shell_integration_dir: None,
+            wrap: Vec::new(),
         }
     }
 }
@@ -336,6 +340,11 @@ fn command(cfg: &TerminalConfig, source: &EnvSource) -> CommandBuilder {
         .as_deref()
         .filter(|_| cfg.shell_integration);
     shell_integration::inject(&mut cmd, integration_dir, cfg.cwd.as_deref());
+    // After the injection, which looks at the shell it starts: the wrapper runs it in place.
+    if !cfg.wrap.is_empty() {
+        cmd.get_argv_mut()
+            .splice(0..0, cfg.wrap.iter().map(Into::into));
+    }
     if let Some(cwd) = &cfg.cwd {
         cmd.cwd(cwd);
     }

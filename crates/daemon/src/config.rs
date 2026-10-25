@@ -90,6 +90,12 @@
 //! [finish]                       # the user's Finish in Changes / `hutan finish` (protocol 0.35, ADR 0020)
 //! push = true                    # push to the upstream after committing (and merging); false: keep it local
 //!
+//! [sandbox]                      # Contain: Hutan's Seatbelt boundary (protocol 0.52, docs/agents.md § Contain); read at start
+//! network = true                 # default for a contained session whose request does not say; false closes the network and every unix socket
+//! extra_write = ["~/.cargo"]     # folders every contained session may write besides its checkout, the repository's git directory and the temp folders
+//! read_deny = ["~/.ssh"]         # folders no contained session may read (default: Keychains, ~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gh, ~/.netrc; Hutan's own folder always)
+//! bin = "/usr/bin/sandbox-exec"  # the Seatbelt tool
+//!
 //! [worktrees]                    # worktree setup and retention (protocol 0.49, docs/orchestration.md § Setup and cleanup)
 //! cleanup = "never"              # "never", "merged" (branch merged into the default branch) or "idle" (untouched for cleanup_idle_days)
 //! cleanup_idle_days = 14         # with "idle": days without a commit or a change of git state
@@ -191,6 +197,7 @@ pub struct DaemonSettings {
     pub projects: ProjectsSettings,
     pub control: ControlSettings,
     pub finish: FinishSettings,
+    pub sandbox: SandboxSettings,
     pub checkpoints: CheckpointSettings,
     pub lsp: LspSettings,
     /// `[[hooks]]`: user hooks (protocol 0.48, `docs/integrations.md` § User hooks); read at
@@ -623,6 +630,38 @@ pub struct FinishSettings {
 impl Default for FinishSettings {
     fn default() -> Self {
         Self { push: true }
+    }
+}
+
+/// `[sandbox]` of `daemon.toml`: Contain, Hutan's Seatbelt boundary (protocol 0.52, ADR 0021).
+/// Read when the daemon starts.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SandboxSettings {
+    /// Whether a contained session whose request does not say may use the network. `false`
+    /// also closes every unix socket (DNS leaks through them).
+    pub network: bool,
+    /// Folders (`~` allowed) every contained session may write, besides its checkout, the
+    /// repository's git directory and the temp folders.
+    pub extra_write: Vec<String>,
+    /// Folders (`~` allowed) no contained session may read. Hutan's own data folder is always
+    /// among them.
+    pub read_deny: Vec<String>,
+    /// The Seatbelt tool; absent: `/usr/bin/sandbox-exec`.
+    pub bin: Option<String>,
+}
+
+impl Default for SandboxSettings {
+    fn default() -> Self {
+        Self {
+            network: true,
+            extra_write: Vec::new(),
+            read_deny: crate::contain::DEFAULT_READ_DENY
+                .iter()
+                .map(|path| (*path).to_owned())
+                .collect(),
+            bin: None,
+        }
     }
 }
 
@@ -1182,6 +1221,8 @@ struct File {
     #[serde(default)]
     finish: FinishSettings,
     #[serde(default)]
+    sandbox: SandboxSettings,
+    #[serde(default)]
     checkpoints: CheckpointSettings,
     #[serde(default)]
     lsp: LspSettings,
@@ -1323,6 +1364,7 @@ impl DaemonSettings {
             projects: file.projects,
             control: file.control,
             finish: file.finish,
+            sandbox: file.sandbox,
             checkpoints: file.checkpoints,
             lsp: file.lsp,
             hooks: file.hooks,
@@ -1777,6 +1819,23 @@ mod tests {
         ] {
             assert!(DaemonSettings::parse(bad, None).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn sandbox_defaults_keep_credentials_unreadable_and_the_network_on() {
+        let defaults = DaemonSettings::parse("", None).unwrap().sandbox;
+        assert!(defaults.network && defaults.extra_write.is_empty() && defaults.bin.is_none());
+        assert!(defaults.read_deny.contains(&"~/.ssh".to_owned()));
+        let custom = DaemonSettings::parse(
+            "[sandbox]\nnetwork = false\nextra_write = [\"~/.cargo\"]\nread_deny = []\n",
+            None,
+        )
+        .unwrap()
+        .sandbox;
+        assert!(!custom.network && custom.read_deny.is_empty());
+        assert_eq!(custom.extra_write, ["~/.cargo"]);
+        assert!(DaemonSettings::parse("[sandbox]\nnetwork = \"off\"\n", None).is_err());
+        assert!(DaemonSettings::parse("[sandbox]\nprofile = \"x\"\n", None).is_err());
     }
 
     #[test]

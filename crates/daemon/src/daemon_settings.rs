@@ -462,6 +462,16 @@ fn build_specs() -> Vec<Spec> {
         live("finish.push", Kind::Bool, Group::Finish, |c| {
             json!(c.finish.push)
         }),
+        restart("sandbox.network", Kind::Bool, |c| json!(c.sandbox.network)),
+        restart("sandbox.extra_write", Kind::StringList(None), |c| {
+            list_value(&c.sandbox.extra_write)
+        }),
+        restart("sandbox.read_deny", Kind::StringList(None), |c| {
+            list_value(&c.sandbox.read_deny)
+        }),
+        restart("sandbox.bin", Kind::Path(PathRule::Executable), |c| {
+            text_value(c.sandbox.bin.as_ref())
+        }),
         live(
             "worktrees.cleanup",
             Kind::Enum(&["never", "merged", "idle"]),
@@ -1611,6 +1621,7 @@ mod tests {
             projects,
             control,
             finish,
+            sandbox,
             checkpoints,
             worktrees,
             // Language servers are read when the daemon starts and take tables of their own
@@ -1702,6 +1713,12 @@ mod tests {
             approval_timeout_secs: _,
         } = control;
         let config::FinishSettings { push: _ } = finish;
+        let config::SandboxSettings {
+            network: _,
+            extra_write: _,
+            read_deny: _,
+            bin: _,
+        } = sandbox;
         let config::WorktreeSettings {
             cleanup: _,
             cleanup_idle_days: _,
@@ -1773,6 +1790,10 @@ mod tests {
             "control.mcp",
             "control.approval_timeout_secs",
             "finish.push",
+            "sandbox.network",
+            "sandbox.extra_write",
+            "sandbox.read_deny",
+            "sandbox.bin",
             "worktrees.cleanup",
             "worktrees.cleanup_idle_days",
             "worktrees.wait_for_setup",
