@@ -151,6 +151,47 @@ pub struct ThreadResult {
     pub thread: ThreadRef,
     #[serde(default)]
     pub model: Option<String>,
+    /// What the server enforces for the thread: its approval policy (a name) and sandbox
+    /// (`{type: readOnly | workspaceWrite | dangerFullAccess, networkAccess?}`), as 0.162.1
+    /// answers `thread/start` and `thread/resume`. Kept as values: a newer server may shape
+    /// them differently, and the daemon then says it could not confirm.
+    #[serde(default)]
+    pub approval_policy: Option<serde_json::Value>,
+    #[serde(default)]
+    pub sandbox: Option<serde_json::Value>,
+}
+
+impl ThreadResult {
+    /// The safety the server reported, in Hutan's names.
+    pub fn reported_safety(&self) -> Option<crate::adapter::ReportedSafety> {
+        let approval_policy = self
+            .approval_policy
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let sandbox = self.sandbox.as_ref();
+        let kind = sandbox
+            .and_then(|s| s.get("type"))
+            .and_then(|t| t.as_str())
+            .and_then(|t| match t {
+                "readOnly" => Some("read-only"),
+                "workspaceWrite" => Some("workspace-write"),
+                "dangerFullAccess" => Some("danger-full-access"),
+                _ => None,
+            })
+            .map(str::to_owned);
+        let network = sandbox
+            .and_then(|s| s.get("networkAccess"))
+            .and_then(|n| n.as_bool());
+        if approval_policy.is_none() && kind.is_none() && network.is_none() {
+            return None;
+        }
+        Some(crate::adapter::ReportedSafety {
+            approval_policy,
+            sandbox: kind,
+            network,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]

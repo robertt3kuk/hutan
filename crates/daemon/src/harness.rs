@@ -23,7 +23,7 @@ use hutan_protocol::control::{ErrorBody, ErrorCode};
 use hutan_terminal::EnvInherit;
 use serde_json::{Value, json};
 
-use hutan_core::{ApprovalPolicy, SandboxMode};
+use hutan_core::{ApprovalPolicy, SafetyPreset, SandboxMode};
 
 use crate::account_registry::AccountRegistry;
 use crate::config::{AssistantMode, HarnessSettings, McpSettings};
@@ -296,7 +296,7 @@ impl Harnesses {
         agent: &str,
         assistant: Option<AssistantMode>,
     ) -> Result<AcpConfig, ErrorBody> {
-        self.acp_config_with(agent, assistant, None, None)
+        self.acp_config_with(agent, assistant, None, None, None)
     }
 
     /// [`acp_config`](Self::acp_config) with the append-system-prompt of an OMP assistant given
@@ -307,12 +307,18 @@ impl Harnesses {
     /// account: its configuration home variable is set, last, and the credential variables of
     /// the login environment that would outrank the account's login are dropped
     /// ([`AccountEnv`]).
+    ///
+    /// With `safety` (protocol 0.51) OMP gets what its preset needs on the command line
+    /// (`--approval-mode`, `--tools`: [`crate::safety::omp_args`]); Claude Code's preset goes
+    /// through the session's metadata and its session mode, which the chat manager sets. An
+    /// assistant keeps its own profile: it never has a preset.
     pub fn acp_config_with(
         &self,
         agent: &str,
         assistant: Option<AssistantMode>,
         prompt_file: Option<&Path>,
         account: Option<&str>,
+        safety: Option<SafetyPreset>,
     ) -> Result<AcpConfig, ErrorBody> {
         let def = def(agent)
             .filter(|_| is_harness_agent(agent))
@@ -353,6 +359,12 @@ impl Harnesses {
                 ]),
             }
             args.extend(["--append-system-prompt".to_owned(), prompt]);
+        }
+        if agent == AGENT_OMP
+            && assistant.is_none()
+            && let Some(preset) = safety
+        {
+            args.extend(crate::safety::omp_args(preset));
         }
         env.extend(settings.env);
         if let Some(account_env) = &account_env {

@@ -31,7 +31,7 @@ use hutan_core::agent::{DecidedBy, NoticeLevel, PermissionOutcome};
 use hutan_core::question::{self, QuestionResponse};
 use hutan_core::{
     AgentEvent, AgentEventDraft, AgentEventKind, ApprovalId, ApprovalPolicy, ItemId, ModelInfo,
-    QuestionId, QuestionOutcome, SandboxMode, SessionId, TurnId,
+    QuestionId, QuestionOutcome, SafetyPreset, SandboxMode, SessionId, TurnId,
 };
 use hutan_protocol::assistant::{ATTACHMENTS_META_KEY, AttachmentMeta};
 use hutan_protocol::chat::{
@@ -145,6 +145,12 @@ pub struct ChatSpec {
     /// The account's label when the chat was created, for the chat header.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_label: Option<String>,
+    /// Codex and harness chats (protocol 0.51): the safety preset the chat was created with.
+    /// Its Codex pair (`approval_policy`, `sandbox`) and its session `mode` are stored beside it
+    /// when the chat is created; the rest (OMP's arguments, Claude Code's sandbox metadata) is
+    /// derived from it at every start, so a restart or restore applies it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety: Option<SafetyPreset>,
 }
 
 /// What runs a session: an agent process, or the model gateway.
@@ -1108,6 +1114,7 @@ impl ChatManager {
             sandbox: spec.sandbox,
             resume_thread_id: spec.thread_id.clone(),
             developer_instructions: memory.map(|memory| memory.text),
+            session_meta: None,
         };
         let codex = self.codex_for(id, spec.account.as_deref()).await?;
         let CodexSession {
@@ -1147,6 +1154,7 @@ impl ChatManager {
         let harnesses = self.harnesses.clone();
         let agent = spec.agent.clone();
         let account = spec.account.clone();
+        let safety = spec.safety;
         let mode = spec.assistant.then(|| self.assistant_policy().mode);
         // Mawas's memory: OMP gets it in a private prompt file named on its command line (never
         // in argv itself), Claude Code on its first turn, below.
@@ -1163,7 +1171,13 @@ impl ChatManager {
             _ => None,
         };
         let config = tokio::task::spawn_blocking(move || {
-            harnesses.acp_config_with(&agent, mode, prompt_file.as_deref(), account.as_deref())
+            harnesses.acp_config_with(
+                &agent,
+                mode,
+                prompt_file.as_deref(),
+                account.as_deref(),
+                safety,
+            )
         })
         .await
         .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("locating the agent: {e}")))??;
@@ -1175,6 +1189,9 @@ impl ChatManager {
             sandbox: spec.sandbox,
             resume_thread_id: spec.thread_id.clone(),
             developer_instructions: None,
+            session_meta: spec
+                .safety
+                .and_then(|preset| crate::safety::claude_session_meta(&spec.agent, preset)),
         };
         // The user's `[mcp.*]` servers, and Hutan's own (`[control] mcp`), which carries this
         // session's id so that its requests are attributed to it.
@@ -1343,6 +1360,7 @@ impl ChatManager {
             // The provider's model list answers when an image is attached.
             images: None,
             mode: None,
+            reported: None,
         })
     }
 

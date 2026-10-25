@@ -70,6 +70,7 @@ impl Harness {
             sandbox: SandboxMode::ReadOnly,
             resume_thread_id: resume.map(str::to_owned),
             developer_instructions: instructions.map(str::to_owned),
+            session_meta: None,
         }
     }
 
@@ -1260,4 +1261,40 @@ async fn rate_limits_can_be_read_from_a_short_lived_app_server() {
         methods,
         ["initialize", "initialized", "account/rateLimits/read"]
     );
+}
+
+#[tokio::test]
+async fn the_started_conversation_carries_what_the_server_says_it_enforces() {
+    // Recorded from Codex 0.162.1: `thread/start` answers `approvalPolicy` and `sandbox`
+    // (`{type, networkAccess}`), and they are what Hutan reports as the chat's safety — the
+    // server's word, not the request's. The same recordings show 0.162 accepting `untrusted`.
+    let h = Harness::new();
+    let session = h.start("file-change").await;
+    let reported = session.started.reported.clone().unwrap();
+    assert_eq!(reported.approval_policy.as_deref(), Some("untrusted"));
+    assert_eq!(reported.sandbox.as_deref(), Some("workspace-write"));
+    assert_eq!(reported.network, Some(false));
+    session.adapter.shutdown().await;
+
+    let h = Harness::new();
+    let session = h.start("approval-touch").await;
+    let reported = session.started.reported.clone().unwrap();
+    assert_eq!(reported.sandbox.as_deref(), Some("read-only"));
+    assert_eq!(reported.network, Some(false));
+    session.adapter.shutdown().await;
+
+    // A resumed thread reports it too.
+    let h = Harness::new();
+    let session = h
+        .start_with(
+            &fixture("resume-turn"),
+            Some("01a00000-0000-7000-8000-000000000001"),
+        )
+        .await;
+    assert!(session.started.resumed);
+    assert_eq!(
+        session.started.reported.clone().unwrap().sandbox.as_deref(),
+        Some("read-only")
+    );
+    session.adapter.shutdown().await;
 }

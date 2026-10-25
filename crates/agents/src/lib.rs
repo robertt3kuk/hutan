@@ -22,8 +22,8 @@ pub mod usage;
 
 pub use acp::{AcpAdapter, AcpConfig, AcpSession};
 pub use adapter::{
-    AdapterMessage, AgentAdapter, ContextBlock, ExitInfo, ImageBlock, MessageExtras, SessionMode,
-    StartSpec, Started, TurnRef,
+    AdapterMessage, AgentAdapter, ContextBlock, ExitInfo, ImageBlock, MessageExtras,
+    ReportedSafety, SessionMode, StartSpec, Started, TurnRef,
 };
 pub use codex::{CodexAccount, CodexAppServerAdapter, CodexConfig, CodexSession};
 pub use error::AgentError;

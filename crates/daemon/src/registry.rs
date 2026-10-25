@@ -3136,6 +3136,21 @@ impl SessionRegistry {
                 ),
             ));
         }
+        // A safety preset (protocol 0.51) replaces the expert settings it is made of: asking
+        // for both is a conflict, and a harness that cannot honour it refuses with the reason.
+        let safety_plan = match req.safety {
+            None => None,
+            Some(preset) => {
+                if req.approval_policy.is_some() || req.sandbox.is_some() || req.mode.is_some() {
+                    return Err(ErrorBody::new(
+                        ErrorCode::BadRequest,
+                        "`safety` sets the approval policy, sandbox and session mode itself; \
+                         send either `safety` or those settings",
+                    ));
+                }
+                Some(crate::safety::require(&req.agent, preset)?)
+            }
+        };
         let direct = if is_gateway_agent(&req.agent) {
             Some(self.direct_target(&req)?)
         } else {
@@ -3182,19 +3197,35 @@ impl SessionRegistry {
                 assistant: false,
                 account: None,
                 account_label: None,
+                safety: None,
             },
             None => ChatSpec {
                 agent: req.agent,
                 model: req.model.filter(|m| !m.trim().is_empty()),
-                approval_policy: req.approval_policy.unwrap_or_default(),
-                sandbox: req.sandbox.unwrap_or_default(),
+                approval_policy: safety_plan
+                    .as_ref()
+                    .and_then(|plan| plan.codex)
+                    .map(|(policy, _)| policy)
+                    .or(req.approval_policy)
+                    .unwrap_or_default(),
+                sandbox: safety_plan
+                    .as_ref()
+                    .and_then(|plan| plan.codex)
+                    .map(|(_, sandbox)| sandbox)
+                    .or(req.sandbox)
+                    .unwrap_or_default(),
                 thread_id: None,
                 provider_id: None,
                 system_prompt: None,
-                mode: req.mode.filter(|m| !m.trim().is_empty()),
+                mode: safety_plan
+                    .as_ref()
+                    .and_then(|plan| plan.claude_mode)
+                    .map(str::to_owned)
+                    .or_else(|| req.mode.filter(|m| !m.trim().is_empty())),
                 assistant,
                 account,
                 account_label,
+                safety: req.safety,
             },
         };
         let folder = req
@@ -3569,10 +3600,20 @@ impl SessionRegistry {
                     spec.thread_id = Some(started.thread_id.clone());
                     spec.model = Some(started.model.clone());
                 }
+                let preset = session.chat.as_ref().and_then(|spec| spec.safety);
                 if let Some(chat) = &mut session.info.chat {
                     chat.model = started.model;
                     chat.images = started.images;
                     chat.mode = started.mode.map(|mode| ChatMode::new(mode.id, mode.name));
+                    // What the harness says it enforces, not what was asked for.
+                    chat.safety = preset.map(|preset| {
+                        crate::safety::effective(
+                            &chat.agent,
+                            preset,
+                            started.reported.as_ref(),
+                            chat.mode.as_ref(),
+                        )
+                    });
                     if !is_gateway_agent(&chat.agent) {
                         chat.agent_session_id = Some(started.thread_id);
                     }
@@ -3665,6 +3706,10 @@ impl SessionRegistry {
             return;
         };
         let mode = ChatMode::new(mode.id, mode.name);
+        let preset = self.sessions[index]
+            .chat
+            .as_ref()
+            .and_then(|spec| spec.safety);
         let Some(chat) = &mut self.sessions[index].info.chat else {
             return;
         };
@@ -3672,6 +3717,16 @@ impl SessionRegistry {
             return;
         }
         chat.mode = Some(mode);
+        // A mode the user switches to inside the harness changes what the preset amounts to:
+        // the chat says so instead of keeping the claim it started with.
+        if let Some(preset) = preset {
+            chat.safety = Some(crate::safety::effective(
+                &chat.agent,
+                preset,
+                None,
+                chat.mode.as_ref(),
+            ));
+        }
         let session = self.sessions[index].info.clone();
         self.emit(&Event::SessionUpdated { session });
     }
@@ -3919,6 +3974,7 @@ impl SessionRegistry {
                         assistant: false,
                         account: None,
                         account_label: None,
+                        safety: None,
                     },
                     Some(format!("stored spec unreadable: {error}")),
                 )

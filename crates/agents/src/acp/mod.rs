@@ -412,6 +412,7 @@ async fn open(
                 session_id: id,
                 cwd: &cwd,
                 mcp_servers: &servers,
+                meta: spec.session_meta.as_ref(),
             });
             (method, params, Some(id.clone()))
         }
@@ -420,6 +421,7 @@ async fn open(
             serde_json::to_value(wire::NewSessionParams {
                 cwd: &cwd,
                 mcp_servers: &servers,
+                meta: spec.session_meta.as_ref(),
             }),
             None,
         ),
@@ -591,6 +593,7 @@ impl AcpAdapter {
             resumed: opened.resumed,
             images: Some(opened.capabilities.prompt_capabilities.image),
             mode: mode.as_ref().and_then(ModeChoice::current_mode),
+            reported: None,
         };
         let shared = Arc::new(Shared {
             transport,
@@ -1127,6 +1130,7 @@ pub async fn list_models(config: &AcpConfig, cwd: PathBuf) -> Result<Vec<ModelIn
         sandbox: hutan_core::SandboxMode::default(),
         resume_thread_id: None,
         developer_instructions: None,
+        session_meta: None,
     };
     let session = AcpAdapter::start(config, &spec, None, &[]).await?;
     let models = session.models.clone();

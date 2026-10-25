@@ -64,6 +64,9 @@ pub struct AuthenticateParams<'a> {
 pub struct NewSessionParams<'a> {
     pub cwd: &'a str,
     pub mcp_servers: &'a [Value],
+    /// Extension metadata the agent reads (`_meta`).
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<&'a Value>,
 }
 
 /// `session/load` and `session/resume`.
@@ -73,6 +76,8 @@ pub struct LoadSessionParams<'a> {
     pub session_id: &'a str,
     pub cwd: &'a str,
     pub mcp_servers: &'a [Value],
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<&'a Value>,
 }
 
 #[derive(Debug, Serialize)]

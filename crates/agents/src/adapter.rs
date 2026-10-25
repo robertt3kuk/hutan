@@ -26,6 +26,10 @@ pub struct StartSpec {
     /// `developerInstructions` on `thread/start` and `thread/resume`, MW-2: the memory the user
     /// approved). ACP agents take their instructions on the command line and ignore it.
     pub developer_instructions: Option<String>,
+    /// ACP agents only: the `_meta` of `session/new` (and of `session/load` / `session/resume`),
+    /// for what an agent takes through it (Claude Code's `claudeCode.options`, whose `sandbox`
+    /// is Hutan's *Contained* preset). Codex ignores it.
+    pub session_meta: Option<serde_json::Value>,
 }
 
 /// The conversation that is open after [`StartSpec`] was applied.
@@ -40,6 +44,21 @@ pub struct Started {
     /// The session mode the agent reports it runs in (ACP `modes` or a `mode` config option),
     /// `None` when it reports none (Codex). Read only: what the agent was started with.
     pub mode: Option<SessionMode>,
+    /// What the agent says it enforces (Codex's `thread/start` answer: approval policy and
+    /// sandbox); `None` when the agent reports none (ACP agents say a session mode instead).
+    /// Read back, never what Hutan asked for.
+    pub reported: Option<ReportedSafety>,
+}
+
+/// The approval policy and sandbox an agent reported when the conversation opened.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ReportedSafety {
+    /// The agent's name of its approval policy (`on-request`, `never`, `untrusted`).
+    pub approval_policy: Option<String>,
+    /// The agent's name of its sandbox (`read-only`, `workspace-write`, `danger-full-access`).
+    pub sandbox: Option<String>,
+    /// Whether the sandbox lets commands reach the network, when it said so.
+    pub network: Option<bool>,
 }
 
 /// A session mode an agent reports (protocol 0.34, `ChatInfo.mode`).

@@ -34,6 +34,7 @@ mod queue;
 mod recovery;
 mod resources;
 mod restore;
+mod safety;
 mod session_env;
 mod session_names;
 mod sessions;

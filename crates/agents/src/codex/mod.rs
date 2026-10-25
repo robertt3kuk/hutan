@@ -324,7 +324,7 @@ impl CodexAppServerAdapter {
         let cwd = spec.cwd.to_string_lossy();
         let policy = spec.approval_policy.as_str();
         let sandbox = spec.sandbox.as_str();
-        let (thread_id, model, resumed) = match &spec.resume_thread_id {
+        let (thread_id, model, resumed, reported) = match &spec.resume_thread_id {
             Some(thread) => {
                 let result: wire::ThreadResult = call(
                     transport,
@@ -341,12 +341,13 @@ impl CodexAppServerAdapter {
                     },
                 )
                 .await?;
+                let reported = result.reported_safety();
                 let model = result
                     .model
                     .or_else(|| spec.model.clone())
                     .unwrap_or_default();
                 // The server answers for the thread it resumed; it is the one we asked for.
-                (thread.clone(), model, true)
+                (thread.clone(), model, true, reported)
             }
             None => {
                 let catalog = model_catalog(transport).await?;
@@ -364,7 +365,8 @@ impl CodexAppServerAdapter {
                     },
                 )
                 .await?;
-                (result.thread.id, model, false)
+                let reported = result.reported_safety();
+                (result.thread.id, model, false, reported)
             }
         };
         let mapper = Mapper::new(thread_id.clone());
@@ -378,6 +380,7 @@ impl CodexAppServerAdapter {
                 images: None,
                 // Codex says its approval policy and sandbox instead (`ChatInfo`).
                 mode: None,
+                reported,
             },
             mapper,
         ))

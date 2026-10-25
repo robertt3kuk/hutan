@@ -73,6 +73,7 @@ impl Harness {
             sandbox: SandboxMode::default(),
             resume_thread_id: resume.map(str::to_owned),
             developer_instructions: None,
+            session_meta: None,
         }
     }
 
@@ -994,6 +995,43 @@ async fn a_mode_is_set_from_the_modes_the_session_offers() {
         text.contains("yolo") && text.contains("default, plan"),
         "{text}"
     );
+}
+
+#[tokio::test]
+async fn session_meta_rides_on_session_new_and_on_the_load_that_continues_it() {
+    let meta = json!({"claudeCode": {"options": {"sandbox": {"enabled": true}}}});
+    let h = Harness::new();
+    let mut spec = h.spec(None, None);
+    spec.session_meta = Some(meta.clone());
+    let session = timeout(
+        WAIT,
+        AcpAdapter::start(&h.config("plain-turn"), &spec, None, &[]),
+    )
+    .await
+    .expect("start timed out")
+    .unwrap();
+    assert_eq!(h.received_of("session/new")[0]["params"]["_meta"], meta);
+    session.adapter.shutdown().await;
+
+    let h = Harness::new();
+    let mut spec = h.spec(None, Some(SESSION));
+    spec.session_meta = Some(meta.clone());
+    let session = timeout(WAIT, AcpAdapter::start(&h.config("load"), &spec, None, &[]))
+        .await
+        .expect("start timed out")
+        .unwrap();
+    assert_eq!(h.received_of("session/load")[0]["params"]["_meta"], meta);
+    session.adapter.shutdown().await;
+
+    // Without meta the request carries none: agents never see a `_meta` Hutan did not mean.
+    let h = Harness::new();
+    let session = h.start("plain-turn").await;
+    assert!(
+        h.received_of("session/new")[0]["params"]
+            .get("_meta")
+            .is_none()
+    );
+    session.adapter.shutdown().await;
 }
 
 #[tokio::test]
