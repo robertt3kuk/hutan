@@ -17,8 +17,8 @@ use tokio::time::{Instant, sleep_until};
 
 use hutan_agents::{CodexConfig, ExitInfo, SessionMode, Started};
 use hutan_core::{
-    AgentNode, NodeOutcome, NodeUpdate, ObservationTree, Patch, SessionEvent, SessionId,
-    SessionKind, SessionState, TerminalId, WorkspaceId,
+    AgentNode, Contain, ContainKind, Containment, NodeOutcome, NodeUpdate, ObservationTree, Patch,
+    SessionEvent, SessionId, SessionKind, SessionState, TerminalId, WorkspaceId,
 };
 use hutan_protocol::chat::{ChatCreate, ChatInfo, ChatMode};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
@@ -52,8 +52,9 @@ use crate::chat::{
     is_gateway_agent,
 };
 use crate::config::RestoreMode;
+use crate::contain::{Fragment, Plan};
 use crate::direct::MAX_SYSTEM_PROMPT_BYTES;
-use crate::harness::{Harnesses, is_harness_agent};
+use crate::harness::{AGENT_CLAUDE, AGENT_OMP, Harnesses, is_harness_agent};
 use crate::placement::{Occupant, PlacementCache, shared_with};
 use crate::projects::{self, Assignment, Folder, HomeRules, Ident};
 use crate::providers::ProviderService;
@@ -798,6 +799,8 @@ struct SessionRegistry {
     /// `<home>/scratch`: one folder per session with the images pasted into its terminal
     /// (`docs/design.md` § Terminal drops and pastes), removed when the session is closed.
     scratch_dir: PathBuf,
+    /// Contain: wraps the spawn of sessions whose spec asks for it.
+    sandbox: Arc<crate::contain::Sandbox>,
 }
 
 /// What [`spawn`] needs besides the shared services.
@@ -843,6 +846,8 @@ pub struct RegistryConfig {
     pub checkpoints: Arc<crate::checkpoints::turns::TurnCheckpoints>,
     /// Usage and limits records: what the turns of chats used.
     pub usage: Arc<crate::usage::UsageService>,
+    /// Contain (protocol 0.52): the Seatbelt boundary of sessions that ask for one.
+    pub sandbox: Arc<crate::contain::Sandbox>,
 }
 
 /// Starts the actor from the stored state. It stops when every [`RegistryHandle`] is dropped.
@@ -870,6 +875,7 @@ pub fn spawn(
         config.tmp_dir,
         config.checkpoints,
         config.usage,
+        config.sandbox.clone(),
     );
     let (workspaces, home, next_position) =
         restored_workspaces(&stored, &config.storage, &config.home_folder);
@@ -901,6 +907,7 @@ pub fn spawn(
         commands_dirty: false,
         placements: PlacementCache::default(),
         scratch_dir: config.scratch_dir,
+        sandbox: config.sandbox,
     };
     registry.restore_sessions(
         stored.sessions,
@@ -2087,6 +2094,31 @@ impl SessionRegistry {
             .position(|s| s.terminal.as_ref().is_some_and(|t| t.id() == terminal))
     }
 
+    /// The boundary a terminal spec asks for, planned now: `None` without `contain`; the plan
+    /// that wraps the spawn of `argv` otherwise. Never a fallback to an uncontained start.
+    fn contain_terminal(
+        &self,
+        spec: &TerminalSpec,
+        argv: &[String],
+    ) -> Result<Option<Plan>, ErrorBody> {
+        let Some(request) = &spec.contain else {
+            return Ok(None);
+        };
+        let Some(cwd) = spec.cwd.as_deref() else {
+            return Err(ErrorBody::new(
+                ErrorCode::BadRequest,
+                "`contain` needs a `cwd`: the folder the session is confined to",
+            ));
+        };
+        if let Some(reason) = crate::contain::nested_reason(argv) {
+            return Err(ErrorBody::new(ErrorCode::BadRequest, reason));
+        }
+        self.sandbox
+            .plan(cwd, request, &Fragment::default())
+            .map(Some)
+            .map_err(ErrorBody::from)
+    }
+
     fn create_session(
         &mut self,
         req: SessionCreate,
@@ -2104,6 +2136,9 @@ impl SessionRegistry {
                 format!("invalid terminal size {}x{}", size.cols, size.rows),
             ));
         }
+        // A boundary that cannot be applied refuses the session now; it is never started
+        // uncontained (protocol 0.52).
+        self.contain_terminal(&spec, &spec.command)?;
         // An explicit workspace wins; else the project of the folder (Home without one).
         let workspace_id = match req.workspace_id {
             Some(id) => id,
@@ -2136,7 +2171,6 @@ impl SessionRegistry {
             }
         };
         let info = SessionInfo {
-            containment: None,
             id: SessionId::new(),
             workspace_id,
             kind: SessionKind::Terminal,
@@ -2153,6 +2187,7 @@ impl SessionRegistry {
             folder: spec.cwd.clone(),
             recovery: None,
             muted: false,
+            containment: None,
         };
         self.publish(&Event::SessionUpdated {
             session: info.clone(),
@@ -2214,6 +2249,28 @@ impl SessionRegistry {
     fn start_terminal(&mut self, index: usize) {
         let restore_argv = self.sessions[index].restore_argv.take();
         let session = &self.sessions[index];
+        // The boundary is planned at every start: a restart or a restore applies it again, and
+        // fails closed when it cannot.
+        let argv = restore_argv
+            .clone()
+            .unwrap_or_else(|| session.spec.command.clone());
+        let contained = match self.contain_terminal(&session.spec, &argv) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let reason = error.message;
+                warn!(session = %session.info.id, %reason, "the session was not started uncontained");
+                let request = session.spec.contain.clone().unwrap_or_default();
+                self.sessions[index].info.containment = Some(not_applied(&request, &reason));
+                self.sessions[index].advance(SessionEvent::Failed {
+                    reason: reason.clone(),
+                });
+                self.recovery_failed(index, reason);
+                self.emit_session(index);
+                self.persist_session(index);
+                return;
+            }
+        };
+        let session = &self.sessions[index];
         let mut env: BTreeMap<String, String> = session.spec.env.clone();
         if let Some(shell) = &self.login_shell {
             env.entry("SHELL".to_owned())
@@ -2231,12 +2288,16 @@ impl SessionRegistry {
             "HUTAN_WORKSPACE_ID".to_owned(),
             session.info.workspace_id.to_string(),
         );
+        if contained.is_some() {
+            env.insert("HUTAN_CONTAINED".to_owned(), "1".to_owned());
+        }
         let mut config = TerminalConfig {
-            argv: restore_argv.unwrap_or_else(|| session.spec.command.clone()),
+            argv,
             cwd: session.info.cwd.clone(),
             env,
             env_inherit: self.env_inherit,
             shell_integration_dir: self.shell_integration_dir.clone(),
+            wrap: contained.as_ref().map(Plan::prefix).unwrap_or_default(),
             ..TerminalConfig::default()
         };
         if let Some(size) = session.spec.size {
@@ -2257,10 +2318,16 @@ impl SessionRegistry {
                 let session = &mut self.sessions[index];
                 session.info.terminal_id = Some(entry.id());
                 session.terminal = Some(entry);
+                session.info.containment = contained.map(|plan| plan.containment);
                 session.advance(SessionEvent::Spawned);
             }
             Err(error) => {
                 warn!(session = %session.info.id, %error, "terminal spawn failed");
+                if contained.is_some() {
+                    let request = session.spec.contain.clone().unwrap_or_default();
+                    self.sessions[index].info.containment =
+                        Some(not_applied(&request, &error.to_string()));
+                }
                 self.sessions[index].advance(SessionEvent::Failed {
                     reason: error.to_string(),
                 });
@@ -3152,6 +3219,48 @@ impl SessionRegistry {
                 Some(crate::safety::require(&req.agent, preset)?)
             }
         };
+        // Contain (protocol 0.52): OMP's *Contained* preset is Hutan's Seatbelt, so it implies
+        // the request; the boundary is planned now so that a refusal is the chat's error and
+        // never a chat that starts uncontained. Codex and Claude Code run their own sandbox.
+        let contain = match (
+            &req.contain,
+            safety_plan.as_ref().is_some_and(|p| p.needs_contain),
+        ) {
+            (Some(request), _) => Some(request.clone()),
+            (None, true) => Some(Contain::default()),
+            (None, false) => None,
+        };
+        if let Some(request) = &contain {
+            if req.agent != AGENT_OMP {
+                return Err(ErrorBody::new(
+                    ErrorCode::BadRequest,
+                    match req.agent.as_str() {
+                        AGENT_CODEX | AGENT_CLAUDE => format!(
+                            "{} runs its own OS sandbox and Seatbelt does not nest: its Contained \
+                             preset (`safety: contained`) is that sandbox, so `contain` is for OMP \
+                             chats and terminals",
+                            if req.agent == AGENT_CODEX {
+                                "Codex"
+                            } else {
+                                "Claude Code"
+                            }
+                        ),
+                        other => {
+                            format!("a {other} chat runs no commands: there is nothing to contain")
+                        }
+                    },
+                ));
+            }
+            if assistant {
+                return Err(ErrorBody::new(
+                    ErrorCode::BadRequest,
+                    "an assistant keeps its own tool profile and cannot be contained",
+                ));
+            }
+            self.sandbox
+                .plan(&req.cwd, request, &Fragment::default())
+                .map_err(ErrorBody::from)?;
+        }
         let direct = if is_gateway_agent(&req.agent) {
             Some(self.direct_target(&req)?)
         } else {
@@ -3199,6 +3308,7 @@ impl SessionRegistry {
                 account: None,
                 account_label: None,
                 safety: None,
+                contain: None,
             },
             None => ChatSpec {
                 agent: req.agent,
@@ -3227,6 +3337,7 @@ impl SessionRegistry {
                 account,
                 account_label,
                 safety: req.safety,
+                contain,
             },
         };
         let folder = req
@@ -3244,7 +3355,6 @@ impl SessionRegistry {
             .filter(|t| !t.is_empty())
             .map(str::to_owned);
         let info = SessionInfo {
-            containment: None,
             id: SessionId::new(),
             workspace_id,
             kind: SessionKind::Harness,
@@ -3261,6 +3371,7 @@ impl SessionRegistry {
             folder: Some(req.cwd.clone()),
             recovery: None,
             muted: false,
+            containment: None,
         };
         self.publish(&Event::SessionUpdated {
             session: info.clone(),
@@ -3603,6 +3714,17 @@ impl SessionRegistry {
                     spec.model = Some(started.model.clone());
                 }
                 let preset = session.chat.as_ref().and_then(|spec| spec.safety);
+                // What was applied to the process, not what the spec asked for.
+                session.info.containment = session
+                    .chat
+                    .as_ref()
+                    .and_then(|spec| spec.contain.as_ref())
+                    .map(|request| {
+                        self.chats.containment(id).unwrap_or_else(|| {
+                            not_applied(request, "the process did not report its boundary")
+                        })
+                    });
+                let contained = session.info.containment.clone();
                 if let Some(chat) = &mut session.info.chat {
                     chat.model = started.model;
                     chat.images = started.images;
@@ -3614,6 +3736,7 @@ impl SessionRegistry {
                             preset,
                             started.reported.as_ref(),
                             chat.mode.as_ref(),
+                            contained.as_ref(),
                         )
                     });
                     if !is_gateway_agent(&chat.agent) {
@@ -3655,6 +3778,10 @@ impl SessionRegistry {
             }
             Err(error) => {
                 warn!(session = %id, message = %error.message, "chat agent failed to start");
+                if let Some(request) = session.chat.as_ref().and_then(|spec| spec.contain.as_ref())
+                {
+                    session.info.containment = Some(not_applied(request, &error.message));
+                }
                 let stopping = session.stopping;
                 self.recovery_failed(index, format!("resuming failed: {}", error.message));
                 let session = &mut self.sessions[index];
@@ -3712,6 +3839,7 @@ impl SessionRegistry {
             .chat
             .as_ref()
             .and_then(|spec| spec.safety);
+        let contained = self.sessions[index].info.containment.clone();
         let Some(chat) = &mut self.sessions[index].info.chat else {
             return;
         };
@@ -3727,6 +3855,7 @@ impl SessionRegistry {
                 preset,
                 None,
                 chat.mode.as_ref(),
+                contained.as_ref(),
             ));
         }
         let session = self.sessions[index].info.clone();
@@ -3977,6 +4106,7 @@ impl SessionRegistry {
                         account: None,
                         account_label: None,
                         safety: None,
+                        contain: None,
                     },
                     Some(format!("stored spec unreadable: {error}")),
                 )
@@ -4031,7 +4161,6 @@ impl SessionRegistry {
         let default_title = format!("{} · chat", spec.agent);
         self.sessions.push(SessionEntry {
             info: SessionInfo {
-                containment: None,
                 id: row.id,
                 workspace_id: row.workspace_id,
                 kind: SessionKind::Harness,
@@ -4050,6 +4179,7 @@ impl SessionRegistry {
                 recovery,
                 // `restore_mutes` / `reopen_session` set it.
                 muted: false,
+                containment: None,
             },
             spec: TerminalSpec {
                 command: vec![spec.agent.clone()],
@@ -4260,7 +4390,6 @@ impl SessionRegistry {
             let state_is_live = state.is_live();
             self.sessions.push(SessionEntry {
                 info: SessionInfo {
-                    containment: None,
                     id: row.id,
                     workspace_id: row.workspace_id,
                     kind: row.kind,
@@ -4277,6 +4406,7 @@ impl SessionRegistry {
                     folder: cwd,
                     recovery,
                     muted: false,
+                    containment: None,
                 },
                 spec,
                 default_title,
@@ -4940,6 +5070,17 @@ fn exit_reason(exit: &ExitInfo) -> String {
 }
 
 /// argv[0]'s basename, or the login shell's name when the spec runs the default shell.
+/// What a session says when its boundary was asked for and is not there.
+fn not_applied(request: &Contain, reason: &str) -> Containment {
+    Containment {
+        kind: ContainKind::Seatbelt,
+        network: request.network.unwrap_or(false),
+        write_roots: Vec::new(),
+        applied: false,
+        reason: Some(reason.to_owned()),
+    }
+}
+
 fn default_title(spec: &TerminalSpec) -> String {
     let program = match spec.command.first() {
         Some(program) => program.clone(),

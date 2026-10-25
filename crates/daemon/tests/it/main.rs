@@ -10,6 +10,7 @@ mod checkpoint_turns;
 mod checkpoints;
 mod close;
 mod common;
+mod contain;
 mod control;
 mod daemon;
 mod daemon_settings;

@@ -21,8 +21,9 @@ pub enum SafetyPreset {
     /// The agent asks before it acts (Codex `on-request`, Claude Code `default`, OMP
     /// `always-ask`): the behaviour a chat has without a preset.
     Ask,
-    /// The agent works without asking inside the harness's own sandbox: what the sandbox
-    /// refuses fails instead of asking. Needs a harness with an OS sandbox (Codex, Claude Code).
+    /// The agent works without asking inside a boundary: what the boundary refuses fails
+    /// instead of asking. The boundary is the harness's own OS sandbox (Codex, Claude Code) or,
+    /// for a harness without one (OMP), Hutan's Seatbelt (Contain, protocol 0.52).
     Contained,
     /// The agent reads and searches; it changes nothing.
     ReadOnly,
@@ -96,7 +97,7 @@ impl std::str::FromStr for SafetyPreset {
 pub enum SafetyEnforcer {
     /// The harness: its own sandbox, permission mode or tool list.
     Harness,
-    /// Hutan's own sandbox around the process (reserved: SANDBOX-2).
+    /// Hutan's own Seatbelt around the process (Contain, protocol 0.52).
     Hutan,
     /// Nothing: *Full access*, or a preset the harness did not confirm (`note` says which).
     None,
@@ -120,6 +121,10 @@ pub struct SafetyPlan {
     pub omp_approval_mode: Option<&'static str>,
     /// OMP: `--tools` (a list of the tools it keeps).
     pub omp_tools: Option<&'static str>,
+    /// The boundary is Hutan's Seatbelt: the session must also be started with `contain`
+    /// (`chat.create` and a terminal spec carry it; a daemon without capability `sandbox`
+    /// cannot honour the preset).
+    pub needs_contain: bool,
 }
 
 /// OMP's `--tools` in *Read-only*: its read and search tools, by OMP's own names. The same list
@@ -143,23 +148,13 @@ pub fn claude_sandbox_settings() -> Value {
     })
 }
 
-/// Why the preset of a harness cannot be honoured. Every refusal names what is missing.
-fn no_boundary(agent: &str) -> String {
-    match agent {
-        "omp" => "OMP has no OS sandbox, so Contained would only be an approval prompt; it \
-                  needs Contain (SANDBOX-2)"
-            .to_owned(),
-        other => format!("{other} has no sandbox Hutan can switch on"),
-    }
-}
-
 /// What `agent` is started with for `preset`, or why it cannot honour it.
 ///
 /// | | Ask | Contained | Read-only | Full access |
 /// |---|---|---|---|---|
 /// | Codex | `on-request`, `workspace-write` | `never`, `workspace-write` (network off) | `never`, `read-only` | `never`, `danger-full-access` |
 /// | Claude Code | mode `default` | mode `acceptEdits` + Bash sandbox, no unsandboxed retry | mode `plan` | mode `bypassPermissions` |
-/// | OMP | `--approval-mode always-ask` | refused: no OS sandbox | `--tools read,grep,glob` | `--approval-mode yolo` |
+/// | OMP | `--approval-mode always-ask` | `--approval-mode yolo` **inside Contain** (Hutan's Seatbelt) | `--tools read,grep,glob` | `--approval-mode yolo` |
 ///
 /// `direct` chats run no commands, so nothing is offered for them.
 pub fn plan(agent: &str, preset: SafetyPreset) -> Result<SafetyPlan, String> {
@@ -175,6 +170,7 @@ pub fn plan(agent: &str, preset: SafetyPreset) -> Result<SafetyPlan, String> {
         claude_sandbox: false,
         omp_approval_mode: None,
         omp_tools: None,
+        needs_contain: false,
     };
     match agent {
         "codex" => {
@@ -213,7 +209,14 @@ pub fn plan(agent: &str, preset: SafetyPreset) -> Result<SafetyPlan, String> {
                 omp_approval_mode: Some("always-ask"),
                 ..base
             }),
-            SafetyPreset::Contained => Err(no_boundary("omp")),
+            // No prompts, because Hutan's Seatbelt contains what the agent does: the same
+            // autonomy Codex's *Contained* has inside its own sandbox.
+            SafetyPreset::Contained => Ok(SafetyPlan {
+                omp_approval_mode: Some("yolo"),
+                enforced_by: SafetyEnforcer::Hutan,
+                needs_contain: true,
+                ..base
+            }),
             SafetyPreset::ReadOnly => Ok(SafetyPlan {
                 omp_tools: Some(OMP_READ_TOOLS),
                 ..base
@@ -283,6 +286,10 @@ pub fn describe(agent: &str, preset: SafetyPreset) -> Option<&'static str> {
             "Claude Code plan mode: it reads and plans, and changes nothing."
         }
         ("omp", SafetyPreset::Ask) => "OMP asks before every change (always-ask).",
+        ("omp", SafetyPreset::Contained) => {
+            "Hutan's Seatbelt: writes stay in this worktree, it can still read your files. OMP \
+             never asks: what the boundary refuses fails."
+        }
         ("omp", SafetyPreset::ReadOnly) => {
             "OMP keeps only its read, grep and glob tools. This is a tool list, not an OS boundary."
         }
@@ -346,16 +353,26 @@ mod tests {
     }
 
     #[test]
-    fn omp_refuses_contained_and_says_why() {
-        let reason = plan("omp", SafetyPreset::Contained).unwrap_err();
-        assert!(reason.contains("no OS sandbox") && reason.contains("SANDBOX-2"));
-        assert!(describe("omp", SafetyPreset::Contained).is_none());
-        for preset in [
-            SafetyPreset::Ask,
-            SafetyPreset::ReadOnly,
-            SafetyPreset::Full,
-        ] {
-            assert!(plan("omp", preset).is_ok(), "{preset}");
+    fn omp_is_contained_by_hutans_seatbelt_and_nobody_else_needs_it() {
+        let contained = plan("omp", SafetyPreset::Contained).unwrap();
+        assert_eq!(contained.enforced_by, SafetyEnforcer::Hutan);
+        assert_eq!(contained.omp_approval_mode, Some("yolo"));
+        assert!(contained.needs_contain);
+        assert!(
+            describe("omp", SafetyPreset::Contained)
+                .unwrap()
+                .contains("Seatbelt")
+        );
+        for agent in ["codex", "claude", "omp"] {
+            for preset in SafetyPreset::ALL {
+                if let Ok(plan) = plan(agent, preset) {
+                    assert_eq!(
+                        plan.needs_contain,
+                        agent == "omp" && preset == SafetyPreset::Contained,
+                        "{agent} {preset}"
+                    );
+                }
+            }
         }
     }
 
@@ -400,7 +417,10 @@ mod tests {
             ["--tools", "read,grep,glob"]
         );
         assert_eq!(args("omp", SafetyPreset::Full), ["--approval-mode", "yolo"]);
-        assert!(terminal_args("omp", SafetyPreset::Contained).is_err());
+        assert_eq!(
+            args("omp", SafetyPreset::Contained),
+            ["--approval-mode", "yolo"]
+        );
     }
 
     #[test]

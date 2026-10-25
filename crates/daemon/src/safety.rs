@@ -10,7 +10,7 @@
 
 use hutan_agents::ReportedSafety;
 use hutan_core::safety::{self, SafetyPlan};
-use hutan_core::{SafetyEnforcer, SafetyPreset};
+use hutan_core::{Containment, SafetyEnforcer, SafetyPreset};
 use hutan_protocol::chat::{ChatMode, ChatSafety};
 use hutan_protocol::control::{ErrorBody, ErrorCode};
 use serde_json::{Value, json};
@@ -55,11 +55,15 @@ pub fn omp_args(preset: SafetyPreset) -> Vec<String> {
 /// session mode the harness reports now (ACP). A request the harness did not confirm is
 /// `enforced_by: none` with a note that starts with *Not applied*; a part the harness cannot
 /// report (Claude Code's sandbox, OMP's approval mode) stays in `note` as *requested*.
+///
+/// `contained` is the boundary the daemon actually applied to the harness's process (protocol
+/// 0.52). A preset whose boundary is Hutan's Seatbelt is enforced only when it is there.
 pub fn effective(
     agent: &str,
     preset: SafetyPreset,
     reported: Option<&ReportedSafety>,
     mode: Option<&ChatMode>,
+    contained: Option<&Containment>,
 ) -> ChatSafety {
     let not_applied = |note: String| ChatSafety {
         preset,
@@ -130,6 +134,23 @@ pub fn effective(
             note,
         };
     }
+    if plan.needs_contain {
+        let Some(boundary) = contained.filter(|boundary| boundary.applied) else {
+            return not_applied(
+                "Not applied: the process does not run inside Hutan's Seatbelt".to_owned(),
+            );
+        };
+        return ChatSafety {
+            preset,
+            enforced_by: plan.enforced_by,
+            network: Some(boundary.network),
+            note: Some(
+                "The approval mode was passed on OMP's command line; OMP does not report it \
+                 back. The boundary is Hutan's Seatbelt: reads stay open."
+                    .to_owned(),
+            ),
+        };
+    }
     // OMP: the approval mode and tool list are command-line arguments it does not report.
     let note = if plan.omp_tools.is_some() {
         "The tool list was passed on OMP's command line; OMP does not report it back. It is a \
@@ -165,6 +186,7 @@ mod tests {
             SafetyPreset::Contained,
             Some(&reported("never", "workspace-write", Some(false))),
             None,
+            None,
         );
         assert_eq!(safety.enforced_by, SafetyEnforcer::Harness);
         assert_eq!(safety.network, Some(false));
@@ -178,6 +200,7 @@ mod tests {
             SafetyPreset::Contained,
             Some(&reported("untrusted", "read-only", Some(false))),
             None,
+            None,
         );
         assert_eq!(safety.enforced_by, SafetyEnforcer::None);
         let note = safety.note.unwrap();
@@ -187,7 +210,7 @@ mod tests {
 
     #[test]
     fn codex_that_reports_nothing_is_not_applied() {
-        let safety = effective("codex", SafetyPreset::ReadOnly, None, None);
+        let safety = effective("codex", SafetyPreset::ReadOnly, None, None, None);
         assert_eq!(safety.enforced_by, SafetyEnforcer::None);
         assert!(safety.note.unwrap().starts_with("Not applied"));
     }
@@ -199,6 +222,7 @@ mod tests {
             SafetyPreset::Full,
             Some(&reported("never", "danger-full-access", None)),
             None,
+            None,
         );
         assert_eq!(safety.enforced_by, SafetyEnforcer::None);
         assert_eq!(safety.network, Some(true));
@@ -208,7 +232,7 @@ mod tests {
     #[test]
     fn claude_is_confirmed_by_its_mode_and_never_claims_the_sandbox_it_cannot_read_back() {
         let mode = ChatMode::new("acceptEdits", None);
-        let safety = effective("claude", SafetyPreset::Contained, None, Some(&mode));
+        let safety = effective("claude", SafetyPreset::Contained, None, Some(&mode), None);
         assert_eq!(safety.enforced_by, SafetyEnforcer::Harness);
         assert!(safety.note.unwrap().contains("does not report it back"));
 
@@ -217,6 +241,7 @@ mod tests {
             SafetyPreset::ReadOnly,
             None,
             Some(&ChatMode::new("plan", None)),
+            None,
         );
         assert_eq!(
             (plan.enforced_by, plan.note),
@@ -227,32 +252,61 @@ mod tests {
     #[test]
     fn claude_in_another_mode_than_asked_is_not_applied() {
         let mode = ChatMode::new("default", None);
-        let safety = effective("claude", SafetyPreset::Contained, None, Some(&mode));
+        let safety = effective("claude", SafetyPreset::Contained, None, Some(&mode), None);
         assert_eq!(safety.enforced_by, SafetyEnforcer::None);
         assert!(safety.note.unwrap().contains("mode default"));
-        let none = effective("claude", SafetyPreset::Ask, None, None);
+        let none = effective("claude", SafetyPreset::Ask, None, None, None);
         assert_eq!(none.enforced_by, SafetyEnforcer::None);
     }
 
     #[test]
     fn omp_says_its_arguments_are_not_reported_back() {
-        let ask = effective("omp", SafetyPreset::Ask, None, None);
+        let ask = effective("omp", SafetyPreset::Ask, None, None, None);
         assert_eq!(ask.enforced_by, SafetyEnforcer::Harness);
         assert!(ask.note.unwrap().contains("does not report it back"));
-        let read = effective("omp", SafetyPreset::ReadOnly, None, None);
+        let read = effective("omp", SafetyPreset::ReadOnly, None, None, None);
         assert!(read.note.unwrap().contains("not an OS boundary"));
-        let full = effective("omp", SafetyPreset::Full, None, None);
+        let full = effective("omp", SafetyPreset::Full, None, None, None);
         assert_eq!(full.enforced_by, SafetyEnforcer::None);
     }
 
     #[test]
-    fn a_preset_the_harness_cannot_honour_is_never_shown_as_applied() {
-        let safety = effective("omp", SafetyPreset::Contained, None, None);
+    fn omp_contained_is_enforced_by_hutan_only_while_the_seatbelt_is_applied() {
+        let boundary = Containment {
+            kind: hutan_core::ContainKind::Seatbelt,
+            network: false,
+            write_roots: vec!["/repo".into()],
+            applied: true,
+            reason: None,
+        };
+        let safety = effective("omp", SafetyPreset::Contained, None, None, Some(&boundary));
+        assert_eq!(safety.enforced_by, SafetyEnforcer::Hutan);
+        assert_eq!(safety.network, Some(false));
+        assert!(safety.note.unwrap().contains("reads stay open"));
+        for missing in [
+            None,
+            Some(Containment {
+                applied: false,
+                reason: Some("no".into()),
+                ..boundary.clone()
+            }),
+        ] {
+            let safety = effective("omp", SafetyPreset::Contained, None, None, missing.as_ref());
+            assert_eq!(safety.enforced_by, SafetyEnforcer::None);
+            assert!(safety.note.unwrap().starts_with("Not applied"));
+        }
+    }
+
+    #[test]
+    fn a_preset_a_harness_cannot_honour_is_never_shown_as_applied() {
+        let safety = effective("direct", SafetyPreset::Contained, None, None, None);
         assert_eq!(safety.enforced_by, SafetyEnforcer::None);
-        assert!(safety.note.unwrap().contains("no OS sandbox"));
-        let error = require("omp", SafetyPreset::Contained).unwrap_err();
+        assert!(safety.note.unwrap().starts_with("Not applied"));
+        let error = require("direct", SafetyPreset::Contained).unwrap_err();
         assert_eq!(error.code, ErrorCode::BadRequest);
-        assert!(error.message.contains("Contained") && error.message.contains("no OS sandbox"));
+        assert!(
+            error.message.contains("Contained") && error.message.contains("nothing to contain")
+        );
     }
 
     #[test]
@@ -266,7 +320,10 @@ mod tests {
             ["--tools", "read,grep,glob"]
         );
         assert_eq!(omp_args(SafetyPreset::Full), ["--approval-mode", "yolo"]);
-        assert!(omp_args(SafetyPreset::Contained).is_empty());
+        assert_eq!(
+            omp_args(SafetyPreset::Contained),
+            ["--approval-mode", "yolo"]
+        );
         let meta = claude_session_meta("claude", SafetyPreset::Contained).unwrap();
         assert_eq!(
             meta["claudeCode"]["options"]["sandbox"],

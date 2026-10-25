@@ -568,7 +568,6 @@ impl AssistantService {
             title.push_str(&format!(" {}", existing + 1));
         }
         let mut request = ChatCreate {
-            contain: None,
             workspace_id: Some(workspace.id),
             cwd,
             agent: AGENT_ASSISTANT.to_owned(),
@@ -581,6 +580,7 @@ impl AssistantService {
             system_prompt: None,
             account: None,
             safety: None,
+            contain: None,
         };
         match backend.kind {
             AssistantBackend::Provider => {

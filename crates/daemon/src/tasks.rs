@@ -842,11 +842,11 @@ impl TaskService {
                 self.start_chat(task, session_workspace, chat, cwd).await?
             }
             run => {
-                let argv = match run {
-                    Some(TaskRun::Terminal { argv, .. }) => argv.clone(),
-                    _ => Vec::new(),
+                let (argv, contain) = match run {
+                    Some(TaskRun::Terminal { argv, contain }) => (argv.clone(), contain.clone()),
+                    _ => (Vec::new(), None),
                 };
-                self.start_terminal(task, session_workspace, argv, cwd)
+                self.start_terminal(task, session_workspace, argv, contain, cwd)
                     .await?
             }
         };
@@ -860,15 +860,16 @@ impl TaskService {
         task: &Task,
         workspace_id: Option<WorkspaceId>,
         argv: Vec<String>,
+        contain: Option<hutan_core::Contain>,
         cwd: PathBuf,
     ) -> Result<SessionInfo, ErrorBody> {
         let spec = TerminalSpec {
-            contain: None,
             command: argv,
             cwd: Some(cwd),
             env: BTreeMap::from([(TASK_ID_ENV.to_owned(), task.id.to_string())]),
             title: Some(task.title.clone()),
             size: None,
+            contain,
         };
         let session = self
             .registry
@@ -1742,9 +1743,14 @@ fn check_placement(placement: &TaskPlacement) -> Result<(), ErrorBody> {
 fn check_run(run: Option<&TaskRun>, prompt: Option<&str>) -> Result<(), ErrorBody> {
     match run {
         None => Ok(()),
-        Some(TaskRun::Terminal { argv, .. }) => {
+        Some(TaskRun::Terminal { argv, contain }) => {
             if argv.is_empty() || argv[0].is_empty() {
                 return Err(bad_request("a terminal run needs a command"));
+            }
+            if contain.is_some()
+                && let Some(reason) = crate::contain::nested_reason(argv)
+            {
+                return Err(bad_request(reason));
             }
             if argv.len() > model::MAX_ARGV_WORDS
                 || argv.iter().map(String::len).sum::<usize>() > model::MAX_ARGV_BYTES
@@ -1760,8 +1766,15 @@ fn check_run(run: Option<&TaskRun>, prompt: Option<&str>) -> Result<(), ErrorBod
             agent,
             model,
             safety,
+            contain,
             ..
         }) => {
+            if contain.is_some() && agent != "omp" {
+                return Err(bad_request(format!(
+                    "`contain` is for OMP chats and terminals: `{agent}` runs its own sandbox \
+                     (or none to contain)"
+                )));
+            }
             if model.as_deref().is_some_and(|m| m.trim().is_empty()) {
                 return Err(bad_request("a chat task's model cannot be empty"));
             }

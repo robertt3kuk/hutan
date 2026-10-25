@@ -365,7 +365,6 @@ impl WorktreeService {
         info.state = WorktreeSetupState::Running;
         let script = setup_script(&report.copied, &resolved.setup);
         let spec = TerminalSpec {
-            contain: None,
             command: vec!["/bin/sh".to_owned(), "-c".to_owned(), script],
             cwd: Some(path.to_owned()),
             env: BTreeMap::from([
@@ -377,6 +376,7 @@ impl WorktreeService {
             ]),
             title: Some(SETUP_TITLE.to_owned()),
             size: None,
+            contain: None,
         };
         match self
             .registry

@@ -23,15 +23,15 @@ use std::time::{Duration, Instant};
 
 use futures::future::BoxFuture;
 use hutan_agents::{
-    AcpAdapter, AcpSession, AdapterMessage, AgentAdapter, AgentError, CodexAppServerAdapter,
-    CodexConfig, CodexSession, ContextBlock, ExitInfo, ImageBlock, MessageExtras, StartSpec,
-    Started,
+    AcpAdapter, AcpConfig, AcpSession, AdapterMessage, AgentAdapter, AgentError,
+    CodexAppServerAdapter, CodexConfig, CodexSession, ContextBlock, ExitInfo, ImageBlock,
+    MessageExtras, StartSpec, Started,
 };
 use hutan_core::agent::{DecidedBy, NoticeLevel, PermissionOutcome};
 use hutan_core::question::{self, QuestionResponse};
 use hutan_core::{
-    AgentEvent, AgentEventDraft, AgentEventKind, ApprovalId, ApprovalPolicy, ItemId, ModelInfo,
-    QuestionId, QuestionOutcome, SafetyPreset, SandboxMode, SessionId, TurnId,
+    AgentEvent, AgentEventDraft, AgentEventKind, ApprovalId, ApprovalPolicy, Contain, Containment,
+    ItemId, ModelInfo, QuestionId, QuestionOutcome, SafetyPreset, SandboxMode, SessionId, TurnId,
 };
 use hutan_protocol::assistant::{ATTACHMENTS_META_KEY, AttachmentMeta};
 use hutan_protocol::chat::{
@@ -54,6 +54,7 @@ use crate::bus::EventBus;
 use crate::chat_queue::{Changed, Queues};
 use crate::checkpoints::turns::{Scope, TurnCheckpoints};
 use crate::config::AssistantMode;
+use crate::contain::{Fragment, Sandbox};
 use crate::context::Attached;
 use crate::direct::{DirectSession, Target};
 use crate::harness::{
@@ -151,6 +152,10 @@ pub struct ChatSpec {
     /// derived from it at every start, so a restart or restore applies it again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety: Option<SafetyPreset>,
+    /// OMP chats (protocol 0.52): the process runs inside Hutan's Seatbelt boundary. Planned
+    /// again at every start, so a restart or a restore applies it again — or fails closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contain: Option<Contain>,
 }
 
 /// What runs a session: an agent process, or the model gateway.
@@ -470,6 +475,10 @@ pub struct ChatManager {
     queues: Queues,
     /// Records what turns used and the limits harnesses report.
     usage: Arc<UsageService>,
+    /// Contain (protocol 0.52): wraps the process of a chat that asks for the boundary.
+    sandbox: Arc<Sandbox>,
+    /// The boundary each running chat's process was started in, read from what was applied.
+    contained: Mutex<HashMap<SessionId, Containment>>,
 }
 
 /// Why a subagent thread could not be interrupted.
@@ -562,6 +571,7 @@ impl ChatManager {
         tmp_dir: PathBuf,
         checkpoints: Arc<TurnCheckpoints>,
         usage: Arc<UsageService>,
+        sandbox: Arc<Sandbox>,
     ) -> Arc<Self> {
         // A daemon that was killed mid-turn left its images behind: nothing is in flight yet.
         let stale = tmp_dir.clone();
@@ -604,9 +614,17 @@ impl ChatManager {
             tmp_dir,
             checkpoints,
             usage,
+            sandbox,
+            contained: Mutex::new(HashMap::new()),
         });
         tokio::spawn(Self::sleeper(Arc::downgrade(&manager)));
         manager
+    }
+
+    /// The boundary the chat's process was started in (protocol 0.52): what was applied to the
+    /// spawn, `None` for a chat started without one.
+    pub(crate) fn containment(&self, id: SessionId) -> Option<Containment> {
+        lock(&self.contained).get(&id).cloned()
     }
 
     /// The model providers of this daemon.
@@ -1065,9 +1083,11 @@ impl ChatManager {
         }
         // Before the agent runs: its first turn may follow at once.
         self.checkpoints.open(id, cwd.clone(), scope);
+        lock(&self.contained).remove(&id);
         let started = self.start_agent(id, cwd, spec).await;
         if started.is_err() {
             self.checkpoints.close(id);
+            lock(&self.contained).remove(&id);
         }
         started.map_err(|failure| failure.error)
     }
@@ -1181,6 +1201,33 @@ impl ChatManager {
         })
         .await
         .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("locating the agent: {e}")))??;
+        // What the errors below call the program, not the Seatbelt tool that runs it.
+        let program = config.program.clone();
+        let config = match &spec.contain {
+            None => config,
+            Some(request) => {
+                let sandbox = self.sandbox.clone();
+                let request = request.clone();
+                let dir = cwd.clone();
+                let planned = tokio::task::spawn_blocking(move || {
+                    let fragment = Fragment::omp(sandbox.user_home(), &config.env);
+                    sandbox
+                        .plan(&dir, &request, &fragment)
+                        .map(|plan| (plan, config))
+                })
+                .await
+                .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("planning Contain: {e}")))?
+                .map_err(ErrorBody::from)?;
+                let (plan, config) = planned;
+                let (wrapped, args) = plan.wrap(config.program.as_os_str(), &config.args);
+                lock(&self.contained).insert(id, plan.containment);
+                AcpConfig {
+                    program: wrapped,
+                    args,
+                    ..config
+                }
+            }
+        };
         let last = self.journal_end(id).await?;
         let start = StartSpec {
             cwd,
@@ -1204,9 +1251,7 @@ impl ChatManager {
             models,
         } = AcpAdapter::start(&config, &start, spec.mode.as_deref(), &servers)
             .await
-            .map_err(|e| {
-                StartFailure::agent(&e, harness_error(&e, &spec.agent, &config.program))
-            })?;
+            .map_err(|e| StartFailure::agent(&e, harness_error(&e, &spec.agent, &program)))?;
         if !models.is_empty() {
             lock(&self.models).insert(spec.agent.clone(), (Instant::now(), models));
         }

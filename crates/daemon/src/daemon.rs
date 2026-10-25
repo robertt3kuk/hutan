@@ -341,6 +341,18 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
         config.checkpoints.clone(),
     );
     tokio::spawn(checkpoints.clone().upkeep(shutdown.clone()));
+    // Contain (protocol 0.52): the Seatbelt self-test runs now, off the async threads, so that
+    // the first contained session does not wait for it.
+    let sandbox = Arc::new(crate::contain::Sandbox::new(
+        &settings.sandbox,
+        &paths.base,
+        &paths.socket,
+        paths.user_home.as_deref(),
+    ));
+    {
+        let sandbox = sandbox.clone();
+        tokio::task::spawn_blocking(move || sandbox.warm_up());
+    }
     let usage = UsageService::new(
         storage.clone(),
         bus.clone(),
@@ -381,6 +393,7 @@ pub async fn start(config: DaemonConfig) -> Result<RunningDaemon, DaemonError> {
             scratch_dir: paths.base.join("scratch"),
             checkpoints: checkpoints.clone(),
             usage: usage.clone(),
+            sandbox: sandbox.clone(),
         },
         stored,
     );

@@ -89,6 +89,7 @@ pub const CAPABILITIES: &[&str] = &[
     "worktree.setup",
     "accounts.multi",
     "chat.safety",
+    "sandbox",
 ];
 
 /// This daemon's build (protocol 0.42, capability `daemon.identity`): its version, the commit

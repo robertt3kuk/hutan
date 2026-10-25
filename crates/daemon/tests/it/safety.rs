@@ -237,23 +237,29 @@ async fn omp_gets_the_approval_mode_or_tool_list_of_its_preset_and_says_it_canno
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn omp_refuses_contained_with_the_reason_and_starts_nothing() {
+async fn omp_contained_runs_inside_hutans_seatbelt_and_reports_hutan_as_the_enforcer() {
     let t = S::start(Setup {
         omp: Some("plain-turn"),
         ..Setup::default()
     })
     .await;
-    let error = t
-        .try_create(t.request("omp", Some(SafetyPreset::Contained)))
-        .await
-        .unwrap_err();
-    let text = error.to_string();
-    assert_eq!(remote_code(Err::<(), _>(error)), ErrorCode::BadRequest);
-    assert!(
-        text.contains("Contained") && text.contains("no OS sandbox") && text.contains("SANDBOX-2"),
-        "{text}"
+    assert!(t.client.supports_sandbox());
+    let session = t.create("omp", Some(SafetyPreset::Contained)).await;
+
+    // No prompts, because the boundary contains what the agent does.
+    assert_eq!(t.extras("omp"), [["--approval-mode", "yolo"]]);
+    let safety = safety_of(&session);
+    assert_eq!(
+        (safety.preset, safety.enforced_by),
+        (SafetyPreset::Contained, SafetyEnforcer::Hutan)
     );
-    assert!(t.spawns("omp").is_empty(), "nothing was started");
+    assert_eq!(safety.network, Some(true), "the chat harness needs its API");
+    let containment = session.containment.expect("the boundary that was applied");
+    assert!(containment.applied && containment.reason.is_none());
+    assert_eq!(
+        containment.write_roots,
+        [t.work.path().canonicalize().unwrap()]
+    );
     t.stop().await;
 }
 
@@ -559,11 +565,11 @@ async fn a_chat_task_carries_its_preset_into_the_chat_and_is_refused_when_the_ha
     // Refused when the task is made: the reason is the harness's.
     let error = t
         .client
-        .task_create(create("omp", Some(SafetyPreset::Contained)))
+        .task_create(create("direct", Some(SafetyPreset::Contained)))
         .await
         .unwrap_err()
         .to_string();
-    assert!(error.contains("no OS sandbox"), "{error}");
+    assert!(error.contains("nothing to contain"), "{error}");
 
     let task = t
         .client
