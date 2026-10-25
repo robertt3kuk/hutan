@@ -81,6 +81,8 @@ impl<'a> BlameLine<'a> {
 #[derive(Debug)]
 pub(crate) struct BlameState {
     data: BlameData,
+    /// Width of the gutter's column in cells, from what the commits say ([`column_cells`]).
+    cells: usize,
     /// For each line of the current text, the index of its commit in `data.commits`.
     rows: Vec<Option<u32>>,
 }
@@ -89,6 +91,7 @@ impl BlameState {
     /// The blame of `data`, matched to `current`.
     pub(crate) fn new(data: BlameData, current: &str) -> Self {
         let mut state = Self {
+            cells: column_cells(&data.commits),
             data,
             rows: Vec::new(),
         };
@@ -124,6 +127,40 @@ impl BlameState {
     pub(crate) fn lines(&self) -> usize {
         self.rows.len()
     }
+
+    /// Width of the gutter's column in cells.
+    pub(crate) fn cells(&self) -> usize {
+        self.cells
+    }
+}
+
+/// The narrowest and widest the blame column of the gutter gets, in cells.
+pub const COLUMN_MIN_CELLS: usize = 40;
+pub const COLUMN_MAX_CELLS: usize = 72;
+/// The longest relative date (`12 months ago`) and the most of a subject the column makes room for.
+const DATE_CHARS: usize = 13;
+const SUBJECT_CHARS: usize = 48;
+/// Cells the column keeps for the marks beside the text (the agent's bar and the glyph, the gap).
+const COLUMN_PAD: usize = 3;
+
+/// The width of the gutter's blame column for `commits`: the longest `author · date · subject`
+/// (the subject up to [`SUBJECT_CHARS`]) and the padding, between [`COLUMN_MIN_CELLS`] and
+/// [`COLUMN_MAX_CELLS`]. The message gets what the author and the date leave; a long author name
+/// widens the column instead of eating the message.
+pub fn column_cells(commits: &[BlameCommit]) -> usize {
+    let longest = commits
+        .iter()
+        .filter(|c| !c.uncommitted)
+        .map(|c| {
+            c.author.chars().count()
+                + 3
+                + DATE_CHARS
+                + 3
+                + c.subject.chars().count().min(SUBJECT_CHARS)
+        })
+        .max()
+        .unwrap_or(0);
+    (longest + COLUMN_PAD).clamp(COLUMN_MIN_CELLS, COLUMN_MAX_CELLS)
 }
 
 /// `3 days ago`, `now`, `2 years ago`: how long ago `time` is at `now` (both Unix seconds).
@@ -208,6 +245,39 @@ mod tests {
             lines: vec![0, 1, 0],
             text: Arc::from("one\ntwo\nthree\n"),
         }
+    }
+
+    #[test]
+    fn the_column_is_as_wide_as_its_commits_need_between_the_bounds() {
+        let short = [commit("a", "Ada", "first")];
+        assert_eq!(column_cells(&short), COLUMN_MIN_CELLS);
+        assert_eq!(column_cells(&[]), COLUMN_MIN_CELLS);
+        // A long author and a long subject widen it; the cap holds.
+        let long = [commit(
+            "b",
+            "Robert Tkachenko",
+            "a subject that goes on and on and on and on and on and on",
+        )];
+        let cells = column_cells(&long);
+        assert!(
+            cells > COLUMN_MIN_CELLS && cells <= COLUMN_MAX_CELLS,
+            "{cells}"
+        );
+        // At least 24 characters of the message stay readable beside author and date.
+        let line = label(
+            BlameLine::Commit(&BlameCommit {
+                time: 0,
+                ..long[0].clone()
+            }),
+            86_400 * 400,
+        );
+        let shown = fit(&line, cells - 3);
+        let subject_shown = shown.split(" · ").last().unwrap().chars().count();
+        assert!(subject_shown >= 24, "{shown:?}");
+        // Uncommitted lines say `Uncommitted` and widen nothing.
+        let mut pending = commit("0000000", "Not Committed Yet", "x".repeat(80).as_str());
+        pending.uncommitted = true;
+        assert_eq!(column_cells(&[pending]), COLUMN_MIN_CELLS);
     }
 
     fn who(state: &BlameState, row: usize) -> String {

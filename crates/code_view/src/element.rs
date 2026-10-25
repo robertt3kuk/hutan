@@ -36,8 +36,6 @@ pub(crate) struct AgentMarks {
     pub removed_above: Option<Hsla>,
 }
 
-/// Width of the blame column in the gutter, in cells.
-pub(crate) const BLAME_COLS: usize = 40;
 /// Longest blame label at the end of the caret line, in characters.
 const INLINE_BLAME_CHARS: usize = 120;
 
@@ -230,7 +228,17 @@ fn prepare(
 ) -> Prepaint {
     let style = view.style.clone();
     let (cell, line_h) = metrics(&style, window);
-    let (text, ready, editable, syntax, hunks, diagnostics, diagnostics_epoch, has_blame) = {
+    let (
+        text,
+        ready,
+        editable,
+        syntax,
+        hunks,
+        diagnostics,
+        diagnostics_epoch,
+        has_blame,
+        blame_cells,
+    ) = {
         let buffer = view.buffer().read(cx);
         (
             buffer.text().clone(),
@@ -241,6 +249,7 @@ fn prepare(
             buffer.diagnostics(),
             buffer.diagnostics_epoch(),
             buffer.has_blame(),
+            buffer.blame_cells(),
         )
     };
     let blame_column = view.blame_gutter && has_blame;
@@ -257,7 +266,7 @@ fn prepare(
     } else {
         cell * 2.0
     } + if blame_column {
-        cell * BLAME_COLS as f32
+        cell * blame_cells as f32
     } else {
         px(0.0)
     };
@@ -266,7 +275,7 @@ fn prepare(
     let blame_area = blame_column.then(|| {
         Bounds::new(
             point(bounds.left() + cell * 2.0, bounds.top()),
-            size(cell * (BLAME_COLS as f32 - 1.0), bounds.size.height),
+            size(cell * (blame_cells as f32 - 1.0), bounds.size.height),
         )
     });
     view.blame_area = blame_area;
@@ -663,8 +672,8 @@ fn prepare(
                         .blame_line(line - 1)
                         .is_none_or(|before| !before.same_run(this));
                 let label = crate::blame::label(this, now);
-                let column =
-                    (blame_column && starts_run).then(|| crate::blame::fit(&label, BLAME_COLS - 3));
+                let column = (blame_column && starts_run)
+                    .then(|| crate::blame::fit(&label, blame_cells - 3));
                 let inline = (blame_inline && head_line == Some(line))
                     .then(|| crate::blame::fit(&label, INLINE_BLAME_CHARS));
                 (column, inline)

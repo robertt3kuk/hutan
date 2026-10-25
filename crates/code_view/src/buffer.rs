@@ -670,6 +670,13 @@ impl FileBuffer {
         self.blame.as_ref()?.line(row)
     }
 
+    /// Width of the gutter's blame column in cells, from the commits the blame names.
+    pub fn blame_cells(&self) -> usize {
+        self.blame
+            .as_ref()
+            .map_or(crate::blame::COLUMN_MIN_CELLS, BlameState::cells)
+    }
+
     /// How many lines the blame covers now.
     pub fn blame_lines(&self) -> usize {
         self.blame.as_ref().map_or(0, BlameState::lines)
