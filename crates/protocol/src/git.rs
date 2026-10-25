@@ -1,4 +1,4 @@
-//! Read-only git history on the wire (protocol 0.46, capability `git.history`): `git.log`,
+//! Read-only git history on the wire (protocol 0.47, capability `git.history`): `git.log`,
 //! `git.blame`, `git.show` and `git.file` (`docs/protocol.md` § Git history).
 //!
 //! Every request names a place in a checkout by an absolute `path`: the checkout's top level, or

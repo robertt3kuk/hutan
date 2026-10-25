@@ -1,4 +1,4 @@
-//! `hutan git log|blame|show`: read-only git history through the daemon (protocol 0.46,
+//! `hutan git log|blame|show`: read-only git history through the daemon (protocol 0.47,
 //! `docs/protocol.md` § Git history). Thin: the daemon runs git, bounded and read-only; this only
 //! prints what it answers.
 
@@ -20,7 +20,7 @@ impl Ctx {
         let client = self.connect().await?;
         if !client.supports_git_history() {
             return Err(CliError::Failed(
-                "this hutand cannot answer git history (it is older than protocol 0.46); \
+                "this hutand cannot answer git history (it is older than protocol 0.47); \
                  restart it with `hutan daemon restart`"
                     .to_owned(),
             ));

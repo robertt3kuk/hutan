@@ -320,7 +320,7 @@ terminal.search {terminal_id, query, case?, regex?, limit, from?, block_id?, tex
 - **Stable under output**: rows keep their numbers while new output arrives, so a client keeps its matches and searches again (debounced) to catch the new ones.
 - Control: Read (an agent may search; the text it reads is the terminal's own).
 
-## Git history (protocol 0.46, capability `git.history`)
+## Git history (protocol 0.47, capability `git.history`)
 
 Read-only history of a checkout (slice GIT-HISTORY; users of Zed, Helix and Orca ask for it daily: `docs/spikes/2026-10-25-user-needs/`). The daemon runs git; clients only draw. Code: `crates/protocol/src/git.rs` (DTOs and bounds), `crates/daemon/src/worktrees/history.rs` (the queries), `crates/client` (`git_log` …), `hutan git` and MCP `git_log` / `git_blame` (`crates/cli`).
 

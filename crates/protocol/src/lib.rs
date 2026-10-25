@@ -4,7 +4,7 @@
 //!   and the import — and `memory.import` / `memory.files.status` (protocol 0.46, capability
 //!   `memory.files`); [`memory`]'s provenance names the origin of an edit made in a file.
 //! - [`git`]: read-only git history — `git.log`, `git.blame`, `git.show` and `git.file` (protocol
-//!   0.46, capability `git.history`).
+//!   0.47, capability `git.history`).
 //! - [`terminal_search`]: find in terminal output — `terminal.search` (protocol 0.43, capability
 //!   `terminal.search`).
 //! - [`messages`] also carries which daemon answers — `Welcome.daemon_build` (protocol 0.42,

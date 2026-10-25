@@ -411,7 +411,7 @@ pub enum Request {
     /// `WorktreeFileDiff`. Read-only.
     #[serde(rename = "worktree.file_diff")]
     WorktreeFileDiff(WorktreeFileDiffRequest),
-    /// Capability `git.history` (protocol 0.46): the commits of a checkout, or of a file or
+    /// Capability `git.history` (protocol 0.47): the commits of a checkout, or of a file or
     /// folder in it, newest first; answered with `GitLogResult`. Read-only, bounded.
     #[serde(rename = "git.log")]
     GitLog(GitLog),

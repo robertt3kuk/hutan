@@ -206,7 +206,7 @@ pub(crate) const TERMINAL_SEARCH_CAPABILITY: &str = "terminal.search";
 pub(crate) const PROJECT_GIT_INIT_CAPABILITY: &str = "project.git_init";
 /// Capability for `usage.summary` and the `usage.changed` event (protocol 0.45).
 pub(crate) const USAGE_CAPABILITY: &str = "usage";
-/// Capability for `git.log|blame|show|file` (protocol 0.46).
+/// Capability for `git.log|blame|show|file` (protocol 0.47).
 pub(crate) const GIT_HISTORY_CAPABILITY: &str = "git.history";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
@@ -668,7 +668,7 @@ impl Client {
             .any(|capability| capability == PROJECT_GIT_INIT_CAPABILITY)
     }
 
-    /// True when the daemon advertised capability `git.history` (protocol 0.46): `git.log`,
+    /// True when the daemon advertised capability `git.history` (protocol 0.47): `git.log`,
     /// `git.blame`, `git.show` and `git.file`.
     pub fn supports_git_history(&self) -> bool {
         self.welcome

@@ -1,4 +1,4 @@
-//! Git history (protocol 0.46, capability `git.history`): `git.log`, `git.blame`, `git.show` and
+//! Git history (protocol 0.47, capability `git.history`): `git.log`, `git.blame`, `git.show` and
 //! `git.file`.
 //!
 //! Read-only, like the diffs of [`super::review`]: every call is a `git --no-pager

@@ -1,4 +1,4 @@
-//! `git.log`, `git.blame`, `git.show` and `git.file` (protocol 0.46, capability `git.history`)
+//! `git.log`, `git.blame`, `git.show` and `git.file` (protocol 0.47, capability `git.history`)
 //! end to end: a real daemon on a temporary `HUTAN_HOME`, real client connections, and git
 //! repositories the tests create in temporary directories (git runs without the account's
 //! configuration).
