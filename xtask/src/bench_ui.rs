@@ -139,6 +139,7 @@ pub async fn chat(stack: &Stack<'_>, project: &Project, title: &str) -> Result<S
     Ok(stack
         .client
         .chat_create(hutan_protocol::chat::ChatCreate {
+            contain: None,
             workspace_id: Some(project.info.id),
             cwd: project.dir.clone(),
             agent: "codex".to_owned(),

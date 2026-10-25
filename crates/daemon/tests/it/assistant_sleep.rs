@@ -504,6 +504,7 @@ async fn chats_that_are_not_assistants_are_left_running() {
     let chat = t
         .client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            contain: None,
             workspace_id: None,
             cwd: t.work.path().to_owned(),
             agent: "omp".to_owned(),

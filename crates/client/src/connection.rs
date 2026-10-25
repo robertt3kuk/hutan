@@ -1132,6 +1132,13 @@ impl Connection {
             .is_some_and(|client| client.supports_chat_safety())
     }
 
+    /// True while connected to a daemon that advertised capability `sandbox` (Contain).
+    pub fn supports_sandbox(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_sandbox())
+    }
+
     /// True while connected to a daemon that advertised capability `accounts.multi`.
     pub fn supports_accounts_multi(&self) -> bool {
         self.shared

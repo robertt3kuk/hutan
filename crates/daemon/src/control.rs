@@ -1228,6 +1228,7 @@ mod tests {
 
     fn session(kind: SessionKind, state: SessionState, agent: bool) -> SessionInfo {
         SessionInfo {
+            containment: None,
             id: SessionId::new(),
             workspace_id: WorkspaceId::new(),
             kind,

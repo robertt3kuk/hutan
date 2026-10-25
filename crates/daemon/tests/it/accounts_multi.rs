@@ -232,6 +232,7 @@ impl M {
 
     fn request(&self, agent: &str, account: Option<&str>) -> ChatCreate {
         ChatCreate {
+            contain: None,
             workspace_id: None,
             cwd: self.work.path().to_owned(),
             agent: agent.to_owned(),

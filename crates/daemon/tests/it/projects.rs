@@ -455,6 +455,7 @@ async fn a_chat_lands_in_the_project_of_its_folder() {
 
     let chat = client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            contain: None,
             workspace_id: None,
             cwd: repo.clone(),
             agent: "codex".to_owned(),
@@ -851,6 +852,7 @@ async fn task_session(
                 base: None,
             }),
             run: Some(TaskRun::Terminal {
+                contain: None,
                 argv: vec!["sleep".into(), "60".into()],
             }),
             auto_start: false,

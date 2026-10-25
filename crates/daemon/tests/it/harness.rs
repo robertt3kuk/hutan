@@ -169,6 +169,7 @@ impl H {
 
     fn request(&self, agent: &str) -> ChatCreate {
         ChatCreate {
+            contain: None,
             workspace_id: None,
             cwd: self.work.path().to_owned(),
             agent: agent.to_owned(),
@@ -1210,6 +1211,7 @@ async fn tasks_run_as_omp_and_claude_chats() {
         depends_on: Vec::new(),
         placement: None,
         run: Some(TaskRun::Chat {
+            contain: None,
             agent: agent.to_owned(),
             model: None,
             account: None,
@@ -1287,6 +1289,7 @@ async fn a_chat_task_starts_on_the_model_it_names() {
         depends_on: Vec::new(),
         placement: None,
         run: Some(TaskRun::Chat {
+            contain: None,
             agent: "omp".into(),
             model: Some(model.to_owned()),
             account: None,
@@ -1314,6 +1317,7 @@ async fn a_chat_task_starts_on_the_model_it_names() {
     assert_eq!(
         task.run,
         Some(TaskRun::Chat {
+            contain: None,
             agent: "omp".into(),
             model: Some(HAIKU.into()),
             account: None,

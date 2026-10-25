@@ -2136,6 +2136,7 @@ impl SessionRegistry {
             }
         };
         let info = SessionInfo {
+            containment: None,
             id: SessionId::new(),
             workspace_id,
             kind: SessionKind::Terminal,
@@ -3243,6 +3244,7 @@ impl SessionRegistry {
             .filter(|t| !t.is_empty())
             .map(str::to_owned);
         let info = SessionInfo {
+            containment: None,
             id: SessionId::new(),
             workspace_id,
             kind: SessionKind::Harness,
@@ -4029,6 +4031,7 @@ impl SessionRegistry {
         let default_title = format!("{} · chat", spec.agent);
         self.sessions.push(SessionEntry {
             info: SessionInfo {
+                containment: None,
                 id: row.id,
                 workspace_id: row.workspace_id,
                 kind: SessionKind::Harness,
@@ -4257,6 +4260,7 @@ impl SessionRegistry {
             let state_is_live = state.is_live();
             self.sessions.push(SessionEntry {
                 info: SessionInfo {
+                    containment: None,
                     id: row.id,
                     workspace_id: row.workspace_id,
                     kind: row.kind,

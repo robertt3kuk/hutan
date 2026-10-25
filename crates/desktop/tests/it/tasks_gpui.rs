@@ -128,6 +128,7 @@ impl Env {
             depends_on: deps.iter().map(|t| t.id).collect(),
             placement: None,
             run: Some(TaskRun::Terminal {
+                contain: None,
                 argv: vec!["sh".into(), "-c".into(), "sleep 60".into()],
             }),
             auto_start: false,
@@ -652,6 +653,7 @@ fn the_sheet_creates_a_task_with_dependencies_and_a_worktree_placement(cx: &mut 
     assert_eq!(
         created.run,
         Some(TaskRun::Terminal {
+            contain: None,
             argv: hutan_desktop::sessions::launch::shell_argv(
                 &hutan_desktop::sessions::launch::user_shell(),
                 "cargo build --release"
@@ -1249,6 +1251,7 @@ fn awaiting_task(env: &Env, title: &str) -> (Task, PathBuf) {
             base: None,
         });
         request.run = Some(TaskRun::Terminal {
+            contain: None,
             argv: vec!["sh".into(), "-c".into(), "exit 0".into()],
         });
     });
@@ -2020,6 +2023,7 @@ fn review_follows_the_turns_the_user_sees_and_a_finish_closes_it(cx: &mut TestAp
         let task = env.create(title, &[], |request| {
             request.prompt = Some(format!("{title}."));
             request.run = Some(TaskRun::Chat {
+                contain: None,
                 agent: "codex".into(),
                 model: None,
                 account: None,

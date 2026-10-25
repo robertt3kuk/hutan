@@ -196,7 +196,12 @@ pub enum TaskPlacementKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskRun {
     /// A terminal session running `argv` (never empty).
-    Terminal { argv: Vec<String> },
+    Terminal {
+        argv: Vec<String>,
+        /// Run it inside Hutan's Seatbelt boundary (protocol 0.52, capability `sandbox`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        contain: Option<crate::contain::Contain>,
+    },
     /// A chat session with an agent (`codex`); the task's prompt is the first message.
     Chat {
         agent: String,
@@ -211,6 +216,9 @@ pub enum TaskRun {
         /// absent: the harness's own settings.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         safety: Option<crate::safety::SafetyPreset>,
+        /// Run the agent inside Hutan's Seatbelt boundary (protocol 0.52, capability `sandbox`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        contain: Option<crate::contain::Contain>,
     },
 }
 
@@ -942,6 +950,7 @@ mod tests {
     fn a_task_round_trips_as_json() {
         let mut t = task(7, &[TaskId::new()]);
         t.run = Some(TaskRun::Terminal {
+            contain: None,
             argv: vec!["cargo".into(), "test".into()],
         });
         t.placement = TaskPlacement {
@@ -955,6 +964,7 @@ mod tests {
         assert!(json.get("prompt").is_none());
         assert_eq!(serde_json::from_value::<Task>(json).unwrap(), t);
         let chat = serde_json::to_value(TaskRun::Chat {
+            contain: None,
             agent: "codex".into(),
             model: None,
             account: None,
@@ -963,6 +973,7 @@ mod tests {
         .unwrap();
         assert_eq!(chat, serde_json::json!({"kind": "chat", "agent": "codex"}));
         let picked = serde_json::to_value(TaskRun::Chat {
+            contain: None,
             agent: "omp".into(),
             model: Some("anthropic/claude-opus-4-5".into()),
             account: None,

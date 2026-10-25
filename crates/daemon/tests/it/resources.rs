@@ -649,6 +649,7 @@ fn codex_replaying(transcript: &str, received: &Path) -> CodexConfig {
 async fn codex_session(client: &Client, cwd: &Path) -> SessionInfo {
     client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            contain: None,
             workspace_id: None,
             cwd: cwd.to_owned(),
             agent: "codex".to_owned(),

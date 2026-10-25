@@ -1069,6 +1069,7 @@ fn the_send_menu_offers_the_assistant_when_no_chat_running_is_one(cx: &mut TestA
         let _: hutan_protocol::messages::SessionResult =
             env.daemon
                 .call(Request::ChatCreate(hutan_protocol::chat::ChatCreate {
+                    contain: None,
                     workspace_id: Some(workspace.id),
                     cwd: root.clone(),
                     agent: "direct".to_owned(),

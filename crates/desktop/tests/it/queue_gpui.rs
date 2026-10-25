@@ -174,6 +174,7 @@ fn omp_cancellable(dir: &std::path::Path) -> TestDaemon {
 fn omp_chat(daemon: &TestDaemon, cwd: &std::path::Path) -> hutan_core::SessionId {
     let created: hutan_protocol::messages::SessionResult = daemon.call(
         hutan_protocol::messages::Request::ChatCreate(hutan_protocol::chat::ChatCreate {
+            contain: None,
             workspace_id: None,
             cwd: cwd.to_path_buf(),
             agent: "omp".into(),

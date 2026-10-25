@@ -191,6 +191,7 @@ fn size() -> TerminalSize {
 
 fn session_info() -> SessionInfo {
     SessionInfo {
+        containment: None,
         id: sid(),
         workspace_id: ws(),
         kind: SessionKind::Terminal,
@@ -901,6 +902,7 @@ fn running_task() -> Task {
             base: Some("main".into()),
         },
         run: Some(TaskRun::Chat {
+            contain: None,
             agent: "codex".into(),
             model: None,
             account: None,
@@ -1430,6 +1432,7 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::SessionCreate(SessionCreate {
                 workspace_id: Some(ws()),
                 spec: SessionSpec::Terminal(TerminalSpec {
+                    contain: None,
                     command: vec!["omp".into()],
                     cwd: Some("/repo".into()),
                     env: BTreeMap::from([("RUST_LOG".into(), "debug".into())]),
@@ -1688,6 +1691,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create",
             Request::ChatCreate(ChatCreate {
+                contain: None,
                 workspace_id: Some(ws()),
                 cwd: "/repo".into(),
                 agent: "codex".into(),
@@ -1705,6 +1709,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create_minimal",
             Request::ChatCreate(ChatCreate {
+                contain: None,
                 workspace_id: None,
                 cwd: "/repo".into(),
                 agent: "codex".into(),
@@ -1854,6 +1859,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create_direct",
             Request::ChatCreate(ChatCreate {
+                contain: None,
                 workspace_id: None,
                 cwd: "/repo".into(),
                 agent: AGENT_DIRECT.into(),
@@ -2106,6 +2112,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                     base: Some("main".into()),
                 }),
                 run: Some(TaskRun::Chat {
+                    contain: None,
                     agent: "codex".into(),
                     model: None,
                     account: None,
@@ -2124,6 +2131,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 depends_on: vec![],
                 placement: None,
                 run: Some(TaskRun::Chat {
+                    contain: None,
                     agent: "omp".into(),
                     model: Some("anthropic/claude-opus-4-5".into()),
                     account: None,
@@ -2142,6 +2150,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 depends_on: vec![],
                 placement: None,
                 run: Some(TaskRun::Terminal {
+                    contain: None,
                     argv: vec!["cargo".into(), "test".into()],
                 }),
                 auto_start: false,
@@ -2195,6 +2204,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 depends_on: Some(vec![]),
                 placement: Some(TaskPlacement::default()),
                 run: Some(TaskRun::Terminal {
+                    contain: None,
                     argv: vec!["sh".into(), "-c".into(), "make".into()],
                 }),
                 auto_start: Some(false),
@@ -2220,6 +2230,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create_harness",
             Request::ChatCreate(ChatCreate {
+                contain: None,
                 workspace_id: None,
                 cwd: "/repo".into(),
                 agent: "omp".into(),
@@ -2276,6 +2287,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 depends_on: vec![],
                 placement: None,
                 run: Some(TaskRun::Chat {
+                    contain: None,
                     agent: "codex".into(),
                     model: None,
                     account: None,
@@ -2294,6 +2306,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 depends_on: vec![],
                 placement: None,
                 run: Some(TaskRun::Chat {
+                    contain: None,
                     agent: "claude".into(),
                     model: None,
                     account: Some("work".into()),
@@ -2353,6 +2366,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create_account",
             Request::ChatCreate(ChatCreate {
+                contain: None,
                 workspace_id: None,
                 cwd: "/work/repo".into(),
                 agent: "claude".into(),
@@ -2370,6 +2384,7 @@ fn requests() -> Vec<(&'static str, Request)> {
         (
             "chat_create_safety",
             Request::ChatCreate(ChatCreate {
+                contain: None,
                 workspace_id: None,
                 cwd: "/work/repo".into(),
                 agent: "claude".into(),
@@ -2382,6 +2397,57 @@ fn requests() -> Vec<(&'static str, Request)> {
                 system_prompt: None,
                 account: None,
                 safety: Some(hutan_core::SafetyPreset::Contained),
+            }),
+        ),
+        (
+            "chat_create_contain",
+            Request::ChatCreate(ChatCreate {
+                contain: Some(hutan_core::Contain {
+                    network: Some(false),
+                    extra_write: vec!["/work/cache".into()],
+                }),
+                workspace_id: None,
+                cwd: "/work/repo".into(),
+                agent: "omp".into(),
+                model: None,
+                approval_policy: None,
+                sandbox: None,
+                title: None,
+                mode: None,
+                provider_id: None,
+                system_prompt: None,
+                account: None,
+                safety: Some(hutan_core::SafetyPreset::Contained),
+            }),
+        ),
+        (
+            "task_create_terminal_contain",
+            Request::TaskCreate(TaskCreate {
+                workspace_id: ws(),
+                title: "Run the tests contained".into(),
+                prompt: None,
+                depends_on: vec![],
+                placement: None,
+                run: Some(TaskRun::Terminal {
+                    argv: vec!["cargo".into(), "test".into()],
+                    contain: Some(hutan_core::Contain::default()),
+                }),
+                auto_start: false,
+                after_policy: AfterPolicy::Done,
+            }),
+        ),
+        (
+            "session_create_contain",
+            Request::SessionCreate(SessionCreate {
+                workspace_id: None,
+                spec: SessionSpec::Terminal(TerminalSpec {
+                    cwd: Some("/work/repo".into()),
+                    contain: Some(hutan_core::Contain {
+                        network: Some(false),
+                        extra_write: vec![],
+                    }),
+                    ..TerminalSpec::default()
+                }),
             }),
         ),
         (
@@ -4191,6 +4257,65 @@ fn events() -> Vec<(&'static str, Event)> {
                             label: "Work".into(),
                         }),
                         ..chat
+                    }),
+                    ..harness_chat_session_info()
+                },
+            },
+        ),
+        (
+            "session_updated_contained",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    containment: Some(hutan_core::Containment {
+                        kind: hutan_core::ContainKind::Seatbelt,
+                        network: false,
+                        write_roots: vec!["/work/repo".into(), "/work/repo.git".into()],
+                        applied: true,
+                        reason: None,
+                    }),
+                    ..session_info()
+                },
+            },
+        ),
+        (
+            "session_updated_contain_refused",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    state: SessionState::Failed {
+                        reason: "Contain is not available: /usr/bin/sandbox-exec is missing".into(),
+                    },
+                    containment: Some(hutan_core::Containment {
+                        kind: hutan_core::ContainKind::Seatbelt,
+                        network: true,
+                        write_roots: vec![],
+                        applied: false,
+                        reason: Some(
+                            "Contain is not available: /usr/bin/sandbox-exec is missing".into(),
+                        ),
+                    }),
+                    ..session_info()
+                },
+            },
+        ),
+        (
+            "session_updated_chat_contained_omp",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    chat: harness_chat_session_info().chat.map(|chat| ChatInfo {
+                        safety: Some(ChatSafety {
+                            preset: hutan_core::SafetyPreset::Contained,
+                            enforced_by: hutan_core::SafetyEnforcer::Hutan,
+                            network: Some(true),
+                            note: Some("The boundary is Hutan's Seatbelt: reads stay open.".into()),
+                        }),
+                        ..chat
+                    }),
+                    containment: Some(hutan_core::Containment {
+                        kind: hutan_core::ContainKind::Seatbelt,
+                        network: true,
+                        write_roots: vec!["/work/repo".into()],
+                        applied: true,
+                        reason: None,
                     }),
                     ..harness_chat_session_info()
                 },

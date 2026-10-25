@@ -78,6 +78,7 @@ mod tests {
 
     fn session(placement: Option<Placement>) -> SessionInfo {
         SessionInfo {
+            containment: None,
             id: SessionId::new(),
             workspace_id: WorkspaceId::new(),
             kind: SessionKind::Terminal,

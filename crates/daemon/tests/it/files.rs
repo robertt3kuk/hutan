@@ -984,6 +984,7 @@ async fn a_file_diff_in_a_chat_names_the_tool_call_of_the_change_that_follows() 
 
     let created: hutan_protocol::messages::SessionResult = subscribed
         .call(Request::ChatCreate(ChatCreate {
+            contain: None,
             workspace_id: Some(env.workspace),
             cwd: env.root.clone(),
             agent: "omp".into(),

@@ -744,6 +744,7 @@ impl Chat {
     async fn create_in(&self, cwd: &Path) -> SessionInfo {
         self.client
             .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+                contain: None,
                 workspace_id: None,
                 cwd: cwd.to_owned(),
                 agent: "codex".to_owned(),

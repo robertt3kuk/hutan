@@ -843,7 +843,7 @@ impl TaskService {
             }
             run => {
                 let argv = match run {
-                    Some(TaskRun::Terminal { argv }) => argv.clone(),
+                    Some(TaskRun::Terminal { argv, .. }) => argv.clone(),
                     _ => Vec::new(),
                 };
                 self.start_terminal(task, session_workspace, argv, cwd)
@@ -863,6 +863,7 @@ impl TaskService {
         cwd: PathBuf,
     ) -> Result<SessionInfo, ErrorBody> {
         let spec = TerminalSpec {
+            contain: None,
             command: argv,
             cwd: Some(cwd),
             env: BTreeMap::from([(TASK_ID_ENV.to_owned(), task.id.to_string())]),
@@ -892,6 +893,7 @@ impl TaskService {
             model,
             account,
             safety,
+            contain,
         } = chat
         else {
             return Err(bad_request("not a chat run"));
@@ -915,6 +917,7 @@ impl TaskService {
                 system_prompt: None,
                 account: account.clone(),
                 safety: *safety,
+                contain: contain.clone(),
             })
             .await?;
         self.link(task.id, session.id);
@@ -1739,7 +1742,7 @@ fn check_placement(placement: &TaskPlacement) -> Result<(), ErrorBody> {
 fn check_run(run: Option<&TaskRun>, prompt: Option<&str>) -> Result<(), ErrorBody> {
     match run {
         None => Ok(()),
-        Some(TaskRun::Terminal { argv }) => {
+        Some(TaskRun::Terminal { argv, .. }) => {
             if argv.is_empty() || argv[0].is_empty() {
                 return Err(bad_request("a terminal run needs a command"));
             }
@@ -1920,6 +1923,7 @@ mod tests {
         assert!(clean_prompt(Some("x".repeat(model::PROMPT_MAX_BYTES + 1))).is_err());
 
         let terminal = |argv: &[&str]| TaskRun::Terminal {
+            contain: None,
             argv: argv.iter().map(|a| (*a).to_owned()).collect(),
         };
         assert!(check_run(Some(&terminal(&["make"])), None).is_ok());
@@ -1927,6 +1931,7 @@ mod tests {
         assert!(check_run(Some(&terminal(&[""])), None).is_err());
         assert!(check_run(Some(&terminal(&["a\0b"])), None).is_err());
         let chat = TaskRun::Chat {
+            contain: None,
             agent: "codex".into(),
             model: None,
             account: None,
@@ -1938,6 +1943,7 @@ mod tests {
             "a chat needs its first message"
         );
         let other = TaskRun::Chat {
+            contain: None,
             agent: "direct".into(),
             model: None,
             account: None,
@@ -1945,6 +1951,7 @@ mod tests {
         };
         assert!(check_run(Some(&other), Some("go")).is_err());
         let empty_model = TaskRun::Chat {
+            contain: None,
             agent: "codex".into(),
             model: Some(" ".into()),
             account: None,
@@ -2114,6 +2121,7 @@ mod tests {
         t.placement.kind = TaskPlacementKind::Worktree;
         assert!(reviewable(&t, false), "a worktree holds work");
         t.run = Some(TaskRun::Chat {
+            contain: None,
             agent: "codex".into(),
             model: None,
             account: None,

@@ -271,6 +271,7 @@ pub fn build_create(
                 ));
             }
             Some(TaskRun::Chat {
+                contain: None,
                 agent: values.agent.clone(),
                 model: values.model.clone(),
                 account: values.account.clone(),
@@ -278,6 +279,7 @@ pub fn build_create(
             })
         }
         LaunchKind::TerminalAgent => Some(TaskRun::Terminal {
+            contain: None,
             argv: terminal_agent_argv(&values.agent, prompt, values.safety)?,
         }),
         LaunchKind::Terminal => None,
@@ -287,6 +289,7 @@ pub fn build_create(
                 return Err("Type the command to run.".to_owned());
             }
             Some(TaskRun::Terminal {
+                contain: None,
                 argv: shell_argv(&values.shell, command),
             })
         }
@@ -397,6 +400,7 @@ mod tests {
         assert_eq!(
             full.run,
             Some(TaskRun::Terminal {
+                contain: None,
                 argv: vec![
                     "/bin/zsh".into(),
                     "-lc".into(),
@@ -453,6 +457,7 @@ mod tests {
         assert_eq!(
             chat.run,
             Some(TaskRun::Chat {
+                contain: None,
                 agent: "codex".into(),
                 model: Some("gpt-x".into()),
                 account: None,
@@ -473,6 +478,7 @@ mod tests {
         assert_eq!(
             tui.run,
             Some(TaskRun::Terminal {
+                contain: None,
                 argv: vec!["claude".into(), "refactor".into()]
             })
         );
@@ -487,6 +493,7 @@ mod tests {
         assert_eq!(
             bare.run,
             Some(TaskRun::Terminal {
+                contain: None,
                 argv: vec!["omp".into()]
             })
         );
@@ -505,6 +512,7 @@ mod tests {
         assert_eq!(
             chat.run,
             Some(TaskRun::Chat {
+                contain: None,
                 agent: "codex".into(),
                 model: None,
                 account: None,
@@ -521,7 +529,7 @@ mod tests {
             })
             .unwrap();
             match tui.run {
-                Some(TaskRun::Terminal { argv }) => argv,
+                Some(TaskRun::Terminal { argv, .. }) => argv,
                 other => panic!("{other:?}"),
             }
         };
@@ -651,6 +659,7 @@ mod tests {
         assert_eq!(
             shell("echo 'unclosed"),
             Some(TaskRun::Terminal {
+                contain: None,
                 argv: vec!["/bin/bash".into(), "-lc".into(), "echo 'unclosed".into()]
             }),
             "the shell, not the sheet, judges the text"

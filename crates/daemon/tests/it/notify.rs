@@ -118,6 +118,7 @@ impl Env {
     ) -> SessionInfo {
         self.client
             .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+                contain: None,
                 workspace_id: None,
                 cwd: self.work.path().to_owned(),
                 agent: "codex".to_owned(),

@@ -205,6 +205,7 @@ impl Env {
     fn script(&self, title: &str, script: &str, after: &[&Task]) -> TaskCreate {
         TaskCreate {
             run: Some(TaskRun::Terminal {
+                contain: None,
                 argv: vec!["sh".into(), "-c".into(), script.into()],
             }),
             depends_on: after.iter().map(|t| t.id).collect(),
@@ -462,6 +463,7 @@ async fn tasks_are_created_listed_in_dependency_order_and_announced() {
             prompt: Some(String::new()),
             auto_start: Some(true),
             run: Some(TaskRun::Terminal {
+                contain: None,
                 argv: vec!["make".into(), "test".into()],
             }),
             placement: worktree(Some("task/test-it")),
@@ -599,6 +601,7 @@ async fn bad_tasks_and_bad_changes_are_refused() {
         },
         TaskCreate {
             run: Some(TaskRun::Chat {
+                contain: None,
                 agent: "codex".into(),
                 model: None,
                 account: None,
@@ -608,6 +611,7 @@ async fn bad_tasks_and_bad_changes_are_refused() {
         },
         TaskCreate {
             run: Some(TaskRun::Chat {
+                contain: None,
                 agent: "gemini".into(),
                 model: None,
                 account: None,
@@ -617,7 +621,10 @@ async fn bad_tasks_and_bad_changes_are_refused() {
             ..t.create_request("unknown agent")
         },
         TaskCreate {
-            run: Some(TaskRun::Terminal { argv: vec![] }),
+            run: Some(TaskRun::Terminal {
+                contain: None,
+                argv: vec![],
+            }),
             ..t.create_request("nothing to run")
         },
         TaskCreate {
@@ -825,6 +832,7 @@ async fn a_failing_task_fails_and_does_not_release_its_dependants() {
     t.client
         .task_update(TaskUpdate {
             run: Some(TaskRun::Terminal {
+                contain: None,
                 argv: vec!["true".into()],
             }),
             ..update_of(a.id)
@@ -1131,6 +1139,7 @@ async fn a_chat_task_sends_its_prompt_and_is_done_when_the_turn_completes() {
         .create(TaskCreate {
             prompt: Some("Reply with the single word pong and nothing else.".into()),
             run: Some(TaskRun::Chat {
+                contain: None,
                 agent: "codex".into(),
                 model: None,
                 account: None,
@@ -1168,6 +1177,7 @@ async fn a_chat_task_whose_turn_fails_is_failed() {
         .create(TaskCreate {
             prompt: Some("Do something that fails.".into()),
             run: Some(TaskRun::Chat {
+                contain: None,
                 agent: "codex".into(),
                 model: None,
                 account: None,
@@ -1327,6 +1337,7 @@ async fn running_tasks_keep_running_when_their_session_is_restored_and_fail_when
                 base: Some("main".into()),
             }),
             run: Some(TaskRun::Chat {
+                contain: None,
                 agent: "codex".into(),
                 model: None,
                 account: None,
@@ -1777,6 +1788,7 @@ async fn changes_requested_on_a_chat_task_reach_the_chat_and_the_task_runs_again
         .create(TaskCreate {
             prompt: Some("Reply with the single word pong and nothing else.".into()),
             run: Some(TaskRun::Chat {
+                contain: None,
                 agent: "codex".into(),
                 model: None,
                 account: None,

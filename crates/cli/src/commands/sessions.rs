@@ -66,6 +66,7 @@ impl Ctx {
                 Request::SessionCreate(SessionCreate {
                     workspace_id: workspace,
                     spec: SessionSpec::Terminal(TerminalSpec {
+                        contain: None,
                         command: args.argv,
                         cwd: Some(cwd),
                         env: args.env.into_iter().collect::<BTreeMap<_, _>>(),
@@ -652,6 +653,7 @@ mod tests {
 
     fn session(id: &str, terminal: u64, title: &str) -> SessionInfo {
         SessionInfo {
+            containment: None,
             id: id.parse().unwrap(),
             workspace_id: WorkspaceId::new(),
             kind: hutan_core::SessionKind::Terminal,

@@ -908,6 +908,13 @@ pub struct TerminalSpec {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<TerminalSize>,
+    /// Protocol 0.52 (capability `sandbox`): run the process inside Hutan's Seatbelt boundary.
+    /// Needs a `cwd` (`bad_request` without one, and when the command is a harness that runs
+    /// its own OS sandbox: Seatbelt does not nest). `unsupported`, with the reason, when the
+    /// boundary cannot be applied: a session is never started uncontained. Kept by
+    /// `session.restart`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contain: Option<hutan_core::Contain>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1237,6 +1244,10 @@ pub struct SessionInfo {
     /// (`notify.mute`): it raises no notification intent. It still counts as needing the user.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub muted: bool,
+    /// Protocol 0.52 (capability `sandbox`, ADR 0021): the boundary the session runs in, as the
+    /// daemon **applied** it. Absent for sessions started without `contain`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub containment: Option<hutan_core::Containment>,
 }
 
 /// The latest report of a coding agent running in a session: the main agent, with the state

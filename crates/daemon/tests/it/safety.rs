@@ -125,6 +125,7 @@ impl S {
 
     fn request(&self, agent: &str, safety: Option<SafetyPreset>) -> ChatCreate {
         ChatCreate {
+            contain: None,
             workspace_id: None,
             cwd: self.work.path().to_owned(),
             agent: agent.to_owned(),
@@ -546,6 +547,7 @@ async fn a_chat_task_carries_its_preset_into_the_chat_and_is_refused_when_the_ha
         depends_on: Vec::new(),
         placement: None,
         run: Some(TaskRun::Chat {
+            contain: None,
             agent: agent.to_owned(),
             model: None,
             account: None,
@@ -571,6 +573,7 @@ async fn a_chat_task_carries_its_preset_into_the_chat_and_is_refused_when_the_ha
     assert_eq!(
         task.run,
         Some(TaskRun::Chat {
+            contain: None,
             agent: "codex".into(),
             model: None,
             account: None,

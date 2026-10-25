@@ -1,1 +1,1 @@
-{"id":236,"method":"lsp.definition","params":{"path":"/Users/me/repo/src/main.rs","position":{"character":9,"line":3}}}
+{"id":239,"method":"lsp.definition","params":{"path":"/Users/me/repo/src/main.rs","position":{"character":9,"line":3}}}

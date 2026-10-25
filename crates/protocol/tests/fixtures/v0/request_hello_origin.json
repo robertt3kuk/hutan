@@ -1,1 +1,1 @@
-{"id":131,"method":"hello","params":{"capabilities":["control"],"client":{"kind":"cli","origin":{"session_id":"01K7F3B5N2Q9W8E4R6T1Y0V3KM"},"version":"0.1.0"},"protocol":{"major":0,"minor":51}}}
+{"id":134,"method":"hello","params":{"capabilities":["control"],"client":{"kind":"cli","origin":{"session_id":"01K7F3B5N2Q9W8E4R6T1Y0V3KM"},"version":"0.1.0"},"protocol":{"major":0,"minor":52}}}

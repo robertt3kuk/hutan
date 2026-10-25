@@ -1,1 +1,1 @@
-{"id":160,"method":"daemon.settings.set","params":{"key":"notify.kinds","value":["approval_required","task_failed"]}}
+{"id":163,"method":"daemon.settings.set","params":{"key":"notify.kinds","value":["approval_required","task_failed"]}}

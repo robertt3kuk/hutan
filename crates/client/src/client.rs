@@ -221,6 +221,9 @@ pub(crate) const WORKTREE_SETUP_CAPABILITY: &str = "worktree.setup";
 /// Capability for `chat.create`'s `safety`, `ChatInfo.safety` and `TaskRun::Chat.safety`
 /// (protocol 0.51).
 pub(crate) const CHAT_SAFETY_CAPABILITY: &str = "chat.safety";
+/// Capability for Contain: `contain` on terminal specs, chats and task runs, and
+/// `SessionInfo.containment` (protocol 0.52).
+pub(crate) const SANDBOX_CAPABILITY: &str = "sandbox";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -240,6 +243,7 @@ const CAPABILITIES: &[&str] = &[
     ACCOUNTS_CAPABILITY,
     ACCOUNTS_MULTI_CAPABILITY,
     CHAT_SAFETY_CAPABILITY,
+    SANDBOX_CAPABILITY,
     RESOURCES_CAPABILITY,
     PROJECTS_CAPABILITY,
     ASSISTANT_BACKEND_CAPABILITY,
@@ -575,6 +579,15 @@ impl Client {
             .capabilities
             .iter()
             .any(|capability| capability == CHAT_SAFETY_CAPABILITY)
+    }
+
+    /// True when the daemon advertised capability `sandbox` (protocol 0.52): it can run a
+    /// session inside Hutan's Seatbelt boundary.
+    pub fn supports_sandbox(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == SANDBOX_CAPABILITY)
     }
 
     /// The logins of the harnesses (`account.list`): names and plan only.

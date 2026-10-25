@@ -339,7 +339,7 @@ pub fn placement_label(task: &Task) -> (String, Option<String>) {
 pub fn run_label(run: Option<&TaskRun>, names: &ModelNames) -> String {
     match run {
         None => "shell".to_owned(),
-        Some(TaskRun::Terminal { argv }) => {
+        Some(TaskRun::Terminal { argv, .. }) => {
             let line = argv.join(" ");
             let mut short: String = line.chars().take(40).collect();
             if line.chars().count() > 40 {
@@ -595,6 +595,7 @@ mod tests {
             base: None,
         };
         t.run = Some(TaskRun::Terminal {
+            contain: None,
             argv: vec!["cargo".into(), "test".into()],
         });
         t.started_at_ms = Some(10_000);
@@ -616,6 +617,7 @@ mod tests {
         t.ended_at_ms = Some(40_000);
         t.outcome = Some("exited 3".into());
         t.run = Some(TaskRun::Chat {
+            contain: None,
             agent: "omp".into(),
             model: None,
             account: None,

@@ -897,6 +897,7 @@ async fn hutan_chats_are_rows_with_their_conversation() {
     let client = env.daemon.connect().await;
     let chat = client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            contain: None,
             workspace_id: None,
             cwd: work.path().to_owned(),
             agent: "codex".to_owned(),

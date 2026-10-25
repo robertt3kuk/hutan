@@ -82,6 +82,14 @@ pub struct ChatCreate {
     /// with `approval_policy`, `sandbox` or `mode`, which it replaces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety: Option<SafetyPreset>,
+    /// Protocol 0.52 (capability `sandbox`, ADR 0021 decision 3), `omp` only: run the harness
+    /// inside Hutan's Seatbelt boundary. With `safety: contained` OMP gets this boundary and no
+    /// prompts; *Read-only* and *Ask* may carry it too. `bad_request`, with the reason, for a
+    /// harness that runs its own OS sandbox (Codex, Claude Code: Seatbelt does not nest) and for
+    /// a `direct` chat; `unsupported` when the boundary cannot be applied (never started
+    /// uncontained).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contain: Option<hutan_core::Contain>,
 }
 
 /// `chat.send`: the user's message; the turn's events follow as `chat.event`.

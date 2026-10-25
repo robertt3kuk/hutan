@@ -2244,6 +2244,7 @@ impl Workbench {
             };
             let created = connection
                 .chat_create(ChatCreate {
+                    contain: None,
                     workspace_id: Some(project),
                     cwd,
                     agent: "direct".to_owned(),

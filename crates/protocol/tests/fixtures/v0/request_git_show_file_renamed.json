@@ -1,1 +1,1 @@
-{"id":258,"method":"git.show","params":{"old_path":"/Users/me/proj/hutan/src/old.rs","patch":false,"path":"/Users/me/proj/hutan/src/new.rs","rev":"HEAD~3"}}
+{"id":261,"method":"git.show","params":{"old_path":"/Users/me/proj/hutan/src/old.rs","patch":false,"path":"/Users/me/proj/hutan/src/new.rs","rev":"HEAD~3"}}

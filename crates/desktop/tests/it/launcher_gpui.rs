@@ -460,6 +460,7 @@ fn a_chat_in_a_new_worktree_creates_the_task_with_that_placement_and_starts_it(
     assert_eq!(
         task.run,
         Some(TaskRun::Chat {
+            contain: None,
             agent: "omp".into(),
             model: None,
             account: None,
@@ -501,6 +502,7 @@ fn queue_as_task_does_not_start_it(cx: &mut TestAppContext) {
         depends_on: Vec::new(),
         placement: None,
         run: Some(TaskRun::Terminal {
+            contain: None,
             argv: vec!["sh".into(), "-c".into(), "sleep 60".into()],
         }),
         auto_start: false,
@@ -538,6 +540,7 @@ fn queue_as_task_does_not_start_it(cx: &mut TestAppContext) {
     assert_eq!(
         queued.run,
         Some(TaskRun::Terminal {
+            contain: None,
             argv: shell_argv(&user_shell(), "cargo test")
         })
     );
@@ -972,6 +975,7 @@ fn a_picked_model_goes_into_the_task_even_when_it_is_queued(cx: &mut TestAppCont
         depends_on: Vec::new(),
         placement: None,
         run: Some(TaskRun::Terminal {
+            contain: None,
             argv: vec!["sh".into(), "-c".into(), "sleep 60".into()],
         }),
         auto_start: false,
@@ -1011,6 +1015,7 @@ fn a_picked_model_goes_into_the_task_even_when_it_is_queued(cx: &mut TestAppCont
     assert_eq!(
         queued.run,
         Some(TaskRun::Chat {
+            contain: None,
             agent: "omp".into(),
             model: Some(model),
             account: None,
@@ -1734,6 +1739,7 @@ fn a_command_runs_through_the_login_shell_in_a_real_terminal(cx: &mut TestAppCon
     assert_eq!(
         task.run,
         Some(TaskRun::Terminal {
+            contain: None,
             argv: shell_argv(&user_shell(), command)
         })
     );
@@ -2048,6 +2054,7 @@ fn the_safety_row_offers_what_the_harness_can_honour_and_says_why_not(cx: &mut T
     assert_eq!(
         env.task("Review the diff").unwrap().run,
         Some(TaskRun::Chat {
+            contain: None,
             agent: "claude".into(),
             model: None,
             account: None,
@@ -2082,6 +2089,7 @@ fn a_terminal_agent_gets_the_presets_flags_and_other_kinds_have_no_row(cx: &mut 
     assert_eq!(
         env.task("fix it").unwrap().run,
         Some(TaskRun::Terminal {
+            contain: None,
             argv: ["omp", "--tools", "read,grep,glob", "fix it"]
                 .map(String::from)
                 .to_vec(),

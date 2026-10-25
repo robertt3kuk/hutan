@@ -146,6 +146,7 @@ impl TestDaemon {
             .find(|w| w.kind == hutan_protocol::messages::WorkspaceKind::Home)
             .map(|w| w.id);
         let created: SessionResult = self.call(Request::ChatCreate(ChatCreate {
+            contain: None,
             workspace_id: home,
             cwd: cwd.to_path_buf(),
             agent: "codex".to_owned(),

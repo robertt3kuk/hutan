@@ -109,6 +109,7 @@ impl Ctx {
         };
         let session = client
             .chat_create(ChatCreate {
+                contain: None,
                 workspace_id: workspace,
                 cwd,
                 agent,

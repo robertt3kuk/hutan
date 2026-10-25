@@ -67,6 +67,7 @@ impl Ctx {
             .or_else(|| args.codex.then(|| "codex".to_owned()));
         let run = if let Some(agent) = chat_agent {
             Some(TaskRun::Chat {
+                contain: None,
                 agent,
                 model: args.model.clone(),
                 account: args.account.clone(),
@@ -75,7 +76,10 @@ impl Ctx {
         } else if args.argv.is_empty() {
             None
         } else {
-            Some(TaskRun::Terminal { argv: args.argv })
+            Some(TaskRun::Terminal {
+                contain: None,
+                argv: args.argv,
+            })
         };
         let placement = args.worktree.map(|branch| TaskPlacement {
             kind: TaskPlacementKind::Worktree,
@@ -476,7 +480,7 @@ fn task_tree(tasks: &[Task], ids: &HashMap<TaskId, String>) -> String {
                     Some(model) => format!("chat {agent} ({model})"),
                     None => format!("chat {agent}"),
                 }),
-                Some(TaskRun::Terminal { argv }) => notes.push(format!("$ {}", argv.join(" "))),
+                Some(TaskRun::Terminal { argv, .. }) => notes.push(format!("$ {}", argv.join(" "))),
                 None => {}
             }
             if task.auto_start {
@@ -594,7 +598,7 @@ fn task_details(
     line(
         "run",
         match &task.run {
-            Some(TaskRun::Terminal { argv }) => format!("terminal: {}", argv.join(" ")),
+            Some(TaskRun::Terminal { argv, .. }) => format!("terminal: {}", argv.join(" ")),
             Some(TaskRun::Chat { agent, model, .. }) => match model {
                 Some(model) => format!("chat with {agent} on {model}"),
                 None => format!("chat with {agent}"),
@@ -815,6 +819,7 @@ mod tests {
             base: None,
         };
         tasks[1].run = Some(TaskRun::Terminal {
+            contain: None,
             argv: vec!["cargo".into(), "clippy".into()],
         });
         tasks[0].outcome = Some("exited 0".into());
@@ -866,6 +871,7 @@ mod tests {
             base: Some("main".into()),
         };
         ship.run = Some(TaskRun::Chat {
+            contain: None,
             agent: "codex".into(),
             model: None,
             account: None,

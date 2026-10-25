@@ -700,6 +700,7 @@ async fn a_task_placed_in_a_worktree_waits_for_its_setup_unless_told_not_to() {
                 base: None,
             }),
             run: Some(TaskRun::Terminal {
+                contain: None,
                 argv: vec!["sh".into(), "-c".into(), "sleep 60".into()],
             }),
             auto_start: false,
@@ -755,6 +756,7 @@ async fn a_task_placed_in_a_worktree_waits_for_its_setup_unless_told_not_to() {
                 base: None,
             }),
             run: Some(TaskRun::Terminal {
+                contain: None,
                 argv: vec!["sh".into(), "-c".into(), "sleep 60".into()],
             }),
             auto_start: false,

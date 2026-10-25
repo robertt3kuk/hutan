@@ -140,6 +140,7 @@ impl Q {
     async fn create(&self, agent: &str) -> SessionInfo {
         self.client
             .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+                contain: None,
                 workspace_id: None,
                 cwd: self.work.path().to_owned(),
                 agent: agent.to_owned(),

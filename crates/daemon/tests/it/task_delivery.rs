@@ -92,6 +92,7 @@ impl Env {
                 depends_on: Vec::new(),
                 placement: None,
                 run: Some(TaskRun::Chat {
+                    contain: None,
                     agent: "codex".into(),
                     model: None,
                     account: None,

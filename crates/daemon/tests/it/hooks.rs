@@ -277,6 +277,7 @@ async fn start_chat(
 ) -> SessionId {
     client
         .call::<SessionResult>(Request::ChatCreate(ChatCreate {
+            contain: None,
             workspace_id: None,
             cwd: cwd.to_owned(),
             agent: "codex".to_owned(),

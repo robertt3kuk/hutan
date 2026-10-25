@@ -1673,6 +1673,7 @@ fn task(workspace: WorkspaceId, title: &str, created: u64, deps: &[TaskId]) -> T
             base: Some("main".to_owned()),
         },
         run: Some(TaskRun::Terminal {
+            contain: None,
             argv: vec!["cargo".to_owned(), "test".to_owned()],
         }),
         auto_start: true,

@@ -81,6 +81,7 @@ esac"#,
 
 fn create_chat(daemon: &TestDaemon, cwd: &Path) -> SessionId {
     let created: SessionResult = daemon.call(Request::ChatCreate(ChatCreate {
+        contain: None,
         workspace_id: None,
         cwd: cwd.to_path_buf(),
         agent: "omp".into(),

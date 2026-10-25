@@ -590,6 +590,7 @@ mod tests {
         terminal: Option<u64>,
     ) -> SessionInfo {
         SessionInfo {
+            containment: None,
             id: SessionId::new(),
             workspace_id,
             kind: SessionKind::Terminal,
