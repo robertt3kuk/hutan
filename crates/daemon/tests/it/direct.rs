@@ -220,6 +220,7 @@ impl Direct {
             provider_id: Some(provider.to_owned()),
             system_prompt: system.map(str::to_owned),
             account: None,
+            safety: None,
         })
     }
 
@@ -1421,6 +1422,7 @@ async fn creating_a_direct_chat_validates_the_request() {
             provider_id: provider.map(str::to_owned),
             system_prompt: None,
             account: None,
+            safety: None,
         })
     };
     for (request, what) in [

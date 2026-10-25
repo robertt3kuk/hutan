@@ -1125,6 +1125,13 @@ impl Connection {
         client.account_logout(harness, provider).await
     }
 
+    /// True while connected to a daemon that advertised capability `chat.safety`.
+    pub fn supports_chat_safety(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_chat_safety())
+    }
+
     /// True while connected to a daemon that advertised capability `accounts.multi`.
     pub fn supports_accounts_multi(&self) -> bool {
         self.shared

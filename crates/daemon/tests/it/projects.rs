@@ -466,6 +466,7 @@ async fn a_chat_lands_in_the_project_of_its_folder() {
             provider_id: None,
             system_prompt: None,
             account: None,
+            safety: None,
         }))
         .await
         .unwrap()

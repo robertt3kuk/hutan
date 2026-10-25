@@ -474,6 +474,7 @@ async fn a_pending_approval_needs_you_until_it_is_answered() {
             provider_id: None,
             system_prompt: None,
             account: None,
+            safety: None,
         }))
         .await
         .unwrap()

@@ -70,6 +70,7 @@ impl Ctx {
                 agent,
                 model: args.model.clone(),
                 account: args.account.clone(),
+                safety: None,
             })
         } else if args.argv.is_empty() {
             None
@@ -868,6 +869,7 @@ mod tests {
             agent: "codex".into(),
             model: None,
             account: None,
+            safety: None,
         });
         ship.outcome = Some("turn failed: boom".into());
         ship.started_at_ms = Some(1_000);

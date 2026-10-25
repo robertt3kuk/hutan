@@ -282,6 +282,7 @@ fn chat_info() -> ChatInfo {
         mode: None,
         checkpoints: None,
         account: None,
+        safety: None,
     }
 }
 
@@ -305,6 +306,7 @@ fn harness_chat_session_info() -> SessionInfo {
             mode: None,
             checkpoints: None,
             account: None,
+            safety: None,
         }),
         ..chat_session_info()
     }
@@ -330,6 +332,7 @@ fn harness_assistant_session_info() -> SessionInfo {
             mode: None,
             checkpoints: None,
             account: None,
+            safety: None,
         }),
         ..chat_session_info()
     }
@@ -355,6 +358,7 @@ fn direct_chat_session_info() -> SessionInfo {
             mode: None,
             checkpoints: None,
             account: None,
+            safety: None,
         }),
         ..chat_session_info()
     }
@@ -442,6 +446,7 @@ fn assistant_session_info() -> SessionInfo {
             mode: None,
             checkpoints: None,
             account: None,
+            safety: None,
         }),
         ..chat_session_info()
     }
@@ -899,6 +904,7 @@ fn running_task() -> Task {
             agent: "codex".into(),
             model: None,
             account: None,
+            safety: None,
         }),
         auto_start: true,
         sessions: vec![sid()],
@@ -1693,6 +1699,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 provider_id: None,
                 system_prompt: None,
                 account: None,
+                safety: None,
             }),
         ),
         (
@@ -1709,6 +1716,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 provider_id: None,
                 system_prompt: None,
                 account: None,
+                safety: None,
             }),
         ),
         (
@@ -1857,6 +1865,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 provider_id: Some("openrouter".into()),
                 system_prompt: Some("Answer in one sentence.".into()),
                 account: None,
+                safety: None,
             }),
         ),
         (
@@ -2100,6 +2109,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                     agent: "codex".into(),
                     model: None,
                     account: None,
+                    safety: None,
                 }),
                 auto_start: true,
                 after_policy: AfterPolicy::Accepted,
@@ -2117,6 +2127,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                     agent: "omp".into(),
                     model: Some("anthropic/claude-opus-4-5".into()),
                     account: None,
+                    safety: None,
                 }),
                 auto_start: false,
                 after_policy: AfterPolicy::Done,
@@ -2220,6 +2231,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 provider_id: None,
                 system_prompt: None,
                 account: None,
+                safety: None,
             }),
         ),
         ("account_list", Request::AccountList(Empty {})),
@@ -2256,6 +2268,24 @@ fn requests() -> Vec<(&'static str, Request)> {
             }),
         ),
         (
+            "task_create_chat_safety",
+            Request::TaskCreate(TaskCreate {
+                workspace_id: ws(),
+                title: "Refactor contained".into(),
+                prompt: Some("Split the module".into()),
+                depends_on: vec![],
+                placement: None,
+                run: Some(TaskRun::Chat {
+                    agent: "codex".into(),
+                    model: None,
+                    account: None,
+                    safety: Some(hutan_core::SafetyPreset::ReadOnly),
+                }),
+                auto_start: false,
+                after_policy: AfterPolicy::Done,
+            }),
+        ),
+        (
             "task_create_chat_account",
             Request::TaskCreate(TaskCreate {
                 workspace_id: ws(),
@@ -2267,6 +2297,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                     agent: "claude".into(),
                     model: None,
                     account: Some("work".into()),
+                    safety: None,
                 }),
                 auto_start: false,
                 after_policy: AfterPolicy::Done,
@@ -2333,6 +2364,24 @@ fn requests() -> Vec<(&'static str, Request)> {
                 provider_id: None,
                 system_prompt: None,
                 account: Some("work".into()),
+                safety: None,
+            }),
+        ),
+        (
+            "chat_create_safety",
+            Request::ChatCreate(ChatCreate {
+                workspace_id: None,
+                cwd: "/work/repo".into(),
+                agent: "claude".into(),
+                model: None,
+                approval_policy: None,
+                sandbox: None,
+                title: None,
+                mode: None,
+                provider_id: None,
+                system_prompt: None,
+                account: None,
+                safety: Some(hutan_core::SafetyPreset::Contained),
             }),
         ),
         (
@@ -4140,6 +4189,42 @@ fn events() -> Vec<(&'static str, Event)> {
                         account: Some(ChatAccount {
                             name: "work".into(),
                             label: "Work".into(),
+                        }),
+                        ..chat
+                    }),
+                    ..harness_chat_session_info()
+                },
+            },
+        ),
+        (
+            "session_updated_chat_safety",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    chat: harness_chat_session_info().chat.map(|chat| ChatInfo {
+                        agent: "codex".into(),
+                        safety: Some(ChatSafety {
+                            preset: hutan_core::SafetyPreset::Contained,
+                            enforced_by: hutan_core::SafetyEnforcer::Harness,
+                            network: Some(false),
+                            note: None,
+                        }),
+                        ..chat
+                    }),
+                    ..harness_chat_session_info()
+                },
+            },
+        ),
+        (
+            "session_updated_chat_safety_unconfirmed",
+            Event::SessionUpdated {
+                session: SessionInfo {
+                    chat: harness_chat_session_info().chat.map(|chat| ChatInfo {
+                        agent: "claude".into(),
+                        safety: Some(ChatSafety {
+                            preset: hutan_core::SafetyPreset::Contained,
+                            enforced_by: hutan_core::SafetyEnforcer::None,
+                            network: None,
+                            note: Some("Not applied: Claude Code reports mode default".into()),
                         }),
                         ..chat
                     }),

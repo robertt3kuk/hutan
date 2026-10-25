@@ -1,1 +1,1 @@
-{"id":106,"method":"task.create","params":{"prompt":"Review the diff","run":{"account":"work","agent":"claude","kind":"chat"},"title":"Review as work","workspace_id":"01K7F3B5N2Q9W8E4R6T1Y0V3JA"}}
+{"id":107,"method":"task.create","params":{"prompt":"Review the diff","run":{"account":"work","agent":"claude","kind":"chat"},"title":"Review as work","workspace_id":"01K7F3B5N2Q9W8E4R6T1Y0V3JA"}}

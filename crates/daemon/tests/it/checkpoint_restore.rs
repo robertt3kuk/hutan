@@ -712,6 +712,7 @@ async fn only_the_user_restores_never_during_a_turn_and_an_open_file_hears_it() 
             provider_id: None,
             system_prompt: None,
             account: None,
+            safety: None,
         }))
         .await
         .unwrap()

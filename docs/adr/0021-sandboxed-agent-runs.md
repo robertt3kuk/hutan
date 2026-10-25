@@ -1,11 +1,11 @@
 # 0021. Sandboxed agent runs: native sandboxes first, Hutan's Seatbelt where none exists, containers later
 
-- Status: proposed
+- Status: Accepted (2026-10-26, user asked for sandboxing; SANDBOX-1 first). Still open: whether *Contained* may default to no prompts (SANDBOX-1 ships Codex *Contained* as `never` inside the sandbox, Claude Code as `acceptEdits` + Bash sandbox; a "safer prompts" reading would use `on-request`), whether a new worktree session defaults to *Contained*, and containers (decision 7) until CONTAINER-SPIKE reports.
 - Date: 2026-10-26
 - Milestone: after M8 (agents); security track
 - Relates to: ADR 0005 (agent integration), ADR 0008 and ADR 0015 (credentials: Hutan never touches harness tokens), ADR 0016 and ADR 0017 (control surface; "a stronger restricted endpoint + sandbox"), ADR 0019 (checkpoints), ADR 0020 (Finish is the user's)
 - Evidence: `docs/spikes/2026-10-26-sandbox/README.md` (harness facts with links, a Seatbelt prototype measured on macOS 27.0.1 arm64, container survey)
-- Number: draft; renumber on merge if another ADR took 0021.
+- Number: 0021.
 
 ## Context
 - Users run agents unattended and ask for a boundary so that approvals are not the only guard (Orca #13665, Superset #3957 and #2419, agent-orchestrator #6663). What they want is **safe autonomy**: no prompts *because* damage is contained.

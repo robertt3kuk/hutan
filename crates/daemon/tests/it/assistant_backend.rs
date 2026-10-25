@@ -1146,6 +1146,7 @@ async fn a_plain_codex_chat_takes_files_and_images() {
             provider_id: None,
             system_prompt: None,
             account: None,
+            safety: None,
         }))
         .await
         .unwrap();

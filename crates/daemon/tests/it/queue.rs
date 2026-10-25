@@ -151,6 +151,7 @@ impl Q {
                 provider_id: None,
                 system_prompt: None,
                 account: None,
+                safety: None,
             }))
             .await
             .unwrap()

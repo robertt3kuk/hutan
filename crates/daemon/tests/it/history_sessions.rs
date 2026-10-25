@@ -908,6 +908,7 @@ async fn hutan_chats_are_rows_with_their_conversation() {
             provider_id: None,
             system_prompt: None,
             account: None,
+            safety: None,
         }))
         .await
         .unwrap()

@@ -150,6 +150,7 @@ pub async fn chat(stack: &Stack<'_>, project: &Project, title: &str) -> Result<S
             provider_id: None,
             system_prompt: None,
             account: None,
+            safety: None,
         })
         .await?)
 }

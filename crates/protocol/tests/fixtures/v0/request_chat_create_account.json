@@ -1,1 +1,1 @@
-{"id":113,"method":"chat.create","params":{"account":"work","agent":"claude","cwd":"/work/repo"}}
+{"id":114,"method":"chat.create","params":{"account":"work","agent":"claude","cwd":"/work/repo"}}

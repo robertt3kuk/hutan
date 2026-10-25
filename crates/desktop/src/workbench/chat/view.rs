@@ -1913,6 +1913,7 @@ mod mode_chip_tests {
             mode,
             checkpoints: None,
             account: None,
+            safety: None,
         }
     }
 

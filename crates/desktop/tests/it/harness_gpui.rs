@@ -238,6 +238,7 @@ fn a_harness_chat_switches_its_model_between_turns(cx: &mut TestAppContext) {
         provider_id: None,
         system_prompt: None,
         account: None,
+        safety: None,
     }));
     let (view, cx) = open(cx, &daemon);
     view.update_in(cx, |wb, window, cx| {
@@ -602,6 +603,7 @@ fn model_names_survive_an_app_restart_with_no_harness_spawn(cx: &mut TestAppCont
         provider_id: None,
         system_prompt: None,
         account: None,
+        safety: None,
     }));
     let session = created.session.id;
     wait_until(vcx, "the chat in the first window", |cx| {

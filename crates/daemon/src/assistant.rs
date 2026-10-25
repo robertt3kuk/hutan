@@ -579,6 +579,7 @@ impl AssistantService {
             provider_id: None,
             system_prompt: None,
             account: None,
+            safety: None,
         };
         match backend.kind {
             AssistantBackend::Provider => {

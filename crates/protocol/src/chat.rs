@@ -10,6 +10,7 @@ use hutan_core::{
     AgentEvent, ApprovalId, ApprovalPolicy, ModelInfo, QuestionId, QuestionResponse, QuestionSpec,
     SandboxMode, SessionId, TurnId, WorkspaceId,
 };
+use hutan_core::{SafetyEnforcer, SafetyPreset};
 use serde::{Deserialize, Serialize};
 
 use crate::assistant::Attachment;
@@ -72,6 +73,15 @@ pub struct ChatCreate {
     /// `bad_request` for `direct` chats.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// Protocol 0.51 (capability `chat.safety`, ADR 0021), `codex`, `omp` and `claude` only: a
+    /// safety preset, which the daemon turns into what the harness is started with (Codex's
+    /// approval policy and sandbox, Claude Code's session mode and Bash sandbox, OMP's approval
+    /// mode or tool list: `docs/agents.md` § Safety presets). Absent: the harness's own
+    /// settings, as before. `bad_request`, with the reason, when the harness cannot honour the
+    /// preset (OMP has no OS sandbox, so no *Contained*), for a `direct` chat, and together
+    /// with `approval_policy`, `sandbox` or `mode`, which it replaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety: Option<SafetyPreset>,
 }
 
 /// `chat.send`: the user's message; the turn's events follow as `chat.event`.
@@ -438,6 +448,30 @@ pub struct ChatInfo {
     /// own login, and chats that never had an account (direct chats).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<crate::account::ChatAccount>,
+    /// Protocol 0.51 (capability `chat.safety`): the safety preset the chat was created with
+    /// and what the harness confirmed of it. Absent for chats created without one, direct and
+    /// assistant chats, and until the agent first started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety: Option<ChatSafety>,
+}
+
+/// What a chat's safety preset amounts to, **as the harness reported it** (protocol 0.51,
+/// capability `chat.safety`; ADR 0021 decision 6): never only what Hutan asked for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatSafety {
+    /// The preset the chat was created with.
+    pub preset: SafetyPreset,
+    /// Who enforces the boundary. `none`: no boundary exists (*Full access*), or the harness
+    /// did not confirm the preset (`note` says so: *not applied*).
+    pub enforced_by: SafetyEnforcer,
+    /// Whether the harness's sandbox lets commands reach the network, when it said so (Codex's
+    /// `networkAccess`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<bool>,
+    /// What was not confirmed, or what the harness cannot say, in a sentence. Absent when the
+    /// harness confirmed everything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 impl ChatInfo {

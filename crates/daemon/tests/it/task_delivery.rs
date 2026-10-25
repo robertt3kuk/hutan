@@ -95,6 +95,7 @@ impl Env {
                     agent: "codex".into(),
                     model: None,
                     account: None,
+                    safety: None,
                 }),
                 auto_start: false,
                 after_policy: AfterPolicy::Done,

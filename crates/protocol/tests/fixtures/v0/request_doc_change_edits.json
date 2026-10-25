@@ -1,1 +1,1 @@
-{"id":224,"method":"doc.change","params":{"doc_id":"d1","edits":[{"end":{"character":11,"line":0},"start":{"character":11,"line":0},"text":"println!()"}],"version":2}}
+{"id":226,"method":"doc.change","params":{"doc_id":"d1","edits":[{"end":{"character":11,"line":0},"start":{"character":11,"line":0},"text":"println!()"}],"version":2}}

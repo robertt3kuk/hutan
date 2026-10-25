@@ -207,6 +207,10 @@ pub enum TaskRun {
         /// the harness's own login; absent: the project's default, else the harness's.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         account: Option<String>,
+        /// A safety preset (protocol 0.51, capability `chat.safety`) the chat starts with;
+        /// absent: the harness's own settings.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        safety: Option<crate::safety::SafetyPreset>,
     },
 }
 
@@ -954,6 +958,7 @@ mod tests {
             agent: "codex".into(),
             model: None,
             account: None,
+            safety: None,
         })
         .unwrap();
         assert_eq!(chat, serde_json::json!({"kind": "chat", "agent": "codex"}));
@@ -961,6 +966,7 @@ mod tests {
             agent: "omp".into(),
             model: Some("anthropic/claude-opus-4-5".into()),
             account: None,
+            safety: None,
         })
         .unwrap();
         assert_eq!(

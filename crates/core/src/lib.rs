@@ -8,6 +8,7 @@ pub mod ids;
 pub mod observation;
 pub mod question;
 pub mod restore;
+pub mod safety;
 pub mod session;
 pub mod task;
 
@@ -32,6 +33,7 @@ pub use restore::{
     AcceptError, Change, FileMode, PlannedFile, Present, RestoreAction, RestoreEntry, RestorePlan,
     RestoreState, TreeFile, TurnChanges, restore_plan,
 };
+pub use safety::{SafetyEnforcer, SafetyPreset};
 pub use session::{InvalidTransition, SessionEvent, SessionKind, SessionState};
 pub use task::{
     AfterPolicy, DELIVERY_HISTORY_MAX, DeliveryActor, DeliveryRecord, DeliveryState,

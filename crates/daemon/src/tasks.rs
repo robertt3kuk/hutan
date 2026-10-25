@@ -32,8 +32,8 @@ use std::time::Duration;
 
 use hutan_core::{
     AgentEvent, AgentEventKind, AgentNode, Delivery, DeliveryActor, DeliveryRecord, DeliveryState,
-    NodeKind, NodeOutcome, NodeState, ReviewDecision, SessionId, SessionState, Task, TaskEvent,
-    TaskId, TaskPlacement, TaskPlacementKind, TaskRun, TaskState, TurnId, WorkspaceId,
+    NodeKind, NodeOutcome, NodeState, ReviewDecision, SafetyPreset, SessionId, SessionState, Task,
+    TaskEvent, TaskId, TaskPlacement, TaskPlacementKind, TaskRun, TaskState, TurnId, WorkspaceId,
     task as model,
 };
 use hutan_protocol::chat::ChatCreate;
@@ -842,6 +842,7 @@ impl TaskService {
                 agent,
                 model,
                 account,
+                safety,
             }) => {
                 self.start_chat(
                     task,
@@ -849,6 +850,7 @@ impl TaskService {
                     agent,
                     model.clone(),
                     account.clone(),
+                    *safety,
                     cwd,
                 )
                 .await?
@@ -899,6 +901,7 @@ impl TaskService {
         agent: &str,
         model: Option<String>,
         account: Option<String>,
+        safety: Option<SafetyPreset>,
         cwd: PathBuf,
     ) -> Result<SessionInfo, ErrorBody> {
         let prompt = task
@@ -919,6 +922,7 @@ impl TaskService {
                 provider_id: None,
                 system_prompt: None,
                 account,
+                safety,
             })
             .await?;
         self.link(task.id, session.id);
@@ -1757,9 +1761,21 @@ fn check_run(run: Option<&TaskRun>, prompt: Option<&str>) -> Result<(), ErrorBod
             }
             Ok(())
         }
-        Some(TaskRun::Chat { agent, model, .. }) => {
+        Some(TaskRun::Chat {
+            agent,
+            model,
+            safety,
+            ..
+        }) => {
             if model.as_deref().is_some_and(|m| m.trim().is_empty()) {
                 return Err(bad_request("a chat task's model cannot be empty"));
+            }
+            if let Some(preset) = safety {
+                // Refused when the task is made, not when it is started: the reason is the
+                // harness's (`hutan_core::safety::plan`).
+                hutan_core::safety::plan(agent, *preset).map_err(|reason| {
+                    bad_request(format!("the {} preset: {reason}", preset.label()))
+                })?;
             }
             if agent != AGENT_CODEX && !is_harness_agent(agent) {
                 return Err(bad_request(format!(
@@ -1922,6 +1938,7 @@ mod tests {
             agent: "codex".into(),
             model: None,
             account: None,
+            safety: None,
         };
         assert!(check_run(Some(&chat), Some("go")).is_ok());
         assert!(
@@ -1932,12 +1949,14 @@ mod tests {
             agent: "direct".into(),
             model: None,
             account: None,
+            safety: None,
         };
         assert!(check_run(Some(&other), Some("go")).is_err());
         let empty_model = TaskRun::Chat {
             agent: "codex".into(),
             model: Some(" ".into()),
             account: None,
+            safety: None,
         };
         assert!(check_run(Some(&empty_model), Some("go")).is_err());
         assert!(check_run(None, None).is_ok());
@@ -2106,6 +2125,7 @@ mod tests {
             agent: "codex".into(),
             model: None,
             account: None,
+            safety: None,
         });
         assert!(
             !reviewable(&t, true),

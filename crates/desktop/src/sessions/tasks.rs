@@ -619,6 +619,7 @@ mod tests {
             agent: "omp".into(),
             model: None,
             account: None,
+            safety: None,
         });
         let row = &tree_rows(
             &book(&[&t]),

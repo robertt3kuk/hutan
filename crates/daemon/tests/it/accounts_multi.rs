@@ -243,6 +243,7 @@ impl M {
             provider_id: None,
             system_prompt: None,
             account: account.map(str::to_owned),
+            safety: None,
         }
     }
 

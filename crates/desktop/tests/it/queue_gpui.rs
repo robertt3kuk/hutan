@@ -185,6 +185,7 @@ fn omp_chat(daemon: &TestDaemon, cwd: &std::path::Path) -> hutan_core::SessionId
             provider_id: None,
             system_prompt: None,
             account: None,
+            safety: None,
         }),
     );
     created.session.id

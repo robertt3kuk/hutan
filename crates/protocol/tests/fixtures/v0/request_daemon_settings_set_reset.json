@@ -1,1 +1,1 @@
-{"id":159,"method":"daemon.settings.set","params":{"key":"notify.enabled"}}
+{"id":161,"method":"daemon.settings.set","params":{"key":"notify.enabled"}}

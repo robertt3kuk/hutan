@@ -1,1 +1,1 @@
-{"id":254,"method":"git.blame","params":{"contents":"pub fn hi() {}\n","path":"/Users/me/proj/hutan/src/lib.rs","rev":"v0.2.0"}}
+{"id":256,"method":"git.blame","params":{"contents":"pub fn hi() {}\n","path":"/Users/me/proj/hutan/src/lib.rs","rev":"v0.2.0"}}

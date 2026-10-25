@@ -259,6 +259,7 @@ pub fn build_create(
                 agent: values.agent.clone(),
                 model: values.model.clone(),
                 account: values.account.clone(),
+                safety: None,
             })
         }
         LaunchKind::TerminalAgent => Some(TaskRun::Terminal {
@@ -439,6 +440,7 @@ mod tests {
                 agent: "codex".into(),
                 model: Some("gpt-x".into()),
                 account: None,
+                safety: None,
             })
         );
     }

@@ -1,1 +1,1 @@
-{"id":162,"method":"history.sessions","params":{"filter":"repo:hutan flaky","limit":250,"refresh":true,"scope":"project","sort":"updated","sources":["claude","omp"],"workspace_id":"01K7F3B5N2Q9W8E4R6T1Y0V3JA"}}
+{"id":164,"method":"history.sessions","params":{"filter":"repo:hutan flaky","limit":250,"refresh":true,"scope":"project","sort":"updated","sources":["claude","omp"],"workspace_id":"01K7F3B5N2Q9W8E4R6T1Y0V3JA"}}

@@ -218,6 +218,9 @@ pub(crate) const GIT_HISTORY_CAPABILITY: &str = "git.history";
 pub(crate) const HOOKS_CAPABILITY: &str = "hooks";
 /// Capability for worktree setup, teardown and retention (protocol 0.49).
 pub(crate) const WORKTREE_SETUP_CAPABILITY: &str = "worktree.setup";
+/// Capability for `chat.create`'s `safety`, `ChatInfo.safety` and `TaskRun::Chat.safety`
+/// (protocol 0.51).
+pub(crate) const CHAT_SAFETY_CAPABILITY: &str = "chat.safety";
 /// Capabilities this client understands, offered in `hello`.
 const CAPABILITIES: &[&str] = &[
     "terminal.render.v1",
@@ -236,6 +239,7 @@ const CAPABILITIES: &[&str] = &[
     HARNESS_CAPABILITY,
     ACCOUNTS_CAPABILITY,
     ACCOUNTS_MULTI_CAPABILITY,
+    CHAT_SAFETY_CAPABILITY,
     RESOURCES_CAPABILITY,
     PROJECTS_CAPABILITY,
     ASSISTANT_BACKEND_CAPABILITY,
@@ -563,6 +567,14 @@ impl Client {
     pub async fn usage_summary(&self, refresh: bool) -> Result<UsageSummary, ClientError> {
         self.call(Request::UsageSummary(UsageSummaryRequest { refresh }))
             .await
+    }
+
+    /// True when the daemon advertised capability `chat.safety` (protocol 0.51).
+    pub fn supports_chat_safety(&self) -> bool {
+        self.welcome
+            .capabilities
+            .iter()
+            .any(|capability| capability == CHAT_SAFETY_CAPABILITY)
     }
 
     /// The logins of the harnesses (`account.list`): names and plan only.

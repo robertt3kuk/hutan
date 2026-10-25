@@ -141,6 +141,7 @@ impl Chat {
                 provider_id: None,
                 system_prompt: None,
                 account: None,
+                safety: None,
             }))
             .await
             .unwrap()
@@ -408,6 +409,7 @@ async fn an_unknown_model_is_refused_with_the_catalog() {
             provider_id: None,
             system_prompt: None,
             account: None,
+            safety: None,
         }))
         .await
         .unwrap_err();
@@ -1317,6 +1319,7 @@ async fn creating_a_chat_validates_the_request() {
                     provider_id: None,
                     system_prompt: None,
                     account: None,
+                    safety: None,
                 }))
                 .await
         }
@@ -1382,6 +1385,7 @@ async fn an_unsupported_codex_version_fails_the_session_with_a_clear_reason() {
             provider_id: None,
             system_prompt: None,
             account: None,
+            safety: None,
         }))
         .await;
     let hutan_client::ClientError::Remote(error) = result.unwrap_err() else {
@@ -1430,6 +1434,7 @@ async fn a_missing_codex_says_where_to_configure_it() {
             provider_id: None,
             system_prompt: None,
             account: None,
+            safety: None,
         }))
         .await;
     let hutan_client::ClientError::Remote(error) = result.unwrap_err() else {
