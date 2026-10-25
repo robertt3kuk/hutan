@@ -82,6 +82,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("sessions_restore", "Sessions & restore"),
     ("control", "Agent control & security"),
     ("agents_tools", "Agents & tools"),
+    ("experimental", "Experimental features"),
 ];
 
 const FIELDS: &[FieldText] = &[
@@ -186,6 +187,13 @@ const FIELDS: &[FieldText] = &[
         "usage_warnings",
         "Warn when a usage limit runs low",
         "Shows a toast when one of a harness's limit windows (the 5-hour or the weekly one) passes 80% and again at 95%, once per window. A limit that was already high when Hutan opened is not announced; the status item and the Agents page show it.",
+    ),
+    // ---- experimental ----
+    field(
+        "experimental",
+        "remote_hosts",
+        "Remote hosts over SSH (experimental)",
+        "Lets the command line reach the Hutan of another Mac over SSH (hutan --host and hutan host). Off, both refuse to run.",
     ),
     // ---- keyboard ----
     choice(
@@ -1547,6 +1555,9 @@ pub fn page_keywords(page: &str) -> &'static str {
             "Index sessions indexing on off sources index size Hutan Claude Code Codex OMP \
              how far back range days transcript folders"
         }
+        "experimental" => {
+            "Experimental remote hosts SSH host --host hutan host risk disclaimer another Mac"
+        }
         "notifications" => {
             "Notify notifications alerts native notification centre Dock badge sound toast \
              requests failures finished ready for review"
@@ -1714,6 +1725,7 @@ pub mod words {
         SEC_HISTORY = "What to index";
         SEC_HISTORY_FOLDERS = "Where the transcripts are";
         SEC_HISTORY_PANEL = "The History panel";
+        EXPERIMENTAL_DOCS = "Read about remote hosts";
         SEC_OMP = "OMP";
         SEC_CLAUDE = "Claude Code";
         SEC_CODEX = "Codex";

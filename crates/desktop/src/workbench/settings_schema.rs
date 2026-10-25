@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use hutan_settings::themes;
-use hutan_settings::{AppearanceSettings, Setting, SettingsStore};
+use hutan_settings::{AppearanceSettings, ExperimentalSettings, Setting, SettingsStore};
 use serde_json::Value as Json;
 
 use crate::settings::{
@@ -353,12 +353,20 @@ pub enum NavGroup {
     General,
     Agents,
     Data,
+    /// Features that ship switched off, at the user's own risk.
+    Experimental,
     /// Collapsed in the list until it holds the selected page or a search is on.
     Advanced,
 }
 
 impl NavGroup {
-    pub const ALL: [NavGroup; 4] = [Self::General, Self::Agents, Self::Data, Self::Advanced];
+    pub const ALL: [NavGroup; 5] = [
+        Self::General,
+        Self::Agents,
+        Self::Data,
+        Self::Experimental,
+        Self::Advanced,
+    ];
 
     /// The label over the group's pages.
     pub const fn title(self) -> &'static str {
@@ -366,6 +374,7 @@ impl NavGroup {
             Self::General => "General",
             Self::Agents => "Agents",
             Self::Data => "Data",
+            Self::Experimental => "Experimental",
             Self::Advanced => "Advanced",
         }
     }
@@ -376,6 +385,7 @@ impl NavGroup {
             "assistant" | "agents" | "integrations" | "automation" | "launcher" | "accounts"
             | "models" => Self::Agents,
             "history" | "data" | "sessions_restore" => Self::Data,
+            "experimental" => Self::Experimental,
             "agents_tools" | "control" | "resources" => Self::Advanced,
             _ => Self::General,
         }
@@ -419,6 +429,8 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<HistorySettings>(),
         CatalogEntry::custom("data"),
         CatalogEntry::custom("sessions_restore"),
+        // Experimental
+        CatalogEntry::of::<ExperimentalSettings>(),
         // Advanced
         CatalogEntry::custom("agents_tools"),
         CatalogEntry::custom("control"),

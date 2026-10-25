@@ -17,6 +17,7 @@ use crate::ssh_host::FakeSsh;
 /// A scratch `HUTAN_HOME` holding `settings.toml`, with a host called `fake` that runs `ssh`.
 async fn home_with_host(ssh: &FakeSsh) -> TempDir {
     let home = tempfile::tempdir().unwrap();
+    enable_remote_hosts(home.path());
     hutan_in(
         home.path(),
         &ssh.script,
@@ -30,6 +31,7 @@ async fn home_with_host(ssh: &FakeSsh) -> TempDir {
 #[tokio::test]
 async fn hosts_are_added_listed_and_removed_in_settings_toml() {
     let home = tempfile::tempdir().unwrap();
+    enable_remote_hosts(home.path());
     let ssh = Path::new("/nonexistent/ssh");
     let h = |args: &'static [&'static str]| hutan_in(home.path(), ssh, args);
 
@@ -93,7 +95,8 @@ async fn hosts_are_added_listed_and_removed_in_settings_toml() {
     assert_eq!(h(&["host", "remove", "studio"]).await.code, 1);
     h(&["host", "rm", "box"]).await.ok();
     let file = std::fs::read_to_string(home.path().join("settings.toml")).unwrap();
-    assert!(!file.contains("host"), "{file:?}");
+    assert!(!file.contains("[[host]]"), "{file:?}");
+    assert!(file.contains("remote_hosts = true"), "{file:?}");
 }
 
 #[tokio::test]
@@ -359,4 +362,87 @@ async fn host_forward_runs_ssh_with_a_replaceable_socket_and_cleans_up() {
         serde_json::from_slice(output.stdout.split(|b| *b == b'\n').next().unwrap()).unwrap();
     assert_eq!(printed["remote_socket"], "/home/me/hutand.sock");
     assert_eq!(printed["host"], "fake");
+}
+
+#[tokio::test]
+async fn remote_hosts_are_refused_until_the_experimental_setting_is_on() {
+    let t = TestDaemon::start().await;
+    let ssh = FakeSsh::proxying(&t.paths.socket);
+    let home = tempfile::tempdir().unwrap();
+    let run = |args: &'static [&'static str]| hutan_in(home.path(), &ssh.script, args);
+
+    // Off (the default): `--host` and `host` refuse before anything runs, naming the setting
+    // and saying what it risks.
+    for args in [
+        &["host", "list"][..],
+        &["host", "add", "fake", "me@fake.example"][..],
+        &["host", "test", "fake"][..],
+        &["--host", "fake", "ls"][..],
+    ] {
+        let out = hutan_in(home.path(), &ssh.script, args).await;
+        assert_eq!(out.code, 2, "{args:?}: {out:?}");
+        assert!(
+            out.stderr.contains("experimental.remote_hosts"),
+            "{args:?}: {out:?}"
+        );
+        assert!(
+            out.stderr.contains("Use at your own risk"),
+            "{args:?}: {out:?}"
+        );
+        assert!(
+            out.stderr.contains("Settings ▸ Experimental"),
+            "{args:?}: {out:?}"
+        );
+    }
+    assert!(ssh.runs().is_empty());
+    assert!(
+        !home.path().join("settings.toml").exists(),
+        "nothing was written"
+    );
+
+    // A workspace cannot switch it on: only the user's file counts.
+    let repo = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(repo.path().join(".hutan")).unwrap();
+    std::fs::write(
+        repo.path().join(".hutan/settings.toml"),
+        "[experimental]\nremote_hosts = true\n",
+    )
+    .unwrap();
+    let mut command = command(Path::new(HUTAN), None, &["host", "list"]);
+    command
+        .env("HUTAN_HOME", home.path())
+        .current_dir(repo.path());
+    assert_eq!(finish(command).await.code, 2);
+
+    // `hutan proxy` is what the host's ssh runs: it never reads the setting (`proxy.rs` runs it
+    // with no settings at all), and it is not in `--help`.
+    let help = run(&["--help"]).await.ok().stdout;
+    assert!(!help.contains("proxy"), "{help}");
+    assert!(
+        help.contains("host"),
+        "`hutan host` stays listed, marked experimental: {help}"
+    );
+    assert!(help.contains("EXPERIMENTAL"), "{help}");
+
+    // On: the same commands work, and `add` and `test` print the disclaimer.
+    enable_remote_hosts(home.path());
+    let added = run(&["host", "add", "fake", "me@fake.example"]).await.ok();
+    assert!(added.stdout.contains("Use at your own risk"), "{added:?}");
+    let tested = run(&["host", "test", "fake"]).await.ok();
+    assert!(tested.stdout.contains("Use at your own risk"), "{tested:?}");
+    assert!(
+        run(&["host", "test", "fake", "--json"]).await.ok().json()["disclaimer"]
+            .as_str()
+            .is_some_and(|d| d.contains("at your own risk"))
+    );
+    // Its listing does not repeat it.
+    assert!(
+        !run(&["host", "list"])
+            .await
+            .ok()
+            .stdout
+            .contains("own risk")
+    );
+    run(&["--host", "fake", "ls"]).await.ok();
+    t.stop().await;
 }

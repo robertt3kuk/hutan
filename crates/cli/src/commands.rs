@@ -63,6 +63,7 @@ const STOP_POLL: Duration = Duration::from_millis(25);
 
 pub async fn run(cli: Cli) -> Result<(), CliError> {
     if let Some(name) = &cli.host {
+        host::require_enabled()?;
         if let Some(why) = refused_for_host(&cli.command) {
             return Err(CliError::Usage(format!("`--host {name}`: {why}")));
         }

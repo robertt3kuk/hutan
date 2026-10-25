@@ -204,12 +204,53 @@ impl Workbench {
                 rows.push(self.render_vim_keys());
             }
             "assistant" => rows.extend(self.render_assistant_daemon(cx)),
+            "experimental" => rows.push(self.render_experimental_disclaimer(cx)),
             page if super::settings_daemon::is_daemon_page(page) => {
                 rows.extend(self.render_daemon_page(page, cx));
             }
             _ => {}
         }
         rows
+    }
+
+    // ---- Experimental --------------------------------------------------------------------------
+
+    /// The disclaimer under the Experimental toggles, with the way to the docs.
+    fn render_experimental_disclaimer(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme;
+        let tokens = self.density.ui();
+        let docs = Button::new(
+            "experimental-docs",
+            words::EXPERIMENTAL_DOCS,
+            &theme,
+            &tokens,
+        )
+        .compact()
+        .on_click(cx.listener(|_, _, _, cx| {
+            cx.open_url(hutan_settings::experimental::REMOTE_HOSTS_DOCS_URL);
+        }))
+        .child(probe(&self.regions, Region::Settings("experimental-docs")));
+        div()
+            .id("experimental-disclaimer")
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap(px(tokens.spacing))
+            .px(px(tokens.spacing * 2.0))
+            .py(px(tokens.spacing))
+            .child(
+                note(
+                    hutan_settings::experimental::REMOTE_HOSTS_DISCLAIMER,
+                    &theme,
+                    &tokens,
+                )
+                .child(probe(
+                    &self.regions,
+                    Region::Settings("experimental-disclaimer"),
+                )),
+            )
+            .child(docs)
+            .into_any_element()
     }
 
     // ---- History -------------------------------------------------------------------------------

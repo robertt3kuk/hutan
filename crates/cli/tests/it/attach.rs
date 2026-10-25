@@ -240,6 +240,7 @@ async fn attach_works_through_a_host_over_ssh() {
     // terminal's snapshot, frames and input all cross the proxy.
     let t = TestDaemon::start().await;
     let home = tempfile::tempdir().unwrap();
+    common::enable_remote_hosts(home.path());
     let ssh = crate::ssh_host::FakeSsh::proxying(&t.paths.socket);
     let added = common::hutan_in(
         home.path(),

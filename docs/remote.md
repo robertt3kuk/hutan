@@ -1,5 +1,17 @@
 # Remote hosts over SSH (R-2, ADR 0022)
 
+> **Experimental — use at your own risk.** Remote hosts ship switched off. They may change or break between releases, and anyone who can SSH into the host's account has the same control over its Hutan as the user of this Mac. They are off until you turn them on:
+>
+> - **Settings ▸ Experimental features ▸ Remote hosts over SSH (experimental)**, or
+> - add to your `settings.toml` (user file only; a workspace's or project's `.hutan/settings.toml` cannot switch it on):
+>   ```toml
+>   [experimental]
+>   remote_hosts = true
+>   ```
+>   or `hutan ui set experimental.remote_hosts true` while the desktop is open.
+>
+> Turn it off the same way (`false`, or delete the key). While off, `hutan --host …` and `hutan host …` refuse to run (exit 2) and name the setting; nothing connects. `hutan proxy` is not gated and is hidden from `--help`: it is what `ssh` runs on the host, which only happens when someone already has SSH access to that account. `hutan host add` and `hutan host test` repeat the disclaimer in their output.
+
 `hutan --host NAME <command>` runs any CLI command against the `hutand` of another machine. Hutan opens no listener and stores no credential for this: the connection is the system `ssh`, running `hutan proxy` on the host, and the protocol (ADR 0002) runs unchanged over its standard input and output. Authentication, host keys, jump hosts, agents and connection sharing are the user's `~/.ssh/config`.
 
 ```
@@ -12,6 +24,7 @@ This slice is the CLI and the client library. The desktop's multi-host UI, host 
 
 ## Set up a host
 
+0. **Turn the experiment on** (above), on the Mac you run `hutan` from. The host needs nothing turned on: it only runs `hutan proxy`.
 1. **Install Hutan on the host** (a Mac for now; the Linux daemon is LX-1). The host needs the `hutan` and `hutand` executables side by side (the proxy starts `hutand` beside itself) and `git`, and whichever agent harnesses you use, logged in *on the host* (their logins stay in their own homes there; Hutan never forwards a token, ADR 0015).
 2. **Make `ssh HOST` work without a prompt.** Hutan runs `ssh` with `BatchMode=yes`: a password, a passphrase prompt or an unknown host key is a failure, never a question. Put the destination in `~/.ssh/config` (keys, `ProxyJump`, an agent, `IdentityFile`), and connect once by hand so the host key is known:
 
@@ -95,8 +108,9 @@ A forwarded socket is a way for *any process of your user* on this Mac to talk t
 
 ## Troubleshooting
 
-| Message (exit 3) | Cause and fix |
+| Message | Cause and fix |
 |---|---|
+| `remote hosts are off.` (exit 2) | `experimental.remote_hosts` is false: turn it on (top of this page). |
 | `ssh studio: Permission denied (publickey).` / `…Host key verification failed.` | `ssh studio true` does not work non-interactively: fix the key, the agent or the host key in `known_hosts` (connect once by hand). |
 | `ssh studio: <shell>: command not found: hutan` | `hutan` is not on the host's non-interactive `PATH`: `hutan host add … --hutan /full/path/hutan`. |
 | `ssh studio: the host printed text before hutan's first message (`…`)` | A startup file of the host's shell writes to standard output (a banner, `echo`, `fortune`, `.zshenv`, a `.bashrc` without an interactive guard). Make non-interactive shells silent: in bash put `[[ $- == *i* ]] || return` at the top of `.bashrc`; in zsh keep output out of `.zshenv`; remove banners and `echo`s from files a non-interactive shell reads. |

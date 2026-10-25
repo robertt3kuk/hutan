@@ -1859,6 +1859,7 @@ pub fn register_all(store: &SettingsStore) {
     store.register::<ResourcesSettings>();
     store.register::<TasksSettings>();
     store.register::<ChangesSettings>();
+    store.register::<hutan_settings::ExperimentalSettings>();
 }
 
 /// Panels use this for `PanelId` lookups without importing the model.

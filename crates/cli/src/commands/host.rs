@@ -9,7 +9,7 @@ use hutan_client::{Client, ConnectOptions, Endpoint, SshHost, default_socket_pat
 use hutan_protocol::PROTOCOL_VERSION;
 use hutan_protocol::messages::{ClientInfo, ClientKind, DaemonStatusInfo, Empty, Request};
 use hutan_settings::hosts::{self, HostProfile};
-use hutan_settings::{SettingsError, SettingsPaths};
+use hutan_settings::{ExperimentalSettings, SettingsError, SettingsPaths};
 use serde::Serialize;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::sleep;
@@ -32,6 +32,27 @@ const GIVE_UP: u32 = 5;
 /// The longest Unix socket path (macOS `sun_path` is 104 bytes including the NUL).
 const SOCKET_PATH_MAX: usize = 100;
 
+/// The one-line disclaimer, as `hutan host add` and `hutan host test` end with it.
+pub(super) const DISCLAIMER: &str = hutan_settings::experimental::REMOTE_HOSTS_DISCLAIMER;
+
+/// Refuses (usage error, exit 2) while `experimental.remote_hosts` is off, naming the setting.
+/// Remote hosts ship switched off: they may change or break between releases and give anyone
+/// with SSH access to the host the control of its user (`docs/remote.md`).
+pub(super) fn require_enabled() -> Result<(), CliError> {
+    let enabled = ExperimentalSettings::load(&paths()?)
+        .map_err(settings_error)?
+        .remote_hosts;
+    if enabled {
+        return Ok(());
+    }
+    Err(CliError::Usage(format!(
+        "remote hosts are off. {DISCLAIMER}\n\
+         Turn them on in Settings ▸ Experimental (\"Remote hosts over SSH\"), with `hutan ui set \
+         experimental.remote_hosts true` while Hutan is open, or by adding `[experimental]` \
+         `remote_hosts = true` to settings.toml. See docs/remote.md."
+    )))
+}
+
 fn settings_error(error: SettingsError) -> CliError {
     CliError::Usage(error.to_string())
 }
@@ -51,6 +72,7 @@ pub(super) fn resolve(name: &str) -> Result<SshHost, CliError> {
 }
 
 pub(super) async fn run(json: bool, command: HostCommand) -> Result<(), CliError> {
+    require_enabled()?;
     match command {
         HostCommand::List => list(json),
         HostCommand::Add { name, ssh, hutan } => add(json, HostProfile { name, ssh, hutan }),
@@ -112,12 +134,16 @@ fn list(json: bool) -> Result<(), CliError> {
 
 fn add(json: bool, profile: HostProfile) -> Result<(), CliError> {
     hosts::add(&paths()?, &profile).map_err(settings_error)?;
-    output(json, &serde_json::json!({ "added": profile }), || {
-        format!(
-            "added host {name}; try `hutan host test {name}`, then `hutan --host {name} ls`",
-            name = profile.name
-        )
-    })
+    output(
+        json,
+        &serde_json::json!({ "added": profile, "disclaimer": DISCLAIMER }),
+        || {
+            format!(
+                "added host {name}; try `hutan host test {name}`, then `hutan --host {name} ls`\n{DISCLAIMER}",
+                name = profile.name
+            )
+        },
+    )
 }
 
 fn remove(json: bool, name: &str) -> Result<(), CliError> {
@@ -146,6 +172,7 @@ struct TestOut {
     daemon: DaemonStatusInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     note: Option<String>,
+    disclaimer: &'static str,
 }
 
 fn ms(duration: Duration) -> f64 {
@@ -201,6 +228,7 @@ async fn test(json: bool, name: &str) -> Result<(), CliError> {
         protocol: format!("{}.{}", ours.major, ours.minor),
         daemon,
         note,
+        disclaimer: DISCLAIMER,
     };
     output(json, &out, || {
         let d = &out.daemon;
@@ -223,6 +251,7 @@ async fn test(json: bool, name: &str) -> Result<(), CliError> {
         if let Some(note) = &out.note {
             text.push_str(&format!("\n  note: {note}"));
         }
+        text.push_str(&format!("\n{DISCLAIMER}"));
         text
     })
 }

@@ -15,6 +15,7 @@ use serde::de::DeserializeOwned;
 pub mod appearance;
 mod edit;
 mod error;
+pub mod experimental;
 pub mod hosts;
 pub mod keymap;
 mod store;
@@ -26,6 +27,7 @@ pub use appearance::{
     AppearanceMode, AppearanceSettings, Density, ReduceMotionSetting, ThemeOverrides,
 };
 pub use error::{SettingsError, Severity};
+pub use experimental::ExperimentalSettings;
 pub use keymap::{BindingSpec, Keystroke};
 pub use store::{
     ChangeSet, KEYMAP_NAMESPACE, LayerInfo, SettingsLayer, SettingsPaths, SettingsStore,

@@ -20,8 +20,9 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "PATH")]
     pub socket: Option<PathBuf>,
 
-    /// Run the command against the hutand of a host from `[[host]]` in settings.toml, over SSH
-    /// (see `hutan host list`); the host's own daemon is started there when it is not running
+    /// EXPERIMENTAL (off until Settings ▸ Experimental turns it on; use at your own risk): run
+    /// the command against the hutand of a host from `[[host]]` in settings.toml, over SSH (see
+    /// `hutan host list`); the host's own daemon is started there when it is not running
     #[arg(long, global = true, value_name = "NAME", conflicts_with = "socket")]
     pub host: Option<String>,
 
@@ -174,11 +175,13 @@ pub enum Command {
     /// Finish the work in a checkout: commit everything, merge a worktree into its target, push
     /// the branch to its upstream (never forced). Only you can run it, not an agent
     Finish(FinishArgs),
-    /// Hosts reached over SSH: list, add, remove, test, forward (`hutan --host NAME <command>`)
+    /// EXPERIMENTAL, off until Settings ▸ Experimental turns it on: hosts reached over SSH
+    /// (list, add, remove, test, forward; `hutan --host NAME <command>`)
     #[command(subcommand)]
     Host(HostCommand),
     /// Bridge standard input and output to this machine's hutand socket, bytes only (what `ssh
     /// HOST hutan proxy` runs for `--host`; it starts the daemon when it is not running)
+    #[command(hide = true)]
     Proxy,
     /// Tasks with dependencies, run in the main checkout or a worktree (`hutan task add|ls|start|done|review|cancel|reset|rm|show`)
     #[command(subcommand)]

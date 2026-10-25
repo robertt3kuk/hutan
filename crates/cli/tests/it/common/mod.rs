@@ -139,6 +139,15 @@ pub fn command(binary: &Path, socket: Option<&Path>, args: &[&str]) -> Command {
     command
 }
 
+/// Switches remote hosts on in the `settings.toml` of `home` (they ship off, R-2).
+pub fn enable_remote_hosts(home: &Path) {
+    std::fs::write(
+        home.join("settings.toml"),
+        "[experimental]\nremote_hosts = true\n",
+    )
+    .unwrap();
+}
+
 /// `hutan args…` with `HUTAN_HOME` = `home` (where `settings.toml` with the `[[host]]` profiles
 /// lives) and `HUTAN_SSH` = `ssh`, the program `--host` runs instead of the system `ssh`.
 pub async fn hutan_in(home: &Path, ssh: &Path, args: &[&str]) -> Out {
