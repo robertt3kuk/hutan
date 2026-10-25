@@ -172,6 +172,9 @@ pub struct LspStore {
     jumps: Vec<Jump>,
     listener: Option<Task<()>>,
     status: Option<Task<()>>,
+    /// Servers a notice (`lsp.state`) updated while an `lsp.status` read was in flight: the
+    /// read began before the notice, so its answer for them is older and must not replace it.
+    noticed: HashSet<String>,
     /// `doc.change` calls sent (tests: debouncing).
     changes_sent: u64,
     /// `doc.open` calls sent (tests).
@@ -392,6 +395,7 @@ impl LspStore {
             jumps: Vec::new(),
             listener: None,
             status: None,
+            noticed: HashSet::new(),
             changes_sent: 0,
             opens_sent: 0,
             completion_asked: Arc::new(AtomicU64::new(0)),
@@ -756,6 +760,7 @@ impl LspStore {
     }
 
     fn server_changed(&mut self, server: LspServerInfo, cx: &mut Context<Self>) {
+        self.noticed.insert(server.server_id.clone());
         self.servers.insert(server.server_id.clone(), server);
         cx.emit(LspStoreEvent::Changed);
         cx.notify();
@@ -829,6 +834,7 @@ impl LspStore {
         if !self.connection.supports_lsp() {
             return;
         }
+        self.noticed.clear();
         let connection = self.connection.clone();
         let call =
             cx.background_spawn(
@@ -841,7 +847,9 @@ impl LspStore {
             this.update(cx, |this, cx| {
                 this.status = None;
                 for server in status.servers {
-                    this.servers.insert(server.server_id.clone(), server);
+                    if !this.noticed.contains(&server.server_id) {
+                        this.servers.insert(server.server_id.clone(), server);
+                    }
                 }
                 cx.emit(LspStoreEvent::Changed);
                 cx.notify();
