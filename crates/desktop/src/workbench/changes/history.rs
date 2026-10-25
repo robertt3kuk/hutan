@@ -383,8 +383,10 @@ impl ChangesView {
             .border_color(theme.border)
             .py(px(tokens.spacing));
         list = if narrow {
+            // The list takes 45 % of the panel's height (six rows at least), the commit the rest.
             list.w_full()
-                .max_h(px(tokens.sidebar_row * 6.0))
+                .h(gpui::relative(0.45))
+                .min_h(px(tokens.sidebar_row * 6.0))
                 .border_b_1()
         } else {
             list.w(px(tokens.font_size * 30.0)).h_full().border_r_1()

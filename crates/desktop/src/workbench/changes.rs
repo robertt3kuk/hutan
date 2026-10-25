@@ -398,6 +398,16 @@ impl ChangesView {
     /// Picks a segment of the toolbar: what the list holds and, for the uncommitted changes,
     /// which of them.
     pub fn set_scope(&mut self, scope: Scope, cx: &mut Context<Self>) {
+        // The "Committed … Done" banner of a commit has been read once another segment is
+        // picked; a merge's result (its offer to remove the worktree) and a failure stay.
+        if scope != self.scope()
+            && self
+                .finished
+                .as_ref()
+                .is_some_and(|done| done.merge.is_none() && !done.failed())
+        {
+            self.finished = None;
+        }
         if scope == Scope::History {
             self.show_history(cx);
             return;

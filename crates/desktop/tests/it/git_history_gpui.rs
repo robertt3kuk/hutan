@@ -617,3 +617,66 @@ fn shortcuts_keep_working_after_a_click_on_a_segment_of_changes(cx: &mut TestApp
         drop(orphan);
     }
 }
+
+#[gpui::test]
+fn the_history_list_has_the_panels_height_and_the_commit_banner_goes_with_the_segment(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::workbench::{ChangesView, Scope};
+
+    let fx = Fx::new();
+    let (view, cx) = open(cx, &fx);
+    fs::write(fx.root.join("new.txt"), "hello\n").unwrap();
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_changes(fx.root.clone(), window, cx);
+    });
+    draw(cx);
+    let changes: Entity<ChangesView> = view
+        .read_with(cx, |wb, _| wb.changes(&fx.root.display().to_string()))
+        .expect("the Changes view was opened");
+    wait_until(cx, "the listing with the new file", |cx| {
+        changes.read_with(cx, |c, _| c.visible_files().iter().any(|f| f == "new.txt"))
+    });
+
+    // Commit it with Finish: the result card says it, until another segment is picked.
+    changes.update_in(cx, |c, window, cx| {
+        c.open_finish(window, cx);
+        c.set_finish_push(false, cx);
+        c.confirm_finish(cx);
+    });
+    wait_until(cx, "the finish result", |cx| {
+        changes.read_with(cx, |c, _| c.finished().is_some())
+    });
+    assert!(!changes.read_with(cx, |c, _| c.finished().unwrap().failed()));
+    let history = view
+        .read_with(cx, |wb, _| {
+            wb.region_bounds(Region::Changes("changes-scope-history"))
+        })
+        .expect("the History segment is drawn");
+    cx.simulate_click(history.center(), Modifiers::none());
+    assert_eq!(changes.read_with(cx, |c, _| c.scope()), Scope::History);
+    assert!(
+        changes.read_with(cx, |c, _| c.finished().is_none()),
+        "the banner goes with the segment"
+    );
+
+    // In a narrow window the list is not three rows: it takes a share of the panel's height.
+    cx.simulate_resize(gpui::size(gpui::px(700.0), gpui::px(900.0)));
+    wait_until(cx, "the commits", |cx| {
+        draw(cx);
+        changes.read_with(cx, |c, _| c.history_commits().len() == 4)
+    });
+    let root = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::Changes("root")))
+        .expect("the view is drawn");
+    let first = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::ChangesCommit(0)))
+        .expect("the first commit is drawn");
+    let last = view
+        .read_with(cx, |wb, _| wb.region_bounds(Region::ChangesCommit(3)))
+        .expect("four commits fit in the list");
+    assert!(
+        last.bottom() - first.top() > gpui::px(60.0) && last.bottom() <= root.bottom(),
+        "{first:?} {last:?} in {root:?}"
+    );
+}
