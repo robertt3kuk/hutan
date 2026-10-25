@@ -328,5 +328,5 @@ The app never signals a process to switch daemons: every restart is the daemon's
 ## Extensibility path
 - External clients use the published JSON Schema (`protocol` → `xtask schema`).
 - Agents: ACP config entries (M8); Hutan also exposes its control surface as an MCP server so agents can create sessions/tasks (M8).
-- Plugins: manifest actions + event hooks over the same protocol (M9).
+- Plugins: manifest actions over the same protocol (M9). User event hooks (`[[hooks]]` of `daemon.toml`: commands the daemon runs on events, `docs/integrations.md` § User hooks) are the first piece and already exist.
 - Remote: TLS/WebSocket transport wrapping the same frames (M9); render-delta terminals keep mobile clients thin.
