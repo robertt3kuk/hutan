@@ -1408,9 +1408,9 @@ impl SessionsStore {
         }
     }
 
-    /// What Problems is about: Mawas's scope while Mawas Home is the focused center tab, else
-    /// the container the window shows.
-    pub fn problems_scope(&self) -> Option<ScopeLabel> {
+    /// What Problems and Changes are about: Mawas's scope while Mawas Home is the focused center
+    /// tab, else the container the window shows.
+    pub fn followed_scope(&self) -> Option<ScopeLabel> {
         if self.mawas_focus.is_some() {
             return self.mawas_scope();
         }

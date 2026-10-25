@@ -234,9 +234,10 @@ impl ChangesPanel {
         self.diffs.get(checkout).map(|files| Counts::of(files))
     }
 
-    /// What the panel is about: the container the window shows (the chip of its header).
+    /// What the panel is about: the container the window shows, or Mawas's scope while Mawas
+    /// Home is the focused center tab (the chip of its header).
     pub fn scope(&self, cx: &gpui::App) -> Option<crate::sessions::ScopeLabel> {
-        self.env.sessions.read(cx).container_scope()
+        self.env.sessions.read(cx).followed_scope()
     }
 
     /// The listed checkouts, in the order the rows have.
@@ -252,7 +253,7 @@ impl ChangesPanel {
         let (workspace, state, supported) = {
             let store = self.env.sessions.read(cx);
             (
-                store.active_workspace_id(),
+                store.scope_container_id(),
                 store.connection_state(),
                 store.connection().supports_worktree_review(),
             )
@@ -292,7 +293,7 @@ impl ChangesPanel {
 
     /// Lists the checkouts of `workspace` again (the Refresh button).
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let workspace = self.env.sessions.read(cx).active_workspace_id();
+        let workspace = self.env.sessions.read(cx).scope_container_id();
         if let Some(workspace) = workspace {
             self.load(workspace, cx);
         }
@@ -409,6 +410,13 @@ impl ChangesPanel {
     /// main checkout of the project they work in, else the first main checkout.
     fn current_in<'a>(&self, list: &'a [WorktreeInfo], cx: &gpui::App) -> Option<&'a WorktreeInfo> {
         let store = self.env.sessions.read(cx);
+        // Mawas's folder while her page is in front: the Home folder, or her workspace's project.
+        if store.mawas_focus().is_some() {
+            let folder = store.files_root();
+            return folder
+                .and_then(|root| list.iter().find(|w| w.path == root))
+                .or_else(|| list.iter().find(|w| w.main));
+        }
         if let Some(picked) = store.active_checkout()
             && let Some(found) = list.iter().find(|w| w.path == picked)
         {
@@ -912,7 +920,7 @@ impl Render for ChangesPanel {
                         .env
                         .sessions
                         .read(cx)
-                        .active_workspace()
+                        .scope_container()
                         .is_some_and(|w| w.kind == WorkspaceKind::Home);
                 if track {
                     let button = ui::Button::new(

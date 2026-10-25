@@ -642,3 +642,89 @@ fn track_changes_turns_changes_on_and_a_mawas_turn_gets_a_checkpoint(cx: &mut Te
     });
     let _ = &env.chat;
 }
+
+/// `git init` with one commit in `dir`.
+fn init_repo(dir: &Path) {
+    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["add", "-A"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "first",
+        ],
+    );
+}
+
+#[gpui::test]
+fn changes_follows_mawass_scope_like_files_while_mawas_home_is_the_focused_tab(
+    cx: &mut TestAppContext,
+) {
+    let env = track_env();
+    init_repo(&env.home_dir);
+    let lab = env.chat.cwd().join("lab");
+    fs::create_dir(&lab).unwrap();
+    fs::write(lab.join("lab.txt"), "lab\n").unwrap();
+    init_repo(&lab);
+    let lab = lab.canonicalize().unwrap();
+    let home_dir = env.home_dir.canonicalize().unwrap();
+    let (view, cx) = open(cx, &env.daemon);
+    project(&view, cx, &lab);
+    cx.dispatch_action(actions::OpenPanel("changes".into()));
+    draw(cx);
+    draw(cx);
+    let changes: Entity<ChangesPanel> = view
+        .read_with(cx, |wb, _| wb.panel("changes"))
+        .expect("Changes is drawn");
+    // The checkout shown is the one of the panel's rows that `shown` names first.
+    let shown_path = |cx: &mut VisualTestContext| -> Option<PathBuf> {
+        cx.read(|cx| {
+            let panel = changes.read(cx);
+            panel
+                .shown(cx)
+                .first()
+                .map(|&index| panel.rows()[index].path.clone())
+        })
+    };
+    wait_until(
+        cx,
+        "Changes to show the project the window works in",
+        |cx| shown_path(cx).as_deref() == Some(lab.as_path()),
+    );
+    assert_eq!(
+        cx.read(|cx| changes.read(cx).scope(cx)).map(|s| s.name),
+        Some("lab".to_owned())
+    );
+
+    // Mawas Home, Global: Changes shows the Home checkout, with Mawas's chip.
+    let panel: Entity<AssistantPanel> = open_assistant(&view, cx);
+    panel.update(cx, |p, cx| p.choose(AssistantChoice::Global, cx));
+    draw(cx);
+    wait_until(cx, "Mawas's Global scope", |cx| {
+        mawas_focus(&view, cx) == Some(MawasFocus::Global)
+    });
+    wait_until(cx, "Changes to show the Home checkout", |cx| {
+        draw(cx);
+        shown_path(cx).as_deref() == Some(home_dir.as_path())
+    });
+    assert_eq!(
+        cx.read(|cx| changes.read(cx).scope(cx)),
+        label("Mawas · Global", ScopeKind::Mawas)
+    );
+
+    // Another tab: the project's again.
+    show_other_tab(&view, cx, "Elsewhere");
+    wait_until(cx, "Changes to leave Mawas", |cx| {
+        draw(cx);
+        shown_path(cx).as_deref() == Some(lab.as_path())
+    });
+    assert_eq!(mawas_focus(&view, cx), None);
+}

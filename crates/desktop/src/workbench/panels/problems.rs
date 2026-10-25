@@ -362,7 +362,7 @@ impl ProblemsPanel {
 
     /// What the panel is about: the container the window shows (the chip of its header).
     pub fn scope(&self, cx: &gpui::App) -> Option<crate::sessions::ScopeLabel> {
-        self.env.sessions.read(cx).problems_scope()
+        self.env.sessions.read(cx).followed_scope()
     }
 
     fn filter(&self) -> ProblemsSeverity {
