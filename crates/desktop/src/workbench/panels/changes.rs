@@ -667,6 +667,7 @@ impl ChangesPanel {
                         let tone = match line.tone {
                             SetupTone::Busy => theme.accent,
                             SetupTone::Warn => theme.warning,
+                            SetupTone::Failed => theme.danger,
                         };
                         let action_path = path.display().to_string();
                         let action = line.action.map(|(label, action)| {

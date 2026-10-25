@@ -15,8 +15,9 @@
 //! `teardown` runs before the worktree is removed, headless (its output is captured and, when it
 //! fails, quoted in the refusal), under the same trust rule.
 //!
-//! The state of a setup is kept in memory: a daemon restart ends the *Setup* session with the
-//! rest, and a worktree that is listed afterwards simply shows no setup.
+//! The state of a setup is kept in memory: after a daemon restart the *Setup* session is restored
+//! like any terminal (a fresh shell; the commands do not run again) and the worktree simply shows
+//! no setup.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};

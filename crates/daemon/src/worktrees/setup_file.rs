@@ -358,10 +358,8 @@ pub fn copy_files(main: &Path, dest: &Path, ignored: &[String], report: &mut Cop
             ));
             continue;
         }
+        // A file the worktree already has is kept, silently: running a setup again is not news.
         if to.symlink_metadata().is_ok() {
-            report
-                .skipped
-                .push(format!("{relative} (already in the worktree)"));
             continue;
         }
         if under_symlink(dest, relative) {
@@ -579,7 +577,7 @@ mod tests {
             "kept"
         );
         assert!(!outside.path().join("secret").exists());
-        assert_eq!(report.skipped.len(), 3, "{:?}", report.skipped);
+        assert_eq!(report.skipped.len(), 2, "{:?}", report.skipped);
 
         // The count is bounded.
         let many: Vec<String> = (0..MAX_COPY_FILES + 5).map(|i| format!("f{i}")).collect();

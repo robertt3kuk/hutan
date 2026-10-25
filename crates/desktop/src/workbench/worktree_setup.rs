@@ -28,8 +28,10 @@ use super::workspaces::tilde;
 pub enum SetupTone {
     /// Something is running: the accent colour.
     Busy,
-    /// It needs the user: the warning colour.
+    /// It waits for the user: the warning colour.
     Warn,
+    /// It failed: the danger colour.
+    Failed,
 }
 
 /// What the action of a setup line does.
@@ -65,7 +67,7 @@ pub fn setup_line(worktree: &WorktreeInfo) -> Option<SetupLine> {
         }),
         WorktreeSetupState::Failed => Some(SetupLine {
             text: "Setup failed".to_owned(),
-            tone: SetupTone::Warn,
+            tone: SetupTone::Failed,
             action: Some(if setup.session_id.is_some() {
                 ("Show output", SetupAction::ShowOutput)
             } else {
@@ -419,7 +421,7 @@ mod tests {
         );
         let failed = setup_line(&worktree(Some(setup(WorktreeSetupState::Failed, true)))).unwrap();
         assert_eq!(failed.text, "Setup failed");
-        assert_eq!(failed.tone, SetupTone::Warn);
+        assert_eq!(failed.tone, SetupTone::Failed);
         assert_eq!(
             failed.action,
             Some(("Show output", SetupAction::ShowOutput))
