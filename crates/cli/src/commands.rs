@@ -37,6 +37,7 @@ mod git;
 mod grants;
 mod help;
 mod history;
+mod hooks;
 mod integration;
 mod lsp;
 mod memory;
@@ -118,6 +119,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Ask(args) => ctx?.ask(args).await,
         Command::Assistant(command) => ctx?.assistant(command).await,
         Command::Grants(command) => ctx?.grants(command).await,
+        Command::Hooks(command) => ctx?.hooks(command).await,
         Command::Memory(command) => ctx?.memory(command).await,
         Command::Fs(command) => ctx?.fs(command).await,
         Command::Terminal(command) => ctx?.terminal(command).await,

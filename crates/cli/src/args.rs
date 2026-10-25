@@ -120,6 +120,10 @@ pub enum Command {
     /// ls|revoke`)
     #[command(subcommand)]
     Grants(GrantsCommand),
+    /// Your hooks: commands the daemon runs on Hutan events, set in `[[hooks]]` of daemon.toml
+    /// (`hutan hooks list|test|log`)
+    #[command(subcommand)]
+    Hooks(HooksCommand),
     /// Mawas's memory: what the assistant remembers because you approved it (`hutan memory
     /// ls|add|edit|archive|restore|history|proposals`)
     #[command(subcommand)]
@@ -1181,6 +1185,34 @@ pub enum GrantsCommand {
     Ls(GrantsLsArgs),
     /// Remove one grant (the next request it covered asks again), or all of them
     Revoke(GrantsRevokeArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HooksCommand {
+    /// List the hooks of daemon.toml with what they ran on, when they last ran, and how it went
+    List,
+    /// Run one hook now with a sample payload of its event and show what it did (exit code 1
+    /// when it did not end well); filters and `when_focused` do not apply
+    Test(HooksTestArgs),
+    /// The finished runs, newest first, with what each printed (secrets masked)
+    Log(HooksLogArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct HooksTestArgs {
+    /// The hook: its number in `hutan hooks list`, or its `name`
+    #[arg(value_name = "HOOK")]
+    pub hook: String,
+}
+
+#[derive(Debug, Args)]
+pub struct HooksLogArgs {
+    /// Only this hook's runs: its number in `hutan hooks list`, or its `name`
+    #[arg(value_name = "HOOK")]
+    pub hook: Option<String>,
+    /// At most this many runs
+    #[arg(long, short = 'n', default_value_t = 20, value_name = "N")]
+    pub limit: u32,
 }
 
 #[derive(Debug, Args)]

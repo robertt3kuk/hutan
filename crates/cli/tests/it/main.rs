@@ -15,6 +15,7 @@ mod grants;
 mod harness;
 mod history;
 mod history_resume;
+mod hooks;
 mod integration;
 mod integration_mcp;
 mod lsp;
