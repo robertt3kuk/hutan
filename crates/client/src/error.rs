@@ -22,6 +22,10 @@ pub enum ClientError {
     /// carries the daemon's start-error record or what it printed.
     #[error("{0}")]
     DaemonStart(Box<StartFailure>),
+    /// A host reached over SSH could not be reached or did not speak the protocol; the text
+    /// says which host and what `ssh` or the host's shell reported.
+    #[error("{0}")]
+    Ssh(String),
     #[error("cannot determine the hutand socket path; set HUTAN_SOCKET or HUTAN_HOME")]
     NoSocketPath,
 }

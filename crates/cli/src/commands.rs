@@ -44,6 +44,7 @@ mod memory;
 mod notify;
 mod projects;
 mod providers;
+mod proxy;
 mod recovery;
 mod resources;
 mod sessions;
@@ -71,6 +72,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Integration(command) => integration::run(cli.json, command),
         Command::Theme(command) => theme::run(cli.json, command),
         Command::Help(args) => help::run(&args.topic),
+        Command::Proxy => ctx?.proxy().await,
         Command::Mcp => crate::mcp::run(ctx?.socket_arg).await,
         Command::Ui(command) => ctx?.ui(command).await,
         Command::Setup => ctx?.setup().await,

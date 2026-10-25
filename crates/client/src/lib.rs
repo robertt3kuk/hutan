@@ -20,6 +20,7 @@ pub mod identity;
 mod lsp;
 pub mod recovery;
 mod socket;
+mod ssh;
 pub mod start_failure;
 mod store;
 mod supervisor;
@@ -28,13 +29,14 @@ pub mod time;
 
 pub use blocks::BlockList;
 pub use chat::{ChatUpdate, CheckpointUpdate};
-pub use client::{AUTOSTART_GIVE_UP, Client, ConnectOptions, Resumed};
+pub use client::{AUTOSTART_GIVE_UP, Client, ConnectOptions, Resumed, dial_local};
 pub use connection::Connection;
 pub use endpoint::Endpoint;
 pub use error::ClientError;
 pub use fs::FsText;
 pub use identity::{DaemonIdentity, Mismatch};
 pub use socket::default_socket_path;
+pub use ssh::{SSH_PROGRAM_ENV, SshHost};
 pub use start_failure::{
     DaemonFiles, MovedData, ResetError, StartErrorKind, StartErrorRecord, StartFailure,
     StartOutcome, move_data_aside,

@@ -100,6 +100,7 @@ use tracing::{debug, warn};
 
 use crate::endpoint::Endpoint;
 use crate::error::ClientError;
+use crate::ssh::SSH_HANDSHAKE_TIMEOUT;
 use crate::start_failure::{DaemonFiles, StartFailure, StartOutcome};
 
 /// Capability for `terminal.set_colors`; the client sends colors only to daemons advertising it.
@@ -380,9 +381,9 @@ impl Client {
             .clone()
             .or_else(Endpoint::default_local)
             .ok_or(ClientError::NoSocketPath)?;
-        let stream = match &endpoint {
+        match &endpoint {
             Endpoint::Local(socket) => {
-                dial(
+                let stream = dial(
                     socket,
                     opts.autostart
                         .as_deref()
@@ -390,10 +391,26 @@ impl Client {
                     opts.endpoint.is_some(),
                     permit,
                 )
-                .await?
+                .await?;
+                Self::establish(stream.into_split(), opts.client, resume, HANDSHAKE_TIMEOUT).await
             }
-        };
-        Self::establish(stream.into_split(), opts.client, resume).await
+            Endpoint::Ssh(host) => {
+                // Nothing here starts a process on this machine but `ssh`; the proxy on the
+                // host starts that host's daemon when it is not running.
+                let (stream, diagnostics) = host.open()?;
+                let established = Self::establish(
+                    tokio::io::split(stream),
+                    opts.client,
+                    resume,
+                    SSH_HANDSHAKE_TIMEOUT,
+                )
+                .await;
+                match established {
+                    Ok(resumed) => Ok(resumed),
+                    Err(error) => Err(diagnostics.explain(host, error).await),
+                }
+            }
+        }
     }
 
     /// Handshakes over a byte stream the caller opened, and starts the reader and writer
@@ -410,7 +427,7 @@ impl Client {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        Self::establish(tokio::io::split(stream), client, resume).await
+        Self::establish(tokio::io::split(stream), client, resume, HANDSHAKE_TIMEOUT).await
     }
 
     /// The handshake and tasks over the two halves of one stream. A Unix socket's own
@@ -419,6 +436,7 @@ impl Client {
         (read_half, write_half): (R, W),
         client: ClientInfo,
         resume: Option<ResumePoint>,
+        handshake_timeout: Duration,
     ) -> Result<Resumed, ClientError>
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -433,7 +451,7 @@ impl Client {
             resume,
         };
         let welcome = timeout(
-            HANDSHAKE_TIMEOUT,
+            handshake_timeout,
             handshake(&mut reader, &mut writer, hello),
         )
         .await
@@ -2351,6 +2369,18 @@ async fn dial(
     let failure = StartFailure::collect(&files, outcome, spawned_ms);
     debug!(%failure, "autostarted hutand did not come up");
     Err(ClientError::DaemonStart(Box::new(failure)))
+}
+
+/// Opens the Unix socket of the local daemon as a raw stream, for a byte bridge (`hutan proxy`)
+/// that must not interpret the protocol. Like [`Client::connect`] it starts `hutand`
+/// (`autostart`) when nothing answers on `socket` and waits for it; `socket_explicit` says the
+/// socket was named by the caller (the daemon is then told to listen there).
+pub async fn dial_local(
+    socket: &Path,
+    autostart: Option<&Path>,
+    socket_explicit: bool,
+) -> Result<UnixStream, ClientError> {
+    dial(socket, autostart, socket_explicit, || true).await
 }
 
 /// `hutand`'s exit code when another daemon holds the lock (`crates/daemon/src/main.rs`).

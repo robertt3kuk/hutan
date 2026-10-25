@@ -169,6 +169,9 @@ pub enum Command {
     /// Finish the work in a checkout: commit everything, merge a worktree into its target, push
     /// the branch to its upstream (never forced). Only you can run it, not an agent
     Finish(FinishArgs),
+    /// Bridge standard input and output to this machine's hutand socket, bytes only (what `ssh
+    /// HOST hutan proxy` runs for `--host`; it starts the daemon when it is not running)
+    Proxy,
     /// Tasks with dependencies, run in the main checkout or a worktree (`hutan task add|ls|start|done|review|cancel|reset|rm|show`)
     #[command(subcommand)]
     Task(TaskCommand),
