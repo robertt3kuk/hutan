@@ -654,6 +654,8 @@ pub struct Workbench {
     pub(crate) assistant_defaults: super::settings_assistant::AssistantDefaults,
     /// What Mawas may do without asking (`control.grants.list`), for Settings → Mawas.
     pub(crate) mawas_grants: super::settings_assistant::MawasGrants,
+    /// The Automation page: the user's hooks as the daemon last said.
+    pub(crate) hooks_page: super::settings_hooks::HooksPage,
     pub(crate) agent_focus: FocusHandle,
     pub(crate) held: HashMap<SessionId, Entity<TerminalSession>>,
     /// Folded blocks per terminal, saved with the layout (see [`persistence::CollapsedBlocks`]).
@@ -1273,6 +1275,7 @@ impl Workbench {
             daemon_settings: super::settings_daemon::DaemonSettingsState::default(),
             assistant_defaults: super::settings_assistant::AssistantDefaults::default(),
             mawas_grants: super::settings_assistant::MawasGrants::default(),
+            hooks_page: super::settings_hooks::HooksPage::default(),
             agent_focus,
             held: HashMap::new(),
             collapsed_blocks: options

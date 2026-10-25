@@ -73,6 +73,7 @@ const NAMESPACES: &[(&str, &str)] = &[
     ("tasks", "Tasks"),
     ("assistant", "Mawas"),
     ("integrations", "Agent Integrations"),
+    ("automation", "Automation"),
     ("launcher", "Start Sheet"),
     ("accounts", "Accounts"),
     ("models", "Models"),
@@ -1475,6 +1476,10 @@ pub fn page_keywords(page: &str) -> &'static str {
              agent transcripts search budget mode ask before acting advisor actions grants revoke"
         }
         "integrations" => "Hooks install repair uninstall status Claude Code Codex OMP agent hooks",
+        "automation" => {
+            "Hooks run command script notify phone ntfy sound turn finished failed approval \
+             attention session exited task done finish test log timeout focused daemon.toml"
+        }
         "launcher" => "Remembered choices Don't ask again revoke exemptions",
         "keymap" => "Bindings shortcuts keys keymap.toml reload open",
         "layout" => "Presets save current layout rename delete",
@@ -1638,6 +1643,18 @@ pub mod words {
         GRANT_REVOKE = "Revoke";
         GRANT_REVOKE_ALL = "Revoke all";
         GRANTS_UNSUPPORTED = "This hutand is older than the app and has no grants: restart it (Daemon → Restart).";
+        SEC_HOOKS = "Hooks";
+        SEC_HOOKS_HELP = "Commands Hutan runs when something happens: a turn ends, an agent asks, a session exits. You write them in daemon.toml; no agent can add or change them. Hutan gives a command what happened (names, states and counts, never conversation text or secrets) as JSON on its standard input and as HUTAN_EVENT variables.";
+        HOOKS_UNSUPPORTED = "This hutand is older than the app and has no hooks: restart it (Daemon → Restart).";
+        HOOKS_LOADING = "Asking the daemon…";
+        HOOKS_NONE = "No hooks yet. Add a [[hooks]] table to daemon.toml (the Hooks guide has examples, including a phone notification and a sound) and restart the daemon.";
+        HOOK_NEVER_RAN = "Has not run since the daemon started.";
+        HOOK_RUN_TEST = "Run test";
+        HOOK_TESTING = "Running…";
+        HOOKS_REFRESH = "Refresh";
+        SEC_HOOKS_LOG = "Log";
+        SEC_HOOKS_LOG_HELP = "The latest runs, newest first, with what each printed (secrets masked). The log lasts until the daemon stops.";
+        HOOKS_LOG_EMPTY = "Nothing has run yet.";
         SEC_ASSISTANT_BACKEND = "Backend and model";
         SEC_ASSISTANT_BACKEND_HELP = "What answers Mawas in each place. Inherit follows the place above it: a workspace follows its parent workspace, then Global, then daemon.toml, then Automatic, the first backend that is ready.";
         SEC_ASSISTANT_DEFAULT = "When nothing is chosen";
@@ -1708,6 +1725,42 @@ pub mod words {
         RESTART_NEUTRAL = "What happens to them in the new daemon depends on the setting “Sessions after a restart”.";
         RESTART_RESPAWN = "The new daemon restores them: shells start again in their folders, chats resume their conversations.";
         RESTART_STOPPED = "The new daemon lists them stopped (your setting “Leave them stopped”); start each again from its Restart action.";
+    }
+
+    /// "Last run: ok in 212 ms, 3m ago".
+    pub fn hook_last_run(run: &str) -> String {
+        format!("Last run: {run}")
+    }
+
+    /// "Test: ok in 212 ms, 3s ago".
+    pub fn hook_test_result(run: &str) -> String {
+        format!("Test with a sample payload: {run}")
+    }
+
+    /// "4 runs, 1 failed, 2 dropped (queue full), 3 skipped (window focused)"; nothing before
+    /// the first run.
+    pub fn hook_counts(runs: u64, failures: u64, dropped: u64, skipped: u64) -> Option<String> {
+        if runs == 0 && dropped == 0 && skipped == 0 {
+            return None;
+        }
+        let mut parts = vec![format!("{runs} {}", if runs == 1 { "run" } else { "runs" })];
+        if failures > 0 {
+            parts.push(format!("{failures} failed"));
+        }
+        if dropped > 0 {
+            parts.push(format!("{dropped} dropped (queue full)"));
+        }
+        if skipped > 0 {
+            parts.push(format!("{skipped} skipped (window focused)"));
+        }
+        Some(parts.join(", "))
+    }
+
+    /// "1 running now. At most 4 run at once and 8 wait for each hook; more are dropped."
+    pub fn hooks_limits(running: u32, max: u32, queue: u32) -> String {
+        format!(
+            "{running} running now. At most {max} run at once and {queue} wait for each hook; further events are dropped and counted. Hooks are read when the daemon starts."
+        )
     }
 
     /// "Remove MCP server “docs”?".
@@ -2088,7 +2141,14 @@ mod tests {
         for text in words::ALL.iter().filter(|t| !t.starts_with("# ")) {
             assert_user_facing("a text of the sheet", text);
         }
-        for page in ["data", "models", "accounts", "history", "integrations"] {
+        for page in [
+            "data",
+            "models",
+            "accounts",
+            "history",
+            "integrations",
+            "automation",
+        ] {
             assert!(!page_keywords(page).trim().is_empty(), "{page}");
             assert_user_facing(&format!("keywords of {page}"), page_keywords(page));
         }
@@ -2143,7 +2203,13 @@ mod tests {
             words::at_least(1),
             words::no_match("zzz"),
             words::mcp_remove_title("docs"),
+            words::hook_last_run("ok in 212 ms, 3m ago"),
+            words::hook_test_result("ok in 212 ms, 3s ago"),
+            words::hook_counts(4, 1, 2, 3).unwrap(),
+            words::hook_counts(1, 0, 0, 0).unwrap(),
+            words::hooks_limits(1, 4, 8),
         ];
+        assert!(words::hook_counts(0, 0, 0, 0).is_none());
         for sentence in &sentences {
             assert_user_facing("a sentence of the sheet", sentence);
         }

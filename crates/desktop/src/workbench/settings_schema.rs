@@ -373,9 +373,8 @@ impl NavGroup {
     /// The group of the page of `namespace`.
     pub fn of(namespace: &str) -> Self {
         match namespace {
-            "assistant" | "agents" | "integrations" | "launcher" | "accounts" | "models" => {
-                Self::Agents
-            }
+            "assistant" | "agents" | "integrations" | "automation" | "launcher" | "accounts"
+            | "models" => Self::Agents,
             "history" | "data" | "sessions_restore" => Self::Data,
             "agents_tools" | "control" | "resources" => Self::Advanced,
             _ => Self::General,
@@ -411,6 +410,7 @@ pub fn catalog() -> Vec<CatalogEntry> {
         CatalogEntry::of::<AssistantSettings>(),
         CatalogEntry::of::<AgentsSettings>(),
         CatalogEntry::of::<IntegrationsSettings>(),
+        CatalogEntry::custom("automation"),
         CatalogEntry::of::<LauncherSettings>(),
         CatalogEntry::custom("accounts"),
         CatalogEntry::custom("models"),

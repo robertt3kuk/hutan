@@ -143,6 +143,7 @@ impl Workbench {
                 self.refresh_daemon_status(cx);
             }
             "integrations" => self.refresh_all_integration_statuses(cx),
+            "automation" => self.refresh_hooks(cx),
             "assistant" => {
                 self.refresh_daemon_settings(cx);
                 self.refresh_assistant_defaults(cx);
@@ -195,6 +196,7 @@ impl Workbench {
         rows.extend(fields.iter().map(|f| self.render_field_row(f, cx)));
         match page {
             "integrations" => rows.push(self.render_integrations(cx)),
+            "automation" => rows.extend(self.render_hooks(cx)),
             "launcher" => rows.push(self.render_exemptions(cx)),
             "keymap" => {
                 rows.push(self.render_keybindings(cx));
