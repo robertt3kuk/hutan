@@ -144,7 +144,7 @@ fn an_image_is_saved_its_path_reaches_the_program_and_closing_the_session_remove
     );
     common::draw(cx);
     click(&view, cx, Region::PasteToast("reveal"));
-    assert_eq!(*revealed.borrow(), [saved.clone()]);
+    assert_eq!(revealed.borrow().as_slice(), std::slice::from_ref(&saved));
     assert!(view.read_with(cx, |wb, _| wb.paste_toast().is_none()));
 
     // Closing the session removes its images: the daemon owns the session.
