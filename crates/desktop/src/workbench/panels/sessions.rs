@@ -164,6 +164,9 @@ struct ContainerRow {
     working: usize,
     /// The branch of a repository's main checkout (`None` outside git).
     branch: Option<String>,
+    /// Files its checkouts have uncommitted, as last counted; only for a project the window is
+    /// not working in (the Changes panel says it for the active one).
+    changed: usize,
     /// Its sessions are listed under it: the container the window shows, or whatever the user
     /// opened with the chevron; every container with `sidebar.show_all_sessions`.
     expanded: bool,
@@ -1069,6 +1072,11 @@ impl SessionsPanel {
                 needs: node.needs,
                 working: rolled(info),
                 branch: is_project.then(|| store.main_branch(info)).flatten(),
+                changed: if is_project && active_project != Some(info.id) {
+                    store.changed_files_of(info)
+                } else {
+                    0
+                },
                 expanded: is_expanded,
             }));
             if !is_expanded {
@@ -1135,6 +1143,7 @@ impl SessionsPanel {
                         needs: workspace.needs,
                         working: rolled(&workspace.info),
                         branch: None,
+                        changed: 0,
                         expanded: is_expanded,
                     }));
                     if is_expanded {
@@ -1836,6 +1845,26 @@ impl SessionsPanel {
                         .gap(px(2.0))
                         .child(crate::icons::glyph(Icon::StateWorking))
                         .child(row.working.to_string()),
+                )
+            })
+            .when(row.changed > 0, |s| {
+                let tip = SharedString::from(format!(
+                    "{} changed file{} in this project",
+                    row.changed,
+                    if row.changed == 1 { "" } else { "s" }
+                ));
+                s.child(
+                    div()
+                        .id(SharedString::from(format!("workspace-changed-{id_text}")))
+                        .flex_none()
+                        .text_color(theme.accent)
+                        .flex()
+                        .items_center()
+                        .gap(px(2.0))
+                        .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
+                        .child(crate::icons::glyph(Icon::VcsDirty))
+                        .child(row.changed.to_string())
+                        .child(probe(&self.env.regions, Region::ProjectChanged(id))),
                 )
             })
             .children(count_text(info).map(|count| ui::counter(count, &theme, &tokens)))

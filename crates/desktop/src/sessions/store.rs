@@ -66,6 +66,10 @@ pub const REPLAY_WINDOW: Duration = Duration::from_millis(400);
 /// something the user did a while ago, not a request to move the window now.
 pub const UI_OPEN_MAX_AGE_MS: u64 = 15_000;
 
+/// Dirty checkouts whose uncommitted files are counted for the sidebar's badges; the rest show
+/// none.
+const MAX_COUNTED_CHECKOUTS: usize = 16;
+
 /// Most notification intents remembered to acknowledge when their sessions are read (the
 /// daemon keeps at most this many pending).
 const MAX_SURFACED: usize = 100;
@@ -435,6 +439,13 @@ pub struct SessionsStore {
     checkouts: Vec<WorktreeInfo>,
     checkouts_loaded: bool,
     checkouts_in_flight: bool,
+    /// A listing asked for while one was in flight: one more follows it.
+    checkouts_again: bool,
+    /// How many files each dirty checkout has uncommitted (`worktree.diff`, the file list only),
+    /// for the sidebar's badges. Read after a checkout listing, never while drawing; a checkout
+    /// that is clean or could not be counted has no entry.
+    changed_files: HashMap<PathBuf, usize>,
+    changed_in_flight: bool,
     /// Worktree roots a session worked in that a listing was asked for (never asked again for
     /// the same root: a root the listing does not know must not loop).
     checkouts_tried: HashSet<PathBuf>,
@@ -617,6 +628,9 @@ impl SessionsStore {
             checkouts: Vec::new(),
             checkouts_loaded: false,
             checkouts_in_flight: false,
+            checkouts_again: false,
+            changed_files: HashMap::new(),
+            changed_in_flight: false,
             checkouts_tried: HashSet::new(),
             chosen_checkout: HashMap::new(),
             terminals: HashMap::new(),
@@ -1472,12 +1486,21 @@ impl SessionsStore {
     }
 
     /// Lists the checkouts again (`worktree.list`, all workspaces); a change reaches the
-    /// sidebar as [`StoreChanged::CHECKOUTS`].
+    /// sidebar as [`StoreChanged::CHECKOUTS`]. A call while a listing is in flight asks for one
+    /// more afterwards, so a burst of triggers is at most two listings. After every listing the
+    /// uncommitted files of the dirty checkouts are counted again (the sidebar's badges).
     pub fn refresh_checkouts(&mut self, cx: &mut Context<Self>) {
+        if self.state.connection != ConnectionState::Connected
+            || !self.connection.supports_worktrees()
+        {
+            return;
+        }
         if self.checkouts_in_flight {
+            self.checkouts_again = true;
             return;
         }
         self.checkouts_in_flight = true;
+        self.checkouts_again = false;
         for session in &self.state.sessions {
             if let Some(placement) = &session.placement {
                 self.checkouts_tried.insert(placement.root.clone());
@@ -1496,6 +1519,86 @@ impl SessionsStore {
                     }
                     Ok(_) => {}
                     Err(error) => tracing::debug!("worktree.list for the sidebar failed: {error}"),
+                }
+                store.refresh_changed_files(cx);
+                if std::mem::take(&mut store.checkouts_again) {
+                    store.refresh_checkouts(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// How many files `project`'s checkouts have uncommitted, as last counted: the sidebar's
+    /// badge. A lookup; nothing is read.
+    pub fn changed_files_of(&self, project: &WorkspaceInfo) -> usize {
+        let Some(info) = project.project.as_ref().filter(|p| p.common_dir.is_some()) else {
+            return 0;
+        };
+        self.checkouts
+            .iter()
+            .filter(|c| c.repo_root == info.root && !c.prunable)
+            .filter_map(|c| self.changed_files.get(&c.path))
+            .sum()
+    }
+
+    /// How many files the checkout at `path` has uncommitted, as last counted.
+    pub fn changed_files_at(&self, path: &std::path::Path) -> Option<usize> {
+        self.changed_files.get(path).copied()
+    }
+
+    /// Counts the uncommitted files of every dirty checkout (`worktree.diff`, the file list
+    /// only; at most [`MAX_COUNTED_CHECKOUTS`]), one pass at a time. A checkout that cannot be
+    /// counted keeps no entry; a change reaches the sidebar as [`StoreChanged::CHECKOUTS`].
+    fn refresh_changed_files(&mut self, cx: &mut Context<Self>) {
+        if self.changed_in_flight
+            || self.state.connection != ConnectionState::Connected
+            || !self.connection.supports_worktree_review()
+        {
+            return;
+        }
+        let wanted: Vec<PathBuf> = self
+            .checkouts
+            .iter()
+            .filter(|c| c.dirty && !c.prunable)
+            .take(MAX_COUNTED_CHECKOUTS)
+            .map(|c| c.path.clone())
+            .collect();
+        if wanted.is_empty() {
+            if !self.changed_files.is_empty() {
+                self.changed_files.clear();
+                self.changed(StoreChanged::CHECKOUTS, cx);
+            }
+            return;
+        }
+        self.changed_in_flight = true;
+        let reads: Vec<_> = wanted
+            .iter()
+            .map(|path| {
+                let request = WorktreeDiffRequest {
+                    path: path.clone(),
+                    base: None,
+                    include_uncommitted: true,
+                };
+                (path.clone(), self.worktree_diff(request, cx))
+            })
+            .collect();
+        cx.spawn(async move |this, cx| {
+            let mut counted: HashMap<PathBuf, usize> = HashMap::new();
+            for (path, read) in reads {
+                if let Ok(diff) = read.await {
+                    let files = diff.files.iter().filter(|f| f.uncommitted).count();
+                    if files > 0 {
+                        counted.insert(path, files);
+                    }
+                }
+            }
+            this.update(cx, |store, cx| {
+                store.changed_in_flight = false;
+                if store.changed_files != counted {
+                    store.changed_files = counted;
+                    store.changed(StoreChanged::CHECKOUTS, cx);
                 }
             })
             .ok();

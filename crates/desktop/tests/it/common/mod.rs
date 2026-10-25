@@ -130,6 +130,13 @@ impl Hold {
         self.down.set(held);
     }
 
+    /// How many bytes the client has sent the daemon through this proxy so far: a test that
+    /// draws frames and sees this stand still knows the desktop asked the daemon (so git)
+    /// nothing while drawing.
+    pub fn sent_bytes(&self) -> usize {
+        self.up.0.passed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     /// Whether what the daemon sent and is held back contains `needle`.
     pub fn holds_answer_with(&self, needle: &str) -> bool {
         let held = self.down.0.held.lock().unwrap();
@@ -145,6 +152,8 @@ struct Valve(std::sync::Arc<ValveState>);
 struct ValveState {
     closed: std::sync::atomic::AtomicBool,
     held: std::sync::Mutex<Vec<u8>>,
+    /// Bytes passed on so far.
+    passed: std::sync::atomic::AtomicUsize,
     opened: tokio::sync::Notify,
 }
 
@@ -180,6 +189,9 @@ impl Valve {
             if to.write_all(&out).await.is_err() {
                 return;
             }
+            self.0
+                .passed
+                .fetch_add(out.len(), std::sync::atomic::Ordering::SeqCst);
         }
     }
 }
