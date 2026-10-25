@@ -45,7 +45,7 @@ MCP servers Hutan starts for chat sessions (below) get `HUTAN_SESSION_ID` of tha
 
 **Limits.**
 - An agent that runs in a terminal without a Hutan integration (no hooks, so no report) is not detected: its commands count as the user's. Install the hooks (`hutan integration install <agent>`) to get it gated.
-- The origin is an environment variable: an agent can unset `HUTAN_SESSION_ID` or edit its hello. It is a marker for well-behaved agents and for the MCP servers Hutan itself starts, not a security boundary against a hostile one; that boundary is the user's sandbox for the agent.
+- The origin is an environment variable: an agent can unset `HUTAN_SESSION_ID` or edit its hello. It is a marker for well-behaved agents and for the MCP servers Hutan itself starts, not a security boundary against a hostile one; that boundary is the user's sandbox for the agent. Since protocol 0.52 Hutan can be that sandbox (`docs/agents.md` § Contain): a contained session cannot connect to Hutan's sockets at all, so it cannot act as the user through `hutan` or the daemon socket; the per-session socket that would let it report back as an agent, attributed by the socket it came in on instead of by an environment variable, is SANDBOX-2B.
 - An `hutan mcp` started by the user's own agent configuration outside a Hutan session has no origin and is the user's (nothing is gated).
 
 ## The policy
