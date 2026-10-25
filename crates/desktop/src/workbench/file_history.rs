@@ -32,6 +32,13 @@ use crate::theme::DensityExt as _;
 const PAGE: u32 = 100;
 /// Pages read to find a commit a click on a blame asked for before giving up.
 const SEEK_PAGES: usize = 20;
+/// The commit list's width in ems when there is room, and the narrowest it shrinks to.
+const LIST_BASIS: f32 = 34.0;
+const LIST_MIN: f32 = 20.0;
+/// The narrowest the detail gets beside the list, in ems.
+const DETAIL_MIN: f32 = 28.0;
+/// Below this many ems the list stacks above the detail instead of sharing the width.
+const STACK_BELOW: f32 = LIST_MIN + DETAIL_MIN;
 
 /// What a file history tab asks of the workbench.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +71,10 @@ pub struct FileHistoryView {
     focus: FocusHandle,
     diff_x: ScrollHandle,
     list: ScrollHandle,
+    /// The width the body was painted with (0 before the first paint).
+    width: std::rc::Rc<std::cell::Cell<f32>>,
+    /// The list is above the detail, as drawn last.
+    stacked: bool,
 }
 
 impl EventEmitter<FileHistoryEvent> for FileHistoryView {}
@@ -107,6 +118,8 @@ impl FileHistoryView {
             focus: cx.focus_handle(),
             diff_x: ScrollHandle::new(),
             list: ScrollHandle::new(),
+            width: std::rc::Rc::new(std::cell::Cell::new(0.0)),
+            stacked: false,
         };
         view.reload(cx);
         view
@@ -363,6 +376,7 @@ impl Render for FileHistoryView {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let look = Look::of(cx);
+        self.stacked = self.stacked_for(&tokens);
 
         let header = div()
             .flex()
@@ -434,12 +448,36 @@ impl Render for FileHistoryView {
                 })
                 .into_any_element()
         } else {
+            // The list shrinks to `LIST_MIN` ems, the detail never gets below `DETAIL_MIN`; with
+            // less room than both the list stacks above the detail (the width of the frame is
+            // measured by the canvas below, a frame on the other side of the line draws again).
+            let stacked = self.stacked_for(&tokens);
+            let width = std::rc::Rc::clone(&self.width);
+            let (em, was_stacked) = (tokens.font_size, stacked);
             div()
+                .relative()
                 .flex_1()
                 .min_h_0()
                 .flex()
-                .child(self.render_list(&theme, &tokens, cx))
-                .child(self.render_detail(&look, cx))
+                .when(stacked, |s| s.flex_col())
+                .child(self.render_list(&theme, &tokens, stacked, cx))
+                .child(self.render_detail(&look, stacked, cx))
+                .child(
+                    gpui::canvas(
+                        |bounds, _, _| bounds,
+                        move |_, bounds, window, cx| {
+                            let measured: f32 = bounds.size.width.into();
+                            width.set(measured);
+                            if (measured < STACK_BELOW * em) != was_stacked {
+                                cx.notify(window.current_view());
+                            }
+                        },
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                )
                 .into_any_element()
         };
 
@@ -461,10 +499,23 @@ impl Render for FileHistoryView {
 }
 
 impl FileHistoryView {
+    /// Whether the list goes above the detail: the measured width of the body is below
+    /// [`STACK_BELOW`] ems.
+    fn stacked_for(&self, tokens: &crate::theme::Tokens) -> bool {
+        let measured = self.width.get();
+        measured > 0.0 && measured < STACK_BELOW * tokens.font_size
+    }
+
+    /// Whether the list is above the detail (a narrow centre pane), as drawn last.
+    pub fn stacked(&self) -> bool {
+        self.stacked
+    }
+
     fn render_list(
         &self,
         theme: &crate::theme::Theme,
         tokens: &crate::theme::Tokens,
+        stacked: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let hover = theme.surface_hover;
@@ -472,12 +523,22 @@ impl FileHistoryView {
             .id("history-commits")
             .flex()
             .flex_col()
-            .flex_none()
-            .w(px(tokens.font_size * 34.0))
-            .h_full()
+            .when(!stacked, |s| {
+                s.flex_shrink(1.0)
+                    .flex_basis(px(tokens.font_size * LIST_BASIS))
+                    .min_w(px(tokens.font_size * LIST_MIN))
+                    .max_w(px(tokens.font_size * LIST_BASIS))
+                    .h_full()
+                    .border_r_1()
+            })
+            .when(stacked, |s| {
+                s.flex_none()
+                    .w_full()
+                    .max_h(px(tokens.font_size * 12.0))
+                    .border_b_1()
+            })
             .overflow_y_scroll()
             .track_scroll(&self.list)
-            .border_r_1()
             .border_color(theme.border)
             .py(px(tokens.spacing));
         for (index, commit) in self.commits.iter().enumerate() {
@@ -562,13 +623,17 @@ impl FileHistoryView {
         list.into_any_element()
     }
 
-    fn render_detail(&self, look: &Look, cx: &mut Context<Self>) -> AnyElement {
+    fn render_detail(&self, look: &Look, stacked: bool, cx: &mut Context<Self>) -> AnyElement {
         let (theme, tokens) = (&look.theme, &look.tokens);
         let mut pane = div()
             .id("history-detail")
             .relative()
             .flex_1()
-            .min_w_0()
+            .min_w(px(if stacked {
+                0.0
+            } else {
+                tokens.font_size * DETAIL_MIN
+            }))
             .min_h_0()
             .overflow_y_scroll()
             .p(px(tokens.spacing * 2.0))

@@ -515,3 +515,55 @@ fn the_changes_view_has_a_history_segment_with_the_commits_and_their_diffs(
     assert_eq!(changes.read_with(cx, |c, _| c.scope()), Scope::Committed);
     assert!(!changes.read_with(cx, |c, _| c.history_shown()));
 }
+
+#[gpui::test]
+fn file_history_keeps_the_detail_readable_in_a_narrow_centre_pane(cx: &mut TestAppContext) {
+    let fx = Fx::new();
+    let (view, cx) = open(cx, &fx);
+    let history = history_of(&view, cx, &fx.file(), None);
+    wait_until(cx, "the commits and the newest one's diff", |cx| {
+        history.read_with(cx, |h, _| {
+            h.commits().len() == 3 && h.selected_diff().is_some()
+        })
+    });
+    let bounds = |view: &Entity<Workbench>, cx: &VisualTestContext, region: Region| {
+        view.read_with(cx, |wb, _| wb.region_bounds(region))
+            .expect("the region is drawn")
+    };
+
+    // Wide: side by side, the list keeps its width.
+    cx.simulate_resize(gpui::size(gpui::px(1800.0), gpui::px(800.0)));
+    draw(cx);
+    draw(cx);
+    assert!(!history.read_with(cx, |h, _| h.stacked()));
+    let (row, detail) = (
+        bounds(&view, cx, Region::FileHistoryRow(0)),
+        bounds(&view, cx, Region::FileHistory("detail")),
+    );
+    assert!(detail.origin.x >= row.origin.x + row.size.width, "beside");
+
+    // Narrow: the list is above the detail, which keeps the whole width.
+    cx.simulate_resize(gpui::size(gpui::px(520.0), gpui::px(800.0)));
+    draw(cx);
+    draw(cx);
+    assert!(history.read_with(cx, |h, _| h.stacked()));
+    let (row, detail) = (
+        bounds(&view, cx, Region::FileHistoryRow(0)),
+        bounds(&view, cx, Region::FileHistory("detail")),
+    );
+    assert!(detail.origin.y >= row.origin.y + row.size.height, "below");
+    assert!(
+        detail.size.width >= row.size.width,
+        "the detail is not squeezed: {detail:?} vs {row:?}"
+    );
+    let open_revision = bounds(&view, cx, Region::FileHistory("root"));
+    assert!(
+        detail.origin.x + detail.size.width <= open_revision.origin.x + open_revision.size.width
+    );
+
+    // Wide again: back beside each other.
+    cx.simulate_resize(gpui::size(gpui::px(1800.0), gpui::px(800.0)));
+    draw(cx);
+    draw(cx);
+    assert!(!history.read_with(cx, |h, _| h.stacked()));
+}
