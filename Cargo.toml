@@ -16,6 +16,7 @@ hutan-buffer = { path = "crates/buffer" }
 hutan-chat-view = { path = "crates/chat_view" }
 hutan-client = { path = "crates/client" }
 hutan-code-view = { path = "crates/code_view" }
+hutan-container = { path = "crates/container" }
 hutan-core = { path = "crates/core" }
 hutan-daemon = { path = "crates/daemon" }
 hutan-gateway = { path = "crates/gateway" }
