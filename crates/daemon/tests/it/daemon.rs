@@ -241,7 +241,8 @@ async fn handshake_then_status_reports_epoch_and_pid() {
             "worktree.setup",
             "accounts.multi",
             "chat.safety",
-            "sandbox"
+            "sandbox",
+            "worktree.stage"
         ]
     );
     assert_eq!(welcome.resume, ResumeOutcome::SnapshotRequired);

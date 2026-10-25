@@ -144,7 +144,6 @@ impl ChangesView {
                 .when(file.staged, |s| {
                     s.bg(theme.accent).text_color(theme.on_accent())
                 })
-                .cursor_pointer()
                 .tooltip(move |_, cx| cx.new(|_| TextTooltip(SharedString::from(tip))).into())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
