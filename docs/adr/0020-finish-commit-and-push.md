@@ -22,3 +22,10 @@ An agent started in the main checkout (the default placement, kept by the user o
 - The default path closes inside Hutan; "Hutan never fetches or pushes" becomes "Hutan pushes only when the user presses Finish".
 - New failure modes surface in the UI (auth prompts from git's helper, rejected pushes); they must be explained, not hidden.
 - Revisit for PR creation (D-P1 option b) when a user asks for it.
+
+## Amendment 2026-10-26 — staging and partial commits (STAGING, protocol 0.53)
+The user answered yes to partial commits (revising decision D2, "Changes is read-only; no stage, unstage or commit-selected"; evidence: `docs/spikes/2026-10-25-user-needs/README.md` need #8 — Zed #34813, #45295, Helix #5132).
+- **Staging is the user's, like Finish.** `worktree.stage`, `worktree.unstage`, `worktree.discard` and `worktree.commit` / `worktree.finish` with `staged_only` are `UserOnly`: an agent-originated connection gets `forbidden` whatever `[control]` says. `worktree.hunks` (the ids) is a read. Agents still never push, and Finish stays user-only.
+- Stage and unstage change git's index only (`git add -A`, `git reset`, `git apply --cached` of a generated hunk patch, `--reverse` to unstage); the working tree is never written. A hunk id is a digest, so a stale one answers `conflict` and nothing changes.
+- **Discard is destructive and undoable**: the daemon holds the checkout, takes a checkpoint (ADR 0019, kind `restore`) before and after, refuses while an agent turn runs in the checkout or checkpoints are off, and returns the checkpoint; restoring it is Undo (files only; the index is not restored).
+- *Commit all* and Finish's default are unchanged; *Commit staged* and Finish's *Commit staged only* commit exactly the index (no `git add`), and the main checkout may be committed this way as Finish does.

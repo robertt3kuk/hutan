@@ -12,6 +12,7 @@ mod comments;
 mod delivery;
 mod finish;
 mod history;
+mod staging;
 mod tray;
 
 pub use comments::{Mark, ReviewComment, SnippetLine};
@@ -1154,6 +1155,7 @@ impl ChangesView {
                     .justify_end()
                     .gap(px(tokens.spacing * 2.0))
                     .children(self.render_review_controls(theme, tokens, cx))
+                    .children(self.render_staging_controls(theme, tokens, cx))
                     .child(self.render_scope_strip(theme, tokens, cx))
                     .children(self.render_freshness(theme, tokens))
                     .child(
@@ -1525,6 +1527,7 @@ impl ChangesView {
                     .when(selected, |s| s.bg(theme.accent_soft))
                     .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
                     .on_click(cx.listener(move |this, _, _, cx| this.select(&path, cx)))
+                    .children(self.render_file_check(index, file, theme, cx))
                     .child(div().flex_none().w(px(12.0)).text_color(color).child(mark))
                     .child(
                         div()

@@ -1139,6 +1139,15 @@ impl Connection {
             .is_some_and(|client| client.supports_sandbox())
     }
 
+    /// True while connected to a daemon that advertised capability `worktree.stage` (protocol
+    /// 0.53): files and hunks can be staged, unstaged and discarded, and the staged ones
+    /// committed alone.
+    pub fn supports_worktree_stage(&self) -> bool {
+        self.shared
+            .client()
+            .is_some_and(|client| client.supports_worktree_stage())
+    }
+
     /// True while connected to a daemon that advertised capability `accounts.multi`.
     pub fn supports_accounts_multi(&self) -> bool {
         self.shared

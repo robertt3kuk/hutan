@@ -20,6 +20,7 @@ use hutan_core::{
     TerminalId, WorkspaceId,
 };
 use hutan_protocol::chat::{ApprovalInfo, ChatCreate};
+use hutan_protocol::checkpoint::{CheckpointPreviewRequest, CheckpointRestore, CheckpointRestored};
 use hutan_protocol::messages::{
     AgentReportRequest, RecentProject, RecentProjects, Request, SessionCreate, SessionInfo,
     SessionRef, SessionRename, SessionResult, SessionSpec, TerminalSpec, WorkspaceCreate,
@@ -36,9 +37,10 @@ use hutan_protocol::task::{
 };
 use hutan_protocol::worktree::{
     PlacementKind, WorktreeCommit, WorktreeCommitted, WorktreeCreate, WorktreeDiff,
-    WorktreeDiffRequest, WorktreeFileDiff, WorktreeFileDiffRequest, WorktreeFinish,
-    WorktreeFinished, WorktreeInfo, WorktreeList, WorktreeListRequest, WorktreeRemove,
-    WorktreeRemoved,
+    WorktreeDiffRequest, WorktreeDiscard, WorktreeDiscarded, WorktreeFileDiff,
+    WorktreeFileDiffRequest, WorktreeFinish, WorktreeFinished, WorktreeHunks, WorktreeHunksRequest,
+    WorktreeIndexChange, WorktreeIndexed, WorktreeInfo, WorktreeList, WorktreeListRequest,
+    WorktreeRemove, WorktreeRemoved,
 };
 use hutan_terminal_view::DefaultColors;
 use tokio::sync::broadcast::error::RecvError;
@@ -3204,6 +3206,73 @@ impl SessionsStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<WorktreeCommitted, String>> {
         self.call(Request::WorktreeCommit(request), |done| done, cx)
+    }
+
+    /// `worktree.hunks`: the hunks of some files of a checkout, with their ids (protocol 0.53).
+    pub fn worktree_hunks(
+        &self,
+        request: WorktreeHunksRequest,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WorktreeHunks, String>> {
+        self.call(Request::WorktreeHunks(request), |done| done, cx)
+    }
+
+    /// `worktree.stage` (`stage`) or `worktree.unstage`: files or hunks into or out of git's
+    /// index; never the working tree.
+    pub fn change_index(
+        &self,
+        request: WorktreeIndexChange,
+        stage: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WorktreeIndexed, String>> {
+        let request = if stage {
+            Request::WorktreeStage(request)
+        } else {
+            Request::WorktreeUnstage(request)
+        };
+        self.call(request, |done| done, cx)
+    }
+
+    /// `worktree.discard`: throws working-tree changes away after a checkpoint.
+    pub fn discard_worktree(
+        &self,
+        request: WorktreeDiscard,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WorktreeDiscarded, String>> {
+        self.call(Request::WorktreeDiscard(request), |done| done, cx)
+    }
+
+    /// Undo of a discard: previews the checkpoint it took and restores it. Refused while a turn
+    /// runs in the checkout (the preview says so).
+    pub fn undo_discard(
+        &self,
+        checkpoint: hutan_core::CheckpointId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<CheckpointRestored, String>> {
+        let connection = self.connection.clone();
+        cx.background_spawn(async move {
+            let preview = connection
+                .checkpoint_preview(CheckpointPreviewRequest {
+                    checkpoint_id: checkpoint,
+                    through: None,
+                    paths: Vec::new(),
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            if !preview.busy.is_empty() {
+                return Err("a turn is running in the checkout: undo when it ends".to_owned());
+            }
+            connection
+                .checkpoint_restore(CheckpointRestore {
+                    checkpoint_id: checkpoint,
+                    through: None,
+                    paths: Vec::new(),
+                    accept_conflicts: Vec::new(),
+                    plan_digest: preview.plan_digest,
+                })
+                .await
+                .map_err(|e| e.to_string())
+        })
     }
 
     /// `worktree.list`: the worktrees of the repositories of `workspace`.

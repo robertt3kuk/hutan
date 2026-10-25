@@ -51,6 +51,8 @@ pub(super) struct FinishForm {
     push: bool,
     /// The user chose `push` here; until then `[finish] push` decides.
     push_chosen: bool,
+    /// Commit only what is staged (`worktree.finish` with `staged_only`).
+    staged_only: bool,
     running: bool,
     /// The daemon refused before changing anything.
     error: Option<String>,
@@ -375,6 +377,7 @@ impl ChangesView {
                 vim: Vim::new(),
                 push: true,
                 push_chosen: false,
+                staged_only: false,
                 running: false,
                 error: None,
             });
@@ -480,6 +483,14 @@ impl ChangesView {
         }
     }
 
+    /// Commit only what is staged in this Finish (`worktree.finish` with `staged_only`).
+    pub fn set_finish_staged_only(&mut self, staged_only: bool, cx: &mut Context<Self>) {
+        if let Some(form) = &mut self.finish {
+            form.staged_only = staged_only;
+            cx.notify();
+        }
+    }
+
     /// Dismisses the result of the last Finish.
     pub fn dismiss_finished(&mut self, cx: &mut Context<Self>) {
         self.finished = None;
@@ -504,7 +515,7 @@ impl ChangesView {
             push: form.push_chosen.then_some(form.push),
             into: if worktree { self.base.clone() } else { None },
             strategy: form.strategy,
-            staged_only: false,
+            staged_only: form.staged_only,
         };
         let finishing = self
             .env
@@ -742,6 +753,38 @@ impl ChangesView {
                         })),
                 ),
         );
+        if self.staged_choice(cx) {
+            body = body.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(tokens.spacing * 2.0))
+                    .child(
+                        chip(
+                            "changes-finish-staged",
+                            "Commit staged only",
+                            form.staged_only,
+                            theme,
+                            tokens,
+                        )
+                        .on_click(cx.listener({
+                            let next = !form.staged_only;
+                            move |this, _, _, cx| this.set_finish_staged_only(next, cx)
+                        }))
+                        .child(probe(&self.env.regions, Region::Changes("finish-staged"))),
+                    )
+                    .child(
+                        div()
+                            .text_color(theme.muted)
+                            .text_size(px(tokens.secondary_font_size))
+                            .child(SharedString::from(if form.staged_only {
+                                "Only what is staged is committed; the rest stays uncommitted."
+                            } else {
+                                "Everything uncommitted is committed."
+                            })),
+                    ),
+            );
+        }
         if let Some(error) = &form.error {
             body = body.child(
                 div()

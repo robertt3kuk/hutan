@@ -59,6 +59,15 @@ pub enum DeliveryForm {
     RequestChanges,
     /// "Commit all…": the commit message.
     Commit,
+    /// "Commit staged…": the commit message; only what is staged goes in.
+    CommitStaged,
+}
+
+impl DeliveryForm {
+    /// Whether the form commits.
+    pub fn commits(self) -> bool {
+        matches!(self, Self::Commit | Self::CommitStaged)
+    }
 }
 
 #[derive(Debug)]
@@ -264,6 +273,13 @@ impl ChangesView {
         }
     }
 
+    /// "Commit staged…" (STAGING): the commit message form for what is staged.
+    pub fn open_commit_staged(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.has_staged() && self.staging_supported(cx) {
+            self.open_form(DeliveryForm::CommitStaged, window, cx);
+        }
+    }
+
     pub fn close_delivery_form(&mut self, cx: &mut Context<Self>) {
         self.delivery.form = None;
         cx.notify();
@@ -287,7 +303,7 @@ impl ChangesView {
         }
         match form.kind {
             DeliveryForm::RequestChanges => self.send_request_changes(cx),
-            DeliveryForm::Commit => self.send_commit(cx),
+            DeliveryForm::Commit | DeliveryForm::CommitStaged => self.send_commit(cx),
         }
     }
 
@@ -351,10 +367,11 @@ impl ChangesView {
         }
         form.running = true;
         form.error = None;
+        let staged_only = form.kind == DeliveryForm::CommitStaged;
         let request = WorktreeCommit {
             path: self.path.clone(),
             message,
-            staged_only: false,
+            staged_only,
         };
         let committing = self
             .env
@@ -562,6 +579,26 @@ impl ChangesView {
                 "commit-message",
                 "commit-confirm",
                 "commit-cancel",
+            ),
+            DeliveryForm::CommitStaged => (
+                format!(
+                    "Commit the staged changes of {}",
+                    self.info
+                        .as_ref()
+                        .and_then(|i| i.branch.clone())
+                        .unwrap_or_else(|| "the checkout".to_owned())
+                ),
+                "Commits only what is staged, as one commit on the branch. Everything else \
+                 stays where it is, unstaged. Git hooks do not run.",
+                "Commit message",
+                if form.running {
+                    "Committing…"
+                } else {
+                    "Commit staged"
+                },
+                "staged-message",
+                "staged-confirm",
+                "staged-cancel",
             ),
         };
         let focused = self.delivery.focus.is_focused(window);
