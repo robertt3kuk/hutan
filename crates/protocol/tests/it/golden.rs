@@ -2746,6 +2746,7 @@ fn requests() -> Vec<(&'static str, Request)> {
             Request::WorktreeCommit(WorktreeCommit {
                 path: "/work/repo-wt/feature-login".into(),
                 message: "Add login".into(),
+                staged_only: false,
             }),
         ),
         (
@@ -3109,6 +3110,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 push: Some(true),
                 into: Some("main".into()),
                 strategy: MergeStrategy::Squash,
+                staged_only: false,
             }),
         ),
         (
@@ -3119,6 +3121,7 @@ fn requests() -> Vec<(&'static str, Request)> {
                 push: None,
                 into: None,
                 strategy: MergeStrategy::Merge,
+                staged_only: false,
             }),
         ),
         (
@@ -3620,6 +3623,112 @@ fn requests() -> Vec<(&'static str, Request)> {
                 mode: Some(WorktreeCleanup::Merged),
                 idle_days: None,
                 paths: vec!["/work/repo-wt/feature-login".into()],
+            }),
+        ),
+        (
+            "worktree_commit_staged_only",
+            Request::WorktreeCommit(WorktreeCommit {
+                path: "/work/repo-wt/feature-login".into(),
+                message: "Add login form".into(),
+                staged_only: true,
+            }),
+        ),
+        (
+            "worktree_hunks",
+            Request::WorktreeHunks(WorktreeHunksRequest {
+                path: "/work/repo-wt/feature-login".into(),
+                files: vec!["src/login.rs".into()],
+            }),
+        ),
+        (
+            "worktree_hunks_all",
+            Request::WorktreeHunks(WorktreeHunksRequest {
+                path: "/work/repo-wt/feature-login".into(),
+                files: vec![],
+            }),
+        ),
+        (
+            "worktree_stage_paths",
+            Request::WorktreeStage(WorktreeIndexChange {
+                checkout: "/work/repo-wt/feature-login".into(),
+                paths: vec!["src/login.rs".into(), "README.md".into()],
+                hunks: vec![],
+                all: false,
+            }),
+        ),
+        (
+            "worktree_stage_hunks",
+            Request::WorktreeStage(WorktreeIndexChange {
+                checkout: "/work/repo-wt/feature-login".into(),
+                paths: vec![],
+                hunks: vec![
+                    HunkRef {
+                        path: "src/login.rs".into(),
+                        hunk_id: "5f0c3a9d1e7b2a46".into(),
+                        lines: vec![],
+                    },
+                    HunkRef {
+                        path: "src/login.rs".into(),
+                        hunk_id: "0a1b2c3d4e5f6071".into(),
+                        lines: vec![2, 3],
+                    },
+                ],
+                all: false,
+            }),
+        ),
+        (
+            "worktree_stage_all",
+            Request::WorktreeStage(WorktreeIndexChange {
+                checkout: "/work/repo".into(),
+                paths: vec![],
+                hunks: vec![],
+                all: true,
+            }),
+        ),
+        (
+            "worktree_unstage_hunk",
+            Request::WorktreeUnstage(WorktreeIndexChange {
+                checkout: "/work/repo-wt/feature-login".into(),
+                paths: vec![],
+                hunks: vec![HunkRef {
+                    path: "src/login.rs".into(),
+                    hunk_id: "9d8c7b6a5f4e3d2c".into(),
+                    lines: vec![],
+                }],
+                all: false,
+            }),
+        ),
+        (
+            "worktree_discard_paths",
+            Request::WorktreeDiscard(WorktreeDiscard {
+                checkout: "/work/repo-wt/feature-login".into(),
+                paths: vec!["notes.txt".into()],
+                hunks: vec![],
+                staged: true,
+            }),
+        ),
+        (
+            "worktree_discard_hunk",
+            Request::WorktreeDiscard(WorktreeDiscard {
+                checkout: "/work/repo-wt/feature-login".into(),
+                paths: vec![],
+                hunks: vec![HunkRef {
+                    path: "src/login.rs".into(),
+                    hunk_id: "5f0c3a9d1e7b2a46".into(),
+                    lines: vec![],
+                }],
+                staged: false,
+            }),
+        ),
+        (
+            "worktree_finish_staged_only",
+            Request::WorktreeFinish(WorktreeFinish {
+                checkout: "/work/repo".into(),
+                message: "Fix the login form".into(),
+                push: Some(false),
+                into: None,
+                strategy: MergeStrategy::Merge,
+                staged_only: true,
             }),
         ),
     ]
@@ -6111,6 +6220,80 @@ fn responses_match_fixtures() {
                 },
             )
             .unwrap(),
+        ),
+        (
+            "worktree_hunks",
+            ControlMessage::ok(
+                34,
+                &WorktreeHunks {
+                    files: vec![
+                        FileHunks {
+                            path: "assets/logo.png".into(),
+                            binary: true,
+                            unstaged: vec![],
+                            staged: vec![],
+                        },
+                        FileHunks {
+                            path: "src/login.rs".into(),
+                            binary: false,
+                            unstaged: vec![DiffHunk {
+                                id: "5f0c3a9d1e7b2a46".into(),
+                                header: "@@ -10,3 +10,4 @@ fn login() {".into(),
+                                old_start: 10,
+                                old_lines: 3,
+                                new_start: 10,
+                                new_lines: 4,
+                                body: " let user = form.user();\n+let name = user.trim();\n let ok = check(user);\n return ok;".into(),
+                            }],
+                            staged: vec![DiffHunk {
+                                id: "9d8c7b6a5f4e3d2c".into(),
+                                header: "@@ -1,2 +1,2 @@".into(),
+                                old_start: 1,
+                                old_lines: 2,
+                                new_start: 1,
+                                new_lines: 2,
+                                body: "-use std::io;\n+use std::fmt;\n use std::fs;".into(),
+                            }],
+                        },
+                    ],
+                    truncated: false,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "worktree_indexed",
+            ControlMessage::ok(
+                35,
+                &WorktreeIndexed {
+                    paths: 1,
+                    hunks: 2,
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "worktree_discarded",
+            ControlMessage::ok(
+                36,
+                &WorktreeDiscarded {
+                    paths: 0,
+                    hunks: 1,
+                    checkpoint: restore_checkpoint_fixture(),
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "error_worktree_hunk_stale",
+            ControlMessage::err(
+                37,
+                ErrorBody::new(
+                    ErrorCode::Conflict,
+                    "hunk 5f0c3a9d1e7b2a46 of src/login.rs is gone: the file changed since the \
+                     hunks were listed",
+                ),
+            ),
         ),
         (
             "error_worktree_merge_conflict",

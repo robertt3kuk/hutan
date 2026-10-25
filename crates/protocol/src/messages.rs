@@ -65,8 +65,9 @@ use crate::ui::{SessionSendText, UiCommandResult, UiPublish, UiRun, UiSetSetting
 use crate::usage::{UsageSummary, UsageSummaryRequest};
 use crate::worktree::{
     Placement, WorktreeCleanupRequest, WorktreeCommit, WorktreeCreate, WorktreeDiffRequest,
-    WorktreeFileDiffRequest, WorktreeFinish, WorktreeListRequest, WorktreeMerge, WorktreePrune,
-    WorktreeRemove, WorktreeSetupRequest, WorktreeSetupTrust,
+    WorktreeDiscard, WorktreeFileDiffRequest, WorktreeFinish, WorktreeHunksRequest,
+    WorktreeIndexChange, WorktreeListRequest, WorktreeMerge, WorktreePrune, WorktreeRemove,
+    WorktreeSetupRequest, WorktreeSetupTrust,
 };
 
 /// Parameterless request body; encoded as `{}`.
@@ -441,6 +442,22 @@ pub enum Request {
     /// its target, push; user-only. Answered with `WorktreeFinished`.
     #[serde(rename = "worktree.finish")]
     WorktreeFinish(WorktreeFinish),
+    /// Capability `worktree.stage` (protocol 0.53): the hunks of a checkout's files, with ids;
+    /// answered with `WorktreeHunks`. Read-only.
+    #[serde(rename = "worktree.hunks")]
+    WorktreeHunks(WorktreeHunksRequest),
+    /// Capability `worktree.stage`: copy files or hunks into git's index; user-only. Answered
+    /// with `WorktreeIndexed`.
+    #[serde(rename = "worktree.stage")]
+    WorktreeStage(WorktreeIndexChange),
+    /// Capability `worktree.stage`: take files or hunks out of git's index; user-only.
+    /// Answered with `WorktreeIndexed`.
+    #[serde(rename = "worktree.unstage")]
+    WorktreeUnstage(WorktreeIndexChange),
+    /// Capability `worktree.stage`: throw working-tree changes away after a checkpoint; user-only.
+    /// Answered with `WorktreeDiscarded`.
+    #[serde(rename = "worktree.discard")]
+    WorktreeDiscard(WorktreeDiscard),
     /// Capability `worktree.setup` (protocol 0.49): run a worktree's setup again; answered with
     /// `WorktreeSetupResult`.
     #[serde(rename = "worktree.setup")]

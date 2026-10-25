@@ -346,14 +346,21 @@ pub fn conflict_files(error: &crate::control::ErrorBody) -> Vec<String> {
 /// and commits it with `message`, so a following merge takes it. Hooks do not run. Answered
 /// with [`WorktreeCommitted`].
 ///
+/// With `staged_only` (protocol 0.53, capability `worktree.stage`, **user-only**) nothing is
+/// staged: the commit takes exactly what git's index holds, and the main checkout may be
+/// committed too (as Finish does); the rest stays where it is.
+///
 /// Errors: `bad_request` (`path` not absolute, an empty message), `not_found` (no such
-/// worktree), `invalid_state` for the main checkout (commit there yourself), a detached HEAD, a
-/// merge or rebase in progress, nothing to commit, or git's own refusal (e.g. no author
-/// identity).
+/// worktree), `invalid_state` for the main checkout (commit there yourself; not with
+/// `staged_only`), a detached HEAD, a merge or rebase in progress, nothing to commit (nothing
+/// staged, with `staged_only`), or git's own refusal (e.g. no author identity).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorktreeCommit {
     pub path: PathBuf,
     pub message: String,
+    /// Commit only what is staged; default `false`: everything, as before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub staged_only: bool,
 }
 
 /// Result of `worktree.commit`.
@@ -365,6 +372,153 @@ pub struct WorktreeCommitted {
     pub branch: String,
     /// Files the commit changed.
     pub files: u32,
+}
+
+// Staging (protocol 0.53, capability `worktree.stage`, ADR 0020 amendment) -------------------
+
+/// `worktree.hunks`: the hunks of the files of a checkout that can be staged, unstaged or
+/// discarded, with their ids. Answered with [`WorktreeHunks`]. Read-only.
+///
+/// Hunks come from `git diff` (the working tree against the index: **unstaged**) and
+/// `git diff --cached` (the index against `HEAD`: **staged**), both without rename detection, so
+/// a renamed file appears as its two paths. An untracked file has one unstaged hunk (all of it).
+/// A hunk's id is a digest of its side, path, position and text: it is the same for as long as
+/// that side of the file is unchanged, and a request naming an id that no longer exists answers
+/// `conflict`. Errors as `worktree.diff`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeHunksRequest {
+    /// The checkout (a worktree git lists, the main checkout included).
+    pub path: PathBuf,
+    /// Only these files, relative to the checkout; empty: every changed file (at most 5000).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+}
+
+/// Result of `worktree.hunks`: sorted by path; files without hunks are left out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeHunks {
+    pub files: Vec<FileHunks>,
+    /// Some file was left out or cut: more than 5000 files, or a file's diff over 2 MiB.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+}
+
+/// The hunks of one file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileHunks {
+    /// Relative to the checkout's top level, `/`-separated.
+    pub path: String,
+    /// git treats the file as binary: it can be staged, unstaged or discarded whole, never by
+    /// hunk (`bad_request`), and it lists no hunks.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub binary: bool,
+    /// Working tree against the index (what *Stage hunk* and *Discard hunk* act on).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unstaged: Vec<DiffHunk>,
+    /// Index against `HEAD` (what *Unstage hunk* acts on).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub staged: Vec<DiffHunk>,
+}
+
+/// One hunk of a unified diff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffHunk {
+    /// 16 hex digits; see [`WorktreeHunksRequest`].
+    pub id: String,
+    /// The `@@ -a,b +c,d @@ …` line.
+    pub header: String,
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+    /// The hunk's lines after the header, each with its ` `, `+`, `-` or `\` prefix, joined by
+    /// `\n` (invalid UTF-8 is replaced). A line's number in this list (from 0) is what
+    /// [`HunkRef::lines`] counts.
+    pub body: String,
+}
+
+/// A hunk named by a request, as `worktree.hunks` listed it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HunkRef {
+    /// The file, as [`FileHunks::path`].
+    pub path: String,
+    /// [`DiffHunk::id`].
+    pub hunk_id: String,
+    /// Only these changed lines of the hunk (their numbers in [`DiffHunk::body`], from 0; each
+    /// must be a `+` or `-` line); empty: the whole hunk. The others stay as they are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lines: Vec<u32>,
+}
+
+/// `worktree.stage` and `worktree.unstage` (**user-only**: an agent-originated connection gets
+/// `forbidden` whatever `[control]` says). Answered with [`WorktreeIndexed`].
+///
+/// `stage` copies working-tree state into git's index — whole files (`paths`: `git add -A`, so a
+/// deleted file is staged as deleted and an untracked one is added; a renamed file needs both of
+/// its paths) or hunks (`hunks`: the unstaged hunk applied to the index with `git apply
+/// --cached`). `unstage` restores index entries from `HEAD` (`paths`) or applies a staged hunk
+/// in reverse to the index (`hunks`). **The working tree is never touched**, and no hook runs.
+/// `all` is every path of the checkout (`git add -A` / `git reset`).
+///
+/// Everything is checked before the first change: the request is applied whole or not at all.
+/// Errors: `bad_request` (`checkout` not absolute; nothing named; a path that leaves the
+/// checkout; a hunk of a binary file; a line that is not a changed line), `not_found` (no such
+/// checkout or file), `conflict` (a hunk id that no longer exists, a patch that no longer
+/// applies), `invalid_state` (a merge or rebase in progress, git's refusal).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WorktreeIndexChange {
+    pub checkout: PathBuf,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hunks: Vec<HunkRef>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all: bool,
+}
+
+/// Result of `worktree.stage` and `worktree.unstage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WorktreeIndexed {
+    /// Whole files named (`all`: `0`).
+    pub paths: u32,
+    /// Hunks applied.
+    pub hunks: u32,
+}
+
+/// `worktree.discard` (**user-only**): throws working-tree changes away, for good unless the
+/// checkpoint it takes first is restored (Undo). Answered with [`WorktreeDiscarded`].
+///
+/// `paths` make a file's working tree equal to the index (an untracked file is deleted); with
+/// `staged` they make file and index equal to `HEAD` (a file new in the index is deleted).
+/// `hunks` are unstaged hunks, applied in reverse to the working tree. The index is not touched
+/// by hunks, nor by paths without `staged`.
+///
+/// Before anything is written the daemon takes a checkpoint of the checkout (kind `restore`,
+/// the one `checkpoint.restore` calls Undo when restored) and a second one afterwards; the
+/// changes are announced in `fs.changed` with `origin: {kind: "restore"}`. Refused with
+/// `invalid_state`, nothing changed: an agent session in the checkout has a turn running, or
+/// checkpoints are off or unsupported there (Undo would not exist). Other errors as
+/// [`WorktreeIndexChange`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WorktreeDiscard {
+    pub checkout: PathBuf,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hunks: Vec<HunkRef>,
+    /// Also discard what is staged for `paths` (back to `HEAD`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub staged: bool,
+}
+
+/// Result of `worktree.discard`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeDiscarded {
+    pub paths: u32,
+    pub hunks: u32,
+    /// The discard's checkpoint (kind `restore`): `checkpoint.preview` and `checkpoint.restore`
+    /// with its id put everything back.
+    pub checkpoint: hutan_core::CheckpointInfo,
 }
 
 /// `worktree.finish` (protocol 0.35, capability `finish`, ADR 0020): the user's **Finish** of a
@@ -409,6 +563,10 @@ pub struct WorktreeFinish {
     /// How a worktree's branch is merged. Ignored for a main checkout.
     #[serde(default)]
     pub strategy: MergeStrategy,
+    /// Protocol 0.53 (capability `worktree.stage`): the commit step takes only what is staged
+    /// (as `worktree.commit` with `staged_only`); the rest stays uncommitted in the checkout.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub staged_only: bool,
 }
 
 /// Result of `worktree.finish`: one entry per step.

@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`worktree`] also carries staging — `worktree.hunks`, `worktree.stage`, `worktree.unstage`,
+//!   `worktree.discard` (all user-only but the read `hunks`), `WorktreeCommit.staged_only` and
+//!   `WorktreeFinish.staged_only` (protocol 0.53, capability `worktree.stage`, ADR 0020).
 //! - [`hooks`]: user hooks — `hooks.list`, `hooks.log`, `hooks.test` and the payload a hook
 //!   receives (protocol 0.48, capability `hooks`).
 //! - [`worktree`] also carries setup and retention — `worktree.setup`, `worktree.setup_trust`
@@ -123,7 +126,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 52,
+    minor: 53,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
