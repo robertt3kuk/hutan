@@ -23,6 +23,7 @@ use hutan_desktop::workbench::panels::{
     AssistantChoice, AssistantPanel, ChangesCheckouts, ChangesPanel, FilesPanel, ProblemsPanel,
     SearchPanel,
 };
+use hutan_desktop::workbench::rewind::{Phase, SheetFocus};
 use hutan_desktop::workbench::{FileOpen, Region, Workbench};
 use hutan_protocol::assistant::{AssistantOpen, AssistantScope};
 use hutan_protocol::chat::{ChatSend, ChatSent};
@@ -640,6 +641,65 @@ fn track_changes_turns_changes_on_and_a_mawas_turn_gets_a_checkpoint(cx: &mut Te
                 }));
         list.checkpoints.iter().any(|c| c.files_changed == 1)
     });
+
+    // Rewinding her turn puts the note for her in *her* composer (Mawas Home owns its model),
+    // not in a model of a chat tab nobody sees.
+    let list: CheckpointList = env
+        .daemon
+        .call(Request::CheckpointList(CheckpointListRequest {
+            session_id: Some(session),
+            ..CheckpointListRequest::default()
+        }));
+    let checkpoint = list
+        .checkpoints
+        .iter()
+        .find(|c| c.files_changed == 1)
+        .expect("the turn's checkpoint")
+        .id;
+    wait_until(cx, "the checkpoint in the window's store", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .checkpoints()
+                .read(cx)
+                .get(checkpoint)
+                .is_some()
+        })
+    });
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_rewind(session, checkpoint, window, cx);
+    });
+    wait_until(cx, "the rewind preview", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.rewind_sheet()
+                .is_some_and(|s| matches!(s.phase, Phase::Ready) && !s.working && !s.busy())
+        })
+    });
+    view.update_in(cx, |wb, window, cx| {
+        wb.press_rewind(SheetFocus::Restore, window, cx);
+    });
+    wait_until(cx, "the restore", |cx| {
+        view.read_with(cx, |wb, _| {
+            wb.restore_toast().is_some() && wb.rewind_sheet().is_none()
+        })
+    });
+    assert!(!env.home_dir.join("b.txt").exists(), "the file is gone");
+    let assistant: Entity<AssistantPanel> = view
+        .read_with(cx, |wb, _| wb.panel("assistant"))
+        .expect("Mawas Home is open");
+    let draft = assistant.read_with(cx, |panel, cx| {
+        panel
+            .chat_model(session)
+            .expect("her chat model")
+            .read(cx)
+            .input()
+            .text()
+            .to_owned()
+    });
+    assert!(
+        draft.starts_with("Hutan restored these files to before") && draft.contains("b.txt"),
+        "{draft}"
+    );
     let _ = &env.chat;
 }
 

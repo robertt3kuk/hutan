@@ -1018,7 +1018,11 @@ impl Workbench {
                 .collect();
             changed.sort_unstable();
             let note = agent_note(sheet.prompt.as_deref(), &changed);
-            let model = self.ensure_chat_model(sheet.session, cx);
+            // Mawas's conversation is drawn by her page, which owns its composer's model.
+            let model = self
+                .panel::<super::panels::AssistantPanel>("assistant")
+                .and_then(|panel| panel.read(cx).chat_model(sheet.session))
+                .unwrap_or_else(|| self.ensure_chat_model(sheet.session, cx));
             model.update(cx, |model, cx| model.add_note(&note, cx));
         }
         self.show_restore_toast(sheet.session, restored.checkpoint.id, files, sheet.undo, cx);
