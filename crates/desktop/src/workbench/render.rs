@@ -726,6 +726,19 @@ impl Workbench {
                 this.open_changes(std::path::PathBuf::from(&a.0), window, cx);
             }),
         )
+        .on_action(cx.listener(|this, a: &actions::ReviewFileAt, window, cx| {
+            this.open_changes_file(
+                std::path::PathBuf::from(&a.0.checkout),
+                &a.0.file,
+                window,
+                cx,
+            );
+        }))
+        .on_action(
+            cx.listener(|this, a: &actions::FinishChangesAt, window, cx| {
+                this.open_changes_finish(std::path::PathBuf::from(&a.0), window, cx);
+            }),
+        )
         .on_action(cx.listener(|this, _: &actions::NewAgent, window, cx| {
             this.new_agent(window, cx);
         }))

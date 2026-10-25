@@ -6,13 +6,14 @@
 //! when the workspace or the connection changes, and again after [`REFRESH_AFTER`]) and has the
 //! Refresh button for the rest. It never reads a repository itself.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, AppContext as _, Context, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Task, Window, div, px,
+    SharedString, StatefulInteractiveElement, Styled, Task, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use hutan_client::ConnectionState;
 use hutan_core::WorkspaceId;
@@ -21,9 +22,12 @@ use hutan_protocol::worktree::{DiffFile, WorktreeDiffRequest, WorktreeInfo};
 
 use crate::icons::Icon;
 use crate::sessions::CheckoutActivity;
-use crate::theme::DensityExt as _;
+use crate::settings::ChangesScope;
+use crate::theme::{DensityExt as _, Theme, Tokens};
 use crate::workbench::Region;
-use crate::workbench::actions::{ReviewChangesAt, TrackHomeChanges};
+use crate::workbench::actions::{
+    ChangedFileAt, FinishChangesAt, ReviewChangesAt, ReviewFileAt, TrackHomeChanges,
+};
 use crate::workbench::chat::{Look, counts_of};
 use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
@@ -34,8 +38,11 @@ use crate::workbench::workspaces::tilde;
 /// A drawn panel lists the checkouts again after this long.
 pub const REFRESH_AFTER: Duration = Duration::from_secs(15);
 
-/// Checkouts whose changes are counted for their rows; the rest show no count.
+/// Checkouts whose changes are counted for their headers; the rest show no count.
 const MAX_COUNTED: usize = 12;
+
+/// Files listed under a group's header; the rest is "N more files…".
+const MAX_FILES_SHOWN: usize = 40;
 
 /// What a checkout changed, for its row: files and lines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,8 +105,14 @@ pub struct ChangesPanel {
     generation: u64,
     task: Option<Task<()>>,
     /// What each listed checkout changed (`worktree.diff`, the file list only), read after every
-    /// listing; a checkout that could not be counted has no entry.
-    counts: HashMap<PathBuf, Counts>,
+    /// listing; a checkout that could not be read has no entry.
+    diffs: HashMap<PathBuf, Vec<DiffFile>>,
+    /// Groups folded to their header.
+    collapsed: HashSet<PathBuf>,
+    /// *This checkout* or *All in workspace*, as chosen with the chip.
+    changes_scope: ChangesScope,
+    /// The checkout the window worked in when the files were last read.
+    counted_for: Option<PathBuf>,
     counts_task: Option<Task<()>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -110,6 +123,14 @@ impl std::fmt::Debug for ChangesPanel {
             .field("checkouts", &self.checkouts)
             .finish_non_exhaustive()
     }
+}
+
+/// The repository a checkout belongs to, by its folder's name.
+fn repo_name(worktree: &WorktreeInfo) -> String {
+    worktree.repo_root.file_name().map_or_else(
+        || tilde(&worktree.repo_root),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }
 
 /// The rows of a listing: checkouts that still exist, the ones with uncommitted changes first,
@@ -147,7 +168,10 @@ impl ChangesPanel {
             reload_again: false,
             generation: 0,
             task: None,
-            counts: HashMap::new(),
+            diffs: HashMap::new(),
+            collapsed: HashSet::new(),
+            changes_scope: ChangesScope::default(),
+            counted_for: None,
             counts_task: None,
             _subscriptions: subscriptions,
         };
@@ -195,7 +219,7 @@ impl ChangesPanel {
 
     /// What `checkout` changed, once counted (tests).
     pub fn counts(&self, checkout: &std::path::Path) -> Option<Counts> {
-        self.counts.get(checkout).copied()
+        self.diffs.get(checkout).map(|files| Counts::of(files))
     }
 
     /// What the panel is about: the container the window shows (the chip of its header).
@@ -223,6 +247,15 @@ impl ChangesPanel {
         };
         let wanted = workspace.map(|w| (w, state));
         if wanted == self.asked {
+            // The window may work in another checkout of the same workspace now: its files are
+            // read too.
+            if let Checkouts::Ready(list) = &self.checkouts {
+                let current = self.current_in(list, cx).map(|w| w.path.clone());
+                if current != self.counted_for {
+                    let list = list.clone();
+                    self.count(&list, cx);
+                }
+            }
             return;
         }
         self.asked = wanted;
@@ -236,7 +269,7 @@ impl ChangesPanel {
                 self.loading = false;
                 self.reload_again = false;
                 self.checkouts = Checkouts::Idle;
-                self.counts.clear();
+                self.diffs.clear();
                 self.counts_task = None;
                 self.refreshed_ms = None;
                 self.refresh_error = None;
@@ -298,16 +331,25 @@ impl ChangesPanel {
     }
 
     /// Reads what each checkout that may have changes changed (the dirty ones and the branches
-    /// of worktrees), at most [`MAX_COUNTED`], for the counts on the rows. A count that cannot
-    /// be read is left out; the row stays as it was.
+    /// of worktrees; the checkout the window works in first), at most [`MAX_COUNTED`], for the
+    /// counts on the headers and the files under them. A checkout that cannot be read is left
+    /// out; its header stays as it was.
     fn count(&mut self, list: &[WorktreeInfo], cx: &mut Context<Self>) {
-        let wanted: Vec<PathBuf> = list
+        let current = self.current_in(list, cx).map(|w| w.path.clone());
+        self.counted_for.clone_from(&current);
+        let mut wanted: Vec<PathBuf> = list
             .iter()
-            .filter(|w| w.dirty || !w.main)
-            .take(MAX_COUNTED)
+            .filter(|w| w.dirty || !w.main || Some(&w.path) == current.as_ref())
             .map(|w| w.path.clone())
             .collect();
-        self.counts.retain(|path, _| wanted.contains(path));
+        if let Some(current) = current
+            && let Some(at) = wanted.iter().position(|p| *p == current)
+        {
+            let first = wanted.remove(at);
+            wanted.insert(0, first);
+        }
+        wanted.truncate(MAX_COUNTED);
+        self.diffs.retain(|path, _| wanted.contains(path));
         let generation = self.generation;
         let reads: Vec<_> = wanted
             .iter()
@@ -334,10 +376,10 @@ impl ChangesPanel {
                         }
                         match result {
                             Ok(diff) => {
-                                this.counts.insert(path, Counts::of(&diff.files));
+                                this.diffs.insert(path, diff.files);
                             }
                             Err(_) => {
-                                this.counts.remove(&path);
+                                this.diffs.remove(&path);
                             }
                         }
                         cx.notify();
@@ -351,18 +393,157 @@ impl ChangesPanel {
         }));
     }
 
-    fn row(&self, index: usize, worktree: &WorktreeInfo, cx: &mut Context<Self>) -> AnyElement {
+    /// The checkout the window works in, among `list`: the worktree the user picked, else the
+    /// main checkout of the project they work in, else the first main checkout.
+    fn current_in<'a>(&self, list: &'a [WorktreeInfo], cx: &gpui::App) -> Option<&'a WorktreeInfo> {
+        let store = self.env.sessions.read(cx);
+        if let Some(picked) = store.active_checkout()
+            && let Some(found) = list.iter().find(|w| w.path == picked)
+        {
+            return Some(found);
+        }
+        if let Some(root) = store
+            .active_project()
+            .and_then(|p| p.project.as_ref())
+            .map(|p| &p.root)
+            && let Some(found) = list.iter().find(|w| w.main && w.repo_root == *root)
+        {
+            return Some(found);
+        }
+        list.iter().find(|w| w.main)
+    }
+
+    /// Whether the workspace has more than one place that changes: several repositories, or a
+    /// worktree with changes. Only then is there a choice between the scopes.
+    pub fn all_available(&self) -> bool {
+        let rows = self.rows();
+        let repos: HashSet<&PathBuf> = rows.iter().map(|w| &w.repo_root).collect();
+        repos.len() > 1
+            || rows
+                .iter()
+                .any(|w| !w.main && (w.dirty || self.counts(&w.path).is_some_and(|c| c.files > 0)))
+    }
+
+    /// The scope the panel shows: the chosen one while [`all_available`](Self::all_available),
+    /// else the checkout's.
+    pub fn shown_scope(&self) -> ChangesScope {
+        if self.all_available() {
+            self.changes_scope
+        } else {
+            ChangesScope::Checkout
+        }
+    }
+
+    /// The scope the user chose (the chip), whether or not it applies right now.
+    pub fn changes_scope(&self) -> ChangesScope {
+        self.changes_scope
+    }
+
+    /// Switches the chip: *This checkout* or *All in workspace*.
+    pub fn set_changes_scope(&mut self, scope: ChangesScope, cx: &mut Context<Self>) {
+        if self.changes_scope != scope {
+            self.changes_scope = scope;
+            cx.notify();
+        }
+    }
+
+    /// The rows (indexes into [`rows`](Self::rows)) the panel draws: the checkout the window
+    /// works in, or every checkout of the workspace.
+    pub fn shown(&self, cx: &gpui::App) -> Vec<usize> {
+        let rows = self.rows();
+        match self.shown_scope() {
+            ChangesScope::Workspace => (0..rows.len()).collect(),
+            ChangesScope::Checkout => self
+                .current_in(rows, cx)
+                .and_then(|current| rows.iter().position(|w| w.path == current.path))
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    /// The files `checkout` changed, as last read (empty while unread or clean).
+    pub fn files_of(&self, checkout: &std::path::Path) -> &[DiffFile] {
+        self.diffs.get(checkout).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether the group of `checkout` is folded to its header.
+    pub fn is_folded(&self, checkout: &std::path::Path) -> bool {
+        self.collapsed.contains(checkout)
+    }
+
+    /// Folds or unfolds the group of `checkout`.
+    pub fn toggle_folded(&mut self, checkout: &std::path::Path, cx: &mut Context<Self>) {
+        if !self.collapsed.remove(checkout) {
+            self.collapsed.insert(checkout.to_owned());
+        }
+        cx.notify();
+    }
+
+    /// A checkout of the listing as a group: its header (the checkout, what it changed, Finish…)
+    /// and, unless folded, its changed files.
+    fn group(&self, index: usize, worktree: &WorktreeInfo, cx: &mut Context<Self>) -> AnyElement {
+        let style = UiStyle::get(cx);
+        let (theme, tokens) = (style.theme, style.density.ui());
+        let files = self.files_of(&worktree.path);
+        let folded = self.collapsed.contains(&worktree.path);
+        let mut group = div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .child(self.header(index, worktree, cx));
+        if !folded {
+            let path = worktree.path.display().to_string();
+            group = group
+                .children(
+                    files
+                        .iter()
+                        .take(MAX_FILES_SHOWN)
+                        .enumerate()
+                        .map(|(i, file)| self.file_row(index, i, &path, file, cx)),
+                )
+                .when(files.len() > MAX_FILES_SHOWN, |s| {
+                    let rest = files.len() - MAX_FILES_SHOWN;
+                    let open = path.clone();
+                    s.child(
+                        div()
+                            .id(SharedString::from(format!("changes-more-{path}")))
+                            .flex_none()
+                            .pl(px(tokens.spacing * 2.0 + 40.0))
+                            .py(px(tokens.spacing))
+                            .cursor_pointer()
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(theme.muted)
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(Box::new(ReviewChangesAt(open.clone())), cx);
+                            })
+                            .child(SharedString::from(format!("{rest} more files…"))),
+                    )
+                });
+        }
+        group.into_any_element()
+    }
+
+    /// `▾ ⑂ repo · branch   4 files · +4 −0   [Finish…]` over `~/path · main checkout`. A click
+    /// opens the checkout's Changes view; the chevron folds the group.
+    fn header(&self, index: usize, worktree: &WorktreeInfo, cx: &mut Context<Self>) -> AnyElement {
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
         let hover = theme.sidebar_accent;
         let look = Look::of(cx);
-        let counted = self.counts.get(&worktree.path).filter(|c| c.files > 0);
+        let counted = self.counts(&worktree.path).filter(|c| c.files > 0);
         let path = worktree.path.clone();
         let click_path = path.display().to_string();
-        let title = worktree
-            .branch
-            .clone()
-            .unwrap_or_else(|| "(detached)".to_owned());
+        let finish_path = click_path.clone();
+        let folded = self.collapsed.contains(&path);
+        let fold_path = path.clone();
+        let title = format!(
+            "{} · {}",
+            repo_name(worktree),
+            worktree
+                .branch
+                .clone()
+                .unwrap_or_else(|| "(detached)".to_owned())
+        );
         let mut notes: Vec<String> = Vec::new();
         if worktree.main {
             notes.push("main checkout".to_owned());
@@ -379,10 +560,15 @@ impl ChangesPanel {
         } else {
             format!("{} · {}", tilde(&path), notes.join(" · "))
         };
+        let can_finish = counted.is_some()
+            && worktree.branch.is_some()
+            && self.env.sessions.read(cx).connection().supports_finish();
+        let foldable = counted.is_some();
         div()
             .id(SharedString::from(format!("changes-row-{click_path}")))
             .relative()
             .flex()
+            .flex_none()
             .items_center()
             .gap(px(tokens.spacing * 2.0))
             .mx(px(tokens.spacing * 2.0))
@@ -396,6 +582,7 @@ impl ChangesPanel {
             })
             .child(
                 div()
+                    .id(SharedString::from(format!("changes-fold-{index}")))
                     .flex_none()
                     .w(px(20.0))
                     .flex()
@@ -405,11 +592,25 @@ impl ChangesPanel {
                     } else {
                         theme.muted
                     })
-                    .child(crate::icons::glyph(if worktree.dirty {
-                        Icon::VcsDirty
+                    .when(foldable, |s| {
+                        s.on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.toggle_folded(&fold_path, cx);
+                                cx.stop_propagation();
+                            }))
+                    })
+                    .child(crate::icons::glyph(if !foldable {
+                        if worktree.dirty {
+                            Icon::VcsDirty
+                        } else {
+                            Icon::VcsClean
+                        }
+                    } else if folded {
+                        Icon::ActionDisclose
                     } else {
-                        Icon::VcsClean
-                    })),
+                        Icon::ActionExpand
+                    }))
+                    .child(probe(&self.env.regions, Region::ChangesFold(index))),
             )
             .child(
                 div()
@@ -451,7 +652,150 @@ impl ChangesPanel {
                             .child(SharedString::from(detail)),
                     ),
             )
+            .when(can_finish, |s| {
+                s.child(
+                    ui::Button::new(
+                        SharedString::from(format!("changes-finish-{index}")),
+                        "Finish…",
+                        &theme,
+                        &tokens,
+                    )
+                    .ghost()
+                    .compact()
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(FinishChangesAt(finish_path.clone())), cx);
+                        cx.stop_propagation();
+                    })
+                    .child(probe(&self.env.regions, Region::ChangesFinish(index))),
+                )
+            })
             .child(probe(&self.env.regions, Region::ChangesCheckout(index)))
+            .into_any_element()
+    }
+
+    /// `M  src/lib.rs   +3 −1`: one changed file of a group; a click opens the checkout's
+    /// Changes view on it.
+    fn file_row(
+        &self,
+        group: usize,
+        index: usize,
+        checkout: &str,
+        file: &DiffFile,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let style = UiStyle::get(cx);
+        let (theme, tokens) = (style.theme, style.density.ui());
+        let hover = theme.sidebar_accent;
+        let look = Look::of(cx);
+        let (letter, color) = crate::workbench::changes::status_mark(file.status, &theme);
+        let (name, dir) = match file.path.rsplit_once('/') {
+            Some((dir, name)) => (name.to_owned(), Some(dir.to_owned())),
+            None => (file.path.clone(), None),
+        };
+        let action = ChangedFileAt {
+            checkout: checkout.to_owned(),
+            file: file.path.clone(),
+        };
+        let tip = SharedString::from(file.path.clone());
+        div()
+            .id(SharedString::from(format!(
+                "changes-file-{checkout}-{}",
+                file.path
+            )))
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(tokens.spacing * 2.0))
+            .mx(px(tokens.spacing * 2.0))
+            .pl(px(tokens.spacing * 2.0 + 20.0 + tokens.spacing * 2.0))
+            .pr(px(tokens.spacing * 2.0))
+            .py(px(tokens.spacing))
+            .rounded(px(tokens.radius))
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .tooltip(move |_, cx| {
+                cx.new(|_| crate::workbench::style::TextTooltip(tip.clone()))
+                    .into()
+            })
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(Box::new(ReviewFileAt(action.clone())), cx);
+            })
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(12.0))
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(color)
+                    .child(letter),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .gap(px(tokens.spacing))
+                    .text_size(px(tokens.font_size))
+                    .child(
+                        div()
+                            .flex_none()
+                            .max_w_full()
+                            .truncate()
+                            .child(SharedString::from(name)),
+                    )
+                    .children(dir.map(|dir| {
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(tokens.secondary_font_size))
+                            .text_color(theme.muted)
+                            .child(SharedString::from(dir))
+                    })),
+            )
+            .child(if file.binary {
+                div()
+                    .flex_none()
+                    .text_size(px(tokens.secondary_font_size))
+                    .text_color(theme.muted)
+                    .child("binary")
+                    .into_any_element()
+            } else {
+                counts_of(file.additions as usize, file.deletions as usize, &look)
+            })
+            .child(probe(
+                &self.env.regions,
+                Region::ChangesPanelFile(group, index),
+            ))
+            .into_any_element()
+    }
+
+    /// *This checkout · All in workspace*: only when the workspace has more than one place
+    /// that changes.
+    fn scope_switch(&self, theme: &Theme, tokens: &Tokens, cx: &mut Context<Self>) -> AnyElement {
+        let shown = self.shown_scope();
+        let segment = |id: &'static str, label: &'static str, scope: ChangesScope| {
+            ui::segment(id, label, shown == scope, theme, tokens)
+                .on_click(cx.listener(move |this, _, _, cx| this.set_changes_scope(scope, cx)))
+                .child(probe(&self.env.regions, Region::Changes(id)))
+        };
+        div()
+            .flex()
+            .flex_none()
+            .px(px(tokens.spacing * 3.0))
+            .pb(px(tokens.spacing * 2.0))
+            .child(
+                ui::segmented(theme, tokens)
+                    .child(segment(
+                        "panel-scope-checkout",
+                        "This checkout",
+                        ChangesScope::Checkout,
+                    ))
+                    .child(segment(
+                        "panel-scope-workspace",
+                        "All in workspace",
+                        ChangesScope::Workspace,
+                    )),
+            )
             .into_any_element()
     }
 }
@@ -482,15 +826,17 @@ impl Render for ChangesPanel {
         .child(probe(&self.env.regions, Region::Changes("panel-refresh")))
         .into_any_element();
 
+        let shown = self.shown(cx);
+        let all = self.all_available();
         let body: AnyElement = match &self.checkouts {
-            Checkouts::Ready(list) if !list.is_empty() => div()
+            Checkouts::Ready(list) if !shown.is_empty() => div()
                 .id("changes-list")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
                 .flex()
                 .flex_col()
-                .children(list.iter().enumerate().map(|(i, w)| self.row(i, w, cx)))
+                .children(shown.iter().map(|&i| self.group(i, &list[i], cx)))
                 .into_any_element(),
             other => {
                 // At Home, an empty listing means the Home folder is not a repository: say so
@@ -590,6 +936,7 @@ impl Render for ChangesPanel {
                             .child(refresh),
                     ),
             )
+            .when(all, |s| s.child(self.scope_switch(&theme, &tokens, cx)))
             .children(stale)
             .child(body)
     }

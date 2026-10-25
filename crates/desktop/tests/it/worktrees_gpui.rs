@@ -270,6 +270,14 @@ fn the_changes_tab_lists_the_checkouts_and_a_click_opens_the_changes_view(cx: &m
     assert_eq!(rows[0].branch.as_deref(), Some("topic"));
     assert!(rows[0].dirty && !rows[0].main);
     assert!(rows[1].main && !rows[1].dirty);
+    // The window works in the clean main checkout, so *This checkout* is one header with no
+    // files; a worktree with changes offers *All in workspace*, which lists both.
+    wait_until(cx, "the scope switch", |cx| {
+        panel.read_with(cx, |p, _| p.all_available())
+    });
+    panel.update(cx, |p, cx| {
+        p.set_changes_scope(hutan_desktop::settings::ChangesScope::Workspace, cx)
+    });
     wait_until(cx, "the rows to be drawn", |cx| {
         view.read_with(cx, |wb, _| {
             wb.region_bounds(Region::ChangesCheckout(1)).is_some()

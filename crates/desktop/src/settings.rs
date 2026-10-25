@@ -1311,6 +1311,27 @@ impl TasksScope {
     }
 }
 
+/// What the Changes panel lists (`docs/design.md` § Changes panel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangesScope {
+    /// The files of the checkout the window works in.
+    #[default]
+    Checkout,
+    /// The files of every checkout of the workspace, grouped by checkout.
+    Workspace,
+}
+
+impl ChangesScope {
+    /// The value in `settings.toml`.
+    pub fn key(self) -> &'static str {
+        match self {
+            ChangesScope::Checkout => "checkout",
+            ChangesScope::Workspace => "workspace",
+        }
+    }
+}
+
 /// The `resources` namespace: the resources panel (processes per session, CPU and memory).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]

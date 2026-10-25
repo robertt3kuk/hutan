@@ -22,7 +22,7 @@ use hutan_protocol::worktree::{
     StepStatus, WorktreeFinish, WorktreeFinished, WorktreeMerged,
 };
 
-use super::{ChangesEvent, ChangesView, Merged};
+use super::{ChangesEvent, ChangesView, Listing, Merged};
 use crate::sessions::presentation::harness_label;
 use crate::theme::{Theme, Tokens};
 use crate::workbench::chat::vim::{Outcome, Vim};
@@ -382,6 +382,23 @@ impl ChangesView {
         }
         window.focus(&self.message_focus, cx);
         cx.notify();
+    }
+
+    /// *Finish…* asked for from outside the view (the Changes panel's group header): the form
+    /// opens as soon as the checkout's listing has been read, since Finish needs its branch.
+    pub fn finish_when_ready(&mut self, cx: &mut Context<Self>) {
+        self.finish_requested = true;
+        cx.notify();
+    }
+
+    /// Opens the form a [`finish_when_ready`](Self::finish_when_ready) waited for, once the
+    /// listing is in (drawn from `render`, which has the window).
+    pub(super) fn open_requested_finish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.finish_requested || self.loading || matches!(self.listing, Listing::Loading) {
+            return;
+        }
+        self.finish_requested = false;
+        self.open_finish(window, cx);
     }
 
     /// A new listing while the form is open: a message the user has not edited follows it (the

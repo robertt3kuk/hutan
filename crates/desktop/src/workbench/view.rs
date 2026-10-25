@@ -407,6 +407,15 @@ pub enum Region {
     TaskDelivery(usize),
     /// Row `index` of the right sidebar's Changes tab (the checkouts, top to bottom).
     ChangesCheckout(usize),
+    /// The changed-files badge of a project row of the sidebar (a project the window is not
+    /// working in).
+    ProjectChanged(hutan_core::WorkspaceId),
+    /// The fold chevron of group `index` of the Changes tab.
+    ChangesFold(usize),
+    /// The *Finish…* button of group `index` of the Changes tab.
+    ChangesFinish(usize),
+    /// File `file` of group `group` of the Changes tab (top to bottom, folded groups have none).
+    ChangesPanelFile(usize, usize),
     /// A control of the Changes view, by name (`toggle`, `refresh`, `merge`, `merge-confirm`,
     /// `merge-cancel`, `strategy-merge`, `strategy-squash`, `strategy-rebase`, `message`,
     /// `remove`, `keep`; delivery: `delivery`, `accept`, `request-changes`, `request-note`,
@@ -1181,7 +1190,11 @@ impl Workbench {
                 this.refresh_login_status(cx);
                 this.schedule_publish(cx);
                 if this.window_active {
-                    this.sessions.update(cx, |store, cx| store.scan_agents(cx));
+                    this.sessions.update(cx, |store, cx| {
+                        store.scan_agents(cx);
+                        // Files may have changed while another app had the focus.
+                        store.refresh_checkouts(cx);
+                    });
                     if this.first_screen_open(cx) {
                         this.refresh_first_screen_agents(true, cx);
                     }
@@ -1200,8 +1213,10 @@ impl Workbench {
             // A command or a turn ended in a checkout: the branch may have changed.
             cx.subscribe(
                 &sessions,
-                |this, _, _: &crate::sessions::CheckoutActivity, cx| {
+                |this, sessions, _: &crate::sessions::CheckoutActivity, cx| {
                     this.status_branch.mark_stale();
+                    // The sidebar's change badges follow what the session did.
+                    sessions.update(cx, |store, cx| store.refresh_checkouts(cx));
                     cx.notify();
                 },
             ),

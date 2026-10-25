@@ -195,6 +195,11 @@ pub struct ChangesView {
     /// Bumped by every reload; answers of older ones are dropped.
     generation: u64,
     selected: Option<String>,
+    /// A file the next listing selects (the Changes panel's file rows open the view on it).
+    wanted_file: Option<String>,
+    /// *Finish…* was asked for before the listing it needs (the branch, whether git knows it)
+    /// arrived; the form opens as soon as it has.
+    finish_requested: bool,
     patches: HashMap<String, FilePatch>,
     collapsed: HashSet<(String, usize)>,
     /// The Finish form, while it is open.
@@ -259,6 +264,8 @@ impl ChangesView {
             listing: Listing::Loading,
             generation: 0,
             selected: None,
+            wanted_file: None,
+            finish_requested: false,
             patches: HashMap::new(),
             collapsed: HashSet::new(),
             finish: None,
@@ -530,11 +537,16 @@ impl ChangesView {
                 }
                 match diff {
                     Ok(diff) => {
-                        let keep = this
-                            .selected
-                            .as_ref()
-                            .filter(|s| diff.files.iter().any(|f| &f.path == *s))
-                            .cloned();
+                        let wanted = this
+                            .wanted_file
+                            .take()
+                            .filter(|s| diff.files.iter().any(|f| &f.path == s));
+                        let keep = wanted.or_else(|| {
+                            this.selected
+                                .as_ref()
+                                .filter(|s| diff.files.iter().any(|f| &f.path == *s))
+                                .cloned()
+                        });
                         this.selected = keep.or_else(|| diff.files.first().map(|f| f.path.clone()));
                         this.listing = Listing::Ready(diff);
                         this.refreshed_ms = Some(hutan_client::time::now_ms());
@@ -675,6 +687,17 @@ impl ChangesView {
         self.selected = Some(file.to_owned());
         self.load_patch(file, cx);
         cx.notify();
+    }
+
+    /// Opens the view on `file` (the Changes panel's file rows): selected now when the listing
+    /// has it, else by the next listing.
+    pub fn show_file(&mut self, file: &str, cx: &mut Context<Self>) {
+        if !self.loading && self.files().iter().any(|f| f.path == file) {
+            self.wanted_file = None;
+            self.select(file, cx);
+        } else {
+            self.wanted_file = Some(file.to_owned());
+        }
     }
 
     /// Whether the last frame was narrower than [`NARROW_BELOW`]: the layout that frame's
@@ -843,7 +866,7 @@ impl ChangesView {
     }
 }
 
-fn status_mark(status: DiffStatus, theme: &Theme) -> (&'static str, gpui::Hsla) {
+pub(crate) fn status_mark(status: DiffStatus, theme: &Theme) -> (&'static str, gpui::Hsla) {
     match status {
         DiffStatus::Added => ("A", theme.diff_added),
         DiffStatus::Modified => ("M", theme.diff_modified),
@@ -860,6 +883,7 @@ impl Render for ChangesView {
         let (theme, tokens) = (style.theme, style.density.ui());
         let look = Look::of(cx);
         let narrow = self.narrow();
+        self.open_requested_finish(window, cx);
 
         let mut root = div()
             .relative()

@@ -429,6 +429,12 @@ data_actions! {
     ShowFilesMenu(FilesMenuAt);
     /// Open the Changes view of the checkout at this path (a worktree or a main checkout).
     ReviewChangesAt(String);
+    /// Open the Changes view of the checkout of a changed file with that file selected (a file
+    /// row of the Changes panel).
+    ReviewFileAt(ChangedFileAt);
+    /// Open the Changes view of the checkout at this path with its Finish form (a group header
+    /// of the Changes panel).
+    FinishChangesAt(String);
     /// Show the menu of the Assistant page's scope dropdown (Global / the workspace) at this
     /// position.
     ShowAssistantScopeMenu(gpui::Point<gpui::Pixels>);
@@ -541,6 +547,14 @@ pub struct ProjectDrop {
 pub struct CheckoutOpen {
     pub project: String,
     pub path: String,
+}
+
+/// A checkout (its folder) and one of its changed files (relative to it): a file row of the
+/// Changes panel.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ChangedFileAt {
+    pub checkout: String,
+    pub file: String,
 }
 
 /// A workspace or project (`workspace` is its id) and the name the user typed for it.

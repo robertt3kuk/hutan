@@ -191,6 +191,37 @@ impl Workbench {
         self.focus_root(window, cx);
     }
 
+    /// [`open_changes`](Self::open_changes) with `file` selected (a file row of the Changes
+    /// panel).
+    pub fn open_changes_file(
+        &mut self,
+        path: PathBuf,
+        file: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = path.display().to_string();
+        self.open_changes(path, window, cx);
+        if let Some(view) = self.changes(&key) {
+            view.update(cx, |view, cx| view.show_file(file, cx));
+        }
+    }
+
+    /// [`open_changes`](Self::open_changes) with the Finish form open, as soon as the checkout
+    /// has been read (a group header of the Changes panel).
+    pub fn open_changes_finish(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = path.display().to_string();
+        self.open_changes(path, window, cx);
+        if let Some(view) = self.changes(&key) {
+            view.update(cx, |view, cx| view.finish_when_ready(cx));
+        }
+    }
+
     /// [`open_changes`](Self::open_changes) for the work of `task`: the view reviews that task
     /// (Accept, Request changes…) whatever its branch says.
     fn open_changes_of_task(
