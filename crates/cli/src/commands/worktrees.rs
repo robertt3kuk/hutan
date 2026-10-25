@@ -7,10 +7,12 @@ use hutan_client::Client;
 use hutan_core::WorkspaceId;
 use hutan_protocol::messages::{CreatedBy, Request, WorkspaceKind, WorkspaceOpen, WorkspaceOpened};
 use hutan_protocol::worktree::{
-    DiffFile, DiffStatus, FinishCommit, FinishMerge, FinishPush, MergeStrategy, StepReason,
-    StepStatus, WorktreeCommit, WorktreeCreate, WorktreeCreated, WorktreeDiff, WorktreeDiffRequest,
-    WorktreeFileDiffRequest, WorktreeFinish, WorktreeFinished, WorktreeInfo, WorktreeList,
-    WorktreeMerge, WorktreeMerged, WorktreeRemove, conflict_files,
+    CleanupReason, DiffFile, DiffStatus, FinishCommit, FinishMerge, FinishPush, MergeStrategy,
+    StepReason, StepStatus, WorktreeCleanup, WorktreeCleanupRequest, WorktreeCommit,
+    WorktreeCreate, WorktreeCreated, WorktreeDiff, WorktreeDiffRequest, WorktreeFileDiffRequest,
+    WorktreeFinish, WorktreeFinished, WorktreeInfo, WorktreeList, WorktreeMerge, WorktreeMerged,
+    WorktreePrune, WorktreeRemove, WorktreeSetup, WorktreeSetupRequest, WorktreeSetupState,
+    WorktreeSetupTrust, conflict_files,
 };
 use serde_json::json;
 
@@ -18,7 +20,8 @@ use super::Ctx;
 use super::sessions::with_source;
 use super::workspaces::workspace_target;
 use crate::args::{
-    FinishArgs, WtCommand, WtCommitArgs, WtDiffArgs, WtLsArgs, WtMergeArgs, WtNewArgs, WtRmArgs,
+    FinishArgs, WtCommand, WtCommitArgs, WtDiffArgs, WtLsArgs, WtMergeArgs, WtNewArgs, WtPruneArgs,
+    WtRmArgs, WtSetupArgs,
 };
 use crate::error::CliError;
 
@@ -37,6 +40,8 @@ impl Ctx {
             WtCommand::Diff(args) => self.wt_diff(args).await,
             WtCommand::Merge(args) => self.wt_merge(args).await,
             WtCommand::Commit(args) => self.wt_commit(args).await,
+            WtCommand::Setup(args) => self.wt_setup(args).await,
+            WtCommand::Prune(args) => self.wt_prune(args).await,
         }
     }
 
@@ -232,11 +237,126 @@ impl Ctx {
                 branch: args.branch,
                 base: args.base,
                 path,
+                no_setup: args.no_setup,
             })
             .await
             .map_err(|e| self.fail(e))?;
+        if let Some(setup) = &created.setup {
+            self.note(setup_note(setup, created.branch.as_deref()));
+        }
         let path = created.path.display().to_string();
         self.print(&WorktreeCreated { worktree: created }, || path)
+    }
+
+    /// `hutan wt setup`: runs the setup again; the repository's commands are shown and asked
+    /// about when they are new.
+    async fn wt_setup(&self, args: WtSetupArgs) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        if !client.supports_worktree_setup() {
+            return Err(CliError::Failed(
+                "this hutand cannot run worktree setup (it is older than protocol 0.48); restart \
+                 it to update"
+                    .to_owned(),
+            ));
+        }
+        let target = self
+            .wt_target(&client, &args.target, args.workspace)
+            .await?;
+        let mut result = client
+            .worktree_setup(WorktreeSetupRequest {
+                path: target.path.clone(),
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        if let Some(setup) = result.worktree.setup.clone()
+            && setup.state == WorktreeSetupState::NeedsTrust
+        {
+            let hash = setup.hash.clone().unwrap_or_default();
+            confirm_setup(&setup, &target.path, args.yes)?;
+            result = client
+                .worktree_setup_trust(WorktreeSetupTrust {
+                    path: target.path.clone(),
+                    hash,
+                })
+                .await
+                .map_err(|e| self.fail(e))?;
+        }
+        self.print(&result, || {
+            result.worktree.setup.as_ref().map_or_else(
+                || "no setup".to_owned(),
+                |setup| setup_note(setup, target.branch.as_deref()),
+            )
+        })
+    }
+
+    /// `hutan wt prune`: lists what the cleanup policy removes, asks, and removes it.
+    async fn wt_prune(&self, args: WtPruneArgs) -> Result<(), CliError> {
+        let client = self.connect().await?;
+        if !client.supports_worktree_setup() {
+            return Err(CliError::Failed(
+                "this hutand cannot clean up worktrees (it is older than protocol 0.48); restart \
+                 it to update"
+                    .to_owned(),
+            ));
+        }
+        let workspace = self.wt_scope(&client, args.workspace).await?.map(|s| s.0);
+        let (mode, idle_days) = match (args.merged, args.idle_days) {
+            (true, _) => (Some(WorktreeCleanup::Merged), None),
+            (_, Some(days)) => (Some(WorktreeCleanup::Idle), Some(days)),
+            _ => (None, None),
+        };
+        let listed = client
+            .worktree_cleanup(WorktreeCleanupRequest {
+                workspace_id: workspace,
+                mode,
+                idle_days,
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        if args.dry_run {
+            return self.print(&listed, || cleanup_text(&listed));
+        }
+        if listed.candidates.is_empty() {
+            return self.print(
+                &hutan_protocol::worktree::WorktreePruned {
+                    removed: Vec::new(),
+                    failed: Vec::new(),
+                },
+                || cleanup_text(&listed),
+            );
+        }
+        if !self.json {
+            println!("{}", cleanup_text(&listed));
+        }
+        confirm_prune(listed.candidates.len(), args.yes)?;
+        let pruned = client
+            .worktree_prune(WorktreePrune {
+                workspace_id: workspace,
+                mode,
+                idle_days,
+                paths: listed.candidates.iter().map(|c| c.path.clone()).collect(),
+            })
+            .await
+            .map_err(|e| self.fail(e))?;
+        self.print(&pruned, || {
+            let mut lines: Vec<String> = pruned
+                .removed
+                .iter()
+                .map(|path| format!("removed {}", path.display()))
+                .collect();
+            lines.extend(
+                pruned
+                    .failed
+                    .iter()
+                    .map(|f| format!("kept {}: {}", f.path.display(), f.reason)),
+            );
+            lines.join("\n")
+        })?;
+        if pruned.failed.is_empty() {
+            Ok(())
+        } else {
+            Err(CliError::Reported)
+        }
     }
 
     async fn wt_ls(&self, args: WtLsArgs) -> Result<(), CliError> {
@@ -317,10 +437,14 @@ impl Ctx {
                 branch: branch.to_owned(),
                 base: None,
                 path: None,
+                no_setup: false,
             })
             .await
             .map_err(|e| self.fail(e))?;
         self.note(format!("created worktree {}", created.path.display()));
+        if let Some(setup) = &created.setup {
+            self.note(setup_note(setup, created.branch.as_deref()));
+        }
         Ok(Placed {
             workspace,
             path: created.path,
@@ -703,6 +827,139 @@ fn branch_text(worktree: &WorktreeInfo) -> String {
     }
 }
 
+/// One line for what a setup is doing or did.
+fn setup_note(setup: &WorktreeSetup, branch: Option<&str>) -> String {
+    let copied = match setup.copied {
+        0 => String::new(),
+        1 => "copied 1 file; ".to_owned(),
+        n => format!("copied {n} files; "),
+    };
+    let tail = setup
+        .message
+        .as_deref()
+        .map(|m| format!(" ({m})"))
+        .unwrap_or_default();
+    match setup.state {
+        WorktreeSetupState::Running => format!(
+            "{copied}setup is running{}{tail}",
+            setup
+                .session_id
+                .map(|id| format!(" in session {id}"))
+                .unwrap_or_default()
+        ),
+        WorktreeSetupState::NeedsTrust => format!(
+            "{copied}setup did not run: its commands come from .hutan/worktree.toml and need your \
+             confirmation; run `hutan wt setup {}`{tail}",
+            branch.unwrap_or("<worktree>")
+        ),
+        WorktreeSetupState::Failed => format!("{copied}setup failed{tail}"),
+        WorktreeSetupState::Done => format!("{copied}setup done{tail}"),
+    }
+}
+
+/// Shows the repository's commands and asks; anything but `y` or `yes` is No.
+fn confirm_setup(setup: &WorktreeSetup, path: &Path, yes: bool) -> Result<(), CliError> {
+    use std::io::{BufRead as _, IsTerminal as _, Write as _};
+    let mut stderr = std::io::stderr().lock();
+    writeln!(
+        stderr,
+        ".hutan/worktree.toml asks to run these commands in the worktree {}:",
+        path.display()
+    )?;
+    for command in &setup.commands {
+        writeln!(stderr, "  setup     $ {command}")?;
+    }
+    for command in &setup.teardown {
+        writeln!(
+            stderr,
+            "  teardown  $ {command}  (before the worktree is removed)"
+        )?;
+    }
+    if yes {
+        return Ok(());
+    }
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        return Err(CliError::Usage(
+            "nothing ran: stdin is not a terminal; pass --yes to confirm these commands".to_owned(),
+        ));
+    }
+    write!(
+        stderr,
+        "Run them, and again whenever they stay the same? [y/N] "
+    )?;
+    stderr.flush()?;
+    let mut answer = String::new();
+    stdin.lock().read_line(&mut answer)?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        Err(CliError::Failed(
+            "nothing ran: the commands were not confirmed".to_owned(),
+        ))
+    }
+}
+
+fn confirm_prune(count: usize, yes: bool) -> Result<(), CliError> {
+    use std::io::{BufRead as _, IsTerminal as _, Write as _};
+    if yes {
+        return Ok(());
+    }
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        return Err(CliError::Usage(
+            "nothing was removed: stdin is not a terminal; pass --yes to remove them".to_owned(),
+        ));
+    }
+    let mut stderr = std::io::stderr().lock();
+    write!(
+        stderr,
+        "Remove {count} worktree(s), running their teardown first? [y/N] "
+    )?;
+    stderr.flush()?;
+    let mut answer = String::new();
+    stdin.lock().read_line(&mut answer)?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        Err(CliError::Failed("nothing was removed".to_owned()))
+    }
+}
+
+fn cleanup_text(list: &hutan_protocol::worktree::WorktreeCleanupList) -> String {
+    if list.candidates.is_empty() {
+        return match list.mode {
+            WorktreeCleanup::Never => {
+                "cleanup is never: set `[worktrees] cleanup` in daemon.toml, \
+                                      or pass --merged or --idle-days N"
+                    .to_owned()
+            }
+            WorktreeCleanup::Merged => "no merged worktree to clean up".to_owned(),
+            WorktreeCleanup::Idle => format!("no worktree untouched for {} day(s)", list.idle_days),
+        };
+    }
+    let rows = list
+        .candidates
+        .iter()
+        .map(|c| {
+            vec![
+                c.branch.clone().unwrap_or_else(|| "(detached)".to_owned()),
+                c.path.display().to_string(),
+                match c.reason {
+                    CleanupReason::Merged => "merged".to_owned(),
+                    CleanupReason::Idle => format!("idle {} d", c.idle_days),
+                },
+                if c.teardown.is_empty() {
+                    String::new()
+                } else {
+                    format!("teardown: {}", c.teardown.join("; "))
+                },
+            ]
+        })
+        .collect();
+    super::workspaces::table(&["BRANCH", "PATH", "WHY", "TEARDOWN"], rows)
+}
+
 fn state_text(worktree: &WorktreeInfo) -> String {
     let mut parts: Vec<String> = Vec::new();
     if worktree.main {
@@ -724,6 +981,12 @@ fn state_text(worktree: &WorktreeInfo) -> String {
         0 => {}
         1 => parts.push("1 session".to_owned()),
         n => parts.push(format!("{n} sessions")),
+    }
+    match worktree.setup.as_ref().map(|s| s.state) {
+        Some(WorktreeSetupState::Running) => parts.push("setting up".to_owned()),
+        Some(WorktreeSetupState::NeedsTrust) => parts.push("setup needs confirmation".to_owned()),
+        Some(WorktreeSetupState::Failed) => parts.push("setup failed".to_owned()),
+        Some(WorktreeSetupState::Done) | None => {}
     }
     if parts.is_empty() {
         "-".to_owned()
@@ -779,6 +1042,7 @@ mod tests {
             live_sessions: vec![],
             locked: false,
             prunable: false,
+            setup: None,
         }
     }
 

@@ -420,7 +420,9 @@ const WT_WS_HELP: &str = "Workspace or project: id, unique id prefix, or exact n
 #[derive(Debug, Subcommand)]
 pub enum WtCommand {
     /// Create a worktree for a branch (a new branch from --base, or the existing one); prints
-    /// its path
+    /// its path. Copies the files and runs the setup `.hutan/worktree.toml` asks for, unless
+    /// --no-setup
+    #[command(visible_alias = "create")]
     New(WtNewArgs),
     /// List the worktrees of a workspace's repositories: branch, path, state, live sessions
     Ls(WtLsArgs),
@@ -437,6 +439,42 @@ pub enum WtCommand {
     /// Commit everything in a worktree (tracked changes and untracked files that are not
     /// ignored), so that a merge takes it: `hutan wt commit BRANCH -m MSG`
     Commit(WtCommitArgs),
+    /// Run a worktree's setup again (`.hutan/worktree.toml`: copy, setup); commands that come
+    /// from the repository ask for your confirmation the first time and whenever they change
+    Setup(WtSetupArgs),
+    /// Remove the worktrees the `[worktrees] cleanup` policy lists (merged, or idle for N days),
+    /// each after its teardown; --dry-run only lists them. Never removes one with a live
+    /// session or uncommitted changes
+    Prune(WtPruneArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct WtSetupArgs {
+    /// The worktree's path, or its branch (see `hutan wt ls`)
+    pub target: String,
+    #[arg(long = "ws", value_name = "ID|NAME", help = WT_WS_HELP)]
+    pub workspace: Option<String>,
+    /// Confirm the repository's commands without asking (needed without a terminal)
+    #[arg(long, short = 'y')]
+    pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct WtPruneArgs {
+    #[arg(long = "ws", value_name = "ID|NAME", help = WT_WS_HELP)]
+    pub workspace: Option<String>,
+    /// List what would be removed and remove nothing
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Remove without asking (needed without a terminal)
+    #[arg(long, short = 'y')]
+    pub yes: bool,
+    /// Whose branch is merged into the default branch, whatever `[worktrees] cleanup` says
+    #[arg(long, conflicts_with = "idle_days")]
+    pub merged: bool,
+    /// Untouched for this many days, whatever `[worktrees] cleanup` says
+    #[arg(long, value_name = "DAYS", value_parser = clap::value_parser!(u64).range(1..))]
+    pub idle_days: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -456,6 +494,10 @@ pub struct WtNewArgs {
     /// found by it, else the workspace's first git root)
     #[arg(long, value_name = "PATH")]
     pub repo: Option<PathBuf>,
+    /// Do not copy files or run the setup of `.hutan/worktree.toml` (`hutan wt setup` runs it
+    /// later)
+    #[arg(long)]
+    pub no_setup: bool,
 }
 
 #[derive(Debug, Args)]

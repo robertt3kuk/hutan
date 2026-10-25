@@ -390,3 +390,214 @@ async fn ls_shows_the_placement_and_warns_when_two_agents_share_a_checkout() {
     assert_eq!(table.matches("main ⚠ shared").count(), 2, "{table}");
     t.stop().await;
 }
+
+// Setup, teardown and cleanup (protocol 0.48) ---------------------------------------------------
+
+/// Polls `hutan wt ls --json` from `cwd` until the worktree at `path` has a setup in `state`.
+async fn wait_setup(t: &TestDaemon, cwd: &Path, path: &Path, state: &str) -> Value {
+    timeout(WAIT, async {
+        loop {
+            let listed = hutan_in(t, cwd, &["wt", "ls", "--json"]).await.ok().json();
+            let found = listed["worktrees"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|w| w["path"] == s(path))
+                .and_then(|w| w.get("setup").cloned());
+            if let Some(setup) = found
+                && setup["state"] == state
+            {
+                return setup;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("setup of {} never reached {state}", path.display()))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn wt_create_is_wt_new_and_no_setup_skips_what_wt_setup_runs_later() {
+    let t = TestDaemon::start_toml(
+        "[worktrees.projects.repo]\nsetup = [\"touch ran\"]\ncopy = [\".env\"]\n",
+        |_| {},
+    )
+    .await;
+    let repo = Repo::new();
+    fs::write(repo.root.join(".gitignore"), ".env\n").unwrap();
+    git(&repo.root, &["add", ".gitignore"]);
+    git(&repo.root, &["commit", "-q", "-m", "ignore"]);
+    fs::write(repo.root.join(".env"), "A=1\n").unwrap();
+    open_workspace(&t, &repo.root).await;
+
+    let quiet = hutan_in(&t, &repo.root, &["wt", "create", "quiet", "--no-setup"])
+        .await
+        .ok();
+    assert_eq!(quiet.stdout.trim(), s(&repo.wt("quiet")));
+    assert!(!quiet.stderr.contains("setup"), "{}", quiet.stderr);
+    assert!(!repo.wt("quiet").join(".env").exists());
+    assert!(!repo.wt("quiet").join("ran").exists());
+
+    // `wt setup` runs it afterwards, in a Setup session.
+    let again = hutan_in(&t, &repo.root, &["wt", "setup", "quiet"])
+        .await
+        .ok();
+    assert!(again.stdout.contains("copied 1 file"), "{}", again.stdout);
+    wait_setup(&t, &repo.root, &repo.wt("quiet"), "done").await;
+    assert_eq!(
+        fs::read_to_string(repo.wt("quiet").join(".env")).unwrap(),
+        "A=1\n"
+    );
+    assert!(repo.wt("quiet").join("ran").exists());
+
+    // Without the flag, `wt new` does it at once and says so on stderr (the path stays alone on
+    // stdout).
+    let made = hutan_in(&t, &repo.root, &["wt", "new", "eager"]).await.ok();
+    assert_eq!(made.stdout.trim(), s(&repo.wt("eager")));
+    assert!(made.stderr.contains("copied 1 file"), "{}", made.stderr);
+    wait_setup(&t, &repo.root, &repo.wt("eager"), "done").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_setup_shows_in_wt_ls() {
+    let t =
+        TestDaemon::start_toml("[worktrees.projects.repo]\nsetup = [\"exit 3\"]\n", |_| {}).await;
+    let repo = Repo::new();
+    open_workspace(&t, &repo.root).await;
+    hutan_in(&t, &repo.root, &["wt", "new", "bad"]).await.ok();
+    let setup = wait_setup(&t, &repo.root, &repo.wt("bad"), "failed").await;
+    assert!(setup["message"].as_str().unwrap().contains("code 3"));
+    let table = hutan_in(&t, &repo.root, &["wt", "ls"]).await.ok().stdout;
+    assert!(table.contains("setup failed"), "{table}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn commands_of_the_repository_need_yes_without_a_terminal() {
+    let t = TestDaemon::start().await;
+    let repo = Repo::new();
+    fs::create_dir(repo.root.join(".hutan")).unwrap();
+    fs::write(
+        repo.root.join(".hutan/worktree.toml"),
+        "setup = [\"touch ran\"]\n",
+    )
+    .unwrap();
+    git(&repo.root, &["add", ".hutan/worktree.toml"]);
+    git(&repo.root, &["commit", "-q", "-m", "worktree config"]);
+    open_workspace(&t, &repo.root).await;
+
+    let made = hutan_in(&t, &repo.root, &["wt", "new", "feature/x"])
+        .await
+        .ok();
+    assert!(
+        made.stderr.contains("need your confirmation")
+            && made.stderr.contains("hutan wt setup feature/x"),
+        "{}",
+        made.stderr
+    );
+    let table = hutan_in(&t, &repo.root, &["wt", "ls"]).await.ok().stdout;
+    assert!(table.contains("setup needs confirmation"), "{table}");
+    let wt = repo.wt("feature-x");
+    assert!(!wt.join("ran").exists());
+
+    // No terminal and no --yes: the commands are shown and nothing runs.
+    let refused = hutan_in(&t, &repo.root, &["wt", "setup", "feature/x"]).await;
+    assert_ne!(refused.code, 0);
+    assert!(refused.stderr.contains("pass --yes"), "{}", refused.stderr);
+    assert!(refused.stderr.contains("$ touch ran"), "{}", refused.stderr);
+    assert!(!wt.join("ran").exists());
+
+    hutan_in(&t, &repo.root, &["wt", "setup", "feature/x", "--yes"])
+        .await
+        .ok();
+    wait_setup(&t, &repo.root, &wt, "done").await;
+    assert!(wt.join("ran").exists());
+    // The same commands in the next worktree run without a question.
+    let next = hutan_in(&t, &repo.root, &["wt", "new", "feature/y"])
+        .await
+        .ok();
+    assert!(
+        !next.stderr.contains("need your confirmation"),
+        "{}",
+        next.stderr
+    );
+    wait_setup(&t, &repo.root, &repo.wt("feature-y"), "done").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn wt_prune_lists_merged_worktrees_and_removes_them_only_when_told() {
+    let t = TestDaemon::start_toml("[worktrees]\ncleanup = \"merged\"\n", |_| {}).await;
+    let repo = Repo::new();
+    open_workspace(&t, &repo.root).await;
+    let done = hutan_in(&t, &repo.root, &["wt", "new", "done"]).await.ok();
+    let done_path = PathBuf::from(done.stdout.trim());
+    hutan_in(&t, &repo.root, &["wt", "new", "open"]).await.ok();
+    fs::write(done_path.join("d.txt"), "d\n").unwrap();
+    git(&done_path, &["add", "d.txt"]);
+    git(&done_path, &["commit", "-q", "-m", "d"]);
+    git(
+        &repo.root,
+        &["merge", "-q", "--no-ff", "-m", "merge done", "done"],
+    );
+
+    let dry = hutan_in(&t, &repo.root, &["wt", "prune", "--dry-run"])
+        .await
+        .ok();
+    assert!(
+        dry.stdout.contains("done") && dry.stdout.contains("merged"),
+        "{}",
+        dry.stdout
+    );
+    assert!(!dry.stdout.contains("open"), "{}", dry.stdout);
+    let json = hutan_in(&t, &repo.root, &["wt", "prune", "--dry-run", "--json"])
+        .await
+        .ok()
+        .json();
+    assert_eq!(json["mode"], "merged");
+    assert_eq!(json["candidates"].as_array().unwrap().len(), 1);
+    assert!(done_path.exists());
+
+    // Without a terminal it asks for --yes and removes nothing.
+    let refused = hutan_in(&t, &repo.root, &["wt", "prune"]).await;
+    assert_ne!(refused.code, 0);
+    assert!(refused.stderr.contains("--yes"), "{}", refused.stderr);
+    assert!(done_path.exists());
+
+    let pruned = hutan_in(&t, &repo.root, &["wt", "prune", "--yes"])
+        .await
+        .ok();
+    assert!(pruned.stdout.contains("removed"), "{}", pruned.stdout);
+    assert!(!done_path.exists());
+    assert!(repo.wt("open").exists());
+    let after = hutan_in(&t, &repo.root, &["wt", "prune", "--dry-run"])
+        .await
+        .ok();
+    assert!(
+        after.stdout.contains("no merged worktree"),
+        "{}",
+        after.stdout
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn wt_prune_says_how_to_turn_cleanup_on_while_the_policy_is_never() {
+    let t = TestDaemon::start().await;
+    let repo = Repo::new();
+    open_workspace(&t, &repo.root).await;
+    let out = hutan_in(&t, &repo.root, &["wt", "prune", "--dry-run"])
+        .await
+        .ok();
+    assert!(out.stdout.contains("cleanup is never"), "{}", out.stdout);
+    // The flags pick a policy for this run.
+    let idle = hutan_in(
+        &t,
+        &repo.root,
+        &["wt", "prune", "--dry-run", "--idle-days", "30"],
+    )
+    .await
+    .ok();
+    assert!(
+        idle.stdout.contains("untouched for 30 day"),
+        "{}",
+        idle.stdout
+    );
+}
