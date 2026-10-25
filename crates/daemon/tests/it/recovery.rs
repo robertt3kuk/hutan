@@ -650,7 +650,7 @@ async fn a_hutand_that_was_killed_is_told_from_one_that_was_stopped() {
         .spawn()
         .unwrap();
     let options = hutan_client::ConnectOptions {
-        socket: Some(paths.socket.clone()),
+        endpoint: Some(paths.socket.clone().into()),
         autostart: None,
         client: hutan_protocol::messages::ClientInfo {
             kind: hutan_protocol::messages::ClientKind::Cli,

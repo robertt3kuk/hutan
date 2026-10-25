@@ -53,7 +53,7 @@ fn wrapper(dir: &Path, home: &Path) -> PathBuf {
 
 fn options(socket: &Path, autostart: PathBuf) -> ConnectOptions {
     ConnectOptions {
-        socket: Some(socket.to_owned()),
+        endpoint: Some(socket.to_owned().into()),
         autostart: Some(autostart),
         client: ClientInfo {
             kind: ClientKind::Cli,

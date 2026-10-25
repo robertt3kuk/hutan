@@ -372,7 +372,7 @@ fn binary_beside(exe: Option<&Path>, name: &str) -> PathBuf {
 /// respected) with `hutand` autostarted when nothing listens.
 pub fn connect_options() -> ConnectOptions {
     ConnectOptions {
-        socket: None,
+        endpoint: None,
         autostart: Some(hutand_path()),
         client: ClientInfo {
             kind: ClientKind::Desktop,

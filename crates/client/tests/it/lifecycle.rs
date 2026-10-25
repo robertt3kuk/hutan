@@ -33,7 +33,7 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
 
 fn options(socket: &Path, autostart: PathBuf, kind: ClientKind) -> ConnectOptions {
     ConnectOptions {
-        socket: Some(socket.to_owned()),
+        endpoint: Some(socket.to_owned().into()),
         autostart: Some(autostart),
         client: ClientInfo {
             kind,

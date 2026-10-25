@@ -272,7 +272,7 @@ fn failed_start<'a>(
     )
     .unwrap();
     let connection = Connection::start(ConnectOptions {
-        socket: Some(socket),
+        endpoint: Some(socket.into()),
         autostart: None,
         client: ClientInfo {
             kind: ClientKind::Desktop,

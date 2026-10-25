@@ -49,7 +49,7 @@ async fn a_stopped_daemon_stays_down_until_autostart_is_turned_on_again() {
         .unwrap();
 
     let connection = Connection::start(ConnectOptions {
-        socket: Some(paths.socket.clone()),
+        endpoint: Some(paths.socket.clone().into()),
         autostart: Some(binary),
         client: ClientInfo {
             kind: ClientKind::Desktop,

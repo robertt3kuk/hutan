@@ -40,8 +40,8 @@ use tracing::error;
 use crate::blocks::BlockList;
 use crate::chat::ChatUpdate;
 use crate::client::{Client, ConnectOptions};
+use crate::endpoint::Endpoint;
 use crate::error::ClientError;
-use crate::socket::default_socket_path;
 use crate::store::{ConnectionState, Notice, StoreState};
 use crate::supervisor::Supervisor;
 use crate::terminal::{Command, TerminalHandle, UPDATE_BUFFER, send_command};
@@ -168,7 +168,7 @@ impl Drop for Owner {
 pub struct Connection {
     shared: Arc<Shared>,
     owner: Arc<Owner>,
-    socket: Option<PathBuf>,
+    endpoint: Option<Endpoint>,
 }
 
 impl Connection {
@@ -193,7 +193,7 @@ impl Connection {
     }
 
     fn start_with(opts: ConnectOptions, autostart: bool) -> Connection {
-        let socket = opts.socket.clone().or_else(default_socket_path);
+        let endpoint = opts.endpoint.clone().or_else(Endpoint::default_local);
         let (state, _) = watch::channel(Arc::new(StoreState::initial()));
         let (notices, _) = broadcast::channel(NOTICE_BUFFER);
         let (chat, _) = broadcast::channel(CHAT_BUFFER);
@@ -232,7 +232,7 @@ impl Connection {
                 cancel,
                 thread: Mutex::new(thread),
             }),
-            socket,
+            endpoint,
         }
     }
 
@@ -254,9 +254,14 @@ impl Connection {
         self.shared.chat.subscribe()
     }
 
-    /// The socket this connection dials (`ConnectOptions::socket`, else the default location).
+    /// What this connection dials (`ConnectOptions::endpoint`, else the local default).
+    pub fn endpoint(&self) -> Option<&Endpoint> {
+        self.endpoint.as_ref()
+    }
+
+    /// The Unix socket this connection dials, when its endpoint is local.
     pub fn socket_path(&self) -> Option<&Path> {
-        self.socket.as_deref()
+        self.endpoint.as_ref().and_then(Endpoint::local_socket)
     }
 
     /// Allows or forbids starting `hutand` when nothing listens (it has no effect without

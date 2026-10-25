@@ -171,7 +171,7 @@ impl Drop for Host {
 
 async fn client(t: &TestDaemon) -> Client {
     Client::connect(ConnectOptions {
-        socket: Some(t.paths.socket.clone()),
+        endpoint: Some(t.paths.socket.clone().into()),
         autostart: None,
         client: ClientInfo {
             kind: ClientKind::Cli,

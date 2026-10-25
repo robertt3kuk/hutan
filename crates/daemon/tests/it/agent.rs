@@ -405,7 +405,7 @@ async fn sessions_get_the_hutan_environment_and_the_daemon_wins_over_the_spec() 
     spec.env.insert("HUTAN_BIN".into(), "/evil/hutan".into());
 
     let client = Client::connect(hutan_client::ConnectOptions {
-        socket: Some(paths.socket.clone()),
+        endpoint: Some(paths.socket.clone().into()),
         autostart: None,
         client: hutan_protocol::messages::ClientInfo {
             kind: hutan_protocol::messages::ClientKind::Cli,

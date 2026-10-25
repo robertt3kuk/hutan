@@ -44,7 +44,11 @@ struct Server {
 impl Server {
     fn options(&self) -> ConnectOptions {
         ConnectOptions {
-            socket: self.target.socket.clone(),
+            endpoint: self
+                .target
+                .socket
+                .clone()
+                .map(hutan_client::Endpoint::Local),
             autostart: None,
             client: ClientInfo {
                 kind: ClientKind::Other,

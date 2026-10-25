@@ -671,7 +671,7 @@ impl<'a> Stack<'a> {
         let client = loop {
             daemon.ensure_running()?;
             let attempt = Client::connect(ConnectOptions {
-                socket: Some(socket.clone()),
+                endpoint: Some(socket.clone().into()),
                 autostart: None,
                 client: ClientInfo {
                     kind: ClientKind::Cli,

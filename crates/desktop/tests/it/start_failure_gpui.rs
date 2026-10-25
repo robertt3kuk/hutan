@@ -193,7 +193,7 @@ fn a_stuck_daemon_is_shown_and_only_a_hutand_is_ever_stopped(cx: &mut TestAppCon
     )
     .unwrap();
     let connection = Connection::start(ConnectOptions {
-        socket: Some(socket),
+        endpoint: Some(socket.into()),
         autostart: None,
         client: ClientInfo {
             kind: ClientKind::Desktop,

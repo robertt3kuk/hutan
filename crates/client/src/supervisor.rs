@@ -41,9 +41,9 @@ use crate::client::{
     is_unreachable,
 };
 use crate::connection::Shared;
+use crate::endpoint::Endpoint;
 use crate::error::ClientError;
 use crate::identity::DaemonIdentity;
-use crate::socket::default_socket_path;
 use crate::start_failure::{DaemonFiles, StartFailure};
 use crate::store::{ConnectionState, Effects, Notice, StoreState};
 use crate::terminal::{Command, GoneReason, TerminalUpdate};
@@ -351,10 +351,12 @@ impl Supervisor {
         cancel: CancellationToken,
     ) -> Self {
         let files = opts
-            .socket
+            .endpoint
             .clone()
-            .or_else(default_socket_path)
-            .map(|socket| DaemonFiles::for_socket(&socket));
+            .or_else(Endpoint::default_local)
+            .as_ref()
+            .and_then(Endpoint::local_socket)
+            .map(DaemonFiles::for_socket);
         Self {
             opts,
             shared,

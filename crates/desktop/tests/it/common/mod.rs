@@ -432,7 +432,7 @@ impl TestDaemon {
         });
         self.older = Some(task);
         let mut options = self.options();
-        options.socket = Some(path);
+        options.endpoint = Some(path.into());
         Connection::start(options)
     }
 
@@ -444,7 +444,7 @@ impl TestDaemon {
             self.proxy = Some(proxy);
         }
         let mut options = self.options();
-        options.socket = Some(path);
+        options.endpoint = Some(path.into());
         Connection::start(options)
     }
 
@@ -477,7 +477,7 @@ impl TestDaemon {
             }
         });
         let mut options = self.options();
-        options.socket = Some(path);
+        options.endpoint = Some(path.into());
         (Connection::start(options), hold)
     }
 
@@ -491,7 +491,7 @@ impl TestDaemon {
 
     pub fn options(&self) -> ConnectOptions {
         ConnectOptions {
-            socket: Some(self.paths.socket.clone()),
+            endpoint: Some(self.paths.socket.clone().into()),
             autostart: None,
             client: client_info(),
         }
@@ -689,7 +689,7 @@ pub fn offline_connection() -> (Connection, SettingsStore, PathBuf) {
     let state = dir.path().join("desktop-state.json");
     KEEP.with(|keep| keep.borrow_mut().push(dir));
     let connection = Connection::start(ConnectOptions {
-        socket: Some(socket),
+        endpoint: Some(socket.into()),
         autostart: None,
         client: client_info(),
     });
@@ -833,7 +833,7 @@ impl ProcessDaemon {
 
     pub fn options(&self) -> ConnectOptions {
         ConnectOptions {
-            socket: Some(self.socket()),
+            endpoint: Some(self.socket().into()),
             autostart: Some(self.wrapper.clone()),
             client: client_info(),
         }
@@ -904,7 +904,7 @@ impl ProcessDaemon {
         request: Request,
     ) -> T {
         let options = ConnectOptions {
-            socket: Some(self.socket()),
+            endpoint: Some(self.socket().into()),
             autostart: None,
             client: ClientInfo {
                 kind,

@@ -56,7 +56,7 @@ async fn run(home: &std::path::Path) -> Result<()> {
     let daemon = hutan_daemon::start(DaemonConfig::new(paths.clone())).await?;
     let connect = || async {
         Client::connect(ConnectOptions {
-            socket: Some(paths.socket.clone()),
+            endpoint: Some(paths.socket.clone().into()),
             autostart: None,
             client: ClientInfo {
                 kind: ClientKind::Cli,

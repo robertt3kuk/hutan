@@ -123,7 +123,7 @@ fn catalog() -> UiPublish {
 impl FakeDesktop {
     pub(crate) async fn start(socket: &Path) -> Self {
         let client = Client::connect(ConnectOptions {
-            socket: Some(socket.to_owned()),
+            endpoint: Some(socket.to_owned().into()),
             autostart: None,
             client: ClientInfo {
                 kind: ClientKind::Desktop,
@@ -412,7 +412,7 @@ async fn setup_opens_the_desktops_setup_and_says_so_without_a_window() {
 /// does.
 async fn start_quitting_desktop(socket: &Path) {
     let client = Client::connect(ConnectOptions {
-        socket: Some(socket.to_owned()),
+        endpoint: Some(socket.to_owned().into()),
         autostart: None,
         client: ClientInfo {
             kind: ClientKind::Desktop,

@@ -656,7 +656,7 @@ fn a_settings_file_from_before_keeps_its_login_item_and_is_told_so(cx: &mut Test
 
 fn connect_options(socket: &Path, autostart: Option<&Path>) -> ConnectOptions {
     ConnectOptions {
-        socket: Some(socket.to_owned()),
+        endpoint: Some(socket.to_owned().into()),
         autostart: autostart.map(Path::to_owned),
         client: ClientInfo {
             kind: ClientKind::Desktop,

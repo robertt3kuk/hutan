@@ -830,7 +830,7 @@ async fn sigterm_stops_sessions_and_removes_the_socket() {
 
     let connect = || async {
         Client::connect(ConnectOptions {
-            socket: Some(socket.clone()),
+            endpoint: Some(socket.clone().into()),
             autostart: None,
             client: ClientInfo {
                 kind: ClientKind::Cli,

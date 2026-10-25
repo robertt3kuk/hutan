@@ -90,16 +90,16 @@ use hutan_protocol::{
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UnixStream;
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::process::Child;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::{sleep, timeout};
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, warn};
 
+use crate::endpoint::Endpoint;
 use crate::error::ClientError;
-use crate::socket::default_socket_path;
 use crate::start_failure::{DaemonFiles, StartFailure, StartOutcome};
 
 /// Capability for `terminal.set_colors`; the client sends colors only to daemons advertising it.
@@ -298,9 +298,11 @@ const MAX_INPUT_CHUNK: usize = MAX_PAYLOAD - 8;
 
 #[derive(Debug, Clone)]
 pub struct ConnectOptions {
-    /// Socket to dial; default per `HUTAN_SOCKET` / `HUTAN_HOME` / the standard location.
-    pub socket: Option<PathBuf>,
-    /// `hutand` binary to spawn (detached) when nothing accepts connections on the socket.
+    /// Daemon to reach; default the local daemon at its default socket (`HUTAN_SOCKET` /
+    /// `HUTAN_HOME` / the standard location).
+    pub endpoint: Option<Endpoint>,
+    /// `hutand` binary to spawn (detached) when nothing accepts connections on the local
+    /// socket. Used only for [`Endpoint::Local`].
     pub autostart: Option<PathBuf>,
     pub client: ClientInfo,
 }
@@ -341,9 +343,9 @@ struct Pending {
 }
 
 impl Client {
-    /// Connects and handshakes. If the socket is absent (or stale) and `opts.autostart` is set,
-    /// spawns `hutand` and waits up to 15 s for it; a daemon that does not come up fails with
-    /// [`ClientError::DaemonStart`].
+    /// Connects and handshakes. If the endpoint is the local socket and it is absent (or stale)
+    /// and `opts.autostart` is set, spawns `hutand` and waits up to 15 s for it; a daemon that
+    /// does not come up fails with [`ClientError::DaemonStart`].
     pub async fn connect(opts: ConnectOptions) -> Result<Self, ClientError> {
         Ok(Self::connect_resuming(opts, None).await?.client)
     }
@@ -365,25 +367,60 @@ impl Client {
         resume: Option<ResumePoint>,
         permit: impl FnOnce() -> bool,
     ) -> Result<Resumed, ClientError> {
-        let socket = opts
-            .socket
+        let endpoint = opts
+            .endpoint
             .clone()
-            .or_else(default_socket_path)
+            .or_else(Endpoint::default_local)
             .ok_or(ClientError::NoSocketPath)?;
-        let stream = dial(
-            &socket,
-            opts.autostart.as_deref(),
-            opts.socket.is_some(),
-            permit,
-        )
-        .await?;
+        let stream = match &endpoint {
+            Endpoint::Local(socket) => {
+                dial(
+                    socket,
+                    opts.autostart
+                        .as_deref()
+                        .filter(|_| endpoint.may_autostart()),
+                    opts.endpoint.is_some(),
+                    permit,
+                )
+                .await?
+            }
+        };
+        Self::establish(stream.into_split(), opts.client, resume).await
+    }
 
-        let (read_half, write_half) = stream.into_split();
+    /// Handshakes over a byte stream the caller opened, and starts the reader and writer
+    /// tasks. The stream is anything that reads and writes bytes in order: an in-memory
+    /// duplex, a socket pair, the stdio of a supervised `ssh` (slice R-2). The protocol on it
+    /// is exactly the local one: the first frame sent is `hello`, no peer is assumed trusted
+    /// by this call; authenticating the other side is the stream opener's job. No autostart
+    /// and no reconnect: both belong to the endpoint that produced the stream.
+    pub async fn connect_stream<S>(
+        stream: S,
+        client: ClientInfo,
+        resume: Option<ResumePoint>,
+    ) -> Result<Resumed, ClientError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        Self::establish(tokio::io::split(stream), client, resume).await
+    }
+
+    /// The handshake and tasks over the two halves of one stream. A Unix socket's own
+    /// `into_split` halves are lock-free, so the local path passes those.
+    async fn establish<R, W>(
+        (read_half, write_half): (R, W),
+        client: ClientInfo,
+        resume: Option<ResumePoint>,
+    ) -> Result<Resumed, ClientError>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         let mut reader = FramedRead::new(read_half, FrameCodec);
         let mut writer = FramedWrite::new(write_half, FrameCodec);
         let hello = Hello {
             protocol: PROTOCOL_VERSION,
-            client: opts.client,
+            client,
             capabilities: CAPABILITIES.iter().map(|c| (*c).to_owned()).collect(),
             resume,
         };
@@ -2090,9 +2127,9 @@ impl Drop for PendingEntry<'_> {
     }
 }
 
-async fn handshake(
-    reader: &mut FramedRead<OwnedReadHalf, FrameCodec>,
-    writer: &mut FramedWrite<OwnedWriteHalf, FrameCodec>,
+async fn handshake<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+    reader: &mut FramedRead<R, FrameCodec>,
+    writer: &mut FramedWrite<W, FrameCodec>,
     hello: Hello,
 ) -> Result<Welcome, ClientError> {
     let frame = ControlMessage::request(0, &Request::Hello(hello))?.to_frame()?;
@@ -2117,7 +2154,10 @@ async fn handshake(
     }
 }
 
-async fn read_loop(mut reader: FramedRead<OwnedReadHalf, FrameCodec>, shared: Arc<Shared>) {
+async fn read_loop<R: AsyncRead + Unpin>(
+    mut reader: FramedRead<R, FrameCodec>,
+    shared: Arc<Shared>,
+) {
     while let Some(item) = reader.next().await {
         let frame = match item {
             Ok(frame) => frame,
@@ -2147,8 +2187,8 @@ async fn read_loop(mut reader: FramedRead<OwnedReadHalf, FrameCodec>, shared: Ar
     shared.close();
 }
 
-async fn write_loop(
-    mut writer: FramedWrite<OwnedWriteHalf, FrameCodec>,
+async fn write_loop<W: AsyncWrite + Unpin>(
+    mut writer: FramedWrite<W, FrameCodec>,
     mut outbox: mpsc::Receiver<Frame>,
 ) {
     while let Some(frame) = outbox.recv().await {

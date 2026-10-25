@@ -62,7 +62,7 @@ fn read_record(paths: &Paths) -> StartErrorRecord {
 
 fn options(paths: &Paths) -> ConnectOptions {
     ConnectOptions {
-        socket: Some(paths.socket.clone()),
+        endpoint: Some(paths.socket.clone().into()),
         autostart: None,
         client: ClientInfo {
             kind: ClientKind::Cli,

@@ -270,7 +270,7 @@ async fn run_connection(
     let terminal = args.terminal;
     let mut frames = FrameLog::default();
     let client = Client::connect(ConnectOptions {
-        socket: args.socket,
+        endpoint: args.socket.map(hutan_client::Endpoint::Local),
         autostart: None,
         client: ClientInfo {
             kind: ClientKind::Desktop,

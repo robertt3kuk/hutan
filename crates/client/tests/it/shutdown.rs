@@ -9,6 +9,7 @@
 
 use crate::common;
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use common::*;
@@ -102,7 +103,7 @@ fn assert_client_threads(expected: usize, what: &str) {
 
 fn dead_end_options() -> ConnectOptions {
     ConnectOptions {
-        socket: Some("/nonexistent/hutan-test.sock".into()),
+        endpoint: Some(PathBuf::from("/nonexistent/hutan-test.sock").into()),
         autostart: None,
         client: ClientInfo {
             kind: ClientKind::Desktop,

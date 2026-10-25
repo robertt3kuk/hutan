@@ -24,7 +24,7 @@ async fn a_held_connection_dials_but_never_spawns_until_it_is_allowed() {
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let connection = Connection::start_held(ConnectOptions {
-        socket: Some(dir.path().join("hutand.sock")),
+        endpoint: Some((dir.path().join("hutand.sock")).into()),
         autostart: Some(script),
         client: ClientInfo {
             kind: ClientKind::Desktop,

@@ -42,7 +42,7 @@ async fn autostarts_a_missing_daemon_and_again_after_it_died() {
     let socket = home.path().join("hutand.sock");
 
     let connection = Connection::start(ConnectOptions {
-        socket: Some(socket.clone()),
+        endpoint: Some(socket.clone().into()),
         autostart: Some(binary),
         client: ClientInfo {
             kind: ClientKind::Desktop,

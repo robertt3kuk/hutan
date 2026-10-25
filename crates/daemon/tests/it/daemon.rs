@@ -68,7 +68,7 @@ impl TestDaemon {
 
     fn options(&self) -> ConnectOptions {
         ConnectOptions {
-            socket: Some(self.paths.socket.clone()),
+            endpoint: Some(self.paths.socket.clone().into()),
             autostart: None,
             client: Self::client_info(),
         }
@@ -712,7 +712,7 @@ async fn stale_socket_from_a_dead_daemon_is_replaced() {
         .await
         .unwrap();
     let client = Client::connect(ConnectOptions {
-        socket: Some(paths.socket.clone()),
+        endpoint: Some(paths.socket.clone().into()),
         autostart: None,
         client: TestDaemon::client_info(),
     })
@@ -807,7 +807,7 @@ async fn client_autostarts_hutand_when_the_socket_is_absent() {
     assert!(!paths.socket.exists());
 
     let client = Client::connect(ConnectOptions {
-        socket: Some(paths.socket.clone()),
+        endpoint: Some(paths.socket.clone().into()),
         autostart: Some(wrapper),
         client: TestDaemon::client_info(),
     })

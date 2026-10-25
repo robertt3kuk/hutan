@@ -135,7 +135,7 @@ impl Env {
     /// Options for a connection that goes through the proxy.
     pub fn options(&self) -> ConnectOptions {
         ConnectOptions {
-            socket: Some(self.proxy.path.clone()),
+            endpoint: Some(self.proxy.path.clone().into()),
             autostart: None,
             client: ClientInfo {
                 kind: ClientKind::Desktop,
@@ -148,7 +148,7 @@ impl Env {
     /// A plain client straight to the daemon (not through the proxy).
     pub async fn direct(&self) -> Client {
         let mut opts = self.options();
-        opts.socket = Some(self.paths.socket.clone());
+        opts.endpoint = Some(self.paths.socket.clone().into());
         Client::connect(opts).await.unwrap()
     }
 

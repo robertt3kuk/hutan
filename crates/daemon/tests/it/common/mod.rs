@@ -62,7 +62,7 @@ impl TestDaemon {
 
     pub fn options(&self) -> ConnectOptions {
         ConnectOptions {
-            socket: Some(self.paths.socket.clone()),
+            endpoint: Some(self.paths.socket.clone().into()),
             autostart: None,
             client: ClientInfo {
                 kind: ClientKind::Cli,

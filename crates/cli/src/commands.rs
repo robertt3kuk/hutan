@@ -162,7 +162,7 @@ impl Ctx {
 
     fn options(&self, autostart: Option<PathBuf>) -> ConnectOptions {
         ConnectOptions {
-            socket: self.socket_arg.clone(),
+            endpoint: self.socket_arg.clone().map(hutan_client::Endpoint::Local),
             autostart,
             client: ClientInfo {
                 kind: ClientKind::Cli,

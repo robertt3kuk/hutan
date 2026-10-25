@@ -45,7 +45,7 @@ async fn agent_session(t: &TestDaemon) -> SessionId {
 
 async fn agent_client(t: &TestDaemon, session: SessionId) -> Client {
     Client::connect(ConnectOptions {
-        socket: Some(t.paths.socket.clone()),
+        endpoint: Some(t.paths.socket.clone().into()),
         autostart: None,
         client: ClientInfo {
             kind: ClientKind::Other,

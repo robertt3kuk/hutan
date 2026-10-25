@@ -39,7 +39,7 @@ impl Attached {
     /// Runs `script` with `sh -c` in a 60 × 12 terminal and attaches to it.
     async fn start(daemon_paths: &Paths, script: &str) -> Self {
         let client = Client::connect(ConnectOptions {
-            socket: Some(daemon_paths.socket.clone()),
+            endpoint: Some(daemon_paths.socket.clone().into()),
             autostart: None,
             client: ClientInfo {
                 kind: ClientKind::Other,
