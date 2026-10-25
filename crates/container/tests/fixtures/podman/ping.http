@@ -1,0 +1,15 @@
+HTTP/1.1 200 OK
+Api-Version: 1.41
+Buildkit-Version: 
+Builder-Version: 1
+Cache-Control: no-cache
+Content-Length: 2
+Content-Type: text/plain; charset=utf-8
+Docker-Experimental: true
+Libpod-Api-Version: 5.6.2
+Libpod-Buildah-Version: 1.41.4
+Ostype: linux
+Pragma: no-cache
+Server: Libpod/5.6.2 (linux)
+
+OK

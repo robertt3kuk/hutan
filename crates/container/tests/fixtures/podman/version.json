@@ -1,0 +1,45 @@
+{
+  "Platform": {
+    "Name": "linux/arm64/fedora-coreos-43"
+  },
+  "Components": [
+    {
+      "Name": "Podman Engine",
+      "Version": "5.6.2",
+      "Details": {
+        "APIVersion": "5.6.2",
+        "Arch": "arm64",
+        "BuildTime": "2025-10-01T00:00:00Z",
+        "Experimental": "false",
+        "GitCommit": "",
+        "GoVersion": "go1.24.7",
+        "KernelVersion": "6.16.7-200.fc42.aarch64",
+        "MinAPIVersion": "4.0.0",
+        "Os": "linux"
+      }
+    },
+    {
+      "Name": "Conmon",
+      "Version": "conmon version 2.1.13, commit: ",
+      "Details": {
+        "Package": "conmon-2.1.13-1.fc42.aarch64"
+      }
+    },
+    {
+      "Name": "OCI Runtime (crun)",
+      "Version": "crun version 1.24",
+      "Details": {
+        "Package": "crun-1.24-1.fc42.aarch64"
+      }
+    }
+  ],
+  "Version": "5.6.2",
+  "ApiVersion": "1.41",
+  "MinAPIVersion": "1.24",
+  "GitCommit": "",
+  "GoVersion": "go1.24.7",
+  "Os": "linux",
+  "Arch": "arm64",
+  "KernelVersion": "6.16.7-200.fc42.aarch64",
+  "BuildTime": "2025-10-01T00:00:00Z"
+}

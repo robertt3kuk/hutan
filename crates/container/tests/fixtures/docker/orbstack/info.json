@@ -1,0 +1,8 @@
+{
+  "Name": "docker",
+  "ServerVersion": "23.0.3",
+  "OperatingSystem": "Alpine Linux edge (containerized)",
+  "OSType": "linux",
+  "Architecture": "aarch64",
+  "KernelVersion": "6.1.23-orbstack-00113-g6614aaccb205-dirty"
+}

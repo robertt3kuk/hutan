@@ -11,7 +11,7 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::probe::{
@@ -56,15 +56,43 @@ impl SystemProbe {
     }
 }
 
-fn read_capped(mut source: impl Read + Send + 'static) -> mpsc::Receiver<Vec<u8>> {
-    let (tx, rx) = mpsc::sync_channel(1);
+/// Output of one pipe, read on its own thread into a shared buffer so that whatever arrived is
+/// kept even when the pipe never reaches EOF.
+struct Capture {
+    buffer: Arc<Mutex<Vec<u8>>>,
+    finished: mpsc::Receiver<()>,
+}
+
+fn capture(mut source: impl Read + Send + 'static) -> Capture {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let (tx, finished) = mpsc::sync_channel(1);
+    let shared = Arc::clone(&buffer);
     std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        // A read error keeps what arrived: partial output is still output.
-        let _ = source.by_ref().take(MAX_OUTPUT).read_to_end(&mut buf);
-        let _ = tx.send(buf);
+        let mut chunk = [0u8; 4096];
+        // A read error ends the capture: partial output is still output.
+        while let Ok(n) = source.read(&mut chunk) {
+            let mut buf = shared.lock().unwrap_or_else(PoisonError::into_inner);
+            let room = usize::try_from(MAX_OUTPUT)
+                .unwrap_or(usize::MAX)
+                .saturating_sub(buf.len());
+            if n == 0 || room == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n.min(room)]);
+        }
+        let _ = tx.send(());
     });
-    rx
+    Capture { buffer, finished }
+}
+
+impl Capture {
+    /// Wait briefly for EOF, then take what arrived: a grandchild holding the pipe open must
+    /// not hold detection hostage.
+    fn collect(self) -> String {
+        let _ = self.finished.recv_timeout(Duration::from_millis(250));
+        let buf = self.buffer.lock().unwrap_or_else(PoisonError::into_inner);
+        String::from_utf8_lossy(&buf).into_owned()
+    }
 }
 
 fn io_error(e: std::io::Error) -> ProbeError {
@@ -134,8 +162,8 @@ impl HostProbe for SystemProbe {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(io_error)?;
-        let stdout = child.stdout.take().map(read_capped);
-        let stderr = child.stderr.take().map(read_capped);
+        let stdout = child.stdout.take().map(capture);
+        let stderr = child.stderr.take().map(capture);
         let deadline = Instant::now() + self.timeout;
         let status = loop {
             match child.try_wait().map_err(io_error)? {
@@ -149,16 +177,10 @@ impl HostProbe for SystemProbe {
                 None => std::thread::sleep(Duration::from_millis(5)),
             }
         };
-        // A grandchild holding the pipe open must not hold detection hostage.
-        let collect = |rx: Option<mpsc::Receiver<Vec<u8>>>| {
-            rx.and_then(|rx| rx.recv_timeout(Duration::from_millis(250)).ok())
-                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-                .unwrap_or_default()
-        };
         Ok(CommandOutput {
             status: status.code(),
-            stdout: collect(stdout),
-            stderr: collect(stderr),
+            stdout: stdout.map(Capture::collect).unwrap_or_default(),
+            stderr: stderr.map(Capture::collect).unwrap_or_default(),
         })
     }
 

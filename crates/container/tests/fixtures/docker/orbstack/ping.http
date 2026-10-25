@@ -1,0 +1,13 @@
+HTTP/1.1 200 OK
+Api-Version: 1.42
+Builder-Version: 2
+Cache-Control: no-cache, no-store, must-revalidate
+Content-Length: 2
+Content-Type: text/plain; charset=utf-8
+Docker-Experimental: false
+Ostype: linux
+Pragma: no-cache
+Server: Docker/23.0.3 (linux)
+Swarm: inactive
+
+OK

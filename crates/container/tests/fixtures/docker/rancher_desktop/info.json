@@ -1,0 +1,8 @@
+{
+  "Name": "lima-rancher-desktop",
+  "ServerVersion": "27.0.1",
+  "OperatingSystem": "Alpine Linux",
+  "OSType": "linux",
+  "Architecture": "aarch64",
+  "KernelVersion": "6.8.0-31-generic"
+}

@@ -1,0 +1,8 @@
+{
+  "Name": "colima",
+  "ServerVersion": "26.1.1",
+  "OperatingSystem": "Ubuntu 24.04 LTS",
+  "OSType": "linux",
+  "Architecture": "aarch64",
+  "KernelVersion": "6.8.0-31-generic"
+}

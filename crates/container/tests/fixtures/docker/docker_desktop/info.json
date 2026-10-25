@@ -1,0 +1,8 @@
+{
+  "Name": "docker-desktop",
+  "ServerVersion": "29.3.1",
+  "OperatingSystem": "Docker Desktop",
+  "OSType": "linux",
+  "Architecture": "aarch64",
+  "KernelVersion": "6.12.76-linuxkit"
+}

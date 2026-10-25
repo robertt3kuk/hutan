@@ -1,0 +1,31 @@
+{
+  "Platform": {
+    "Name": "Docker Engine - Community"
+  },
+  "Components": [
+    {
+      "Name": "Engine",
+      "Version": "27.0.1",
+      "Details": {
+        "ApiVersion": "1.47",
+        "Arch": "arm64",
+        "BuildTime": "2020-06-22T15:49:27.000000000+00:00",
+        "Experimental": "false",
+        "GitCommit": "48a66213fe",
+        "GoVersion": "go1.22.7",
+        "KernelVersion": "6.8.0-31-generic",
+        "MinAPIVersion": "1.24",
+        "Os": "linux"
+      }
+    }
+  ],
+  "Version": "27.0.1",
+  "ApiVersion": "1.47",
+  "MinAPIVersion": "1.24",
+  "GitCommit": "48a66213fe",
+  "GoVersion": "go1.22.7",
+  "Os": "linux",
+  "Arch": "arm64",
+  "KernelVersion": "6.8.0-31-generic",
+  "BuildTime": "2020-06-22T15:49:27.000000000+00:00"
+}
