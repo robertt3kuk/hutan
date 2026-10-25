@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use hutan_core::{ApprovalPolicy, SandboxMode};
+use hutan_core::{ApprovalPolicy, SafetyPreset, SandboxMode};
 
 /// Exit codes: 0 ok, 1 remote or other error, 2 usage (including an ambiguous session target),
 /// 3 hutand unreachable or lost. `attach` killed by SIGTERM/SIGHUP exits 143/129.
@@ -347,6 +347,17 @@ pub struct TaskAddArgs {
         conflicts_with = "argv"
     )]
     pub account: Option<String>,
+    /// Safety preset of a chat task's agent: ask, contained, read_only or full (`hutan chat new
+    /// --help` says what each means); refused when the task is made if the agent cannot honour
+    /// it. Default: the agent's own settings
+    #[arg(
+        long,
+        value_name = "PRESET",
+        value_parser = parse_safety,
+        requires = "prompt",
+        conflicts_with = "argv"
+    )]
+    pub safety: Option<SafetyPreset>,
     /// Start by itself when ready, within the daemon's `[tasks] max_parallel`
     #[arg(long)]
     pub auto: bool,
@@ -961,6 +972,17 @@ pub struct ChatNewArgs {
     /// login). Default: the project's default, else the harness's
     #[arg(long, value_name = "NAME", conflicts_with = "direct")]
     pub account: Option<String>,
+    /// Safety preset: ask, contained (the agent's own sandbox, no questions inside it),
+    /// read_only or full (no boundary, no questions). A harness that cannot honour it refuses
+    /// with the reason (OMP has no OS sandbox, so no contained); replaces --approval-policy,
+    /// --sandbox and --mode. Default: the agent's own settings
+    #[arg(
+        long,
+        value_name = "PRESET",
+        value_parser = parse_safety,
+        conflicts_with_all = ["direct", "approval_policy", "sandbox", "mode"]
+    )]
+    pub safety: Option<SafetyPreset>,
 }
 
 #[derive(Debug, Args)]
@@ -1561,6 +1583,10 @@ fn parse_policy(text: &str) -> Result<ApprovalPolicy, String> {
 }
 
 fn parse_sandbox(text: &str) -> Result<SandboxMode, String> {
+    text.parse()
+}
+
+fn parse_safety(text: &str) -> Result<SafetyPreset, String> {
     text.parse()
 }
 

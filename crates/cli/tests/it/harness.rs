@@ -622,3 +622,138 @@ async fn usage_shows_what_a_turn_used_and_what_the_harnesses_report() {
     );
     assert!(text.contains("gitlab-duo"), "{text}");
 }
+
+// Safety presets (SANDBOX-1) --------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_new_takes_a_safety_preset_and_prints_what_the_harness_reported() {
+    let e = Env::start("plain-turn").await;
+    let cwd = e.cwd();
+
+    // OMP passes `--tools read,grep,glob` and says it cannot read that back.
+    let out =
+        e.t.hutan(&[
+            "chat",
+            "new",
+            "--agent",
+            "omp",
+            "--cwd",
+            &cwd,
+            "--safety",
+            "read_only",
+        ])
+        .await
+        .ok();
+    assert!(
+        out.stdout.contains("safety read_only: enforced by harness")
+            && !out.stdout.contains("NOT APPLIED"),
+        "{}",
+        out.stdout
+    );
+    let json =
+        e.t.hutan(&[
+            "chat", "new", "--agent", "omp", "--cwd", &cwd, "--safety", "full", "--json",
+        ])
+        .await
+        .ok()
+        .json();
+    let safety = &json["session"]["chat"]["safety"];
+    assert_eq!(safety["preset"], "full");
+    assert_eq!(safety["enforced_by"], "none");
+
+    // A harness that cannot honour a preset refuses it with the reason; nothing starts.
+    let refused =
+        e.t.hutan(&[
+            "chat",
+            "new",
+            "--agent",
+            "omp",
+            "--cwd",
+            &cwd,
+            "--safety",
+            "contained",
+        ])
+        .await;
+    assert_ne!(refused.code, 0);
+    assert!(
+        refused.stderr.contains("no OS sandbox") && refused.stderr.contains("SANDBOX-2"),
+        "{}",
+        refused.stderr
+    );
+
+    // clap: not a preset, and not together with the settings it replaces.
+    for args in [
+        ["--safety", "yolo"].as_slice(),
+        ["--safety", "ask", "--sandbox", "read-only"].as_slice(),
+        ["--safety", "ask", "--approval-policy", "never"].as_slice(),
+        ["--safety", "ask", "--mode", "plan"].as_slice(),
+    ] {
+        let mut all = vec!["chat", "new", "--agent", "omp", "--cwd", &cwd];
+        all.extend_from_slice(args);
+        assert_eq!(e.t.hutan(&all).await.code, 2, "{args:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_add_takes_a_safety_preset_for_a_chat_and_the_daemon_refuses_what_the_harness_cannot()
+{
+    let e = Env::start("plain-turn").await;
+    let repo = e.work.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let ws =
+        e.t.hutan(&["project", "open", repo.to_str().unwrap(), "--json"])
+            .await
+            .ok()
+            .json()["workspace"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+    let add = |safety: &'static str, agent: &'static str| {
+        let ws = ws.clone();
+        let e = &e;
+        async move {
+            e.t.hutan(&[
+                "task", "add", "Review", "--ws", &ws, "--agent", agent, "--prompt", "Look.",
+                "--safety", safety,
+            ])
+            .await
+        }
+    };
+    let refused = add("contained", "omp").await;
+    assert_ne!(refused.code, 0);
+    assert!(
+        refused.stderr.contains("no OS sandbox"),
+        "{}",
+        refused.stderr
+    );
+
+    let id = add("read_only", "omp").await.ok().stdout.trim().to_owned();
+    let tasks =
+        e.t.hutan(&["--json", "task", "ls", "--ws", &ws])
+            .await
+            .ok()
+            .json();
+    let task = tasks["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| {
+            t["id"]
+                .as_str()
+                .is_some_and(|i| i.starts_with(&id) || id.starts_with(i))
+        })
+        .unwrap()
+        .clone();
+    assert_eq!(task["run"]["kind"], "chat");
+    assert_eq!(task["run"]["safety"], "read_only");
+
+    // A preset is for a chat: not with a command, and not without a prompt.
+    assert_eq!(
+        e.t.hutan(&[
+            "task", "add", "X", "--ws", &ws, "--safety", "ask", "--", "sh"
+        ])
+        .await
+        .code,
+        2
+    );
+}

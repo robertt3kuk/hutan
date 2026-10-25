@@ -70,7 +70,7 @@ impl Ctx {
                 agent,
                 model: args.model.clone(),
                 account: args.account.clone(),
-                safety: None,
+                safety: args.safety,
             })
         } else if args.argv.is_empty() {
             None

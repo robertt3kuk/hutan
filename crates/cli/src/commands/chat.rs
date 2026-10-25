@@ -26,6 +26,44 @@ const MIN_PREFIX: usize = 4;
 /// Events of the journal shown first by `attach`.
 const ATTACH_BACKLOG: u32 = 40;
 
+/// What a chat reports of its safety preset, in words: `safety contained: enforced by harness,
+/// workspace-write, network off`, or `safety contained: NOT APPLIED (Not applied: …)`.
+pub(crate) fn safety_words(chat: &hutan_protocol::chat::ChatInfo) -> String {
+    use hutan_core::SafetyEnforcer;
+    let Some(safety) = &chat.safety else {
+        return String::new();
+    };
+    let preset = safety.preset.as_str();
+    let note = safety
+        .note
+        .as_deref()
+        .map(|n| format!(" ({n})"))
+        .unwrap_or_default();
+    match safety.enforced_by {
+        SafetyEnforcer::None if !safety.preset.is_full_access() => {
+            format!("safety {preset}: NOT APPLIED{note}")
+        }
+        SafetyEnforcer::None => format!("safety {preset}: no boundary{note}"),
+        by => {
+            let by = match by {
+                SafetyEnforcer::Harness => "harness",
+                _ => "hutan",
+            };
+            let network = match safety.network {
+                Some(true) => ", network on",
+                Some(false) => ", network off",
+                None => "",
+            };
+            let sandbox = if chat.agent == "codex" {
+                format!(", {}", chat.sandbox)
+            } else {
+                String::new()
+            };
+            format!("safety {preset}: enforced by {by}{sandbox}{network}{note}")
+        }
+    }
+}
+
 impl Ctx {
     pub(super) async fn chat(&self, command: ChatCommand) -> Result<(), CliError> {
         match command {
@@ -82,7 +120,7 @@ impl Ctx {
                 provider_id: args.provider,
                 system_prompt: args.system,
                 account: args.account,
-                safety: None,
+                safety: args.safety,
             })
             .await
             .map_err(|e| self.fail(e))?;
@@ -95,6 +133,14 @@ impl Ctx {
                     session.id,
                     chat.provider_id.as_deref().unwrap_or("?"),
                     chat.model
+                ),
+                // A preset says what the harness reported of it, never only what was asked.
+                Some(chat) if chat.safety.is_some() => format!(
+                    "session {} {} {} ({})",
+                    session.id,
+                    chat.agent,
+                    chat.model,
+                    safety_words(chat)
                 ),
                 // The harness decides what asks and what is sandboxed; the CLI does not show
                 // Hutan's defaults as if they applied.

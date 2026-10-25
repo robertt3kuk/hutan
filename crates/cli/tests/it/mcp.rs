@@ -700,3 +700,64 @@ async fn git_history_tools_read_without_asking_and_never_write() {
     );
     t.stop().await;
 }
+
+/// SANDBOX-1: an agent can read a chat's safety state (it is part of the session's `chat`), but
+/// the `chat_create` tool does not offer to choose one: widening what a new agent may do is the
+/// user's decision, taken in the Start sheet or on the command line.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_reads_a_chats_safety_state_but_the_chat_create_tool_cannot_set_one() {
+    let work = tempfile::tempdir().unwrap();
+    let transcript = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../agents/tests/fixtures/acp-omp-18.11/plain-turn.jsonl");
+    let toml = format!(
+        "[terminal]\nenv_inherit = \"daemon\"\n\n[harness.omp]\nbin = {bin:?}\nargs = [\"replay\", {transcript:?}, \"acp\"]\n",
+        bin = common::acp_fixture_bin(),
+    );
+    let t = TestDaemon::start_toml(&toml, |_| {}).await;
+    let cwd = work.path().display().to_string();
+    let created = t
+        .hutan(&[
+            "chat",
+            "new",
+            "--agent",
+            "omp",
+            "--cwd",
+            &cwd,
+            "--safety",
+            "read_only",
+            "--json",
+        ])
+        .await
+        .ok()
+        .json();
+    let id = created["session"]["id"].as_str().unwrap().to_owned();
+
+    let mut mcp = Mcp::start(&t.paths.socket, None).await;
+    mcp.initialize().await;
+    let call = mcp.tool_request("session_list", json!({})).await;
+    let list = mcp.answer(call).await;
+    assert!(!is_error(&list), "{list}");
+    let session = list["result"]["structuredContent"]["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == id.as_str())
+        .expect("the chat is listed")
+        .clone();
+    assert_eq!(session["chat"]["safety"]["preset"], "read_only");
+    assert_eq!(session["chat"]["safety"]["enforced_by"], "harness");
+
+    let tools = mcp.call("tools/list", json!({})).await;
+    let create = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "chat_create")
+        .unwrap()
+        .clone();
+    assert!(
+        create["inputSchema"]["properties"].get("safety").is_none(),
+        "{create}"
+    );
+    t.stop().await;
+}
