@@ -5,7 +5,6 @@
 //! document (`doc.open`), waits for the server to start and publish, prints the diagnostics and
 //! closes the document again.
 
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use hutan_client::Client;
@@ -16,6 +15,7 @@ use hutan_protocol::lsp::{
 };
 
 use super::Ctx;
+use super::paths::{absolute, here};
 use crate::args::{DiagnosticsArgs, LspArgs, LspCommand, LspTrustArgs};
 use crate::diag::{self, Collected};
 use crate::error::CliError;
@@ -81,7 +81,7 @@ impl Ctx {
     async fn lsp_trust(&self, client: &Client, args: LspTrustArgs) -> Result<(), CliError> {
         let folder = match args.folder {
             Some(folder) => absolute(&folder)?,
-            None => std::env::current_dir()?,
+            None => here()?,
         };
         let decision = if args.deny {
             LspTrust::Denied
@@ -127,7 +127,7 @@ impl Ctx {
         let min_severity = args.severity.as_deref().map(parse_severity).transpose()?;
         let target = match &args.path {
             Some(path) => absolute(path)?,
-            None => std::env::current_dir()?,
+            None => here()?,
         };
         let entry = client
             .fs_stat(&target, true)
@@ -273,14 +273,6 @@ fn parse_severity(text: &str) -> Result<LspSeverity, CliError> {
         other => Err(CliError::Failed(format!(
             "`{other}` is not a severity: error, warning, info or hint"
         ))),
-    }
-}
-
-fn absolute(path: &Path) -> Result<PathBuf, CliError> {
-    if path.is_absolute() {
-        Ok(path.to_owned())
-    } else {
-        Ok(std::env::current_dir()?.join(path))
     }
 }
 

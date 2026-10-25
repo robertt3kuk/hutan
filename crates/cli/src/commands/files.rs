@@ -9,6 +9,7 @@ use hutan_protocol::fs::{FileVersion, FsEntry, FsFind, FsKind, FsList, FsSearch,
 use serde_json::json;
 
 use super::Ctx;
+use super::paths::{absolute, here};
 use crate::args::{
     FsCommand, FsFindArgs, FsLsArgs, FsPathArgs, FsSearchArgs, FsWriteArgs, OpenArgs,
 };
@@ -107,7 +108,7 @@ impl Ctx {
     async fn fs_ls(&self, client: &Client, args: FsLsArgs) -> Result<(), CliError> {
         let dir = match args.path {
             Some(path) => absolute(&path)?,
-            None => current_dir()?,
+            None => here()?,
         };
         let listing = client
             .fs_list(FsList {
@@ -213,7 +214,7 @@ impl Ctx {
     async fn fs_find(&self, client: &Client, args: FsFindArgs) -> Result<(), CliError> {
         let root = match args.root {
             Some(root) => absolute(&root)?,
-            None => current_dir()?,
+            None => here()?,
         };
         let found = client
             .fs_find(FsFind {
@@ -236,7 +237,7 @@ impl Ctx {
     async fn fs_search(&self, client: &Client, args: FsSearchArgs) -> Result<(), CliError> {
         let root = match args.root {
             Some(root) => absolute(&root)?,
-            None => current_dir()?,
+            None => here()?,
         };
         let case_sensitive = match (args.ignore_case, args.case_sensitive) {
             (true, _) => Some(false),
@@ -314,19 +315,6 @@ fn parse_target(text: &str) -> Target {
         };
     }
     whole(text)
-}
-
-fn current_dir() -> Result<PathBuf, CliError> {
-    Ok(std::env::current_dir()?)
-}
-
-/// The path as the daemon wants it: absolute, relative to the current directory.
-fn absolute(path: &Path) -> Result<PathBuf, CliError> {
-    if path.is_absolute() {
-        Ok(path.to_owned())
-    } else {
-        Ok(current_dir()?.join(path))
-    }
 }
 
 fn version_text(version: &FileVersion) -> String {

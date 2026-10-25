@@ -449,6 +449,35 @@ fn unknown_keys_warn_without_failing() {
 }
 
 #[test]
+fn host_profiles_are_the_users_and_are_checked_not_flagged_unknown() {
+    // `[[host]]` (R-2) is no namespace: valid profiles raise nothing, invalid ones an error.
+    let f = Fixture::new(Some("[[host]]\nname = \"studio\"\nssh = \"me@studio\"\n"));
+    f.store.register::<Terminal>();
+    assert!(f.store.errors().is_empty(), "{:?}", f.store.errors());
+
+    let f = Fixture::new(Some("[[host]]\nname = \"a b\"\nssh = \"-oX=y\"\n"));
+    f.store.register::<Terminal>();
+    let errors = f.store.errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].severity, Severity::Error);
+    assert_eq!(errors[0].key_path, "host");
+    assert!(errors[0].message.contains("not a host name"), "{errors:?}");
+
+    // A repository cannot choose which machine a command runs on.
+    let f = Fixture::new(None);
+    f.store.register::<Layout>();
+    f.workspace("[[host]]\nname = \"evil\"\nssh = \"x@y\"\n");
+    let errors = f.store.errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0]
+            .message
+            .contains("belongs to the user's settings.toml"),
+        "{errors:?}"
+    );
+}
+
+#[test]
 fn unknown_namespace_warning_disappears_once_registered() {
     let f = Fixture::new(Some("[layout]\npreset = \"x\"\n"));
     f.store.register::<Terminal>();

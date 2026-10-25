@@ -139,6 +139,14 @@ pub fn command(binary: &Path, socket: Option<&Path>, args: &[&str]) -> Command {
     command
 }
 
+/// `hutan args…` with `HUTAN_HOME` = `home` (where `settings.toml` with the `[[host]]` profiles
+/// lives) and `HUTAN_SSH` = `ssh`, the program `--host` runs instead of the system `ssh`.
+pub async fn hutan_in(home: &Path, ssh: &Path, args: &[&str]) -> Out {
+    let mut command = command(Path::new(HUTAN), None, args);
+    command.env("HUTAN_HOME", home).env("HUTAN_SSH", ssh);
+    finish(command).await
+}
+
 /// Held while a child is spawned. On macOS std creates a child's stdio pipes with `pipe()` and
 /// sets `FD_CLOEXEC` afterwards, so a child spawned at that moment by another task inherits
 /// both ends of the other child's pipe. A long-lived child (a CLI waiting for its approval) then

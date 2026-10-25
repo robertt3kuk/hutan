@@ -484,6 +484,21 @@ impl State {
     ) {
         for (key, value) in table {
             let path = join(prefix, key);
+            // `[[host]]` is not a namespace (an array of tables), and it is the user's alone.
+            if prefix.is_empty() && key == crate::hosts::KEY {
+                match scope {
+                    Some(scope) => out.push(SettingsError::error(
+                        file,
+                        path,
+                        format!(
+                            "`host` belongs to the user's settings.toml, not to a {scope}'s; \
+                             ignored"
+                        ),
+                    )),
+                    None => out.extend(crate::hosts::diagnose(file, value)),
+                }
+                continue;
+            }
             if let Some(entry) = self.registry.get(path.as_str()) {
                 if let Some(scope) = scope
                     && !entry.overridable
@@ -1095,7 +1110,7 @@ pub(crate) fn create_private_dir(dir: &Path) -> std::io::Result<()> {
 
 /// Write-then-rename in the target's directory; follows a symlinked `settings.toml` (dotfile
 /// managers) and keeps the existing file's permissions.
-fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let dir = target.parent().unwrap_or_else(|| Path::new("."));
     create_private_dir(dir)?;

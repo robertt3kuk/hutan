@@ -67,7 +67,7 @@ impl Ctx {
         // The daemon resolves paths from its own working directory, not ours.
         let paths = paths
             .iter()
-            .map(std::path::absolute)
+            .map(super::paths::absolute)
             .collect::<Result<Vec<_>, _>>()?;
         let client = self.connect().await?;
         let ws: WorkspaceInfo = self
@@ -127,7 +127,7 @@ impl Ctx {
                     .ok_or_else(|| CliError::Failed(format!("workspace {} disappeared", ws.id)))?
             }
             None => {
-                let path = std::path::absolute(what)?;
+                let path = super::paths::absolute(what)?;
                 self.call(
                     &client,
                     Request::WorkspaceAddRoot(WorkspaceRoot {
@@ -296,6 +296,8 @@ impl Ctx {
 pub(super) fn workspace_target(flag: Option<String>) -> Option<(String, &'static str)> {
     match flag {
         Some(target) => Some((target, "--ws")),
+        // `$HUTAN_WORKSPACE` names a workspace of the local daemon.
+        None if super::paths::is_remote() => None,
         None => std::env::var(WORKSPACE_ENV)
             .ok()
             .filter(|value| !value.is_empty())

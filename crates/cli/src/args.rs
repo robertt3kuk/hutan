@@ -20,6 +20,11 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "PATH")]
     pub socket: Option<PathBuf>,
 
+    /// Run the command against the hutand of a host from `[[host]]` in settings.toml, over SSH
+    /// (see `hutan host list`); the host's own daemon is started there when it is not running
+    #[arg(long, global = true, value_name = "NAME", conflicts_with = "socket")]
+    pub host: Option<String>,
+
     /// Machine-readable JSON output
     #[arg(long, global = true)]
     pub json: bool,
@@ -169,6 +174,9 @@ pub enum Command {
     /// Finish the work in a checkout: commit everything, merge a worktree into its target, push
     /// the branch to its upstream (never forced). Only you can run it, not an agent
     Finish(FinishArgs),
+    /// Hosts reached over SSH: list, add, remove, test, forward (`hutan --host NAME <command>`)
+    #[command(subcommand)]
+    Host(HostCommand),
     /// Bridge standard input and output to this machine's hutand socket, bytes only (what `ssh
     /// HOST hutan proxy` runs for `--host`; it starts the daemon when it is not running)
     Proxy,
@@ -1592,6 +1600,41 @@ fn parse_sandbox(text: &str) -> Result<SandboxMode, String> {
 
 fn parse_safety(text: &str) -> Result<SafetyPreset, String> {
     text.parse()
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HostCommand {
+    /// List the hosts of settings.toml
+    #[command(visible_alias = "ls")]
+    List,
+    /// Add a host: a name and what `ssh` is given (user@host, a ~/.ssh/config alias, ssh://…).
+    /// Keys, jump hosts and options stay in ~/.ssh/config; Hutan stores no credential
+    Add {
+        /// Name for `--host` (letters, digits, `.`, `_`, `-`)
+        name: String,
+        /// The ssh destination
+        ssh: String,
+        /// `hutan` on the host (a path; default: `hutan` from the host's non-interactive PATH)
+        #[arg(long, value_name = "PATH")]
+        hutan: Option<String>,
+    },
+    /// Remove a host from settings.toml
+    #[command(visible_alias = "rm")]
+    Remove { name: String },
+    /// Connect to a host and report what answers: time to connect, the daemon's version and
+    /// protocol, its round trip
+    Test { name: String },
+    /// Forward a local Unix socket to the host's daemon socket (`ssh -N -L`) for tools that
+    /// speak the protocol themselves; runs until interrupted and restarts ssh when it exits
+    Forward {
+        name: String,
+        /// The local socket to create (default: <hutan home>/hosts/NAME.sock)
+        #[arg(long, value_name = "PATH")]
+        listen: Option<PathBuf>,
+        /// The daemon's socket on the host (default: asked from the host's `hutan`)
+        #[arg(long, value_name = "PATH")]
+        remote_socket: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

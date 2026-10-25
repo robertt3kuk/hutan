@@ -8,6 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use hutan_client::StoreState;
 use hutan_client::{
     Client, ClientError, ConnectOptions, Connection, ConnectionState, Endpoint, Resumed, SshHost,
 };
@@ -16,7 +17,6 @@ use hutan_protocol::messages::{
     ClientInfo, ClientKind, DaemonStatusInfo, Empty, Event, Request, ResumeOutcome, ResumePoint,
     Subscribed, WorkspaceCreate, WorkspaceInfo,
 };
-use hutan_client::StoreState;
 use tempfile::TempDir;
 use tokio::sync::watch;
 use tokio::time::{sleep, timeout};
@@ -46,11 +46,18 @@ async fn wait_state(
         }
     })
     .await;
-    assert!(found.is_ok(), "timed out waiting for {what}: {:?}", *rx.borrow());
+    assert!(
+        found.is_ok(),
+        "timed out waiting for {what}: {:?}",
+        *rx.borrow()
+    );
 }
 
 async fn wait_connected(rx: &mut watch::Receiver<std::sync::Arc<StoreState>>) {
-    wait_state(rx, "connected", |s| s.connection == ConnectionState::Connected).await;
+    wait_state(rx, "connected", |s| {
+        s.connection == ConnectionState::Connected
+    })
+    .await;
 }
 
 /// A fake `ssh` in a temporary directory.
@@ -147,7 +154,10 @@ async fn the_client_speaks_the_protocol_through_ssh_running_the_proxy() {
     assert!(args.contains(&"-T".to_owned()), "{args:?}");
     assert!(args.contains(&"BatchMode=yes".to_owned()), "{args:?}");
     let dashes = args.iter().position(|a| a == "--").unwrap();
-    assert_eq!(&args[dashes + 1..], ["me@fake.example", "~/'bin/my hutan' proxy"]);
+    assert_eq!(
+        &args[dashes + 1..],
+        ["me@fake.example", "~/'bin/my hutan' proxy"]
+    );
 
     drop(client);
     t.stop().await;
@@ -157,7 +167,9 @@ async fn the_client_speaks_the_protocol_through_ssh_running_the_proxy() {
 async fn the_client_never_starts_a_daemon_for_an_ssh_endpoint() {
     // `ssh` that cannot reach the host: the error is the one `ssh` printed, and `autostart`
     // (which names a `hutand` to spawn here) is not used for a remote endpoint.
-    let ssh = FakeSsh::with_body("echo 'ssh: connect to host fake.example port 22: Connection refused' >&2\nexit 255\n");
+    let ssh = FakeSsh::with_body(
+        "echo 'ssh: connect to host fake.example port 22: Connection refused' >&2\nexit 255\n",
+    );
     let started = tempfile::tempdir().unwrap();
     let marker = started.path().join("started");
     let hutand = started.path().join("hutand");
@@ -214,7 +226,10 @@ async fn a_host_without_hutan_shows_what_its_shell_said() {
     // `ssh` ends without answering `hello`: whatever the host printed on stderr is shown.
     let ssh = FakeSsh::with_body("echo 'zsh:1: command not found: hutan' >&2\nexit 127\n");
     let error = Client::connect(ssh.options()).await.unwrap_err();
-    assert!(error.to_string().contains("command not found: hutan"), "{error}");
+    assert!(
+        error.to_string().contains("command not found: hutan"),
+        "{error}"
+    );
 }
 
 #[tokio::test]
@@ -223,7 +238,10 @@ async fn resume_through_a_second_ssh_replays_what_was_missed() {
     let ssh = FakeSsh::proxying(&t.paths.socket);
 
     let first = Client::connect(ssh.options()).await.unwrap();
-    first.call::<Subscribed>(Request::EventsSubscribe(Empty {})).await.unwrap();
+    first
+        .call::<Subscribed>(Request::EventsSubscribe(Empty {}))
+        .await
+        .unwrap();
     let resume = ResumePoint {
         epoch: first.epoch(),
         seq: first.last_seq(),
@@ -249,8 +267,9 @@ async fn resume_through_a_second_ssh_replays_what_was_missed() {
             .unwrap()
     };
 
-    let Resumed { client, mut events } =
-        Client::connect_resuming(ssh.options(), Some(resume)).await.unwrap();
+    let Resumed { client, mut events } = Client::connect_resuming(ssh.options(), Some(resume))
+        .await
+        .unwrap();
     assert_eq!(client.welcome().resume, ResumeOutcome::Replayed);
     let (seq, event) = timeout(WAIT, events.recv()).await.unwrap().unwrap();
     assert_eq!(seq, Seq(resume.seq.0 + 1));
@@ -289,7 +308,9 @@ async fn the_connection_reconnects_when_ssh_exits() {
     let id = t.new_session(&[], &["sh", "-c", "exec cat"]).await;
     wait_state(&mut state, "the new session through the second ssh", |s| {
         s.connection == ConnectionState::Connected
-            && s.sessions.iter().any(|session| session.id.to_string() == id)
+            && s.sessions
+                .iter()
+                .any(|session| session.id.to_string() == id)
     })
     .await;
     assert_eq!(state.borrow().epoch, epoch, "the same daemon, resumed");

@@ -57,7 +57,7 @@ impl Ctx {
             .worktree_list(scope)
             .await
             .map_err(|e| self.fail(e))?;
-        resolve_worktree(&list, target, &std::env::current_dir()?).cloned()
+        resolve_worktree(&list, target, &super::paths::here()?).cloned()
     }
 
     async fn wt_diff(&self, args: WtDiffArgs) -> Result<(), CliError> {
@@ -190,7 +190,7 @@ impl Ctx {
             .worktree_list(scope)
             .await
             .map_err(|e| self.fail(e))?;
-        let cwd = std::env::current_dir()?;
+        let cwd = super::paths::here()?;
         let checkout = match &args.target {
             Some(target) => resolve_worktree(&list, target, &cwd)?.clone(),
             None => checkout_of(&list, &cwd)?.clone(),
@@ -225,11 +225,11 @@ impl Ctx {
             .ok_or_else(no_workspace)?;
         // The daemon resolves paths from its own working directory, not ours.
         let repo = match args.repo {
-            Some(path) => Some(std::path::absolute(path)?),
-            None if from_cwd => Some(std::env::current_dir()?),
+            Some(path) => Some(super::paths::absolute(path)?),
+            None if from_cwd => Some(super::paths::here()?),
             None => None,
         };
-        let path = args.path.map(std::path::absolute).transpose()?;
+        let path = args.path.map(super::paths::absolute).transpose()?;
         let created = client
             .worktree_create(WorktreeCreate {
                 workspace_id: workspace,
@@ -377,7 +377,7 @@ impl Ctx {
             .worktree_list(workspace)
             .await
             .map_err(|e| self.fail(e))?;
-        let target = resolve_worktree(&list, &args.target, &std::env::current_dir()?)?.clone();
+        let target = resolve_worktree(&list, &args.target, &super::paths::here()?)?.clone();
         let removed = client
             .worktree_remove(WorktreeRemove {
                 path: target.path.clone(),
@@ -478,7 +478,7 @@ impl Ctx {
             .call(
                 client,
                 Request::WorkspaceOpen(WorkspaceOpen {
-                    path: std::env::current_dir()?,
+                    path: super::paths::here()?,
                     created_by: Some(CreatedBy::Cli),
                 }),
             )

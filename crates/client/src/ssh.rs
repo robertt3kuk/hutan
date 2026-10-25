@@ -7,14 +7,14 @@
 
 use std::ffi::OsString;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::watch;
 use tokio::time::timeout;
@@ -33,6 +33,8 @@ pub(crate) const SSH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 const STDERR_TAIL: usize = 4096;
 /// How much of what `ssh` printed first is kept to recognise text that is not a frame.
 const HEAD: usize = 128;
+/// The most `run` keeps of what the remote command printed.
+const RUN_OUTPUT_LIMIT: u64 = 1 << 20;
 /// How long a failed handshake waits for the rest of `ssh`'s standard error.
 const STDERR_GRACE: Duration = Duration::from_millis(300);
 
@@ -61,7 +63,9 @@ impl SshHost {
         let destination = destination.into();
         if destination.is_empty()
             || destination.starts_with('-')
-            || destination.chars().any(|c| c.is_whitespace() || c.is_control())
+            || destination
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control())
         {
             return Err(ClientError::Ssh(format!(
                 "host `{name}`: `{destination}` is not an ssh destination (user@host, a \
@@ -107,9 +111,17 @@ impl SshHost {
             .unwrap_or_else(|| OsString::from("ssh"))
     }
 
-    /// The command the host's shell runs: `hutan proxy`.
+    /// The command the host's shell runs to start `hutan` there with `arguments`.
+    pub fn hutan_command(&self, arguments: &str) -> String {
+        format!(
+            "{} {arguments}",
+            remote_word(self.hutan.as_deref().unwrap_or("hutan"))
+        )
+    }
+
+    /// The command the host's shell runs for a connection: `hutan proxy`.
     pub fn proxy_command(&self) -> String {
-        format!("{} proxy", remote_word(self.hutan.as_deref().unwrap_or("hutan")))
+        self.hutan_command("proxy")
     }
 
     /// Options every connection of Hutan sets, before the user's own `ssh_config` applies for
@@ -136,10 +148,126 @@ impl SshHost {
 
     /// The arguments of `ssh` that run the proxy.
     pub fn proxy_args(&self) -> Vec<OsString> {
+        self.command_args(&self.proxy_command())
+    }
+
+    /// The arguments of `ssh` that run `remote_command` on the host.
+    pub fn command_args(&self, remote_command: &str) -> Vec<OsString> {
         let mut args: Vec<OsString> = Self::BASE_OPTIONS.iter().map(OsString::from).collect();
         args.push(OsString::from(&self.destination));
-        args.push(OsString::from(self.proxy_command()));
+        args.push(OsString::from(remote_command));
         args
+    }
+
+    /// The arguments of `ssh` that forward the Unix socket `local` to the host's `remote`
+    /// socket and do nothing else: a stale `local` left by an earlier run is replaced
+    /// (`StreamLocalBindUnlink`) and a forward that cannot be made ends `ssh` instead of
+    /// leaving a connection that serves nothing (`ExitOnForwardFailure`). The forwards of the
+    /// user's configuration are not cleared here: they are the user's.
+    pub fn forward_args(&self, local: &Path, remote: &str) -> Result<Vec<OsString>, ClientError> {
+        let local = local.to_string_lossy();
+        if local.contains(':') || remote.contains(':') || remote.is_empty() {
+            return Err(ClientError::Ssh(format!(
+                "ssh {}: a forwarded socket path cannot contain `:` (ssh's own separator) or be                  empty: `{local}` -> `{remote}`",
+                self.name
+            )));
+        }
+        let mut args: Vec<OsString> = [
+            "-N",
+            "-T",
+            "-a",
+            "-x",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-o",
+            "StreamLocalBindUnlink=yes",
+            "-o",
+            "ConnectTimeout=15",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-L",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect();
+        args.push(OsString::from(format!("{local}:{remote}")));
+        args.push(OsString::from("--"));
+        args.push(OsString::from(&self.destination));
+        Ok(args)
+    }
+
+    /// Starts the `ssh` of [`forward_args`](Self::forward_args). Its standard error is the
+    /// caller's (the user reads why a forward failed); it ends when dropped.
+    pub fn forward(&self, local: &Path, remote: &str) -> Result<Child, ClientError> {
+        let program = self.program();
+        Command::new(&program)
+            .args(self.forward_args(local, remote)?)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .process_group(0)
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| {
+                ClientError::Ssh(format!("cannot run `{}`: {e}", program.to_string_lossy()))
+            })
+    }
+
+    /// Runs `remote_command` on the host and returns what it printed (at most 1 MiB), within
+    /// `within`. A command that fails reports what `ssh` or the host's shell wrote to standard
+    /// error.
+    pub async fn run(&self, remote_command: &str, within: Duration) -> Result<String, ClientError> {
+        let program = self.program();
+        let mut child = Command::new(&program)
+            .args(self.command_args(remote_command))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| {
+                ClientError::Ssh(format!("cannot run `{}`: {e}", program.to_string_lossy()))
+            })?;
+        let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+            return Err(ClientError::Ssh("ssh started without its pipes".into()));
+        };
+        let work = async {
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            let mut stdout = stdout.take(RUN_OUTPUT_LIMIT);
+            let mut stderr = stderr.take(4 * STDERR_TAIL as u64);
+            let (read_out, read_err) =
+                tokio::join!(stdout.read_to_end(&mut out), stderr.read_to_end(&mut err),);
+            read_out?;
+            read_err?;
+            let status = child.wait().await?;
+            Ok::<_, io::Error>((out, err, status))
+        };
+        let name = &self.name;
+        let (out, err, status) = match timeout(within, work).await {
+            Err(_) => {
+                return Err(ClientError::Ssh(format!(
+                    "ssh {name}: no answer within {} s",
+                    within.as_secs()
+                )));
+            }
+            Ok(Err(e)) => return Err(ClientError::Ssh(format!("ssh {name}: {e}"))),
+            Ok(Ok(done)) => done,
+        };
+        if status.success() {
+            return Ok(String::from_utf8_lossy(&out).into_owned());
+        }
+        let diagnostics = SshDiagnostics::default();
+        diagnostics.push_stderr(&err);
+        let said = diagnostics.stderr_text();
+        Err(ClientError::Ssh(if said.is_empty() {
+            format!("ssh {name}: exited with {status}")
+        } else {
+            format!("ssh {name}: {said}")
+        }))
     }
 
     /// Spawns `ssh … hutan proxy` and returns its stdio as one stream, with what is needed to
@@ -156,10 +284,7 @@ impl SshHost {
             .process_group(0)
             .kill_on_drop(true);
         let mut child = command.spawn().map_err(|e| {
-            ClientError::Ssh(format!(
-                "cannot run `{}`: {e}",
-                program.to_string_lossy()
-            ))
+            ClientError::Ssh(format!("cannot run `{}`: {e}", program.to_string_lossy()))
         })?;
         let (Some(stdin), Some(stdout), Some(mut stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
@@ -195,8 +320,9 @@ impl SshHost {
 fn remote_word(path: &str) -> String {
     let plain = |s: &str| {
         !s.is_empty()
-            && s.chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '+' | '@'))
+            && s.chars().all(|c| {
+                c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '+' | '@')
+            })
     };
     if plain(path) {
         return path.to_owned();
@@ -362,7 +488,10 @@ mod tests {
     #[test]
     fn remote_words_are_quoted_for_the_hosts_shell() {
         assert_eq!(remote_word("hutan"), "hutan");
-        assert_eq!(remote_word("/opt/homebrew/bin/hutan"), "/opt/homebrew/bin/hutan");
+        assert_eq!(
+            remote_word("/opt/homebrew/bin/hutan"),
+            "/opt/homebrew/bin/hutan"
+        );
         assert_eq!(remote_word("~/bin/hutan"), "~/bin/hutan");
         assert_eq!(remote_word("~/my bin/hutan"), "~/'my bin/hutan'");
         assert_eq!(remote_word("/a b/it's"), r"'/a b/it'\''s'");

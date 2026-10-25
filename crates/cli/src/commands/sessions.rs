@@ -33,8 +33,8 @@ impl Ctx {
         };
         // The daemon resolves paths from its own working directory, not ours.
         let mut cwd = match args.cwd {
-            Some(path) => std::path::absolute(path)?,
-            None => std::env::current_dir()?,
+            Some(path) => super::paths::absolute(path)?,
+            None => super::paths::here()?,
         };
         let client = self.connect().await?;
         let mut workspace = match super::workspaces::workspace_target(args.workspace.clone()) {

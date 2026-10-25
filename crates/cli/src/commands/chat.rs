@@ -93,8 +93,8 @@ impl Ctx {
     async fn chat_new(&self, args: ChatNewArgs) -> Result<(), CliError> {
         // The daemon resolves paths from its own working directory, not ours.
         let cwd = match args.cwd {
-            Some(path) => std::path::absolute(path)?,
-            None => std::env::current_dir()?,
+            Some(path) => super::paths::absolute(path)?,
+            None => super::paths::here()?,
         };
         let client = self.connect().await?;
         let workspace = match super::workspaces::workspace_target(args.workspace) {

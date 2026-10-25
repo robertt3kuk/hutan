@@ -15,6 +15,7 @@ use serde::de::DeserializeOwned;
 pub mod appearance;
 mod edit;
 mod error;
+pub mod hosts;
 pub mod keymap;
 mod store;
 pub mod themes;

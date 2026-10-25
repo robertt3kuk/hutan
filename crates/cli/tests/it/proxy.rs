@@ -153,7 +153,11 @@ async fn bridge_over_a_pipe_pair_carries_the_protocol() {
 #[tokio::test]
 async fn the_proxy_process_carries_every_frame_kind_and_prints_only_protocol() {
     let t = TestDaemon::start().await;
-    let mut command = command(std::path::Path::new(HUTAN), Some(&t.paths.socket), &["proxy"]);
+    let mut command = command(
+        std::path::Path::new(HUTAN),
+        Some(&t.paths.socket),
+        &["proxy"],
+    );
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -164,22 +168,24 @@ async fn the_proxy_process_carries_every_frame_kind_and_prints_only_protocol() {
 
     // Any byte of the process's standard output that is not a frame would fail the handshake or
     // a later decode: the client reads that pipe directly.
-    let Resumed { client, .. } =
-        Client::connect_stream(
-            Stdio2 {
-                stdin: Some(stdin),
-                stdout,
-            },
-            client_info(),
-            None,
-        )
-            .await
-            .unwrap();
+    let Resumed { client, .. } = Client::connect_stream(
+        Stdio2 {
+            stdin: Some(stdin),
+            stdout,
+        },
+        client_info(),
+        None,
+    )
+    .await
+    .unwrap();
     run_flows(&t, &client).await;
 
     // End of input ends the proxy cleanly, with nothing on standard error.
     drop(client);
-    let output = timeout(WAIT, child.wait_with_output()).await.unwrap().unwrap();
+    let output = timeout(WAIT, child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert_eq!(String::from_utf8_lossy(&output.stderr), "");
     t.stop().await;
@@ -188,7 +194,11 @@ async fn the_proxy_process_carries_every_frame_kind_and_prints_only_protocol() {
 #[tokio::test]
 async fn the_proxy_process_ends_when_the_daemon_does() {
     let t = TestDaemon::start().await;
-    let mut command = command(std::path::Path::new(HUTAN), Some(&t.paths.socket), &["proxy"]);
+    let mut command = command(
+        std::path::Path::new(HUTAN),
+        Some(&t.paths.socket),
+        &["proxy"],
+    );
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -196,17 +206,16 @@ async fn the_proxy_process_ends_when_the_daemon_does() {
     let mut child = spawn_child(&mut command);
     let stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
-    let Resumed { client, .. } =
-        Client::connect_stream(
-            Stdio2 {
-                stdin: Some(stdin),
-                stdout,
-            },
-            client_info(),
-            None,
-        )
-            .await
-            .unwrap();
+    let Resumed { client, .. } = Client::connect_stream(
+        Stdio2 {
+            stdin: Some(stdin),
+            stdout,
+        },
+        client_info(),
+        None,
+    )
+    .await
+    .unwrap();
     let _ = &client;
 
     t.daemon.shutdown();

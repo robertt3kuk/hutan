@@ -59,6 +59,18 @@ impl CliError {
             other => Self::Failed(other.to_string()),
         }
     }
+
+    /// Like [`from_client`](Self::from_client) for a daemon on host `host` reached over SSH.
+    pub fn from_host(error: ClientError, host: &str) -> Self {
+        match error {
+            ClientError::Remote(body) => Self::Remote(body),
+            ClientError::Ssh(text) => Self::Unreachable(text),
+            ClientError::Disconnected => {
+                Self::Unreachable(format!("lost the connection to host `{host}`"))
+            }
+            other => Self::Failed(other.to_string()),
+        }
+    }
 }
 
 /// What `hutan` prints when the daemon it started did not come up: the sentence, what the

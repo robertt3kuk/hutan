@@ -159,8 +159,7 @@ impl Ctx {
             (None, Some(text))
         } else {
             // The daemon reads the file, so it gets a path it can resolve from anywhere.
-            let path = std::path::absolute(&args.path)
-                .map_err(|e| CliError::Failed(format!("{}: {e}", args.path.display())))?;
+            let path = super::paths::absolute(&args.path)?;
             (Some(path), None)
         };
         let imported = client

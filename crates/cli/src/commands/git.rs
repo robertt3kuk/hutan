@@ -2,7 +2,7 @@
 //! `docs/protocol.md` § Git history). Thin: the daemon runs git, bounded and read-only; this only
 //! prints what it answers.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use hutan_client::Client;
 use hutan_protocol::git::{
@@ -11,6 +11,7 @@ use hutan_protocol::git::{
 use hutan_protocol::worktree::{DiffFile, DiffStatus};
 use serde_json::json;
 
+use super::paths::absolute;
 use super::{Ctx, print_line};
 use crate::args::{GitBlameArgs, GitCommand, GitLogArgs, GitShowArgs};
 use crate::error::CliError;
@@ -135,14 +136,6 @@ impl Ctx {
             eprintln!("note: the diff is cut (2 MiB) or lists only the first 5000 files");
         }
         Ok(())
-    }
-}
-
-fn absolute(path: &Path) -> Result<PathBuf, CliError> {
-    if path.is_absolute() {
-        Ok(path.to_owned())
-    } else {
-        Ok(std::env::current_dir()?.join(path))
     }
 }
 

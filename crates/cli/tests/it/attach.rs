@@ -34,6 +34,13 @@ struct Host {
 
 impl Host {
     fn spawn(socket: &Path, args: &[&str]) -> Self {
+        let mut argv = vec!["--socket", socket.to_str().unwrap()];
+        argv.extend_from_slice(args);
+        Self::spawn_with(&argv, &[])
+    }
+
+    /// `hutan args…` with the environment variables `env` set.
+    fn spawn_with(args: &[&str], env: &[(&str, &Path)]) -> Self {
         let pty = native_pty_system()
             .openpty(PtySize {
                 rows: 24,
@@ -43,11 +50,12 @@ impl Host {
             })
             .unwrap();
         let mut cmd = CommandBuilder::new(HUTAN);
-        cmd.arg("--socket");
-        cmd.arg(socket);
         cmd.args(args);
         cmd.env_remove("HUTAN_HOME");
         cmd.env_remove("HUTAN_SOCKET");
+        for (name, value) in env {
+            cmd.env(name, value);
+        }
         cmd.env("TERM", "xterm-256color");
         let child = pty.slave.spawn_command(cmd).unwrap();
         drop(pty.slave);
@@ -223,6 +231,49 @@ async fn attach_shows_the_session_forwards_typing_and_detaches() {
     again.wait_for_text("more").await;
     again.type_bytes(&[CTRL_BACKSLASH, b'd']);
     assert_eq!(again.wait_exit().await, 0);
+    t.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn attach_works_through_a_host_over_ssh() {
+    // `--host fake` runs the fake `ssh`, which runs `hutan proxy` against the test daemon: the
+    // terminal's snapshot, frames and input all cross the proxy.
+    let t = TestDaemon::start().await;
+    let home = tempfile::tempdir().unwrap();
+    let ssh = crate::ssh_host::FakeSsh::proxying(&t.paths.socket);
+    let added = common::hutan_in(
+        home.path(),
+        &ssh.script,
+        &["host", "add", "fake", "me@fake.example"],
+    )
+    .await;
+    assert_eq!(added.code, 0, "{added:?}");
+    let id = t
+        .new_session(
+            &[],
+            &[
+                "sh",
+                "-c",
+                "echo ready; read line; echo \"got:$line\"; exec cat",
+            ],
+        )
+        .await;
+
+    let mut host = Host::spawn_with(
+        &["--host", "fake", "attach", &id[..12]],
+        &[("HUTAN_HOME", home.path()), ("HUTAN_SSH", &ssh.script)],
+    );
+    host.wait_for_text("ready").await;
+    assert!(host.in_alternate_screen());
+    host.type_bytes(b"abc\r");
+    host.wait_for_text("got:abc").await;
+    host.type_bytes(&[CTRL_BACKSLASH]);
+    sleep(Duration::from_millis(100)).await;
+    host.type_bytes(b"d");
+    assert_eq!(host.wait_exit().await, 0);
+    assert!(!host.in_alternate_screen());
+    // One ssh for the whole attach.
+    assert_eq!(ssh.runs().len(), 1, "{:?}", ssh.runs());
     t.stop().await;
 }
 

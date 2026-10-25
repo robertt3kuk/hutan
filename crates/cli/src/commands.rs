@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use hutan_client::identity::{self, DaemonIdentity, Mismatch};
 use hutan_client::{
-    Client, ClientError, ConnectOptions, DaemonFiles, StartFailure, default_socket_path,
+    Client, ClientError, ConnectOptions, DaemonFiles, SshHost, StartFailure, default_socket_path,
     move_data_aside, start_failure,
 };
 use hutan_protocol::ErrorBody;
@@ -38,10 +38,12 @@ mod grants;
 mod help;
 mod history;
 mod hooks;
+mod host;
 mod integration;
 mod lsp;
 mod memory;
 mod notify;
+mod paths;
 mod projects;
 mod providers;
 mod proxy;
@@ -60,6 +62,12 @@ const STOP_WAIT: Duration = Duration::from_secs(10);
 const STOP_POLL: Duration = Duration::from_millis(25);
 
 pub async fn run(cli: Cli) -> Result<(), CliError> {
+    if let Some(name) = &cli.host {
+        if let Some(why) = refused_for_host(&cli.command) {
+            return Err(CliError::Usage(format!("`--host {name}`: {why}")));
+        }
+        paths::set_remote(name);
+    }
     // Whether a socket can be found is each command's own business: the agent hooks must not
     // fail on it, the integration commands do not need one.
     let ctx = Ctx::new(&cli);
@@ -72,6 +80,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Integration(command) => integration::run(cli.json, command),
         Command::Theme(command) => theme::run(cli.json, command),
         Command::Help(args) => help::run(&args.topic),
+        Command::Host(command) => host::run(cli.json, command).await,
         Command::Proxy => ctx?.proxy().await,
         Command::Mcp => crate::mcp::run(ctx?.socket_arg).await,
         Command::Ui(command) => ctx?.ui(command).await,
@@ -143,13 +152,23 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
 struct Ctx {
     /// `--socket` as given; `None` lets the client resolve it from the environment.
     socket_arg: Option<PathBuf>,
-    /// The socket that will be dialed, for messages.
+    /// The socket that will be dialed, for messages. Unused with `--host` (empty).
     socket: PathBuf,
+    /// `--host`: the daemon is on this machine, reached over SSH (R-2).
+    host: Option<SshHost>,
     json: bool,
 }
 
 impl Ctx {
     fn new(cli: &Cli) -> Result<Self, CliError> {
+        if let Some(name) = &cli.host {
+            return Ok(Self {
+                socket_arg: None,
+                socket: PathBuf::new(),
+                host: Some(host::resolve(name)?),
+                json: cli.json,
+            });
+        }
         let socket = cli
             .socket
             .clone()
@@ -158,24 +177,36 @@ impl Ctx {
         Ok(Self {
             socket_arg: cli.socket.clone(),
             socket,
+            host: None,
             json: cli.json,
         })
     }
 
     fn options(&self, autostart: Option<PathBuf>) -> ConnectOptions {
         ConnectOptions {
-            endpoint: self.socket_arg.clone().map(hutan_client::Endpoint::Local),
+            endpoint: match &self.host {
+                Some(host) => Some(hutan_client::Endpoint::Ssh(host.clone())),
+                None => self.socket_arg.clone().map(hutan_client::Endpoint::Local),
+            },
             autostart,
             client: ClientInfo {
                 kind: ClientKind::Cli,
                 version: env!("CARGO_PKG_VERSION").to_owned(),
-                origin: session_origin(),
+                // The session this process runs in belongs to the local daemon.
+                origin: if self.host.is_some() {
+                    None
+                } else {
+                    session_origin()
+                },
             },
         }
     }
 
     fn fail(&self, error: ClientError) -> CliError {
-        CliError::from_client(error, &self.socket)
+        match &self.host {
+            Some(host) => CliError::from_host(error, &host.name),
+            None => CliError::from_client(error, &self.socket),
+        }
     }
 
     async fn connect(&self) -> Result<Client, CliError> {
@@ -244,6 +275,14 @@ impl Ctx {
     }
 
     async fn daemon_status(&self) -> Result<(), CliError> {
+        if let Some(host) = &self.host {
+            // The proxy on the host starts its daemon, so a host's daemon is always found.
+            let client = self.connect().await?;
+            let info: DaemonStatusInfo =
+                self.call(&client, Request::DaemonStatus(Empty {})).await?;
+            let out = StatusOut::remote(host, info, &client);
+            return self.print(&out, || out.human());
+        }
         let client = match self.connect().await {
             Ok(client) => client,
             Err(error @ CliError::Unreachable(_)) => {
@@ -538,7 +577,12 @@ impl Ctx {
 #[derive(Serialize)]
 struct StatusOut {
     running: bool,
-    socket: PathBuf,
+    /// The daemon's socket; absent for a host reached over SSH.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    socket: Option<PathBuf>,
+    /// The `--host` that answered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host: Option<HostOut>,
     #[serde(flatten)]
     info: DaemonStatusInfo,
     /// Which build answers (protocol 0.42; absent from older daemons).
@@ -547,6 +591,12 @@ struct StatusOut {
     /// How it differs from the `hutand` this CLI starts; absent when it does not.
     #[serde(skip_serializing_if = "Option::is_none")]
     mismatch: Option<MismatchOut>,
+}
+
+#[derive(Serialize)]
+struct HostOut {
+    name: String,
+    ssh: String,
 }
 
 #[derive(Serialize)]
@@ -613,17 +663,34 @@ impl StatusOut {
     fn new(socket: &Path, info: DaemonStatusInfo, client: &Client) -> Self {
         Self {
             running: true,
-            socket: socket.to_owned(),
+            socket: Some(socket.to_owned()),
+            host: None,
             info,
             build: client.welcome().daemon_build.clone(),
             mismatch: MismatchOut::of(client),
         }
     }
 
+    /// The status of the daemon of a host. Whether its build matches this CLI's is not said:
+    /// the two are different machines and may differ on purpose.
+    fn remote(host: &SshHost, info: DaemonStatusInfo, client: &Client) -> Self {
+        Self {
+            running: true,
+            socket: None,
+            host: Some(HostOut {
+                name: host.name.clone(),
+                ssh: host.destination().to_owned(),
+            }),
+            info,
+            build: client.welcome().daemon_build.clone(),
+            mismatch: None,
+        }
+    }
+
     fn human(&self) -> String {
         let i = &self.info;
         let mut out = format!(
-            "hutand {} (protocol {}.{}) pid {}, up {}, {} session(s), {} client(s)\nsocket {}\nepoch  {}",
+            "hutand {} (protocol {}.{}) pid {}, up {}, {} session(s), {} client(s)\n{}\nepoch  {}",
             i.daemon_version,
             i.protocol.major,
             i.protocol.minor,
@@ -631,7 +698,11 @@ impl StatusOut {
             format_uptime(i.uptime_ms / 1000),
             i.sessions,
             i.clients,
-            self.socket.display(),
+            match (&self.socket, &self.host) {
+                (_, Some(host)) => format!("host   {} (ssh {})", host.name, host.ssh),
+                (Some(socket), None) => format!("socket {}", socket.display()),
+                (None, None) => String::new(),
+            },
             i.epoch,
         );
         if let Some(build) = &self.build {
@@ -697,6 +768,37 @@ fn print_line(text: &str) -> Result<(), CliError> {
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "{text}")?;
     Ok(())
+}
+
+/// Why `command` cannot run against a host with `--host`, when it cannot: it is about this
+/// machine, or is a process the host's own shell runs.
+fn refused_for_host(command: &Command) -> Option<&'static str> {
+    match command {
+        Command::Agent(AgentCommand::Interrupt(_)) => None,
+        Command::Agent(_) => Some(
+            "agent hooks report the session this process runs in to the daemon of this machine",
+        ),
+        Command::Integration(_) | Command::Theme(_) | Command::Help(_) => {
+            Some("this command works on this machine's files and does not use a daemon")
+        }
+        Command::Host(_) => Some("host commands manage the list on this machine; drop `--host`"),
+        Command::Proxy => Some("`hutan proxy` is what ssh runs on the host; drop `--host`"),
+        Command::Mcp => Some(
+            "an MCP server belongs to the agent that starts it; configure the agent to run \
+             `ssh HOST hutan mcp`",
+        ),
+        Command::Daemon(
+            DaemonCommand::Start
+            | DaemonCommand::Stop { .. }
+            | DaemonCommand::Restart { .. }
+            | DaemonCommand::Why
+            | DaemonCommand::ResetData { .. },
+        ) => Some(
+            "the host's daemon is started by any command that connects to it and stopped on the \
+             host itself (`ssh HOST hutan daemon stop`); `daemon status` shows it",
+        ),
+        _ => None,
+    }
 }
 
 /// The Hutan session this process runs in (`HUTAN_SESSION_ID`): sent as the client's origin so

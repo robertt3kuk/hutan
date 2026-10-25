@@ -126,7 +126,7 @@ impl Ctx {
 
     async fn project_open(&self, path: PathBuf) -> Result<(), CliError> {
         // The daemon resolves paths from its own working directory, not ours.
-        let path = std::path::absolute(path)?;
+        let path = super::paths::absolute(path)?;
         let client = self.connect().await?;
         let opened: WorkspaceOpened = self
             .call(
