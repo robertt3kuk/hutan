@@ -378,6 +378,9 @@ async fn write_loop<W: AsyncWrite + Unpin>(
             }
             sink.flush().await?;
         }
+        // Tell the peer nothing more comes. A Unix socket's half does that when dropped; the
+        // halves of a generic stream do not (the stream closes when both are gone).
+        sink.close().await?;
         Ok::<(), ProtocolError>(())
     };
     tokio::select! {

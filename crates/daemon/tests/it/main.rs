@@ -41,6 +41,7 @@ mod start_error;
 mod task_delivery;
 mod tasks;
 mod terminal_search;
+mod transport;
 mod usage;
 mod workspaces;
 mod worktree_review;

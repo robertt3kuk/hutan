@@ -2197,6 +2197,8 @@ async fn write_loop<W: AsyncWrite + Unpin>(
             break;
         }
     }
+    // Ends the daemon's reading side; see the same step in the daemon's connection writer.
+    let _ = writer.close().await;
 }
 
 pub(crate) fn is_unreachable(e: &io::Error) -> bool {
