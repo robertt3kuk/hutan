@@ -982,6 +982,7 @@ async fn a_running_turn_in_the_checkout_refuses_a_discard() {
             system_prompt: None,
             account: None,
             safety: None,
+            contain: None,
         }))
         .await
         .unwrap()
