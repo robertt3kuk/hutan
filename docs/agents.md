@@ -270,6 +270,20 @@ Harness processes start from the user's **login environment** (as terminal sessi
 
 Entries carry provider, a label (`ChatGPT`, `API key`, `Claude subscription`, the provider id for OMP), plan, status and, when the harness could not be asked, a `detail`. E-mail addresses, account ids and token-like strings are never read into an entry. A login/logout session ends like any session; the daemon then publishes `account.changed {harness}` and clients list again. `hutan account login omp anthropic --attach` attaches the terminal to the session at once.
 
+#### Several accounts per harness
+
+ADR 0015 § Amendment (2026-10-25), protocol 0.50. An **account** is a named configuration home that Hutan creates (`<data dir>/accounts/<harness>/<name>/`) and the harness fills; a session of the account starts the harness with the variable below set to it. Hutan never opens anything inside a home (its allowlist is empty).
+
+**Findings** (documentation and `--help` only, 2026-10-25; no credential file or Keychain item was read — details and links in the ADR):
+
+| Harness | Variable Hutan sets | Where the harness keeps the login | Source |
+|---|---|---|---|
+| Codex | `CODEX_HOME` | `auth.json` in it, or the OS credential store (`cli_auth_credentials_store = file \| keyring \| auto`); the keyring entry is keyed by the canonical path of `CODEX_HOME` | [Codex authentication](https://developers.openai.com/codex/auth), `codex-rs/login/src/auth/storage.rs` (`compute_store_key`) |
+| Claude Code | `CLAUDE_CONFIG_DIR` | the macOS Keychain, an entry keyed to the directory; `.credentials.json` in it as the fallback (and on Linux) | [Authentication § Log in with multiple accounts, § Credential management](https://code.claude.com/docs/en/authentication) |
+| OMP | `PI_CODING_AGENT_DIR` + `OMP_PROFILE=` (empty) | `agent.db` in the agent directory (default profile only: a named profile ignores the variable) | `omp --help` 18.12.3; `docs/environment-variables.md`, `docs/config-usage.md` § Profiles in `can1357/oh-my-pi` |
+
+What this means: the account's login lives wherever the harness puts it, and only the harness reads it. Removing an account runs the harness's logout first (Claude Code, Codex) so that a Keychain item goes too. A fresh home has none of your harness settings. Claude Code's keyless *Console* sign-in is stored outside the directory, so two such accounts are not separated; an auth broker for OMP (`OMP_AUTH_BROKER_URL`) keeps tokens off the home, so OMP accounts then share the broker's logins.
+
 ### Tests and fixtures
 
 `hutan-acp-fixture replay` is the fake `omp acp`: the replay engine of `hutan-codex-fixture` (transcript entries `{"dir": "out"|"in"|"hold"|"exit", …}`, requests matched by method, responses given the id of the request they answer, a directory = one transcript per spawn, `--received FILE`), with its own scrubber (`acp_scrub`: session ids become `sess_fixture_N`, temp and home directories and e-mail addresses are replaced, tokens refused; a test asserts committed fixtures are already scrubbed).
