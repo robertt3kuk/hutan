@@ -10,5 +10,7 @@ mod argv;
 mod common;
 mod detect_apple;
 mod detect_docker;
+mod policy;
+mod runtime_trait;
 mod spec;
 mod system_probe;
