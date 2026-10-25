@@ -1050,6 +1050,11 @@ impl AgentsPage {
                     } else {
                         limit.label.clone()
                     };
+                    // Two accounts of one harness have a window each: each says whose it is.
+                    let name = match &limit.account {
+                        Some(account) => format!("{name} · {account}"),
+                        None => name,
+                    };
                     div()
                         .id(("usage-limit", index * 16 + n))
                         .flex()

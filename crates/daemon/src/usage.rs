@@ -183,9 +183,19 @@ pub struct Attribution {
     pub harness: String,
     pub provider: String,
     pub model: Option<String>,
+    /// The managed account the session runs as (protocol 0.50): the limits it reports are that
+    /// account's. `None`: the harness's own login.
+    pub account: Option<String>,
 }
 
 impl Attribution {
+    /// The same attribution for the managed account `account`.
+    #[must_use]
+    pub fn with_account(mut self, account: Option<String>) -> Self {
+        self.account = account;
+        self
+    }
+
     /// A harness chat on `model` (OMP's ids are `provider/model`).
     pub fn harness(harness: &str, model: Option<&str>) -> Self {
         let (provider, model) = match (harness, model) {
@@ -201,6 +211,7 @@ impl Attribution {
             harness: harness.to_owned(),
             provider,
             model,
+            account: None,
         }
     }
 
@@ -210,6 +221,7 @@ impl Attribution {
             harness: HARNESS_DIRECT.to_owned(),
             provider: provider_id.to_owned(),
             model: Some(model.to_owned()),
+            account: None,
         }
     }
 }
@@ -335,7 +347,8 @@ pub fn build_summary(
                 .filter(|row| row.harness == harness && !is_over(row, now_ms))
                 .collect();
             windows.sort_by(|a, b| {
-                (&a.provider, a.window_minutes, &a.window_id).cmp(&(
+                (&a.account, &a.provider, a.window_minutes, &a.window_id).cmp(&(
+                    &b.account,
                     &b.provider,
                     b.window_minutes,
                     &b.window_id,
@@ -346,6 +359,8 @@ pub fn build_summary(
                 limits: windows
                     .into_iter()
                     .map(|row| UsageLimit {
+                        account: (!row.account.is_empty()).then(|| row.account.clone()),
+                        account_label: None,
                         provider: row.provider.clone(),
                         id: row.window_id.clone(),
                         label: row.label.clone(),
@@ -474,6 +489,7 @@ pub fn parse_omp_usage(text: &str, now_ms: u64) -> Option<Vec<UsageLimitRow>> {
             }
             let row = UsageLimitRow {
                 harness: HARNESS_OMP.to_owned(),
+                account: String::new(),
                 provider: provider.clone(),
                 window_id: id.clone(),
                 label,
@@ -579,8 +595,14 @@ impl UsageService {
         });
     }
 
-    /// A harness reported the limit windows of its account.
-    pub fn limits_reported(self: &Arc<Self>, harness: &str, limits: &RateLimits) {
+    /// A harness reported the limit windows of its account: the managed account `account`
+    /// (protocol 0.50), or `None` for the harness's own login.
+    pub fn limits_reported(
+        self: &Arc<Self>,
+        harness: &str,
+        account: Option<&str>,
+        limits: &RateLimits,
+    ) {
         let now = now_ms();
         let Some(provider) = identifier(&limits.provider) else {
             return;
@@ -590,6 +612,7 @@ impl UsageService {
             .iter()
             .map(|window| UsageLimitRow {
                 harness: harness.to_owned(),
+                account: account.unwrap_or_default().to_owned(),
                 provider: provider.clone(),
                 window_id: window.id.clone(),
                 label: window.label.clone(),
@@ -643,16 +666,32 @@ impl UsageService {
     /// The summary of what is stored, now.
     pub async fn snapshot(&self) -> Result<UsageSummary, ErrorBody> {
         let storage = self.storage.clone();
+        let accounts = self.harnesses.accounts().clone();
         let now = now_ms();
         tokio::task::spawn_blocking(move || {
             let (day, week) = period_starts(now, local_offset_secs);
             let usage = storage.usage();
-            let limits = usage.limits()?;
+            // The windows of an account that was removed are not shown.
+            let limits: Vec<_> = usage
+                .limits()?
+                .into_iter()
+                .filter(|row| {
+                    row.account.is_empty() || accounts.get(&row.harness, &row.account).is_some()
+                })
+                .collect();
             let week_sums = usage.sums_since(week)?;
             let day_sums = usage.sums_since(day)?;
-            Ok::<_, hutan_storage::StorageError>(build_summary(
-                now, day, week, &limits, &day_sums, &week_sums,
-            ))
+            let mut summary = build_summary(now, day, week, &limits, &day_sums, &week_sums);
+            for limit in summary.harnesses.iter_mut().flat_map(|h| {
+                let harness = h.harness.clone();
+                h.limits.iter_mut().map(move |l| (harness.clone(), l))
+            }) {
+                let (harness, limit) = limit;
+                if let Some(account) = &limit.account {
+                    limit.account_label = accounts.get(&harness, account).map(|r| r.label);
+                }
+            }
+            Ok::<_, hutan_storage::StorageError>(summary)
         })
         .await
         .map_err(|e| ErrorBody::new(ErrorCode::Internal, format!("reading usage: {e}")))?
@@ -678,21 +717,56 @@ impl UsageService {
         self.changed();
     }
 
-    /// Whether a harness has reported limits or run a turn through Hutan.
-    fn known(&self, harness: &str) -> bool {
+    /// Whether a harness has reported limits or run a turn through Hutan; with `account`, whether
+    /// that account has reported limits (it is not asked before it has been used through Hutan).
+    fn known(&self, harness: &str, account: Option<&str>) -> bool {
         let usage = self.storage.usage();
-        usage
-            .limits()
-            .is_ok_and(|rows| rows.iter().any(|row| row.harness == harness))
-            || usage
-                .sums_since(0)
-                .is_ok_and(|sums| sums.iter().any(|sum| sum.harness == harness))
+        let reported = usage.limits().is_ok_and(|rows| {
+            rows.iter()
+                .any(|row| row.harness == harness && row.account == account.unwrap_or_default())
+        });
+        match account {
+            Some(_) => reported,
+            None => {
+                reported
+                    || usage
+                        .sums_since(0)
+                        .is_ok_and(|sums| sums.iter().any(|sum| sum.harness == harness))
+            }
+        }
     }
 
-    async fn refresh_omp(&self) {
+    /// The accounts of `harness` to ask: its own login (`None`), then each managed account.
+    fn accounts_of(&self, harness: &str) -> Vec<Option<String>> {
+        std::iter::once(None)
+            .chain(
+                self.harnesses
+                    .accounts()
+                    .list()
+                    .into_iter()
+                    .filter(|record| record.harness == harness)
+                    .map(|record| Some(record.name)),
+            )
+            .collect()
+    }
+
+    async fn refresh_omp(self: &Arc<Self>) {
+        futures::future::join_all(
+            self.accounts_of(HARNESS_OMP)
+                .into_iter()
+                .map(|account| self.refresh_omp_for(account)),
+        )
+        .await;
+    }
+
+    async fn refresh_omp_for(&self, account: Option<String>) {
         let harnesses = self.harnesses.clone();
         let codex = self.codex.program.clone();
-        let cli = tokio::task::spawn_blocking(move || harnesses.cli(HARNESS_OMP, &codex)).await;
+        let asked = account.clone();
+        let cli = tokio::task::spawn_blocking(move || {
+            harnesses.cli_as(HARNESS_OMP, &codex, asked.as_deref())
+        })
+        .await;
         let Ok(Ok((program, env))) = cli else {
             debug!("omp is not installed: no limits from `omp usage`");
             return;
@@ -704,13 +778,19 @@ impl UsageService {
                 return;
             }
         };
-        let Some(rows) = parse_omp_usage(&text, now_ms()) else {
+        let Some(mut rows) = parse_omp_usage(&text, now_ms()) else {
             debug!("`omp usage --json` printed something that is not a usage report");
             return;
         };
+        let name = account.unwrap_or_default();
+        for row in &mut rows {
+            row.account.clone_from(&name);
+        }
         let storage = self.storage.clone();
         let stored = tokio::task::spawn_blocking(move || {
-            storage.usage().replace_limits(HARNESS_OMP.to_owned(), rows)
+            storage
+                .usage()
+                .replace_limits(HARNESS_OMP.to_owned(), name, rows)
         })
         .await;
         if !matches!(stored, Ok(Ok(()))) {
@@ -719,24 +799,40 @@ impl UsageService {
     }
 
     async fn refresh_codex(self: &Arc<Self>) {
-        let this = self.clone();
-        let known = tokio::task::spawn_blocking(move || this.known(HARNESS_CODEX))
+        for account in self.accounts_of(HARNESS_CODEX) {
+            let this = self.clone();
+            let asked = account.clone();
+            let known =
+                tokio::task::spawn_blocking(move || this.known(HARNESS_CODEX, asked.as_deref()))
+                    .await
+                    .unwrap_or(false);
+            if !known {
+                continue;
+            }
+            let mut config = self.codex.clone();
+            if let Some(name) = &account {
+                match self.harnesses.accounts().launch_env(HARNESS_CODEX, name) {
+                    Ok(env) => env.apply_to_pairs(&mut config.env),
+                    Err(error) => {
+                        debug!(message = %error.message, "no codex limits for a missing account");
+                        continue;
+                    }
+                }
+            }
+            match timeout(
+                CODEX_READ_TIMEOUT,
+                hutan_agents::codex::read_rate_limits(&config),
+            )
             .await
-            .unwrap_or(false);
-        if !known {
-            return;
-        }
-        match timeout(
-            CODEX_READ_TIMEOUT,
-            hutan_agents::codex::read_rate_limits(&self.codex),
-        )
-        .await
-        {
-            Ok(Ok(Some(limits))) => self.limits_reported(HARNESS_CODEX, &limits),
-            Ok(Ok(None)) => {}
-            Ok(Err(AgentError::Spawn { .. })) => debug!("codex is not installed"),
-            Ok(Err(error)) => debug!(%error, "codex did not report its limits"),
-            Err(_) => debug!("codex did not report its limits in time"),
+            {
+                Ok(Ok(Some(limits))) => {
+                    self.limits_reported(HARNESS_CODEX, account.as_deref(), &limits);
+                }
+                Ok(Ok(None)) => {}
+                Ok(Err(AgentError::Spawn { .. })) => debug!("codex is not installed"),
+                Ok(Err(error)) => debug!(%error, "codex did not report its limits"),
+                Err(_) => debug!("codex did not report its limits in time"),
+            }
         }
     }
 
@@ -889,6 +985,7 @@ mod tests {
     fn limit(harness: &str, id: &str, used: f64, resets: Option<u64>) -> UsageLimitRow {
         UsageLimitRow {
             harness: harness.to_owned(),
+            account: String::new(),
             provider: "openai".to_owned(),
             window_id: id.to_owned(),
             label: id.to_owned(),
@@ -963,6 +1060,19 @@ mod tests {
             ["anthropic", "ollama", "openai"],
             "most used first"
         );
+    }
+
+    #[test]
+    fn the_summary_keeps_a_window_per_account_in_account_order() {
+        let mut work = limit("claude", "5h", 60.0, Some(2_000_000));
+        work.account = "work".to_owned();
+        let own = limit("claude", "5h", 5.0, Some(2_000_000));
+        let summary = build_summary(1_000_000, 0, 0, &[work, own], &[], &[]);
+        let limits = &summary.harnesses[0].limits;
+        assert_eq!(limits.len(), 2);
+        assert_eq!(limits[0].account, None, "the harness's own login first");
+        assert_eq!(limits[1].account.as_deref(), Some("work"));
+        assert_eq!(limits[1].used_percent, 60.0);
     }
 
     #[test]

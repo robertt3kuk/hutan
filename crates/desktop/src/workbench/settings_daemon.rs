@@ -143,6 +143,7 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
                     "harness.omp.args",
                     "harness.omp.env",
                     "harness.omp.cli",
+                    "harness.omp.account",
                 ],
             },
             Section {
@@ -153,12 +154,13 @@ pub(super) fn sections(page: &str) -> &'static [Section] {
                     "harness.claude.args",
                     "harness.claude.env",
                     "harness.claude.cli",
+                    "harness.claude.account",
                 ],
             },
             Section {
                 title: words::SEC_CODEX,
                 help: "",
-                keys: &["codex.bin", "codex.args"],
+                keys: &["codex.bin", "codex.args", "codex.account"],
             },
             Section {
                 title: words::SEC_MCP,

@@ -1125,7 +1125,8 @@ impl ChatManager {
             self.assistant_policy().mode,
             spec.assistant,
             LiveUsage::new(
-                Attribution::harness(AGENT_CODEX, Some(&started.model)),
+                Attribution::harness(AGENT_CODEX, Some(&started.model))
+                    .with_account(spec.account.clone()),
                 !started.resumed,
             ),
         );
@@ -1200,7 +1201,8 @@ impl ChatManager {
             self.assistant_policy().mode,
             spec.assistant,
             LiveUsage::new(
-                Attribution::harness(&spec.agent, Some(&started.model)),
+                Attribution::harness(&spec.agent, Some(&started.model))
+                    .with_account(spec.account.clone()),
                 !started.resumed,
             ),
         );
@@ -1370,7 +1372,8 @@ impl ChatManager {
                         error => ErrorBody::new(ErrorCode::ProviderError, error.to_string()),
                     })?;
                 let mut attribution = lock(&live.usage.attribution);
-                *attribution = Attribution::harness(&attribution.harness.clone(), Some(&model));
+                *attribution = Attribution::harness(&attribution.harness.clone(), Some(&model))
+                    .with_account(attribution.account.clone());
                 Ok(())
             }
         }
@@ -2403,8 +2406,12 @@ impl ChatManager {
                         }
                         AdapterMessage::Mode(mode) => self.notifier.mode(live.id, mode).await,
                         AdapterMessage::Limits(limits) => {
-                            let harness = lock(&live.usage.attribution).harness.clone();
-                            self.usage.limits_reported(&harness, &limits);
+                            let (harness, account) = {
+                                let attribution = lock(&live.usage.attribution);
+                                (attribution.harness.clone(), attribution.account.clone())
+                            };
+                            self.usage
+                                .limits_reported(&harness, account.as_deref(), &limits);
                         }
                         AdapterMessage::Exited(info) => {
                             exit = info;

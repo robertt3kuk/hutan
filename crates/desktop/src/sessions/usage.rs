@@ -139,10 +139,22 @@ pub fn limit_line(harness: &HarnessUsage, limit: &UsageLimit, now_ms: u64) -> St
         );
     }
     line.push_str(&format!(" {}", percent(limit.used_percent)));
+    if let Some(account) = account_name(limit) {
+        line.push_str(&format!(" · {account}"));
+    }
     if let Some(resets) = limit.resets_at_ms {
         line.push_str(&format!(" · resets in {}", reset_in(resets, now_ms)));
     }
     line
+}
+
+/// The account a window belongs to, as it is named next to it (`Work`); none for the
+/// harness's own login (protocol 0.50).
+pub fn account_name(limit: &UsageLimit) -> Option<String> {
+    limit
+        .account_label
+        .clone()
+        .or_else(|| limit.account.clone())
 }
 
 /// `22.2k tokens · ≈ $0.42 (estimate)`; `no turns` for none. A cost is the harness's own price
@@ -183,6 +195,8 @@ pub struct LimitView {
     pub label: String,
     /// The provider the window is with.
     pub provider: String,
+    /// The managed account the window is of (`Work`); none for the harness's own login.
+    pub account: Option<String>,
     /// `72%`.
     pub percent: String,
     /// How full the bar is, 0 to 1.
@@ -220,6 +234,7 @@ pub fn section(summary: &UsageSummary, now_ms: u64) -> Vec<HarnessView> {
                 .map(|l| LimitView {
                     label: l.label.clone(),
                     provider: l.provider.clone(),
+                    account: account_name(l),
                     percent: percent(l.used_percent),
                     fraction: (l.used_percent / 100.0).clamp(0.0, 1.0) as f32,
                     resets: l
@@ -254,6 +269,10 @@ pub fn section(summary: &UsageSummary, now_ms: u64) -> Vec<HarnessView> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UsageWarning {
     pub harness: String,
+    /// The managed account (its name), none for the harness's own login.
+    pub account: Option<String>,
+    /// How the account reads next to the harness (`Work`).
+    pub account_name: Option<String>,
     pub provider: String,
     pub window_id: String,
     pub label: String,
@@ -266,9 +285,12 @@ pub struct UsageWarning {
 impl UsageWarning {
     /// `Codex is at 80% of its 5-hour limit · resets in 3h`.
     pub fn text(&self, now_ms: u64) -> String {
+        let who = match &self.account_name {
+            Some(account) => format!("{} ({account})", harness_label(&self.harness)),
+            None => harness_label(&self.harness),
+        };
         let mut text = format!(
-            "{} is at {} of its {} limit",
-            harness_label(&self.harness),
+            "{who} is at {} of its {} limit",
             percent(self.used_percent),
             self.label
         );
@@ -279,11 +301,11 @@ impl UsageWarning {
     }
 }
 
-type WindowKey = (String, String, String, u64);
+type WindowKey = (String, String, String, String, u64);
 
 /// Gives each warning once per limit window.
 ///
-/// A window is a harness, a provider, a window id and the reset time it runs to: when the reset
+/// A window is a harness, an account, a provider, a window id and the reset time it runs to: when the reset
 /// comes the daemon reports the next one, which is a window of its own. The first summary a
 /// window sees only seeds what is known (a limit that is at 85 % when the app opens is not news:
 /// the status item shows it). After that a window warns when it reaches 80 %, and again when it
@@ -315,6 +337,7 @@ impl UsageWarnings {
             for limit in harness.limits.iter().filter(|l| current(l, now_ms)) {
                 let key: WindowKey = (
                     harness.harness.clone(),
+                    limit.account.clone().unwrap_or_default(),
                     limit.provider.clone(),
                     limit.id.clone(),
                     limit.resets_at_ms.unwrap_or(0),
@@ -324,6 +347,8 @@ impl UsageWarnings {
                 if level > known && !seeding {
                     warnings.push(UsageWarning {
                         harness: harness.harness.clone(),
+                        account: limit.account.clone(),
+                        account_name: account_name(limit),
                         provider: limit.provider.clone(),
                         window_id: limit.id.clone(),
                         label: limit.label.clone(),
@@ -354,6 +379,8 @@ mod tests {
 
     fn limit(provider: &str, id: &str, used: f64, resets: Option<u64>) -> UsageLimit {
         UsageLimit {
+            account: None,
+            account_label: None,
             provider: provider.into(),
             id: id.into(),
             label: if id == "5h" { "5-hour" } else { "weekly" }.into(),
@@ -382,6 +409,56 @@ mod tests {
             harnesses,
             providers: vec![],
         }
+    }
+
+    fn of_account(mut limit: UsageLimit, name: &str, label: &str) -> UsageLimit {
+        limit.account = Some(name.into());
+        limit.account_label = Some(label.into());
+        limit
+    }
+
+    #[test]
+    fn two_accounts_of_one_harness_each_have_their_window_and_warn_on_their_own() {
+        let own = limit("anthropic", "5h", 10.0, Some(NOW + HOUR));
+        let work = of_account(
+            limit("anthropic", "5h", 82.0, Some(NOW + HOUR)),
+            "work",
+            "Work",
+        );
+        let usage = summary(vec![harness("claude", vec![own.clone(), work.clone()])]);
+        // The Usage section says whose each bar is; the harness's own login says nothing.
+        let rows = section(&usage, NOW);
+        let accounts: Vec<_> = rows[0].limits.iter().map(|l| l.account.clone()).collect();
+        assert_eq!(accounts, [None, Some("Work".to_owned())]);
+        // The tooltip and the status item name the tightest window's account.
+        let text = status_text(&usage, NOW).unwrap();
+        assert!(
+            text.tooltip.contains("Claude Code 5-hour 82% · Work"),
+            "{}",
+            text.tooltip
+        );
+        // Seeded at 10 % and 20 %, the second account crossing 80 % warns by itself.
+        let mut warnings = UsageWarnings::default();
+        let calm = summary(vec![harness(
+            "claude",
+            vec![
+                own.clone(),
+                of_account(
+                    limit("anthropic", "5h", 20.0, Some(NOW + HOUR)),
+                    "work",
+                    "Work",
+                ),
+            ],
+        )]);
+        assert!(warnings.observe(&calm, NOW).is_empty());
+        let news = warnings.observe(&usage, NOW);
+        assert_eq!(news.len(), 1);
+        assert_eq!(news[0].account.as_deref(), Some("work"));
+        assert_eq!(
+            news[0].text(NOW),
+            "Claude Code (Work) is at 82% of its 5-hour limit · resets in 1h"
+        );
+        assert!(warnings.observe(&usage, NOW).is_empty(), "once per window");
     }
 
     #[test]
@@ -463,6 +540,7 @@ mod tests {
             [LimitView {
                 label: "5-hour".into(),
                 provider: "anthropic".into(),
+                account: None,
                 percent: "7%".into(),
                 fraction: 0.07,
                 resets: Some("resets in 3h".into()),

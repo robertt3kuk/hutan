@@ -58,6 +58,14 @@ impl AccountEnv {
         }
     }
 
+    /// Sets the account's variables over a list of pairs (a process configuration's `env`).
+    pub fn apply_to_pairs(&self, env: &mut Vec<(String, String)>) {
+        for (name, value) in &self.set {
+            env.retain(|(k, _)| k != name);
+            env.push((name.clone(), value.clone()));
+        }
+    }
+
     /// Sets the account's variables over `env`.
     pub fn apply(&self, env: &mut BTreeMap<String, String>) {
         for (name, value) in &self.set {

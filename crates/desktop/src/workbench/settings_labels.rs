@@ -1262,6 +1262,12 @@ const DAEMON_FIELDS: &[FieldText] = &[
     ),
     field(
         "daemon",
+        "harness.omp.account",
+        "OMP default account",
+        "The account new OMP chats run as when you have not set a default on the Accounts page: the name of an account you added (`hutan account list`), or system for the harness's own login. Applies after the daemon restarts.",
+    ),
+    field(
+        "daemon",
         "harness.claude.bin",
         "Claude Code adapter",
         "The program Hutan starts to chat with Claude Code. Default: claude-agent-acp, else claude-code-acp, found on the PATH of your login shell.",
@@ -1286,6 +1292,12 @@ const DAEMON_FIELDS: &[FieldText] = &[
     ),
     field(
         "daemon",
+        "harness.claude.account",
+        "Claude Code default account",
+        "The account new Claude Code chats run as when you have not set a default on the Accounts page: the name of an account you added (`hutan account list`), or system for the harness's own login. Applies after the daemon restarts.",
+    ),
+    field(
+        "daemon",
         "codex.bin",
         "Codex program",
         "The program Hutan starts to chat with Codex. Default: codex, found on the PATH of the daemon.",
@@ -1295,6 +1307,12 @@ const DAEMON_FIELDS: &[FieldText] = &[
         "codex.args",
         "Codex arguments",
         "Arguments passed to that program. Default: app-server.",
+    ),
+    field(
+        "daemon",
+        "codex.account",
+        "Codex default account",
+        "The account new Codex chats run as when you have not set a default on the Accounts page: the name of an account you added (`hutan account list`), or system for the harness's own login. Applies after the daemon restarts.",
     ),
     field(
         "daemon",

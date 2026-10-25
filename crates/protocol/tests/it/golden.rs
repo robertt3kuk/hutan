@@ -4725,6 +4725,8 @@ fn usage_summary_fixture() -> UsageSummary {
                 harness: "codex".into(),
                 limits: vec![
                     UsageLimit {
+                        account: None,
+                        account_label: None,
                         provider: "openai".into(),
                         id: "5h".into(),
                         label: "5-hour".into(),
@@ -4735,6 +4737,8 @@ fn usage_summary_fixture() -> UsageSummary {
                         observed_at_ms: 1_791_894_100_000,
                     },
                     UsageLimit {
+                        account: Some("work".into()),
+                        account_label: Some("Work".into()),
                         provider: "openai".into(),
                         id: "7d".into(),
                         label: "weekly".into(),

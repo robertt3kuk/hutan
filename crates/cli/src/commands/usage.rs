@@ -107,6 +107,9 @@ pub fn usage_text(summary: &UsageSummary, now_ms: u64) -> String {
                 bar(limit.used_percent),
                 limit.used_percent
             );
+            if let Some(account) = limit.account_label.as_ref().or(limit.account.as_ref()) {
+                line.push_str(&format!("  {account}"));
+            }
             if let Some(resets) = limit.resets_at_ms {
                 line.push_str(&format!("  resets in {}", reset_in(resets, now_ms)));
             }
@@ -146,6 +149,8 @@ mod tests {
             harnesses: vec![HarnessUsage {
                 harness: "codex".into(),
                 limits: vec![UsageLimit {
+                    account: None,
+                    account_label: None,
                     provider: "openai".into(),
                     id: "5h".into(),
                     label: "5-hour".into(),

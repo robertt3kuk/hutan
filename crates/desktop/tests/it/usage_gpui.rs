@@ -27,6 +27,8 @@ fn now() -> u64 {
 
 fn limit(provider: &str, id: &str, used: f64, resets: Option<u64>) -> UsageLimit {
     UsageLimit {
+        account: None,
+        account_label: None,
         provider: provider.into(),
         id: id.into(),
         label: if id == "5h" { "5-hour" } else { "weekly" }.into(),

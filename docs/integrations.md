@@ -266,3 +266,9 @@ A hook is a command **you** wrote, run by the daemon with your rights whenever t
 Nothing here runs with more rights than the agent has. The hook script is a few lines of `sh` that checks `HUTAN_ENV`, finds `HUTAN_BIN`, and calls `hutan agent hook`; the daemon validates every resume command before it stores it. No credentials pass through any of it.
 
 Tests: user hooks `crates/daemon/src/hooks.rs`, `crates/daemon/tests/it/hooks.rs`, `crates/cli/tests/it/hooks.rs`, `crates/desktop/tests/it/hooks_gpui.rs`; `crates/daemon/tests/it/agent.rs` (protocol semantics, restart resumes a fake agent through its reported argv), `crates/cli/tests/it/{agent,integration,integration_mcp,omp_extension}.rs` (CLI against a real daemon; installs on temporary copies of real-shaped configuration; the OMP extension under Bun, skipped when Bun is missing).
+
+Tests: `crates/daemon/tests/it/agent.rs` (protocol semantics, restart resumes a fake agent through its reported argv), `crates/cli/tests/it/{agent,integration,integration_mcp,omp_extension}.rs` (CLI against a real daemon; installs on temporary copies of real-shaped configuration; the OMP extension under Bun, skipped when Bun is missing).
+
+## Several accounts and the agent's own terminal
+
+`hutan account add <harness> <name>` (ADR 0015 § Amendment, `docs/agents.md` § Several accounts per harness) gives a harness a second login in a folder of Hutan's (`<data dir>/accounts/<harness>/<name>/`). Chats Hutan starts run with it. A harness you start yourself in a terminal does not: to use an account there, set the harness's variable to the folder `hutan account list --json` shows as `home` (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR` with `OMP_PROFILE=` empty). The hooks written by `hutan integration install` go to the harness's own configuration folder, not into an account's: an account starts as a first run of the harness.

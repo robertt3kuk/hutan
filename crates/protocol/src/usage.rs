@@ -62,6 +62,14 @@ pub struct ProviderUsage {
 /// One limit window a harness reported (the 5-hour or the weekly window of a plan).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UsageLimit {
+    /// Protocol 0.50 (capability `accounts.multi`): the managed account the window belongs to
+    /// (its name); absent: the harness's own login. Two accounts of one harness have a window
+    /// each.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    /// The account's label, for display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_label: Option<String>,
     /// The provider the limit is for (`anthropic`, `openai`).
     pub provider: String,
     /// `5h`, `7d`, `30m`, or `primary`/`secondary` when the harness gave no duration.

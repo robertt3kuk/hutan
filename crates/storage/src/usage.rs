@@ -1,4 +1,5 @@
-//! The `usage_turns` and `usage_limits` tables (schema v19, `docs/agents.md` § Usage).
+//! The `usage_turns` and `usage_limits` tables (schema v19, limits per account from v21,
+//! `docs/agents.md` § Usage).
 //!
 //! Writes are applied before they return (they go through the writer like a read): a limit the
 //! daemon announced is on disk when the announcement is.
@@ -53,6 +54,8 @@ pub struct UsageSum {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UsageLimitRow {
     pub harness: String,
+    /// The managed account the window belongs to; empty: the harness's own login.
+    pub account: String,
     pub provider: String,
     pub window_id: String,
     pub label: String,
@@ -106,7 +109,8 @@ impl Usage<'_> {
         self.0.read(move |conn| sums_since(conn, since_ms))
     }
 
-    /// Stores windows, each replacing the one with the same harness, provider and window id.
+    /// Stores windows, each replacing the one with the same harness, account, provider and
+    /// window id.
     pub fn upsert_limits(&self, rows: Vec<UsageLimitRow>) -> Result<()> {
         self.0.read(move |conn| {
             let tx = conn
@@ -120,16 +124,24 @@ impl Usage<'_> {
         })
     }
 
-    /// Replaces every window of `harness` with `rows` (a harness that reports all of its
-    /// windows at once: a window it no longer reports is gone).
-    pub fn replace_limits(&self, harness: String, rows: Vec<UsageLimitRow>) -> Result<()> {
+    /// Replaces every window of `harness` and `account` (empty: its own login) with `rows` (a
+    /// harness that reports all of its windows at once: a window it no longer reports is gone).
+    pub fn replace_limits(
+        &self,
+        harness: String,
+        account: String,
+        rows: Vec<UsageLimitRow>,
+    ) -> Result<()> {
         self.0.read(move |conn| {
             let context = "replacing limits";
             let tx = conn
                 .unchecked_transaction()
                 .map_err(StorageError::sqlite(context))?;
-            tx.execute("DELETE FROM usage_limits WHERE harness = ?1", [&harness])
-                .map_err(StorageError::sqlite(context))?;
+            tx.execute(
+                "DELETE FROM usage_limits WHERE harness = ?1 AND account = ?2",
+                [&harness, &account],
+            )
+            .map_err(StorageError::sqlite(context))?;
             for row in &rows {
                 upsert_limit(&tx, row)?;
             }
@@ -142,23 +154,25 @@ impl Usage<'_> {
             let context = "reading limits";
             let mut stmt = conn
                 .prepare(
-                    "SELECT harness, provider, window_id, label, used_percent, window_minutes, \
+                    "SELECT harness, account, provider, window_id, label, used_percent, window_minutes, \
                          resets_at_ms, plan, observed_at_ms \
-                     FROM usage_limits ORDER BY harness, provider, window_minutes, window_id",
+                     FROM usage_limits \
+                     ORDER BY harness, account, provider, window_minutes, window_id",
                 )
                 .map_err(StorageError::sqlite(context))?;
             let rows = stmt
                 .query_map([], |row| {
                     Ok(UsageLimitRow {
                         harness: row.get(0)?,
-                        provider: row.get(1)?,
-                        window_id: row.get(2)?,
-                        label: row.get(3)?,
-                        used_percent: row.get(4)?,
-                        window_minutes: row.get::<_, Option<i64>>(5)?.map(unms),
-                        resets_at_ms: row.get::<_, Option<i64>>(6)?.map(unms),
-                        plan: row.get(7)?,
-                        observed_at_ms: unms(row.get(8)?),
+                        account: row.get(1)?,
+                        provider: row.get(2)?,
+                        window_id: row.get(3)?,
+                        label: row.get(4)?,
+                        used_percent: row.get(5)?,
+                        window_minutes: row.get::<_, Option<i64>>(6)?.map(unms),
+                        resets_at_ms: row.get::<_, Option<i64>>(7)?.map(unms),
+                        plan: row.get(8)?,
+                        observed_at_ms: unms(row.get(9)?),
                     })
                 })
                 .map_err(StorageError::sqlite(context))?;
@@ -170,11 +184,12 @@ impl Usage<'_> {
 
 fn upsert_limit(conn: &Connection, row: &UsageLimitRow) -> Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO usage_limits (harness, provider, window_id, label, used_percent, \
-             window_minutes, resets_at_ms, plan, observed_at_ms) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT OR REPLACE INTO usage_limits (harness, account, provider, window_id, label, \
+             used_percent, window_minutes, resets_at_ms, plan, observed_at_ms) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             row.harness,
+            row.account,
             row.provider,
             row.window_id,
             row.label,
@@ -318,6 +333,7 @@ mod tests {
     fn limit(harness: &str, window: &str, used: f64) -> UsageLimitRow {
         UsageLimitRow {
             harness: harness.to_owned(),
+            account: String::new(),
             provider: "openai".to_owned(),
             window_id: window.to_owned(),
             label: window.to_owned(),
@@ -350,7 +366,11 @@ mod tests {
         );
         usage.upsert_limits(vec![limit("omp", "5h", 1.0)]).unwrap();
         usage
-            .replace_limits("codex".to_owned(), vec![limit("codex", "7d", 6.0)])
+            .replace_limits(
+                "codex".to_owned(),
+                String::new(),
+                vec![limit("codex", "7d", 6.0)],
+            )
             .unwrap();
         let rows = usage.limits().unwrap();
         let names: Vec<_> = rows
@@ -358,5 +378,33 @@ mod tests {
             .map(|r| (r.harness.as_str(), r.window_id.as_str()))
             .collect();
         assert_eq!(names, [("codex", "7d"), ("omp", "5h")]);
+    }
+
+    #[test]
+    fn the_same_window_exists_once_per_account_and_replacing_one_leaves_the_others() {
+        let (_dir, storage) = storage();
+        let usage = storage.usage();
+        let mut work = limit("claude", "5h", 40.0);
+        work.account = "work".to_owned();
+        let own = limit("claude", "5h", 10.0);
+        usage.upsert_limits(vec![own, work.clone()]).unwrap();
+        assert_eq!(usage.limits().unwrap().len(), 2);
+        let mut updated = work;
+        updated.used_percent = 90.0;
+        usage.upsert_limits(vec![updated]).unwrap();
+        let rows = usage.limits().unwrap();
+        assert_eq!(rows.len(), 2);
+        // Ordered by account: the harness's own login ('') first.
+        assert_eq!((rows[0].account.as_str(), rows[0].used_percent), ("", 10.0));
+        assert_eq!(
+            (rows[1].account.as_str(), rows[1].used_percent),
+            ("work", 90.0)
+        );
+        usage
+            .replace_limits("claude".to_owned(), "work".to_owned(), Vec::new())
+            .unwrap();
+        let rows = usage.limits().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].account, "");
     }
 }
