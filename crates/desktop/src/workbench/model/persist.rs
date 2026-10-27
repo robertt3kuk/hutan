@@ -24,9 +24,20 @@ use super::{
 /// (MEM-SIDEBAR) makes Mawas's Memory a body of the left sidebar: a `mawas-memory` tab of the
 /// center moves into the left dock ([`migrate_v6`]). 8 (SB-ATTACH) puts Files in the right
 /// dock: a layout whose left dock is the built-in one loses `files` there and gets it at the
-/// front of the right dock ([`migrate_v7`]); a Files panel the user placed stays. The next save
-/// writes version 8.
-pub const STATE_VERSION: u32 = 8;
+/// front of the right dock ([`migrate_v7`]); a Files panel the user placed stays. 9
+/// (FX-CHANGES-VIEW) gives Files to every layout that has it nowhere: a layout saved before Files
+/// existed (the first release's left dock was Projects and Tasks) never named it, and a saved
+/// layout wins over the presets, so Files was missing for good; such a layout gets `files` at the
+/// front of the right dock ([`migrate_v8`]) and one note, once. A Files panel hidden in a
+/// version 9 layout stays hidden. The next save writes version 9.
+pub const STATE_VERSION: u32 = 9;
+
+/// What loading a saved layout changed that the user is told once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutNote {
+    /// The layout had no Files panel anywhere: it is on the right rail now ([`migrate_v8`]).
+    FilesRestored,
+}
 
 /// Result of reading a saved state.
 #[derive(Debug)]
@@ -34,10 +45,12 @@ pub struct LoadOutcome {
     pub state: WorkbenchState,
     /// Set when the saved data was unusable and the default layout was substituted.
     pub warning: Option<String>,
+    /// What loading changed that the user is told once.
+    pub notes: Vec<LayoutNote>,
 }
 
 impl WorkbenchState {
-    /// `{ "version": 8, "docks": …, "center": …, … }`, pretty-printed.
+    /// `{ "version": 9, "docks": …, "center": …, … }`, pretty-printed.
     pub fn to_json(&self) -> Result<String, ModelError> {
         let mut value =
             serde_json::to_value(self).map_err(|e| ModelError::Invalid(e.to_string()))?;
@@ -50,10 +63,15 @@ impl WorkbenchState {
     /// Strict parse: wrong version or malformed data is an error. The result is normalized, so
     /// hand-edited files with broken ratios or empty panes still load into a valid state.
     pub fn from_json(json: &str) -> Result<Self, ModelError> {
+        Self::from_json_noted(json).map(|(state, _)| state)
+    }
+
+    /// [`Self::from_json`], with what the migrations changed that the user is told once.
+    pub fn from_json_noted(json: &str) -> Result<(Self, Vec<LayoutNote>), ModelError> {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| ModelError::Invalid(e.to_string()))?;
         let version = match value.get("version").and_then(serde_json::Value::as_u64) {
-            Some(v @ (1..=8)) => v,
+            Some(v @ (1..=9)) => v,
             Some(v) => return Err(ModelError::Invalid(format!("unsupported version {v}"))),
             None => return Err(ModelError::Invalid("missing version".to_owned())),
         };
@@ -77,20 +95,26 @@ impl WorkbenchState {
         if version <= 7 {
             migrate_v7(&mut state);
         }
+        let mut notes = Vec::new();
+        if version <= 8 && migrate_v8(&mut state) {
+            notes.push(LayoutNote::FilesRestored);
+        }
         state.normalize();
-        Ok(state)
+        Ok((state, notes))
     }
 
     /// Like [`Self::from_json`] but falls back to the default layout with a warning.
     pub fn from_json_or_default(json: &str) -> LoadOutcome {
-        match Self::from_json(json) {
-            Ok(state) => LoadOutcome {
+        match Self::from_json_noted(json) {
+            Ok((state, notes)) => LoadOutcome {
                 state,
                 warning: None,
+                notes,
             },
             Err(err) => LoadOutcome {
                 state: WorkbenchState::default(),
                 warning: Some(format!("saved layout ignored: {err}")),
+                notes: Vec::new(),
             },
         }
     }
@@ -145,6 +169,49 @@ pub fn migrate_v7(state: &mut WorkbenchState) {
             "saved layout: Files moved from the left sidebar to the right dock"
         );
     }
+}
+
+/// The one-time repair of a layout older than version 9 that has no Files panel anywhere (the
+/// live layout, the overview stash and every parked workspace layout): `files` joins the front
+/// of its right dock. A layout that has Files in any dock or as a center tab is left as it is.
+/// Returns whether the live layout got it (that is what the note is about). Logged once per read,
+/// only when something moved.
+pub fn migrate_v8(state: &mut WorkbenchState) -> bool {
+    let live = ensure_files(&mut state.docks, &state.center);
+    let mut added = usize::from(live);
+    if let Some(saved) = state.stashed.as_deref_mut() {
+        added += usize::from(ensure_files(&mut saved.docks, &saved.center));
+    }
+    for parked in state.parked.values_mut() {
+        added += usize::from(ensure_files(
+            &mut parked.layout.docks,
+            &parked.layout.center,
+        ));
+        if let Some(saved) = parked.stashed.as_deref_mut() {
+            added += usize::from(ensure_files(&mut saved.docks, &saved.center));
+        }
+    }
+    if added > 0 {
+        tracing::info!(
+            layouts = added,
+            "saved layout: Files was in no dock; it is on the right rail now"
+        );
+    }
+    live
+}
+
+/// Puts `files` at the front of the right dock unless the layout has it somewhere; whether it did.
+fn ensure_files(docks: &mut Docks, center: &PaneTree) -> bool {
+    let files = PanelId::new("files");
+    let in_center = center
+        .panes()
+        .iter()
+        .any(|pane| pane.items.iter().any(|i| i.as_panel() == Some(&files)));
+    if docks.find(&files).is_some() || in_center {
+        return false;
+    }
+    docks.right.panels.insert(0, files);
+    true
 }
 
 /// Moves the center's Memory tabs into the left dock; whether there was one.

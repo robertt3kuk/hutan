@@ -11,7 +11,7 @@ use hutan_desktop::workbench::actions::{self, OpenAssistant, OpenPanel};
 use hutan_desktop::workbench::model::{
     Dock, DockPosition, Docks, FocusTarget, ItemRef, PanelDest, PanelId, WorkbenchState,
 };
-use hutan_desktop::workbench::persistence::{STATE_FILE, load_state};
+use hutan_desktop::workbench::persistence::{STATE_FILE, load_state, load_state_noted};
 use hutan_desktop::workbench::{Region, SAVE_DEBOUNCE, Workbench};
 use hutan_settings::SettingsStore;
 use std::path::PathBuf;
@@ -645,12 +645,31 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
     // History on the right and active; Assistant out; Tasks on the left behind Projects.
     assert_eq!(s.docks.left.panels, ids(&["sessions", "tasks"]));
     assert_eq!(s.docks.left.active, Some(PanelId::new("sessions")));
+    // That release had no Files panel and a saved layout wins over the presets: Files leads the
+    // right rail (FX-CHANGES-VIEW), told once with an Undo.
     assert_eq!(
         s.docks.right.panels,
-        ids(&["history", "changes", "inspector", "agents", "resources"])
+        ids(&[
+            "files",
+            "history",
+            "changes",
+            "inspector",
+            "agents",
+            "resources"
+        ])
     );
     assert_eq!(s.docks.right.active, Some(PanelId::new("history")));
     assert!(s.find_panel(&PanelId::new("assistant")).is_none());
+    let toast = view.read_with(cx, |wb, _| wb.layout_toast().map(|t| t.label().to_owned()));
+    assert!(
+        toast.is_some_and(|label| label.contains("Files")),
+        "the one-time note names Files"
+    );
+    draw(cx);
+    assert!(
+        painted(&view, cx, Region::DockTab(DockPosition::Right, 0)),
+        "Files has its icon on the rail"
+    );
     assert!(s.docks.bottom.panels.is_empty());
     // Sizes the user never changed follow the new defaults; the center is theirs.
     assert_eq!((s.docks.left.size, s.docks.right.size), (280.0, 350.0));
@@ -662,7 +681,7 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
         ]
     );
 
-    // The next save is version 8, and loading that again changes nothing.
+    // The next save is version 9, and loading that again changes nothing.
     view.update(cx, |wb, cx| {
         wb.edit_layout(cx, |s| s.toggle_dock(DockPosition::Bottom))
     });
@@ -671,10 +690,47 @@ fn an_old_saved_layout_is_migrated_once_and_keeps_the_center(cx: &mut TestAppCon
     view.update(cx, |wb, _| wb.flush_save());
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 8);
+    assert_eq!(on_disk["version"], 9);
     let reloaded = load_state(&path);
     assert_eq!(reloaded.docks, state(&view, cx).docks);
     assert_eq!(reloaded.center, state(&view, cx).center);
+}
+
+#[gpui::test]
+fn the_files_note_is_told_once_and_files_hidden_afterwards_stays_hidden(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = version_1_file(dir.path());
+    assert!(
+        load_state_noted(&path)
+            .1
+            .contains(&hutan_desktop::workbench::model::LayoutNote::FilesRestored),
+        "the old file is migrated with a note"
+    );
+    let (view, _settings, cx) = open_in(cx, None, Some(path.clone()));
+    assert!(view.read_with(cx, |wb, _| wb.layout_toast().is_some()));
+    // The window saved the migrated layout at once: reading it again is not a migration.
+    cx.executor().advance_clock(SAVE_DEBOUNCE * 2);
+    cx.run_until_parked();
+    view.update(cx, |wb, _| wb.flush_save());
+    let (saved, notes) = load_state_noted(&path);
+    assert!(notes.is_empty(), "told once");
+    assert!(saved.docks.right.panels.contains(&PanelId::new("files")));
+
+    // Undo hides it again; that choice is kept (a version 9 layout without Files is hidden).
+    view.update(cx, |wb, cx| wb.undo_layout_change(cx));
+    assert!(
+        !state(&view, cx)
+            .docks
+            .right
+            .panels
+            .contains(&PanelId::new("files"))
+    );
+    cx.executor().advance_clock(SAVE_DEBOUNCE * 2);
+    cx.run_until_parked();
+    view.update(cx, |wb, _| wb.flush_save());
+    let (saved, notes) = load_state_noted(&path);
+    assert!(notes.is_empty());
+    assert!(!saved.docks.right.panels.contains(&PanelId::new("files")));
 }
 
 #[gpui::test]

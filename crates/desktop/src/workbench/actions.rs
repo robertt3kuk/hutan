@@ -434,6 +434,9 @@ data_actions! {
     /// Open the Changes view of the checkout of a changed file with that file selected (a file
     /// row of the Changes panel).
     ReviewFileAt(ChangedFileAt);
+    /// Show a changed file in the Files panel, scoped to its checkout (the Changes view's *Show
+    /// in Files*): the sidebar picks that checkout, so Files follows it, and the file is selected.
+    ShowInFiles(ChangedFileAt);
     /// Open the Changes view of the checkout at this path with its Finish form (a group header
     /// of the Changes panel).
     FinishChangesAt(String);

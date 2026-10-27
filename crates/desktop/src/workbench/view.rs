@@ -449,6 +449,8 @@ pub enum Region {
     ChangesHistoryFile(usize),
     /// Hunk header `index` of the shown file's diff, top to bottom.
     ChangesHunk(usize),
+    /// The *Show in Files* button of file `index` of the Changes view's list.
+    ChangesShowInFiles(usize),
     /// Diff line `index` of the shown file in the Changes view, the whole row (its tint).
     ChangesRow(usize),
     /// The number gutter of diff line `index` (an index into the shown file's diff lines) of
@@ -710,6 +712,8 @@ pub struct Workbench {
     pub(crate) quick_open: super::quick_open::QuickOpenTasks,
     /// The file of the focused tab the Files panel was last told about.
     pub(crate) revealed_file: Option<String>,
+    /// The Changes tab the Files panel last followed (`files.rs`).
+    pub(crate) followed_changes: Option<String>,
     /// The Search panel's *Replace All* in progress (E-13b): files waiting for their buffer or
     /// their save.
     pub(crate) replace_job: Option<super::search_replace::ReplaceJob>,
@@ -916,9 +920,14 @@ impl Workbench {
         // has not asked for. A layout that is saved, or handed in, is never touched.
         let first_launch = fresh && options.state_path.is_some();
         let saved = options.initial_state.is_none() && !fresh;
+        let mut layout_notes = Vec::new();
         let mut state = match (options.initial_state, &options.state_path) {
             (Some(state), _) => state,
-            (None, Some(path)) => persistence::load_state(path),
+            (None, Some(path)) => {
+                let (state, notes) = persistence::load_state_noted(path);
+                layout_notes = notes;
+                state
+            }
             (None, None) => WorkbenchState::default(),
         };
         if first_launch {
@@ -1347,6 +1356,7 @@ impl Workbench {
                 .unwrap_or_default(),
             quick_open: super::quick_open::QuickOpenTasks::default(),
             revealed_file: None,
+            followed_changes: None,
             replace_job: None,
             chat_drafts: options
                 .state_path
@@ -1468,6 +1478,9 @@ impl Workbench {
         }
         if install_changed {
             this.schedule_save(cx);
+        }
+        if layout_notes.contains(&super::model::LayoutNote::FilesRestored) {
+            this.tell_files_restored(cx);
         }
         if !this.attention_marks.is_empty() {
             let marks = this.attention_marks.clone();

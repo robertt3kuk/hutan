@@ -748,6 +748,9 @@ impl Workbench {
                 this.open_changes(std::path::PathBuf::from(&a.0), window, cx);
             }),
         )
+        .on_action(cx.listener(|this, a: &actions::ShowInFiles, window, cx| {
+            this.show_in_files(std::path::Path::new(&a.0.checkout), &a.0.file, window, cx);
+        }))
         .on_action(cx.listener(|this, a: &actions::ReviewFileAt, window, cx| {
             this.open_changes_file(
                 std::path::PathBuf::from(&a.0.checkout),

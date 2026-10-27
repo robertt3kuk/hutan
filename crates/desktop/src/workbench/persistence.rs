@@ -1,7 +1,7 @@
 //! `desktop-state.json` location, load, and atomic save.
 
 use super::changes::ReviewComment;
-use super::model::{ModelError, WorkbenchState};
+use super::model::{LayoutNote, ModelError, WorkbenchState};
 use crate::install::InstallRecord;
 use crate::sessions::Marks;
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,6 +35,11 @@ pub fn default_state_path() -> Option<PathBuf> {
 /// Read the saved state. Missing file → default layout; corrupt or unsupported → default layout
 /// plus a logged warning.
 pub fn load_state(path: &Path) -> WorkbenchState {
+    load_state_noted(path).0
+}
+
+/// [`load_state`], with what loading changed that the user is told once.
+pub fn load_state_noted(path: &Path) -> (WorkbenchState, Vec<LayoutNote>) {
     match std::fs::read_to_string(path) {
         Ok(json) => {
             let outcome = WorkbenchState::from_json_or_default(&json);
@@ -44,15 +49,15 @@ pub fn load_state(path: &Path) -> WorkbenchState {
                 }
                 None => tracing::info!(path = %path.display(), "restored desktop layout"),
             }
-            outcome.state
+            (outcome.state, outcome.notes)
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             tracing::info!(path = %path.display(), "no saved desktop layout; using the default layout");
-            WorkbenchState::default()
+            (WorkbenchState::default(), Vec::new())
         }
         Err(err) => {
             tracing::warn!(path = %path.display(), "cannot read desktop layout: {err}; using the default layout");
-            WorkbenchState::default()
+            (WorkbenchState::default(), Vec::new())
         }
     }
 }

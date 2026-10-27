@@ -1378,7 +1378,7 @@ fn json_roundtrip_preserves_state() {
         .unwrap();
     let json = state.to_json().unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["version"], 8);
+    assert_eq!(value["version"], 9);
     let back = WorkbenchState::from_json(&json).unwrap();
     assert_eq!(back, state);
     check(&back);
@@ -1762,11 +1762,11 @@ fn as_version_1_json(state: &WorkbenchState) -> String {
 }
 
 #[test]
-fn the_state_version_is_eight() {
+fn the_state_version_is_nine() {
     let value: serde_json::Value =
         serde_json::from_str(&WorkbenchState::default().to_json().unwrap()).unwrap();
-    assert_eq!(value["version"], 8);
-    assert_eq!(STATE_VERSION, 8);
+    assert_eq!(value["version"], 9);
+    assert_eq!(STATE_VERSION, 9);
 }
 
 /// Whether a tab of the center is `panel`.
@@ -2042,7 +2042,15 @@ fn a_version_1_layout_moves_to_the_orca_arrangement_and_keeps_the_center() {
     assert_eq!(migrated.docks.left.active, Some(PanelId::new("sessions")));
     assert_eq!(
         migrated.docks.right.panels,
-        ids(&["history", "changes", "inspector", "agents", "resources"])
+        // Files, which that release did not have, leads (`migrate_v8`).
+        ids(&[
+            "files",
+            "history",
+            "changes",
+            "inspector",
+            "agents",
+            "resources"
+        ])
     );
     assert_eq!(migrated.docks.right.active, Some(PanelId::new("history")));
     assert!(migrated.docks.bottom.panels.is_empty());
@@ -2116,7 +2124,10 @@ fn migration_keeps_sizes_the_user_changed_a_visible_bottom_dock_and_center_panel
         *items,
         vec![ItemRef::placeholder("Notes"), ItemRef::panel("history")]
     );
-    assert_eq!(migrated.docks.right.panels, ids(&["changes", "inspector"]));
+    assert_eq!(
+        migrated.docks.right.panels,
+        ids(&["files", "changes", "inspector"])
+    );
 }
 
 #[test]
@@ -2135,8 +2146,9 @@ fn migration_reaches_the_overview_stash_and_parked_workspaces() {
     let stash = migrated.stashed.as_ref().unwrap();
     let parked = &migrated.parked["a"];
     for (name, docks) in [("stash", &stash.docks), ("parked", &parked.layout.docks)] {
+        // History leads the old panels, behind Files (`migrate_v8`).
         assert_eq!(
-            docks.right.panels.first(),
+            docks.right.panels.get(1),
             Some(&PanelId::new("history")),
             "{name}"
         );
@@ -2671,4 +2683,84 @@ fn files_still_moves_when_memory_joined_the_built_in_left_dock() {
         ids(&["files", "changes", "agents", "history"])
     );
     assert!(!in_center(&migrated, &PanelId::new(MEMORY_PAGE)));
+}
+
+#[test]
+fn a_layout_without_files_anywhere_gets_it_on_the_right_rail_once_with_a_note() {
+    // The first release: Projects and Tasks on the left, no Files panel existed. The right rail
+    // of that release (History, Changes, Requests, Agents, Resources) keeps its order.
+    let right = ["history", "changes", "inspector", "agents", "resources"];
+    for version in [1, 2, 6, 7, 8] {
+        let (state, notes) =
+            WorkbenchState::from_json_noted(&saved_with(version, &["sessions", "tasks"], &right))
+                .unwrap();
+        assert_eq!(
+            state.docks.right.panels,
+            ids(&[
+                "files",
+                "history",
+                "changes",
+                "inspector",
+                "agents",
+                "resources"
+            ]),
+            "version {version}"
+        );
+        assert_eq!(state.docks.left.panels, ids(&["sessions", "tasks"]));
+        assert!(
+            notes.contains(&LayoutNote::FilesRestored),
+            "version {version} is told once"
+        );
+        check(&state);
+    }
+
+    // The overview stash and a parked workspace layout get it too (the live one decides the note).
+    let mut with_stash = WorkbenchState::default();
+    with_stash.docks.left = Dock::new(&["sessions", "tasks"], 280.0, true);
+    with_stash.docks.right = Dock::new(&right, 350.0, true);
+    let stashed = with_stash.clone();
+    with_stash.stashed = Some(Box::new(SavedLayout::of(&stashed)));
+    let mut value: serde_json::Value =
+        serde_json::from_str(&with_stash.to_json().unwrap()).unwrap();
+    value["version"] = 8.into();
+    let (migrated, _) = WorkbenchState::from_json_noted(&value.to_string()).unwrap();
+    let saved = migrated.stashed.as_deref().expect("the stash is kept");
+    assert_eq!(
+        saved.docks.right.panels.first(),
+        Some(&PanelId::new("files"))
+    );
+
+    // A layout that has Files anywhere is the user's: left, right, or a center tab.
+    let (kept, notes) =
+        WorkbenchState::from_json_noted(&saved_with(8, &["sessions", "tasks", "files"], &right))
+            .unwrap();
+    assert!(notes.is_empty());
+    assert_eq!(kept.docks.left.panels, ids(&["sessions", "tasks", "files"]));
+    let (kept, notes) = WorkbenchState::from_json_noted(&saved_with(
+        8,
+        &["sessions", "tasks"],
+        &["changes", "files"],
+    ))
+    .unwrap();
+    assert!(notes.is_empty());
+    assert_eq!(kept.docks.right.panels, ids(&["changes", "files"]));
+    let mut tabbed = WorkbenchState::default();
+    tabbed.docks.left = Dock::new(&["sessions", "tasks"], 280.0, true);
+    tabbed.docks.right = Dock::new(&right, 350.0, true);
+    tabbed.open_panel_in_center(&PanelId::new("files"));
+    let mut value: serde_json::Value = serde_json::from_str(&tabbed.to_json().unwrap()).unwrap();
+    value["version"] = 8.into();
+    let (kept, notes) = WorkbenchState::from_json_noted(&value.to_string()).unwrap();
+    assert!(
+        notes.is_empty(),
+        "a Files tab in the center is where the user put it"
+    );
+    assert!(!kept.docks.right.panels.contains(&PanelId::new("files")));
+
+    // A layout saved at this version without Files is a layout where it was hidden: it stays so.
+    let (hidden, notes) =
+        WorkbenchState::from_json_noted(&saved_with(STATE_VERSION, &["sessions", "tasks"], &right))
+            .unwrap();
+    assert!(notes.is_empty());
+    assert!(!hidden.docks.right.panels.contains(&PanelId::new("files")));
 }

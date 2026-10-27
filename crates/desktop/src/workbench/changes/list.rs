@@ -592,12 +592,21 @@ impl ChangesView {
                 tokens,
             );
             div()
+                .flex()
                 .flex_none()
+                .items_center()
                 .when(!selected, |s| {
                     s.opacity(0.0)
                         .group_hover(row_group.clone(), |s| s.opacity(1.0))
                 })
                 .child(button)
+                .child(self.show_in_files_button(
+                    SharedString::from(format!("changes-files-{index}")),
+                    &file.path,
+                    Region::ChangesShowInFiles(index),
+                    theme,
+                    tokens,
+                ))
         });
         let folder_text =
             (!in_tree && !folder.is_empty()).then(|| middle_ellipsis(&folder, folder_room));
@@ -666,6 +675,39 @@ impl ChangesView {
             .children(open)
             .child(probe(&self.env.regions, Region::ChangesFile(index)))
             .into_any_element()
+    }
+
+    /// *Show in Files*: the file selected in the Files panel, which works in this view's
+    /// checkout from then on.
+    pub(super) fn show_in_files_button(
+        &self,
+        id: SharedString,
+        file: &str,
+        region: Region,
+        theme: &Theme,
+        tokens: &Tokens,
+    ) -> AnyElement {
+        let target = crate::workbench::actions::ChangedFileAt {
+            checkout: self.path.display().to_string(),
+            file: file.to_owned(),
+        };
+        ui::IconButton::new(
+            id,
+            crate::icons::Icon::ItemFolderOpen,
+            "Show in Files",
+            theme,
+            tokens,
+        )
+        .compact()
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            window.dispatch_action(
+                Box::new(crate::workbench::actions::ShowInFiles(target.clone())),
+                cx,
+            );
+        })
+        .child(probe(&self.env.regions, region))
+        .into_any_element()
     }
 
     /// The keys act on the file list (arrows move the selection, page keys scroll the list):

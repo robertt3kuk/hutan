@@ -24,6 +24,8 @@ use super::file_view::{FileView, FileViewEvent};
 use super::model::{Edge, ItemRef, PaneId};
 use super::view::{MenuEntry, Workbench};
 use crate::settings::{EditorSettings, FilesPanelSettings};
+use hutan_core::WorkspaceId;
+use hutan_protocol::messages::WorkspaceKind;
 
 /// A file to open, and where in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -614,6 +616,7 @@ impl Workbench {
             buffer.update(cx, |b, cx| b.set_syntax_active(visible, cx));
         }
         self.follow_active_file(cx);
+        self.follow_active_changes(cx);
     }
 
     /// How code looks now: the editor colors of the chrome's pack, its monospace family, and
@@ -853,6 +856,92 @@ impl Workbench {
                 panel.focus_tree(window, cx);
             });
         });
+    }
+
+    /// The project whose repository has a checkout at `path`: `(project, the checkout's path as
+    /// the store has it, whether it is the main checkout)`.
+    fn project_of_checkout(
+        &self,
+        path: &Path,
+        cx: &gpui::App,
+    ) -> Option<(WorkspaceId, PathBuf, bool)> {
+        let canonical = std::fs::canonicalize(path).ok();
+        let store = self.sessions.read(cx);
+        store
+            .workspaces()
+            .iter()
+            .filter(|w| w.kind == WorkspaceKind::Project)
+            .find_map(|project| {
+                store
+                    .checkouts_of(project)
+                    .into_iter()
+                    .find(|c| c.path == path || canonical.as_deref() == Some(c.path.as_path()))
+                    .map(|c| (project.id, c.path, c.main))
+            })
+    }
+
+    /// Makes the Files panel (and Search) work in the checkout at `root` of `project`: the
+    /// worktree is picked in the sidebar, the main checkout is the project's own folder. A
+    /// checkout of another project needs `window` to show that project first.
+    fn scope_files_to(
+        &mut self,
+        project: WorkspaceId,
+        root: &Path,
+        main: bool,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sessions.read(cx).active_project_id() != Some(project) {
+            let Some(window) = window else {
+                return;
+            };
+            self.switch_workspace(project, window, cx);
+        }
+        let root = root.to_owned();
+        self.sessions.update(cx, |store, cx| {
+            store.set_active_checkout(project, (!main).then_some(root), cx);
+        });
+    }
+
+    /// *Show in Files* of the Changes view: the Files panel in the checkout `checkout`, with its
+    /// file `file` (relative to it) selected.
+    pub(crate) fn show_in_files(
+        &mut self,
+        checkout: &Path,
+        file: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((project, root, main)) = self.project_of_checkout(checkout, cx) else {
+            self.set_notice(
+                "Files shows the checkouts of your projects; this one is not",
+                cx,
+            );
+            return;
+        };
+        self.scope_files_to(project, &root, main, Some(window), cx);
+        let absolute = root.join(file).display().to_string();
+        self.show_files_at(Some(absolute), window, cx);
+    }
+
+    /// While a Changes tab is the focused one, the Files panel works in the checkout it shows
+    /// (once per change of tab; only within the project the window works in, so following
+    /// never swaps the layout).
+    fn follow_active_changes(&mut self, cx: &mut Context<Self>) {
+        let shown = self.state.active_center_item().and_then(|item| match item {
+            ItemRef::Changes { path } => Some(path.clone()),
+            _ => None,
+        });
+        if shown == self.followed_changes {
+            return;
+        }
+        self.followed_changes = shown.clone();
+        let Some(path) = shown else {
+            return;
+        };
+        if let Some((project, root, main)) = self.project_of_checkout(Path::new(&path), cx) {
+            self.scope_files_to(project, &root, main, None, cx);
+        }
     }
 
     /// *Files: Reveal Active File*: the focused tab's file selected in the Files panel.

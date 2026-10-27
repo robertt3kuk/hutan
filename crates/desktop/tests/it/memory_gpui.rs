@@ -409,13 +409,13 @@ fn a_saved_layout_with_the_old_memory_tab_opens_with_memory_in_the_sidebar(
         panel.read_with(cx, |p, _| p.is_loaded())
     });
 
-    // The next save is version 8 and keeps it there: nothing moves twice.
+    // The next save is version 9 and keeps it there: nothing moves twice.
     cx.dispatch_action(actions::SplitRight);
     view.update(cx, |wb, _| wb.flush_save());
     let saved = WorkbenchState::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let on_disk: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(on_disk["version"], 8);
+    assert_eq!(on_disk["version"], 9);
     assert!(
         saved
             .panes()

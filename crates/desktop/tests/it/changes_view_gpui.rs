@@ -596,7 +596,7 @@ fn the_list_can_be_a_tree_with_folders_that_fold_and_count(cx: &mut TestAppConte
         changes.read_with(cx, |c, _| c.list_mode()),
         ChangesList::Flat
     );
-    assert_eq!(changes.read_with(cx, |c, cx| c.list_rows().len()), FILES);
+    assert_eq!(changes.read_with(cx, |c, _| c.list_rows().len()), FILES);
 
     wait_until(cx, "the toggle", |cx| {
         region(&view, cx, Region::Changes("list-mode")).is_some()
@@ -678,4 +678,173 @@ fn the_changes_panel_in_the_right_dock_scrolls_to_its_last_row_at_every_size(
             "the last row is reachable at {w} × {h}: {more:?} in {list:?}"
         );
     }
+}
+
+// Show in Files -------------------------------------------------------------------------------
+
+/// A repository with a worktree `feature/x` that changed `notes/a.md`; the main checkout changed
+/// `notes/b.md` (uncommitted).
+struct Pair {
+    daemon: TestDaemon,
+    _keep: tempfile::TempDir,
+    main: PathBuf,
+    wt: PathBuf,
+    workspace: WorkspaceId,
+}
+
+impl Pair {
+    fn new() -> Self {
+        use hutan_protocol::messages::Request;
+        use hutan_protocol::worktree::{WorktreeCreate, WorktreeCreated};
+        let daemon = TestDaemon::start();
+        let keep = tempfile::tempdir().unwrap();
+        let main = fs::canonicalize(keep.path()).unwrap().join("repo");
+        fs::create_dir(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "main"]);
+        for (key, value) in [
+            ("user.name", "Test"),
+            ("user.email", "test@example.com"),
+            ("commit.gpgsign", "false"),
+            ("core.hooksPath", "/dev/null"),
+        ] {
+            git(&main, &["config", key, value]);
+        }
+        fs::create_dir(main.join("notes")).unwrap();
+        fs::write(main.join("notes/a.md"), "one\n").unwrap();
+        fs::write(main.join("notes/b.md"), "one\n").unwrap();
+        git(&main, &["add", "-A"]);
+        git(&main, &["commit", "-q", "-m", "first"]);
+        let workspace = daemon.create_workspace("proj", &[&main]).id;
+        let created: WorktreeCreated = daemon.call(Request::WorktreeCreate(WorktreeCreate {
+            workspace_id: workspace,
+            repo: None,
+            branch: "feature/x".into(),
+            base: None,
+            path: None,
+            no_setup: false,
+        }));
+        let wt = created.worktree.path;
+        // The daemon lists the folders of the checkouts its sessions work in (and the
+        // workspace's roots): a terminal in the worktree makes it one.
+        let _: hutan_protocol::messages::SessionResult = daemon.call(Request::SessionCreate(
+            hutan_protocol::messages::SessionCreate {
+                workspace_id: Some(workspace),
+                spec: hutan_protocol::messages::SessionSpec::Terminal(
+                    hutan_protocol::messages::TerminalSpec {
+                        command: vec!["cat".into()],
+                        cwd: Some(wt.clone()),
+                        ..Default::default()
+                    },
+                ),
+            },
+        ));
+        fs::write(wt.join("notes/a.md"), "one\ntwo\n").unwrap();
+        fs::write(main.join("notes/b.md"), "one\nthree\n").unwrap();
+        Self {
+            daemon,
+            _keep: keep,
+            main,
+            wt,
+            workspace,
+        }
+    }
+}
+
+#[gpui::test]
+fn show_in_files_scopes_the_files_panel_to_the_checkout_of_the_view_and_selects_the_file(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::workbench::panels::FilesPanel;
+    let fx = Pair::new();
+    let (view, cx) = open_with(
+        cx,
+        SettingsStore::new(SettingsPaths::in_dir(fx.daemon.home())),
+        fx.daemon.connection(),
+        None,
+    );
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions().read(cx).synced() && wb.active_workspace().is_some()
+        })
+    });
+    let workspace = fx.workspace;
+    view.update_in(cx, |wb, window, cx| {
+        wb.switch_workspace(workspace, window, cx)
+    });
+    let files_root = |view: &Entity<Workbench>, cx: &VisualTestContext| -> Option<PathBuf> {
+        view.read_with(cx, |wb, cx| {
+            wb.panel::<FilesPanel>("files")
+                .and_then(|p| p.read(cx).root().map(Path::to_owned))
+        })
+    };
+    let open_view = |view: &Entity<Workbench>, cx: &mut VisualTestContext, path: &Path| {
+        view.update_in(cx, |wb, window, cx| {
+            wb.open_changes(path.to_owned(), window, cx)
+        });
+        draw(cx);
+        let changes = view
+            .read_with(cx, |wb, _| wb.changes(&path.display().to_string()))
+            .expect("the view was opened");
+        wait_until(cx, "its patch", |cx| {
+            changes.read_with(cx, |c, _| {
+                c.selected().is_some() && c.selected_diff().is_some()
+            })
+        });
+        changes
+    };
+
+    // The worktree's view: its header's Show in Files puts the Files panel in the worktree with
+    // the file selected, and the sidebar's scope picks the worktree.
+    let changes = open_view(&view, cx, &fx.wt);
+    wait_until(cx, "the button", |cx| {
+        region(&view, cx, Region::Changes("show-in-files")).is_some()
+    });
+    let button = at(&view, cx, Region::Changes("show-in-files"));
+    cx.simulate_click(button.center(), Modifiers::none());
+    wait_until(cx, "Files in the worktree", |cx| {
+        files_root(&view, cx).as_deref() == Some(fx.wt.as_path())
+    });
+    let selected = changes.read_with(cx, |c, _| c.selected().unwrap().to_owned());
+    assert_eq!(selected, "notes/a.md");
+    wait_until(cx, "the file selected in the tree", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.panel::<FilesPanel>("files")
+                .and_then(|p| p.read(cx).selected().map(Path::to_owned))
+        }) == Some(fx.wt.join("notes/a.md"))
+    });
+    assert_eq!(
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).active_checkout()),
+        Some(fx.wt.clone()),
+        "the sidebar's scope picked the worktree"
+    );
+
+    // A file row's own button does the same for another file, here in the main checkout's view,
+    // which brings Files back to the main checkout.
+    let main_changes = open_view(&view, cx, &fx.main);
+    wait_until(cx, "Files follows the tab to the main checkout", |cx| {
+        files_root(&view, cx).as_deref() == Some(fx.main.as_path())
+    });
+    wait_until(cx, "the row button", |cx| {
+        region(&view, cx, Region::ChangesShowInFiles(0)).is_some()
+    });
+    let row = at(&view, cx, Region::ChangesShowInFiles(0));
+    cx.simulate_click(row.center(), Modifiers::none());
+    wait_until(cx, "b.md selected in the main checkout's tree", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.panel::<FilesPanel>("files")
+                .and_then(|p| p.read(cx).selected().map(Path::to_owned))
+        }) == Some(fx.main.join("notes/b.md"))
+    });
+    assert_eq!(
+        main_changes.read_with(cx, |c, _| c.selected().map(str::to_owned)),
+        Some("notes/b.md".to_owned())
+    );
+
+    // Back to the worktree's tab: Files follows the checkout the view shows.
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_changes(fx.wt.clone(), window, cx)
+    });
+    wait_until(cx, "Files follows the tab back to the worktree", |cx| {
+        files_root(&view, cx).as_deref() == Some(fx.wt.as_path())
+    });
 }

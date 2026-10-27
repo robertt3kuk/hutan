@@ -793,10 +793,9 @@ impl ChangesView {
             }
         }
         if !showing {
-            bar = bar
-                .child(div().flex_1().min_w_0())
-                .children(self.render_diff_options(theme, tokens, cx));
+            bar = bar.child(div().flex_1().min_w_0());
         }
+        bar = bar.children(self.render_diff_options(showing, theme, tokens, cx));
         bar.into_any_element()
     }
 
@@ -804,6 +803,7 @@ impl ChangesView {
     /// diff to wrap.
     fn render_diff_options(
         &self,
+        showing: bool,
         theme: &Theme,
         tokens: &Tokens,
         cx: &mut Context<Self>,
@@ -816,7 +816,30 @@ impl ChangesView {
             self.patches.get(file),
             Some(FilePatch::Ready { binary: false, .. })
         );
-        if text {
+        if let Some(entry) = self.selected_entry()
+            && entry.status != hutan_protocol::worktree::DiffStatus::Deleted
+        {
+            let path = entry.path.clone();
+            let target = crate::workbench::actions::ChangedFileAt {
+                checkout: self.path.display().to_string(),
+                file: path,
+            };
+            options.push(
+                ui::Button::new("changes-show-in-files", "Show in Files", theme, tokens)
+                    .compact()
+                    .ghost()
+                    .tooltip("Select this file in the Files panel, which works in this checkout")
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(crate::workbench::actions::ShowInFiles(target.clone())),
+                            cx,
+                        );
+                    })
+                    .child(probe(&self.env.regions, Region::Changes("show-in-files")))
+                    .into_any_element(),
+            );
+        }
+        if text && !showing {
             let wrap = self.wraps(file);
             options.push(
                 ui::Button::new("changes-wrap", "Wrap lines", theme, tokens)

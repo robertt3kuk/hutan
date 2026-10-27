@@ -621,6 +621,36 @@ impl Workbench {
         true
     }
 
+    /// The one note of a saved layout that had no Files panel anywhere and got it on the right
+    /// rail while loading (`model::persist::migrate_v8`): what happened, with Undo (hide it
+    /// again) like any layout change, and the layout is saved now so the note is not told again.
+    pub(crate) fn tell_files_restored(&mut self, cx: &mut Context<Self>) {
+        let mut before = self.state.docks.clone();
+        before
+            .right
+            .panels
+            .retain(|panel| panel.as_str() != "files");
+        self.toast_rev += 1;
+        let rev = self.toast_rev;
+        self.layout_undo = Some(LayoutUndo {
+            preset: self.state.preset.clone(),
+            docks: before,
+            after: modes_of(&self.state.docks),
+            center: Vec::new(),
+            keys: Vec::new(),
+            docks_scope: true,
+        });
+        self.show_layout_toast(
+            "Files is on the right rail: your saved layout had none".to_owned(),
+            Some(SharedString::from(
+                "Hide it again from the rail's right-click list. Reset to built-in layout also restores it.",
+            )),
+            rev,
+            cx,
+        );
+        self.schedule_save(cx);
+    }
+
     // ---- the Undo toast ----------------------------------------------------------------------
 
     fn show_layout_toast(
