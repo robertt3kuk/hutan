@@ -113,6 +113,12 @@ fn the_wheel_scrolls_the_palette_not_the_editor_under_it_and_the_palette_fills_t
         rows < total,
         "the list is longer than the window: it scrolls"
     );
+    // A row spans the panel (the key hint sits at its right end), not just its text.
+    let first = region(&view, cx, Region::PaletteRow(0));
+    assert!(
+        (first.size.width - list.size.width).abs() < px(1.0),
+        "row {first:?} in list {list:?}"
+    );
 
     // The wheel over the list scrolls the list and leaves the editor where it was.
     assert_eq!(view.read_with(cx, |wb, _| wb.palette_scrolled()), px(0.0));

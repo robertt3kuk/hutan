@@ -2757,6 +2757,7 @@ impl Workbench {
                             s.child(
                                 div()
                                     .relative()
+                                    .w_full()
                                     .child(
                                         uniform_list(
                                             "palette-list",
@@ -2769,6 +2770,7 @@ impl Workbench {
                                         )
                                         .track_scroll(&self.palette_scroll)
                                         .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
+                                        .w_full()
                                         .max_h(px(list_max)),
                                     )
                                     .child(probe(&self.regions, Region::Palette("list"))),
@@ -2819,6 +2821,7 @@ impl Workbench {
                         .flex()
                         .items_center()
                         .justify_between()
+                        .w_full()
                         .h(px(tokens.sidebar_row + 2.0))
                         .px(px(tokens.spacing * 2.0))
                         .rounded(px(tokens.radius))
