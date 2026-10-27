@@ -16,7 +16,7 @@ pub const TAB_SIZE: usize = 4;
 const CONTROL_GLYPH: char = '\u{FFFD}';
 
 /// How many cells `c` takes when it starts at column `col`.
-fn cells(c: char, col: usize) -> usize {
+pub(crate) fn cells(c: char, col: usize) -> usize {
     match c {
         '\t' => TAB_SIZE - col % TAB_SIZE,
         c if c.is_control() => 1,
@@ -26,8 +26,14 @@ fn cells(c: char, col: usize) -> usize {
 
 /// The columns of a whole line (the end of the last character).
 pub fn line_columns(line: &str) -> usize {
-    let mut col = 0;
-    for c in line.chars() {
+    line_columns_at(line, 0)
+}
+
+/// The column where `text` ends when it starts at column `base` of its line (a tab runs to the
+/// next stop of the line, not of `text`: the row of a wrapped line starts mid-line).
+pub fn line_columns_at(text: &str, base: usize) -> usize {
+    let mut col = base;
+    for c in text.chars() {
         col += cells(c, col);
     }
     col
@@ -36,8 +42,13 @@ pub fn line_columns(line: &str) -> usize {
 /// The column where the character at byte `byte` of `line` starts (the end of the line for a
 /// byte at or past its end).
 pub fn col_of_byte(line: &str, byte: usize) -> usize {
-    let mut col = 0;
-    for (at, c) in line.char_indices() {
+    col_of_byte_at(line, 0, byte)
+}
+
+/// [`col_of_byte`] for text that starts at column `base` of its line.
+pub fn col_of_byte_at(text: &str, base: usize, byte: usize) -> usize {
+    let mut col = base;
+    for (at, c) in text.char_indices() {
         if at >= byte {
             return col;
         }
@@ -49,30 +60,42 @@ pub fn col_of_byte(line: &str, byte: usize) -> usize {
 /// The byte of `line` a click at column position `x_cols` (fractional, in cells) lands on: the
 /// boundary nearest to it, so a click on the right half of a character goes after it.
 pub fn byte_of_col(line: &str, x_cols: f32) -> usize {
-    let mut col = 0usize;
-    for (at, c) in line.char_indices() {
+    byte_of_col_at(line, 0, x_cols)
+}
+
+/// [`byte_of_col`] for text that starts at column `base` of its line; `x_cols` is a column of
+/// the line.
+pub fn byte_of_col_at(text: &str, base: usize, x_cols: f32) -> usize {
+    let mut col = base;
+    for (at, c) in text.char_indices() {
         let width = cells(c, col);
         if width > 0 && x_cols < col as f32 + width as f32 / 2.0 {
             return at;
         }
         col += width;
     }
-    line.len()
+    text.len()
 }
 
 /// The byte of `line` where a caret that wants column `goal` goes on it: the last character
 /// boundary at or before the column (the end of a shorter line), never inside a wide character
 /// or a tab.
 pub fn byte_at_col(line: &str, goal: usize) -> usize {
-    let mut col = 0usize;
-    for (at, c) in line.char_indices() {
+    byte_at_col_from(line, 0, goal)
+}
+
+/// [`byte_at_col`] for text that starts at column `base` of its line; `goal` is a column of the
+/// line.
+pub fn byte_at_col_from(text: &str, base: usize, goal: usize) -> usize {
+    let mut col = base;
+    for (at, c) in text.char_indices() {
         let width = cells(c, col);
         if width > 0 && col + width > goal {
             return at;
         }
         col += width;
     }
-    line.len()
+    text.len()
 }
 
 /// The part of a line drawn for columns `from..to`: the text to shape (one glyph per cell) and
@@ -94,9 +117,15 @@ impl DisplayLine {
     /// Columns `from..to` of `line` (a character cut by either edge is drawn as blanks for the
     /// cells inside).
     pub fn build(line: &str, from: usize, to: usize) -> DisplayLine {
+        Self::build_at(line, 0, from, to)
+    }
+
+    /// Columns `from..to` of a line, given `text`, the part of it that starts at column `base`
+    /// (the row of a wrapped line).
+    pub fn build_at(line: &str, base: usize, from: usize, to: usize) -> DisplayLine {
         let mut text = String::new();
         let mut map = Vec::new();
-        let mut col = 0usize;
+        let mut col = base;
         let mut cols = 0usize;
         let mut end_byte = line.len();
         for (at, c) in line.char_indices() {

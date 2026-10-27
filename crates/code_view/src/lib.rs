@@ -59,6 +59,7 @@ mod snippet;
 mod style;
 mod view;
 mod vim_host;
+mod wrap;
 
 pub use actions::*;
 pub use agent::{AgentChanges, AgentHunk, AgentLabel, HunkKind};
@@ -88,6 +89,10 @@ pub use view::{
     VimWindow, WindowDirection,
 };
 pub use vim_host::{BufferHost, HostStep};
+pub use wrap::{
+    Break as WrapBreak, DEFAULT_WRAP_COLUMN, MAX_WRAP_BYTES, MIN_WRAP_COLS, RowGeom, WrapMap,
+    WrapMode, WrapParams, wrap_line,
+};
 
 /// The key context of a focused code view.
 pub const KEY_CONTEXT: &str = "CodeView";
