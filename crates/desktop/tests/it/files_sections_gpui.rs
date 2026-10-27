@@ -461,3 +461,72 @@ fn open_editors_close_with_cmd_click_and_middle_click(cx: &mut TestAppContext) {
         open_editor_names(&panel, cx) == ["c.txt"]
     });
 }
+
+#[gpui::test]
+fn a_folded_section_belongs_to_its_root_and_is_saved_with_the_layout(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let state = daemon.home().join("desktop-state.json");
+    let (view, cx) = open_with(
+        cx,
+        settings(&daemon, ""),
+        daemon.connection(),
+        Some(state.clone()),
+    );
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).synced())
+    });
+    let (_dir_a, a) = scratch();
+    let (_dir_b, b) = scratch();
+    project(&view, cx, &a);
+    let panel = files_panel(&view, cx);
+    assert!(!panel.read_with(cx, |p, _| p.section_folded(FilesSection::OpenEditors)));
+    panel.update(cx, |p, cx| p.toggle_section(FilesSection::OpenEditors, cx));
+    cx.executor()
+        .advance_clock(hutan_desktop::workbench::SAVE_DEBOUNCE);
+    view.update(cx, |wb, _| wb.flush_save());
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+    assert_eq!(
+        saved["files_expanded"],
+        json!([{ "root": a.display().to_string(), "dirs": [], "folded": ["open-editors"] }])
+    );
+
+    // Another root has its own state; coming back finds the fold again.
+    project(&view, cx, &b);
+    draw(cx);
+    assert!(!panel.read_with(cx, |p, _| p.section_folded(FilesSection::OpenEditors)));
+    project(&view, cx, &a);
+    draw(cx);
+    assert!(panel.read_with(cx, |p, _| p.section_folded(FilesSection::OpenEditors)));
+    panel.update(cx, |p, cx| p.toggle_section(FilesSection::OpenEditors, cx));
+    assert!(!panel.read_with(cx, |p, _| p.section_folded(FilesSection::OpenEditors)));
+}
+
+#[gpui::test]
+fn the_folded_sections_of_the_last_run_come_back(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (_dir, root) = scratch();
+    let state = daemon.home().join("desktop-state.json");
+    std::fs::write(
+        &state,
+        json!({
+            "files_expanded": [{
+                "root": root.display().to_string(),
+                "dirs": [],
+                "folded": ["changed-by-agents", "open-editors", "nonsense"],
+            }],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let (view, cx) = open_with(cx, settings(&daemon, ""), daemon.connection(), Some(state));
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).synced())
+    });
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    panel.read_with(cx, |p, _| {
+        assert!(p.section_folded(FilesSection::OpenEditors));
+        assert!(p.section_folded(FilesSection::ChangedByAgents));
+    });
+}

@@ -178,6 +178,9 @@ pub struct FilesRoot {
     pub root: String,
     /// Its open folders (the root itself not listed), shallowest first, absolute.
     pub dirs: Vec<String>,
+    /// The sections above its tree that are folded (`open-editors`, `changed-by-agents`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folded: Vec<String>,
 }
 
 /// Most roots [`FilesExpanded`] keeps.
@@ -192,27 +195,50 @@ pub fn load_files_expanded(path: &Path) -> FilesExpanded {
     for root in &mut files {
         root.dirs.truncate(MAX_FILES_DIRS);
     }
-    files.retain(|root| !root.dirs.is_empty());
+    files.retain(|root| !root.dirs.is_empty() || !root.folded.is_empty());
     files
 }
 
-/// Remembers `dirs` as the open folders of `root` (made the most recent root); an empty list
-/// forgets the root. True when that changed anything.
+/// Remembers `dirs` as the open folders of `root` (made the most recent root); a root with no
+/// open folders and no folded section is forgotten. True when that changed anything.
 pub fn note_files_expanded(files: &mut FilesExpanded, root: &str, dirs: Vec<String>) -> bool {
     let dirs: Vec<String> = dirs.into_iter().take(MAX_FILES_DIRS).collect();
     let before = files.clone();
+    let folded = files
+        .iter()
+        .find(|r| r.root == root)
+        .map(|r| r.folded.clone())
+        .unwrap_or_default();
+    store_files_root(files, root, dirs, folded);
+    *files != before
+}
+
+/// Remembers which sections above the tree of `root` are folded (made the most recent root);
+/// nothing folded and no open folder forgets the root. True when that changed anything.
+pub fn note_files_folded(files: &mut FilesExpanded, root: &str, folded: Vec<String>) -> bool {
+    let before = files.clone();
+    let dirs = files
+        .iter()
+        .find(|r| r.root == root)
+        .map(|r| r.dirs.clone())
+        .unwrap_or_default();
+    store_files_root(files, root, dirs, folded);
+    *files != before
+}
+
+fn store_files_root(files: &mut FilesExpanded, root: &str, dirs: Vec<String>, folded: Vec<String>) {
     files.retain(|r| r.root != root);
-    if !dirs.is_empty() {
+    if !dirs.is_empty() || !folded.is_empty() {
         files.insert(
             0,
             FilesRoot {
                 root: root.to_owned(),
                 dirs,
+                folded,
             },
         );
     }
     files.truncate(MAX_FILES_ROOTS);
-    *files != before
 }
 
 /// The install the desktop last acknowledged (`install` in the state file); `None` when the file
@@ -570,6 +596,26 @@ mod tests {
             files.iter().all(|r| r.root != "/big"),
             "no folders, no root"
         );
+
+        // Folded sections are per root, travel with it and keep a root alive without folders.
+        assert!(note_files_folded(
+            &mut files,
+            "/repo",
+            vec!["open-editors".into()]
+        ));
+        assert!(!note_files_folded(
+            &mut files,
+            "/repo",
+            vec!["open-editors".into()]
+        ));
+        assert_eq!(files[0].dirs, ["/repo/src"], "the folders stay");
+        note_files_expanded(&mut files, "/repo", vec!["/repo/lib".into()]);
+        assert_eq!(files[0].folded, ["open-editors"], "the folds stay");
+        note_files_expanded(&mut files, "/repo", Vec::new());
+        assert_eq!(files[0].root, "/repo", "a folded section keeps the root");
+        assert!(note_files_folded(&mut files, "/repo", Vec::new()));
+        assert!(files.iter().all(|r| r.root != "/repo"));
+        note_files_folded(&mut files, "/repo", vec!["changed-by-agents".into()]);
 
         save_json(
             &path,

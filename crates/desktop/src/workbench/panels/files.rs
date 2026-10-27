@@ -163,9 +163,32 @@ impl FilesMemory {
             .unwrap_or_default()
     }
 
+    /// The sections above the tree that are folded for `root` (`open-editors`,
+    /// `changed-by-agents`).
+    pub fn folded_of(&self, root: &Path) -> Vec<String> {
+        let key = root.display().to_string();
+        self.roots
+            .borrow()
+            .iter()
+            .find(|r| r.root == key)
+            .map(|r| r.folded.clone())
+            .unwrap_or_default()
+    }
+
     /// What is remembered, for saving.
     pub fn snapshot(&self) -> FilesExpanded {
         self.roots.borrow().clone()
+    }
+
+    fn remember_folded(&self, root: &Path, folded: Vec<String>, cx: &mut App) {
+        let changed = persistence::note_files_folded(
+            &mut self.roots.borrow_mut(),
+            &root.display().to_string(),
+            folded,
+        );
+        if changed {
+            (self.changed)(cx);
+        }
     }
 
     fn remember(&self, root: &Path, dirs: Vec<String>, cx: &mut App) {
@@ -635,6 +658,7 @@ impl FilesPanel {
             }
         });
         self.scroll.0.borrow().base_handle.set_offset(offset);
+        self.load_folded_sections();
         match self.tree.as_ref().map(|t| t.expanded_dirs()) {
             Some(dirs) => {
                 self.listen(cx);

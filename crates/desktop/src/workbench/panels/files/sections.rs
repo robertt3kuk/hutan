@@ -53,11 +53,18 @@ impl Section {
         }
     }
 
-    fn id(self) -> &'static str {
+    /// The name the region and the saved state use.
+    pub fn id(self) -> &'static str {
         match self {
             Self::OpenEditors => "open-editors",
             Self::ChangedByAgents => "changed-by-agents",
         }
+    }
+
+    fn from_id(id: &str) -> Option<Self> {
+        [Self::OpenEditors, Self::ChangedByAgents]
+            .into_iter()
+            .find(|s| s.id() == id)
     }
 }
 
@@ -268,12 +275,36 @@ impl FilesPanel {
         self.sections.folded.contains(&section)
     }
 
-    /// Folds or unfolds `section`.
+    /// Folds or unfolds `section`; the root remembers it (across restarts too).
     pub fn toggle_section(&mut self, section: Section, cx: &mut Context<Self>) {
         if !self.sections.folded.remove(&section) {
             self.sections.folded.insert(section);
         }
+        if let Some(root) = self.root().map(Path::to_owned) {
+            let mut folded: Vec<String> = self
+                .sections
+                .folded
+                .iter()
+                .map(|s| s.id().to_owned())
+                .collect();
+            folded.sort();
+            self.env.files_memory.remember_folded(&root, folded, cx);
+        }
         cx.notify();
+    }
+
+    /// Takes in which sections the root's memory has folded (a new root, or a root come back).
+    pub(super) fn load_folded_sections(&mut self) {
+        self.sections.folded = match self.root() {
+            Some(root) => self
+                .env
+                .files_memory
+                .folded_of(root)
+                .iter()
+                .filter_map(|id| Section::from_id(id))
+                .collect(),
+            None => HashSet::new(),
+        };
     }
 
     /// The sections above the tree; `None` when none has a row.
