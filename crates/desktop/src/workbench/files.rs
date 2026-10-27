@@ -89,6 +89,12 @@ pub(crate) struct Stored {
     pub(crate) autosave: Option<Task<()>>,
     /// The blame being asked of the daemon (`blame.rs`).
     pub(crate) blame_task: Option<Task<()>>,
+    /// The git base being fetched (`git_gutter.rs`).
+    pub(crate) git_task: Option<Task<()>>,
+    /// The file's checkout and its name there, as the last git base fetch found them.
+    pub(crate) git_file: Option<(PathBuf, String)>,
+    /// *Stage hunk* waiting for the save that makes the disk hold the buffer.
+    pub(crate) stage_after_save: Option<super::git_gutter::PendingStage>,
     /// Whether the tabs showed the buffer as changed (they are drawn again when it flips).
     pub(crate) dirty: bool,
     _subscriptions: Vec<Subscription>,
@@ -312,8 +318,12 @@ impl Workbench {
             return stored.buffer.clone();
         }
         let buffer = cx.new(|cx| FileBuffer::new(PathBuf::from(path), cx));
-        let highlight = self.settings.get::<EditorSettings>().agent_highlight;
-        buffer.update(cx, |b, cx| b.set_agent_highlight(highlight, cx));
+        let editor = self.settings.get::<EditorSettings>();
+        let (highlight, git_gutter) = (editor.agent_highlight, editor.git_gutter);
+        buffer.update(cx, |b, cx| {
+            b.set_agent_highlight(highlight, cx);
+            b.set_git_gutter(git_gutter, cx);
+        });
         if self.install.holds(Path::new(path)) {
             buffer.update(cx, |b, cx| b.set_read_only(true, cx));
         }
@@ -334,6 +344,9 @@ impl Workbench {
                 check: None,
                 autosave: None,
                 blame_task: None,
+                git_task: None,
+                git_file: None,
+                stage_after_save: None,
                 dirty: false,
                 _subscriptions: subscriptions,
             },
@@ -472,6 +485,18 @@ impl Workbench {
                 FileViewEvent::BlameChanged(path) => {
                     this.refresh_blame(&path.display().to_string(), cx);
                 }
+                FileViewEvent::GitHunkStage {
+                    path,
+                    first_line,
+                    end_line,
+                } => this.stage_git_hunk(
+                    &path.display().to_string(),
+                    super::git_gutter::PendingStage {
+                        first_line: *first_line,
+                        end_line: *end_line,
+                    },
+                    cx,
+                ),
                 // The status bar's `Wrap` follows the tab.
                 FileViewEvent::WrapChanged => cx.notify(),
                 FileViewEvent::OpenCommit { path, commit } => {
@@ -514,6 +539,7 @@ impl Workbench {
         if view.read(cx).wants_blame() {
             self.refresh_blame(path, cx);
         }
+        self.sync_git_stage_availability(path, cx);
         view
     }
 
@@ -608,14 +634,28 @@ impl Workbench {
             .into_iter()
             .filter_map(|pane| pane.active_item().and_then(ItemRef::as_file))
             .collect();
-        let buffers: Vec<(Entity<FileBuffer>, bool)> = self
+        let buffers: Vec<(String, Entity<FileBuffer>, bool)> = self
             .buffers
             .buffers
             .iter()
-            .map(|(path, stored)| (stored.buffer.clone(), shown.contains(path.as_str())))
+            .map(|(path, stored)| {
+                (
+                    path.clone(),
+                    stored.buffer.clone(),
+                    shown.contains(path.as_str()),
+                )
+            })
             .collect();
-        for (buffer, visible) in buffers {
+        let mut shown_again = Vec::new();
+        for (path, buffer, visible) in buffers {
+            if visible && !buffer.read(cx).syntax_active() {
+                shown_again.push(path);
+            }
             buffer.update(cx, |b, cx| b.set_syntax_active(visible, cx));
+        }
+        // The index or `HEAD` may have moved while the tab was behind another.
+        for path in shown_again {
+            self.refresh_git_base(&path, cx);
         }
         self.follow_active_file(cx);
         self.follow_active_changes(cx);

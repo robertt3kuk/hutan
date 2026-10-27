@@ -567,8 +567,8 @@ impl CodeView {
     }
 
     /// The keys of the language server in Normal mode (E-12a): `K` shows the hover popover at
-    /// the caret, `gd` goes to the definition, `]d` / `[d` to the next / previous diagnostic
-    /// (a count before them is ignored). `pending` is what Vim holds of the command so far.
+    /// the caret, `gd` goes to the definition, `]d` / `[d` to the next / previous diagnostic,
+    /// `]c` / `[c` to the next / previous change against git (a count before them is ignored). `pending` is what Vim holds of the command so far.
     fn language_key(&mut self, pending: &str, key: Key, cx: &mut Context<Self>) -> bool {
         let prefix = pending.trim_start_matches(|c: char| c.is_ascii_digit());
         match (prefix, key) {
@@ -586,6 +586,12 @@ impl CodeView {
             ("]", Key::Char('d')) | ("[", Key::Char('d')) => {
                 self.vim_key(Key::Escape, cx);
                 self.step_diagnostic(prefix == "]", cx);
+                true
+            }
+            // Vim's next / previous change: the git gutter's hunks (EDITOR-POLISH).
+            ("]", Key::Char('c')) | ("[", Key::Char('c')) => {
+                self.vim_key(Key::Escape, cx);
+                self.step_git_hunk(prefix == "]", cx);
                 true
             }
             _ => false,

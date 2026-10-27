@@ -883,7 +883,7 @@ impl CodeView {
 
     // ---- drawing -----------------------------------------------------------------------------
 
-    fn popup_surface(&self) -> gpui::Div {
+    pub(crate) fn popup_surface(&self) -> gpui::Div {
         let theme = &self.style.theme;
         let mut border = rgba(theme.gutter_foreground);
         border.a *= 0.35;

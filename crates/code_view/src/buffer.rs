@@ -31,6 +31,7 @@ use hutan_syntax::{Language, Syntax, SyntaxStats, SyntaxView};
 use crate::agent::{self, AgentChanges, AgentHunk};
 use crate::blame::{BlameData, BlameLine, BlameState, MAX_BLAME_BYTES};
 use crate::diagnostics::{self, Diagnostic, DiagnosticCounts, DiagnosticInput};
+use crate::git_gutter::GitBase;
 use crate::rules::IndentUnit;
 
 /// Typing that pauses longer than this starts a new undo step.
@@ -148,6 +149,16 @@ struct AgentState {
     newest: Option<usize>,
 }
 
+/// What the git gutter compares the text with and the hunks of that comparison.
+struct GitState {
+    base: GitBase,
+    /// The hunks, computed for version `computed` and carried across the edits since.
+    hunks: Arc<[AgentHunk]>,
+    computed: u64,
+    /// A large or minified text: diffed again less often.
+    heavy: bool,
+}
+
 /// The text of one file and what is known about it.
 pub struct FileBuffer {
     path: PathBuf,
@@ -178,6 +189,12 @@ pub struct FileBuffer {
     agent_task: Option<Task<()>>,
     /// The span of the text the last reload changed (in the text after it).
     last_reload: Option<Range<usize>>,
+    /// EDITOR-POLISH: the file in the index (or at `HEAD`) and where the buffer differs from it.
+    git: Option<GitState>,
+    /// `editor.git_gutter`: the hunks are computed (and drawn) only while it is on.
+    git_gutter: bool,
+    /// The background diff that will bring the git hunks up to date.
+    git_task: Option<Task<()>>,
     /// E-12a: what the language servers found, where it is in the text now (sorted).
     diagnostics: Arc<[Diagnostic]>,
     /// Bumped every time a server publishes a new set.
@@ -241,6 +258,9 @@ impl FileBuffer {
             agent_highlight: true,
             agent_task: None,
             last_reload: None,
+            git: None,
+            git_gutter: true,
+            git_task: None,
             diagnostics: Arc::from(Vec::new()),
             diagnostics_epoch: 0,
             blame: None,
@@ -428,7 +448,13 @@ impl FileBuffer {
             self.diagnostics = Arc::from(Vec::new());
             self.diagnostics_epoch += 1;
         }
+        if let Some(git) = &mut self.git {
+            // Positions of another text mean nothing.
+            git.hunks = Arc::from(Vec::new());
+            git.computed = 0;
+        }
         self.schedule_agent_diff(None, cx);
+        self.schedule_git_diff(None, cx);
         cx.notify();
     }
 
@@ -603,6 +629,7 @@ impl FileBuffer {
         }
         self.reparse(reset);
         self.schedule_agent_diff(Some(agent::DIFF_DELAY), cx);
+        self.schedule_git_diff(Some(agent::DIFF_DELAY), cx);
         cx.notify();
     }
 
@@ -619,6 +646,7 @@ impl FileBuffer {
         // A change from the disk is diffed at once; typing waits for a pause.
         let delay = (kind != EditKind::Reload).then_some(agent::DIFF_DELAY);
         self.schedule_agent_diff(delay, cx);
+        self.schedule_git_diff(delay, cx);
         cx.notify();
     }
 
@@ -640,6 +668,7 @@ impl FileBuffer {
             .push_back((self.version, applied.transaction.clone()));
         self.remap_blame();
         self.map_agent_hunks(&applied.transaction);
+        self.map_git_hunks(&applied.transaction);
         if !self.diagnostics.is_empty() {
             self.diagnostics = Arc::from(diagnostics::map(&self.diagnostics, &applied.transaction));
         }
@@ -879,19 +908,7 @@ impl FileBuffer {
         let Some(state) = &mut self.agent else {
             return;
         };
-        let hunks: Vec<AgentHunk> = state
-            .hunks
-            .iter()
-            .map(|h| {
-                let start = transaction.map_offset(h.bytes.start, Bias::Right);
-                let end = transaction.map_offset(h.bytes.end, Bias::Left).max(start);
-                AgentHunk {
-                    bytes: start..end,
-                    base_text: h.base_text.clone(),
-                }
-            })
-            .collect();
-        state.hunks = Arc::from(hunks);
+        state.hunks = map_hunks(&state.hunks, transaction);
         state.newest = state
             .newest
             .map(|at| transaction.map_offset(at, Bias::Left));
@@ -956,6 +973,183 @@ impl FileBuffer {
         cx.notify();
     }
 
+    // ---- git change marks (EDITOR-POLISH) ------------------------------------------------------
+
+    /// Gives the buffer the file as the index holds it (or `HEAD`), or takes it away (a file
+    /// git does not know): the hunks are computed in the background, at once.
+    pub fn set_git_base(&mut self, base: Option<GitBase>, cx: &mut Context<Self>) {
+        match (base, &mut self.git) {
+            (None, None) => return,
+            (None, Some(_)) => {
+                self.git = None;
+                self.git_task = None;
+            }
+            (Some(base), Some(state)) => {
+                if state.base == base {
+                    return;
+                }
+                state.base = base;
+            }
+            (Some(base), None) => {
+                self.git = Some(GitState {
+                    base,
+                    hunks: Arc::from(Vec::new()),
+                    computed: 0,
+                    heavy: false,
+                });
+            }
+        }
+        self.schedule_git_diff(None, cx);
+        cx.notify();
+    }
+
+    /// What the marks are drawn against, when the buffer has a base.
+    pub fn git_base(&self) -> Option<&GitBase> {
+        self.git.as_ref().map(|s| &s.base)
+    }
+
+    /// The buffer's changes against the git base, in the current text (none while
+    /// `editor.git_gutter` is off). Between an edit and the next diff they are carried across
+    /// the edit.
+    pub fn git_hunks(&self) -> Arc<[AgentHunk]> {
+        match &self.git {
+            Some(state) if self.git_gutter => state.hunks.clone(),
+            _ => Arc::from(Vec::new()),
+        }
+    }
+
+    /// Whether the git hunks are those of the current text (tests wait on it).
+    pub fn git_hunks_current(&self) -> bool {
+        self.git_task.is_none()
+            && self
+                .git
+                .as_ref()
+                .is_none_or(|s| !self.git_gutter || s.computed == self.version)
+    }
+
+    /// The git hunk whose lines include line `line` (0-based); a removed hunk counts at the line
+    /// its mark is drawn above.
+    pub fn git_hunk_at_line(&self, line: usize) -> Option<usize> {
+        let text = self.buffer.text();
+        self.git_hunks().iter().position(|h| {
+            let start = h.bytes.start.min(text.len());
+            let Ok(first) = text.line_of_byte(text.floor_char_boundary(start)) else {
+                return false;
+            };
+            if h.bytes.is_empty() {
+                return first == line;
+            }
+            let end = h.bytes.end.min(text.len()).saturating_sub(1).max(start);
+            let last = text
+                .line_of_byte(text.floor_char_boundary(end))
+                .unwrap_or(first);
+            (first..=last).contains(&line)
+        })
+    }
+
+    /// `editor.git_gutter`: off, no hunk is computed or drawn.
+    pub fn set_git_gutter(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.git_gutter == on {
+            return;
+        }
+        self.git_gutter = on;
+        if on {
+            self.schedule_git_diff(None, cx);
+        } else {
+            self.git_task = None;
+        }
+        cx.notify();
+    }
+
+    /// *Revert hunk*: puts the base's text back in place of git hunk `index`, as one undo step
+    /// made by the view `origin` (`selections`: that view's carets, restored by undo).
+    pub fn revert_git_hunk(
+        &mut self,
+        index: usize,
+        origin: EntityId,
+        selections: Option<Selections>,
+        cx: &mut Context<Self>,
+    ) -> Option<Applied> {
+        let hunk = self.git_hunks().get(index)?.clone();
+        if !self.git_hunks_current() {
+            // Hunks carried across an edit are approximate; Revert waits for exact ones.
+            return None;
+        }
+        let after = Selections::cursor(hunk.bytes.start);
+        let transaction = Transaction::replace(hunk.bytes.clone(), hunk.base_text.to_string())
+            .ok()?
+            .with_selections(selections, Some(after));
+        let applied = self.edit(transaction, Coalesce::Step, origin, cx)?;
+        self.schedule_git_diff(None, cx);
+        Some(applied)
+    }
+
+    /// The git hunks follow an edit until the next diff replaces them.
+    fn map_git_hunks(&mut self, transaction: &Transaction) {
+        let Some(state) = &mut self.git else {
+            return;
+        };
+        state.hunks = map_hunks(&state.hunks, transaction);
+    }
+
+    /// Computes the git hunks again in the background, after `delay` (a longer one for a large
+    /// or minified text) or at once. A newer call replaces an older one.
+    fn schedule_git_diff(&mut self, delay: Option<Duration>, cx: &mut Context<Self>) {
+        let Some(state) = &self.git else {
+            return;
+        };
+        if !self.git_gutter || self.large || !self.is_ready() {
+            self.git_task = None;
+            return;
+        }
+        let delay = delay.map(|d| {
+            if state.heavy {
+                agent::SLOW_DIFF_DELAY
+            } else {
+                d
+            }
+        });
+        let base = state.base.text.clone();
+        self.git_task = Some(cx.spawn(async move |this, cx| {
+            if let Some(delay) = delay {
+                cx.background_executor().timer(delay).await;
+            }
+            let Ok((text, version)) = this.update(cx, |b, _| (b.buffer.snapshot(), b.version))
+            else {
+                return;
+            };
+            let computed = cx
+                .background_spawn(async move {
+                    let current = text.to_string();
+                    let heavy = agent::is_heavy(&current);
+                    (agent::hunks_between(&base, &current), heavy)
+                })
+                .await;
+            this.update(cx, |b, cx| b.take_git_hunks(version, computed, cx))
+                .ok();
+        }));
+    }
+
+    fn take_git_hunks(
+        &mut self,
+        version: u64,
+        (hunks, heavy): (Vec<AgentHunk>, bool),
+        cx: &mut Context<Self>,
+    ) {
+        if version != self.version {
+            // Edited meanwhile; the edit asked for another diff (which replaced this task).
+            return;
+        }
+        self.git_task = None;
+        let Some(state) = &mut self.git else {
+            return;
+        };
+        state.hunks = Arc::from(hunks);
+        state.computed = version;
+        state.heavy = heavy;
+        cx.notify();
+    }
+
     // ---- diagnostics (E-12a) ---------------------------------------------------------------
 
     /// A server published the file's diagnostics: `inputs` replace the set (an empty list
@@ -998,6 +1192,11 @@ impl FileBuffer {
     }
 
     // ---- syntax ----------------------------------------------------------------------------
+
+    /// Whether some view of the buffer is on screen: the syntax is kept (and parsed) only then.
+    pub fn syntax_active(&self) -> bool {
+        self.syntax_active
+    }
 
     /// Whether some view of the buffer is on screen: the syntax is kept (and parsed) only then.
     pub fn set_syntax_active(&mut self, active: bool, cx: &mut Context<Self>) {
@@ -1067,6 +1266,21 @@ impl FileBuffer {
             .as_ref()
             .is_some_and(|s| s.wait_for(self.version, timeout).is_some())
     }
+}
+
+/// `hunks` carried across `transaction`: each start and end moves with the text around it.
+fn map_hunks(hunks: &[AgentHunk], transaction: &Transaction) -> Arc<[AgentHunk]> {
+    hunks
+        .iter()
+        .map(|h| {
+            let start = transaction.map_offset(h.bytes.start, Bias::Right);
+            let end = transaction.map_offset(h.bytes.end, Bias::Left).max(start);
+            AgentHunk {
+                bytes: start..end,
+                base_text: h.base_text.clone(),
+            }
+        })
+        .collect()
 }
 
 /// The last component of `path`, or the whole path when it has none.

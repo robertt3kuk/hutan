@@ -285,7 +285,9 @@ impl CodeView {
     pub fn dismiss_hover(&mut self, cx: &mut Context<Self>) -> bool {
         self.hover_task = None;
         self.hover_pointer = None;
-        if self.hover.take().is_some() {
+        // The git peek is dismissed the same way (Escape, a click in the text).
+        let peek = self.git_peek.take().is_some();
+        if self.hover.take().is_some() || peek {
             cx.notify();
             return true;
         }

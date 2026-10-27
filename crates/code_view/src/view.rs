@@ -43,6 +43,14 @@ pub enum CodeViewEvent {
     /// A click on a line's blame in the gutter (GIT-HISTORY): the owner opens the commit the
     /// buffer blames line `row` (0-based) on (`FileBuffer::blame_line`).
     BlameClicked { row: usize },
+    /// *Stage hunk* in the git peek (EDITOR-POLISH): the owner stages the hunk that covers
+    /// lines `first_line..end_line` (0-based; for removed lines, empty and at the line the mark
+    /// is above) of the saved file.
+    GitHunkStage {
+        first_line: usize,
+        end_line: usize,
+        kind: crate::agent::HunkKind,
+    },
     /// The view lost the keyboard, or its window stopped being the active one (autosave on
     /// focus change).
     FocusLost,
@@ -169,6 +177,10 @@ pub struct DrawnRow {
     pub carets: usize,
     /// Cells of selection fill on this row (the line break counts one).
     pub selected_cells: usize,
+    /// The gutter draws a git change bar on this row (a wrapped line has one on every row).
+    pub git_bar: bool,
+    /// The gutter draws the mark of removed lines on this row's top edge.
+    pub git_removed_above: bool,
 }
 /// Counters of what frames did (the deterministic half of the performance budgets).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -307,6 +319,10 @@ pub struct CodeView {
     pub(crate) blame_area: Option<gpui::Bounds<Pixels>>,
     /// The line whose blame the pointer rests on: the popover with the commit shows.
     pub(crate) blame_hover: Option<usize>,
+    /// EDITOR-POLISH: the peek of a git hunk while it shows (`git_peek.rs`).
+    pub(crate) git_peek: Option<crate::git_peek::GitPeek>,
+    /// The owner can stage a hunk: the peek has *Stage hunk*.
+    pub(crate) git_stage: bool,
     /// The `:s` / `:g` that is searching, and its cancel flag.
     pub(crate) ex_task: Option<Task<()>>,
     pub(crate) ex_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -401,6 +417,8 @@ impl CodeView {
             inline_blame: false,
             blame_area: None,
             blame_hover: None,
+            git_peek: None,
+            git_stage: false,
             ex_task: None,
             ex_cancel: None,
             hover: None,
@@ -542,6 +560,8 @@ impl CodeView {
         if self.hover.take().is_some() {
             self.hover_task = None;
         }
+        // The hunks are computed again: the peek would show another change.
+        self.git_peek = None;
         self.map_snippet(&event.transaction, event.version);
         if mine {
             self.refilter_completion(cx);
@@ -947,6 +967,11 @@ impl CodeView {
             return;
         }
         window.focus(&self.focus, cx);
+        if let Some(line) = self.git_mark_line_at(event.position, cx) {
+            // A git mark is a button: it opens the hunk's peek and never moves the caret.
+            self.click_git_mark(line, cx);
+            return;
+        }
         if let Some(row) = self.blame_row_at(event.position, cx) {
             // The blame column is a button: it opens the commit and never moves the caret.
             self.blame_hover = None;
@@ -1538,12 +1563,14 @@ impl Render for CodeView {
         }
         self.check_popups(cx);
         let hover = self.render_hover(cx);
+        let git_peek = self.render_git_peek(cx);
         let blame = self.render_blame_hover(cx);
         let completion = self.render_completion(cx);
         let signature = self.render_signature(cx);
         crate::actions::register(root, cx)
             .child(CodeElement::new(cx.entity()))
             .children(hover)
+            .children(git_peek)
             .children(blame)
             .children(signature)
             .children(completion)

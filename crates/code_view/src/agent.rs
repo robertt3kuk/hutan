@@ -228,11 +228,18 @@ pub fn rebase(base: &str, from: &str, to: &str) -> String {
 /// wrote (see [`rebase`]), diffed against `current`.
 pub fn agent_hunks(base: &str, agent: &str, current: &str) -> Vec<AgentHunk> {
     let rebased = rebase(base, agent, current);
-    if rebased == current {
+    hunks_between(&rebased, current)
+}
+
+/// The changes that turn `base` into `current`, as hunks of `current` (whole lines): what the
+/// git gutter draws (`base` is the file in the index or at `HEAD`) and what an agent's hunks
+/// are once rebased. Both texts are normalized.
+pub fn hunks_between(base: &str, current: &str) -> Vec<AgentHunk> {
+    if base == current {
         return Vec::new();
     }
     let deadline = Instant::now().checked_add(DIFF_DEADLINE);
-    let old = lines(&rebased);
+    let old = lines(base);
     let new = lines(current);
     let mut starts = Vec::with_capacity(new.len() + 1);
     let mut at = 0usize;

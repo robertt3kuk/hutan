@@ -127,6 +127,16 @@ gpui::actions!(
         NextAgentHunk,
         /// Go to the agent's previous change.
         PreviousAgentHunk,
+        /// Go to the next change against git (the index, or `HEAD`) and peek at it.
+        NextGitHunk,
+        /// Go to the previous change against git and peek at it.
+        PreviousGitHunk,
+        /// Open or close the peek of the git change at the caret.
+        ToggleGitPeek,
+        /// Put the base's text back in place of the git change at the caret (one undo step).
+        RevertGitHunk,
+        /// Stage the git change at the caret (the owner saves the file and asks the daemon).
+        StageGitHunk,
         /// Keep every change the agent made to the file: its highlight goes (the owner of the
         /// view drops the file from the pending ledger).
         AcceptAgentChanges,
@@ -237,6 +247,11 @@ pub(crate) fn register(root: Stateful<Div>, cx: &mut Context<CodeView>) -> State
     // `RejectAgentHunk` is the owner's: it may save the file after it.
     let root = run!(root, NextAgentHunk, next_agent_hunk);
     let root = run!(root, PreviousAgentHunk, previous_agent_hunk);
+    let root = run!(root, NextGitHunk, next_git_hunk);
+    let root = run!(root, PreviousGitHunk, previous_git_hunk);
+    let root = run!(root, ToggleGitPeek, toggle_git_peek);
+    let root = run!(root, RevertGitHunk, revert_git_hunk_at_caret);
+    let root = run!(root, StageGitHunk, stage_git_hunk_at_caret);
     let root = run!(root, GoToDefinition, go_to_definition_at_caret);
     let root = run!(root, ShowHover, show_hover_at_caret);
     let root = run!(root, NextDiagnostic, next_diagnostic);

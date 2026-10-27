@@ -137,6 +137,7 @@ impl Workbench {
         self.lsp.update(cx, |lsp, cx| lsp.open(path, &buffer, cx));
         // A tab that shows blame has it for this text.
         self.refresh_blame(path, cx);
+        self.refresh_git_base(path, cx);
         let Some(stored) = self.buffers.buffers.get_mut(path) else {
             return;
         };
@@ -277,6 +278,8 @@ impl Workbench {
         };
         let buffer = stored.buffer.clone();
         stored.save = None;
+        // A *Stage hunk* that waited for this save goes on only if it succeeded.
+        let pending_stage = stored.stage_after_save.take();
         match written {
             Ok(written) => {
                 stored.disk = Some(written.version);
@@ -286,6 +289,10 @@ impl Workbench {
                 self.lsp.update(cx, |lsp, cx| lsp.saved(path, cx));
                 // The saved lines are in the working tree now: blamed again.
                 self.refresh_blame(path, cx);
+                match pending_stage {
+                    Some(change) => self.stage_saved_hunk(path, change, cx),
+                    None => self.refresh_git_base(path, cx),
+                }
                 if let Some(item) = then_close
                     && let Some((pane, index)) = self.state.find_item(&item)
                 {

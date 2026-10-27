@@ -748,6 +748,11 @@ mod audit {
     /// `(file under crates/, how many pointer cursors it keeps, why)`.
     const EXCEPTIONS: &[(&str, usize, &str)] = &[
         (
+            "code_view/src/git_peek.rs",
+            1,
+            "the git peek's buttons: the code view is below the desktop's ui::Button",
+        ),
+        (
             "desktop/src/workbench/agents.rs",
             1,
             "a row of the agent picker",

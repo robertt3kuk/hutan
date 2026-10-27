@@ -20,8 +20,9 @@ use hutan_chat_view::diff::DiffLine;
 use hutan_code_view::{
     AcceptAgentChanges, CloseFind, CodeStyle, CodeView, CodeViewEvent, Conflict, ExRun, FailReason,
     FileBuffer, Find, FindNext, FindPrevious, FindQuery, FindReplace, LoadState, NextAgentHunk,
-    PreviousAgentHunk, RejectAgentHunk, Save, ToggleBlame, ToggleFollowAgent, ToggleSoftWrap,
-    VimKey, VimSettings, VimWindow, WrapMode,
+    NextGitHunk, PreviousAgentHunk, PreviousGitHunk, RejectAgentHunk, RevertGitHunk, Save,
+    StageGitHunk, ToggleBlame, ToggleFollowAgent, ToggleGitPeek, ToggleSoftWrap, VimKey,
+    VimSettings, VimWindow, WrapMode,
 };
 use hutan_settings::SettingsStore;
 use hutan_vim::ex::Ex;
@@ -82,6 +83,13 @@ pub enum FileViewEvent {
     /// inline_blame` changed): the workbench asks the daemon, or drops what the buffer holds
     /// when no tab of the file wants one (GIT-HISTORY).
     BlameChanged(PathBuf),
+    /// *Stage hunk* in the git peek: stage the change at lines `first_line..end_line` of the
+    /// saved file (EDITOR-POLISH).
+    GitHunkStage {
+        path: PathBuf,
+        first_line: usize,
+        end_line: usize,
+    },
     /// The tab wraps its lines now, or no longer (*Toggle Soft Wrap*, settings, the language):
     /// the status bar's `Wrap` follows.
     WrapChanged,
@@ -213,6 +221,18 @@ impl FileView {
                         let path = this.buffer.read(cx).path().to_owned();
                         cx.emit(FileViewEvent::OpenCommit { path, commit });
                     }
+                }
+                CodeViewEvent::GitHunkStage {
+                    first_line,
+                    end_line,
+                    ..
+                } => {
+                    let path = this.buffer.read(cx).path().to_owned();
+                    cx.emit(FileViewEvent::GitHunkStage {
+                        path,
+                        first_line: *first_line,
+                        end_line: *end_line,
+                    });
                 }
                 CodeViewEvent::FocusLost => {
                     let path = this.buffer.read(cx).path().to_owned();
@@ -603,6 +623,12 @@ impl FileView {
     /// Whether the gutter's column of blame is on in this tab.
     pub fn blame_on(&self) -> bool {
         self.blame
+    }
+
+    /// Whether the peek of this tab's git hunks offers *Stage hunk*.
+    pub fn set_git_stage_available(&mut self, available: bool, cx: &mut Context<Self>) {
+        self.code
+            .update(cx, |code, cx| code.set_git_stage_available(available, cx));
     }
 
     /// Whether this tab shows any blame: the column, or the caret line's (`editor.inline_blame`).
@@ -1745,6 +1771,21 @@ impl Render for FileView {
             }))
             .on_action(cx.listener(|this, _: &PreviousAgentHunk, _, cx| {
                 this.code.update(cx, |c, cx| c.previous_agent_hunk(cx));
+            }))
+            .on_action(cx.listener(|this, _: &NextGitHunk, _, cx| {
+                this.code.update(cx, |c, cx| c.next_git_hunk(cx));
+            }))
+            .on_action(cx.listener(|this, _: &PreviousGitHunk, _, cx| {
+                this.code.update(cx, |c, cx| c.previous_git_hunk(cx));
+            }))
+            .on_action(cx.listener(|this, _: &ToggleGitPeek, _, cx| {
+                this.code.update(cx, |c, cx| c.toggle_git_peek(cx));
+            }))
+            .on_action(cx.listener(|this, _: &RevertGitHunk, _, cx| {
+                this.code.update(cx, |c, cx| c.revert_git_hunk_at_caret(cx));
+            }))
+            .on_action(cx.listener(|this, _: &StageGitHunk, _, cx| {
+                this.code.update(cx, |c, cx| c.stage_git_hunk_at_caret(cx));
             }))
             .children(conflict_bar)
             .children(agent_bar)

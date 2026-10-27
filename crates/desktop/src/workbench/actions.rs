@@ -741,6 +741,20 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("View: Toggle Density", ToggleDensity),
         command("View: Reset Theme and Icons to Default", ResetTheme),
         command("Editor: Toggle Vim Mode", ToggleVimMode),
+        command("Editor: Next Change", hutan_code_view::NextGitHunk),
+        command("Editor: Previous Change", hutan_code_view::PreviousGitHunk),
+        command(
+            "Editor: Show Change at Caret",
+            hutan_code_view::ToggleGitPeek,
+        ),
+        command(
+            "Editor: Revert Change at Caret",
+            hutan_code_view::RevertGitHunk,
+        ),
+        command(
+            "Editor: Stage Change at Caret",
+            hutan_code_view::StageGitHunk,
+        ),
         command("Editor: Next Agent Change", hutan_code_view::NextAgentHunk),
         command(
             "Editor: Previous Agent Change",
@@ -1262,6 +1276,12 @@ fn context_bindings() -> Vec<BindingSpec> {
             "cmd-alt-[",
             Some(super::file_view::KEY_CONTEXT),
         ),
+        // The git gutter's changes (VS Code's keys; Vim has `]c` `[c`).
+        bind::<hutan_code_view::NextGitHunk>("alt-f5", Some(super::file_view::KEY_CONTEXT)),
+        bind::<hutan_code_view::PreviousGitHunk>(
+            "shift-alt-f5",
+            Some(super::file_view::KEY_CONTEXT),
+        ),
         // Language servers (E-12a); Vim's Normal mode has `gd`, `K`, `]d` `[d` and `⌃O` itself.
         // Hover is ⌘⌥I in both bases (Zed's chord ⌘K ⌘I is gone: ⌘K opens the palette).
         bind::<hutan_code_view::ShowHover>("cmd-alt-i", Some(hutan_code_view::KEY_CONTEXT)),
@@ -1746,6 +1766,8 @@ mod tests {
             "alt-z | code_view::ToggleSoftWrap | FileView",
             "alt-cmd-] | code_view::NextAgentHunk | FileView",
             "alt-cmd-[ | code_view::PreviousAgentHunk | FileView",
+            "alt-f5 | code_view::NextGitHunk | FileView",
+            "alt-shift-f5 | code_view::PreviousGitHunk | FileView",
             "alt-cmd-i | code_view::ShowHover | CodeView",
             "f12 | code_view::GoToDefinition | CodeView",
             "f8 | code_view::NextDiagnostic | CodeView",

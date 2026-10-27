@@ -1178,6 +1178,11 @@ pub struct EditorSettings {
     /// bar), with per-change Reject. Off, nothing is diffed or drawn; the agent's writes still
     /// reach the file and the pending ledger.
     pub agent_highlight: bool,
+    /// Git change marks in the gutter of file tabs: a bar beside the line numbers for lines
+    /// added or changed against the index (or `HEAD` when nothing of the file is staged) and a
+    /// wedge where lines were removed; a click opens the change with *Revert hunk* and *Stage
+    /// hunk*. Off, the file is not compared with git.
+    pub git_gutter: bool,
     /// Show the git blame of the caret's line (author, date, message) after the end of the line.
     /// Off by default; the gutter's blame column is the *Toggle Blame* command.
     pub inline_blame: bool,
@@ -1218,6 +1223,7 @@ impl Default for EditorSettings {
             autosave: Autosave::Off,
             autosave_delay_ms: 1000,
             agent_highlight: true,
+            git_gutter: true,
             inline_blame: false,
             soft_wrap: SoftWrap::Auto,
             wrap_column: hutan_code_view::DEFAULT_WRAP_COLUMN as u64,

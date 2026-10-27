@@ -3,6 +3,7 @@
 mod agent;
 mod blame;
 mod editing;
+mod git_gutter;
 mod ime;
 mod view;
 mod wrap;

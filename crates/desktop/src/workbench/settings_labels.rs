@@ -749,6 +749,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "editor",
+        "git_gutter",
+        "Show git changes in the gutter",
+        "A bar beside the line numbers marks the lines you added or changed against the index (or HEAD when nothing of the file is staged), and a wedge where lines were removed. Click one to see what it was, revert it or stage it. Off, the file is not compared with git.",
+    ),
+    field(
+        "editor",
         "inline_blame",
         "Show git blame at the caret",
         "The caret's line shows who last changed it, when, and the commit message after the end of the line. Off by default; Toggle Blame in the command palette shows a column for every line.",

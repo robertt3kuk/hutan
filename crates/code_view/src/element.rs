@@ -87,6 +87,8 @@ struct LinePaint {
     marked: Vec<Range<f32>>,
     /// An agent's change on or above the line.
     agent: AgentMarks,
+    /// The line's change against the index (or `HEAD`): the git gutter's bar.
+    git: AgentMarks,
     /// Diagnostics on the line: the columns underlined and how serious each is.
     underlines: Vec<(Range<f32>, Severity)>,
     /// The gutter glyph: the most serious diagnostic that starts on the line.
@@ -238,6 +240,7 @@ fn prepare(
         editable,
         syntax,
         hunks,
+        git_hunks,
         diagnostics,
         diagnostics_epoch,
         has_blame,
@@ -251,6 +254,7 @@ fn prepare(
             buffer.is_editable(),
             buffer.syntax_view(),
             buffer.agent_hunks(),
+            buffer.git_hunks(),
             buffer.diagnostics(),
             buffer.diagnostics_epoch(),
             buffer.has_blame(),
@@ -365,6 +369,7 @@ fn prepare(
             .collect()
     };
     let lines = geoms.first().map_or(0, |g| g.line)..geoms.last().map_or(0, |g| g.line + 1);
+    let git_marks = agent_marks(&text, &git_hunks, lines.clone(), theme);
     let agent_marks = agent_marks(&text, &hunks, lines.clone(), theme);
     // The diagnostics that touch a line in view (they are sorted by where they start).
     let shown_diagnostics: Vec<&Diagnostic> = {
@@ -776,20 +781,27 @@ fn prepare(
             })
         });
 
+        let mut agent = agent_marks
+            .get(line - lines.start)
+            .copied()
+            .unwrap_or_default();
+        let mut git = git_marks
+            .get(line - lines.start)
+            .copied()
+            .unwrap_or_default();
+        if !geom.first {
+            agent.removed_above = None;
+            git.removed_above = None;
+        }
         view.stats.last_rows.push(crate::view::DrawnRow {
             line,
             sub: geom.sub,
             number: number.is_some(),
             carets: carets.len(),
             selected_cells,
+            git_bar: git.bar.is_some(),
+            git_removed_above: git.removed_above.is_some(),
         });
-        let mut agent = agent_marks
-            .get(line - lines.start)
-            .copied()
-            .unwrap_or_default();
-        if !geom.first {
-            agent.removed_above = None;
-        }
         prepaint.lines.push(LinePaint {
             y: bounds.top() + px(row_index as f32 * line_hf - offset),
             number,
@@ -804,6 +816,7 @@ fn prepare(
             carets: if block { Vec::new() } else { carets },
             marked,
             agent,
+            git,
             underlines,
             glyph,
             hint,
@@ -865,7 +878,8 @@ fn shape_muted(
     shaped
 }
 
-/// The marks of an agent's changes (`hunks`, in byte order) on each line of `lines`.
+/// The marks of a list of hunks (`hunks`, in byte order: an agent's changes, or the git
+/// gutter's) on each line of `lines`.
 fn agent_marks(
     text: &hutan_buffer::Text,
     hunks: &[crate::agent::AgentHunk],
@@ -1113,6 +1127,26 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
         if let Some(color) = line.agent.removed_above {
             window.paint_quad(fill(
                 Bounds::new(point(bar_left, line.y - px(1.5)), size(cell, px(3.0))),
+                color,
+            ));
+        }
+    }
+    // The git gutter: a bar beside the numbers' right edge for added and changed lines, a
+    // wedge where lines were removed. Every row of a wrapped line has its bar.
+    let git_left = state.gutter.right() - px(4.5);
+    for line in &state.lines {
+        if let Some(color) = line.git.bar {
+            window.paint_quad(fill(
+                Bounds::new(point(git_left, line.y), size(px(3.0), line_h)),
+                color,
+            ));
+        }
+        if let Some(color) = line.git.removed_above {
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(git_left - cell * 0.5, line.y - px(1.5)),
+                    size(cell * 0.5 + px(3.0), px(3.0)),
+                ),
                 color,
             ));
         }

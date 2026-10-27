@@ -1699,11 +1699,9 @@ impl Workbench {
                 view.update(cx, |view, cx| view.sync_vim(cx));
                 view.update(cx, |view, cx| view.sync_blame_setting(cx));
             }
-            // `editor.agent_highlight` too.
-            let highlight = self
-                .settings
-                .get::<crate::settings::EditorSettings>()
-                .agent_highlight;
+            // `editor.agent_highlight` and `editor.git_gutter` too.
+            let editor = self.settings.get::<crate::settings::EditorSettings>();
+            let (highlight, git_gutter) = (editor.agent_highlight, editor.git_gutter);
             let buffers: Vec<_> = self
                 .buffers
                 .buffers
@@ -1711,8 +1709,12 @@ impl Workbench {
                 .map(|s| s.buffer.clone())
                 .collect();
             for buffer in buffers {
-                buffer.update(cx, |b, cx| b.set_agent_highlight(highlight, cx));
+                buffer.update(cx, |b, cx| {
+                    b.set_agent_highlight(highlight, cx);
+                    b.set_git_gutter(git_gutter, cx);
+                });
             }
+            self.refresh_git_bases(cx);
         }
         if changes.contains("integrations") {
             self.on_integrations_setting_changed(cx);

@@ -49,6 +49,8 @@ mod editing;
 mod element;
 pub mod ex;
 mod find;
+pub mod git_gutter;
+mod git_peek;
 mod hover;
 mod input;
 mod layout;
@@ -78,6 +80,7 @@ pub use diagnostics::{
     UnderlineStyle,
 };
 pub use find::{FindQuery, FindResult, FindState, MAX_FIND_MATCHES};
+pub use git_gutter::{GitBase, GitBaseKind};
 pub use hover::{HOVER_DELAY, HoverBlock, HoverSource, HoverState, markdown_blocks};
 pub use hutan_buffer::Utf16Point;
 pub use hutan_vim::{Key as VimKey, Mode as VimMode};
