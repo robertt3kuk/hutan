@@ -609,3 +609,45 @@ fn the_changes_rail_icon_counts_the_uncommitted_files_of_the_checkout(cx: &mut T
         changes_badge(&view, cx).is_none()
     });
 }
+
+#[gpui::test]
+fn the_scope_chip_shows_a_working_dot_while_an_agent_runs_a_turn_in_the_checkout(
+    cx: &mut TestAppContext,
+) {
+    // The chat of the scripted agent waits on an approval: its turn is running in the folder.
+    let (it, cx) = scripted_agent_write(cx);
+    let view = &it.view;
+    let panel = files_panel(view, cx);
+    wait_until(cx, "the working label", |cx| {
+        panel.read_with(cx, |p, cx| {
+            p.scope(cx)
+                .is_some_and(|s| s.working.as_deref() == Some("Codex working"))
+        })
+    });
+    draw(cx);
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::ScopeWorking("files")))
+            .is_some(),
+        "the dot is drawn on the chip"
+    );
+
+    // Another folder has nobody working in it: no dot there; back in the first, it is there again.
+    let (_dir, elsewhere) = scratch();
+    project(view, cx, &elsewhere);
+    draw(cx);
+    assert_eq!(
+        panel.read_with(cx, |p, cx| p.scope(cx).map(|s| s.working)),
+        Some(None)
+    );
+    assert!(
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::ScopeWorking("files")))
+            .is_none()
+    );
+    project(view, cx, &it.env.cwd());
+    wait_until(cx, "the dot again", |cx| {
+        draw(cx);
+        view.read_with(cx, |wb, _| wb.region_bounds(Region::ScopeWorking("files")))
+            .is_some()
+    });
+    let _ = &it.daemon;
+}

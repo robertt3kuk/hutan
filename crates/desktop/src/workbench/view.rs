@@ -440,6 +440,9 @@ pub enum Region {
     Changes(&'static str),
     /// A part of the Files panel (`tree`: the rows' area).
     Files(&'static str),
+    /// The *working* dot of the scope chip of a panel (`files`, `changes`, …); drawn only while
+    /// an agent runs a turn in the chip's project or worktree.
+    ScopeWorking(&'static str),
     /// A part of the Files panel's sections: row `index` of a list (`open-editors`,
     /// `changed-by-agents`), the close button of Open Editors' row `index` (`open-close`), or a
     /// header (`open-editors` / `changed-by-agents` with `usize::MAX`).

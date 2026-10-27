@@ -548,7 +548,12 @@ pub fn scope_chip(
         ScopeKind::Mawas => Icon::NavMawas,
     };
     let text = SharedString::from(scope_text(scope));
-    let tip = text.clone();
+    // The tooltip says who works there too: the dot beside the name is never the only cue.
+    let tip = match &scope.working {
+        Some(working) => SharedString::from(format!("{text} · {working}")),
+        None => text.clone(),
+    };
+    let working = scope.working.is_some();
     Some(
         div()
             .id(SharedString::from(format!("scope-chip-{panel}")))
@@ -566,6 +571,17 @@ pub fn scope_chip(
             .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone())).into())
             .child(icon(glyph, 12.0, theme.muted))
             .child(div().min_w_0().truncate().child(text))
+            .when(working, |chip| {
+                chip.child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .size(px(6.0))
+                        .rounded_full()
+                        .bg(theme.muted)
+                        .child(probe(regions, Region::ScopeWorking(panel))),
+                )
+            })
             .child(probe(regions, Region::Scope(panel)))
             .into_any_element(),
     )

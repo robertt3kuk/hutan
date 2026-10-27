@@ -1467,6 +1467,7 @@ fn label(name: &str, kind: ScopeKind, branch: Option<&str>) -> Option<ScopeLabel
         name: name.to_owned(),
         kind,
         branch: branch.map(str::to_owned),
+        working: None,
     })
 }
 

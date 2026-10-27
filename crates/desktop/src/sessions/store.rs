@@ -129,6 +129,10 @@ pub struct ScopeLabel {
     pub name: String,
     pub kind: ScopeKind,
     pub branch: Option<String>,
+    /// Who works in this project or worktree right now (`Codex working`, `Codex and 1 more
+    /// working`); the chip shows a dot for it. `None` for a container that is not a checkout,
+    /// or when no agent runs a turn there.
+    pub working: Option<String>,
 }
 
 /// What changed in the [`SessionsStore`], emitted with every notification so that a subscriber
@@ -1431,10 +1435,20 @@ impl SessionsStore {
             name,
             kind: ScopeKind::Mawas,
             branch: None,
+            working: None,
         })
     }
 
     fn scope_of(&self, info: &WorkspaceInfo, checkout: Option<PathBuf>) -> ScopeLabel {
+        let working = (info.kind == WorkspaceKind::Project)
+            .then(|| {
+                checkout
+                    .clone()
+                    .or_else(|| info.project.as_ref().map(|p| p.root.clone()))
+                    .or_else(|| info.roots.first().cloned())
+            })
+            .flatten()
+            .and_then(|root| self.working_label(&root));
         let repository = info
             .project
             .as_ref()
@@ -1458,7 +1472,24 @@ impl SessionsStore {
             name: info.name.clone(),
             kind,
             branch,
+            working,
         }
+    }
+
+    /// `Codex working` for the agents running a turn in the checkout at `root` (the first one's
+    /// name; `and N more` for the rest); `None` when none does.
+    fn working_label(&self, root: &std::path::Path) -> Option<String> {
+        let working = self.agents_working_near(&[root.to_owned()]);
+        let (title, agent) = working.first()?;
+        let name = match agent {
+            Some(agent) => crate::workbench::harnesses::harness_name(agent),
+            None if title.is_empty() => "An agent".to_owned(),
+            None => title.clone(),
+        };
+        Some(match working.len() {
+            1 => format!("{name} working"),
+            n => format!("{name} and {} more working", n - 1),
+        })
     }
 
     /// Asks the daemon for the checkouts of every repository when none were asked for yet, a

@@ -52,6 +52,7 @@ fn label(name: &str, kind: ScopeKind) -> Option<ScopeLabel> {
         name: name.to_owned(),
         kind,
         branch: None,
+        working: None,
     })
 }
 
