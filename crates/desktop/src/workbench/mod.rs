@@ -19,6 +19,7 @@ mod docks;
 pub mod editor_status;
 mod file_ex;
 pub mod file_history;
+mod file_ops;
 mod file_sync;
 pub mod file_view;
 pub mod files;

@@ -1207,6 +1207,57 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::FilesRefresh, _, cx| {
             this.files_refresh(cx);
         }))
+        .on_action(cx.listener(|this, _: &actions::FilesNewFile, window, cx| {
+            this.files_command(super::panels::FilesCommand::NewFile, window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::FilesNewFolder, window, cx| {
+                this.files_command(super::panels::FilesCommand::NewFolder, window, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::FilesRename, window, cx| {
+            this.files_command(super::panels::FilesCommand::Rename, window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::FilesDuplicate, window, cx| {
+                this.files_command(super::panels::FilesCommand::Duplicate, window, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, _: &actions::FilesTrash, window, cx| {
+            this.files_command(super::panels::FilesCommand::Trash, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::FilesCopy, window, cx| {
+            this.files_command(super::panels::FilesCommand::Copy, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::FilesCut, window, cx| {
+            this.files_command(super::panels::FilesCommand::Cut, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::FilesPaste, window, cx| {
+            this.files_command(super::panels::FilesCommand::Paste, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::FilesUndo, window, cx| {
+            this.files_command(super::panels::FilesCommand::Undo, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &actions::FilesRedo, window, cx| {
+            this.files_command(super::panels::FilesCommand::Redo, window, cx);
+        }))
+        .on_action(cx.listener(|this, a: &actions::FilesAskTrash, window, cx| {
+            this.files_ask_trash(&a.0, window, cx);
+        }))
+        .on_action(cx.listener(|this, a: &actions::FilesAskMove, window, cx| {
+            this.files_ask_move(&a.0, window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, a: &actions::FilesTabsMoved, window, cx| {
+                this.files_tabs_moved(&a.0, window, cx);
+            }),
+        )
+        .on_action(cx.listener(|this, a: &actions::FilesTabsTrashed, _, cx| {
+            this.files_tabs_trashed(&a.0, cx);
+        }))
+        .on_action(cx.listener(|this, a: &actions::FilesTabsRestored, _, cx| {
+            this.files_tabs_restored(&a.0, cx);
+        }))
         .on_action(
             cx.listener(|this, a: &actions::OpenChosenFile, window, cx| {
                 let target = super::files::FileOpen {

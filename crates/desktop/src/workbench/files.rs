@@ -578,6 +578,49 @@ impl Workbench {
             .collect()
     }
 
+    /// The file of the buffer at `from` was renamed or moved to `to` (EX-7): the same buffer —
+    /// its text, its unsaved changes, its undo history — now belongs to `to`. The language server
+    /// gets the document under the new path (closed under the old one), the file is watched at
+    /// its new place, and what was in flight for the old path is dropped (a read of the new place
+    /// follows, see `file_ops.rs`). A buffer that had not been read yet is read from its new
+    /// place.
+    pub(crate) fn rekey_buffer(&mut self, from: &str, to: &str, cx: &mut Context<Self>) {
+        let Some(mut stored) = self.buffers.buffers.remove(from) else {
+            return;
+        };
+        let buffer = stored.buffer.clone();
+        buffer.update(cx, |b, cx| b.set_path(PathBuf::from(to), cx));
+        stored.load = None;
+        stored.check = None;
+        stored.autosave = None;
+        stored.blame_task = None;
+        if stored.save.take().is_some() {
+            // The save in flight answers to the old path; what it wrote (if it did) is found
+            // by the read of the new place.
+            buffer.update(cx, |b, cx| b.set_saving(false, cx));
+        }
+        stored._subscriptions = self.watch_buffer(to, &buffer, cx);
+        let was_watched = std::mem::take(&mut stored.watched);
+        let disk = stored.disk;
+        let ready = buffer.read(cx).is_ready();
+        self.buffers.buffers.insert(to.to_owned(), stored);
+        for slot in &mut self.buffers.recent {
+            if slot.as_deref() == Some(from) {
+                *slot = Some(to.to_owned());
+            }
+        }
+        self.lsp.update(cx, |lsp, cx| lsp.close(from, cx));
+        if was_watched {
+            self.unwatch_file(from, cx);
+        }
+        match (ready, disk) {
+            // Opens the document, blames and watches the file at its new place.
+            (true, Some(version)) => self.loaded(to, version, None, cx),
+            (false, _) => self.load_buffer(to, None, false, cx),
+            (true, None) => {}
+        }
+    }
+
     /// Drops the views of file tabs that are gone and the buffers no tab holds any more (the
     /// Agents overview's stash keeps its files' buffers); keeps a syntax tree only for the files
     /// a pane shows.
@@ -872,7 +915,7 @@ impl Workbench {
     }
 
     /// The Files panel, shown (in its default dock when it is closed).
-    fn files_panel(
+    pub(crate) fn files_panel(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,

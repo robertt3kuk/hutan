@@ -511,6 +511,18 @@ const FIELDS: &[FieldText] = &[
         "Reveal the active file",
         "Selects the file of the tab you switch to in the Files panel, opening the folders it is in.",
     ),
+    field(
+        "panels.files",
+        "confirm_delete",
+        "Confirm before moving to the Trash",
+        "Asks first, listing what goes, the tabs with unsaved changes and an agent working in the folder. Files only ever go to the Trash, never straight to deletion.",
+    ),
+    field(
+        "panels.files",
+        "confirm_drag",
+        "Confirm the first drag to a folder",
+        "Asks the first time in a session that you drop a row onto another folder, and not again after you confirm.",
+    ),
     // ---- problems ----
     choice(
         "panels.problems",

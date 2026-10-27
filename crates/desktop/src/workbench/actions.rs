@@ -162,6 +162,26 @@ actions!(
         FilesCollapseAll,
         /// List the Files tree's open folders again and read the git marks now.
         FilesRefresh,
+        /// New file in the folder the Files tree has selected (an inline name, Return makes it).
+        FilesNewFile,
+        /// New folder in the folder the Files tree has selected.
+        FilesNewFolder,
+        /// Rename the selected row of the Files tree in place, the stem of its name selected.
+        FilesRename,
+        /// Copy the selected row next to itself as `name copy`.
+        FilesDuplicate,
+        /// Move the selected row to the Trash (a sheet asks first).
+        FilesTrash,
+        /// Remember the selected row to paste it elsewhere in the tree.
+        FilesCopy,
+        /// Remember the selected row to move it by pasting.
+        FilesCut,
+        /// Paste what ⌘C / ⌘X remembered, or the files Finder copied, into the selected folder.
+        FilesPaste,
+        /// Undo the last file operation of this window's Files tree (a batch is one step).
+        FilesUndo,
+        /// Redo the file operation the last undo took back.
+        FilesRedo,
         /// Show the history of the focused file tab's file in a tab.
         ShowFileHistory,
         RewindFocusedChat,
@@ -443,6 +463,18 @@ data_actions! {
     /// Show the Files panel's ⋯ menu (hidden and ignored files, folding, indent guides, expand
     /// and collapse all, refresh) at a position.
     ShowFilesMoreMenu(gpui::Point<gpui::Pixels>);
+    /// Ask before moving these files and folders (absolute paths) to the Trash: the sheet lists
+    /// them, the tabs with unsaved changes and an agent working there; *Move to Trash* runs it.
+    FilesAskTrash(Vec<String>);
+    /// Ask before the first drag of a session moves rows into another folder.
+    FilesAskMove(FilesMove);
+    /// Files or folders were renamed or moved on disk (`(from, to)`, absolute): the tabs, buffers
+    /// (unsaved text included), watches and language-server documents follow them.
+    FilesTabsMoved(Vec<(String, String)>);
+    /// These paths went to the Trash: their tabs say the file is deleted and keep their text.
+    FilesTabsTrashed(Vec<String>);
+    /// These paths came back from the Trash: their tabs find their file again.
+    FilesTabsRestored(Vec<String>);
     /// Open the Changes view of the checkout at this path (a worktree or a main checkout).
     ReviewChangesAt(String);
     /// Open the Changes view of the checkout of a changed file with that file selected (a file
@@ -501,6 +533,17 @@ pub struct FilesMenuAt {
     /// Whether the row is a file (a folder has no history of its own to show in a tab).
     pub file: bool,
     pub position: gpui::Point<gpui::Pixels>,
+}
+
+/// Rows of the Files tree to move or copy into a folder (a drag, a paste of what ⌘X remembered).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FilesMove {
+    /// Absolute.
+    pub items: Vec<String>,
+    /// Absolute: the folder they go into.
+    pub dir: String,
+    /// Copy instead of move (⌥ while dropping).
+    pub copy: bool,
 }
 
 /// A file to open, and where in it.
@@ -830,6 +873,16 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Files: Reveal Active File", RevealActiveFile),
         command("Files: Collapse All", FilesCollapseAll),
         command("Files: Refresh", FilesRefresh),
+        command("Files: New File", FilesNewFile),
+        command("Files: New Folder", FilesNewFolder),
+        command("Files: Rename", FilesRename),
+        command("Files: Duplicate", FilesDuplicate),
+        command("Files: Move to Trash", FilesTrash),
+        command("Files: Copy", FilesCopy),
+        command("Files: Cut", FilesCut),
+        command("Files: Paste", FilesPaste),
+        command("Files: Undo", FilesUndo),
+        command("Files: Redo", FilesRedo),
         command("Git: Show File History", ShowFileHistory),
         command("Search: Find in Files", ShowSearch),
         command("Search: Replace in Files", ShowSearchReplace),
@@ -1096,6 +1149,9 @@ fn hutan_global_bindings() -> Vec<BindingSpec> {
     ]
 }
 
+/// The key context of the Files tree (`panels/files.rs`).
+pub const FILES_KEY_CONTEXT: &str = "FilesPanel";
+
 /// Bindings inside one key context (terminal blocks, palette, dialogs, chat, setup); the same
 /// in both bases.
 fn context_bindings() -> Vec<BindingSpec> {
@@ -1105,6 +1161,18 @@ fn context_bindings() -> Vec<BindingSpec> {
     const COMPLETING: &str = "CodeView && showing_completions";
     const SNIPPET: &str = "CodeView && in_snippet && !showing_completions";
     vec![
+        // The Files tree (EX-7): only while the keyboard is in the tree itself (its context is
+        // the innermost one), never in its inline name field or an editor tab.
+        bind::<FilesNewFile>("cmd-n", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesNewFolder>("cmd-alt-n", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesRename>("f2", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesDuplicate>("cmd-d", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesTrash>("cmd-backspace", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesCopy>("cmd-c", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesCut>("cmd-x", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesPaste>("cmd-v", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesUndo>("cmd-z", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesRedo>("cmd-shift-z", Some(FILES_KEY_CONTEXT)),
         bind::<hutan_terminal_view::Copy>("cmd-c", Some(hutan_terminal_view::KEY_CONTEXT)),
         bind::<hutan_terminal_view::Paste>("cmd-v", Some(hutan_terminal_view::KEY_CONTEXT)),
         // ⌘↑ / ⌘↓ scroll to the top / bottom of the scrollback, as in Terminal.app and iTerm; the

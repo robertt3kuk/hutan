@@ -30,6 +30,19 @@
 //!   back to the editor. A click shows a file (the keyboard stays), a double click opens it.
 //! - **Reveal.** The workbench reveals the focused tab's file (`panels.files.auto_reveal`, and
 //!   *Files: Reveal Active File*): its folders open, its row is selected and scrolled to.
+//! - **Operations** (EX-7). New file / New folder (the header's buttons, ⌘N / ⌥⌘N, the row menu)
+//!   open a name field first inside the folder; F2 turns a row's name into the field with its stem
+//!   selected (`edit.rs`). ⌘⌫ asks (a sheet that lists what goes, the tabs with unsaved changes and
+//!   an agent working there) and moves to the Trash; ⌘D duplicates (`name copy`); ⌘C / ⌘X / ⌘V
+//!   copy, cut and paste, with the tree's own clipboard and the files Finder copied; a row dragged
+//!   to a folder moves there (⌥ copies), the folder under the pointer opens after a moment and
+//!   the tree scrolls at its edges (`drag.rs`); ⌘Z / ⇧⌘Z undo and redo, a batch is one step
+//!   (`ops.rs`). Every change is a request to the daemon, which never overwrites; the workbench
+//!   re-keys the tabs of what was renamed or moved and marks the tabs of what went to the Trash.
+
+mod drag;
+mod edit;
+mod ops;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -51,6 +64,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 use super::common::{panel_toolbar, scope_chip};
 use super::files_git::GitStatus;
+use super::files_names::Journal;
 use super::files_tree::{ExpandRefusal, file_icon};
 pub use super::files_tree::{Row, RowKind, Tree, TreeOptions};
 use crate::icons::{Icon, icon};
@@ -67,6 +81,14 @@ use crate::workbench::registry::PanelEnv;
 use crate::workbench::render::probe;
 use crate::workbench::style::{TextTooltip, UiStyle};
 use crate::workbench::ui;
+use crate::workbench::vim_ui::FieldEdit;
+pub use drag::{
+    AUTOSCROLL_EVERY as FILES_AUTOSCROLL_EVERY, DraggedRows, SPRING_AFTER as FILES_SPRING_AFTER,
+};
+use edit::NameEdit;
+pub use edit::{EditKind, NameEditView};
+pub use ops::FilesCommand;
+use ops::{PathClipboard, error_message};
 
 /// Open folders watched at once; folders opened beyond it are listed again on the root's
 /// `fs.generation` instead (the connection may watch 256 paths, open files included).
@@ -212,6 +234,32 @@ pub struct FilesPanel {
     git_asked: Option<(PathBuf, hutan_client::ConnectionState)>,
     /// Reads of the git status answered so far (tests wait on it).
     git_reads: usize,
+    /// The name field of a new file, a new folder or a rename, when one is open.
+    editing: Option<NameEdit>,
+    name_edit: FieldEdit,
+    name_focus: FocusHandle,
+    /// A path to select (and, with `true`, to rename) once its folder is listed again.
+    follow: Option<(PathBuf, bool)>,
+    /// A path whose name field opens at the next frame (its row was not listed when asked).
+    rename_when_listed: Option<PathBuf>,
+    /// After a row went (Trash), the row to select in its place once the folder is listed
+    /// again: `(folder, row index)`.
+    hint: Option<(PathBuf, usize)>,
+    /// What ⌘C and ⌘X remembered.
+    clipboard: Option<PathClipboard>,
+    /// The undo and redo stacks of this window's file operations.
+    journal: Journal,
+    /// Operations whose answer is on its way.
+    ops: HashMap<u64, Task<()>>,
+    next_op: u64,
+    ops_done: usize,
+    /// The sheet of the first drag was confirmed this session.
+    drag_confirmed: bool,
+    /// The folder rows are being dragged over, where its row is, and the wait to open it.
+    spring: Option<(PathBuf, gpui::Bounds<Pixels>, Option<Task<()>>)>,
+    /// Pixels per tick the tree scrolls while a drag is near its edge (0: not scrolling).
+    edge_speed: f32,
+    autoscroll: Option<Task<()>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -275,6 +323,21 @@ impl FilesPanel {
             git_cooldown: None,
             git_asked: None,
             git_reads: 0,
+            editing: None,
+            name_edit: FieldEdit::new(),
+            name_focus: cx.focus_handle(),
+            follow: None,
+            rename_when_listed: None,
+            hint: None,
+            clipboard: None,
+            journal: Journal::default(),
+            ops: HashMap::new(),
+            next_op: 0,
+            ops_done: 0,
+            drag_confirmed: false,
+            spring: None,
+            edge_speed: 0.0,
+            autoscroll: None,
             _subscriptions: subscriptions,
         };
         panel.follow_root(cx);
@@ -320,6 +383,14 @@ impl FilesPanel {
 
     pub fn selected(&self) -> Option<&Path> {
         self.selected.as_deref()
+    }
+
+    /// Selects the row of `path` when the tree shows it (without opening anything).
+    pub fn select_path(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if let Some(index) = self.tree.as_ref().and_then(|t| t.index_of(path)) {
+            self.select_index(index);
+            cx.notify();
+        }
     }
 
     /// The file of the focused tab, as last revealed.
@@ -428,6 +499,11 @@ impl FilesPanel {
         self.git_cooldown = None;
         self.git_asked = None;
         self.pending_reveal = None;
+        self.editing = None;
+        self.follow = None;
+        self.rename_when_listed = None;
+        self.hint = None;
+        self.spring = None;
         self.stale_root = None;
         let offset = self.scroll.0.borrow().base_handle.offset();
         let selected = self.selected.take();
@@ -590,6 +666,20 @@ impl FilesPanel {
         }
         if let Some(file) = self.pending_reveal.clone() {
             self.reveal(&file, cx);
+        }
+        self.apply_follow();
+        if let Some((folder, index)) = self.hint.clone()
+            && folder == dir
+        {
+            self.hint = None;
+            let selected_is_row = self
+                .selected
+                .as_deref()
+                .is_some_and(|s| self.tree.as_ref().is_some_and(|t| t.index_of(s).is_some()));
+            let count = self.rows().len();
+            if !selected_is_row && count > 0 {
+                self.select_index(index.min(count - 1));
+            }
         }
         self.after_tree_change(cx);
         cx.notify();
@@ -970,6 +1060,10 @@ impl FilesPanel {
     }
 
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.editing.is_some() {
+            // The name field has the keyboard; what it does not use is nobody's.
+            return false;
+        }
         let keystroke = &event.keystroke;
         let modifiers = keystroke.modifiers;
         if modifiers.platform && !(modifiers.control || modifiers.alt || modifiers.shift) {
@@ -1130,13 +1224,27 @@ impl FilesPanel {
         let active = self.active_file.clone();
         let guides = self.guides_shown();
         let guide_color = theme.faint.opacity(0.35);
+        // The new entry's field is a row of its own among the rows drawn: the tree's rows after
+        // it are one further down the list than they are in the tree.
+        let slot = self.new_row_slot();
         let rows: Vec<(usize, Row)> = range
+            .clone()
+            .filter(|v| Some(*v) != slot.map(|s| s.0))
+            .map(|v| {
+                if slot.is_some_and(|s| v > s.0) {
+                    v - 1
+                } else {
+                    v
+                }
+            })
             .filter_map(|i| self.shown_rows().get(i).cloned().map(|row| (i, row)))
             .collect();
         self.rows_rendered
             .set(self.rows_rendered.get() + rows.len());
         let drawn = Rc::clone(&self.guides_drawn);
-        rows.into_iter()
+        let accent = theme.accent;
+        let mut elements: Vec<AnyElement> = rows
+            .into_iter()
             .map(|(index, row)| {
                 let selected = focused_row.as_ref() == Some(&row.path);
                 let is_active = active.as_ref() == Some(&row.path);
@@ -1195,6 +1303,54 @@ impl FilesPanel {
                         .child(row.name.clone())
                         .into_any_element(),
                 };
+                // A rename turns the name (the last folder of a folded chain) into the field.
+                let name: AnyElement = if self.renaming(row.folder()) {
+                    let editor = self.name_editor(cx);
+                    match row.name.rsplit_once('/') {
+                        Some((front, _)) if row.tail.is_some() => div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .max_w_1_2()
+                                    .truncate()
+                                    .text_color(theme.muted)
+                                    .child(SharedString::from(format!("{front}/"))),
+                            )
+                            .child(editor)
+                            .into_any_element(),
+                        _ => editor,
+                    }
+                } else {
+                    name
+                };
+                let cut = self.is_cut(row.folder());
+                let is_dir = row.kind == RowKind::Dir;
+                let can_drag = !matches!(row.kind, RowKind::More | RowKind::Failed);
+                let target = row.folder().to_owned();
+                let dragged = self.dragged_by(index);
+                let drop_target = target.clone();
+                let drop_listener = cx.listener(move |this, rows: &DraggedRows, window, cx| {
+                    let copy = window.modifiers().alt;
+                    this.dropped(
+                        rows,
+                        Some((drop_target.as_path(), is_dir)),
+                        copy,
+                        window,
+                        cx,
+                    );
+                });
+                let drag_listener = cx.listener(
+                    move |this, event: &gpui::DragMoveEvent<DraggedRows>, window, cx| {
+                        if event.bounds.contains(&event.event.position) {
+                            let over = is_dir.then(|| (target.clone(), event.bounds));
+                            this.drag_over_row(over, window, cx);
+                        }
+                    },
+                );
                 div()
                     .id(("files-row", index))
                     .relative()
@@ -1210,6 +1366,7 @@ impl FilesPanel {
                     .text_size(px(tokens.font_size))
                     .text_color(color)
                     .when(is_active, |s| s.font_weight(gpui::FontWeight::MEDIUM))
+                    .when(cut, |s| s.opacity(0.5))
                     .when(selected, |s| s.bg(theme.sidebar_accent))
                     .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
                     .when(guides, |row_el| {
@@ -1263,6 +1420,20 @@ impl FilesPanel {
                             None => {}
                         }
                     }))
+                    .when_some(dragged, |s, payload| {
+                        s.on_drag(payload, |dragged: &DraggedRows, _, _, cx| {
+                            let style = UiStyle::get(cx);
+                            let label = dragged.label.clone();
+                            cx.new(|_| crate::workbench::view::DragPreview { label, style })
+                        })
+                    })
+                    .when(is_dir, |s| {
+                        s.drag_over::<DraggedRows>(move |s, _, _, _| s.bg(accent.opacity(0.18)))
+                    })
+                    .when(can_drag, |s| {
+                        s.on_drop(drop_listener)
+                            .on_drag_move::<DraggedRows>(drag_listener)
+                    })
                     .child(
                         div()
                             .flex_none()
@@ -1305,7 +1476,34 @@ impl FilesPanel {
                     }))
                     .into_any_element()
             })
-            .collect()
+            .collect();
+        if let Some((at, depth)) = slot
+            && let Some(position) = at.checked_sub(range.start)
+            && position <= elements.len()
+        {
+            let folder = self.editing.as_ref().is_some_and(|e| e.is_dir_entry());
+            let glyph = if folder {
+                Icon::ItemFolder
+            } else {
+                Icon::ItemFile
+            };
+            let lead = tokens.spacing * 2.0;
+            let row = div()
+                .id("files-new-row")
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .h(px(tokens.sidebar_row - 4.0))
+                .pl(px(lead + indent_px(depth)))
+                .pr(px(tokens.spacing * 2.0))
+                .mx(px(tokens.spacing))
+                .child(div().flex_none().w(px(12.0)))
+                .child(div().flex_none().child(icon(glyph, 14.0, theme.muted)))
+                .child(self.name_editor(cx))
+                .into_any_element();
+            elements.insert(position, row);
+        }
+        elements
     }
 }
 
@@ -1316,12 +1514,36 @@ impl Focusable for FilesPanel {
 }
 
 impl Render for FilesPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.env.regions.rendered(cx.entity_id());
         self.sync_options(cx);
+        if let Some(path) = self.rename_when_listed.take() {
+            self.begin_rename_of(path, window, cx);
+        }
+        self.keep_edit_visible();
         self.thumb.set(None);
         let style = UiStyle::get(cx);
         let (theme, tokens) = (style.theme, style.density.ui());
+        let new_file = ui::IconButton::new(
+            "files-new-file",
+            Icon::ActionNewFile,
+            "New File",
+            &theme,
+            &tokens,
+        )
+        .compact()
+        .on_click(cx.listener(|this, _, window, cx| this.begin_new(false, window, cx)))
+        .into_any_element();
+        let new_folder = ui::IconButton::new(
+            "files-new-folder",
+            Icon::ActionNewFolder,
+            "New Folder",
+            &theme,
+            &tokens,
+        )
+        .compact()
+        .on_click(cx.listener(|this, _, window, cx| this.begin_new(true, window, cx)))
+        .into_any_element();
         let refresh = ui::IconButton::new(
             "files-refresh",
             Icon::ActionRefresh,
@@ -1355,12 +1577,17 @@ impl Render for FilesPanel {
         let name_shown = chip.is_none();
         let lead: Vec<AnyElement> = chip.into_iter().collect();
         // The dock tab says Files: the header keeps the scope chip and the controls.
-        let header = panel_toolbar("panels.files", lead, vec![refresh, collapse, more], cx);
+        let header = panel_toolbar(
+            "panels.files",
+            lead,
+            vec![new_file, new_folder, refresh, collapse, more],
+            cx,
+        );
         let name: Option<SharedString> = self.root().and_then(|root| {
             root.file_name()
                 .map(|n| SharedString::from(n.to_string_lossy().into_owned()))
         });
-        let count = self.shown_rows().len();
+        let count = self.shown_rows().len() + usize::from(self.new_row_slot().is_some());
         let body: AnyElement = match (&self.tree, count) {
             (None, _) => empty_state(
                 "No project here",
@@ -1384,6 +1611,16 @@ impl Render for FilesPanel {
                             cx.notify();
                         }
                     }
+                }))
+                .on_drag_move::<DraggedRows>(cx.listener(
+                    |this, event: &gpui::DragMoveEvent<DraggedRows>, window, cx| {
+                        this.drag_near_edge(event.event.position, event.bounds, window, cx);
+                    },
+                ))
+                // Rows dropped on the empty part of the tree go to its root.
+                .on_drop(cx.listener(|this, rows: &DraggedRows, window, cx| {
+                    let copy = window.modifiers().alt;
+                    this.dropped(rows, None, copy, window, cx);
                 }))
                 .child(
                     uniform_list(
@@ -1425,6 +1662,7 @@ impl Render for FilesPanel {
                     .child(name)
             }))
             .child(body)
+            .children(self.name_error_strip(cx))
     }
 }
 

@@ -140,3 +140,5 @@ root = true
 "panel.files" = "file-code.svg"
 "panel.instructions" = "file-text.svg"
 "action.collapse-all" = "arrows-in-line-vertical.svg"
+"action.new-file" = "file-plus.svg"
+"action.new-folder" = "folder-plus.svg"

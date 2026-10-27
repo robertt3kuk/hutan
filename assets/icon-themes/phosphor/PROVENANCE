@@ -7,3 +7,4 @@ hutan.svg: original Hutan-owned monochrome mascot silhouette (MIT).
 Mawas and harness identities use the catalog-approved Phosphor fallbacks.
 See LICENSE for the upstream MIT notice.
 file-rs.svg, file-js.svg, file-ts.svg, file-py.svg, file-md.svg, file-html.svg, file-css.svg, file-image.svg, file-zip.svg, file-pdf.svg, file-lock.svg, file-sql.svg, brackets-curly.svg, arrows-in-line-vertical.svg: Phosphor Regular, the same revision (the Files panel's per-type file icons `item.file.*` and *Collapse all*, EX-1).
+file-plus.svg, folder-plus.svg: Phosphor Regular, the same revision (the Files panel header's *New File* / *New Folder*, EX-7).

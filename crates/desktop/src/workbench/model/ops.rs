@@ -47,6 +47,39 @@ fn remove_pane_item(pane: &mut Pane, index: usize) -> ItemRef {
     item
 }
 
+/// The path `path` has after `from` became `to`: `to` itself, what is below `from` moved below
+/// `to`, anything else `None`.
+pub fn retargeted(path: &str, from: &str, to: &str) -> Option<String> {
+    if path == from {
+        return Some(to.to_owned());
+    }
+    let rest = path.strip_prefix(from)?.strip_prefix('/')?;
+    Some(format!("{}/{rest}", to.trim_end_matches('/')))
+}
+
+/// Points the file tabs of `center` at `from` (and below it) at `to`.
+fn retarget_in(
+    center: &mut super::PaneTree,
+    from: &str,
+    to: &str,
+    mut moved: Option<&mut Vec<(String, String)>>,
+) {
+    for pane in center.panes_mut() {
+        for item in &mut pane.items {
+            let ItemRef::File { path } = item else {
+                continue;
+            };
+            if let Some(new) = retargeted(path, from, to) {
+                if let Some(moved) = moved.as_deref_mut() {
+                    moved.push((std::mem::replace(path, new.clone()), new));
+                } else {
+                    *path = new;
+                }
+            }
+        }
+    }
+}
+
 impl WorkbenchState {
     // ---- focus & selection -------------------------------------------------------------
 
@@ -195,6 +228,25 @@ impl WorkbenchState {
             }
             None => false,
         }
+    }
+
+    /// A file or folder was renamed or moved (EX-7): every file tab at `from`, or below it when
+    /// it is a folder, now shows the same place under `to`, keeping its position and activation.
+    /// The live layout, the overview's stash and the layouts of the workspaces that are not shown
+    /// all follow. Returns the `(old, new)` path of every tab that moved in the live layout.
+    pub fn retarget_files(&mut self, from: &str, to: &str) -> Vec<(String, String)> {
+        let mut moved = Vec::new();
+        retarget_in(&mut self.center, from, to, Some(&mut moved));
+        if let Some(saved) = self.stashed.as_deref_mut() {
+            retarget_in(&mut saved.center, from, to, None);
+        }
+        for parked in self.parked.values_mut() {
+            retarget_in(&mut parked.layout.center, from, to, None);
+            if let Some(saved) = parked.stashed.as_deref_mut() {
+                retarget_in(&mut saved.center, from, to, None);
+            }
+        }
+        moved
     }
 
     // ---- splitting & moving ------------------------------------------------------------

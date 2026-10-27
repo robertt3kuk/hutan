@@ -733,6 +733,16 @@
           "type": "string",
           "description": "Pack-root-relative monochrome SVG path",
           "maxLength": 1024
+        },
+        "action.new-file": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
+        },
+        "action.new-folder": {
+          "type": "string",
+          "description": "Pack-root-relative monochrome SVG path",
+          "maxLength": 1024
         }
       },
       "additionalProperties": true

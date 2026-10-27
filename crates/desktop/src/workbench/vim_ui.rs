@@ -150,6 +150,23 @@ impl FieldEdit {
         self.input.select_all();
     }
 
+    /// A field that opens with the bytes `range` of `text` selected and the caret at the end of
+    /// them: the stem of a file name in a rename (`main` of `main.rs`).
+    pub fn reset_selecting(&mut self, text: &str, range: std::ops::Range<usize>) {
+        self.reset();
+        self.input.reset_to(text);
+        self.input.select(range.start, range.end);
+    }
+
+    /// The selected bytes of `text`, when the field follows it.
+    pub fn selection(&self, text: &str) -> Option<std::ops::Range<usize>> {
+        if self.input.text() == text {
+            self.input.selection()
+        } else {
+            None
+        }
+    }
+
     /// Selects all of `text`: typing replaces it.
     pub fn select_all(&mut self, text: &str) {
         self.sync(text);

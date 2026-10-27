@@ -17,7 +17,7 @@ mod workspace;
 #[cfg(test)]
 mod tests;
 
-pub use ops::{DropTarget, ItemSource, MAX_DOCK_SIZE, MIN_DOCK_SIZE, PanelDest};
+pub use ops::{DropTarget, ItemSource, MAX_DOCK_SIZE, MIN_DOCK_SIZE, PanelDest, retargeted};
 pub use persist::{LayoutNote, LoadOutcome, STATE_VERSION};
 pub use preset::{CenterLayout, LayoutPreset};
 pub use responsive::{

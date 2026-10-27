@@ -169,6 +169,8 @@ catalog! {
     PanelFiles => ("panel.files", "file-code.svg"),
     PanelInstructions => ("panel.instructions", "file-text.svg"),
     ActionCollapseAll => ("action.collapse-all", "arrows-in-line-vertical.svg"),
+    ActionNewFile => ("action.new-file", "file-plus.svg"),
+    ActionNewFolder => ("action.new-folder", "folder-plus.svg"),
 }
 
 pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
@@ -214,6 +216,12 @@ pub(super) fn embedded(path: &str) -> Option<&'static [u8]> {
         )),
         "arrows-in-line-vertical.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/arrows-in-line-vertical.svg"
+        )),
+        "file-plus.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/file-plus.svg"
+        )),
+        "folder-plus.svg" => Some(include_bytes!(
+            "../../../../../assets/icon-themes/phosphor/folder-plus.svg"
         )),
         "arrow-clockwise.svg" => Some(include_bytes!(
             "../../../../../assets/icon-themes/phosphor/arrow-clockwise.svg"

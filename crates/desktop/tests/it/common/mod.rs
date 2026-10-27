@@ -195,6 +195,12 @@ impl Valve {
         }
     }
 }
+/// The Trash tests give their daemon: a folder below the test's home, never the user's Trash.
+fn test_trash(home: &Path) -> std::sync::Arc<dyn hutan_daemon::files::trash::Trash> {
+    std::sync::Arc::new(hutan_daemon::files::trash::FolderTrash::new(
+        home.join("trash"),
+    ))
+}
 
 /// A daemon in this process on a fresh `HUTAN_HOME`.
 pub struct TestDaemon {
@@ -339,6 +345,8 @@ impl TestDaemon {
         // machine that can take longer than the 5 s a real window gets. No desktop test is about
         // the timeout itself (the daemon's own tests cover it).
         config.ui_command_timeout = std::time::Duration::from_secs(30);
+        // `fs.trash` goes to a folder of the test's own: no test touches the user's Trash.
+        config.fs_trash = Some(test_trash(dir.path()));
         tweak(&mut config);
         let daemon = runtime.block_on(hutan_daemon::start(config)).unwrap();
         Self {
@@ -658,6 +666,7 @@ impl TestDaemon {
     pub fn restart_with(&mut self, tweak: impl FnOnce(&mut DaemonConfig)) {
         assert!(self.daemon.is_none(), "daemon is already running");
         let mut config = DaemonConfig::new(self.paths.clone());
+        config.fs_trash = Some(test_trash(self.dir.path()));
         tweak(&mut config);
         self.daemon = Some(self.rt().block_on(hutan_daemon::start(config)).unwrap());
     }

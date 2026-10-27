@@ -433,7 +433,7 @@ impl Workbench {
     /// Reads the file of `path` and gives it to the buffer when the buffer is clean (or
     /// `force`); a changed buffer gets the conflict bar instead. `agent`: an agent's session
     /// wrote it (E-10: the write enters the ledger).
-    fn read_into(
+    pub(crate) fn read_into(
         &mut self,
         path: &str,
         force: bool,

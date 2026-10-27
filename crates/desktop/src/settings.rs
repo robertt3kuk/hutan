@@ -697,6 +697,11 @@ pub struct FilesPanelSettings {
     pub compact_folders: bool,
     /// When the vertical guides along open folders are drawn.
     pub indent_guides: IndentGuides,
+    /// Ask before moving files to the Trash (the sheet lists what goes, the tabs with unsaved
+    /// changes and an agent working there). Off, the Trash still takes them; it never deletes.
+    pub confirm_delete: bool,
+    /// Ask the first time a row is dragged to another folder in a session.
+    pub confirm_drag: bool,
 }
 
 impl Default for FilesPanelSettings {
@@ -707,6 +712,8 @@ impl Default for FilesPanelSettings {
             auto_reveal: true,
             compact_folders: true,
             indent_guides: IndentGuides::Hover,
+            confirm_delete: true,
+            confirm_drag: true,
         }
     }
 }

@@ -1662,6 +1662,32 @@ impl SessionsStore {
         info.state.is_live() && Self::working(info, &self.raw_presentation(info))
     }
 
+    /// The live sessions whose agent works in a place that holds one of `paths`, or that one of
+    /// them holds (a folder about to go to the Trash that a session runs in): the session's title
+    /// and the agent's id (`codex`, `claude`, `omp`, a chat's harness) when it has one.
+    pub fn agents_working_near(&self, paths: &[PathBuf]) -> Vec<(String, Option<String>)> {
+        self.state
+            .sessions
+            .iter()
+            .filter(|s| self.is_working(s))
+            .filter(|s| {
+                session_places(s).iter().any(|place| {
+                    paths
+                        .iter()
+                        .any(|p| p.starts_with(place) || place.starts_with(p))
+                })
+            })
+            .map(|s| {
+                let agent = s
+                    .chat
+                    .as_ref()
+                    .map(|c| c.agent.clone())
+                    .or_else(|| s.agent.as_ref().map(|a| a.agent.clone()));
+                (s.title.clone(), agent)
+            })
+            .collect()
+    }
+
     /// How many sessions of each workspace have a request waiting.
     pub fn requests_by_workspace(&self) -> HashMap<WorkspaceId, usize> {
         let mut counts = HashMap::new();

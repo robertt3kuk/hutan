@@ -9,6 +9,7 @@ mod changes;
 pub(crate) mod common;
 mod files;
 mod files_git;
+mod files_names;
 mod files_tree;
 mod history;
 mod history_catalog;
@@ -53,11 +54,18 @@ pub use common::{
 };
 pub(crate) use common::{edit_text, field_box};
 pub use files::{
-    FilesMemory, FilesPanel, GIT_READ_EVERY as FILES_GIT_READ_EVERY,
-    MAX_CACHED_ROOTS as FILES_MAX_CACHED_ROOTS, MAX_WATCHED_DIRS as FILES_MAX_WATCHED_DIRS,
+    DraggedRows as FilesDragged, EditKind as FilesEditKind, FILES_AUTOSCROLL_EVERY,
+    FILES_SPRING_AFTER, FilesCommand, FilesMemory, FilesPanel,
+    GIT_READ_EVERY as FILES_GIT_READ_EVERY, MAX_CACHED_ROOTS as FILES_MAX_CACHED_ROOTS,
+    MAX_WATCHED_DIRS as FILES_MAX_WATCHED_DIRS, NameEditView as FilesNameEdit,
     RELIST_EVERY as FILES_RELIST_EVERY,
 };
 pub use files_git::{GitMark as FileGitMark, GitStatus as FileGitStatus};
+pub use files_names::{
+    EDGE as FILES_EDGE, Journal as FilesJournal, Step as FilesStep, copy_name as files_copy_name,
+    edge_scroll as files_edge_scroll, listed_names as files_listed_names,
+    stem_range as files_stem_range,
+};
 pub use files_tree::{
     ExpandRefusal as FileExpandRefusal, MORE_ROW as FILES_MORE_ROW, Row as FileRow,
     RowKind as FileRowKind, Tree as FileTree, TreeOptions as FileTreeOptions, file_icon,

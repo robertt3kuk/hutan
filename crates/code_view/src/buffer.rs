@@ -274,6 +274,36 @@ impl FileBuffer {
         &self.path
     }
 
+    /// The file was renamed or moved (EX-7): the buffer follows it, with its text, undo history
+    /// and unsaved changes. The language follows the new name (`notes` → `notes.rs`), the syntax
+    /// is built again for it, and the diagnostics of the old document go (the server sends the
+    /// new one's).
+    pub fn set_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.path == path {
+            return;
+        }
+        let by_name = Language::from_path(&path).filter(|l| l.is_compiled());
+        self.path = path;
+        let language = by_name.or_else(|| {
+            self.buffer
+                .text()
+                .line_text(0)
+                .ok()
+                .and_then(|first| Language::from_shebang(&first))
+                .filter(|l| l.is_compiled())
+        });
+        if language != self.language {
+            self.language = language;
+            self.syntax = None;
+            self.sync_syntax();
+        }
+        if !self.diagnostics.is_empty() {
+            self.diagnostics = Arc::from(Vec::new());
+            self.diagnostics_epoch += 1;
+        }
+        cx.notify();
+    }
+
     /// The file name, for titles.
     pub fn file_name(&self) -> String {
         file_name(&self.path)

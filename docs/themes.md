@@ -612,4 +612,6 @@ Generated from `IconId::ALL`; a drift test enforces this list. Offline schema: `
 - `panel.files`
 - `panel.instructions`
 - `action.collapse-all`
+- `action.new-file`
+- `action.new-folder`
 <!-- icons:end -->

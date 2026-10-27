@@ -317,6 +317,26 @@ impl Tree {
         )
     }
 
+    /// The names `dir` lists, whatever the filters hide (a name typed for a new entry collides
+    /// with a hidden one as well); `None` while the folder has no listing.
+    pub fn entry_names(&self, dir: &Path) -> Option<Vec<&str>> {
+        match self.listings.get(dir) {
+            Some(Listing::Listed { entries, .. }) => {
+                Some(entries.iter().map(|e| e.name.as_str()).collect())
+            }
+            _ => None,
+        }
+    }
+
+    /// What the listing of `path`'s folder says `path` is (folder, file, link); `None` when the
+    /// folder is not listed or has no such entry.
+    pub fn kind_of(&self, path: &Path) -> Option<FsKind> {
+        let Some(Listing::Listed { entries, .. }) = self.listings.get(path.parent()?) else {
+            return None;
+        };
+        entries.iter().find(|e| e.path == path).map(|e| e.kind)
+    }
+
     /// Applies new options; the rows are built again when they changed. Folders the new options
     /// make foldable are opened (see [`Self::take_opened`]).
     pub fn set_options(&mut self, options: TreeOptions) {
