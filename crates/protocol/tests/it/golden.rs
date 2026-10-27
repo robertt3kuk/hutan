@@ -3731,6 +3731,73 @@ fn requests() -> Vec<(&'static str, Request)> {
                 staged_only: true,
             }),
         ),
+        (
+            "fs_create_file",
+            Request::FsCreate(FsCreate {
+                path: "/repo/src/new.rs".into(),
+                kind: FsCreateKind::File,
+                parents: false,
+            }),
+        ),
+        (
+            "fs_create_dir_parents",
+            Request::FsCreate(FsCreate {
+                path: "/repo/docs/guides/intro".into(),
+                kind: FsCreateKind::Dir,
+                parents: true,
+            }),
+        ),
+        (
+            "fs_rename",
+            Request::FsRename(FsRename {
+                from: "/repo/src/old.rs".into(),
+                to: "/repo/src/new.rs".into(),
+            }),
+        ),
+        (
+            "fs_move",
+            Request::FsMove(FsMove {
+                items: vec![
+                    FsMoveItem {
+                        from: "/repo/a.txt".into(),
+                        to: "/repo/src/a.txt".into(),
+                    },
+                    FsMoveItem {
+                        from: "/repo/b".into(),
+                        to: "/repo/src/b".into(),
+                    },
+                ],
+            }),
+        ),
+        (
+            "fs_copy",
+            Request::FsCopy(FsCopy {
+                items: vec![
+                    FsCopyItem {
+                        from: "/repo/src".into(),
+                        to: "/repo/src copy".into(),
+                        picked_from: false,
+                    },
+                    FsCopyItem {
+                        from: "/Users/me/Downloads/logo.png".into(),
+                        to: "/repo/assets/logo.png".into(),
+                        picked_from: true,
+                    },
+                ],
+            }),
+        ),
+        (
+            "fs_trash",
+            Request::FsTrash(FsTrash {
+                paths: vec!["/repo/old.log".into(), "/repo/build".into()],
+            }),
+        ),
+        (
+            "fs_restore",
+            Request::FsRestore(FsRestore {
+                ticket: "01K7F3B5N2Q9W8E4R6T1Y0V3TK".into(),
+            }),
+        ),
     ]
 }
 
@@ -7011,6 +7078,73 @@ fn responses_match_fixtures() {
         (
             "fs_entry",
             ControlMessage::ok(30, &fs_entry("Cargo.toml", FsKind::File, false)).unwrap(),
+        ),
+        (
+            "fs_op_results",
+            ControlMessage::ok(
+                70,
+                &FsOpResults {
+                    items: vec![
+                        FsOpItem {
+                            path: "/repo/a.txt".into(),
+                            entry: Some(fs_entry("src/a.txt", FsKind::File, false)),
+                            error: None,
+                        },
+                        FsOpItem {
+                            path: "/repo/b".into(),
+                            entry: None,
+                            error: Some({
+                                let mut error = ErrorBody::new(
+                                    ErrorCode::Conflict,
+                                    "/repo/src/b exists already",
+                                );
+                                error.data = Some(serde_json::json!({"reason": "exists"}));
+                                error
+                            }),
+                        },
+                    ],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "fs_trashed",
+            ControlMessage::ok(
+                71,
+                &FsTrashed {
+                    ticket: Some("01K7F3B5N2Q9W8E4R6T1Y0V3TK".into()),
+                    items: vec![FsOpItem {
+                        path: "/repo/old.log".into(),
+                        entry: Some(fs_entry("old.log", FsKind::File, false)),
+                        error: None,
+                    }],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "fs_trashed_nothing",
+            ControlMessage::ok(
+                72,
+                &FsTrashed {
+                    ticket: None,
+                    items: vec![FsOpItem {
+                        path: "/repo/gone".into(),
+                        entry: None,
+                        error: Some(ErrorBody::new(ErrorCode::NotFound, "/repo/gone: not found")),
+                    }],
+                },
+            )
+            .unwrap(),
+        ),
+        (
+            "error_unsupported_no_trash",
+            ControlMessage::err(73, {
+                let mut error =
+                    ErrorBody::new(ErrorCode::Unsupported, "this volume has no Trash");
+                error.data = Some(serde_json::json!({"reason": "no_trash"}));
+                error
+            }),
         ),
         (
             "fs_listing",

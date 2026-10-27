@@ -1,0 +1,1 @@
+{"id":286,"method":"fs.move","params":{"items":[{"from":"/repo/a.txt","to":"/repo/src/a.txt"},{"from":"/repo/b","to":"/repo/src/b"}]}}

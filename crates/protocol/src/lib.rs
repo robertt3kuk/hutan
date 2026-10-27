@@ -1,5 +1,8 @@
 //! Hutan IPC protocol (ADR 0002, ADR 0004, `docs/protocol.md`).
 //!
+//! - [`fs`] also carries file operations — `fs.create`, `fs.rename`, `fs.move`, `fs.copy`,
+//!   `fs.trash` (undo tickets) and `fs.restore` (protocol 0.54, capability `fs.ops`, ADR 0012
+//!   amendment 2026-10-27).
 //! - [`worktree`] also carries staging — `worktree.hunks`, `worktree.stage`, `worktree.unstage`,
 //!   `worktree.discard` (all user-only but the read `hunks`), `WorktreeCommit.staged_only` and
 //!   `WorktreeFinish.staged_only` (protocol 0.53, capability `worktree.stage`, ADR 0020).
@@ -126,7 +129,7 @@ use serde::{Deserialize, Serialize};
 /// Version spoken by this build. Minor = additive, major = breaking (ADR 0002).
 pub const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion {
     major: 0,
-    minor: 53,
+    minor: 54,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

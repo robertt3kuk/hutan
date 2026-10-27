@@ -1,0 +1,1 @@
+{"id":70,"result":{"items":[{"entry":{"ino":8834113,"kind":"file","mtime_ns":1791894150123456789,"name":"src/a.txt","path":"/repo/src/a.txt","size":1204},"path":"/repo/a.txt"},{"error":{"code":"conflict","data":{"reason":"exists"},"message":"/repo/src/b exists already"},"path":"/repo/b"}]}}

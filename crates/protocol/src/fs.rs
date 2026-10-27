@@ -23,11 +23,17 @@
 //! `data.size`, `not_a_file`), `conflict` (`data.current`: the file's version now, absent when
 //! it is gone; `data.reason`: `version`, `exists` or `missing`), `invalid_state` (too many
 //! uploads, an upload that expired, too many searches).
+//!
+//! File operations (protocol 0.54, capability `fs.ops`): [`FsCreate`], [`FsRename`],
+//! [`FsMove`], [`FsCopy`], [`FsTrash`] and [`FsRestore`] obey the same confinement and never
+//! overwrite; see ADR 0012 amendment 2026-10-27 and `docs/protocol.md` § Files.
 
 use std::path::PathBuf;
 
 use hutan_core::{CheckpointId, ItemId, SessionId};
 use serde::{Deserialize, Serialize};
+
+use crate::control::ErrorBody;
 
 /// Most bytes of text in one `fs.read` answer and one `fs.write.chunk`.
 pub const CHUNK_MAX_BYTES: usize = 1 << 20;
@@ -57,6 +63,16 @@ pub const CHANGES_MAX: usize = 500;
 pub const COALESCE_MS: u64 = 50;
 /// Shortest time between two `fs.generation` events of one root.
 pub const GENERATION_INTERVAL_MS: u64 = 1_000;
+/// Most items of one `fs.move`, `fs.copy` or `fs.trash` (`bad_request` beyond; protocol 0.54).
+pub const OPS_ITEMS_MAX: usize = 200;
+/// Most entries one `fs.copy` item copies (`unsupported`, `too_large`, beyond).
+pub const COPY_ENTRIES_MAX: u64 = 20_000;
+/// Most bytes one `fs.copy` item copies (`unsupported`, `too_large`, beyond).
+pub const COPY_BYTES_MAX: u64 = 2 << 30;
+/// Trash tickets the daemon remembers; the oldest is forgotten first.
+pub const TICKETS_MAX: usize = 200;
+/// How long the daemon remembers a trash ticket.
+pub const TICKET_TTL_SECS: u64 = 24 * 60 * 60;
 
 /// What identifies the content a client read: a write that expects it fails with `conflict`
 /// when the file is another one now.
@@ -466,4 +482,122 @@ pub struct FsChange {
     pub version: Option<FileVersion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<FsOrigin>,
+}
+
+/// What `fs.create` makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FsCreateKind {
+    /// An empty file, created exclusively.
+    File,
+    /// A folder (`mkdir`).
+    Dir,
+}
+
+/// `fs.create` (protocol 0.54, capability `fs.ops`): makes an empty file or a folder at `path`
+/// and answers with its [`FsEntry`]. It never replaces anything: a path that exists is a
+/// `conflict` (`data.reason` `exists`). The folder that holds `path` must exist, unless
+/// `parents` asks for the missing ones to be made too (each of them below a root, none named
+/// `.git`). Below `.git` is `forbidden` (`git_dir`), a root itself `forbidden` (`root`). A
+/// mutation: an agent asks first (`docs/control.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsCreate {
+    pub path: PathBuf,
+    pub kind: FsCreateKind,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub parents: bool,
+}
+
+/// `fs.rename` (protocol 0.54): gives `from` the new path `to` (the whole new path, not the
+/// folder it goes to) in the same root, and answers with the [`FsEntry`] at `to`. Never
+/// overwrites (`conflict`, `exists`); a rename that only changes the case of the name works on
+/// a case-insensitive volume; a folder is never moved into itself (`bad_request`); another
+/// root is `unsupported` (`data.reason` `cross_root`). A link is renamed, not followed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsRename {
+    pub from: PathBuf,
+    pub to: PathBuf,
+}
+
+/// One item of `fs.move` (and, with [`FsCopyItem`], of `fs.copy`): `to` is the whole new path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsMoveItem {
+    pub from: PathBuf,
+    pub to: PathBuf,
+}
+
+/// `fs.move` (protocol 0.54): [`FsRename`]'s rules for a batch of at most [`OPS_ITEMS_MAX`]
+/// items (a drag of several rows), done in order, best effort: one item that fails does not
+/// undo the others. Answered with [`FsOpResults`], one item per request item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsMove {
+    pub items: Vec<FsMoveItem>,
+}
+
+/// One item of `fs.copy`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsCopyItem {
+    pub from: PathBuf,
+    /// The whole new path of the copy.
+    pub to: PathBuf,
+    /// `from` is something the user chose (a Finder drop, a file dialog): it may lie outside the
+    /// roots. Counts for nothing from an agent, and never lets a path below `.git` in; `to` is
+    /// always confined.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub picked_from: bool,
+}
+
+/// `fs.copy` (protocol 0.54): copies files and folders (recursively; `clonefile` where the
+/// volume can) to new paths, never overwriting (`conflict`, `exists`), for a batch of at most
+/// [`OPS_ITEMS_MAX`] items, best effort. One item copies at most [`COPY_ENTRIES_MAX`] entries
+/// and [`COPY_BYTES_MAX`] bytes (`unsupported`, `too_large`). A link is copied as a link. The
+/// source and the target may lie in different roots. Answered with [`FsOpResults`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsCopy {
+    pub items: Vec<FsCopyItem>,
+}
+
+/// `fs.trash` (protocol 0.54): moves the paths to the system Trash (never deletes), best
+/// effort, at most [`OPS_ITEMS_MAX`] of them. Answered with [`FsTrashed`]; its ticket puts
+/// them back with `fs.restore`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsTrash {
+    pub paths: Vec<PathBuf>,
+}
+
+/// `fs.restore` (protocol 0.54): puts the items of a trash ticket back where they were, without
+/// overwriting. Answered with [`FsOpResults`]; a ticket that is unknown, expired or used up is
+/// `not_found`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsRestore {
+    pub ticket: String,
+}
+
+/// What became of one item of a batch: `entry` or `error`, never both.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FsOpItem {
+    /// The path the request named: `from`, or the path to trash.
+    pub path: PathBuf,
+    /// Success. The entry at the item's new place; for a trashed item, as it was before (it is
+    /// no longer there); for a restored one, where it is again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<FsEntry>,
+    /// Failure: an error as the same request alone would have answered it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ErrorBody>,
+}
+
+/// Result of `fs.move`, `fs.copy` and `fs.restore`: one item per request item, in order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FsOpResults {
+    pub items: Vec<FsOpItem>,
+}
+
+/// Result of `fs.trash`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FsTrashed {
+    /// What `fs.restore` takes; absent when no item was trashed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ticket: Option<String>,
+    pub items: Vec<FsOpItem>,
 }

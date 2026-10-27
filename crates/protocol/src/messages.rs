@@ -31,8 +31,9 @@ use crate::control::{ErrorBody, ErrorCode};
 use crate::daemon_settings::DaemonSettingSet;
 use crate::error::ProtocolError;
 use crate::fs::{
-    FsChange, FsFind, FsList, FsRead, FsSearch, FsSearchCancel, FsStat, FsUnwatch, FsWatch,
-    FsWriteAbort, FsWriteBegin, FsWriteChunk, FsWriteCommit,
+    FsChange, FsCopy, FsCreate, FsFind, FsList, FsMove, FsRead, FsRename, FsRestore, FsSearch,
+    FsSearchCancel, FsStat, FsTrash, FsUnwatch, FsWatch, FsWriteAbort, FsWriteBegin,
+    FsWriteChunk, FsWriteCommit,
 };
 use crate::git::{GitBlame, GitFile, GitLog, GitShow};
 use crate::grants::{ControlGrantRevoke, ControlGrantsList};
@@ -579,6 +580,30 @@ pub enum Request {
     /// Capability `fs`: discards an upload; answered with `Empty`.
     #[serde(rename = "fs.write.abort")]
     FsWriteAbort(FsWriteAbort),
+    /// Capability `fs.ops` (protocol 0.54): makes an empty file or a folder; answered with
+    /// `FsEntry`. A mutation: an agent asks first.
+    #[serde(rename = "fs.create")]
+    FsCreate(FsCreate),
+    /// Capability `fs.ops`: gives a path a new path in the same root, never overwriting;
+    /// answered with `FsEntry`. A mutation.
+    #[serde(rename = "fs.rename")]
+    FsRename(FsRename),
+    /// Capability `fs.ops`: renames a batch, best effort; answered with `FsOpResults`. A
+    /// mutation.
+    #[serde(rename = "fs.move")]
+    FsMove(FsMove),
+    /// Capability `fs.ops`: copies a batch (`clonefile` where possible), best effort; answered
+    /// with `FsOpResults`. A mutation.
+    #[serde(rename = "fs.copy")]
+    FsCopy(FsCopy),
+    /// Capability `fs.ops`: moves paths to the system Trash and answers with an undo ticket
+    /// (`FsTrashed`). A mutation.
+    #[serde(rename = "fs.trash")]
+    FsTrash(FsTrash),
+    /// Capability `fs.ops`: puts the items of a trash ticket back; answered with
+    /// `FsOpResults`. A mutation.
+    #[serde(rename = "fs.restore")]
+    FsRestore(FsRestore),
     /// Capability `fs`: what a path is; answered with `FsEntry`.
     #[serde(rename = "fs.stat")]
     FsStat(FsStat),
