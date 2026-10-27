@@ -518,6 +518,7 @@ impl Workbench {
                     label: entry.label.clone(),
                     background: selected.then_some(theme.sidebar_accent),
                     badge: entry.badge,
+                    calm_badge: false,
                     region: Region::Nav(nav_region_key(&entry.key)),
                 },
                 hover,
@@ -550,6 +551,7 @@ impl Workbench {
                         label: title,
                         background: peeked.then_some(theme.sidebar_accent),
                         badge: None,
+                        calm_badge: false,
                         region: Region::Nav("files"),
                     },
                     hover,
@@ -569,6 +571,7 @@ impl Workbench {
                     label: "Projects".into(),
                     background: None,
                     badge: None,
+                    calm_badge: false,
                     region: Region::Nav("projects"),
                 },
                 hover,
@@ -586,6 +589,7 @@ impl Workbench {
                 label: "Start".into(),
                 background: None,
                 badge: None,
+                calm_badge: false,
                 region: Region::Toolbar("start"),
             },
             hover,
@@ -604,6 +608,7 @@ impl Workbench {
                 label: "Settings".into(),
                 background: None,
                 badge: None,
+                calm_badge: false,
                 region: Region::Toolbar("settings"),
             },
             hover,
@@ -724,6 +729,22 @@ impl Workbench {
             .collect()
     }
 
+    /// The count on the right rail's icon of `panel`: the requests waiting, on Requests
+    /// (`inspector`); the files with uncommitted changes in the checkout the window works in, on
+    /// Changes — the number the sidebar's project badges carry, so the review state stays in
+    /// sight while another panel is open.
+    pub fn rail_badge(&self, panel: &str, cx: &gpui::App) -> Option<usize> {
+        let store = self.sessions.read(cx);
+        match panel {
+            "inspector" => Some(store.approvals().len()).filter(|n| *n > 0),
+            "changes" => store
+                .files_root()
+                .and_then(|root| store.changed_files_at(&root))
+                .filter(|n| *n > 0),
+            _ => None,
+        }
+    }
+
     pub(super) fn right_rail(
         &mut self,
         dock: &Dock,
@@ -743,9 +764,14 @@ impl Workbench {
             - RAIL_BUTTON
             - 3.0 * RIGHT_RAIL_PAD;
         let approvals = self.sessions.read(cx).approvals().len();
-        let badge_of =
-            |panel: &PanelId| (panel.as_str() == "inspector" && approvals > 0).then_some(approvals);
-        let (shown, hidden) = rail_split(dock, |panel| badge_of(panel).is_some(), room);
+        let badge_of = |panel: &PanelId| self.rail_badge(panel.as_str(), cx);
+        // Only a waiting request calls a panel in from the strip's overflow; the count of
+        // changed files is news on an icon that is there anyway.
+        let (shown, hidden) = rail_split(
+            dock,
+            |panel| panel.as_str() == "inspector" && approvals > 0,
+            room,
+        );
         let append_index = dock.panels.len();
         let hover = theme.right_sidebar_accent;
 
@@ -762,6 +788,15 @@ impl Workbench {
                     },
                     cx,
                 );
+                let badge = badge_of(&panel);
+                let title: SharedString = match (panel.as_str(), badge) {
+                    ("changes", Some(n)) => format!(
+                        "{title} · {n} uncommitted file{}",
+                        if n == 1 { "" } else { "s" }
+                    )
+                    .into(),
+                    _ => title,
+                };
                 let dragged = DraggedItem {
                     source: ItemSource::Dock {
                         pos,
@@ -785,7 +820,8 @@ impl Workbench {
                         face,
                         label: title,
                         background: pressed.then_some(theme.right_sidebar_accent),
-                        badge: badge_of(&panel),
+                        badge,
+                        calm_badge: panel.as_str() == "changes",
                         region: Region::DockTab(pos, index),
                     },
                     hover,
@@ -830,6 +866,7 @@ impl Workbench {
                     label: "More".into(),
                     background: None,
                     badge: None,
+                    calm_badge: false,
                     region: Region::StripMore,
                 },
                 hover,
@@ -868,6 +905,7 @@ impl Workbench {
                 .into(),
                 background: None,
                 badge: None,
+                calm_badge: false,
                 region: Region::Toolbar("right-collapse"),
             },
             hover,
@@ -1052,6 +1090,8 @@ struct RailButton {
     background: Option<Hsla>,
     /// A count that stays visible next to the icon (never replaces it).
     badge: Option<usize>,
+    /// The badge is news, not a call for attention: the accent instead of the warning colour.
+    calm_badge: bool,
     region: Region,
 }
 
@@ -1083,11 +1123,19 @@ fn rail_button(wb: &Workbench, spec: RailButton, hover: Hsla) -> Stateful<Div> {
                 .right(px(1.0))
                 .px(px(4.0))
                 .rounded(px(crate::theme::pill_radius()))
-                .bg(theme.warning)
+                .bg(if spec.calm_badge {
+                    theme.accent
+                } else {
+                    theme.warning
+                })
                 .text_color(theme.bg)
                 .text_size(px(10.0))
                 .line_height(px(13.0))
-                .child(SharedString::from(count.to_string()))
+                .child(SharedString::from(if count > 99 {
+                    "99+".to_owned()
+                } else {
+                    count.to_string()
+                }))
         }))
         .child(probe(&wb.regions, spec.region))
 }

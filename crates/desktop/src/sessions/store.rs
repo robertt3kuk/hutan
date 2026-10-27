@@ -1461,11 +1461,12 @@ impl SessionsStore {
         }
     }
 
-    /// Asks the daemon for the checkouts of every repository when none were asked for yet, or
-    /// a session works in a worktree no listing has covered (a worktree made by a command).
+    /// Asks the daemon for the checkouts of every repository when none were asked for yet, a
+    /// session works in a worktree no listing has covered (a worktree made by a command), or a
+    /// repository project appeared that no listing has covered (a folder just opened: its
+    /// uncommitted files are counted for the badges at once).
     fn follow_checkouts(&mut self, cx: &mut Context<Self>) {
-        if self.checkouts_in_flight
-            || self.state.connection != ConnectionState::Connected
+        if self.state.connection != ConnectionState::Connected
             || self.state.epoch.is_none()
             || !self.connection.supports_worktrees()
         {
@@ -1481,7 +1482,20 @@ impl SessionsStore {
                 !self.checkouts_tried.contains(&p.root)
                     && !self.checkouts.iter().any(|c| c.path == p.root)
             });
-        if self.checkouts_loaded && !unseen {
+        let new_project = self.state.workspaces.iter().any(|w| {
+            w.project.as_ref().is_some_and(|p| {
+                p.common_dir.is_some()
+                    && !self.checkouts_tried.contains(&p.root)
+                    && !self.checkouts.iter().any(|c| c.repo_root == p.root)
+            })
+        });
+        if self.checkouts_in_flight {
+            // A listing that started before this worktree or project appeared may not have it:
+            // one more follows it.
+            self.checkouts_again |= unseen || new_project;
+            return;
+        }
+        if self.checkouts_loaded && !unseen && !new_project {
             return;
         }
         self.refresh_checkouts(cx);
@@ -1506,6 +1520,11 @@ impl SessionsStore {
         for session in &self.state.sessions {
             if let Some(placement) = &session.placement {
                 self.checkouts_tried.insert(placement.root.clone());
+            }
+        }
+        for workspace in &self.state.workspaces {
+            if let Some(project) = &workspace.project {
+                self.checkouts_tried.insert(project.root.clone());
             }
         }
         let listing = self.list_all_worktrees(cx);

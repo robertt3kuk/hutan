@@ -530,3 +530,82 @@ fn the_folded_sections_of_the_last_run_come_back(cx: &mut TestAppContext) {
         assert!(p.section_folded(FilesSection::ChangedByAgents));
     });
 }
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn changes_badge(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<usize> {
+    view.read_with(cx, |wb, cx| wb.rail_badge("changes", cx))
+}
+
+#[gpui::test]
+fn the_changes_rail_icon_counts_the_uncommitted_files_of_the_checkout(cx: &mut TestAppContext) {
+    let daemon = TestDaemon::start();
+    let (_dir, base) = scratch();
+    let root = base.join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    git(&root, &["init", "-q", "-b", "main"]);
+    for (key, value) in [
+        ("user.name", "Test"),
+        ("user.email", "test@example.com"),
+        ("commit.gpgsign", "false"),
+        ("core.hooksPath", "/dev/null"),
+    ] {
+        git(&root, &["config", key, value]);
+    }
+    std::fs::write(root.join("a.txt"), "one\n").unwrap();
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "first"]);
+    std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
+    std::fs::write(root.join("new.txt"), "n\n").unwrap();
+
+    let (view, cx) = open_with(cx, settings(&daemon, ""), daemon.connection(), None);
+    wait_until(cx, "the first synchronisation", |cx| {
+        view.read_with(cx, |wb, cx| wb.sessions().read(cx).synced())
+    });
+    assert_eq!(
+        changes_badge(&view, cx),
+        None,
+        "no project, nothing counted"
+    );
+    project(&view, cx, &root);
+
+    // Two files are uncommitted: the icon says so, whatever panel is open.
+    wait_until(cx, "the count on the Changes icon", |cx| {
+        changes_badge(&view, cx) == Some(2)
+    });
+    assert_eq!(
+        view.read_with(cx, |wb, cx| wb.rail_badge("files", cx)),
+        None
+    );
+
+    // Another file changes behind the desktop's back; the window coming back counts again.
+    std::fs::write(root.join("third.txt"), "3\n").unwrap();
+    cx.deactivate_window();
+    draw(cx);
+    cx.update(|window, _| window.activate_window());
+    wait_until(cx, "three files", |cx| changes_badge(&view, cx) == Some(3));
+
+    // Everything committed: the badge goes.
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "second"]);
+    cx.deactivate_window();
+    draw(cx);
+    cx.update(|window, _| window.activate_window());
+    wait_until(cx, "the badge to go", |cx| {
+        changes_badge(&view, cx).is_none()
+    });
+}
