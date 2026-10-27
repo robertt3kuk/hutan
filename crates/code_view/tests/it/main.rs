@@ -6,5 +6,6 @@ mod editing;
 mod git_gutter;
 mod ime;
 mod scroll;
+mod scrollbars;
 mod view;
 mod wrap;

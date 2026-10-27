@@ -57,6 +57,7 @@ mod layout;
 mod modal;
 mod motion;
 mod rules;
+mod scrollbar;
 mod snippet;
 mod soft_wrap;
 mod style;

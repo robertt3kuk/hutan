@@ -318,6 +318,10 @@ pub struct CodeView {
     /// `editor.scroll_beyond_last_line`: how far past the last line the view scrolls, as a
     /// fraction of its height (see [`CodeView::set_scroll_beyond_last_line`]).
     pub(crate) scroll_beyond: f32,
+    /// The vertical and the horizontal scrollbar (`scrollbar.rs`).
+    pub(crate) bars: crate::scrollbar::Bars,
+    /// The ticks on the vertical track and what they were computed for.
+    pub(crate) marks: crate::scrollbar::MarkCache,
     /// GIT-HISTORY: the gutter has a column of blame (while the buffer holds one).
     pub(crate) blame_gutter: bool,
     /// The caret's line shows its blame after its end.
@@ -421,6 +425,8 @@ impl CodeView {
             vim: None,
             show_numbers: true,
             scroll_beyond: DEFAULT_SCROLL_BEYOND,
+            bars: crate::scrollbar::Bars::new(cx.weak_entity()),
+            marks: crate::scrollbar::MarkCache::default(),
             blame_gutter: false,
             inline_blame: false,
             blame_area: None,
@@ -657,7 +663,7 @@ impl CodeView {
     /// How far the view may scroll, in pixels: the last row ends at the bottom of the view plus
     /// [`scroll_beyond_last_line`](Self::scroll_beyond_last_line) of the view's height (half a
     /// screen by default), never a blank view (F-19). A file shorter than that does not scroll.
-    pub(crate) fn max_scroll_y(&self, cx: &App) -> f32 {
+    pub fn max_scroll_y(&self, cx: &App) -> f32 {
         let Some(layout) = self.layout else {
             return 0.0;
         };
@@ -671,18 +677,13 @@ impl CodeView {
     /// the room `editor.scroll_beyond_last_line` allows, the widest line seen can reach the left
     /// edge (a wrapped view never scrolls sideways).
     pub(crate) fn clamp_scroll(&mut self, cx: &App) {
-        let Some(layout) = self.layout else {
+        if self.layout.is_none() {
             return;
-        };
+        }
         let max_y = self.max_scroll_y(cx);
         self.scroll_y = self.scroll_y.clamp(-self.inset, max_y);
         self.inset = (-self.scroll_y).max(0.0);
-        let visible_w = f32::from(layout.bounds.right() - layout.text_left).max(0.0);
-        let max_x = if self.is_wrapping(cx) {
-            0.0
-        } else {
-            (self.widest as f32 * f32::from(layout.cell_width) - visible_w * 0.5).max(0.0)
-        };
+        let max_x = self.max_scroll_x(cx);
         self.scroll_x = self.scroll_x.clamp(0.0, max_x);
     }
 
@@ -1608,8 +1609,12 @@ impl Render for CodeView {
         let blame = self.render_blame_hover(cx);
         let completion = self.render_completion(cx);
         let signature = self.render_signature(cx);
+        let marks = self.scroll_marks(cx);
         crate::actions::register(root, cx)
+            .relative()
             .child(CodeElement::new(cx.entity()))
+            .child(self.bars.y.marked(marks))
+            .child(self.bars.x.element())
             .children(hover)
             .children(git_peek)
             .children(blame)
