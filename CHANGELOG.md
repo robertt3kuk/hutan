@@ -7,6 +7,10 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 ### Added
 - File operations in the daemon (groundwork for the file explorer): create, rename, move, copy and **Trash** (never permanent delete) with undo tickets, confined to the project like writes; `hutan fs mkdir|touch|mv|cp|trash|restore`. An agent's Trash always asks, with no session-wide grant.
 
+### Changed
+- Changes view, fixed for big changesets: the wheel no longer drifts the diff sideways (vertical and sideways scrolling are independent; the line-number gutter stays put and the added/removed tint spans the line); scrollbars you can drag on the list, the diff and the right-dock Changes list; keys scroll the diff and move through files; *Wrap lines* (prose wraps, code scrolls by default: `changes.wrap_lines`); file rows show the **name first** with the folder after it, and an optional tree (`changes.list = tree`); a draggable divider between list and diff, a list that takes the height there is, a header that wraps in narrow panes.
+- **Files beside Changes**: layouts saved by Hutan 0.1 never got the Files panel — it is now put first in the right dock once (with Undo); *Show in Files* on every changed file and in the diff header; Files follows the checkout a focused Changes tab shows.
+
 ## 0.3.0 — 2026-10-26
 
 ### Added
