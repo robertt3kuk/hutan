@@ -6,6 +6,7 @@ Newest release first; add new entries at the top, under **Unreleased**. Older re
 
 ### Added
 - File operations in the daemon (groundwork for the file explorer): create, rename, move, copy and **Trash** (never permanent delete) with undo tickets, confined to the project like writes; `hutan fs mkdir|touch|mv|cp|trash|restore`. An agent's Trash always asks, with no session-wide grant.
+- Soft wrap in the editor: Markdown and plain text wrap at the window by default, code doesn't (`editor.soft_wrap = auto|off|viewport|column`, `editor.wrap_column`, per language `languages.<name>.soft_wrap`); ⌥Z or View → Toggle Soft Wrap per tab, a *Wrap* status item; ↑/↓, Home/End and selections follow wrapped rows; Vim `j`/`k` stay on lines, `gj`/`gk`/`g0`/`g$` move by row.
 
 ### Changed
 - Changes view, fixed for big changesets: the wheel no longer drifts the diff sideways (vertical and sideways scrolling are independent; the line-number gutter stays put and the added/removed tint spans the line); scrollbars you can drag on the list, the diff and the right-dock Changes list; keys scroll the diff and move through files; *Wrap lines* (prose wraps, code scrolls by default: `changes.wrap_lines`); file rows show the **name first** with the folder after it, and an optional tree (`changes.list = tree`); a draggable divider between list and diff, a list that takes the height there is, a header that wraps in narrow panes.
