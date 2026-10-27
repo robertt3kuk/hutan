@@ -970,10 +970,8 @@ impl Workbench {
                 .state_path
                 .as_ref()
                 .is_none_or(|path| !path.exists());
-        // The very first launch of an installation (a layout file is expected and does not exist
-        // yet): the right sidebar waits on its rail, so that nothing opens on a panel the user
-        // has not asked for. A layout that is saved, or handed in, is never touched.
-        let first_launch = fresh && options.state_path.is_some();
+        // The very first launch gets the default layout as it is: the right side opens on Files
+        // (a window too narrow for it shows the rail with a one-time hint, `rail_hint.rs`).
         let saved = options.initial_state.is_none() && !fresh;
         let mut layout_notes = Vec::new();
         let mut state = match (options.initial_state, &options.state_path) {
@@ -985,9 +983,6 @@ impl Workbench {
             }
             (None, None) => WorkbenchState::default(),
         };
-        if first_launch {
-            state.docks.right.collapsed = true;
-        }
         // A layout saved before the clean default stays as it is, and is offered the new one
         // once (`layout_offer.rs`); a new installation starts with it.
         let layout_offer = saved

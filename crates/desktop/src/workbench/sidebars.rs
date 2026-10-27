@@ -775,6 +775,12 @@ impl Workbench {
         let append_index = dock.panels.len();
         let hover = theme.right_sidebar_accent;
 
+        // The hint sits beside the Files icon: under the inset, one slot per icon above it.
+        let files_slot = shown.iter().position(|index| {
+            dock.panels
+                .get(*index)
+                .is_some_and(|p| p.as_str() == "files")
+        });
         let buttons: Vec<AnyElement> = shown
             .into_iter()
             .filter_map(|index| dock.panels.get(index).map(|panel| (index, panel.clone())))
@@ -887,6 +893,12 @@ impl Workbench {
             .into_any_element()
         });
 
+        let hint = files_slot.and_then(|slot| {
+            self.render_rail_hint(
+                TITLEBAR_HEIGHT + RIGHT_RAIL_PAD + slot as f32 * (RAIL_BUTTON + RAIL_GAP),
+                cx,
+            )
+        });
         let collapse_hint = key_hint_of(window, &actions::ToggleRightDock);
         let collapse = rail_button(
             self,
@@ -973,6 +985,7 @@ impl Workbench {
                     .child(collapse),
             )
             .child(probe(&self.regions, Region::Rail(pos)))
+            .children(hint)
             .into_any_element()
     }
 

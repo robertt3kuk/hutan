@@ -128,6 +128,7 @@ impl Workbench {
         let width = f32::from(window.viewport_size().width);
         let enabled = self.layout_seen.auto_collapse;
         self.responsive.evaluate(&self.state.docks, width, enabled);
+        self.retire_rail_hint();
         if let Some(pos) = self.peek {
             let kept = self
                 .state

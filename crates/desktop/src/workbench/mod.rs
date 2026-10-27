@@ -57,6 +57,7 @@ mod projects;
 mod providers;
 pub mod quick_open;
 pub mod quick_terminal;
+mod rail_hint;
 mod recovery_summary;
 pub mod regions;
 pub mod registry;

@@ -7,9 +7,10 @@ use crate::common;
 
 use common::{draw, offline_connection, open_with, wait_until};
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+use hutan_desktop::settings::LayoutSettings;
 use hutan_desktop::workbench::actions::{self, OpenAssistant, OpenPanel};
 use hutan_desktop::workbench::model::{
-    Dock, DockPosition, Docks, FocusTarget, ItemRef, PanelDest, PanelId, WorkbenchState,
+    Dock, DockMode, DockPosition, Docks, FocusTarget, ItemRef, PanelDest, PanelId, WorkbenchState,
 };
 use hutan_desktop::workbench::persistence::{STATE_FILE, load_state, load_state_noted};
 use hutan_desktop::workbench::{Region, SAVE_DEBOUNCE, Workbench};
@@ -791,29 +792,86 @@ fn mawas_is_on_unless_the_user_turned_it_off() {
     assert!(AssistantSettings::default().enabled);
 }
 
-#[gpui::test]
-fn the_very_first_launch_opens_with_the_right_sidebar_on_its_rail(cx: &mut TestAppContext) {
-    // No layout file yet: the right sidebar (History first) waits on its rail.
+fn first_launch(
+    cx: &mut TestAppContext,
+    width: f32,
+) -> (Entity<Workbench>, SettingsStore, &mut VisualTestContext) {
+    // No layout file yet.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(STATE_FILE);
-    let (view, _settings, cx) = open_in(cx, None, Some(path.clone()));
+    let (view, settings, cx) = open_in(cx, None, Some(path));
+    // The directory must outlive the window: the layout is saved beside the settings.
+    std::mem::forget(dir);
+    // The window opens wide, where Files was shown at once and the hint is used up: ask for it
+    // again, then narrow the window.
+    settings
+        .write_user("layout.files_hint", toml::Value::Boolean(true))
+        .unwrap();
+    cx.simulate_resize(gpui::size(gpui::px(width), gpui::px(800.0)));
+    draw(cx);
+    draw(cx);
+    (view, settings, cx)
+}
+
+#[gpui::test]
+fn the_very_first_launch_in_a_wide_window_opens_the_right_side_on_files(cx: &mut TestAppContext) {
+    let (view, settings, cx) = first_launch(cx, 1440.0);
     let docks = state(&view, cx).docks;
-    assert_eq!(
-        docks.right.mode(),
-        hutan_desktop::workbench::model::DockMode::Compact
-    );
+    assert!(docks.right.is_expanded());
     assert_eq!(docks.right.active, Some(PanelId::new("files")));
-    assert!(
-        docks.left.is_expanded(),
-        "the left sidebar is as it always was"
-    );
-    // ⌘L opens the body on the first tab.
-    cx.simulate_keystrokes("cmd-l");
+    assert!(docks.left.is_expanded());
+    view.read_with(cx, |wb, _| {
+        assert!(wb.dock_body_shown(DockPosition::Right));
+        assert!(!wb.rail_hint_visible());
+    });
+    // Files was shown: nothing is left to point at.
+    assert!(!settings.get::<LayoutSettings>().files_hint);
+}
+
+#[gpui::test]
+fn in_a_narrow_window_the_rail_points_at_files_once(cx: &mut TestAppContext) {
+    let (view, settings, cx) = first_launch(cx, 1000.0);
+    // The dock is open in the layout, the window shows its rail only.
     assert!(state(&view, cx).docks.right.is_expanded());
-    assert_eq!(
-        state(&view, cx).docks.right.active,
-        Some(PanelId::new("files"))
+    view.read_with(cx, |wb, _| {
+        assert_eq!(wb.dock_mode(DockPosition::Right), DockMode::Compact);
+        assert!(wb.rail_hint_visible());
+    });
+    // Every icon names its panel (the hover labels), Files first.
+    let tips = view.read_with(cx, |wb, cx| wb.rail_tooltips(DockPosition::Right, cx));
+    assert_eq!(tips[0].1.as_ref(), "Files");
+    let hint = bounds(&view, cx, Region::Offer("rail-hint"));
+    let files = bounds(&view, cx, Region::DockTab(DockPosition::Right, 0));
+    // Beside the Files icon, left of the rail, on its row.
+    assert!(hint.right() <= files.left());
+    assert!(hint.top() <= files.center().y && files.center().y <= hint.bottom());
+    // A click on it opens Files (over the center: the window has no room beside it) and uses
+    // the hint up.
+    click(&view, cx, Region::Offer("rail-hint"));
+    draw(cx);
+    view.read_with(cx, |wb, _| {
+        assert_eq!(wb.peek_dock(), Some(DockPosition::Right));
+        assert!(!wb.rail_hint_visible());
+    });
+    assert!(!settings.get::<LayoutSettings>().files_hint);
+    assert!(!painted(&view, cx, Region::Offer("rail-hint")));
+}
+
+#[gpui::test]
+fn the_rail_hint_can_be_dismissed_and_stays_away(cx: &mut TestAppContext) {
+    let (view, settings, cx) = first_launch(cx, 1000.0);
+    assert!(settings.get::<LayoutSettings>().files_hint);
+    let hint = bounds(&view, cx, Region::Offer("rail-hint"));
+    // The × is the right end of the label.
+    cx.simulate_click(
+        gpui::point(hint.right() - gpui::px(12.0), hint.center().y),
+        Modifiers::none(),
     );
+    draw(cx);
+    assert!(!painted(&view, cx, Region::Offer("rail-hint")));
+    assert!(!settings.get::<LayoutSettings>().files_hint);
+    // Nothing was opened by it.
+    view.read_with(cx, |wb, _| assert_eq!(wb.peek_dock(), None));
 }
 
 #[gpui::test]

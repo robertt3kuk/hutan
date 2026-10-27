@@ -402,6 +402,12 @@ const FIELDS: &[FieldText] = &[
     ),
     field(
         "layout",
+        "files_hint",
+        "Point at Files on the right rail",
+        "Shows a small label beside the Files icon of the right rail once, while the rail is all there is of the right side (a narrow window or a collapsed panel). Off after you used it or Files was shown.",
+    ),
+    field(
+        "layout",
         "presets",
         "Your layout presets",
         "Layouts you saved, by name: save the one on screen, rename a preset or delete one. A preset named like a built-in one replaces it.",

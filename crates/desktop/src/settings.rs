@@ -465,6 +465,10 @@ pub struct LayoutSettings {
     /// and *Keep mine*. Off after you answered, so it is asked once; nothing changes unless you
     /// choose it (View → Use New Default Layout does it any time).
     pub offer_new_default: bool,
+    /// Point at the Files icon of the right rail once, while the rail is all there is of the
+    /// right side (a narrow window): a small label beside it, gone after a click or when Files
+    /// has been shown. Off after that, so it is shown once.
+    pub files_hint: bool,
 }
 
 impl Default for LayoutSettings {
@@ -475,6 +479,7 @@ impl Default for LayoutSettings {
             auto_collapse: true,
             rail_peek: true,
             offer_new_default: true,
+            files_hint: true,
         }
     }
 }
