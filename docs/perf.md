@@ -791,6 +791,24 @@ frame at 100 000 open rows) was not measured: the bench has no GPUI window for t
 run cannot time a frame (`docs/process.md` § UI checks); the rows built per frame are what the test above
 holds, and the scrollbar and the guides add one overlay and at most six lines to each of those rows.
 
+## Files filter (slice EX-3)
+
+Budget from the spike (§ 3.6): *filter key → results drawn (warm index)* ≤ 100 ms. Two tests in
+`crates/desktop/tests/it/files_filter_gpui.rs` print what they measured (debug build, the gate's profile;
+Apple M1 Pro, macOS 27.0.1, 2026-10-28, load average ≈ 10 from other agents' builds; the 60 ms debounce is the
+test clock's and is not in the numbers):
+
+| Measure | Debug | Note |
+|---|---|---|
+| three keys typed, then one frame, **while the daemon's answer to the request is held back by the test** (`typing_shows_what_the_tree_has_listed_while_the_daemons_answer_is_held`) | **52 ms** (one run) | the frame shows the files the tree has already listed; nothing in it waits for the daemon — it would never come |
+| one key at 100 000 files, index warm, key → the frame that shows the daemon's answer to it (`a_project_of_a_hundred_thousand_files_answers_with_at_most_two_hundred`, 16 keys: `  pkg137 file042` after `rs`) | median **526 ms**, worst 756 ms | includes the daemon's `fs.find` over 100 000 paths in a debug build, the 10 ms poll of the test's `wait_until` and the frames it draws; **not a release number, not the budget's** |
+
+The second is the debug cost of the same query ⌘P sends (the table of § E-13a measured it at 49–73 ms in
+release); a release measurement of the filter (`cargo nextest run --cargo-profile release -p hutan-desktop -E
+'test(=files_filter_gpui::a_project_of_a_hundred_thousand_files_answers_with_at_most_two_hundred)' --no-capture`)
+was not made. The panel's own work per key is the instant match over the files of the listed folders
+(stopping at 200 matches) and the projection of at most 200 hits, nothing per frame beyond the rows in view.
+
 ## Editor: completion (slice E-12b, B16)
 
 B16 of `docs/spikes/2026-10-21-editor.md` § 4.8: with a local fake server, keystroke → completion items on screen ≤ 100 ms, of which protocol + daemon ≤ 5 ms (the server's own compute excluded). Measured by two tests over a real daemon and `hutan-fake-lsp` (which answers at once), run in the gate in debug and once in release for the numbers below (`cargo nextest run --cargo-profile release -p hutan-desktop -p hutan-daemon -E 'test(=completion_gpui::b16_keystroke_to_items_on_screen) | test(=lsp::completion_resolve_and_signature_help_run_through_the_daemon)' --no-capture`; build `hutan-fake-lsp` in release first). Apple M1 Pro, macOS 27.0.1, 2026-10-22, load average 12–14 (other agents building).

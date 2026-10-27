@@ -210,6 +210,9 @@ fn typing_shows_what_the_tree_has_listed_while_the_daemons_answer_is_held(cx: &m
     // is open (listed) and `deep` is not.
     draw(cx);
     let frame = started.elapsed();
+    eprintln!(
+        "three keys to the frame with the instant rows, daemon held (debug build): {frame:?}"
+    );
     assert!(
         frame < std::time::Duration::from_secs(1),
         "keys to a frame with rows took {frame:?} while the daemon's answer was held"
