@@ -1241,6 +1241,69 @@ impl Workbench {
         .on_action(cx.listener(|this, _: &actions::FilesRedo, window, cx| {
             this.files_command(super::panels::FilesCommand::Redo, window, cx);
         }))
+        .on_action(cx.listener(|this, _: &actions::FilesCopyPath, window, cx| {
+            this.files_row_command(super::files_menu::FilesRowAction::CopyPath, window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &actions::FilesCopyRelativePath, window, cx| {
+                this.files_row_command(
+                    super::files_menu::FilesRowAction::CopyRelativePath,
+                    window,
+                    cx,
+                );
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::FilesRevealInFinder, window, cx| {
+                this.files_row_command(super::files_menu::FilesRowAction::Reveal, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::FilesOpenInTerminal, window, cx| {
+                this.files_row_command(
+                    super::files_menu::FilesRowAction::OpenInTerminal,
+                    window,
+                    cx,
+                );
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::FilesAttachToChat, window, cx| {
+                this.files_row_command(super::files_menu::FilesRowAction::AttachToChat, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::FilesFindInFolder, window, cx| {
+                this.files_row_command(super::files_menu::FilesRowAction::FindInFolder, window, cx);
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::FilesSelectForCompare, window, cx| {
+                this.files_row_command(
+                    super::files_menu::FilesRowAction::SelectForCompare,
+                    window,
+                    cx,
+                );
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::FilesCompareWithSelected, window, cx| {
+                this.files_row_command(
+                    super::files_menu::FilesRowAction::CompareWithSelected,
+                    window,
+                    cx,
+                );
+            }),
+        )
+        .on_action(
+            cx.listener(|this, _: &actions::FilesCompareWithHead, window, cx| {
+                this.files_row_command(
+                    super::files_menu::FilesRowAction::CompareWithHead,
+                    window,
+                    cx,
+                );
+            }),
+        )
         .on_action(cx.listener(|this, a: &actions::FilesAskTrash, window, cx| {
             this.files_ask_trash(&a.0, window, cx);
         }))
@@ -2628,6 +2691,9 @@ impl Workbench {
             ItemRef::File { path } => self.render_file_item(pane, path, window, cx),
             ItemRef::History { path } => self.render_history_item(path, window, cx),
             ItemRef::Revision { path, rev } => self.render_revision_item(path, rev, cx),
+            item @ (ItemRef::Compare { .. } | ItemRef::CompareHead { .. }) => {
+                self.render_compare_item(item, cx)
+            }
         }
     }
 
@@ -3016,7 +3082,8 @@ impl Workbench {
             .enumerate()
             .map(|(i, entry)| {
                 let disabled = entry.disabled;
-                div()
+                let separator = entry.separator;
+                let row = div()
                     .id(id(format!("menu-row-{i}")))
                     .relative()
                     .flex()
@@ -3042,10 +3109,33 @@ impl Workbench {
                             .when(entry.checked, |s| s.child("✓")),
                     )
                     .child(div().flex_1().child(entry.label))
+                    // The key that does the same, muted, at the right.
+                    .children(entry.hint.map(|hint| {
+                        div()
+                            .flex_none()
+                            .pl(px(tokens.spacing * 4.0))
+                            .text_color(theme.faint)
+                            .text_size(px(tokens.secondary_font_size))
+                            .child(hint)
+                    }))
                     .when(entry.submenu, |s| {
                         s.child(crate::icons::glyph(crate::icons::Icon::ActionDisclose))
                     })
-                    .child(probe(&self.regions, Region::MenuEntry(i)))
+                    .child(probe(&self.regions, Region::MenuEntry(i)));
+                // A group starts under a line.
+                div()
+                    .flex()
+                    .flex_col()
+                    .when(separator, |s| {
+                        s.child(
+                            div()
+                                .h(px(1.0))
+                                .mx(px(tokens.spacing * 2.0))
+                                .my(px(tokens.spacing * 0.5))
+                                .bg(theme.border),
+                        )
+                    })
+                    .child(row)
                     .into_any_element()
             })
             .collect();

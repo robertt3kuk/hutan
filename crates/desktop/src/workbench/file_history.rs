@@ -1007,7 +1007,7 @@ impl Workbench {
 
     /// The tab of `item` focused, or added to the focused pane (replacing an empty
     /// placeholder).
-    fn show_item(&mut self, item: ItemRef, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn show_item(&mut self, item: ItemRef, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((pane, index)) = self.state.find_item(&item) {
             self.try_mutate(cx, |s| {
                 s.set_active_item(pane, index)?;
@@ -1107,46 +1107,6 @@ impl Workbench {
         Self::entry("Show File History", move |this, window, cx| {
             this.open_file_history(&path, None, window, cx);
         })
-    }
-
-    /// The context menu of a Files panel row: the file's actions (*Show File History*), the file
-    /// operations (EX-7: new file and folder, rename, duplicate, cut, copy, paste, Move to Trash)
-    /// and its path. The row is the selected one: the right click selected it.
-    pub(crate) fn show_files_menu(
-        &mut self,
-        at: &super::actions::FilesMenuAt,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        use super::panels::FilesCommand as Cmd;
-        let command = |label: &'static str, command: Cmd| {
-            Self::entry(label, move |this, window, cx| {
-                this.files_command(command, window, cx);
-            })
-        };
-        let path = at.path.clone();
-        let mut entries = Vec::new();
-        if at.file {
-            let open = path.clone();
-            entries.push(Self::entry("Open", move |this, window, cx| {
-                this.open_file(super::files::FileOpen::picked(open.clone()), window, cx);
-            }));
-            entries.push(Self::show_history_entry(&path));
-        }
-        entries.push(command("New File", Cmd::NewFile));
-        entries.push(command("New Folder", Cmd::NewFolder));
-        entries.push(command("Rename", Cmd::Rename));
-        entries.push(command("Duplicate", Cmd::Duplicate));
-        entries.push(command("Cut", Cmd::Cut));
-        entries.push(command("Copy", Cmd::Copy));
-        entries.push(command("Paste", Cmd::Paste));
-        let copy = path;
-        entries.push(Self::entry("Copy Path", move |this, _, cx| {
-            cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
-            this.set_notice("Copied the path", cx);
-        }));
-        entries.push(command("Move to Trash", Cmd::Trash));
-        self.open_menu(at.position, entries, window, cx);
     }
 
     /// *Show File History* for the file of the focused tab.

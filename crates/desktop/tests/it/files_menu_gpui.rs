@@ -14,10 +14,12 @@ use hutan_desktop::workbench::panels::FilesPanel;
 use hutan_desktop::workbench::{Region, Workbench, actions};
 use hutan_settings::{SettingsPaths, SettingsStore};
 
+/// The tree does not follow the focused tab here: a file previewed by a click would otherwise
+/// select itself in the tree when its tab opens, whenever the daemon answers.
 fn settings(daemon: &TestDaemon) -> SettingsStore {
     std::fs::write(
         daemon.home().join("settings.toml"),
-        "[app]\nsetup_done = true\n",
+        "[app]\nsetup_done = true\n[panels.files]\nauto_reveal = false\n",
     )
     .unwrap();
     SettingsStore::new(SettingsPaths::in_dir(daemon.home()))
@@ -173,11 +175,16 @@ fn shift_and_command_clicks_and_shift_arrows_select_several_rows_and_the_operati
     assert_eq!(selected_names(&panel, cx), ["a.txt", "b.txt", "d.txt"]);
     click(cx, rows.at(2), Modifiers::command());
     assert_eq!(selected_names(&panel, cx), ["a.txt", "d.txt"]);
+    // (The plain click on a.txt previewed it; b.txt and d.txt were only ever ⇧- or ⌘-clicked.)
+    let opened = |name: &str, cx: &VisualTestContext| {
+        view.read_with(cx, |wb, _| {
+            wb.buffers()
+                .get(&root.join(name).display().to_string())
+                .is_some()
+        })
+    };
     assert!(
-        view.read_with(cx, |wb, _| wb
-            .buffers()
-            .get(&root.join("a.txt").display().to_string())
-            .is_none()),
+        !opened("b.txt", cx) && !opened("d.txt", cx),
         "a modifier click only selects"
     );
     // ⌘-click on a folder selects it too and does not open it.
@@ -253,7 +260,11 @@ fn shift_and_command_clicks_and_shift_arrows_select_several_rows_and_the_operati
     );
 
     // Rename is of one name: with two rows selected F2 does nothing.
-    wait_names(&panel, cx, &["docs", "a copy.txt", "b.txt", "c.txt", "d.txt"]);
+    wait_names(
+        &panel,
+        cx,
+        &["docs", "a copy.txt", "b.txt", "c.txt", "d.txt"],
+    );
     draw(cx);
     click(cx, rows.at(1), none);
     click(cx, rows.at(2), Modifiers::shift());
@@ -266,21 +277,666 @@ fn shift_and_command_clicks_and_shift_arrows_select_several_rows_and_the_operati
     assert!(panel.read_with(cx, |p, _| p.editing().is_some()));
 }
 
-/// Presses on `from` and drags to `to` (the button stays down).
-#[allow(dead_code)]
-fn drag_to(
-    cx: &mut VisualTestContext,
-    from: gpui::Point<gpui::Pixels>,
-    to: gpui::Point<gpui::Pixels>,
+fn right_click(cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>) {
+    let none = Modifiers::none();
+    cx.simulate_mouse_move(at, None, none);
+    cx.simulate_mouse_down(at, MouseButton::Right, none);
+    cx.simulate_mouse_up(at, MouseButton::Right, none);
+    draw(cx);
+}
+
+fn menu_labels(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<String> {
+    view.read_with(cx, |wb, _| wb.context_menu_entries())
+        .expect("a menu is open")
+        .into_iter()
+        .map(|(label, _)| label.to_string())
+        .collect()
+}
+
+fn menu_hint(view: &Entity<Workbench>, cx: &VisualTestContext, label: &str) -> Option<String> {
+    view.read_with(cx, |wb, _| wb.context_menu_hints())
+        .into_iter()
+        .find(|(l, _)| l == label)
+        .unwrap_or_else(|| panic!("no entry {label}"))
+        .1
+        .map(|h| h.to_string())
+}
+
+fn menu_groups(view: &Entity<Workbench>, cx: &VisualTestContext) -> Vec<String> {
+    view.read_with(cx, |wb, _| wb.context_menu_groups())
+        .into_iter()
+        .map(|l| l.to_string())
+        .collect()
+}
+
+/// Runs the entry named `label` of the open menu.
+fn run_entry(view: &Entity<Workbench>, cx: &mut VisualTestContext, label: &str) {
+    let at = menu_labels(view, cx)
+        .iter()
+        .position(|l| l == label)
+        .unwrap_or_else(|| panic!("no entry {label} in {:?}", menu_labels(view, cx)));
+    view.update_in(cx, |wb, window, cx| wb.run_menu_entry(at, window, cx));
+    draw(cx);
+}
+
+fn clipboard_text(cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()))
+}
+
+fn notice(view: &Entity<Workbench>, cx: &VisualTestContext) -> Option<String> {
+    view.read_with(cx, |wb, _| wb.notice().map(|n| n.to_string()))
+}
+
+#[gpui::test]
+fn the_row_menu_is_grouped_shows_the_keys_and_its_read_only_entries_take_every_selected_row(
+    cx: &mut TestAppContext,
 ) {
-    cx.simulate_mouse_move(from, None, Modifiers::none());
-    cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
-    cx.simulate_mouse_move(
-        from + gpui::point(gpui::px(4.0), gpui::px(4.0)),
-        MouseButton::Left,
-        Modifiers::none(),
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    write(&root, "src/lib.rs", "// lib\n");
+    write(&root, "notes.md", "# notes\n");
+    write(&root, "todo.md", "- [ ] todo\n");
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["src", "notes.md", "todo.md"]);
+    draw(cx);
+    let rows = Rows::of(&view, cx);
+    let none = Modifiers::none();
+
+    // A file: the groups are open, compare, the hooks, the paths and the operations, each under
+    // a line, and the entries that have a key show it.
+    right_click(cx, rows.at(1));
+    assert_eq!(
+        menu_labels(&view, cx),
+        [
+            "Open",
+            "Open to the Side",
+            "Reveal in Finder",
+            "Select for Compare",
+            "Compare with HEAD",
+            "Open in Terminal",
+            "Attach to Chat",
+            "Find in Folder",
+            "Show File History",
+            "Copy Path",
+            "Copy Relative Path",
+            "New File",
+            "New Folder",
+            "Rename",
+            "Duplicate",
+            "Cut",
+            "Copy",
+            "Paste",
+            "Move to Trash"
+        ]
+    );
+    assert_eq!(
+        menu_groups(&view, cx),
+        [
+            "Select for Compare",
+            "Open in Terminal",
+            "Copy Path",
+            "New File"
+        ]
+    );
+    let hint = |label: &str, cx: &VisualTestContext| menu_hint(&view, cx, label);
+    assert_eq!(hint("Open", cx).as_deref(), Some("↩"));
+    assert_eq!(hint("Open to the Side", cx).as_deref(), Some("⌥↩"));
+    assert_eq!(hint("Copy Path", cx).as_deref(), Some("⌥⌘C"));
+    assert_eq!(hint("Copy Relative Path", cx).as_deref(), Some("⌥⌘⇧C"));
+    assert_eq!(hint("New File", cx).as_deref(), Some("⌘N"));
+    assert_eq!(hint("New Folder", cx).as_deref(), Some("⌥⌘N"));
+    assert_eq!(hint("Rename", cx).as_deref(), Some("F2"));
+    assert_eq!(hint("Duplicate", cx).as_deref(), Some("⌘D"));
+    assert_eq!(hint("Cut", cx).as_deref(), Some("⌘X"));
+    assert_eq!(hint("Copy", cx).as_deref(), Some("⌘C"));
+    assert_eq!(hint("Paste", cx).as_deref(), Some("⌘V"));
+    assert_eq!(hint("Move to Trash", cx).as_deref(), Some("⌘⌫"));
+    assert_eq!(hint("Reveal in Finder", cx), None);
+    cx.simulate_keystrokes("escape");
+    assert!(
+        view.read_with(cx, |wb, _| wb.context_menu_entries())
+            .is_none()
+    );
+
+    // A folder: nothing to open or compare, Collapse Folder only while it is open.
+    right_click(cx, rows.at(0));
+    assert_eq!(
+        menu_labels(&view, cx),
+        [
+            "Reveal in Finder",
+            "Open in Terminal",
+            "Find in Folder",
+            "Copy Path",
+            "Copy Relative Path",
+            "New File",
+            "New Folder",
+            "Rename",
+            "Duplicate",
+            "Cut",
+            "Copy",
+            "Paste",
+            "Move to Trash"
+        ]
+    );
+    cx.simulate_keystrokes("escape");
+    click(cx, rows.at(0), none);
+    wait_names(&panel, cx, &["src", "  lib.rs", "notes.md", "todo.md"]);
+    draw(cx);
+    right_click(cx, rows.at(0));
+    let labels = menu_labels(&view, cx);
+    assert_eq!(
+        labels[..4],
+        [
+            "Reveal in Finder",
+            "Open in Terminal",
+            "Find in Folder",
+            "Collapse Folder"
+        ]
+    );
+    assert_eq!(
+        menu_hint(&view, cx, "Collapse Folder").as_deref(),
+        Some("←")
+    );
+    run_entry(&view, cx, "Collapse Folder");
+    wait_names(&panel, cx, &["src", "notes.md", "todo.md"]);
+
+    // Two rows selected: a right click inside the selection keeps it, and the menu is about both.
+    // What has one subject (a terminal, a search, a compare, a name) is not offered.
+    click(cx, rows.at(1), none);
+    click(cx, rows.at(2), Modifiers::shift());
+    right_click(cx, rows.at(2));
+    assert_eq!(selected_names(&panel, cx), ["notes.md", "todo.md"]);
+    assert_eq!(
+        menu_labels(&view, cx),
+        [
+            "Open",
+            "Reveal in Finder",
+            "Compare Selected",
+            "Attach to Chat",
+            "Copy Path",
+            "Copy Relative Path",
+            "Duplicate",
+            "Cut",
+            "Copy",
+            "Paste",
+            "Move to Trash"
+        ]
+    );
+    run_entry(&view, cx, "Copy Path");
+    assert_eq!(
+        clipboard_text(cx),
+        Some(format!(
+            "{}\n{}",
+            root.join("notes.md").display(),
+            root.join("todo.md").display()
+        ))
+    );
+    assert_eq!(notice(&view, cx).as_deref(), Some("Copied 2 paths"));
+    right_click(cx, rows.at(2));
+    run_entry(&view, cx, "Copy Relative Path");
+    assert_eq!(clipboard_text(cx).as_deref(), Some("notes.md\ntodo.md"));
+
+    // Reveal in Finder shows each (the window's handler stands in for Finder).
+    let revealed = std::rc::Rc::new(std::cell::RefCell::new(Vec::<PathBuf>::new()));
+    let sink = std::rc::Rc::clone(&revealed);
+    view.update(cx, |wb, _| {
+        wb.set_reveal_handler(move |path, _| sink.borrow_mut().push(path.to_owned()));
+    });
+    right_click(cx, rows.at(2));
+    run_entry(&view, cx, "Reveal in Finder");
+    assert_eq!(
+        *revealed.borrow(),
+        [root.join("notes.md"), root.join("todo.md")]
+    );
+
+    // Open opens every file among them in a tab.
+    right_click(cx, rows.at(2));
+    run_entry(&view, cx, "Open");
+    wait_until(cx, "both tabs", |cx| {
+        view.read_with(cx, |wb, _| {
+            ["notes.md", "todo.md"].iter().all(|n| {
+                wb.buffers()
+                    .get(&root.join(n).display().to_string())
+                    .is_some()
+            })
+        })
+    });
+
+    // (The tabs that opened revealed their file in the tree, which selected it: select both
+    // again.)
+    click(cx, rows.at(1), none);
+    click(cx, rows.at(2), Modifiers::shift());
+    // Attach to Chat with no chat open copies `@path` text for the next one.
+    right_click(cx, rows.at(2));
+    run_entry(&view, cx, "Attach to Chat");
+    assert_eq!(clipboard_text(cx).as_deref(), Some("@notes.md @todo.md"));
+    assert_eq!(
+        notice(&view, cx).as_deref(),
+        Some("No chat is open: copied @notes.md @todo.md")
+    );
+
+    // The keys: ⌥⌘C and ⌥⇧⌘C with the keyboard in the tree copy the selection's paths too.
+    click(cx, rows.at(1), none);
+    click(cx, rows.at(2), Modifiers::shift());
+    cx.simulate_keystrokes("cmd-alt-c");
+    assert_eq!(
+        clipboard_text(cx),
+        Some(format!(
+            "{}\n{}",
+            root.join("notes.md").display(),
+            root.join("todo.md").display()
+        ))
+    );
+    cx.simulate_keystrokes("cmd-alt-shift-c");
+    assert_eq!(clipboard_text(cx).as_deref(), Some("notes.md\ntodo.md"));
+}
+
+#[gpui::test]
+fn open_to_the_side_open_in_terminal_and_find_in_folder_start_from_the_row(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::workbench::panels::SearchPanel;
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    write(&root, "src/lib.rs", "// lib\n");
+    write(&root, "notes.md", "# notes\n");
+    write(&root, "todo.md", "- [ ] todo\n");
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["src", "notes.md", "todo.md"]);
+    draw(cx);
+    let rows = Rows::of(&view, cx);
+    let none = Modifiers::none();
+    let panes =
+        |cx: &VisualTestContext| view.read_with(cx, |wb, _| wb.state().center.panes().len());
+    assert_eq!(panes(cx), 1);
+
+    // Open to the Side puts the file in a split to the right.
+    right_click(cx, rows.at(1));
+    run_entry(&view, cx, "Open to the Side");
+    wait_until(cx, "the split with the file", |cx| {
+        panes(cx) == 2
+            && view.read_with(cx, |wb, _| {
+                wb.buffers()
+                    .get(&root.join("notes.md").display().to_string())
+                    .is_some()
+            })
+    });
+    // ⌥↩ with the keyboard in the tree does the same for the row under the cursor.
+    click(cx, rows.at(2), none);
+    cx.simulate_keystrokes("alt-enter");
+    wait_until(cx, "a third pane", |cx| panes(cx) == 3);
+    click(cx, rows.at(1), none);
+    cx.simulate_keystrokes("cmd-enter");
+    wait_until(cx, "a fourth pane", |cx| panes(cx) == 4);
+
+    // Open in Terminal: a session whose directory is the folder (a file's folder).
+    draw(cx);
+    right_click(cx, rows.at(0));
+    run_entry(&view, cx, "Open in Terminal");
+    wait_until(cx, "a terminal in src", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .sessions()
+                .iter()
+                .any(|s| s.cwd.as_deref() == Some(root.join("src").as_path()))
+        })
+    });
+    right_click(cx, rows.at(1));
+    run_entry(&view, cx, "Open in Terminal");
+    wait_until(cx, "a terminal in the root, where notes.md is", |cx| {
+        view.read_with(cx, |wb, cx| {
+            wb.sessions()
+                .read(cx)
+                .sessions()
+                .iter()
+                .any(|s| s.cwd.as_deref() == Some(root.as_path()))
+        })
+    });
+
+    // Find in Folder: the Search panel's include glob names the folder.
+    draw(cx);
+    right_click(cx, rows.at(0));
+    run_entry(&view, cx, "Find in Folder");
+    draw(cx);
+    let search = view
+        .read_with(cx, |wb, _| wb.panel::<SearchPanel>("search"))
+        .expect("the Search panel opened");
+    wait_until(cx, "the include glob", |cx| {
+        search.read_with(cx, |s, _| s.include() == "src/**")
+    });
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Ada")
+        .env("GIT_AUTHOR_EMAIL", "ada@example.com")
+        .env("GIT_COMMITTER_NAME", "Ada")
+        .env("GIT_COMMITTER_EMAIL", "ada@example.com")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The active tab of the focused pane.
+fn active_item(
+    view: &Entity<Workbench>,
+    cx: &VisualTestContext,
+) -> Option<hutan_desktop::workbench::model::ItemRef> {
+    view.read_with(cx, |wb, _| {
+        wb.state()
+            .active_pane()
+            .and_then(|pane| pane.active_item().cloned())
+    })
+}
+
+#[gpui::test]
+fn select_for_compare_then_compare_with_selected_opens_a_two_file_diff_tab(
+    cx: &mut TestAppContext,
+) {
+    use hutan_desktop::workbench::file_compare::CompareState;
+    use hutan_desktop::workbench::model::ItemRef;
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    let a = write(&root, "a.txt", "one\ntwo\nthree\n");
+    let b = write(&root, "b.txt", "one\n2\nthree\nfour\n");
+    let same = write(&root, "same.txt", "one\ntwo\nthree\n");
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["a.txt", "b.txt", "same.txt"]);
+    draw(cx);
+    let rows = Rows::of(&view, cx);
+
+    // Nothing selected yet: no Compare with Selected. Select for Compare says what it holds.
+    right_click(cx, rows.at(0));
+    assert!(!menu_labels(&view, cx).contains(&"Compare with Selected".to_owned()));
+    run_entry(&view, cx, "Select for Compare");
+    assert_eq!(
+        notice(&view, cx).as_deref(),
+        Some("Selected “a.txt” for compare")
+    );
+    assert_eq!(
+        view.read_with(cx, |wb, _| wb.compare_selection().map(Path::to_owned)),
+        Some(a.clone())
+    );
+    // On the selected file itself there is nothing to compare it with.
+    right_click(cx, rows.at(0));
+    assert!(!menu_labels(&view, cx).contains(&"Compare with Selected".to_owned()));
+    cx.simulate_keystrokes("escape");
+
+    // On another file: Compare with Selected (a left, b right).
+    right_click(cx, rows.at(1));
+    let labels = menu_labels(&view, cx);
+    let at = |label: &str| labels.iter().position(|l| l == label).unwrap();
+    assert!(at("Select for Compare") < at("Compare with Selected"));
+    assert!(at("Compare with Selected") < at("Compare with HEAD"));
+    run_entry(&view, cx, "Compare with Selected");
+    let item = ItemRef::compare(a.display().to_string(), b.display().to_string());
+    assert_eq!(
+        active_item(&view, cx),
+        Some(item.clone()),
+        "its tab is the active one"
+    );
+    let compare = view
+        .read_with(cx, |wb, _| wb.compare(&item))
+        .expect("its view");
+    wait_until(cx, "the diff", |cx| {
+        compare.read_with(cx, |c, _| c.diff().is_some())
+    });
+    compare.read_with(cx, |c, _| {
+        let diff = c.diff().unwrap();
+        let lines: Vec<(hutan_chat_view::diff::LineKind, &str)> = diff
+            .lines
+            .iter()
+            .map(|l| (l.kind, l.text.as_str()))
+            .collect();
+        use hutan_chat_view::diff::LineKind::{Add, Remove};
+        assert!(lines.contains(&(Remove, "two")), "{lines:?}");
+        assert!(lines.contains(&(Add, "2")), "{lines:?}");
+        assert!(lines.contains(&(Add, "four")), "{lines:?}");
+        assert_eq!((diff.added, diff.removed), (2, 1));
+        assert_eq!(c.title(), "Compare · a.txt ↔ b.txt");
+    });
+    assert_eq!(
+        view.read_with(cx, |wb, cx| wb.item_title(&item, cx).to_string()),
+        "Compare · a.txt ↔ b.txt"
     );
     draw(cx);
-    cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+
+    // The same text on both sides says so; two files selected in the tree are compared too.
+    click(cx, rows.at(0), Modifiers::none());
+    click(cx, rows.at(2), Modifiers::shift());
+    assert_eq!(selected_names(&panel, cx), ["a.txt", "b.txt", "same.txt"]);
+    click(cx, rows.at(0), Modifiers::none());
+    click(cx, rows.at(2), Modifiers::command());
+    right_click(cx, rows.at(2));
+    assert_eq!(
+        menu_labels(&view, cx)
+            .iter()
+            .filter(|l| l.starts_with("Compare"))
+            .collect::<Vec<_>>(),
+        ["Compare Selected"]
+    );
+    run_entry(&view, cx, "Compare Selected");
+    let item = ItemRef::compare(a.display().to_string(), same.display().to_string());
+    assert_eq!(active_item(&view, cx), Some(item.clone()));
+    let compare = view.read_with(cx, |wb, _| wb.compare(&item)).unwrap();
+    wait_until(cx, "the verdict", |cx| {
+        compare.read_with(cx, |c, _| !matches!(c.state(), CompareState::Loading))
+    });
+    assert!(compare.read_with(cx, |c, _| matches!(c.state(), CompareState::Identical)));
+
+    // A file that is gone is told, not drawn as empty.
+    let gone = ItemRef::compare(
+        a.display().to_string(),
+        root.join("nope.txt").display().to_string(),
+    );
+    view.update_in(cx, |wb, window, cx| {
+        wb.open_compare(&a, &root.join("nope.txt"), window, cx);
+    });
+    let missing = view.read_with(cx, |wb, _| wb.compare(&gone)).unwrap();
+    wait_until(cx, "the refusal", |cx| {
+        missing.read_with(cx, |c, _| matches!(c.state(), CompareState::Failed(_)))
+    });
+}
+
+#[gpui::test]
+fn compare_with_head_diffs_the_file_against_its_committed_text(cx: &mut TestAppContext) {
+    use hutan_desktop::workbench::file_compare::CompareState;
+    use hutan_desktop::workbench::model::ItemRef;
+    let daemon = TestDaemon::start();
+    let (view, cx) = open(cx, &daemon);
+    let (_dir, root) = scratch();
+    git(&root, &["init", "-q", "-b", "main"]);
+    let a = write(&root, "a.txt", "one\ntwo\nthree\n");
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "first"]);
+    std::fs::write(&a, "one\nTWO\nthree\n").unwrap();
+    let fresh = write(&root, "fresh.txt", "never committed\n");
+    daemon.create_workspace("proj", &[&root]);
+    project(&view, cx, &root);
+    let panel = files_panel(&view, cx);
+    wait_names(&panel, cx, &["a.txt", "fresh.txt"]);
     draw(cx);
+    let rows = Rows::of(&view, cx);
+
+    right_click(cx, rows.at(0));
+    run_entry(&view, cx, "Compare with HEAD");
+    let item = ItemRef::compare_head(a.display().to_string());
+    assert_eq!(active_item(&view, cx), Some(item.clone()));
+    let compare = view.read_with(cx, |wb, _| wb.compare(&item)).unwrap();
+    wait_until(cx, "the diff against HEAD", |cx| {
+        compare.read_with(cx, |c, _| c.diff().is_some())
+    });
+    compare.read_with(cx, |c, _| {
+        use hutan_chat_view::diff::LineKind::{Add, Remove};
+        let lines: Vec<_> = c
+            .diff()
+            .unwrap()
+            .lines
+            .iter()
+            .map(|l| (l.kind, l.text.as_str()))
+            .collect();
+        assert!(
+            lines.contains(&(Remove, "two")) && lines.contains(&(Add, "TWO")),
+            "{lines:?}"
+        );
+        assert_eq!(c.title(), "Compare · a.txt (HEAD) ↔ a.txt");
+    });
+
+    // A file git does not have has no HEAD to compare with: the tab says why.
+    right_click(cx, rows.at(1));
+    run_entry(&view, cx, "Compare with HEAD");
+    let item = ItemRef::compare_head(fresh.display().to_string());
+    let compare = view.read_with(cx, |wb, _| wb.compare(&item)).unwrap();
+    wait_until(cx, "the refusal", |cx| {
+        compare.read_with(cx, |c, _| matches!(c.state(), CompareState::Failed(_)))
+    });
+    let CompareState::Failed(why) = compare.read_with(cx, |c, _| c.state().clone()) else {
+        unreachable!()
+    };
+    assert!(why.contains("fresh.txt"), "{why}");
+}
+
+/// A chat of the project `workspace`, working in `cwd`.
+fn chat_in(
+    daemon: &TestDaemon,
+    workspace: hutan_core::WorkspaceId,
+    cwd: &Path,
+) -> hutan_protocol::messages::SessionInfo {
+    use hutan_protocol::chat::ChatCreate;
+    use hutan_protocol::messages::{Request, SessionResult};
+    let created: SessionResult = daemon.call(Request::ChatCreate(ChatCreate {
+        contain: None,
+        workspace_id: Some(workspace),
+        cwd: cwd.to_path_buf(),
+        agent: "codex".to_owned(),
+        model: None,
+        approval_policy: None,
+        sandbox: None,
+        title: None,
+        mode: None,
+        provider_id: None,
+        system_prompt: None,
+        account: None,
+        safety: None,
+    }));
+    created.session
+}
+
+/// A project with `src/lib.rs`, `notes.md` and `todo.md` and a daemon whose codex replays a
+/// recorded turn.
+struct ChatProject {
+    _env: common::chat::ChatEnv,
+    daemon: TestDaemon,
+    _dir: tempfile::TempDir,
+    root: PathBuf,
+}
+
+impl ChatProject {
+    fn new() -> Self {
+        let env = common::chat::ChatEnv::new();
+        let daemon = TestDaemon::start_with_codex(env.fixture("plain-turn"));
+        let (dir, root) = scratch();
+        write(&root, "src/lib.rs", "// lib\n");
+        write(&root, "notes.md", "# notes\n");
+        write(&root, "todo.md", "- [ ] todo\n");
+        Self {
+            _env: env,
+            daemon,
+            _dir: dir,
+            root,
+        }
+    }
+
+    /// The window with the project open, a chat of it as the active tab and the Files tree with
+    /// `src` open: the rows are `src`, `lib.rs`, `notes.md`, `todo.md`.
+    fn window<'a>(
+        &self,
+        cx: &'a mut TestAppContext,
+    ) -> (
+        Entity<Workbench>,
+        &'a mut VisualTestContext,
+        hutan_core::SessionId,
+        Entity<FilesPanel>,
+    ) {
+        use hutan_desktop::workbench::chat::LoadStatus;
+        let workspace = self.daemon.create_workspace("proj", &[&self.root]);
+        let chat = chat_in(&self.daemon, workspace.id, &self.root).id;
+        let (view, cx) = open(cx, &self.daemon);
+        project(&view, cx, &self.root);
+        view.update_in(cx, |wb, window, cx| wb.open_session(chat, window, cx));
+        wait_until(cx, "the chat to load", |cx| {
+            view.read_with(cx, |wb, cx| {
+                wb.chat_model_of(chat)
+                    .is_some_and(|m| *m.read(cx).status() == LoadStatus::Ready)
+            })
+        });
+        let panel = files_panel(&view, cx);
+        wait_names(&panel, cx, &["src", "notes.md", "todo.md"]);
+        draw(cx);
+        let rows = Rows::of(&view, cx);
+        click(cx, rows.at(0), Modifiers::none());
+        wait_names(&panel, cx, &["src", "  lib.rs", "notes.md", "todo.md"]);
+        draw(cx);
+        (view, cx, chat, panel)
+    }
+}
+
+#[gpui::test]
+fn attach_to_chat_puts_a_file_chip_of_each_selected_file_in_the_open_chat(cx: &mut TestAppContext) {
+    use hutan_protocol::assistant::Attachment;
+    let fx = ChatProject::new();
+    let (view, cx, chat, panel) = fx.window(cx);
+    let model = view.read_with(cx, |wb, _| wb.chat_model_of(chat).unwrap());
+    let rows = Rows::of(&view, cx);
+
+    // One file: a chip that names it relative to the tree's root and reads the absolute path.
+    right_click(cx, rows.at(1));
+    run_entry(&view, cx, "Attach to Chat");
+    let chips = model.read_with(cx, |m, _| m.context().to_vec());
+    assert_eq!(chips.len(), 1, "{chips:?}");
+    assert_eq!(chips[0].source, "src/lib.rs");
+    assert_eq!(
+        chips[0].attachment,
+        Attachment::File {
+            path: fx.root.join("src/lib.rs").display().to_string(),
+            range: None,
+            picked: true
+        }
+    );
+    assert_eq!(
+        notice(&view, cx).as_deref(),
+        Some("Attached 1 file to the chat")
+    );
+
+    // Two rows: a chip each. (The click on notes.md previews it over the chat in its pane: the
+    // chat is behind that tab and still the chat Attach to Chat means.)
+    click(cx, rows.at(2), Modifiers::none());
+    click(cx, rows.at(3), Modifiers::shift());
+    assert_eq!(selected_names(&panel, cx), ["notes.md", "todo.md"]);
+    right_click(cx, rows.at(3));
+    run_entry(&view, cx, "Attach to Chat");
+    let sources: Vec<String> = model.read_with(cx, |m, _| {
+        m.context().iter().map(|c| c.source.clone()).collect()
+    });
+    assert_eq!(sources, ["src/lib.rs", "notes.md", "todo.md"]);
+    assert_eq!(
+        notice(&view, cx).as_deref(),
+        Some("Attached 2 files to the chat")
+    );
 }

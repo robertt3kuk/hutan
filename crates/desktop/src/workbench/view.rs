@@ -620,7 +620,27 @@ pub(crate) struct MenuEntry {
     pub disabled: bool,
     /// Opens another menu; drawn with `action.disclose`, not encoded in the accessible label.
     pub submenu: bool,
+    /// The key that does the same, drawn at the right ("⌘C", "F2").
+    pub hint: Option<SharedString>,
+    /// A line is drawn above the entry: it starts a group.
+    pub separator: bool,
     pub run: MenuAction,
+}
+
+impl MenuEntry {
+    /// The entry with the key that does the same drawn at its right.
+    #[must_use]
+    pub(crate) fn hinted(mut self, hint: Option<impl Into<SharedString>>) -> Self {
+        self.hint = hint.map(Into::into);
+        self
+    }
+
+    /// The entry with a line above it: it starts a group.
+    #[must_use]
+    pub(crate) fn starting_group(mut self) -> Self {
+        self.separator = true;
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -786,6 +806,8 @@ pub struct Workbench {
     /// Vim state of the text fields of the overlays below (`editor.vim_mode`).
     pub(crate) edits: super::vim_ui::OverlayEdits,
     pub(crate) context_menu: Option<ContextMenu>,
+    /// The file *Select for Compare* of the Files tree remembered (`file_compare.rs`).
+    pub(crate) compare_source: Option<std::path::PathBuf>,
     pub(crate) modal: Option<Modal>,
     /// Where the keyboard was when the open dialog took it; restored when it closes.
     pub(crate) modal_return: Option<gpui::WeakFocusHandle>,
@@ -823,6 +845,8 @@ pub struct Workbench {
     pub(crate) history_subscriptions: HashMap<String, Subscription>,
     /// The read-only views of files at a commit, by path and commit.
     pub(crate) revision_views: HashMap<(String, String), Entity<super::file_history::RevisionView>>,
+    /// The views of compare tabs (two files, or a file and HEAD), by tab.
+    pub(crate) compare_views: HashMap<ItemRef, Entity<super::file_compare::CompareView>>,
     /// The buffers of the files tabs show (see `files.rs`).
     pub(crate) buffers: super::files::BufferStore,
     /// The pending ledger of agents' edits (see `agent_edits.rs`).
@@ -1445,6 +1469,7 @@ impl Workbench {
             palette_scroll,
             edits: super::vim_ui::OverlayEdits::default(),
             context_menu: None,
+            compare_source: None,
             modal: None,
             modal_return: None,
             sheet: None,
@@ -1464,6 +1489,7 @@ impl Workbench {
             history_views: HashMap::new(),
             history_subscriptions: HashMap::new(),
             revision_views: HashMap::new(),
+            compare_views: HashMap::new(),
             buffers: super::files::BufferStore::default(),
             agent_ledger: super::agent_edits::AgentLedger::for_state(options.state_path.as_deref()),
             lsp,
@@ -1757,6 +1783,12 @@ impl Workbench {
                 )
                 .into(),
             ),
+            item @ (ItemRef::Compare { .. } | ItemRef::CompareHead { .. }) => (
+                crate::icons::Icon::ItemFile,
+                super::file_compare::item_title(item)
+                    .unwrap_or_default()
+                    .into(),
+            ),
         }
     }
 
@@ -1908,6 +1940,7 @@ impl Workbench {
             .chain(self.file_views.values().map(Entity::entity_id))
             .chain(self.history_views.values().map(Entity::entity_id))
             .chain(self.revision_views.values().map(Entity::entity_id))
+            .chain(self.compare_views.values().map(Entity::entity_id))
             .chain(self.terminals.values().map(|item| item.view.entity_id()));
         for id in ids {
             gpui::App::notify(cx, id);
@@ -2244,6 +2277,34 @@ impl Workbench {
             .unwrap_or_default()
     }
 
+    /// The key hint of every entry of the open context menu, with its label, in order.
+    pub fn context_menu_hints(&self) -> Vec<(SharedString, Option<SharedString>)> {
+        self.context_menu
+            .as_ref()
+            .map(|m| {
+                m.entries
+                    .iter()
+                    .map(|e| (e.label.clone(), e.hint.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The labels of the entries that start a group (a line is drawn above them) in the open
+    /// context menu.
+    pub fn context_menu_groups(&self) -> Vec<SharedString> {
+        self.context_menu
+            .as_ref()
+            .map(|m| {
+                m.entries
+                    .iter()
+                    .filter(|e| e.separator)
+                    .map(|e| e.label.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Close the context menu and run its `index`-th entry (a greyed-out one only closes it).
     pub fn run_menu_entry(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let run = self
@@ -2280,6 +2341,8 @@ impl Workbench {
             checked: false,
             disabled: false,
             submenu: false,
+            hint: None,
+            separator: false,
             run: Rc::new(run),
         }
     }
@@ -2301,6 +2364,8 @@ impl Workbench {
             checked: false,
             disabled: true,
             submenu: false,
+            hint: None,
+            separator: false,
             run: Rc::new(|_, _, _| {}),
         }
     }

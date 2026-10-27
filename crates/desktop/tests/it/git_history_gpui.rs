@@ -461,12 +461,22 @@ fn the_places_that_offer_blame_and_history(cx: &mut TestAppContext) {
         .into_iter()
         .map(|(label, _)| label.to_string())
         .collect();
-    // History is for a file only; the file operations (EX-7) are on every row.
+    // History is for a file only; the file operations (EX-7) are on every row; the row menu
+    // (EX-4) groups them: open, compare, the hooks, the paths, the operations.
     assert_eq!(
         labels,
         [
             "Open",
+            "Open to the Side",
+            "Reveal in Finder",
+            "Select for Compare",
+            "Compare with HEAD",
+            "Open in Terminal",
+            "Attach to Chat",
+            "Find in Folder",
             "Show File History",
+            "Copy Path",
+            "Copy Relative Path",
             "New File",
             "New Folder",
             "Rename",
@@ -474,7 +484,6 @@ fn the_places_that_offer_blame_and_history(cx: &mut TestAppContext) {
             "Cut",
             "Copy",
             "Paste",
-            "Copy Path",
             "Move to Trash"
         ]
     );
@@ -493,6 +502,11 @@ fn the_places_that_offer_blame_and_history(cx: &mut TestAppContext) {
     assert_eq!(
         labels,
         [
+            "Reveal in Finder",
+            "Open in Terminal",
+            "Find in Folder",
+            "Copy Path",
+            "Copy Relative Path",
             "New File",
             "New Folder",
             "Rename",
@@ -500,10 +514,9 @@ fn the_places_that_offer_blame_and_history(cx: &mut TestAppContext) {
             "Cut",
             "Copy",
             "Paste",
-            "Copy Path",
             "Move to Trash"
         ],
-        "a folder has no history of its own"
+        "a folder has no history of its own, nothing to open or compare"
     );
     let copy_path = labels.iter().position(|l| l == "Copy Path").unwrap();
     view.update_in(cx, |wb, window, cx| {

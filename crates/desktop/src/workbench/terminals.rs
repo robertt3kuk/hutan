@@ -28,6 +28,9 @@ use crate::sessions::TerminalSession;
 use crate::settings::{AppearanceSettings, KeymapSettings, LayoutSettings, TerminalSettings};
 use crate::theme::Theme;
 
+/// The group whose drag-over shows that a terminal takes rows of the Files tree.
+const ROWS_DROP_GROUP: &str = "terminal-rows-drop";
+
 /// The view configuration of a terminal: the `terminal` namespace with the pack's palette and
 /// block roles, the pack's font defaults where the user set none, plus what follows the density
 /// (padding, block gutter).
@@ -175,6 +178,7 @@ impl Workbench {
         self.sync_chats(cx);
         self.sync_files(cx);
         self.sync_history_views();
+        self.sync_compare_views();
     }
 
     fn ensure_held(
@@ -1204,9 +1208,25 @@ impl Workbench {
         });
         let session_id = session.to_owned();
         let menu_view = view.clone();
+        let drop_view = view.clone();
+        let accent = theme.accent;
         let mut root = div()
             .relative()
             .size_full()
+            .group(ROWS_DROP_GROUP)
+            // Rows of the Files tree dropped on the terminal type their paths relative to the
+            // tree's root, quoted for the shell, as Finder's files are.
+            .on_drop::<super::panels::FilesDragged>(cx.listener(
+                move |_, rows: &super::panels::FilesDragged, window, cx| {
+                    let names: Vec<PathBuf> = rows
+                        .relative_paths()
+                        .into_iter()
+                        .map(PathBuf::from)
+                        .collect();
+                    drop_view.update(cx, |terminal, cx| terminal.insert_paths(&names, cx));
+                    window.focus(&drop_view.focus_handle(cx), cx);
+                },
+            ))
             // Right-click: Split Right / Split Down / Close Split. A program that handles the
             // mouse itself keeps the press (⇧ takes it back).
             .on_mouse_down(
@@ -1219,7 +1239,26 @@ impl Workbench {
                     this.open_menu(event.position, entries, window, cx);
                 }),
             )
-            .child(super::render::cached_view(&self.regions, view));
+            .child(super::render::cached_view(&self.regions, view))
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .m(px(6.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(10.0))
+                    .border_2()
+                    .border_color(accent)
+                    .bg(accent.opacity(0.14))
+                    .text_color(accent)
+                    .opacity(0.0)
+                    .group_drag_over::<super::panels::FilesDragged>(ROWS_DROP_GROUP, |style| {
+                        style.opacity(1.0)
+                    })
+                    .child("Drop to insert the path"),
+            );
         // A stopped daemon is said once, by the status bar's `Stopped · Start`; a terminal does
         // not repeat it with a banner of its own.
         if ended && !self.daemon.stopped {

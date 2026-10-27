@@ -525,6 +525,18 @@ impl SearchPanel {
         cx.notify();
     }
 
+    /// *Find in Folder* of the Files tree: the include field names `glob` (a folder below the
+    /// project, as `fs.search` globs read it) and the query field has the keyboard.
+    pub fn find_in_folder(&mut self, glob: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_include(glob, cx);
+        self.reveal(None, false, window, cx);
+    }
+
+    /// What the include field holds.
+    pub fn include(&self) -> &str {
+        &self.include
+    }
+
     // ---- searching ------------------------------------------------------------------------
 
     /// What the panel is about: the worktree picked in the sidebar, else the project the window

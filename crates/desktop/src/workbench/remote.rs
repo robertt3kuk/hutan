@@ -509,6 +509,8 @@ impl Workbench {
                 ItemRef::Revision { path, .. } => {
                     ("revision", None, None, Some(PathBuf::from(path)))
                 }
+                ItemRef::Compare { left, .. } => ("compare", None, None, Some(PathBuf::from(left))),
+                ItemRef::CompareHead { path } => ("compare", None, None, Some(PathBuf::from(path))),
             };
             PaneItem {
                 kind: kind.to_owned(),

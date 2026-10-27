@@ -2507,6 +2507,24 @@ fn a_file_tab_is_stored_so_that_older_binaries_read_a_placeholder() {
 }
 
 #[test]
+fn compare_tabs_are_stored_and_read_back() {
+    let two = ItemRef::compare("/w/a.txt", "/w/b.txt");
+    let json = serde_json::to_value(&two).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({"compare": {"left": "/w/a.txt", "right": "/w/b.txt"}})
+    );
+    assert_eq!(serde_json::from_value::<ItemRef>(json).unwrap(), two);
+    let head = ItemRef::compare_head("/w/a.txt");
+    let json = serde_json::to_value(&head).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({"compare_head": {"path": "/w/a.txt"}})
+    );
+    assert_eq!(serde_json::from_value::<ItemRef>(json).unwrap(), head);
+}
+
+#[test]
 fn a_renamed_path_is_what_is_below_it_moved_and_nothing_that_merely_starts_alike() {
     assert_eq!(
         retargeted("/w/src", "/w/src", "/w/lib").as_deref(),

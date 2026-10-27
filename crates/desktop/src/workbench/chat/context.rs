@@ -176,6 +176,20 @@ impl ContextChip {
         )
     }
 
+    /// A whole file the user chose in the Files tree: read by its absolute `path` wherever it
+    /// is (it was picked), named `shown` (its path relative to the tree's root) on the chip.
+    pub fn picked_file(shown: &str, path: &str) -> Self {
+        Self::new(
+            Attachment::File {
+                path: path.to_owned(),
+                range: None,
+                picked: true,
+            },
+            shown.to_owned(),
+            "whole file".to_owned(),
+        )
+    }
+
     /// The best hits of a history search.
     pub fn search(query: &str, hits: u32) -> Self {
         Self::new(

@@ -20,6 +20,7 @@ use super::markdown_view::Look;
 use super::rich::{chip_for_image_data, chip_for_path, chip_for_text, is_long_paste};
 use super::view::ChatView;
 use crate::workbench::harnesses::harness_name;
+use crate::workbench::panels::FilesDragged as DraggedRows;
 use crate::workbench::render::probe;
 use crate::workbench::ui::IconButton;
 use crate::workbench::view::Region;
@@ -92,6 +93,70 @@ impl ChatView {
         self.attach = None;
         cx.notify();
         added
+    }
+
+    /// *Attach to Chat* from the Files tree: a file chip per `(absolute path, name shown)`; the
+    /// daemon reads each when the message is sent. Returns how many chips were added.
+    pub fn attach_tree_files(
+        &mut self,
+        files: &[(PathBuf, String)],
+        cx: &mut Context<Self>,
+    ) -> usize {
+        if !self.supports_context(cx) && !self.rich_input_available(cx) {
+            self.model.update(cx, |model, cx| {
+                model.set_error(
+                    "This daemon cannot take attachments of files or images: restart hutand",
+                    cx,
+                );
+            });
+            return 0;
+        }
+        let mut added = 0;
+        for (path, shown) in files {
+            let chip = ContextChip::picked_file(shown, &path.display().to_string());
+            if !self
+                .model
+                .update(cx, |model, cx| model.attach_context(chip, cx))
+            {
+                break;
+            }
+            added += 1;
+        }
+        self.attach = None;
+        cx.notify();
+        added
+    }
+
+    /// Rows of the Files tree dropped on the chat: their paths, relative to the tree's root, are
+    /// typed at the caret (a name with a space between quotes), a space after each.
+    pub fn insert_dropped_rows(&mut self, rows: &DraggedRows, cx: &mut Context<Self>) {
+        let names = rows.relative_paths();
+        if names.is_empty() {
+            return;
+        }
+        let mut text = String::new();
+        {
+            let model = self.model.read(cx);
+            let input = model.input();
+            let before = input.text().get(..input.cursor()).unwrap_or("");
+            if before
+                .chars()
+                .next_back()
+                .is_some_and(|c| !c.is_whitespace())
+            {
+                text.push(' ');
+            }
+        }
+        for name in names {
+            if name.chars().any(char::is_whitespace) {
+                text.push_str(&format!("\"{name}\" "));
+            } else {
+                text.push_str(&name);
+                text.push(' ');
+            }
+        }
+        self.model
+            .update(cx, |model, cx| model.edit(|input| input.insert(&text), cx));
     }
 
     /// ⌘V: files copied in Finder and an image on the clipboard attach; a long text folds into a
@@ -338,6 +403,31 @@ impl ChatView {
             })
             .child("Drop files or images to attach")
             .child(probe(&self.regions, Region::Chat("drop-overlay")))
+            .into_any_element()
+    }
+
+    /// The highlight that covers the chat while rows of the Files tree are dragged over it.
+    pub(super) fn render_path_overlay(&self, look: &Look) -> AnyElement {
+        let (theme, tokens) = (&look.theme, &look.tokens);
+        let accent = theme.accent;
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .m(px(tokens.spacing * 2.0))
+            .rounded(px(tokens.card_radius))
+            .border_2()
+            .bg(theme.accent_soft)
+            .text_color(theme.accent)
+            .opacity(0.0)
+            // A drop target: the one place an accent edge is drawn.
+            .group_drag_over::<DraggedRows>(DROP_GROUP, move |style| {
+                style.opacity(1.0).border_color(accent)
+            })
+            .child("Drop to insert the path")
+            .child(probe(&self.regions, Region::Chat("path-overlay")))
             .into_any_element()
     }
 }

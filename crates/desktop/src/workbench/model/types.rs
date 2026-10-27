@@ -367,6 +367,17 @@ pub enum ItemRef {
         path: String,
         rev: String,
     },
+    /// Two files side by side as one diff (EX-4, *Compare with Selected*): read-only, by the
+    /// absolute path of each.
+    Compare {
+        left: String,
+        right: String,
+    },
+    /// A file against its version in HEAD (EX-4, *Compare with HEAD*): read-only, by the file's
+    /// absolute path.
+    CompareHead {
+        path: String,
+    },
     /// A terminal tab that holds a tree of terminal splits (Ghostty / iTerm style): every leaf is
     /// its own daemon session, the tab has one title (the focused split's) and closes with its
     /// last split. A tab with one terminal is [`ItemRef::Terminal`]; this form exists while it
@@ -405,6 +416,13 @@ enum ItemRepr {
         path: String,
         rev: String,
     },
+    Compare {
+        left: String,
+        right: String,
+    },
+    CompareHead {
+        path: String,
+    },
     /// A tab of terminal splits: the tree (each leaf a pane of one terminal item), the focused
     /// leaf, and whether it is zoomed. A binary from before splits reads this as a placeholder
     /// (the sessions stay in the daemon and in the sessions panel).
@@ -434,6 +452,8 @@ impl From<ItemRef> for ItemRepr {
             ItemRef::Changes { path } => ItemRepr::Changes { path },
             ItemRef::History { path } => ItemRepr::History { path },
             ItemRef::Revision { path, rev } => ItemRepr::Revision { path, rev },
+            ItemRef::Compare { left, right } => ItemRepr::Compare { left, right },
+            ItemRef::CompareHead { path } => ItemRepr::CompareHead { path },
             ItemRef::File { path } => ItemRepr::Placeholder {
                 title: std::path::Path::new(&path)
                     .file_name()
@@ -471,6 +491,10 @@ impl From<ItemOnDisk> for ItemRef {
             ItemOnDisk::Known(ItemRepr::Changes { path }) => ItemRef::Changes { path },
             ItemOnDisk::Known(ItemRepr::History { path }) => ItemRef::History { path },
             ItemOnDisk::Known(ItemRepr::Revision { path, rev }) => ItemRef::Revision { path, rev },
+            ItemOnDisk::Known(ItemRepr::Compare { left, right }) => {
+                ItemRef::Compare { left, right }
+            }
+            ItemOnDisk::Known(ItemRepr::CompareHead { path }) => ItemRef::CompareHead { path },
             ItemOnDisk::Known(ItemRepr::TerminalSplit {
                 tree,
                 focus,
@@ -511,6 +535,17 @@ impl ItemRef {
             path: path.into(),
             rev: rev.into(),
         }
+    }
+
+    pub fn compare(left: impl Into<String>, right: impl Into<String>) -> Self {
+        ItemRef::Compare {
+            left: left.into(),
+            right: right.into(),
+        }
+    }
+
+    pub fn compare_head(path: impl Into<String>) -> Self {
+        ItemRef::CompareHead { path: path.into() }
     }
 
     pub fn panel(id: &str) -> Self {

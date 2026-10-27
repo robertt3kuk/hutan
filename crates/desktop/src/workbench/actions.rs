@@ -182,6 +182,24 @@ actions!(
         FilesUndo,
         /// Redo the file operation the last undo took back.
         FilesRedo,
+        /// Put the full path of the selected rows on the clipboard.
+        FilesCopyPath,
+        /// Put the paths of the selected rows, relative to the tree's root, on the clipboard.
+        FilesCopyRelativePath,
+        /// Show the selected rows in Finder (a daemon on this Mac).
+        FilesRevealInFinder,
+        /// Start a terminal in the selected folder (a file's folder).
+        FilesOpenInTerminal,
+        /// Attach the selected files to the chat that is open (else copy `@path` text).
+        FilesAttachToChat,
+        /// Search the selected folder (a file's folder): the Search panel with its include glob.
+        FilesFindInFolder,
+        /// Remember the selected file as the left side of a compare.
+        FilesSelectForCompare,
+        /// Compare the selected file with the one *Select for Compare* remembered.
+        FilesCompareWithSelected,
+        /// Compare the selected file with its version in HEAD.
+        FilesCompareWithHead,
         /// Show the history of the focused file tab's file in a tab.
         ShowFileHistory,
         RewindFocusedChat,
@@ -883,6 +901,15 @@ pub fn commands(presets: &[LayoutPreset], panels: &PanelRegistry, assistant: boo
         command("Files: Paste", FilesPaste),
         command("Files: Undo", FilesUndo),
         command("Files: Redo", FilesRedo),
+        command("Files: Copy Path", FilesCopyPath),
+        command("Files: Copy Relative Path", FilesCopyRelativePath),
+        command("Files: Reveal in Finder", FilesRevealInFinder),
+        command("Files: Open in Terminal", FilesOpenInTerminal),
+        command("Files: Attach to Chat", FilesAttachToChat),
+        command("Files: Find in Folder", FilesFindInFolder),
+        command("Files: Select for Compare", FilesSelectForCompare),
+        command("Files: Compare with Selected", FilesCompareWithSelected),
+        command("Files: Compare with HEAD", FilesCompareWithHead),
         command("Git: Show File History", ShowFileHistory),
         command("Search: Find in Files", ShowSearch),
         command("Search: Replace in Files", ShowSearchReplace),
@@ -1173,6 +1200,8 @@ fn context_bindings() -> Vec<BindingSpec> {
         bind::<FilesPaste>("cmd-v", Some(FILES_KEY_CONTEXT)),
         bind::<FilesUndo>("cmd-z", Some(FILES_KEY_CONTEXT)),
         bind::<FilesRedo>("cmd-shift-z", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesCopyPath>("cmd-alt-c", Some(FILES_KEY_CONTEXT)),
+        bind::<FilesCopyRelativePath>("cmd-alt-shift-c", Some(FILES_KEY_CONTEXT)),
         bind::<hutan_terminal_view::Copy>("cmd-c", Some(hutan_terminal_view::KEY_CONTEXT)),
         bind::<hutan_terminal_view::Paste>("cmd-v", Some(hutan_terminal_view::KEY_CONTEXT)),
         // ⌘↑ / ⌘↓ scroll to the top / bottom of the scrollback, as in Terminal.app and iTerm; the
@@ -1722,6 +1751,8 @@ mod tests {
             "cmd-v | workbench::FilesPaste | FilesPanel",
             "cmd-z | workbench::FilesUndo | FilesPanel",
             "shift-cmd-z | workbench::FilesRedo | FilesPanel",
+            "alt-cmd-c | workbench::FilesCopyPath | FilesPanel",
+            "alt-shift-cmd-c | workbench::FilesCopyRelativePath | FilesPanel",
             "cmd-c | hutan_terminal_view::Copy | HutanTerminal",
             "cmd-v | hutan_terminal_view::Paste | HutanTerminal",
             "cmd-up | hutan_terminal_view::ScrollToTop | HutanTerminal",

@@ -1101,7 +1101,11 @@ impl FilesPanel {
             .collect();
         self.anchor = Some(anchor);
         self.selected = Some(target);
-        self.picked = if range.len() > 1 { range } else { HashSet::new() };
+        self.picked = if range.len() > 1 {
+            range
+        } else {
+            HashSet::new()
+        };
         self.scroll.scroll_to_item(index, ScrollStrategy::Nearest);
     }
 
@@ -1185,7 +1189,9 @@ impl FilesPanel {
         let files: Vec<PathBuf> = self
             .rows()
             .iter()
-            .filter(|r| self.picked.contains(&r.path) && matches!(r.kind, RowKind::File | RowKind::Link))
+            .filter(|r| {
+                self.picked.contains(&r.path) && matches!(r.kind, RowKind::File | RowKind::Link)
+            })
             .map(|r| r.path.clone())
             .collect();
         for path in files {
