@@ -10,6 +10,7 @@ mod blocks_gpui;
 mod buttons_gpui;
 mod changes_fresh_gpui;
 mod changes_multi_gpui;
+mod changes_view_gpui;
 mod chat_gpui;
 mod checkpoints_gpui;
 mod chrome_gpui;

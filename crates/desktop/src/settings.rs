@@ -1341,14 +1341,49 @@ pub struct ChangesSettings {
     /// workspace has more than one repository or a worktree with changes; the panel's own
     /// switch changes it for the open window without writing it here.
     pub default_scope: ChangesScope,
+    /// Whether the Changes view's diff wraps long lines instead of scrolling sideways: `auto`
+    /// (the default: wrapped for prose — Markdown and text files — and scrolled sideways for
+    /// code), `on` or `off`. The *Wrap lines* toggle in the diff header changes it for the open
+    /// view without writing it here.
+    pub wrap_lines: WrapLines,
+    /// How the Changes view lists its files: `flat` (the default: one row per file, the name
+    /// first and its folder after it) or `tree` (grouped by folder, folders collapsible). The
+    /// list's own toggle changes it for the open view without writing it here.
+    pub list: ChangesList,
 }
 
 impl Default for ChangesSettings {
     fn default() -> Self {
         Self {
             default_scope: ChangesScope::Checkout,
+            wrap_lines: WrapLines::Auto,
+            list: ChangesList::Flat,
         }
     }
+}
+
+/// `changes.wrap_lines`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WrapLines {
+    /// Wrapped for Markdown and text files, scrolled sideways for code.
+    #[default]
+    Auto,
+    /// Every diff wraps.
+    On,
+    /// No diff wraps.
+    Off,
+}
+
+/// `changes.list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangesList {
+    /// One row per file.
+    #[default]
+    Flat,
+    /// Grouped by folder.
+    Tree,
 }
 
 impl Setting for ChangesSettings {

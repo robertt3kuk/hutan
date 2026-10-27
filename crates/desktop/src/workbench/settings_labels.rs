@@ -823,6 +823,24 @@ const FIELDS: &[FieldText] = &[
             ("workspace", "All in workspace"),
         ],
     ),
+    choice(
+        "changes",
+        "wrap_lines",
+        "Wrap long lines in diffs",
+        "Whether the Changes view's diff wraps long lines instead of scrolling sideways. Automatic wraps Markdown and text files, where lines are sentences, and scrolls code sideways. The Wrap lines toggle in the diff header changes it for the open view.",
+        &[
+            ("auto", "Automatic (text wraps, code scrolls)"),
+            ("on", "Always"),
+            ("off", "Never"),
+        ],
+    ),
+    choice(
+        "changes",
+        "list",
+        "Changes view lists files",
+        "One row per file with its name first, or grouped by folder with folders you can fold. The list's own toggle changes it for the open view.",
+        &[("flat", "Flat"), ("tree", "As a tree")],
+    ),
     // ---- assistant ----
     field(
         "assistant",

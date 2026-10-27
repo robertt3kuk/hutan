@@ -1532,7 +1532,10 @@ fn a_narrow_changes_view_folds_the_files_into_a_strip_and_keeps_the_diff_and_com
         commit.left() >= pane.left() && commit.right() <= pane.right(),
         "Commit all… stays visible: {commit:?} in {pane:?}"
     );
-    // Long lines scroll sideways instead of widening or clipping the pane.
+    // Long lines scroll sideways instead of widening or clipping the pane (the text file of
+    // this test wraps by default; the view's *Wrap lines* is switched off).
+    changes.update(cx, |c, cx| c.set_wrap(false, cx));
+    draw(cx);
     assert!(
         changes.read_with(cx, |c, _| c.diff_scroll_width()) > 100.0,
         "the 400-column line can be scrolled to"

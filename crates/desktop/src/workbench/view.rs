@@ -449,6 +449,8 @@ pub enum Region {
     ChangesHistoryFile(usize),
     /// Hunk header `index` of the shown file's diff, top to bottom.
     ChangesHunk(usize),
+    /// Diff line `index` of the shown file in the Changes view, the whole row (its tint).
+    ChangesRow(usize),
     /// The number gutter of diff line `index` (an index into the shown file's diff lines) of
     /// the Changes view: clicking it selects the line.
     ChangesLine(usize),

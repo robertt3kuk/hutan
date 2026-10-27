@@ -15,7 +15,7 @@ use hutan_protocol::worktree::{
     WorktreeIndexChange,
 };
 
-use super::{ChangesEvent, ChangesView};
+use super::{ChangesEvent, ChangesView, FilePatch};
 use crate::theme::{Theme, Tokens};
 use crate::workbench::chat::{Look, diff_row};
 use crate::workbench::render::probe;
@@ -687,9 +687,7 @@ impl ChangesView {
         let available = self.stage_available(cx);
         let showing = available && self.staging.on;
         let mut side = div().flex_1().min_w_0().min_h_0().flex().flex_col();
-        if available {
-            side = side.child(self.render_mode_bar(showing, theme, tokens, cx));
-        }
+        side = side.child(self.render_mode_bar(available, showing, theme, tokens, cx));
         if showing && let Some(ask) = &self.staging.confirm {
             side = side.child(self.render_discard_ask(ask, theme, tokens, cx));
         }
@@ -711,6 +709,7 @@ impl ChangesView {
     /// *Review · Stage*, and in Stage mode the file's own actions and the keys.
     fn render_mode_bar(
         &self,
+        available: bool,
         showing: bool,
         theme: &Theme,
         tokens: &Tokens,
@@ -735,11 +734,13 @@ impl ChangesView {
             .gap(px(tokens.spacing * 2.0))
             .px(px(tokens.spacing * 2.0))
             .pt(px(tokens.spacing * 2.0))
-            .child(
-                ui::segmented(theme, tokens)
-                    .child(segment("changes-mode-review", "Review", false, false))
-                    .child(segment("changes-mode-stage", "Stage", true, true)),
-            );
+            .when(available, |s| {
+                s.child(
+                    ui::segmented(theme, tokens)
+                        .child(segment("changes-mode-review", "Review", false, false))
+                        .child(segment("changes-mode-stage", "Stage", true, true)),
+                )
+            });
         if showing && let Some(entry) = self.selected_entry() {
             bar = bar.child(
                 div()
@@ -791,7 +792,51 @@ impl ChangesView {
                 );
             }
         }
+        if !showing {
+            bar = bar
+                .child(div().flex_1().min_w_0())
+                .children(self.render_diff_options(theme, tokens, cx));
+        }
         bar.into_any_element()
+    }
+
+    /// What the header of the diff offers beside the mode: *Wrap lines* while there is a text
+    /// diff to wrap.
+    fn render_diff_options(
+        &self,
+        theme: &Theme,
+        tokens: &Tokens,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let mut options = Vec::new();
+        let Some(file) = self.selected.as_deref() else {
+            return options;
+        };
+        let text = matches!(
+            self.patches.get(file),
+            Some(FilePatch::Ready { binary: false, .. })
+        );
+        if text {
+            let wrap = self.wraps(file);
+            options.push(
+                ui::Button::new("changes-wrap", "Wrap lines", theme, tokens)
+                    .compact()
+                    .ghost()
+                    .selected(wrap)
+                    .tooltip(if wrap {
+                        "Stop wrapping long lines; scroll sideways instead"
+                    } else {
+                        "Wrap long lines instead of scrolling sideways"
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.set_wrap(!wrap, cx);
+                        window.focus(&this.review.focus, cx);
+                    }))
+                    .child(probe(&self.env.regions, Region::Changes("wrap")))
+                    .into_any_element(),
+            );
+        }
+        options
     }
 
     /// Stages (`stage`) or unstages the whole selected file, a renamed one with both paths.
@@ -1012,6 +1057,7 @@ impl ChangesView {
         let mut lines = div()
             .id(SharedString::from(format!("changes-stage-lines-{index}")))
             .overflow_x_scroll()
+            .restrict_scroll_to_axis()
             .flex()
             .flex_col()
             .items_start()

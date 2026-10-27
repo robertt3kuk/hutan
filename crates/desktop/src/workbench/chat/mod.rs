@@ -25,7 +25,7 @@ mod view;
 pub mod vim;
 pub(crate) mod widgets;
 
-pub(crate) use cards::{counts_of, diff_row};
+pub(crate) use cards::{RowFlow, counts_of, diff_row, diff_row_flow};
 pub use chip::{Chip, cut_to};
 pub use context::{
     ContextChip, DEFAULT_HITS, DEFAULT_LINES, DEFAULT_TURNS, Mention, MentionKind, Thumb,

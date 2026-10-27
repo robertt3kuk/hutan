@@ -118,6 +118,9 @@ pub struct ChangesPanel {
     /// The checkout the window worked in when the files were last read.
     counted_for: Option<PathBuf>,
     counts_task: Option<Task<()>>,
+    /// The list of groups scrolls on its own; its scrollbar.
+    scroll: gpui::ScrollHandle,
+    bar: ui::Scrollbar,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -168,6 +171,8 @@ impl ChangesPanel {
             }),
         ];
         let default_scope = env.settings.get::<ChangesSettings>().default_scope;
+        let env_regions = env.regions.clone();
+        let scroll = gpui::ScrollHandle::new();
         let mut panel = Self {
             env,
             checkouts: Checkouts::Idle,
@@ -185,6 +190,19 @@ impl ChangesPanel {
             default_scope,
             counted_for: None,
             counts_task: None,
+            bar: {
+                let regions = env_regions.clone();
+                ui::Scrollbar::new(scroll.clone(), ui::ScrollAxis::Vertical).on_paint(
+                    move |bounds, window| {
+                        regions.record(
+                            window.current_view(),
+                            Region::Changes("panel-vbar"),
+                            bounds,
+                        );
+                    },
+                )
+            },
+            scroll,
             _subscriptions: subscriptions,
         };
         panel.sync(cx);
@@ -533,6 +551,7 @@ impl ChangesPanel {
                     s.child(
                         div()
                             .id(SharedString::from(format!("changes-more-{path}")))
+                            .relative()
                             .flex_none()
                             .pl(px(tokens.spacing * 2.0 + 40.0))
                             .py(px(tokens.spacing))
@@ -542,7 +561,8 @@ impl ChangesPanel {
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(Box::new(ReviewChangesAt(open.clone())), cx);
                             })
-                            .child(SharedString::from(format!("{rest} more files…"))),
+                            .child(SharedString::from(format!("{rest} more files…")))
+                            .child(probe(&self.env.regions, Region::Changes("panel-more"))),
                     )
                 });
         }
@@ -924,13 +944,22 @@ impl Render for ChangesPanel {
         let all = self.all_available();
         let body: AnyElement = match &self.checkouts {
             Checkouts::Ready(list) if !shown.is_empty() => div()
-                .id("changes-list")
+                .relative()
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .children(shown.iter().map(|&i| self.group(i, &list[i], cx)))
+                .child(probe(&self.env.regions, Region::Changes("panel-list")))
+                .child(
+                    div()
+                        .id("changes-list")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
+                        .track_scroll(&self.scroll)
+                        .flex()
+                        .flex_col()
+                        .children(shown.iter().map(|&i| self.group(i, &list[i], cx))),
+                )
+                .child(self.bar.element(&theme))
                 .into_any_element(),
             other => {
                 // At Home, an empty listing means the Home folder is not a repository: say so

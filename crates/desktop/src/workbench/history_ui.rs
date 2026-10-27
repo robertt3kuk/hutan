@@ -89,6 +89,7 @@ pub fn patch_block(
             let mut block = div()
                 .id(id)
                 .overflow_x_scroll()
+                .restrict_scroll_to_axis()
                 .track_scroll(scroll)
                 .flex()
                 .flex_col()

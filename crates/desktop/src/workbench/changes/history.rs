@@ -380,6 +380,7 @@ impl ChangesView {
             .flex_col()
             .flex_none()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .border_color(theme.border)
             .py(px(tokens.spacing));
         list = if narrow {
@@ -479,6 +480,7 @@ impl ChangesView {
             .min_w_0()
             .min_h_0()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .p(px(tokens.spacing * 2.0))
             .flex()
             .flex_col()

@@ -27,7 +27,7 @@ use super::{ChangesEvent, ChangesView, FilePatch, hunk_ranges};
 use crate::settings::{ChatSettings, SendKey};
 use crate::theme::{Theme, Tokens};
 use crate::workbench::chat::vim::{Mode, Outcome, Vim};
-use crate::workbench::chat::{Look, TextInput, diff_row};
+use crate::workbench::chat::{Look, RowFlow, TextInput, diff_row_flow};
 use crate::workbench::panels::{age_label, edit_text, field_box};
 use crate::workbench::render::probe;
 use crate::workbench::text_field::{FieldMut, FieldRef};
@@ -919,6 +919,8 @@ impl ChangesView {
                 cx.notify();
             }
             "escape" if self.review.selection.is_some() => self.clear_selection(cx),
+            // Scrolling: the arrows, page keys, Home and End of the list or the diff.
+            key if self.scroll_key(key, plain, cx) => {}
             _ => return,
         }
         cx.stop_propagation();
@@ -1424,6 +1426,7 @@ impl ChangesView {
         at: usize,
         line: &DiffLine,
         look: &Look,
+        flow: RowFlow,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> E {
@@ -1437,7 +1440,10 @@ impl ChangesView {
         let selected = span.is_some_and(|(a, b)| a <= at && at <= b);
         let tail = selected && span.is_some_and(|(_, b)| b == at) && self.review.draft.is_none();
         let numbered = !matches!(line.kind, LineKind::Hunk | LineKind::Note);
-        let mut row = div().relative().min_w_full().child(diff_row(line, look));
+        let mut row = div()
+            .relative()
+            .child(diff_row_flow(line, look, flow, None, None))
+            .child(probe(&self.env.regions, Region::ChangesRow(at)));
         if selected {
             row = row.child(
                 div()
@@ -1454,7 +1460,7 @@ impl ChangesView {
                     .id(SharedString::from(format!("changes-line-{at}")))
                     .absolute()
                     .top_0()
-                    .left_0()
+                    .left(flow.scrolled)
                     .h_full()
                     .w(px(tokens.font_size * 6.4))
                     .cursor_pointer()
@@ -1504,20 +1510,27 @@ impl ChangesView {
             .as_ref()
             .is_some_and(|d| d.editing.is_none() && d.file == file && d.to == at);
         for id in anchors.last.get(&at).into_iter().flatten() {
-            block = block.child(
-                div()
-                    .min_w_full()
-                    .child(self.render_comment_or_box(*id, anchors, look, window, cx)),
-            );
+            block = block.child(self.pinned(
+                flow,
+                self.render_comment_or_box(*id, anchors, look, window, cx),
+            ));
         }
         if draft_here {
-            block = block.child(
-                div()
-                    .min_w_full()
-                    .child(self.render_comment_box(None, look, window, cx)),
-            );
+            block = block.child(self.pinned(flow, self.render_comment_box(None, look, window, cx)));
         }
         block
+    }
+
+    /// A card hung under a diff line (a comment, the comment box): as wide as the pane and held
+    /// at its left edge while the code scrolls sideways.
+    pub(super) fn pinned(&self, flow: RowFlow, card: AnyElement) -> gpui::Div {
+        let held = div().relative().left(flow.scrolled);
+        if flow.wrap {
+            held.w_full().child(card)
+        } else {
+            held.w(self.diff_x.bounds().size.width.max(px(240.0)))
+                .child(card)
+        }
     }
 
     fn render_comment_or_box(

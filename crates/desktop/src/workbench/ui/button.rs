@@ -754,8 +754,13 @@ mod audit {
         ),
         (
             "desktop/src/workbench/changes.rs",
-            3,
-            "the file strip's toggle, a file row, a hunk header",
+            2,
+            "the file strip's toggle, a hunk header",
+        ),
+        (
+            "desktop/src/workbench/changes/list.rs",
+            2,
+            "a file row and a folder row of the file list",
         ),
         (
             "desktop/src/workbench/changes/history.rs",

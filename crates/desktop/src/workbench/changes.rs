@@ -12,12 +12,14 @@ mod comments;
 mod delivery;
 mod finish;
 mod history;
+mod list;
 mod staging;
 mod tray;
 
 pub use comments::{Mark, ReviewComment, SnippetLine};
 pub use delivery::{CleanupDefault, DeliveryForm};
 pub use finish::{StepTone, step_lines as finish_step_lines};
+pub use list::ListRow;
 pub use staging::HunkRow;
 pub use tray::{Selection, SendTarget};
 
@@ -36,13 +38,14 @@ use hutan_protocol::worktree::{
     WorktreeFinished, WorktreeInfo, WorktreeMerged, WorktreeRemove,
 };
 
-use super::chat::{Look, counts_of, diff_row};
+use super::chat::{Look, RowFlow, counts_of, diff_row_flow};
 use super::registry::PanelEnv;
 use super::render::probe;
 use super::style::UiStyle;
 use super::ui::{self, StyledExt as _};
 use super::view::Region;
 use crate::sessions::CheckoutActivity;
+use crate::settings::ChangesSettings;
 use crate::theme::{DensityExt as _, Theme, Tokens};
 
 /// Below this width the view stacks: the file list becomes a strip above the diff, so the diff
@@ -224,6 +227,21 @@ pub struct ChangesView {
     files_open: bool,
     /// Horizontal scroll of the diff, for lines wider than the pane.
     diff_x: ScrollHandle,
+    /// The scrollbars of the diff (along its lines, and down the pane) and of the file list.
+    diff_bar_x: ui::Scrollbar,
+    diff_bar_y: ui::Scrollbar,
+    files_scroll: ScrollHandle,
+    files_bar: ui::Scrollbar,
+    /// The divider between the file list and the diff, and the list's width it holds.
+    split: ui::Splitter,
+    /// *Wrap lines* of the diff header, for this view; `None` follows `changes.wrap_lines`.
+    wrap_override: Option<bool>,
+    /// The list's own toggle (flat or tree), for this view; `None` follows `changes.list`.
+    list_override: Option<crate::settings::ChangesList>,
+    /// Folders of the tree list that are folded.
+    folded_dirs: HashSet<String>,
+    /// The arrow and page keys act on the file list (after a click in it) rather than the diff.
+    keys_on_list: bool,
     /// When the listing was last read, in Unix milliseconds (`updated 3 s ago`).
     refreshed_ms: Option<u64>,
     /// Why the last refresh failed while the listing it left standing is older.
@@ -259,6 +277,18 @@ impl ChangesView {
         cx: &mut Context<Self>,
     ) -> Self {
         let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let review = tray::Review::new(comments, cx);
+        let review_scroll = review.scroll.clone();
+        let diff_x = ScrollHandle::new();
+        let files_scroll = ScrollHandle::new();
+        // A scrollbar that tells the regions where its thumb is (tests drag it).
+        let all_regions = env.regions.clone();
+        let thumb = move |handle: ScrollHandle, axis: ui::ScrollAxis, name: &'static str| {
+            let regions = all_regions.clone();
+            ui::Scrollbar::new(handle, axis).on_paint(move |bounds, window| {
+                regions.record(window.current_view(), Region::Changes(name), bounds);
+            })
+        };
         let mut view = Self {
             env,
             path,
@@ -278,12 +308,22 @@ impl ChangesView {
             merged: None,
             message_focus: cx.focus_handle(),
             canonical,
-            review: tray::Review::new(comments, cx),
+            review,
             delivery: delivery::Delivery::new(cx),
             history: history::HistoryState::default(),
             staging: staging::StagingState::default(),
             files_open: true,
-            diff_x: ScrollHandle::new(),
+            diff_bar_x: thumb(diff_x.clone(), ui::ScrollAxis::Horizontal, "diff-hbar")
+                .within(review_scroll.clone()),
+            diff_bar_y: thumb(review_scroll, ui::ScrollAxis::Vertical, "diff-vbar"),
+            files_bar: thumb(files_scroll.clone(), ui::ScrollAxis::Vertical, "files-vbar"),
+            diff_x,
+            files_scroll,
+            split: ui::Splitter::new(160.0),
+            wrap_override: None,
+            list_override: None,
+            folded_dirs: HashSet::new(),
+            keys_on_list: false,
             width: std::rc::Rc::default(),
             refreshed_ms: None,
             refresh_error: None,
@@ -722,6 +762,11 @@ impl ChangesView {
             return;
         }
         self.review.selection = None;
+        if self.selected.as_deref() != Some(file) {
+            // Another file: its diff starts at the top left.
+            self.diff_x.set_offset(gpui::point(px(0.0), px(0.0)));
+            self.review.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
+        }
         self.selected = Some(file.to_owned());
         self.load_patch(file, cx);
         self.refresh_hunks(cx);
@@ -1016,13 +1061,24 @@ impl Render for ChangesView {
                 .child(self.render_file_strip(&theme, &tokens, cx))
                 .child(self.render_diff_side(&look, &theme, &tokens, window, cx))
                 .into_any_element(),
-            Listing::Ready(_) => div()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .child(self.render_files(&theme, &tokens, true, cx))
-                .child(self.render_diff_side(&look, &theme, &tokens, window, cx))
-                .into_any_element(),
+            Listing::Ready(_) => {
+                let list = self.render_files(&theme, &tokens, true, cx);
+                let width = self.list_width(&tokens);
+                let regions = self.env.regions.clone();
+                let divider =
+                    self.split
+                        .element("changes-split", width, &theme, move |bounds, window| {
+                            regions.record(window.current_view(), Region::Changes("split"), bounds);
+                        });
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(list)
+                    .child(divider)
+                    .child(self.render_diff_side(&look, &theme, &tokens, window, cx))
+                    .into_any_element()
+            }
         })
         .into_any_element()
     }
@@ -1309,9 +1365,12 @@ impl ChangesView {
             |bounds, _, _| bounds,
             move |_, bounds, window, cx| {
                 regions.record(window.current_view(), Region::Changes("root"), bounds);
-                width.set(Some(bounds.size.width));
-                if (bounds.size.width < px(NARROW_BELOW)) != narrow {
-                    // The layout was built for the other width: build it again.
+                let built_for = width.replace(Some(bounds.size.width));
+                if (bounds.size.width < px(NARROW_BELOW)) != narrow
+                    || built_for.is_none_or(|was| (was - bounds.size.width).abs() > px(0.5))
+                {
+                    // The layout was built for another width (the stacked or the side-by-side
+                    // one, or the file list's share of it): build it again.
                     cx.notify(window.current_view());
                 }
             },
@@ -1427,156 +1486,6 @@ impl ChangesView {
         strip.into_any_element()
     }
 
-    fn render_files(
-        &self,
-        theme: &Theme,
-        tokens: &Tokens,
-        wide: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let look = Look::of(cx);
-        let hover = theme.surface_hover;
-        let mut list = div()
-            .id("changes-files")
-            .flex()
-            .flex_col()
-            .flex_none()
-            .overflow_y_scroll()
-            .border_color(theme.border)
-            .py(px(tokens.spacing));
-        list = if wide {
-            list.w(px(tokens.font_size * 24.0)).h_full().border_r_1()
-        } else {
-            // Unfolded under the strip: the whole width, at most eight rows tall.
-            list.w_full().max_h(px(tokens.sidebar_row * 8.0))
-        };
-        let filter = if self.has_index_marks() {
-            self.index_filter
-        } else {
-            IndexFilter::All
-        };
-        let home = self.env.sessions.read(cx).home_folder();
-        for (index, file) in self.files().iter().enumerate() {
-            if !filter.shows(file) {
-                continue;
-            }
-            let hint = memory_files_hint(
-                home.as_deref(),
-                &[self.path.as_path(), self.canonical.as_path()],
-                &file.path,
-            );
-            let (mark, color) = status_mark(file.status, theme);
-            // staged / unstaged / both: a 14 px glyph with the word in its tooltip (a state is
-            // not a pill that doubles the row's marks): a check for staged, a dot in the
-            // warning colour while something is left unstaged.
-            let index_glyph = index_mark(file).map(|word| {
-                let (icon, tone, tip) = match word {
-                    "staged" => (crate::icons::Icon::StateCompleted, theme.success, "Staged"),
-                    "unstaged" => (crate::icons::Icon::VcsDirty, theme.warning, "Unstaged"),
-                    _ => (
-                        crate::icons::Icon::VcsDirty,
-                        theme.warning,
-                        "Staged and unstaged changes",
-                    ),
-                };
-                div()
-                    .id(SharedString::from(format!("changes-index-glyph-{index}")))
-                    .flex_none()
-                    .w(px(14.0))
-                    .text_color(tone)
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| super::style::TextTooltip(SharedString::from(tip)))
-                            .into()
-                    })
-                    .child(crate::icons::glyph(icon))
-            });
-            let selected = self.selected.as_deref() == Some(file.path.as_str());
-            let path = file.path.clone();
-            let name = match &file.old_path {
-                Some(old) => format!("{old} → {}", file.path),
-                None => file.path.clone(),
-            };
-            // "Open": the file in a tab, at its first hunk once its patch is read (E-10).
-            let first_line = match self.patches.get(&file.path) {
-                Some(FilePatch::Ready { diff, .. }) => diff.first_changed_line(),
-                _ => None,
-            };
-            // Shown on hover (and on the selected row), so a list of files is not a list of
-            // buttons.
-            let row_group = SharedString::from(format!("changes-row-{index}"));
-            let open = (file.status != DiffStatus::Deleted).then(|| {
-                let button = self.open_button(
-                    SharedString::from(format!("changes-open-{index}")),
-                    &file.path,
-                    first_line,
-                    Region::ChangesOpen(index),
-                    theme,
-                    tokens,
-                );
-                div()
-                    .flex_none()
-                    .when(!selected, |s| {
-                        s.opacity(0.0)
-                            .group_hover(row_group.clone(), |s| s.opacity(1.0))
-                    })
-                    .child(button)
-            });
-            list = list.child(
-                div()
-                    .id(SharedString::from(format!("changes-file-{index}")))
-                    .group(SharedString::from(format!("changes-row-{index}")))
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(tokens.spacing * 1.5))
-                    .mx(px(tokens.spacing))
-                    .px(px(tokens.spacing * 1.5))
-                    .h(px(tokens.sidebar_row))
-                    .rounded(px(tokens.radius))
-                    .cursor_pointer()
-                    .when(selected, |s| s.bg(theme.accent_soft))
-                    .when(!selected, move |s| s.hover(move |s| s.bg(hover)))
-                    .on_click(cx.listener(move |this, _, _, cx| this.select(&path, cx)))
-                    .children(self.render_file_check(index, file, theme, cx))
-                    .child(div().flex_none().w(px(12.0)).text_color(color).child(mark))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .gap(px(tokens.spacing))
-                            .child(div().min_w_0().truncate().child(SharedString::from(name)))
-                            .children(hint.map(|hint| {
-                                div()
-                                    .id(SharedString::from(format!("changes-memory-hint-{index}")))
-                                    .flex_none()
-                                    .text_size(px(tokens.secondary_font_size))
-                                    .text_color(theme.muted)
-                                    .child(hint)
-                                    .child(probe(
-                                        &self.env.regions,
-                                        Region::ChangesMemoryHint(index),
-                                    ))
-                            })),
-                    )
-                    .children(index_glyph)
-                    .child(if file.binary {
-                        div()
-                            .flex_none()
-                            .text_size(px(tokens.secondary_font_size))
-                            .text_color(theme.muted)
-                            .child("binary")
-                            .into_any_element()
-                    } else {
-                        counts_of(file.additions as usize, file.deletions as usize, &look)
-                    })
-                    .children(open)
-                    .child(probe(&self.env.regions, Region::ChangesFile(index))),
-            );
-        }
-        list.into_any_element()
-    }
-
     /// *Open* (E-10): `file` (relative to the checkout) in a file tab at `line`.
     fn open_button(
         &self,
@@ -1608,20 +1517,127 @@ impl ChangesView {
             .into_any_element()
     }
 
+    /// Whether the diff of `file` wraps its long lines: the header's *Wrap lines* for this view,
+    /// else `changes.wrap_lines` (`auto`: prose wraps, code scrolls sideways).
+    pub fn wraps(&self, file: &str) -> bool {
+        use crate::settings::WrapLines;
+        self.wrap_override.unwrap_or_else(|| {
+            match self.env.settings.get::<ChangesSettings>().wrap_lines {
+                WrapLines::On => true,
+                WrapLines::Off => false,
+                WrapLines::Auto => is_prose(file),
+            }
+        })
+    }
+
+    /// *Wrap lines*: wraps or stops wrapping the diffs of this view (the setting is not written).
+    pub fn set_wrap(&mut self, wrap: bool, cx: &mut Context<Self>) {
+        self.wrap_override = Some(wrap);
+        self.diff_x
+            .set_offset(gpui::point(px(0.0), self.diff_x.offset().y));
+        cx.notify();
+    }
+
+    /// How far the code of the diff is scrolled sideways (0 while it wraps).
+    pub fn diff_offset(&self) -> f32 {
+        -f32::from(self.diff_x.offset().x)
+    }
+
+    /// How far the diff pane is scrolled down, and how far it can be.
+    pub fn diff_scroll_y(&self) -> (f32, f32) {
+        (
+            -f32::from(self.review.scroll.offset().y),
+            f32::from(self.review.scroll.max_offset().y),
+        )
+    }
+
+    /// How far the file list is scrolled down, and how far it can be.
+    pub fn list_scroll_y(&self) -> (f32, f32) {
+        (
+            -f32::from(self.files_scroll.offset().y),
+            f32::from(self.files_scroll.max_offset().y),
+        )
+    }
+
+    /// Scrolls the diff by `(dx, dy)` pixels (positive moves the content left and up), within
+    /// its limits.
+    pub fn scroll_diff_by(&mut self, dx: f32, dy: f32, cx: &mut Context<Self>) {
+        scroll_by(&self.diff_x, dx, 0.0);
+        scroll_by(&self.review.scroll, 0.0, dy);
+        cx.notify();
+    }
+
+    /// Scrolls the file list by `dy` pixels, within its limits.
+    pub fn scroll_list_by(&mut self, dy: f32, cx: &mut Context<Self>) {
+        scroll_by(&self.files_scroll, 0.0, dy);
+        cx.notify();
+    }
+
+    /// Page keys, Home and End on whichever of the list and the diff has the keys; whether the
+    /// key was one of them.
+    pub(super) fn scroll_key(&mut self, key: &str, plain: bool, cx: &mut Context<Self>) -> bool {
+        if !plain {
+            return false;
+        }
+        let (view, line) = if self.keys_on_list {
+            (f32::from(self.files_scroll.bounds().size.height), 28.0)
+        } else {
+            (f32::from(self.review.scroll.bounds().size.height), 20.0)
+        };
+        let page = (view - 2.0 * line).max(line);
+        let (x, y) = match key {
+            "pagedown" => (0.0, page),
+            "pageup" => (0.0, -page),
+            "home" => (0.0, -1.0e9),
+            "end" => (0.0, 1.0e9),
+            "down" if !self.keys_on_list => (0.0, line),
+            "up" if !self.keys_on_list => (0.0, -line),
+            "right" if !self.keys_on_list => (40.0, 0.0),
+            "left" if !self.keys_on_list => (-40.0, 0.0),
+            "down" => {
+                self.select_neighbor(true, cx);
+                return true;
+            }
+            "up" => {
+                self.select_neighbor(false, cx);
+                return true;
+            }
+            _ => return false,
+        };
+        if self.keys_on_list {
+            self.scroll_list_by(y, cx);
+        } else {
+            self.scroll_diff_by(x, y, cx);
+        }
+        true
+    }
+
     fn render_patch(&self, look: &Look, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let (theme, tokens) = (&look.theme, &look.tokens);
+        let wrap = self
+            .selected
+            .as_deref()
+            .is_some_and(|file| self.wraps(file));
+        let flow = RowFlow {
+            wrap,
+            scrolled: if wrap {
+                px(0.0)
+            } else {
+                -self.diff_x.offset().x
+            },
+        };
         let mut pane = div()
             .id("changes-diff")
             .relative()
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
+            .size_full()
             .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .track_scroll(&self.review.scroll)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, window, cx| {
                     // The workbench takes focus on this same mouse down; ask again after it.
+                    this.keys_on_list = false;
                     let handle = this.review.focus.clone();
                     cx.defer_in(window, move |_, window, cx| window.focus(&handle, cx));
                 }),
@@ -1631,10 +1647,40 @@ impl ChangesView {
             .flex_col()
             .gap(px(tokens.spacing))
             .child(probe(&self.env.regions, Region::Changes("diff")));
-        let Some(file) = self.selected.clone() else {
-            return pane.into_any_element();
-        };
-        match self.patches.get(&file) {
+        if let Some(file) = self.selected.clone() {
+            pane = self.fill_patch(pane, &file, flow, look, window, cx);
+        }
+        if self.truncated() {
+            pane = pane.child(
+                div()
+                    .text_color(theme.warning)
+                    .text_size(px(tokens.secondary_font_size))
+                    .child("Some patches of this diff are too large to show whole."),
+            );
+        }
+        div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .child(pane)
+            .child(self.diff_bar_y.element(theme))
+            .child(probe(&self.env.regions, Region::Changes("diff-view")))
+            .into_any_element()
+    }
+
+    /// The selected file's patch (or what stands in for it) as children of `pane`.
+    fn fill_patch(
+        &self,
+        mut pane: gpui::Stateful<gpui::Div>,
+        file: &str,
+        flow: RowFlow,
+        look: &Look,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let (theme, tokens) = (&look.theme, &look.tokens);
+        match self.patches.get(file) {
             None | Some(FilePatch::Loading) => {
                 pane = pane.child(div().text_color(theme.muted).child("Reading the patch…"));
             }
@@ -1663,84 +1709,82 @@ impl ChangesView {
                 }
                 let ranges = hunk_ranges(diff);
                 let mut drawn = 0usize;
-                // Long lines scroll sideways inside the block, not out of the pane.
-                let mut block = div()
-                    .id("changes-diff-block")
-                    .overflow_x_scroll()
-                    .track_scroll(&self.diff_x)
-                    .flex()
-                    .flex_col()
-                    // Rows are as wide as their text (and at least as the block): that is what
-                    // gives the block something to scroll.
-                    .items_start()
-                    .rounded(px(tokens.radius))
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.bg)
-                    .font_family(look.mono.clone())
-                    .text_size(px(tokens.font_size - 0.5))
-                    .whitespace_nowrap()
-                    .py(px(tokens.spacing));
+                // Every row of a block is as wide as the widest (so a tint spans the whole
+                // scrolled width) and at least as wide as the pane; wrapped, as the pane.
+                let mut rows = div().flex().flex_col();
+                rows = if flow.wrap {
+                    rows.w_full()
+                } else {
+                    rows.min_w_full()
+                };
                 for (hunk, range) in ranges.iter().enumerate() {
-                    let folded = self.collapsed.contains(&(file.clone(), hunk));
+                    let folded = self.collapsed.contains(&(file.to_owned(), hunk));
                     let header = &diff.lines[range.start];
                     let hidden = range.len() - 1;
-                    block = block.child(
+                    let chevron = div()
+                        .flex_none()
+                        .w(px(tokens.font_size * 1.5))
+                        .text_color(theme.muted)
+                        .child(crate::icons::glyph(if folded {
+                            crate::icons::Icon::ActionDisclose
+                        } else {
+                            crate::icons::Icon::ActionExpand
+                        }))
+                        .into_any_element();
+                    let trail = div()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .when(folded && hidden > 0, |s| {
+                            s.child(
+                                div()
+                                    .flex_none()
+                                    .px(px(tokens.spacing * 2.0))
+                                    .text_color(theme.muted)
+                                    .child(SharedString::from(format!("{hidden} lines"))),
+                            )
+                        })
+                        .child(self.open_button(
+                            SharedString::from(format!("changes-hunk-open-{hunk}")),
+                            file,
+                            diff.changed_line_from(range.start),
+                            Region::ChangesHunkOpen(hunk),
+                            theme,
+                            tokens,
+                        ))
+                        .into_any_element();
+                    rows = rows.child(
                         div()
                             .id(SharedString::from(format!("changes-hunk-{hunk}")))
                             .relative()
-                            .flex()
-                            .min_w_full()
-                            .items_center()
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _, _, cx| this.toggle_hunk(hunk, cx)))
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .w(px(tokens.font_size * 1.5))
-                                    .text_color(theme.muted)
-                                    .child(crate::icons::glyph(if folded {
-                                        crate::icons::Icon::ActionDisclose
-                                    } else {
-                                        crate::icons::Icon::ActionExpand
-                                    })),
-                            )
-                            .child(diff_row(header, look))
-                            .when(folded && hidden > 0, |s| {
-                                s.child(
-                                    div()
-                                        .flex_none()
-                                        .px(px(tokens.spacing * 2.0))
-                                        .text_color(theme.muted)
-                                        .child(SharedString::from(format!("{hidden} lines"))),
-                                )
-                            })
-                            .child(self.open_button(
-                                SharedString::from(format!("changes-hunk-open-{hunk}")),
-                                &file,
-                                diff.changed_line_from(range.start),
-                                Region::ChangesHunkOpen(hunk),
-                                theme,
-                                tokens,
+                            .child(diff_row_flow(
+                                header,
+                                look,
+                                flow,
+                                Some(chevron),
+                                Some(trail),
                             ))
                             .child(probe(&self.env.regions, Region::ChangesHunk(hunk))),
                     );
                     if folded {
                         continue;
                     }
-                    let anchors = self.anchors(&file);
+                    let anchors = self.anchors(file);
                     for (offset, line) in diff.lines[range.start + 1..range.end].iter().enumerate()
                     {
                         if drawn >= MAX_LINES {
                             break;
                         }
-                        block = self.review_line(
-                            block,
+                        rows = self.review_line(
+                            rows,
                             &anchors,
-                            &file,
+                            file,
                             range.start + 1 + offset,
                             line,
                             look,
+                            flow,
                             window,
                             cx,
                         );
@@ -1748,19 +1792,56 @@ impl ChangesView {
                     }
                 }
                 if drawn >= MAX_LINES {
-                    block = block.child(
-                        div()
-                            .px(px(tokens.spacing * 2.0))
-                            .text_color(theme.muted)
-                            .child(SharedString::from(format!(
-                                "… the first {MAX_LINES} lines of each file are shown"
-                            ))),
+                    rows = rows.child(
+                        self.pinned(
+                            flow,
+                            div()
+                                .px(px(tokens.spacing * 2.0))
+                                .text_color(theme.muted)
+                                .child(SharedString::from(format!(
+                                    "… the first {MAX_LINES} lines of each file are shown"
+                                )))
+                                .into_any_element(),
+                        ),
                     );
                 }
                 if !ranges.is_empty() {
-                    pane = pane.child(block);
+                    // Long lines scroll sideways inside the block, not out of the pane (a wheel
+                    // over it moves it along its own axis only: down scrolls the pane).
+                    let scrollable = self.diff_x.max_offset().x > px(0.5);
+                    let block = div()
+                        .id("changes-diff-block")
+                        .overflow_x_scroll()
+                        .restrict_scroll_to_axis()
+                        .track_scroll(&self.diff_x)
+                        .flex()
+                        .flex_col()
+                        .items_start()
+                        .rounded(px(tokens.radius))
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.bg)
+                        .font_family(look.mono.clone())
+                        .text_size(px(tokens.font_size - 0.5))
+                        .when(flow.wrap, |s| s.whitespace_normal())
+                        .when(!flow.wrap, |s| s.whitespace_nowrap())
+                        .pt(px(tokens.spacing))
+                        .pb(px(if scrollable {
+                            tokens.spacing + 8.0
+                        } else {
+                            tokens.spacing
+                        }))
+                        .child(rows);
+                    pane = pane.child(
+                        div()
+                            .relative()
+                            .flex_none()
+                            .w_full()
+                            .child(block)
+                            .child(self.diff_bar_x.element(theme)),
+                    );
                 }
-                for card in self.render_outdated(&file, look, window, cx) {
+                for card in self.render_outdated(file, look, window, cx) {
                     pane = pane.child(card);
                 }
                 if *truncated {
@@ -1772,15 +1853,34 @@ impl ChangesView {
                 }
             }
         }
-        if self.truncated() {
-            pane = pane.child(
-                div()
-                    .text_color(theme.warning)
-                    .text_size(px(tokens.secondary_font_size))
-                    .child("Some patches of this diff are too large to show whole."),
-            );
-        }
-        pane.into_any_element()
+        pane
+    }
+}
+
+/// Moves `handle` by `(dx, dy)` pixels (positive: the content goes left and up) within its
+/// limits.
+fn scroll_by(handle: &ScrollHandle, dx: f32, dy: f32) {
+    let max = handle.max_offset();
+    let mut at = handle.offset();
+    at.x = (at.x - px(dx)).clamp(-max.x, px(0.0));
+    at.y = (at.y - px(dy)).clamp(-max.y, px(0.0));
+    handle.set_offset(at);
+}
+
+/// Whether a file is prose: its diff wraps by default (Markdown and text, where a line is a
+/// sentence), unlike code (`changes.wrap_lines = "auto"`).
+pub fn is_prose(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let lower = name.to_ascii_lowercase();
+    match lower.rsplit_once('.') {
+        Some((_, ext)) => matches!(
+            ext,
+            "md" | "markdown" | "mdx" | "txt" | "text" | "rst" | "adoc" | "org" | "tex"
+        ),
+        None => matches!(
+            lower.as_str(),
+            "readme" | "license" | "licence" | "changelog" | "authors" | "notice" | "todo"
+        ),
     }
 }
 

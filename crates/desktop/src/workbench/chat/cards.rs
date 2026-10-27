@@ -1172,6 +1172,105 @@ pub(crate) fn diff_row(line: &DiffLine, look: &Look) -> gpui::Div {
         .child(div().flex_none().child(SharedString::from(shown)))
 }
 
+/// How the Changes view lays a diff row out: lines wrap, or run on and scroll sideways with the
+/// number gutter held in place.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RowFlow {
+    /// Long lines wrap inside the pane; the row is as wide as the pane.
+    pub wrap: bool,
+    /// How far the code is scrolled sideways (positive), so the gutter can stay where it is.
+    pub scrolled: gpui::Pixels,
+}
+
+/// The width of the number gutter and sign column of a flowing diff row.
+pub(crate) fn gutter_width(tokens: &crate::theme::Tokens) -> gpui::Pixels {
+    px(tokens.font_size * 7.4)
+}
+
+/// A diff row of the Changes view: like [`diff_row`], but the old and new line numbers and the
+/// sign are a gutter that stays at the left edge of the pane while the code scrolls sideways
+/// under it, and the tint covers the whole row however wide the code is (the rows of a block are
+/// stretched to its widest). `lead` replaces the numbers (a hunk header's fold chevron); `trail`
+/// follows the text (a hunk header's *Open*).
+pub(crate) fn diff_row_flow(
+    line: &DiffLine,
+    look: &Look,
+    flow: RowFlow,
+    lead: Option<AnyElement>,
+    trail: Option<AnyElement>,
+) -> gpui::Div {
+    let (theme, tokens) = (&look.theme, &look.tokens);
+    let number = |n: Option<u32>| {
+        div()
+            .flex_none()
+            .w(px(tokens.font_size * 3.2))
+            .text_right()
+            .pr(px(tokens.spacing))
+            .text_color(theme.muted)
+            .child(SharedString::from(
+                n.map_or(String::new(), |n| n.to_string()),
+            ))
+    };
+    let (sign, tint, text_color) = match line.kind {
+        LineKind::Add => ("+", Some(theme.diff_added_bg), theme.fg),
+        LineKind::Remove => ("−", Some(theme.diff_removed_bg), theme.fg),
+        LineKind::Context => (" ", None, theme.fg),
+        LineKind::Hunk => ("", Some(theme.diff_hunk_bg), theme.diff_hunk_fg),
+        LineKind::Note => ("", None, theme.muted),
+    };
+    let mut shown = if matches!(line.kind, LineKind::Hunk) {
+        line.text.clone()
+    } else {
+        line.text.replace('\t', "    ")
+    };
+    if shown.is_empty() {
+        // An empty line keeps its height.
+        shown.push(' ');
+    }
+    let gutter = gutter_width(tokens);
+    let numbers = match lead {
+        Some(lead) => div().flex().items_center().size_full().child(lead),
+        None => div()
+            .flex()
+            .size_full()
+            .child(number(line.old))
+            .child(number(line.new))
+            .child(div().flex_none().w(px(tokens.font_size)).child(sign)),
+    };
+    div()
+        .relative()
+        .flex()
+        .when(flow.wrap, |s| s.w_full())
+        .when_some(tint, |s, tint| s.bg(tint))
+        .text_color(text_color)
+        .pl(gutter)
+        .child(if flow.wrap {
+            div()
+                .flex_1()
+                .min_w_0()
+                .whitespace_normal()
+                .child(SharedString::from(shown))
+        } else {
+            div().flex_none().child(SharedString::from(shown))
+        })
+        .children(trail)
+        .child(
+            // Opaque under the tint, so code scrolled beneath the gutter is hidden by it.
+            div()
+                .absolute()
+                .top_0()
+                .left(flow.scrolled)
+                .h_full()
+                .w(gutter)
+                .bg(theme.bg)
+                .child(
+                    numbers
+                        .when_some(tint, |s, tint| s.bg(tint))
+                        .text_color(theme.muted),
+                ),
+        )
+}
+
 /// A unified diff: line numbers, a sign and the text; additions and removals tinted
 /// green and red.
 fn diff_view(diff: &FileDiff, look: &Look, ids: &mut Ids) -> AnyElement {
@@ -1181,6 +1280,7 @@ fn diff_view(diff: &FileDiff, look: &Look, ids: &mut Ids) -> AnyElement {
     div()
         .id(ids.next("diff"))
         .overflow_x_scroll()
+        .restrict_scroll_to_axis()
         .rounded(px(tokens.radius))
         .border_1()
         .border_color(theme.border)
