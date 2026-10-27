@@ -473,6 +473,7 @@ fn the_places_that_offer_blame_and_history(cx: &mut TestAppContext) {
             "Compare with HEAD",
             "Open in Terminal",
             "Attach to Chat",
+            "Filter in this Folder",
             "Find in Folder",
             "Show File History",
             "Copy Path",
@@ -504,6 +505,7 @@ fn the_places_that_offer_blame_and_history(cx: &mut TestAppContext) {
         [
             "Reveal in Finder",
             "Open in Terminal",
+            "Filter in this Folder",
             "Find in Folder",
             "Copy Path",
             "Copy Relative Path",
