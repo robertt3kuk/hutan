@@ -340,14 +340,17 @@ impl CodeView {
         if !layout.bounds.contains(&position) || position.x < layout.text_left {
             return None;
         }
-        let text = self.buffer().read(cx).text();
         let y = f32::from(position.y - layout.bounds.top()) + self.scroll_y;
-        let line = (y / f32::from(layout.line_height)).floor() as usize;
-        if line >= text.line_count() {
+        let row = (y / f32::from(layout.line_height)).floor() as usize;
+        if row >= self.display_rows(cx) {
             return None;
         }
-        let at = self.offset_at(position, cx)?;
-        let content = text.line_content_range(line).ok()?;
+        let (at, past_row_end) = self.offset_at_affinity(position, cx)?;
+        if past_row_end {
+            return None;
+        }
+        let text = self.buffer().read(cx).text();
+        let content = text.line_content_range(text.line_of_byte(at).ok()?).ok()?;
         (at < content.end).then_some(at)
     }
 
@@ -367,8 +370,9 @@ impl CodeView {
         let theme = &self.style.theme;
         let mut border = rgba(theme.gutter_foreground);
         border.a *= 0.35;
-        let y =
-            layout.bounds.top() + layout.line_height * (row as f32 + 1.0) - gpui::px(self.scroll_y);
+        let y = layout.bounds.top()
+            + layout.line_height * (self.first_row_of_line(row, cx) as f32 + 1.0)
+            - gpui::px(self.scroll_y);
         let mut body = div()
             .id("code-blame-hover")
             .flex()

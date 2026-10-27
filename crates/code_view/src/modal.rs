@@ -643,10 +643,12 @@ impl CodeView {
         let id = cx.entity_id();
         let head = self.selections.primary().head;
         let unit = self.buffer().read(cx).indent_unit();
-        // Vim's window: the first whole line in view and how many fit.
+        // Vim's window: the first whole line in view (the line of the first whole row while
+        // wrapping) and how many rows fit.
         let view = self.layout.map(|layout| {
             let line_h = f32::from(layout.line_height).max(1.0);
-            let top = (self.scroll_y.max(0.0) / line_h).ceil() as usize;
+            let top_row = (self.scroll_y.max(0.0) / line_h).ceil() as usize;
+            let top = self.line_of_row(top_row, cx).0;
             let height = (f32::from(layout.bounds.size.height) / line_h).floor() as usize;
             (top, height.max(1))
         });
@@ -690,7 +692,7 @@ impl CodeView {
         self.marked.clear();
         self.goal = None;
         if let (Some(top), Some(layout)) = (scrolled, self.layout) {
-            self.scroll_y = top as f32 * f32::from(layout.line_height);
+            self.scroll_y = self.first_row_of_line(top, cx) as f32 * f32::from(layout.line_height);
             self.clamp_scroll(cx);
         }
         self.reveal_head(cx);

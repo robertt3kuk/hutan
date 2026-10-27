@@ -5,6 +5,7 @@
 //! The editing commands are in `motion.rs` (carets and selections), `editing.rs` (changes to
 //! the text) and `input.rs` (the platform's text input: typing, input methods).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
@@ -24,6 +25,7 @@ use crate::find::{self, FindQuery, FindState};
 use crate::layout;
 use crate::rules::is_word;
 use crate::style::CodeStyle;
+use crate::wrap::WrapState;
 
 /// Lines shaped above and below the ones that intersect the view. None: a frame shapes exactly
 /// what it shows (a partly visible line at each edge included).
@@ -154,6 +156,20 @@ pub struct Layout {
     pub rows: usize,
 }
 
+/// One display row a frame drew.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrawnRow {
+    /// The buffer line (0-based).
+    pub line: usize,
+    /// Which row of the line (0 for the first, which has the line number).
+    pub sub: usize,
+    /// Whether the gutter shows the line's number on this row.
+    pub number: bool,
+    /// Bar carets drawn on this row.
+    pub carets: usize,
+    /// Cells of selection fill on this row (the line break counts one).
+    pub selected_cells: usize,
+}
 /// Counters of what frames did (the deterministic half of the performance budgets).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ViewStats {
@@ -167,6 +183,8 @@ pub struct ViewStats {
     pub last_lines: Range<usize>,
     /// The diagnostics the last frame drew (E-12a).
     pub last_diagnostics: Vec<crate::diagnostics::DrawnDiagnostic>,
+    /// The display rows the last frame drew, top to bottom (EDITOR-WRAP).
+    pub last_rows: Vec<DrawnRow>,
     /// The buffer's diagnostics epoch the frames drew last, and the first frame that drew it
     /// (the B16b budget: a publish reaches the screen in the next frame).
     pub diagnostics_drawn: Option<(u64, u64)>,
@@ -309,6 +327,8 @@ pub struct CodeView {
     pub(crate) completion_seq: u64,
     pub(crate) snippet: Option<crate::completion::SnippetSession>,
     pub(crate) signature: Option<crate::completion::SignatureState>,
+    /// Soft wrap (`soft_wrap.rs`): the mode, the map of the last frame's width, the edits since.
+    pub(crate) wrap: RefCell<WrapState>,
     _observe: Subscription,
     _edits: Subscription,
     /// Focus-out and window-activation watchers, made at the first render (they need the
@@ -393,6 +413,7 @@ impl CodeView {
             completion_seq: 0,
             snippet: None,
             signature: None,
+            wrap: RefCell::new(WrapState::default()),
             _observe: observe,
             _edits: edits,
             focus_watch: Vec::new(),
@@ -455,11 +476,14 @@ impl CodeView {
         self.buffer.read(cx).is_editable()
     }
 
-    /// The first line drawn (0-based).
+    /// The first line drawn (0-based), as of the last frame; the line of the first display row
+    /// while wrapping.
     pub fn top_line(&self) -> usize {
-        self.layout.map_or(0, |l| {
-            (self.scroll_y / f32::from(l.line_height)).floor() as usize
-        })
+        let row = self.top_row();
+        match &self.wrap.borrow().map {
+            Some(map) => map.locate_row(row).0,
+            None => row,
+        }
     }
 
     /// The 1-based line and column (in characters) of the primary caret: what the status bar
@@ -489,6 +513,9 @@ impl CodeView {
     /// matches follow it.
     fn on_buffer_edited(&mut self, event: &BufferEdited, cx: &mut Context<Self>) {
         let mine = event.origin == Some(cx.entity_id());
+        self.wrap
+            .get_mut()
+            .note_edit(event.version, &event.transaction);
         if !mine {
             self.selections = self.selections.map(&event.transaction);
             self.marked = self
@@ -567,7 +594,7 @@ impl CodeView {
         };
         let line_h = f32::from(layout.line_height);
         let third = (layout.rows / 3) as f32 * line_h;
-        self.scroll_y = (index as f32 * line_h - third).max(0.0);
+        let mut target = index;
         if let Ok(content) = text.line_content_range(index) {
             let at = match reveal {
                 Reveal::Column {
@@ -592,27 +619,32 @@ impl CodeView {
             self.selections = Selections::cursor(at);
             self.marked.clear();
             self.goal = None;
+            self.set_upstream(None);
+            target = self.row_of_offset(at, cx);
+        } else if self.is_wrapping(cx) {
+            target = self.first_row_of_line(index, cx);
         }
+        self.scroll_y = (target as f32 * line_h - third).max(0.0);
         self.reveal = None;
         self.clamp_scroll(cx);
     }
 
-    fn line_count(&self, cx: &App) -> usize {
-        self.buffer.read(cx).text().line_count()
-    }
-
-    /// Keeps the scroll inside the content: the last line can reach the top, the widest line
-    /// seen can reach the left edge.
+    /// Keeps the scroll inside the content: the last row can reach the top, the widest line
+    /// seen can reach the left edge (a wrapped view never scrolls sideways).
     pub(crate) fn clamp_scroll(&mut self, cx: &App) {
         let Some(layout) = self.layout else {
             return;
         };
         let line_h = f32::from(layout.line_height);
-        let max_y = (self.line_count(cx).saturating_sub(1)) as f32 * line_h;
+        let max_y = (self.display_rows(cx).saturating_sub(1)) as f32 * line_h;
         self.scroll_y = self.scroll_y.clamp(-self.inset, max_y.max(0.0));
         self.inset = (-self.scroll_y).max(0.0);
         let visible_w = f32::from(layout.bounds.right() - layout.text_left).max(0.0);
-        let max_x = (self.widest as f32 * f32::from(layout.cell_width) - visible_w * 0.5).max(0.0);
+        let max_x = if self.is_wrapping(cx) {
+            0.0
+        } else {
+            (self.widest as f32 * f32::from(layout.cell_width) - visible_w * 0.5).max(0.0)
+        };
         self.scroll_x = self.scroll_x.clamp(0.0, max_x);
     }
 
@@ -640,6 +672,11 @@ impl CodeView {
 
     pub fn scroll_y(&self) -> f32 {
         self.scroll_y
+    }
+
+    /// Pixels of content left of the text area's edge (always 0 while wrapping).
+    pub fn scroll_x(&self) -> f32 {
+        self.scroll_x
     }
 
     /// Starts where `other` (a view of the same file) is: its primary caret and its scroll; the
@@ -697,26 +734,30 @@ impl CodeView {
         let Ok(line) = text.line_of_byte(head) else {
             return;
         };
+        let row = self.row_of_offset(head, cx);
         let line_h = f32::from(layout.line_height);
         let view_h = f32::from(layout.bounds.size.height);
-        let top = line as f32 * line_h;
+        let top = row as f32 * line_h;
         if top < self.scroll_y {
             self.scroll_y = top;
         } else if top + line_h > self.scroll_y + view_h {
             self.scroll_y = top + line_h - view_h;
         }
-        let start = text.line_start(line).unwrap_or(0);
-        let window = line_window(text, start..head, usize::MAX);
-        let col = layout::line_columns(&window);
-        let cell = f32::from(layout.cell_width);
-        let x = col as f32 * cell;
-        let visible_w = f32::from(layout.bounds.right() - layout.text_left);
-        self.widest = self.widest.max(col + 1);
-        let margin = 4.0 * cell;
-        if x < self.scroll_x + margin {
-            self.scroll_x = (x - margin).max(0.0);
-        } else if x > self.scroll_x + visible_w - margin {
-            self.scroll_x = x - visible_w + margin;
+        if !self.is_wrapping(cx) {
+            let text = self.buffer.read(cx).text();
+            let start = text.line_start(line).unwrap_or(0);
+            let window = line_window(text, start..head, usize::MAX);
+            let col = layout::line_columns(&window);
+            let cell = f32::from(layout.cell_width);
+            let x = col as f32 * cell;
+            let visible_w = f32::from(layout.bounds.right() - layout.text_left);
+            self.widest = self.widest.max(col + 1);
+            let margin = 4.0 * cell;
+            if x < self.scroll_x + margin {
+                self.scroll_x = (x - margin).max(0.0);
+            } else if x > self.scroll_x + visible_w - margin {
+                self.scroll_x = x - visible_w + margin;
+            }
         }
         self.clamp_scroll(cx);
     }
@@ -730,13 +771,16 @@ impl CodeView {
         let Ok(line) = text.line_of_byte(offset) else {
             return;
         };
+        let row = self.row_of_offset(offset, cx);
         let line_h = f32::from(layout.line_height);
-        let top = line as f32 * line_h;
+        let top = row as f32 * line_h;
         let view_h = f32::from(layout.bounds.size.height);
         if top < self.scroll_y || top + line_h > self.scroll_y + view_h {
             self.scroll_y = top - (view_h / 2.0).floor();
         }
-        if let Ok(start) = text.line_start(line) {
+        if !self.is_wrapping(cx)
+            && let Ok(start) = text.line_start(line)
+        {
             let window = line_window(&text, start..offset, usize::MAX);
             let col = layout::line_columns(&window) as f32;
             let x = col * f32::from(layout.cell_width);
@@ -752,35 +796,71 @@ impl CodeView {
     // ---- geometry -----------------------------------------------------------------------------
 
     /// The line and fractional display column under window position `position` (the line
-    /// clamped into the text).
-    fn cell_at(&self, position: Point<Pixels>, text: &Text) -> Option<(usize, f32)> {
+    /// clamped into the text). While wrapping, the column is the line's own, counted from the
+    /// start of the row the pointer is on.
+    fn cell_at(&self, position: Point<Pixels>, cx: &App) -> Option<(usize, f32)> {
         let layout = self.layout?;
         let line_h = f32::from(layout.line_height);
         let y = f32::from(position.y - layout.bounds.top()) + self.scroll_y;
-        let line = if y < 0.0 {
+        let row = if y < 0.0 {
             0
         } else {
-            ((y / line_h).floor() as usize).min(text.line_count().saturating_sub(1))
+            (y / line_h).floor() as usize
         };
+        let cells = f32::from(position.x - layout.text_left) / f32::from(layout.cell_width);
+        let wrapped = self.with_wrap(cx, |map, text| {
+            let geom = map.row_at(text, row);
+            (
+                geom.line,
+                geom.start_col as f32 + (cells - geom.indent as f32).max(0.0),
+            )
+        });
+        if wrapped.is_some() {
+            return wrapped;
+        }
+        let text = self.buffer.read(cx).text();
+        let line = row.min(text.line_count().saturating_sub(1));
         let x = f32::from(position.x - layout.text_left) + self.scroll_x;
         Some((line, (x / f32::from(layout.cell_width)).max(0.0)))
     }
 
     /// The byte offset under window position `position` (clamped into the text).
     pub(crate) fn offset_at(&self, position: Point<Pixels>, cx: &App) -> Option<usize> {
+        self.offset_at_affinity(position, cx).map(|(at, _)| at)
+    }
+
+    /// [`offset_at`](Self::offset_at) and whether the pointer is past the end of a wrapped row
+    /// that another follows (the caret then draws at the end of that row).
+    pub(crate) fn offset_at_affinity(
+        &self,
+        position: Point<Pixels>,
+        cx: &App,
+    ) -> Option<(usize, bool)> {
         let layout = self.layout?;
-        let text = self.buffer.read(cx).text();
         let y = f32::from(position.y - layout.bounds.top()) + self.scroll_y;
         if y < 0.0 {
-            return Some(0);
+            return Some((0, false));
         }
-        if (y / f32::from(layout.line_height)).floor() as usize >= text.line_count() {
-            return Some(text.len());
+        let row = (y / f32::from(layout.line_height)).floor() as usize;
+        let x_cells = f32::from(position.x - layout.text_left) / f32::from(layout.cell_width);
+        let wrapped = self.with_wrap(cx, |map, text| {
+            if row >= map.total_rows() {
+                (text.len(), false)
+            } else {
+                map.byte_at_x(text, row, x_cells.max(0.0))
+            }
+        });
+        if wrapped.is_some() {
+            return wrapped;
         }
-        let (line, x_cols) = self.cell_at(position, text)?;
+        let text = self.buffer.read(cx).text();
+        if row >= text.line_count() {
+            return Some((text.len(), false));
+        }
+        let (line, x_cols) = self.cell_at(position, cx)?;
         let content = text.line_content_range(line).ok()?;
         let window = line_window(text, content.clone(), x_cols as usize + 2);
-        Some(content.start + layout::byte_of_col(&window, x_cols))
+        Some((content.start + layout::byte_of_col(&window, x_cols), false))
     }
 
     /// The window position of the top left corner of the cell where byte `offset` is drawn.
@@ -788,6 +868,15 @@ impl CodeView {
         let layout = self.layout?;
         let text = self.buffer.read(cx).text();
         let offset = text.floor_char_boundary(offset.min(text.len()));
+        let upstream = self.upstream_at(offset);
+        if let Some((row, x)) =
+            self.with_wrap(cx, |map, text| map.x_of_byte(text, offset, upstream))
+        {
+            let left = layout.text_left + layout.cell_width * x;
+            let top =
+                layout.bounds.top() + layout.line_height * row as f32 - gpui::px(self.scroll_y);
+            return Some(gpui::point(left, top));
+        }
         let line = text.line_of_byte(offset).ok()?;
         let start = text.line_start(line).ok()?;
         let col = layout::line_columns(&line_window(text, start..offset, usize::MAX));
@@ -842,8 +931,11 @@ impl CodeView {
         if row < 0.0 {
             return None;
         }
-        let row = row as usize;
-        self.buffer.read(cx).blame_line(row).map(|_| row)
+        let (line, sub) = self.line_of_row(row as usize, cx);
+        if sub != 0 || row as usize >= self.display_rows(cx) {
+            return None;
+        }
+        self.buffer.read(cx).blame_line(line).map(|_| line)
     }
 
     // ---- the mouse ----------------------------------------------------------------------------
@@ -865,9 +957,10 @@ impl CodeView {
             cx.notify();
             return;
         }
-        let Some(at) = self.offset_at(event.position, cx) else {
+        let Some((at, up)) = self.offset_at_affinity(event.position, cx) else {
             return;
         };
+        self.set_upstream(None);
         let text = self.buffer.read(cx).text().clone();
         self.dismiss_hover(cx);
         self.buffer.update(cx, |b, _| b.break_group());
@@ -886,7 +979,7 @@ impl CodeView {
         }
         if modifiers.alt && modifiers.shift {
             // A block of columns from here.
-            if let Some((line, col)) = self.cell_at(event.position, &text) {
+            if let Some((line, col)) = self.cell_at(event.position, cx) {
                 let col = col.round() as usize;
                 self.drag = Some(Drag::Column { line, col });
                 self.selections = column_selections(&text, (line, col), (line, col));
@@ -937,6 +1030,7 @@ impl CodeView {
                         (at, at)
                     };
                     self.selections = Selections::single(Selection::new(anchor, at));
+                    self.set_upstream(up.then_some(at));
                     self.drag = Some(Drag::Chars {
                         anchor,
                         others: None,
@@ -964,10 +1058,11 @@ impl CodeView {
             self.drag = None;
             return;
         }
-        let Some(at) = self.offset_at(event.position, cx) else {
+        let Some((at, up)) = self.offset_at_affinity(event.position, cx) else {
             return;
         };
         let text = self.buffer.read(cx).text().clone();
+        let chars_drag = matches!(drag, Drag::Chars { .. });
         let selections = match drag {
             Drag::Chars { anchor, others } => {
                 with_dragged(others.as_ref(), Selection::new(anchor, at))
@@ -979,7 +1074,7 @@ impl CodeView {
                 with_dragged(others.as_ref(), extend(origin, line_at(&text, at)))
             }
             Drag::Column { line, col } => {
-                let Some((now_line, now_col)) = self.cell_at(event.position, &text) else {
+                let Some((now_line, now_col)) = self.cell_at(event.position, cx) else {
                     return;
                 };
                 column_selections(&text, (line, col), (now_line, now_col.round() as usize))
@@ -987,6 +1082,7 @@ impl CodeView {
         };
         if self.selections != selections {
             self.selections = selections;
+            self.set_upstream((chars_drag && up).then_some(at));
             self.reveal_head(cx);
             cx.emit(CodeViewEvent::Changed);
             cx.notify();

@@ -225,6 +225,20 @@ pub struct RowGeom {
 }
 
 impl RowGeom {
+    /// `line` drawn as one row (a view that does not wrap).
+    pub fn whole_line(text: &Text, line: usize) -> Self {
+        Self {
+            line,
+            sub: 0,
+            bytes: text.line_content_range(line).unwrap_or(0..0),
+            start_col: 0,
+            indent: 0,
+            first: true,
+            last: true,
+            end_col: None,
+        }
+    }
+
     /// The column of the line the row ends at.
     pub fn end_col(&self, text: &Text) -> usize {
         self.end_col.unwrap_or_else(|| {

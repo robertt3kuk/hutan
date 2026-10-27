@@ -39,13 +39,8 @@ pub fn line_columns_at(text: &str, base: usize) -> usize {
     col
 }
 
-/// The column where the character at byte `byte` of `line` starts (the end of the line for a
-/// byte at or past its end).
-pub fn col_of_byte(line: &str, byte: usize) -> usize {
-    col_of_byte_at(line, 0, byte)
-}
-
-/// [`col_of_byte`] for text that starts at column `base` of its line.
+/// The column where the character at byte `byte` of `text` starts when `text` begins at column
+/// `base` of its line (the end of the text for a byte at or past its end).
 pub fn col_of_byte_at(text: &str, base: usize, byte: usize) -> usize {
     let mut col = base;
     for (at, c) in text.char_indices() {
@@ -195,7 +190,10 @@ mod tests {
     fn tabs_run_to_the_next_stop() {
         assert_eq!(line_columns("\tx"), 5);
         assert_eq!(line_columns("ab\tx"), 5);
-        assert_eq!(col_of_byte("ab\tx", 3), 4);
+        assert_eq!(col_of_byte_at("ab\tx", 0, 3), 4);
+        // A row that starts at column 2 of its line reaches the same stop.
+        assert_eq!(col_of_byte_at("\tx", 2, 1), 4);
+        assert_eq!(line_columns_at("\tx", 2), 5);
         let shown = DisplayLine::build("ab\tx", 0, 80);
         assert_eq!(shown.text, "ab  x");
         assert_eq!(shown.text_range(3..4), 4..5);
@@ -205,7 +203,7 @@ mod tests {
     fn wide_characters_take_two_cells() {
         let line = "a日b";
         assert_eq!(line_columns(line), 4);
-        assert_eq!(col_of_byte(line, 4), 3);
+        assert_eq!(col_of_byte_at(line, 0, 4), 3);
         let shown = DisplayLine::build(line, 0, 80);
         assert_eq!(shown.text, "a日 b");
         assert_eq!(shown.cols, 4);

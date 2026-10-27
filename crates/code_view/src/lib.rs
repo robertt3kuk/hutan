@@ -56,6 +56,7 @@ mod modal;
 mod motion;
 mod rules;
 mod snippet;
+mod soft_wrap;
 mod style;
 mod view;
 mod vim_host;
@@ -85,8 +86,8 @@ pub use modal::{ExRun, VimMessage, VimSettings, vim_key_of, vim_key_of_keystroke
 pub use rules::IndentUnit;
 pub use style::{CodeStyle, rgb, rgba};
 pub use view::{
-    CodeView, CodeViewEvent, Layout, MAX_COLUMN_LINES, OVERSCAN_LINES, PaintTimes, ViewStats,
-    VimWindow, WindowDirection,
+    CodeView, CodeViewEvent, DrawnRow, Layout, MAX_COLUMN_LINES, OVERSCAN_LINES, PaintTimes,
+    ViewStats, VimWindow, WindowDirection,
 };
 pub use vim_host::{BufferHost, HostStep};
 pub use wrap::{

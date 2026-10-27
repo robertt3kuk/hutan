@@ -26,6 +26,7 @@ use crate::diagnostics::{Diagnostic, DrawnDiagnostic, GlyphShape, Severity, Unde
 use crate::layout::DisplayLine;
 use crate::style::{CodeStyle, rgba};
 use crate::view::{CodeView, Layout, OVERSCAN_LINES, line_window};
+use crate::wrap::{RowGeom, WrapMap};
 
 /// How an agent's change marks a drawn line.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -74,6 +75,9 @@ struct LinePaint {
     text: Option<Rc<ShapedLine>>,
     /// Column the shaped text starts at.
     start_col: usize,
+    /// Cells to add to a column of the line to get the cell it is drawn in, counted from the
+    /// left of the text area: a wrapped row starts at its indent, whatever column it begins at.
+    col_shift: f32,
     /// Column ranges painted behind the text: the current line, find matches, the current
     /// match, the matching brackets, the selections.
     fills: Vec<(Range<f32>, Hsla)>,
@@ -238,6 +242,7 @@ fn prepare(
         diagnostics_epoch,
         has_blame,
         blame_cells,
+        version,
     ) = {
         let buffer = view.buffer().read(cx);
         (
@@ -250,6 +255,7 @@ fn prepare(
             buffer.diagnostics_epoch(),
             buffer.has_blame(),
             buffer.blame_cells(),
+            buffer.version(),
         )
     };
     let blame_column = view.blame_gutter && has_blame;
@@ -288,6 +294,7 @@ fn prepare(
         line_height: line_h,
         rows,
     });
+    view.sync_wrap_frame(&text, version);
     if std::mem::take(&mut view.keep_in_place)
         && let Some(previous) = previous_top
     {
@@ -332,6 +339,7 @@ fn prepare(
         input: focused && editable,
     };
     view.stats.last_diagnostics.clear();
+    view.stats.last_rows.clear();
     if line_count == 0 {
         view.stats.last_shaped = 0;
         view.stats.last_lines = 0..0;
@@ -339,10 +347,23 @@ fn prepare(
     }
 
     let line_hf = f32::from(line_h);
-    let first = ((view.scroll_y / line_hf).floor() as usize).saturating_sub(OVERSCAN_LINES);
+    let first =
+        ((view.scroll_y / line_hf).floor().max(0.0) as usize).saturating_sub(OVERSCAN_LINES);
     let offset = view.scroll_y - first as f32 * line_hf;
-    let shown = (rows + 2 * OVERSCAN_LINES).min(line_count - first.min(line_count));
-    let lines = first..first + shown;
+    // The rows in view: lines, or the rows the lines wrap to.
+    let wrapped = view.wrap.borrow().map.is_some();
+    let geoms: Vec<RowGeom> = {
+        let wrap = view.wrap.borrow();
+        let total = wrap.map.as_ref().map_or(line_count, WrapMap::total_rows);
+        let shown = (rows + 2 * OVERSCAN_LINES).min(total - first.min(total));
+        (first..first + shown)
+            .map(|row| match &wrap.map {
+                Some(map) => map.row_at(&text, row),
+                None => RowGeom::whole_line(&text, row),
+            })
+            .collect()
+    };
+    let lines = geoms.first().map_or(0, |g| g.line)..geoms.last().map_or(0, |g| g.line + 1);
     let agent_marks = agent_marks(&text, &hunks, lines.clone(), theme);
     // The diagnostics that touch a line in view (they are sorted by where they start).
     let shown_diagnostics: Vec<&Diagnostic> = {
@@ -375,6 +396,9 @@ fn prepare(
     };
     let primary = view.selections.primary();
     let head_line = text.line_of_byte(primary.head.min(text.len())).ok();
+    // A caret at the end of a wrapped row (`End`, a click past it) is drawn there, not at the
+    // start of the row after it.
+    let upstream_head = view.wrap.borrow().upstream.filter(|u| *u == primary.head);
     // Vim's Normal and Visual draw a block over the character under the caret.
     let block = view.block_caret();
     // The current line is tinted while there is one caret and nothing is selected.
@@ -397,17 +421,24 @@ fn prepare(
     // the lines that miss, not for the whole view.
     let mut shaped = 0usize;
     let text_system = window.text_system().clone();
-    let mut rows: Vec<Row> = Vec::with_capacity(lines.len());
+    let mut rows: Vec<Row> = Vec::with_capacity(geoms.len());
     let mut missing: Option<Range<usize>> = None;
-    for line in lines.clone() {
-        let Ok(content) = text.line_content_range(line) else {
-            continue;
+    for geom in geoms {
+        let content = geom.bytes.clone();
+        let (window_text, display) = if wrapped {
+            let row_text = geom.text(&text);
+            let end_col = crate::layout::line_columns_at(&row_text, geom.start_col);
+            let display = DisplayLine::build_at(&row_text, geom.start_col, geom.start_col, end_col);
+            (row_text, display)
+        } else {
+            let window_text = line_window(&text, content.clone(), to_col);
+            let display = DisplayLine::build(&window_text, from_col, to_col);
+            view.widest = view.widest.max(crate::layout::line_columns(&window_text));
+            (window_text, display)
         };
-        let window_text = line_window(&text, content.clone(), to_col);
-        let display = DisplayLine::build(&window_text, from_col, to_col);
-        view.widest = view.widest.max(crate::layout::line_columns(&window_text));
         let key = hash_of((
-            line,
+            geom.line,
+            geom.sub,
             hash_of(&display.text),
             display.start_col,
             from_col,
@@ -421,11 +452,10 @@ fn prepare(
             view.lines.get(key)
         };
         if text_line.is_none() && !display.text.is_empty() {
-            missing = Some(missing.map_or(line..line + 1, |m| m.start..line + 1));
+            missing = Some(missing.map_or(content.clone(), |m| m.start..content.end));
         }
         rows.push(Row {
-            line,
-            content,
+            geom,
             window_text,
             display,
             key,
@@ -433,19 +463,15 @@ fn prepare(
         });
     }
     if let Some(missing) = missing {
-        let start = text.line_start(missing.start).unwrap_or(0);
-        let end = text
-            .line_range(missing.end - 1)
-            .map_or(text.len(), |r| r.end);
         let spans: Vec<HighlightSpan> = syntax
             .as_ref()
-            .map(|s| s.highlights(start..end))
+            .map(|s| s.highlights(missing))
             .unwrap_or_default();
         for row in rows
             .iter_mut()
             .filter(|r| r.text_line.is_none() && !r.display.text.is_empty())
         {
-            let runs = runs_for(&row.display, row.content.clone(), &spans, &style);
+            let runs = runs_for(&row.display, row.geom.bytes.clone(), &spans, &style);
             let shown = content_key(&row.display.text, &runs, view.style_generation);
             let shaped_line = match view.shapes.get(shown) {
                 Some(hit) => hit,
@@ -465,15 +491,27 @@ fn prepare(
             row.text_line = Some(shaped_line);
         }
     }
-    for row in rows {
+    for (row_index, row) in rows.into_iter().enumerate() {
         let Row {
-            line,
-            content,
+            geom,
             window_text,
             display,
             text_line,
             ..
         } = row;
+        let line = geom.line;
+        let content = geom.bytes.clone();
+        let base_col = geom.start_col;
+        let last_row = geom.last;
+        // Whether a range starting at `start` begins inside the row: the end of the line
+        // belongs to its last row, the end of any other row to the row after it.
+        let begins_in_row = |start: usize| {
+            if last_row {
+                start <= content.end
+            } else {
+                start < content.end
+            }
+        };
 
         let number_color = if head_line == Some(line) {
             theme.line_number_active
@@ -481,7 +519,7 @@ fn prepare(
             theme.gutter_foreground
         };
         let number_key = hash_of((line, view.style_generation, head_line == Some(line)));
-        let number = if !numbers {
+        let number = if !numbers || !geom.first {
             None
         } else if let Some(hit) = view.numbers.get(number_key) {
             Some(hit)
@@ -507,7 +545,11 @@ fn prepare(
 
         let line_range = content.start..content.end;
         let col = |byte: usize| -> f32 {
-            crate::layout::col_of_byte(&window_text, byte.saturating_sub(content.start)) as f32
+            crate::layout::col_of_byte_at(
+                &window_text,
+                base_col,
+                byte.saturating_sub(content.start),
+            ) as f32
         };
         let columns = |range: Range<usize>, extend_eol: bool| -> Range<f32> {
             let from = col(range.start);
@@ -530,7 +572,7 @@ fn prepare(
         let first_match = find_matches.partition_point(|m| m.end <= line_range.start);
         for found in find_matches[first_match..]
             .iter()
-            .take_while(|m| m.start <= line_range.end)
+            .take_while(|m| begins_in_row(m.start))
         {
             let clipped = found.start.max(line_range.start)..found.end.min(line_range.end);
             let color = if current_match.as_ref() == Some(found) {
@@ -540,19 +582,22 @@ fn prepare(
             };
             fills.push((columns(clipped, false), rgba(color)));
         }
+        let mut selected_cells = 0usize;
         let first_selection = selections.partition_point(|s| s.end < line_range.start);
         for selected in selections[first_selection..]
             .iter()
-            .take_while(|s| s.start <= line_range.end)
+            .take_while(|s| begins_in_row(s.start))
         {
             if selected.is_empty() {
                 continue;
             }
             let clipped = selected.start.max(line_range.start)..selected.end.min(line_range.end);
             // The line break is selected too: one more cell.
-            let eol = selected.end > line_range.end;
+            let eol = selected.end > line_range.end && last_row;
             if eol || !clipped.is_empty() {
-                fills.push((columns(clipped, eol), selection_color));
+                let cols = columns(clipped, eol);
+                selected_cells += (cols.end - cols.start).round() as usize;
+                fills.push((cols, selection_color));
             }
         }
         let carets: Vec<Range<f32>> = if focused {
@@ -560,6 +605,19 @@ fn prepare(
             heads[first_head..]
                 .iter()
                 .take_while(|h| **h <= line_range.end)
+                .filter(|h| {
+                    let at = **h;
+                    if upstream_head == Some(at) {
+                        // Drawn at the end of the row before the byte it stands at.
+                        if !last_row && at == content.end {
+                            return true;
+                        }
+                        if geom.sub > 0 && at == content.start {
+                            return false;
+                        }
+                    }
+                    begins_in_row(at)
+                })
                 .map(|h| {
                     let from = col(*h);
                     // A block covers the character's cells (one at the end of the line).
@@ -585,27 +643,40 @@ fn prepare(
             .map(|m| col(m.start.max(line_range.start))..col(m.end.min(line_range.end)))
             .collect();
 
-        // Diagnostics: the columns each covers on this line, the glyph of the most serious one
-        // that starts here, and on the caret's line the most serious one's message.
+        // Diagnostics: the columns each covers on this row, the glyph of the most serious one
+        // that starts on the line (beside its first row), and on the caret's line the most
+        // serious one's message (after its last row).
         let mut underlines = Vec::new();
-        let mut glyph: Option<Severity> = None;
-        let mut on_line: Option<&Diagnostic> = None;
         for d in &shown_diagnostics {
-            let touches = if d.bytes.is_empty() || line_range.is_empty() {
-                d.bytes.start <= line_range.end && d.bytes.end >= line_range.start
-            } else {
-                d.bytes.start <= line_range.end && d.bytes.end > line_range.start
-            };
-            if !touches {
+            if !diagnostic_touches(d, &line_range, last_row) {
                 continue;
             }
             let clipped = d.bytes.start.max(line_range.start)..d.bytes.end.min(line_range.end);
             underlines.push((columns(clipped, false), d.severity));
-            if d.bytes.start >= line_range.start && glyph.is_none_or(|g| d.severity < g) {
-                glyph = Some(d.severity);
-            }
-            if on_line.is_none_or(|o| d.severity < o.severity) {
-                on_line = Some(d);
+        }
+        let mut glyph: Option<Severity> = None;
+        let mut on_line: Option<&Diagnostic> = None;
+        if geom.first || geom.last {
+            let whole_line = if wrapped {
+                text.line_content_range(line)
+                    .unwrap_or_else(|_| line_range.clone())
+            } else {
+                line_range.clone()
+            };
+            for d in &shown_diagnostics {
+                if geom.first
+                    && d.bytes.start >= whole_line.start
+                    && d.bytes.start <= whole_line.end
+                    && glyph.is_none_or(|g| d.severity < g)
+                {
+                    glyph = Some(d.severity);
+                }
+                if geom.last
+                    && diagnostic_touches(d, &whole_line, true)
+                    && on_line.is_none_or(|o| d.severity < o.severity)
+                {
+                    on_line = Some(d);
+                }
             }
         }
         for (index, (_, severity)) in underlines.iter().enumerate() {
@@ -653,7 +724,7 @@ fn prepare(
                         shaped
                     }
                 };
-                let end_col = crate::layout::line_columns(&window_text) as f32;
+                let end_col = crate::layout::line_columns_at(&window_text, base_col) as f32;
                 Some((shaped, end_col + 3.0))
             }
             _ => None,
@@ -672,9 +743,9 @@ fn prepare(
                         .blame_line(line - 1)
                         .is_none_or(|before| !before.same_run(this));
                 let label = crate::blame::label(this, now);
-                let column = (blame_column && starts_run)
+                let column = (blame_column && starts_run && geom.first)
                     .then(|| crate::blame::fit(&label, blame_cells - 3));
-                let inline = (blame_inline && head_line == Some(line))
+                let inline = (blame_inline && head_line == Some(line) && geom.last)
                     .then(|| crate::blame::fit(&label, INLINE_BLAME_CHARS));
                 (column, inline)
             };
@@ -699,20 +770,39 @@ fn prepare(
                     &style,
                     (format!("   {label}"), "inline-blame", view.style_generation),
                 );
-                let end_col = crate::layout::line_columns(&window_text) as f32;
+                let end_col = crate::layout::line_columns_at(&window_text, base_col) as f32;
                 (shaped, end_col)
             })
         });
 
+        view.stats.last_rows.push(crate::view::DrawnRow {
+            line,
+            sub: geom.sub,
+            number: number.is_some(),
+            carets: carets.len(),
+            selected_cells,
+        });
+        let mut agent = agent_marks
+            .get(line - lines.start)
+            .copied()
+            .unwrap_or_default();
+        if !geom.first {
+            agent.removed_above = None;
+        }
         prepaint.lines.push(LinePaint {
-            y: bounds.top() + px((line - first) as f32 * line_hf - offset),
+            y: bounds.top() + px(row_index as f32 * line_hf - offset),
             number,
             text: text_line,
             start_col: display.start_col,
+            col_shift: if wrapped {
+                geom.indent as f32 - geom.start_col as f32
+            } else {
+                0.0
+            },
             fills,
             carets: if block { Vec::new() } else { carets },
             marked,
-            agent: agent_marks.get(line - first).copied().unwrap_or_default(),
+            agent,
             underlines,
             glyph,
             hint,
@@ -916,7 +1006,9 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
         point(layout.text_left - cell * 0.25, bounds.top()),
         bounds.bottom_right(),
     );
-    let x_of = |col: f32| layout.text_left + cell * col - state.scroll_x;
+    let x_of = |line: &LinePaint, col: f32| {
+        layout.text_left + cell * (col + line.col_shift) - state.scroll_x
+    };
 
     window.with_content_mask(Some(ContentMask { bounds: text_area }), |window| {
         // An agent's changed lines: tinted under everything else, across the text area.
@@ -938,7 +1030,7 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
                     };
                     (text_area.left(), text_area.right(), color)
                 } else {
-                    (x_of(cols.start), x_of(cols.end), *color)
+                    (x_of(line, cols.start), x_of(line, cols.end), *color)
                 };
                 window.paint_quad(fill(
                     Bounds::from_corners(point(left, line.y), point(right, line.y + line_h)),
@@ -948,12 +1040,12 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
         }
         for line in &state.lines {
             if let Some(text) = &line.text {
-                let origin = point(x_of(line.start_col as f32), line.y);
+                let origin = point(x_of(line, line.start_col as f32), line.y);
                 let _ = text.paint(origin, line_h, TextAlign::Left, None, window, cx);
             }
             for marked in &line.marked {
-                let left = x_of(marked.start);
-                let right = x_of(marked.end.max(marked.start + 1.0));
+                let left = x_of(line, marked.start);
+                let right = x_of(line, marked.end.max(marked.start + 1.0));
                 window.paint_quad(fill(
                     Bounds::from_corners(
                         point(left, line.y + line_h - px(2.0)),
@@ -963,7 +1055,7 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
                 ));
             }
             for caret in &line.carets {
-                let x = x_of(caret.start);
+                let x = x_of(line, caret.start);
                 window.paint_quad(fill(
                     Bounds::new(point(x - px(1.0), line.y), size(px(2.0), line_h)),
                     state.caret_color,
@@ -972,8 +1064,8 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
             // Diagnostics: the style of the line says the severity as well as its color.
             for (cols, severity) in &line.underlines {
                 let color = state.diagnostic_colors[*severity as usize];
-                let left = x_of(cols.start);
-                let right = x_of(cols.end.max(cols.start + 1.0));
+                let left = x_of(line, cols.start);
+                let right = x_of(line, cols.end.max(cols.start + 1.0));
                 paint_underline(
                     window,
                     severity.underline(),
@@ -984,7 +1076,7 @@ fn paint(state: &Prepaint, window: &mut Window, cx: &mut App) {
                 );
             }
             if let Some((hint, col)) = &line.hint {
-                let origin = point(x_of(*col), line.y);
+                let origin = point(x_of(line, *col), line.y);
                 let _ = hint.paint(origin, line_h, TextAlign::Left, None, window, cx);
             }
         }
@@ -1119,14 +1211,28 @@ fn paint_glyph(window: &mut Window, shape: GlyphShape, bounds: Bounds<Pixels>, c
     }
 }
 
-/// One line of a frame: what it shows and its shaped text, if it is already shaped.
+/// One row of a frame: what it shows and its shaped text, if it is already shaped.
 struct Row {
-    line: usize,
-    content: Range<usize>,
+    geom: RowGeom,
     window_text: String,
     display: DisplayLine,
     key: u64,
     text_line: Option<Rc<ShapedLine>>,
+}
+
+/// Whether diagnostic `d` is drawn on the row of `range` (the end of a line belongs to its last
+/// row, the end of any other row to the row after it).
+fn diagnostic_touches(d: &Diagnostic, range: &Range<usize>, last_row: bool) -> bool {
+    let starts_before_end = if last_row {
+        d.bytes.start <= range.end
+    } else {
+        d.bytes.start < range.end
+    };
+    if d.bytes.is_empty() || range.is_empty() {
+        starts_before_end && d.bytes.end >= range.start
+    } else {
+        starts_before_end && d.bytes.end > range.start
+    }
 }
 #[cfg(test)]
 mod tests {

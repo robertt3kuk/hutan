@@ -5,3 +5,4 @@ mod blame;
 mod editing;
 mod ime;
 mod view;
+mod wrap;
