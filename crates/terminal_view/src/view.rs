@@ -244,6 +244,8 @@ pub struct TerminalView {
     /// scrolled past are seen. See [`Self::set_scroll_offset`].
     unseen_lines: u32,
     scroll_accum: f32,
+    /// The scrollbar over the scrollback (`scrollbar.rs`).
+    pub(crate) bar: hutan_ui::Scrollbar,
     history_in_flight: HashSet<u32>,
     /// History lines from this one on do not exist (an empty page came back).
     history_end: Option<u32>,
@@ -382,6 +384,10 @@ impl TerminalView {
             scroll_offset: 0,
             unseen_lines: 0,
             scroll_accum: 0.0,
+            bar: hutan_ui::Scrollbar::of(
+                crate::scrollbar::Scrollback(cx.weak_entity()),
+                hutan_ui::Axis::Vertical,
+            ),
             history_in_flight: HashSet::new(),
             history_end: None,
             selection: None,
@@ -2807,6 +2813,7 @@ impl Render for TerminalView {
             .overflow_hidden()
             .bg(background)
             .child(TerminalElement::new(cx.entity()))
+            .child(self.bar.element())
             .children(bar)
             .children(link_tip)
             .children(pill)

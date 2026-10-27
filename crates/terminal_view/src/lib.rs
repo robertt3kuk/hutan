@@ -18,6 +18,7 @@ pub mod links;
 pub mod model;
 pub mod mouse;
 pub mod paste;
+mod scrollbar;
 pub mod selection;
 mod settings;
 mod shape;

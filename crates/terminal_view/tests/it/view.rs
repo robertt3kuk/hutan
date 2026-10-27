@@ -1801,3 +1801,228 @@ fn padding_shrinks_the_grid_on_all_four_sides(cx: &mut TestAppContext) {
     );
     assert_eq!(view.read_with(cx, |v, _| v.grid_size()), Some((100, 37)));
 }
+
+// ---- the scrollbar over the scrollback (SCROLLBARS) ---------------------------------------------
+
+fn bar_x() -> gpui::Pixels {
+    // The thumb is 7 px wide, 2 px from the right edge of the 800 px window.
+    px(800.0 - 2.0 - 3.5)
+}
+
+fn thumb(
+    view: &Entity<TerminalView>,
+    cx: &VisualTestContext,
+) -> Option<gpui::Bounds<gpui::Pixels>> {
+    view.read_with(cx, |v, _| v.scrollbar().thumb())
+}
+
+#[gpui::test]
+fn the_thumb_sits_at_the_end_of_the_track_on_the_live_screen_and_rises_with_the_scrollback(
+    cx: &mut TestAppContext,
+) {
+    let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
+    apply(
+        &view,
+        cx,
+        snapshot(1, &["live"; 30], Modes::default(), 1000),
+    );
+    draw(cx);
+    let live = thumb(&view, cx).expect("1 000 lines of history to scroll through");
+    assert_eq!(
+        f32::from(live.bottom()),
+        600.0 - 2.0,
+        "the live screen is the end of the track"
+    );
+    assert_eq!(f32::from(live.right()), 800.0 - 2.0);
+
+    // Half way back: the thumb is half way up its travel.
+    view.update(cx, |v, cx| v.scroll_lines(500, cx));
+    draw(cx);
+    let middle = thumb(&view, cx).expect("scrolled back");
+    assert!(middle.origin.y < live.origin.y);
+    assert!(middle.origin.y > px(2.0));
+
+    // The oldest line in view: the start of the track.
+    view.update(cx, |v, cx| v.scroll_to_top(cx));
+    draw(cx);
+    let top = thumb(&view, cx).expect("scrolled back");
+    assert_eq!(f32::from(top.origin.y), 2.0);
+}
+
+#[gpui::test]
+fn the_thumb_has_the_share_of_the_lines_in_view(cx: &mut TestAppContext) {
+    let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
+    apply(&view, cx, snapshot(1, &["live"; 30], Modes::default(), 100));
+    draw(cx);
+    let rows = f32::from(view.read_with(cx, |v, _| v.grid_size().expect("laid out").1));
+    let thumb = thumb(&view, cx).expect("100 lines of history");
+    let track = 600.0 - 4.0;
+    let expected = track * rows / (rows + 100.0);
+    assert!(
+        (f32::from(thumb.size.height) - expected).abs() < 1.0,
+        "{rows} of {} lines in view: {expected} px of {track}, got {:?}",
+        rows + 100.0,
+        thumb.size.height
+    );
+}
+
+#[gpui::test]
+fn dragging_the_thumb_scrolls_the_daemons_scrollback_to_the_oldest_line_and_back(
+    cx: &mut TestAppContext,
+) {
+    let (view, cx, recorder) = setup(cx, TerminalViewSettings::default());
+    apply(
+        &view,
+        cx,
+        snapshot(1, &["live"; 30], Modes::default(), 1000),
+    );
+    draw(cx);
+    recorder.take();
+    let grab = thumb(&view, cx).expect("scrollable");
+    let y = f32::from(grab.origin.y) + 10.0;
+    cx.simulate_mouse_down(point(bar_x(), px(y)), MouseButton::Left, Modifiers::none());
+    assert!(view.read_with(cx, |v, _| v.scrollbar().held()));
+    cx.simulate_mouse_move(
+        point(bar_x(), px(-400.0)),
+        Some(MouseButton::Left),
+        Modifiers::none(),
+    );
+    draw(cx);
+    assert_eq!(
+        view.read_with(cx, |v, _| v.scroll_offset()),
+        1000,
+        "the end of the drag is the oldest line"
+    );
+    let asked = recorder.take();
+    assert!(
+        asked
+            .iter()
+            .any(|c| matches!(c, Call::History(from, 200) if *from >= 800)),
+        "the oldest history page was asked of the daemon: {asked:?}"
+    );
+    cx.simulate_mouse_up(
+        point(bar_x(), px(-400.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+
+    // And back down to the live screen.
+    let top = thumb(&view, cx).expect("scrollable");
+    let y = f32::from(top.origin.y) + 10.0;
+    cx.simulate_mouse_down(point(bar_x(), px(y)), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        point(bar_x(), px(5_000.0)),
+        Some(MouseButton::Left),
+        Modifiers::none(),
+    );
+    draw(cx);
+    assert_eq!(
+        view.read_with(cx, |v, _| v.scroll_offset()),
+        0,
+        "live again"
+    );
+    cx.simulate_mouse_up(
+        point(bar_x(), px(5_000.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+}
+
+#[gpui::test]
+fn a_drag_in_the_middle_is_in_proportion_to_the_scrollback(cx: &mut TestAppContext) {
+    let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
+    apply(
+        &view,
+        cx,
+        snapshot(1, &["live"; 30], Modes::default(), 1000),
+    );
+    draw(cx);
+    let grab = thumb(&view, cx).expect("scrollable");
+    let travel = (600.0 - 4.0) - f32::from(grab.size.height);
+    let y = f32::from(grab.origin.y) + 4.0;
+    cx.simulate_mouse_down(point(bar_x(), px(y)), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        point(bar_x(), px(y - travel / 2.0)),
+        Some(MouseButton::Left),
+        Modifiers::none(),
+    );
+    let offset = view.read_with(cx, |v, _| v.scroll_offset());
+    assert!(
+        (offset as i64 - 500).abs() <= 2,
+        "half the travel is half the scrollback: {offset}"
+    );
+    cx.simulate_mouse_up(point(bar_x(), px(y)), MouseButton::Left, Modifiers::none());
+}
+
+#[gpui::test]
+fn a_click_on_the_track_scrolls_a_page_towards_it(cx: &mut TestAppContext) {
+    let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
+    apply(
+        &view,
+        cx,
+        snapshot(1, &["live"; 30], Modes::default(), 1000),
+    );
+    draw(cx);
+    let rows = view.read_with(cx, |v, _| v.grid_size().expect("laid out").1);
+    cx.simulate_click(point(bar_x(), px(100.0)), Modifiers::none());
+    assert_eq!(
+        view.read_with(cx, |v, _| v.scroll_offset()),
+        u32::from(rows),
+        "a page towards the past"
+    );
+    draw(cx);
+    let thumb = thumb(&view, cx).expect("scrollable");
+    cx.simulate_click(point(bar_x(), thumb.bottom() + px(20.0)), Modifiers::none());
+    assert_eq!(
+        view.read_with(cx, |v, _| v.scroll_offset()),
+        0,
+        "and a page back"
+    );
+}
+
+#[gpui::test]
+fn there_is_no_thumb_without_scrollback_or_on_the_alternate_screen(cx: &mut TestAppContext) {
+    let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
+    apply(&view, cx, snapshot(1, &["live"; 30], Modes::default(), 0));
+    draw(cx);
+    assert!(thumb(&view, cx).is_none(), "no history, nothing to scroll");
+
+    apply(&view, cx, snapshot(2, &["live"; 30], Modes::default(), 500));
+    draw(cx);
+    assert!(thumb(&view, cx).is_some());
+    let alternate = Modes {
+        alt_screen: true,
+        ..Modes::default()
+    };
+    apply(&view, cx, snapshot(3, &["vim"; 30], alternate, 500));
+    draw(cx);
+    assert!(
+        thumb(&view, cx).is_none(),
+        "vim, htop and pagers have no scrollback to show"
+    );
+}
+
+#[gpui::test]
+fn the_overlay_thumb_shows_while_scrolling_and_fades(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        hutan_ui::scrollbar::set_system_always(cx, false);
+        hutan_ui::scrollbar::set_setting(cx, hutan_settings::ScrollbarsSetting::Scrolling);
+    });
+    let (view, cx, _recorder) = setup(cx, TerminalViewSettings::default());
+    apply(
+        &view,
+        cx,
+        snapshot(1, &["live"; 30], Modes::default(), 1000),
+    );
+    draw(cx);
+    assert!(
+        thumb(&view, cx).is_none(),
+        "an overlay bar waits for scrolling"
+    );
+    wheel(cx, 3.0);
+    draw(cx);
+    assert!(thumb(&view, cx).is_some(), "the wheel shows it");
+    cx.executor().advance_clock(Duration::from_millis(1300));
+    draw(cx);
+    assert!(thumb(&view, cx).is_none(), "and it fades after a second");
+}
