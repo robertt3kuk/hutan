@@ -216,13 +216,6 @@ impl Journal {
     pub fn redoable(&self) -> usize {
         self.redo.len()
     }
-
-    /// Forgets that `path` (and what is inside it) ever was: nothing in the journal can be done
-    /// to it any more.
-    pub fn clear(&mut self) {
-        self.undo.clear();
-        self.redo.clear();
-    }
 }
 
 /// How many names the delete sheet lists before it says "and N more".

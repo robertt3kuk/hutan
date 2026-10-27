@@ -1155,4 +1155,35 @@ mod tests {
         list(&mut big, "/b", &files);
         assert_eq!(big.expand_all(), Err(ExpandRefusal::TooManyRows));
     }
+
+    #[test]
+    fn a_listed_folder_says_its_names_and_kinds_whatever_the_filters_hide() {
+        let mut tree = tree("/r");
+        assert_eq!(tree.entry_names(Path::new("/r")), None, "not listed yet");
+        list(
+            &mut tree,
+            "/r",
+            &[
+                (".hidden", FsKind::File),
+                ("src", FsKind::Dir),
+                ("a.rs", FsKind::File),
+            ],
+        );
+        tree.set_options(TreeOptions {
+            show_hidden: false,
+            ..TreeOptions::default()
+        });
+        assert_eq!(tree.rows().len(), 2, "the dotfile has no row");
+        let mut names = tree.entry_names(Path::new("/r")).unwrap();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            [".hidden", "a.rs", "src"],
+            "a new name collides with the hidden one too"
+        );
+        assert_eq!(tree.kind_of(Path::new("/r/src")), Some(FsKind::Dir));
+        assert_eq!(tree.kind_of(Path::new("/r/a.rs")), Some(FsKind::File));
+        assert_eq!(tree.kind_of(Path::new("/r/none")), None);
+        assert_eq!(tree.kind_of(Path::new("/elsewhere/a.rs")), None);
+    }
 }

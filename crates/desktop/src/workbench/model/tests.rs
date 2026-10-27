@@ -2507,6 +2507,78 @@ fn a_file_tab_is_stored_so_that_older_binaries_read_a_placeholder() {
 }
 
 #[test]
+fn a_renamed_path_is_what_is_below_it_moved_and_nothing_that_merely_starts_alike() {
+    assert_eq!(
+        retargeted("/w/src", "/w/src", "/w/lib").as_deref(),
+        Some("/w/lib")
+    );
+    assert_eq!(
+        retargeted("/w/src/a/b.rs", "/w/src", "/w/lib").as_deref(),
+        Some("/w/lib/a/b.rs")
+    );
+    assert_eq!(retargeted("/w/srcx/a.rs", "/w/src", "/w/lib"), None);
+    assert_eq!(retargeted("/w/other.rs", "/w/src", "/w/lib"), None);
+    assert_eq!(
+        retargeted("/w/a.rs", "/w/a.rs", "/w/b/").as_deref(),
+        Some("/w/b/"),
+        "a file moved to a path keeps it as given"
+    );
+}
+
+#[test]
+fn file_tabs_follow_a_rename_in_every_layout_and_keep_their_place() {
+    let mut state = WorkbenchState::default();
+    let pane = state.active_pane_id();
+    for path in ["/w/src/a.rs", "/w/d.rs", "/w/src/deep/b.rs", "/w/srcx/c.rs"] {
+        state.add_item(pane, ItemRef::file(path)).unwrap();
+    }
+    state.set_active_item(pane, 2).unwrap();
+    state.stashed = Some(Box::new(SavedLayout::of(&state)));
+
+    let moved = state.retarget_files("/w/src", "/w/lib");
+    assert_eq!(
+        moved,
+        [
+            ("/w/src/a.rs".to_owned(), "/w/lib/a.rs".to_owned()),
+            ("/w/src/deep/b.rs".to_owned(), "/w/lib/deep/b.rs".to_owned()),
+        ]
+    );
+    let tabs: Vec<_> = state
+        .pane(pane)
+        .unwrap()
+        .items
+        .iter()
+        .filter_map(|i| i.as_file().map(str::to_owned))
+        .collect();
+    assert_eq!(
+        tabs,
+        ["/w/lib/a.rs", "/w/d.rs", "/w/lib/deep/b.rs", "/w/srcx/c.rs"],
+        "same order; a sibling that starts alike is not below the folder"
+    );
+    assert_eq!(state.pane(pane).unwrap().active, 2, "the active tab stays");
+    let stash: Vec<_> = state
+        .stashed
+        .as_ref()
+        .unwrap()
+        .center
+        .panes()
+        .iter()
+        .flat_map(|p| {
+            p.items
+                .iter()
+                .filter_map(|i| i.as_file().map(str::to_owned))
+        })
+        .collect();
+    assert_eq!(stash[0], "/w/lib/a.rs", "the overview's stash follows too");
+    check(&state);
+
+    // A file renamed to another name: one tab.
+    assert_eq!(state.retarget_files("/w/d.rs", "/w/e.rs").len(), 1);
+    assert!(state.find_item(&ItemRef::file("/w/e.rs")).is_some());
+    assert!(state.retarget_files("/w/none.rs", "/w/x.rs").is_empty());
+}
+
+#[test]
 fn a_tab_kind_of_a_newer_binary_becomes_a_placeholder() {
     let unknown: ItemRef =
         serde_json::from_value(serde_json::json!({"notebook": {"path": "/x.ipynb"}})).unwrap();

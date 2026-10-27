@@ -763,7 +763,7 @@ Behaviour is in `docs/editor.md` § Git blame and file history; how it looks:
 - **Inline blame.** The same text, three spaces after the end of the caret line, muted; a diagnostic's message on that line is shown instead.
 - **File history tab** (`History · name`, `PanelHistory` icon). Header: file name, its path muted, `n commits` (`n+` while there are more), Refresh. Left column (34 font-sizes wide, hairline right): a row per commit — subject (medium when selected), then relative time (absolute in the tooltip), author, short hash, muted and small; selected row `accent-soft`; *Older commits* (ghost, compact) closes the list while more exist. Right: the commit's subject (medium), `hash · author <email> · local time` muted, `Renamed from …` muted when it renamed the file, the message body, **Open at this revision** (secondary, compact) and **Copy hash** (ghost), and under them the patch of the file in a bordered block of diff rows (line numbers, sign, text; the Changes view's colors) that scrolls sideways inside itself. Empty: *No commit has changed this file yet.*; an error: the error mascot and the reason.
 - **Revision tab** (`name @ 1a2b3c4`, file icon): a bar (`sidebar` fill, hairline under it) saying `<path> at commit 1a2b3c4 · read-only`, then the code view; the text cannot be edited.
-- **Menus.** The file tab's menu has *Toggle Blame* and *Show File History* after *Reveal in Files Panel*; a Files panel row's context menu (right click) is *Open* · *Show File History* for a file, and *Copy Path*; ⌘K has *Editor: Toggle Blame* and *Git: Show File History*.
+- **Menus.** The file tab's menu has *Toggle Blame* and *Show File History* after *Reveal in Files Panel*; a Files panel row's context menu (right click) is *Open* · *Show File History* for a file, then (EX-7) *New File* · *New Folder* · *Rename* · *Duplicate* · *Cut* · *Copy* · *Paste*, *Copy Path* and *Move to Trash*; ⌘K has *Editor: Toggle Blame* and *Git: Show File History*, and *Files: New File · New Folder · Rename · Duplicate · Move to Trash · Copy · Cut · Paste · Undo · Redo*.
 
 ## Problems panel (E-12a)
 
@@ -1024,6 +1024,7 @@ The **Zed** base follows Zed's published macOS keymap (`default-macos.json`) whe
 | Quick open: the active project's files (`path:line:col`), then every workspace, project and session; `?` + words searches the session history | ⌘P (Zed's quick open) | ⌘P |
 | Jump to any workspace, project or session only | ⌘P's Sessions section; palette | ⌘J |
 | Files panel (the project's tree, the focused tab's file selected; from the tree, back to the focused tab) | ⌘⇧E | ⌘⇧E |
+| Files tree operations, only with the keyboard in the tree itself (its key context `FilesPanel`; never in an editor tab, a terminal or the tree's own name field): new file / new folder · rename · duplicate · move to Trash (asks) · copy / cut / paste · undo / redo | ⌘N / ⌥⌘N · F2 · ⌘D · ⌘⌫ · ⌘C / ⌘X / ⌘V · ⌘Z / ⇧⌘Z | same (⌘D splits the pane everywhere else) |
 | Problems panel (the language servers' diagnostics, the keyboard in its list) | ⌘⇧M | ⌘⇧M |
 | Go to definition / back · next / previous diagnostic · hover (file tabs) | F12 / ⌃O · F8 / ⇧F8 · ⌘⌥I (Vim Normal: `gd` / `⌃O` · `]d` / `[d` · `K`) | F12 / ⌃O · F8 / ⇧F8 · ⌘⌥I (Vim the same) |
 | Open a folder as a project (recent projects, Open Folder…) | ⌘O | ⌘O |

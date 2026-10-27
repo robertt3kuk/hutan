@@ -984,12 +984,14 @@ impl FilesPanel {
     }
 }
 
-/// Splits what `fs.move` answered into the pairs that moved and `(name, reason)` of those that
-/// did not.
-fn split_results(
-    pairs: &[(PathBuf, PathBuf)],
-    results: FsOpResults,
-) -> (Vec<(PathBuf, PathBuf)>, Vec<(String, String)>) {
+/// `(from, to)` of each thing moved.
+type Moved = Vec<(PathBuf, PathBuf)>;
+
+/// `(name, reason)` of each item of a batch that was refused.
+type Refused = Vec<(String, String)>;
+
+/// Splits what `fs.move` answered into the pairs that moved and those that did not.
+fn split_results(pairs: &[(PathBuf, PathBuf)], results: FsOpResults) -> (Moved, Refused) {
     let mut done = Vec::new();
     let mut failed = Vec::new();
     for ((from, to), item) in pairs.iter().zip(results.items) {

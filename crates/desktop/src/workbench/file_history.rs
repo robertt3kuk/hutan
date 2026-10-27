@@ -1131,8 +1131,8 @@ impl Workbench {
             }));
             entries.push(Self::show_history_entry(&path));
         }
-        entries.push(command("New File…", Cmd::NewFile));
-        entries.push(command("New Folder…", Cmd::NewFolder));
+        entries.push(command("New File", Cmd::NewFile));
+        entries.push(command("New Folder", Cmd::NewFolder));
         entries.push(command("Rename", Cmd::Rename));
         entries.push(command("Duplicate", Cmd::Duplicate));
         entries.push(command("Cut", Cmd::Cut));

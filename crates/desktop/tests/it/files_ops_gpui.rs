@@ -279,7 +279,7 @@ fn open_tab(view: &Entity<Workbench>, cx: &mut VisualTestContext, path: &Path, t
         view.read_with(cx, |wb, cx| {
             wb.buffers()
                 .get(&key)
-                .is_some_and(|b| b.read(cx).is_ready() && b.read(cx).text().to_string() == text)
+                .is_some_and(|b| b.read(cx).is_ready() && b.read(cx).text() == text)
         })
     });
 }
@@ -487,7 +487,7 @@ fn the_language_servers_document_is_opened_again_under_the_new_path(cx: &mut Tes
     });
     assert!(
         tab.buffer.read_with(cx, |b, _| b.is_dirty()
-            && b.text().to_string() == "// top let x = error;\n"),
+            && b.text() == "// top let x = error;\n"),
         "the unsaved text is what the server has"
     );
 }
@@ -547,7 +547,7 @@ fn the_trash_sheet_warns_of_unsaved_text_and_a_working_agent_and_undo_brings_it_
         view.read_with(cx, |wb, cx| {
             !wb.sessions()
                 .read(cx)
-                .agents_working_near(&[root.clone()])
+                .agents_working_near(std::slice::from_ref(&root))
                 .is_empty()
         })
     });
@@ -998,5 +998,3 @@ fn the_tree_scrolls_by_itself_while_a_row_is_dragged_near_its_edge(cx: &mut Test
     cx.simulate_mouse_up(middle, Left, Modifiers::none());
     draw(cx);
 }
-
-fn _unused(_: ClipboardEntry, _: ClipboardItem, _: ExternalPaths, _: Modifiers) {}
